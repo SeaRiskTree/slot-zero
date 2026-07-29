@@ -82,7 +82,10 @@ export const percentile = (xs: readonly Sol[], q: number): number => {
   return (s[lo] as number) + (h - lo) * ((s[hi] as number) - (s[lo] as number));
 };
 
-/** Share of values strictly greater than zero. */
+/**
+ * Share of values strictly greater than zero. Throws on an empty set rather than reporting
+ * 0% profitable for a population that has no members — an empty filter is a bug, not a result.
+ */
 export const fractionPositive = (xs: readonly Sol[]): number => {
   if (xs.length === 0) throw new Error('fraction positive of an empty set');
   return (xs as readonly number[]).filter((x) => x > 0).length / xs.length;

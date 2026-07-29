@@ -145,14 +145,15 @@ export interface BookMemberOutsider {
   /**
    * Same ceiling as {@link IndependentOutsider.outsiderConfidence}, and this is the wallet on
    * which it is *measured*: the bankroll and the operation demonstrably hold accounts at one
-   * custodial venue. The negative holds regardless, on two complete sets — all 4,806
-   * transactions of the `9BhkaAyb…` bankroll's life, and the operation's complete signature
-   * sets for the deployer and all six cohort wallets. **This wallet's own index was never
-   * exhaustively enumerated** (~1,000,000 transactions,
-   * `kol-cohort-vs-outsider-funding/report.md` §10.2), which is sufficient: an intersection
-   * test needs one complete side, not two. Evidence and decision: the README's "The ceiling of
-   * the method: shared custodial venues"; which side each negative is complete on: the
-   * README's "What is open".
+   * custodial venue. The negative holds regardless, but it is **complete on the bankroll side**
+   * rather than on this wallet's: no complete signature set for the wallet itself exists
+   * (~1,000,000 entries, walk abandoned at 550,000 —
+   * `kol-cohort-vs-outsider-funding/report.md` §10.2), so it rests on the operation's complete
+   * signature sets for the deployer and all six cohort wallets plus the `9BhkaAyb…` bankroll's
+   * complete set. That is sufficient: an intersection test needs one complete side, not two.
+   * Evidence and decision: the README's "The ceiling of the method: shared custodial venues";
+   * which side each negative is complete on, and how it differs from
+   * {@link INDEPENDENT_OUTSIDER}'s: the README's "What is open".
    */
   readonly outsiderConfidence: 'high';
   /**

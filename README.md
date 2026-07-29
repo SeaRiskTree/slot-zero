@@ -173,18 +173,31 @@ method shown twice to surface real links when they exist, §4.4). Each traces to
 independently characterised funding channel the operation never uses, and neither shares a
 funder or a destination with it (§5).
 
-**Which side each negative is complete on**, because that is what the test rests on and §8.2
-states it plainly. Neither outsider's *own* index was exhaustively enumerated — `5brv79eF…`'s
-runs to 347,230 transactions (§4.1) and `EgQX9R3Q…`'s to ~1,000,000, which the funding report
-attempted and abandoned (§10.2, §9.1). The completeness is on the **operation's** side:
-complete signature sets for the deployer and all six cohort wallets, so any transaction
-between the operation and either outsider is necessarily inside them. That is sufficient for an
-intersection test, which needs one complete side, not two. For `EgQX9R3Q…` a second complete set backs it up — the
-`9BhkaAyb…` bankroll that funds it and receives its sweeps, all 4,806 transactions of its
-nine-month life, zero contact ("The ceiling of the method" above). One set is genuinely
-truncated and is not used as evidence anywhere: `2CQgjcdN…`'s, at 2026-07-22 (§8.2). And
-**both negatives carry the shared-custodial-venue ceiling** recorded above; neither is a claim
-that the parties are provably unrelated.
+**Which side each negative is complete on**, because that is what the test rests on and the two
+wallets are not symmetric here. Common to both: the **operation's** side is complete — complete
+signature sets for the deployer and all six cohort wallets, so any transaction between the
+operation and either outsider is necessarily inside them. That alone is sufficient for an
+intersection test, which needs one complete side, not two.
+
+- **`5brv79eF…` is complete on both sides.** Its own complete lifetime signature index was
+  obtained — 347,230 transactions (the funding report's §1 evidence table, alongside the
+  deployer's 157,851 and the cohort's 115,082). What was *not* done is fetching every one of
+  those transactions to characterise its **inflows** (§10.2 item 4, which calls it not
+  warranted because the complete-set tests already cover every transaction it shares with the
+  operation). That is a limit on describing where its money comes from, not a gap in the
+  negative.
+- **`EgQX9R3Q…` is complete on the bankroll side** — the report's own phrase. No complete
+  signature set for the wallet itself exists: its index is ~1,000,000 entries and the walk was
+  abandoned at 550,000 (§10.2 item 2, §9.1). Its negative rests on the operation's complete
+  sets plus the complete set of the `9BhkaAyb…` bankroll that funds it and receives its sweeps
+  — all 4,806 transactions of its nine-month life, zero contact
+  (`slot-zero-bankroll-book-pnl/report.md` §5.1–§5.2, via "The ceiling of the method" above).
+  §10.2 item 2 notes that obtaining the wallet's own set would upgrade this to "complete on
+  both".
+
+One set is genuinely truncated and is not used as evidence anywhere: `2CQgjcdN…`'s, at
+2026-07-22 (§8.2). And **both negatives carry the shared-custodial-venue ceiling** recorded
+above; neither is a claim that the parties are provably unrelated.
 
 `5brv79eF…` in particular is exactly what it appeared to be: an unaffiliated, still-running,
 bridge-funded sniper that has taken money out of this operator's launches for four months and

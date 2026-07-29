@@ -123,13 +123,13 @@ venue, on-chain evidence cannot see the relationship.* Named first by
 `kol-cohort-vs-outsider-funding/report.md` §8.2 — "**Custodial walls are walls.**"
 
 **Here it is not hypothetical; it is measured.** The `9BhkaAyb…` book and the operation
-demonstrably hold accounts at the same venue. Every figure below is from
-`slot-zero-bankroll-book-pnl/report.md`, cited by section as it is used:
+demonstrably hold accounts at the same venue:
 
 - The book's bankroll has a **complete lifetime signature index** walked to genesis — **all
-  4,806 transactions fetched and parsed, zero unresolved** (§2.1). *(The funding report's own
-  §1 table records the same index as 4,802: the two counts are the same index read at
-  different times — §2.1 accounts for the difference — not a conflict.)*
+  4,806 transactions fetched and parsed, zero unresolved**
+  (`slot-zero-bankroll-book-pnl/report.md` §2.1; its later sections are cited bare below).
+  *(The funding report's own §1 table records the same index as 4,802: the two counts are the
+  same index read at different times — §2.1 accounts for the difference — not a conflict.)*
 - Across that complete nine-month life, **before any materiality filter**, **zero** of the
   4,806 name the deployer or any of the six cohort wallets in any capacity (§5.1). That is one
   of the two complete sets the negative rests on — the other is the operation's own;

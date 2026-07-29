@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
  * "does it reach the network?" is answerable by reading `src/`.
  */
 
-function parseRows(text: string): string[][] {
+function parseRows(text: string, source: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';
@@ -55,6 +55,11 @@ function parseRows(text: string): string[][] {
       sawAnyChar = true;
     }
   }
+  if (quoted) {
+    throw new Error(
+      `${source}: input ends inside a quoted field (row ${rows.length + 1}, field ${row.length + 1})`,
+    );
+  }
   if (sawAnyChar || field !== '' || row.length > 0) {
     row.push(field);
     rows.push(row);
@@ -66,7 +71,7 @@ export type CsvRow = ReadonlyMap<string, string>;
 
 /** Read a CSV file into header-keyed rows. Throws on a ragged row rather than guessing. */
 export function readCsv(path: string): CsvRow[] {
-  const rows = parseRows(readFileSync(path, 'utf8'));
+  const rows = parseRows(readFileSync(path, 'utf8'), path);
   const header = rows[0];
   if (!header) throw new Error(`empty CSV: ${path}`);
   const out: CsvRow[] = [];

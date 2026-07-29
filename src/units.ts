@@ -83,5 +83,7 @@ export const percentile = (xs: readonly Sol[], q: number): number => {
 };
 
 /** Share of values strictly greater than zero. */
-export const fractionPositive = (xs: readonly Sol[]): number =>
-  xs.length === 0 ? 0 : (xs as readonly number[]).filter((x) => x > 0).length / xs.length;
+export const fractionPositive = (xs: readonly Sol[]): number => {
+  if (xs.length === 0) throw new Error('fraction positive of an empty set');
+  return (xs as readonly number[]).filter((x) => x > 0).length / xs.length;
+};

@@ -183,10 +183,10 @@ function readWallet(row: CsvRow): WalletAggregate {
   };
 }
 
-function readOnchainRow(row: CsvRow, hasSymbol: boolean): OnchainRow {
+function readOnchainRow(row: CsvRow): OnchainRow {
   return {
     mint: str(row, 'mint'),
-    symbol: hasSymbol ? str(row, 'symbol') : '',
+    symbol: str(row, 'symbol'),
     tx: str(row, 'tx'),
     slot: num(row, 'slot'),
     wallet: str(row, 'wallet'),
@@ -267,7 +267,9 @@ export class Tape {
   private _wallets?: readonly WalletAggregate[];
   private _createSlot?: ReadonlyMap<string, number>;
   private _onchainRows?: readonly OnchainRow[];
+  private _onchainFeeSample?: readonly OnchainRow[];
   private _onchainRoundTrips?: readonly OnchainRoundTrip[];
+  private _onchainPositions?: readonly OnchainRoundTrip[];
 
   private constructor(dataDir: string) {
     this.dataDir = dataDir;
@@ -314,32 +316,41 @@ export class Tape {
    * route to `slotsAfterCreate` — the axis `report.md` §5.2's cliff is measured on.
    */
   createSlotByMint(): ReadonlyMap<string, number> {
-    if (!this._createSlot) {
-      const m = new Map<string, number>();
-      for (const row of readCsv(this.path('wallet_launch_pnl.csv'))) {
-        if (str(row, 'in_create_slot') !== '1') continue;
-        const mint = str(row, 'mint');
-        const slot = num(row, 'first_slot');
-        const seen = m.get(mint);
-        if (seen === undefined) m.set(mint, slot);
-        else if (seen !== slot) {
-          throw new Error(`${mint}: create slot ambiguous (${seen} vs ${slot})`);
-        }
+    if (!this._createSlot) this.loadPairs();
+    return this._createSlot as ReadonlyMap<string, number>;
+  }
+
+  /**
+   * `wallet_launch_pnl.csv` is the largest file in the dataset (9.9 MB, 46,553 rows), so it
+   * is parsed exactly once: the create-slot map and the pair objects are both derived from
+   * the same pass. The map has to be complete before any pair is built, because
+   * `slotsAfterCreate` is measured against it.
+   */
+  private loadPairs(): void {
+    const rows = readCsv(this.path('wallet_launch_pnl.csv'));
+
+    const cs = new Map<string, number>();
+    for (const row of rows) {
+      if (str(row, 'in_create_slot') !== '1') continue;
+      const mint = str(row, 'mint');
+      const slot = num(row, 'first_slot');
+      const seen = cs.get(mint);
+      if (seen === undefined) cs.set(mint, slot);
+      else if (seen !== slot) {
+        throw new Error(`${mint}: create slot ambiguous (${seen} vs ${slot})`);
       }
-      this._createSlot = m;
     }
-    return this._createSlot;
+
+    this._createSlot = cs;
+    this._pairs = rows.map((r) => readPair(r, cs));
   }
 
   // -- per (wallet, launch) --------------------------------------------------------
 
   /** All 46,553 (wallet, launch) pairs. Discriminate on `closedInWindow` before using P&L. */
   pairs(): readonly WalletLaunchPair[] {
-    if (!this._pairs) {
-      const cs = this.createSlotByMint();
-      this._pairs = readCsv(this.path('wallet_launch_pnl.csv')).map((r) => readPair(r, cs));
-    }
-    return this._pairs;
+    if (!this._pairs) this.loadPairs();
+    return this._pairs as readonly WalletLaunchPair[];
   }
 
   /**
@@ -382,15 +393,14 @@ export class Tape {
    * with {@link onchainFeeSample} if you want the first pass.
    */
   onchainRows(): readonly OnchainRow[] {
-    this._onchainRows ??= readCsv(this.path('onchain_create_slot_pnl.csv')).map((r) =>
-      readOnchainRow(r, false),
-    );
+    this._onchainRows ??= readCsv(this.path('onchain_create_slot_pnl.csv')).map(readOnchainRow);
     return this._onchainRows;
   }
 
   /** The earlier 6-launch pass. Overlaps {@link onchainRows}; do not sum the two. */
   onchainFeeSample(): readonly OnchainRow[] {
-    return readCsv(this.path('onchain_fee_sample.csv')).map((r) => readOnchainRow(r, true));
+    this._onchainFeeSample ??= readCsv(this.path('onchain_fee_sample.csv')).map(readOnchainRow);
+    return this._onchainFeeSample;
   }
 
   /**
@@ -399,17 +409,16 @@ export class Tape {
    * This is what `report.md` §5.5 is computed over — 596 cohort and 630 non-cohort.
    */
   onchainRoundTrips(): readonly OnchainRoundTrip[] {
-    if (!this._onchainRoundTrips) {
-      this._onchainRoundTrips = foldOnchain(this.onchainRows()).filter(
-        (t) => t.tokensBought > 0 && Math.abs(t.netTokenDelta) <= FLAT_TOLERANCE * t.tokensBought,
-      );
-    }
+    this._onchainRoundTrips ??= this.onchainPositions().filter(
+      (t) => t.tokensBought > 0 && Math.abs(t.netTokenDelta) <= FLAT_TOLERANCE * t.tokensBought,
+    );
     return this._onchainRoundTrips;
   }
 
   /** Every (wallet, launch) in the on-chain pass, flat or not. Mostly a diagnostic. */
   onchainPositions(): readonly OnchainRoundTrip[] {
-    return foldOnchain(this.onchainRows());
+    this._onchainPositions ??= foldOnchain(this.onchainRows());
+    return this._onchainPositions;
   }
 
   // -- the raw tape ----------------------------------------------------------------

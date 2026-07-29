@@ -32,7 +32,7 @@ export interface WindowTrade {
   /** Price per token in SOL at this fill. */
   readonly priceSol: number;
   readonly priceUsd: number;
-  readonly raw: Readonly<Record<string, string>>;
+  readonly raw: Readonly<Record<string, string | number>>;
 }
 
 /** `window/{mint}.meta.json`. A launch counts as covered only when `reached_mint` is true. */
@@ -47,10 +47,31 @@ export interface WindowMeta {
   readonly reachedMint: boolean;
 }
 
-export function parseWindowTape(gzipped: Buffer): WindowTrade[] {
+/**
+ * An unrecognised enum value is a data-shape change, not a trade to be guessed at:
+ * defaulting `k` to `buy` or `p` to the bonding curve would silently reclassify a fill.
+ * The message names the value, the field and the file so a future data refresh is
+ * diagnosable from the failure alone.
+ */
+function enumField<T extends string>(
+  value: unknown,
+  allowed: readonly T[],
+  field: string,
+  source: string,
+  line: number,
+): T {
+  if (typeof value === 'string' && (allowed as readonly string[]).includes(value)) return value as T;
+  throw new Error(
+    `${source}:${line}: field '${field}' is ${JSON.stringify(value)}, expected one of ${allowed.join(', ')}`,
+  );
+}
+
+export function parseWindowTape(gzipped: Buffer, source = '<window tape>'): WindowTrade[] {
   const text = gunzipSync(gzipped).toString('utf8');
   const out: WindowTrade[] = [];
-  for (const line of text.split('\n')) {
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] as string;
     if (line === '') continue;
     const t = JSON.parse(line) as Record<string, string | number>;
     out.push({
@@ -59,20 +80,20 @@ export function parseWindowTape(gzipped: Buffer): WindowTrade[] {
       tx: String(t['tx']),
       ts: String(t['ts']),
       wallet: String(t['u']),
-      side: t['k'] === 'sell' ? 'sell' : 'buy',
-      venue: t['p'] === 'pump_amm' ? 'pump_amm' : 'pump',
+      side: enumField(t['k'], ['buy', 'sell'] as const, 'k', source, i + 1),
+      venue: enumField(t['p'], ['pump', 'pump_amm'] as const, 'p', source, i + 1),
       solGrossOfFees: Number(t['sol']),
       tokens: Number(t['base']),
       priceSol: Number(t['psol']),
       priceUsd: Number(t['pusd']),
-      raw: t as Readonly<Record<string, string>>,
+      raw: t,
     });
   }
   return out;
 }
 
 export function readWindowTape(path: string): WindowTrade[] {
-  return parseWindowTape(readFileSync(path));
+  return parseWindowTape(readFileSync(path), path);
 }
 
 export function readWindowMeta(path: string): WindowMeta {

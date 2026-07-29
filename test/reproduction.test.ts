@@ -46,11 +46,9 @@ function graduationSpanningWindows(): readonly GraduationSpan[] {
   if (_spans) return _spans;
   const out: GraduationSpan[] = [];
   for (const l of tape.tapedLaunches()) {
-    if (l.priceDevbuy === null || !l.dev.complete) {
-      // Large-buy launches carry a window-truncated dev figure but a valid price_devbuy,
-      // so keep them — the constant is supposed to hold at every stake.
-      if (l.priceDevbuy === null) continue;
-    }
+    // Large-buy launches carry a window-truncated dev figure but a valid price_devbuy,
+    // so keep them — the constant is supposed to hold at every stake.
+    if (l.priceDevbuy === null) continue;
     const trades = tape.windowTape(l.mint);
     if (!trades) continue;
     const firstPool = trades.findIndex((t) => t.venue === 'pump_amm');
@@ -444,7 +442,7 @@ describe('graduation is a curve constant (report §3.5)', () => {
     // price before the first pool fill and divide by the launch's initial price. The
     // deployer's stake varies from 3.46 to 56.30 SOL across these; the constant does not.
     const spans = graduationSpanningWindows();
-    expect(spans.length).toBeGreaterThanOrEqual(13); // report §3.5 says "thirteen"
+    expect(spans.length).toBe(18); // report §3.5 says "thirteen"; the data holds 18 (README #6)
     for (const s of spans) {
       expect(s.lastCurvePrice / CURVE.initialPriceSol, `${s.symbol}`).toBeCloseTo(14.7, 1);
     }

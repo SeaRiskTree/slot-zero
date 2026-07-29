@@ -98,8 +98,14 @@ export interface IndependentOutsider {
   readonly fundingChannel: string;
   /** The funding report's verdict block. */
   readonly outsiderConfidence: 'high';
-  /** Still trading as of this date — funding report §6.2, balance 239.34 SOL. */
-  readonly stillTradingAsOf: string;
+  /**
+   * The observation date on which the funding report saw this wallet still trading — §6.2,
+   * balance 239.34 SOL. **A snapshot, not a present-tense fact:** this repo is offline by
+   * construction and can never refresh it, so past this date the wallet's status is unknown
+   * and only a new run of the funding report can move it. Contrast
+   * {@link BookMemberOutsider.retiredUtc}, which is permanent.
+   */
+  readonly stillTradingAsOfObservation: string;
 }
 
 /**
@@ -147,7 +153,7 @@ export const INDEPENDENT_OUTSIDER: IndependentOutsider = {
   fundingChannel:
     'cross-chain relay/settlement service; its first-ever instruction is a Circle CCTP v2 receive',
   outsiderConfidence: 'high',
-  stillTradingAsOf: '2026-07-29',
+  stillTradingAsOfObservation: '2026-07-29',
 };
 
 /** `EgQX9R3Q…` — settled outsider, and one leg of the `9BhkaAyb…` book. */

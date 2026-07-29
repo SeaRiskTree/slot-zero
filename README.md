@@ -67,7 +67,9 @@ medianNet(trips.map((t) => t.netSol));                         // +0.035 SOL —
 ## What is established
 
 Every claim below traces to a file and column in the imported data, and every one is
-asserted in `test/reproduction.test.ts`.
+asserted in `test/reproduction.test.ts` — **except where a claim is explicitly attributed to
+a companion report**, which this repo does not hold and cannot assert against. Those carry
+the report's name and section inline; they are evidence from elsewhere, not reproductions.
 
 - **The edge is in the create slot and essentially nowhere else.** Closed round trips
   entering in the same slot as the create transaction: **1,999 pairs, median +0.283 SOL,

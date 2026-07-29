@@ -11,6 +11,9 @@ what is established and what is open.
 - `npm test` — `tsc --noEmit` then `vitest run`. **Both halves matter**: the type guards in
   `test/type-guards.test-d.ts` are compile-time assertions that fail `tsc`, not `vitest`.
 - `npm run test:unit` runs only vitest. No runtime dependencies; `npm ci` is dev-only.
+- CI is `.github/workflows/ci.yml` (PRs and pushes to `main`): `npm ci` then `npm test` on
+  Node 20 — the `engines` floor, not the dev box's version. That is the whole check set on
+  purpose; there is no lint script and no coverage, audit or matrix gate to satisfy.
 - **Nothing in this repo may reach the network or read a credential.** Enforced structurally
   by `test/loader.test.ts` → "this repo does not reach the network and reads no credential",
   which greps `src/` for sockets, `process.env` and key-shaped strings. Keep it that way; the

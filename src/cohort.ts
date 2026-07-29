@@ -149,7 +149,7 @@ export interface BookMemberOutsider {
    * transactions of the `9BhkaAyb…` bankroll's life, and the operation's complete signature
    * sets for the deployer and all six cohort wallets. **This wallet's own index was never
    * exhaustively enumerated** (~1,000,000 transactions,
-   * `kol-cohort-vs-outsider-funding/report.md` §8.2), which is sufficient: an intersection
+   * `kol-cohort-vs-outsider-funding/report.md` §10.2), which is sufficient: an intersection
    * test needs one complete side, not two. Evidence and decision: the README's "The ceiling of
    * the method: shared custodial venues"; which side each negative is complete on: the
    * README's "What is open".

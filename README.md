@@ -174,11 +174,12 @@ independently characterised funding channel the operation never uses, and neithe
 funder or a destination with it (§5).
 
 **Which side each negative is complete on**, because that is what the test rests on and §8.2
-states it plainly. Neither outsider's *own* index was exhaustively enumerated — 347,230 and
-~1,000,000 transactions. The completeness is on the **operation's** side: complete signature
-sets for the deployer and all six cohort wallets, so any transaction between the operation and
-either outsider is necessarily inside them. That is sufficient for an intersection test, which
-needs one complete side, not two. For `EgQX9R3Q…` a second complete set backs it up — the
+states it plainly. Neither outsider's *own* index was exhaustively enumerated — `5brv79eF…`'s
+runs to 347,230 transactions (§4.1) and `EgQX9R3Q…`'s to ~1,000,000, which the funding report
+attempted and abandoned (§10.2, §9.1). The completeness is on the **operation's** side:
+complete signature sets for the deployer and all six cohort wallets, so any transaction
+between the operation and either outsider is necessarily inside them. That is sufficient for an
+intersection test, which needs one complete side, not two. For `EgQX9R3Q…` a second complete set backs it up — the
 `9BhkaAyb…` bankroll that funds it and receives its sweeps, all 4,806 transactions of its
 nine-month life, zero contact ("The ceiling of the method" above). One set is genuinely
 truncated and is not used as evidence anywhere: `2CQgjcdN…`'s, at 2026-07-22 (§8.2). And
@@ -233,7 +234,8 @@ the book beside it.
 **On the sentence that used to be here.** *"Do not build a strategy on this dataset until
 that question is answered"* is retired, because its stated condition is met. What survives of
 it is narrower and specific: any lane starting from `EgQX9R3Q…` is gated on the book
-measurement; `5brv79eF…` is an existence proof and not a base rate — one wallet out of
+measurement, which exists in `slot-zero-bankroll-book-pnl/report.md` but is not imported here;
+`5brv79eF…` is an existence proof and not a base rate — one wallet out of
 20,388, on an operator selected for being unusual; and the limits in "The rest" below still
 bind. That is a smaller hold than a blanket one, and it is the one the evidence supports.
 

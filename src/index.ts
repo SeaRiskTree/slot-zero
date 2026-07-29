@@ -21,9 +21,10 @@
  *    and a pointer to the file that has the real number.
  *
  * A fourth guard came from the funding graph rather than from the tape: `EgQX9R3Q…`, one of
- * the two winning outsiders, is **one wallet of a book** whose total nobody has measured, so
- * a {@link BookMemberOutsider} has no `wallet` field to filter a P&L table by. See
- * {@link SETTLED_OUTSIDERS}.
+ * the two winning outsiders, is **one wallet of a book** whose total this repo does not hold —
+ * the book has since been measured by `slot-zero-bankroll-book-pnl/report.md`, whose figures are
+ * another lane's to import — so a {@link BookMemberOutsider} has no `wallet` field to filter a
+ * P&L table by. See {@link SETTLED_OUTSIDERS}.
  */
 
 export { Tape, DEFAULT_DATA_DIR, type TapeOptions } from './tape.js';

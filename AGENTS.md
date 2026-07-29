@@ -39,7 +39,8 @@ view:
 3. **`dev_exit_complete = 0`** marks seven window-truncated launches; `DevExitTruncated`
    has no complete net figure, only a pointer to the correct file.
 
-Three data hazards the loader handles and callers must not undo:
+Four data hazards callers must not undo — the first three the loader handles, the fourth is a
+permanent limit of the evidence:
 
 - **Symbols are not unique — key on `mint`.** Two launches are called `maxxing`, one of them
   the operator's best result ever.

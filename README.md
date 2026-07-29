@@ -332,8 +332,8 @@ than merely documented, which is the whole point of the loader. No runtime depen
 
 ## Provenance
 
-The dataset and the findings are the work of four read-only scout investigations, all
-carried out with zero metered provider requests. The population-tape report and its brief
+The dataset and the findings are the work of five read-only scout investigations — the four
+behind the dataset all carried out with zero metered provider requests. The population-tape report and its brief
 are reproduced in full under `data/population-tape-2026-07-29/`. The three companion reports
 — `kol-deployer-entity-cluster` (the operator behind the launches, and the creator-record
 mutability trap), `kol-dev-wallet-sell-side` (the exit-ladder measurement, and the

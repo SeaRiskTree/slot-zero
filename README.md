@@ -115,8 +115,8 @@ the report's name and section inline; they are evidence from elsewhere, not repr
 
 Every "unaffiliated" verdict this repo carries is an **on-chain** verdict, and on-chain
 evidence has one blind spot that no further on-chain work removes. It is recorded here once,
-as a stated limit of the method, and pointed at from every place a verdict is asserted —
-`src/cohort.ts` and "What is open" below both refer here rather than restating it.
+as a stated limit of the method: `src/cohort.ts` and "What is open" below refer here rather
+than restating it.
 
 **The limit.** *If the deployer and an outsider both hold accounts at the same custodial
 venue, on-chain evidence cannot see the relationship.* Named first by
@@ -128,7 +128,9 @@ demonstrably hold accounts at the same venue (`slot-zero-bankroll-book-pnl/repor
 
 - Across the **complete nine-month life** of the book's bankroll — **all 4,806 transactions,
   before any materiality filter** — **zero** name the deployer or any of the six cohort
-  wallets in any capacity. Affiliation is settled negative on complete sets on both sides.
+  wallets in any capacity. That is one of the two complete sets the negative rests on — the
+  other is the operation's own; `EgQX9R3Q…`'s own index is not one of them. See "Which side
+  each negative is complete on" below, which owns that accounting.
 - Four transactions touch the operation's *custodial endpoints* rather than its wallets, and
   exactly one of them is above one lamport: on **2026-05-12** the bankroll received
   **149.999 SOL** from `5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9`, a wallet holding
@@ -193,7 +195,7 @@ wallet's edge is repeatable by a new entrant. The funding report answers whose m
 and says so itself (its §7 "Explicitly not claimed", §10). Every limit in "The rest" below
 survives it untouched.
 
-### What replaces it: `EgQX9R3Q…` is one wallet of a book, and the book was not measured
+### What replaces it: `EgQX9R3Q…` is one wallet of a book, and this dataset cannot measure the book
 
 `EgQX9R3Q…` is **not an individual trader**. It is one wallet of a sniping book of at least
 five run out of a single bankroll (`9BhkaAyb…`) — and `2CQgjcdN…`, this dataset's own
@@ -218,9 +220,10 @@ about the wallet. *(`launches.csv` `created_utc` joined to `wallet_launch_pnl.cs
 `test/reproduction.test.ts` → "the outsider question, settled". Reading the adjacency as a
 deliberate rotation is inference; the dates are measured.)*
 
-**Any strategy claim resting on `EgQX9R3Q…` must be evaluated at the book level, and the book
-has not been measured.** A separate investigation is measuring it; until it reports, treat
-that wallet's figures as one leg of an unknown total.
+**Any strategy claim resting on `EgQX9R3Q…` must be evaluated at the book level, and this repo
+holds no such measurement.** The book has since been measured by
+`slot-zero-bankroll-book-pnl/report.md`, but importing its figures is another lane's scope; until
+they land here, treat that wallet's figures as one leg of a total this repo does not hold.
 
 The loader encodes this rather than documenting it: `src/cohort.ts` → `SETTLED_OUTSIDERS` is
 a union in which only `IndependentOutsider` has a `wallet`, so filtering a P&L table by

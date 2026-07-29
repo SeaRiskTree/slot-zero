@@ -5,8 +5,9 @@ a token launch, who profits, and whether any of it is capturable.
 
 This repo is the foundation, and only the foundation. It holds one primary dataset, a typed
 loader over it, and a test that reproduces the published numbers. **There is no strategy,
-backtest, signal or trading logic here, and there should not be** — that work is gated on an
-unresolved question stated at the bottom of this file.
+backtest, signal or trading logic here.** The question that used to gate that work — whether
+the two winning outsiders were the operator's own book — has been answered; what is still
+gated, and what no longer is, is stated at the bottom of this file.
 
 Nothing in this repo reaches the network. Nothing reads a credential. Every source behind
 the dataset is keyless and public, and the whole thing was built with **zero metered
@@ -25,10 +26,10 @@ Private. Nothing here is production.
 
 | | |
 |---|---|
-| `data/population-tape-2026-07-29/` | The population tape. 239 launches, 107,439 fills, 20,388 counterparty wallets, reconstructed keyless. Column semantics in its `README.md`, findings in its `report.md`, import decisions in its `IMPORT.md`. |
+| `data/population-tape-2026-07-29/` | The population tape. 239 launches, 107,439 fills, 20,388 counterparty wallets, reconstructed keyless. Column semantics in its `README.md`, findings in its `report.md`, import and correction decisions in its `IMPORT.md`. |
 | `src/` | The loader. Per-launch, per-wallet and per-(wallet, launch) views, plus the raw per-fill tape. No runtime dependencies. |
 | `test/reproduction.test.ts` | The published headline numbers, asserted against the loaded data. |
-| `test/type-guards.test-d.ts` | Compile-time proof that the three traps below are unreachable. |
+| `test/type-guards.test-d.ts` | Compile-time proof that the three traps below are unreachable — and that `EgQX9R3Q…`'s figures cannot be read as an independent observation. |
 | `AGENTS.md` | Provider facts that cost real time to learn. Read before touching pump.fun or Solana RPC. |
 
 ### The three traps the loader makes unreachable
@@ -66,7 +67,9 @@ medianNet(trips.map((t) => t.netSol));                         // +0.035 SOL —
 ## What is established
 
 Every claim below traces to a file and column in the imported data, and every one is
-asserted in `test/reproduction.test.ts`.
+asserted in `test/reproduction.test.ts` — **except where a claim is explicitly attributed to
+a companion report**, which this repo does not hold and cannot assert against. Those carry
+the report's name and section inline; they are evidence from elsewhere, not reproductions.
 
 - **The edge is in the create slot and essentially nowhere else.** Closed round trips
   entering in the same slot as the create transaction: **1,999 pairs, median +0.283 SOL,
@@ -79,11 +82,21 @@ asserted in `test/reproduction.test.ts`.
   appears in **zero of 70 other deployers' launches**. Fee-inclusive, the cohort's median
   create-slot round trip is **+0.838 SOL**; the non-cohort median is **+0.035 SOL**.
   *(`counterparties.csv`; `onchain_create_slot_pnl.csv` for the fee-inclusive figures.)*
-  That the six are *part of the operation* is an inference the source report labels as such —
-  common ownership is not established, and settling it needs a funding graph.
+  That the six are *part of the operation* was an inference when the source report was
+  written; the funding graph has since turned it into an artefact. **The discriminator is the
+  operator's own tooling, host and handle on the cohort's own launches:** `2CHrnc2L…` is
+  listed by pump.fun as the current creator of **36 coins, every one on the operator's own
+  metadata host `meta.uxento.io`, one citing `genyrational` — the deployer's own promo
+  handle**; and `43x1zWzj…` and `5P8A9bG…` have a genesis byte-identical to the deployer's —
+  the same 3.500000000 SOL from a custodial hot wallet in the same instruction envelope, then
+  a pump.fun create-and-buy crediting the identical 3.0014616 SOL through the same tool fee
+  accounts, minutes later. **Common ownership is still not formally established:** `?creator=`
+  lists by *current* creator, so the 36 may mean "launched it" or "was given it", and nothing
+  on-chain proves ownership. *(`kol-cohort-vs-outsider-funding/report.md` §2.1, §6.3.)*
 - **The outsider edge is real, thin, and bought.** `5brv79eF…` keeps **+47.8 SOL of +100.9
   gross** over 49 exactly-priced launches — it pays away over half in priority fees, and is
-  still the best unaffiliated result in 20,388 wallets.
+  still the best unaffiliated result in 20,388 wallets. Its outsider status is settled, not
+  presumed — see below.
 - **Graduation is a curve constant.** 14.70× the initial price, from the curve parameters
   alone — confirmed here empirically on **18 launches whose raw tape window spans the switch
   to the graduated pool**, across dev buys from 3.46 to 56.30 SOL. At the current
@@ -100,20 +113,70 @@ asserted in `test/reproduction.test.ts`.
 
 Stated honestly, because the temptation is to read the section above as a green light.
 
-### The one that gates everything
+### The one that gated everything — answered
 
-**The entire positive strategy result rests on two wallets out of 20,388, and whether they
-are genuine outsiders is not settled.** `5brv79eF…` and `EgQX9R3Q…` are the whole empirical
-case that this launch window is winnable by someone not inside the operation. Every
-discriminator available points to "outsider" — they pay full market price where the cohort
-pays 1.08×, they bid real priority fees where the cohort pays none, they miss most launches,
-and one of them appears in the control. **None of that excludes their being the same
-operator running a differently-positioned book.** The settling evidence is a funding graph
-that nobody has built.
+**Both wallets are genuine outsiders. The positive case survives. Confidence: high for
+both.** The funding graph this section used to say nobody had built has been built —
+`kol-cohort-vs-outsider-funding/report.md`, read-only and keyless, zero metered provider
+requests.
 
-If they turn out to be the operator's, the positive answer collapses to zero and the honest
-conclusion becomes a flat no. **Do not build a strategy on this dataset until that question
-is answered.** (`report.md` §7, §10.3; `src/cohort.ts` → `UNSETTLED_OUTSIDERS`.)
+Neither `5brv79eF…`'s nor `EgQX9R3Q…`'s money touches the deployer or any of the six cohort
+wallets **at any point in either wallet's complete life** (§4.2's complete-signature-set
+matrix; §4.5 fetched and classified 1,504 of the 1,558 non-dust candidates one at a time and
+found no link, using a method shown twice to surface real links when they exist, §4.4). Each
+traces to a distinct, independently characterised funding channel the operation never uses,
+and neither shares a funder or a destination with it (§5).
+
+`5brv79eF…` in particular is exactly what it appeared to be: an unaffiliated, still-running,
+bridge-funded sniper that has taken money out of this operator's launches for four months and
+withdraws to a service the operator never touches (§3.1, §6.2). **It carries no further
+caveat from this evidence.**
+
+**What this does not say.** Nothing above establishes that the strategy works, or that either
+wallet's edge is repeatable by a new entrant. The funding report answers whose money it is
+and says so itself (its §7 "Explicitly not claimed", §10). Every limit in "The rest" below
+survives it untouched.
+
+### What replaces it: `EgQX9R3Q…` is one wallet of a book, and the book was not measured
+
+`EgQX9R3Q…` is **not an individual trader**. It is one wallet of a sniping book of at least
+five run out of a single bankroll (`9BhkaAyb…`) — and `2CQgjcdN…`, this dataset's own
+headline fee-blindness loser at **−12.2 SOL**, is in the same book (§8.1). Its **+47.1 SOL and
+that wallet's −12.2 SOL are the same operator's P&L.** `report.md` §4.2 lists them as two
+independent rows and §5.5 prices them as two independent wallets; they are one trader listed
+twice.
+
+Measured on this dataset, on the 123 launches priced exactly on-chain: that operator's two
+rows together are **+34.9 SOL over 60 launches, not +47.1 over 10** — and even that is only
+the part of the book that touches this deployer. The other three known book-mates never trade
+this operator at all, and on this operator's launches the two that do **never once appear
+together** (48 launches and 62, zero shared), so no counterparty table built from this tape
+could ever have shown it.
+
+Once you know the two are one operator, the tape shows the handover: `EgQX9R3Q…`'s last
+launch here is **2026-05-25** and `2CQgjcdN…`'s first is **33 hours later**. One wallet stops
+and the next starts — which is why they never share a launch, and why "`EgQX9R3Q…` ran
+March–May and stopped" was always a statement about this deployer's launches rather than
+about the wallet. *(`launches.csv` `created_utc` joined to `wallet_launch_pnl.csv`;
+`onchain_create_slot_pnl.csv` for the P&L. All of it asserted in
+`test/reproduction.test.ts` → "the outsider question, settled". Reading the adjacency as a
+deliberate rotation is inference; the dates are measured.)*
+
+**Any strategy claim resting on `EgQX9R3Q…` must be evaluated at the book level, and the book
+has not been measured.** A separate investigation is measuring it; until it reports, treat
+that wallet's figures as one leg of an unknown total.
+
+The loader encodes this rather than documenting it: `src/cohort.ts` → `SETTLED_OUTSIDERS` is
+a union in which only `IndependentOutsider` has a `wallet`, so filtering a P&L table by
+`EgQX9R3Q…`'s address is a compile error until you have read the name it is stored under and
+the book beside it.
+
+**On the sentence that used to be here.** *"Do not build a strategy on this dataset until
+that question is answered"* is retired, because its stated condition is met. What survives of
+it is narrower and specific: any lane starting from `EgQX9R3Q…` is gated on the book
+measurement; `5brv79eF…` is an existence proof and not a base rate — one wallet out of
+20,388, on an operator selected for being unusual; and the limits in "The rest" below still
+bind. That is a smaller hold than a blanket one, and it is the one the evidence supports.
 
 ### The rest
 
@@ -191,10 +254,12 @@ than merely documented, which is the whole point of the loader. No runtime depen
 
 ## Provenance
 
-The dataset and the findings are the work of three read-only scout investigations, all
+The dataset and the findings are the work of four read-only scout investigations, all
 carried out with zero metered provider requests. The population-tape report and its brief
-are reproduced in full under `data/population-tape-2026-07-29/`. The two companion reports —
-`kol-deployer-entity-cluster` (the operator behind the launches, and the creator-record
-mutability trap) and `kol-dev-wallet-sell-side` (the exit-ladder measurement, and the
-Token-2022 and fee-payer method notes) — are not copied here; the facts from them that this
-repo depends on are carried in `AGENTS.md`.
+are reproduced in full under `data/population-tape-2026-07-29/`. The three companion reports
+— `kol-deployer-entity-cluster` (the operator behind the launches, and the creator-record
+mutability trap), `kol-dev-wallet-sell-side` (the exit-ladder measurement, and the
+Token-2022 and fee-payer method notes) and `kol-cohort-vs-outsider-funding` (the funding
+graph that settles the outsider question above, and the two corrections in
+`data/population-tape-2026-07-29/IMPORT.md`) — are not copied here; the facts from them that
+this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`.

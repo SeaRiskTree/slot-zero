@@ -1,0 +1,23 @@
+{
+  "name": "slot-zero",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "pump.fun launch-microstructure research lab: the population tape, and a loader that reproduces its published numbers.",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "tsc --noEmit && vitest run",
+    "typecheck": "tsc --noEmit",
+    "test:unit": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

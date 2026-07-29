@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+
+# There are no credentials in this repo and there must never be. These lines exist so an
+# accidental one is not committed, not because anything here reads them.
+.env
+.env.*
+*.pem
+*.key

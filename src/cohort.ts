@@ -60,10 +60,16 @@ export const isCohort = (wallet: string): boolean => COHORT_SET.has(wallet);
  * none of them was the funding graph. That graph has since been built —
  * `kol-cohort-vs-outsider-funding/report.md`, read-only and keyless — and it settles both
  * wallets as **genuine outsiders, confidence high**: neither one's money touches the
- * deployer or any of the six cohort wallets at any point in either wallet's complete life
- * (§4.2, §4.5), and each traces to a distinct funding channel the operation never uses
- * (§5). The positive case survives. It does **not** follow that the strategy works; that
- * report answers whose money it is and says so explicitly (its §7, §10).
+ * deployer or any of the six cohort wallets, tested against **complete signature sets for
+ * the deployer and all six** so that any such transaction is necessarily inside them (§4.2,
+ * §4.5), and each traces to a distinct funding channel the operation never uses (§5). The
+ * positive case survives. It does **not** follow that the strategy works; that report
+ * answers whose money it is and says so explicitly (its §7, §10).
+ *
+ * **What "outsider" means here, exactly:** no on-chain relationship on complete sets — not
+ * provably unrelated. See {@link IndependentOutsider.outsiderConfidence} and the README's
+ * "The ceiling of the method: shared custodial venues", which owns that limit and is
+ * deliberately not restated here.
  *
  * ## What replaced it, and why it is a type rather than a comment
  *
@@ -96,7 +102,16 @@ export interface IndependentOutsider {
   readonly fundedBy: string;
   /** What that funder is. **Inference**, labelled as such in the funding report §7. */
   readonly fundingChannel: string;
-  /** The funding report's verdict block. */
+  /**
+   * The funding report's verdict block. **High confidence in an on-chain verdict, which has a
+   * permanent ceiling:** if the deployer and an outsider both hold accounts at the same
+   * custodial venue, on-chain evidence cannot see the relationship
+   * (`kol-cohort-vs-outsider-funding/report.md` §8.2, "Custodial walls are walls"). This
+   * value therefore means *no on-chain relationship on complete sets*, not *provably
+   * unrelated*. The limit is measured, not hypothetical, and testing it off-chain was
+   * declined; the README's "The ceiling of the method: shared custodial venues" owns the
+   * evidence and the decision. Do not read this field as broader than that.
+   */
   readonly outsiderConfidence: 'high';
   /**
    * The observation date on which the funding report saw this wallet still trading — §6.2,
@@ -130,6 +145,14 @@ export interface BookMemberOutsider {
   readonly bookMates: readonly string[];
   /** Same address as {@link bankroll}: funded by, and returns to, one place (§3.2). */
   readonly fundedBy: string;
+  /**
+   * Same ceiling as {@link IndependentOutsider.outsiderConfidence}, and this is the wallet on
+   * which it is *measured*: the bankroll and the operation demonstrably hold accounts at one
+   * custodial venue, and the negative — zero contact with the deployer or the cohort across
+   * all 4,806 of the bankroll's transactions — is settled on complete sets on both sides
+   * regardless. Evidence and decision: the README's "The ceiling of the method: shared
+   * custodial venues".
+   */
   readonly outsiderConfidence: 'high';
   /**
    * The whole book was drained in one batch here — two book-mates stopped within two

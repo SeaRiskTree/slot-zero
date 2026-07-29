@@ -96,7 +96,7 @@ the report's name and section inline; they are evidence from elsewhere, not repr
 - **The outsider edge is real, thin, and bought.** `5brv79eF…` keeps **+47.8 SOL of +100.9
   gross** over 49 exactly-priced launches — it pays away over half in priority fees, and is
   still the best unaffiliated result in 20,388 wallets. Its outsider status is settled, not
-  presumed — see below.
+  presumed — and bounded by the on-chain ceiling in "The ceiling of the method" below.
 - **Graduation is a curve constant.** 14.70× the initial price, from the curve parameters
   alone — confirmed here empirically on **18 launches whose raw tape window spans the switch
   to the graduated pool**, across dev buys from 3.46 to 56.30 SOL. At the current
@@ -108,6 +108,50 @@ the report's name and section inline; they are evidence from elsewhere, not repr
   −100.0 SOL**, profitable on 2% and 4%.
 - **The deployer takes 4,315 SOL over 228 complete exits** (median +21.66 per launch, gross
   of fees), and is out at a median +13 seconds — long before graduation, every time.
+
+---
+
+## The ceiling of the method: shared custodial venues
+
+Every "unaffiliated" verdict this repo carries is an **on-chain** verdict, and on-chain
+evidence has one blind spot that no further on-chain work removes. It is recorded here once,
+as a stated limit of the method, and pointed at from every place a verdict is asserted —
+`src/cohort.ts` and "What is open" below both refer here rather than restating it.
+
+**The limit.** *If the deployer and an outsider both hold accounts at the same custodial
+venue, on-chain evidence cannot see the relationship.* Named first by
+`kol-cohort-vs-outsider-funding/report.md` §8.2 — "**Custodial walls are walls.**"
+
+**Here it is not hypothetical; it is measured.** The `9BhkaAyb…` book and the operation
+demonstrably hold accounts at the same venue (`slot-zero-bankroll-book-pnl/report.md` §5.2,
+§5.3, the source for every figure in this section):
+
+- Across the **complete nine-month life** of the book's bankroll — **all 4,806 transactions,
+  before any materiality filter** — **zero** name the deployer or any of the six cohort
+  wallets in any capacity. Affiliation is settled negative on complete sets on both sides.
+- Four transactions touch the operation's *custodial endpoints* rather than its wallets, and
+  exactly one of them is above one lamport: on **2026-05-12** the bankroll received
+  **149.999 SOL** from `5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9`, a wallet holding
+  ~1.1 million SOL that the deployer also deposits its profits into.
+- **That transaction is not evidence of common ownership.** It pays **eight** recipients
+  irregular, user-shaped amounts (0.711940000, 0.291915860, 10.071917000 …) in a single batch
+  signed with a **durable nonce** — an exchange withdrawal processor serving unrelated
+  parties, with seven strangers in the same transaction as the bankroll.
+- The other three contacts are **1-lamport address-poisoning spam signed by strangers**, each
+  naming both the bankroll and a large custodial wallet. Recorded so a later reader does not
+  rediscover them as signal: they are not.
+
+**The verdicts stand, and this does not widen them.** The book is unaffiliated with the
+operation, and so is `5brv79eF…`. What the shared venue adds is the exact reading of the word:
+"unaffiliated" here means *no on-chain relationship, tested on complete sets* — not *provably
+unrelated*. Those are different claims and no on-chain measurement closes the gap.
+
+**It will not be tested.** Naming the venue and asking it would take off-chain enquiry. That
+option was put and **declined** (captain decision 114a, 2026-07-29). So this is a settled
+boundary of the method, not an open question and not a TODO: the ceiling is permanent, and
+every unaffiliated verdict this lab produces is to be read as carrying it.
+
+---
 
 ## What is open
 
@@ -121,16 +165,28 @@ both.** The funding graph this section used to say nobody had built has been bui
 requests.
 
 Neither `5brv79eF…`'s nor `EgQX9R3Q…`'s money touches the deployer or any of the six cohort
-wallets **at any point in either wallet's complete life** (§4.2's complete-signature-set
-matrix; §4.5 fetched and classified 1,504 of the 1,558 non-dust candidates one at a time and
-found no link, using a method shown twice to surface real links when they exist, §4.4). Each
-traces to a distinct, independently characterised funding channel the operation never uses,
-and neither shares a funder or a destination with it (§5).
+wallets, on complete signature sets for the deployer and all six (§4.2's matrix; §4.5 fetched
+and classified 1,504 of the 1,558 non-dust candidates one at a time and found no link, using a
+method shown twice to surface real links when they exist, §4.4). Each traces to a distinct,
+independently characterised funding channel the operation never uses, and neither shares a
+funder or a destination with it (§5).
+
+**Which side each negative is complete on**, because that is what the test rests on and §8.2
+states it plainly. Neither outsider's *own* index was exhaustively enumerated — 347,230 and
+~1,000,000 transactions. The completeness is on the **operation's** side: complete signature
+sets for the deployer and all six cohort wallets, so any transaction between the operation and
+either outsider is necessarily inside them. That is sufficient for an intersection test, which
+needs one complete side, not two. For `EgQX9R3Q…` a second complete set backs it up — the
+`9BhkaAyb…` bankroll that funds it and receives its sweeps, all 4,806 transactions of its
+nine-month life, zero contact ("The ceiling of the method" above). One set is genuinely
+truncated and is not used as evidence anywhere: `2CQgjcdN…`'s, at 2026-07-22 (§8.2). And
+**both negatives carry the shared-custodial-venue ceiling** recorded above; neither is a claim
+that the parties are provably unrelated.
 
 `5brv79eF…` in particular is exactly what it appeared to be: an unaffiliated, still-running,
 bridge-funded sniper that has taken money out of this operator's launches for four months and
 withdraws to a service the operator never touches (§3.1, §6.2). **It carries no further
-caveat from this evidence.**
+caveat from this evidence** beyond the ceiling every on-chain verdict here carries.
 
 **What this does not say.** Nothing above establishes that the strategy works, or that either
 wallet's edge is repeatable by a new entrant. The funding report answers whose money it is
@@ -262,4 +318,6 @@ mutability trap), `kol-dev-wallet-sell-side` (the exit-ladder measurement, and t
 Token-2022 and fee-payer method notes) and `kol-cohort-vs-outsider-funding` (the funding
 graph that settles the outsider question above, and the two corrections in
 `data/population-tape-2026-07-29/IMPORT.md`) — are not copied here; the facts from them that
-this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`.
+this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`. A later one,
+`slot-zero-bankroll-book-pnl` (the bankroll's complete transaction set, and the shared
+custodial venue in "The ceiling of the method" above), is likewise not copied here.

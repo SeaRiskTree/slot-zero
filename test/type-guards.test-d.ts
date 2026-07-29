@@ -1,5 +1,5 @@
 /**
- * Compile-time proof that the three guards bite.
+ * Compile-time proof that the four guards bite.
  *
  * Every `@ts-expect-error` below is an assertion: if the mistake it describes ever becomes
  * legal, `tsc --noEmit` fails with "Unused '@ts-expect-error' directive". This file is
@@ -17,11 +17,14 @@ import {
   netSol,
   sumGross,
   sumNet,
+  type BookMemberOutsider,
   type ClosedPair,
   type GrossSol,
+  type IndependentOutsider,
   type Launch,
   type NetSol,
   type OpenPair,
+  type Outsider,
   type WalletLaunchPair,
 } from '../src/index.js';
 
@@ -104,9 +107,49 @@ if (launch.tape !== 'none') {
 // @ts-expect-error an un-taped launch has no trade-derived fields at all
 const _m = launch.nTrades;
 
+// -- 4. a book member is not an independent observation -----------------------------
+//
+// `EgQX9R3Q…` is a settled outsider (kol-cohort-vs-outsider-funding §4) and one wallet of a
+// sniping book of at least five whose total nobody has measured (its §8.1). Its +47.1 SOL
+// and its book-mate `2CQgjcdN…`'s −12.2 SOL are the same operator's, so reading its address
+// off the union and filtering a P&L table by it produces a number that is one leg of an
+// unknown total. That filter must not be writable by accident.
+
+declare const outsider: Outsider;
+declare const book: BookMemberOutsider;
+declare const independent: IndependentOutsider;
+declare const onchainWallet: string;
+
+// @ts-expect-error one of the two settled outsiders is one leg of an unmeasured book, so the
+// union has no `wallet` to filter a P&L table by
+const _n = outsider.wallet;
+
+// @ts-expect-error nor has the book member itself — its address is under a name that says so
+const _o = book.wallet;
+
+// @ts-expect-error and the comparison that would build the filter cannot be written either
+const _p = onchainWallet === outsider.wallet;
+
+// @ts-expect-error a book member cannot stand in where an independent observation is wanted
+const _q: IndependentOutsider = book;
+
+// Discriminating is the only route, and it is one line.
+if (outsider.unit === 'wallet') {
+  const _ok12: string = outsider.wallet;
+} else {
+  const _ok13: string = outsider.oneWalletOfAnUnmeasuredBook;
+  // The book it belongs to, and the measurement nobody has taken, are right beside it.
+  const _ok14: readonly string[] = outsider.bookMates;
+  const _ok15: string = outsider.seeAlso;
+}
+const _ok16: string = independent.wallet;
+const _ok17: string = book.oneWalletOfAnUnmeasuredBook;
+
 // Silence "declared but never read" for the intentional bindings above.
 export type _Unused = [
   typeof _a, typeof _b, typeof _c, typeof _d, typeof _e, typeof _f, typeof _g,
   typeof _h, typeof _i, typeof _j, typeof _m,
+  typeof _n, typeof _o, typeof _p, typeof _q,
   typeof _ok1, typeof _ok2, typeof _ok3, typeof _ok5, typeof _ok6, typeof _ok7,
+  typeof _ok16, typeof _ok17,
 ];

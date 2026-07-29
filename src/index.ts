@@ -19,6 +19,11 @@
  * 3. **`dev_exit_complete = 0`** marks seven window-truncated launches. A
  *    {@link DevExitTruncated} has no `netSolGrossOfFees` — only a `windowTruncated…` field
  *    and a pointer to the file that has the real number.
+ *
+ * A fourth guard came from the funding graph rather than from the tape: `EgQX9R3Q…`, one of
+ * the two winning outsiders, is **one wallet of a book** whose total nobody has measured, so
+ * a {@link BookMemberOutsider} has no `wallet` field to filter a P&L table by. See
+ * {@link SETTLED_OUTSIDERS}.
  */
 
 export { Tape, DEFAULT_DATA_DIR, type TapeOptions } from './tape.js';
@@ -60,12 +65,18 @@ export const CURVE = {
 } as const;
 
 export {
+  BOOK_MEMBER_OUTSIDER,
   CREATE_SLOT_COHORT,
   DEPLOYER,
   GROSS_NET_SIGN_FLIP_WALLET,
+  INDEPENDENT_OUTSIDER,
   REPEAT_LOSERS,
-  UNSETTLED_OUTSIDERS,
+  SETTLED_OUTSIDERS,
+  independentOutsiderWallets,
   isCohort,
+  type BookMemberOutsider,
+  type IndependentOutsider,
+  type Outsider,
 } from './cohort.js';
 
 export {

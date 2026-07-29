@@ -5,7 +5,9 @@ This directory is a verbatim copy of the scout deliverable
 
 **Not one row was reformatted, re-sorted, re-derived or "cleaned."** This is a primary
 record and its value is that it is exactly what was measured. `README.md` (column
-semantics) and `report.md` (the findings) are the originals, unmodified.
+semantics) and `report.md` (the findings) are the originals, unmodified — where later
+evidence has contradicted their prose it is recorded under "Corrections" below rather than
+edited into them.
 
 The dataset was produced with **zero metered provider requests** — every source is
 keyless and public (`swap-api.pump.fun`, `frontend-api-v3.pump.fun`,
@@ -32,6 +34,43 @@ is gzipped JSONL and does not need Git LFS.
 **35 MB total; largest single file `wallet_launch_pnl.csv` at 9.9 MB.** Comfortably
 committable as plain Git objects — no LFS, no sampling, no truncation. Nothing was dropped
 for size other than the two directories named above.
+
+## Corrections
+
+Later evidence has contradicted the imported prose twice. **The originals stay unmodified** —
+that is what makes this directory a primary record — so the corrections live here, and this
+is the file to add to when it happens again. Both come from
+`kol-cohort-vs-outsider-funding/report.md` (2026-07-29, read-only, keyless, zero metered
+requests), recommendation 4. **Neither touches a measured figure in this directory; both are
+about what a figure means.**
+
+1. **`EgQX9R3Q…` did not stop in May.** `report.md` §2 ("ran the same way from March to May
+   and stopped") and §4.3 ("`EgQX9R3Q…` ran March–May and stopped") describe this dataset's
+   window into *this deployer's* launches, not the wallet. On-chain it ran until
+   **2026-07-06 19:25:32 UTC**, and two of its book-mates stopped within two seconds of it
+   while a fourth stopped on 2026-07-10: the book was retired in one batch, which is a
+   decision by whoever runs it rather than a wallet fading out. (Funding report §6.1.)
+
+2. **`EgQX9R3Q…` and `2CQgjcdN…` are not independent rows.** `report.md` §4.2's counterparty
+   table and §5.5's per-wallet fee table both list them separately.
+   Both are funded by, and sweep to, the same private bankroll `9BhkaAyb…`, which runs a
+   sniping book of **at least five** wallets: `EgQX9R3Q…`'s **+47.1 SOL** and `2CQgjcdN…`'s
+   **−12.2 SOL** are the same operator's P&L. The figures themselves are correct; reading
+   either row as one independent observation is not, and **the book's total has not been
+   measured**. (Funding report §8.1, Appendix B; encoded in `src/cohort.ts` →
+   `SETTLED_OUTSIDERS`, asserted in `test/reproduction.test.ts`.)
+
+   This directory corroborates it, which is worth recording because it was there all along:
+   the two wallets appear on **48 and 62 launches here and share not one** — `EgQX9R3Q…`'s
+   last is `2026-05-25T12:02:46Z` and `2CQgjcdN…`'s first is 33 hours later. One wallet hands
+   over to the next. (`launches.csv` `created_utc` joined to `wallet_launch_pnl.csv`. The
+   dates are measured; reading the adjacency as a deliberate rotation is inference, and it is
+   only available once the funding graph says the two are one operator.)
+
+The same investigation settles `report.md` §10.3 — **both `5brv79eF…` and `EgQX9R3Q…` are
+genuine outsiders, confidence high** — and strengthens §7's "the six create-slot wallets are
+part of the operation" from inference toward evidence. Neither is a correction to this
+directory; see the repo `README.md`, "What is open".
 
 ## Coverage caveats that must travel with the data
 

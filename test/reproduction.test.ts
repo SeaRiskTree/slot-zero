@@ -1,12 +1,15 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  BOOK_MEMBER_OUTSIDER,
   CREATE_SLOT_COHORT,
   CURVE,
   GROSS_NET_SIGN_FLIP_WALLET,
+  INDEPENDENT_OUTSIDER,
+  SETTLED_OUTSIDERS,
   Tape,
-  UNSETTLED_OUTSIDERS,
   fractionPositive,
+  independentOutsiderWallets,
   medianGross,
   medianNet,
   percentile,
@@ -313,8 +316,9 @@ describe('the fee correction (report §5.5) — the only fee-inclusive numbers',
     const expected: Array<[string, number, number, number, number]> = [
       // [wallet, launches priced, true P&L, fees paid, share positive]
       [CREATE_SLOT_COHORT[0] as string, 120, 306.0, 0.3, 1.0],
-      [UNSETTLED_OUTSIDERS[0] as string, 49, 47.8, 17.5, 0.78],
-      [UNSETTLED_OUTSIDERS[1] as string, 10, 47.1, 12.91, 1.0],
+      [INDEPENDENT_OUTSIDER.wallet, 49, 47.8, 17.5, 0.78],
+      // Published as an independent row. It is not — see "the outsider question, settled".
+      [BOOK_MEMBER_OUTSIDER.oneWalletOfAnUnmeasuredBook, 10, 47.1, 12.91, 1.0],
       ['Anubis512ho5t7S6LNSwoxUWdeQmX2kf3RvZ8ApHHF5w', 38, 13.4, 0.01, 0.87],
     ];
     for (const [wallet, n, net, fees, positive] of expected) {
@@ -334,7 +338,7 @@ describe('the fee correction (report §5.5) — the only fee-inclusive numbers',
 
   it('the outsider keeps under half its gross — the edge is bought, not free', () => {
     // report §5.5: 5brv79eF… keeps +47.8 of +100.9 gross over the 49 priced launches.
-    const wallet = UNSETTLED_OUTSIDERS[0] as string;
+    const wallet = INDEPENDENT_OUTSIDER.wallet;
     const priced = new Set(
       tape.onchainRoundTrips().filter((t) => t.wallet === wallet).map((t) => t.mint),
     );
@@ -383,6 +387,111 @@ describe('the tape-derived league table (report §4.2)', () => {
   it('closed counterparty profit totals +2,375.6 SOL gross (report §4.4)', () => {
     const total = sumGross(tape.wallets().map((w) => w.pnlClosedSolGrossOfFees)) as number;
     expect(total).toBeCloseTo(2_375.6, 0);
+  });
+});
+
+/**
+ * The funding graph `report.md` §10.3 asked for has been built —
+ * `kol-cohort-vs-outsider-funding/report.md`, keyless and read-only. It settles both winning
+ * wallets as genuine outsiders (confidence high) and, in doing so, breaks one row of the
+ * §4.2 table above: `EgQX9R3Q…` is one wallet of a book, not a trader.
+ *
+ * The funding evidence itself is off-chain of this dataset and cannot be asserted here. What
+ * *can* be asserted is what the qualification does to this dataset's own numbers, and that
+ * is what this block does.
+ */
+describe('the outsider question, settled (kol-cohort-vs-outsider-funding)', () => {
+  it('both wallets are settled outsiders, and only one of them is a trading unit', () => {
+    expect(SETTLED_OUTSIDERS).toHaveLength(2);
+    for (const o of SETTLED_OUTSIDERS) expect(o.outsiderConfidence).toBe('high');
+    // Only the independent one calls its address `wallet`. The type says so; asserted at
+    // runtime so a refactor cannot quietly reintroduce the field on the book member.
+    expect(BOOK_MEMBER_OUTSIDER).not.toHaveProperty('wallet');
+    expect(independentOutsiderWallets()).toEqual([INDEPENDENT_OUTSIDER.wallet]);
+    expect(independentOutsiderWallets()).not.toContain(
+      BOOK_MEMBER_OUTSIDER.oneWalletOfAnUnmeasuredBook,
+    );
+  });
+
+  it('EgQX9R3Q… and 2CQgjcdN… are one operator, so §4.2 lists one trader twice', () => {
+    // funding report §8.1: both are funded by, and sweep to, the bankroll 9BhkaAyb….
+    expect(BOOK_MEMBER_OUTSIDER.bookMates).toContain(GROSS_NET_SIGN_FLIP_WALLET);
+
+    const book = BOOK_MEMBER_OUTSIDER.oneWalletOfAnUnmeasuredBook;
+    const trips = tape.onchainRoundTrips();
+    const walletOnly = trips.filter((t) => t.wallet === book);
+    const withBookMate = trips.filter(
+      (t) => t.wallet === book || t.wallet === GROSS_NET_SIGN_FLIP_WALLET,
+    );
+
+    // The row as §5.5 publishes it.
+    expect(walletOnly).toHaveLength(10);
+    expect(sumNet(walletOnly.map((t) => t.netSol)) as number).toBeCloseTo(47.1, 1);
+
+    // The same operator's two rows added — what it actually made on the launches this
+    // dataset prices exactly. onchain_create_slot_pnl.csv, `sol_delta_lamports`.
+    expect(withBookMate).toHaveLength(60);
+    expect(sumNet(withBookMate.map((t) => t.netSol)) as number).toBeCloseTo(34.9, 1);
+
+    // Reading the published row on its own overstates the unit by exactly its book-mate's
+    // loss — 12.2 SOL — and this is still only the part of the book that touches this
+    // deployer. Three more known book-mates never appear here at all.
+    const overstatement =
+      (sumNet(walletOnly.map((t) => t.netSol)) as number) -
+      (sumNet(withBookMate.map((t) => t.netSol)) as number);
+    expect(overstatement).toBeGreaterThan(0);
+    expect(overstatement).toBeCloseTo(12.2, 1);
+  });
+
+  it('this dataset cannot see the book, which is why the caveat is a pointer', () => {
+    const book = BOOK_MEMBER_OUTSIDER.oneWalletOfAnUnmeasuredBook;
+    const mintsOf = (w: string) =>
+      new Set(tape.pairs().filter((p) => p.wallet === w).map((p) => p.mint));
+    const a = mintsOf(book);
+    const b = mintsOf(GROSS_NET_SIGN_FLIP_WALLET);
+
+    // 48 launches and 62, and not one in common: nothing in this tape reveals that the two
+    // rows are one trader. A counterparty table built from it never could.
+    expect(a.size).toBe(48);
+    expect(b.size).toBe(62);
+    expect([...b].filter((m) => a.has(m))).toHaveLength(0);
+
+    // The rest of the book never trades this operator at all, so no measurement of the book
+    // is available from this dataset — hence `seeAlso` rather than a number.
+    for (const mate of BOOK_MEMBER_OUTSIDER.bookMates) {
+      if (mate === GROSS_NET_SIGN_FLIP_WALLET) continue;
+      expect(tape.wallet(mate), mate).toBeUndefined();
+    }
+    expect(BOOK_MEMBER_OUTSIDER.seeAlso).toMatch(/unmeasured/);
+  });
+
+  it('the two book wallets hand over: one stops here, the other starts 33 hours later', () => {
+    // launches.csv `created_utc`, joined to the wallet's wallet_launch_pnl.csv rows. The
+    // dates are measured; reading the adjacency as a deliberate wallet rotation is an
+    // inference, and it is only available at all once the funding graph says the two are
+    // one operator. It is also why the zero overlap above is not a coincidence.
+    const createdUtc = new Map(tape.launches().map((l) => [l.mint, l.createdUtc]));
+    const span = (wallet: string) => {
+      const d = tape
+        .pairs()
+        .filter((p) => p.wallet === wallet)
+        .map((p) => createdUtc.get(p.mint) as string)
+        .sort();
+      return { first: d[0] as string, last: d[d.length - 1] as string };
+    };
+    const book = span(BOOK_MEMBER_OUTSIDER.oneWalletOfAnUnmeasuredBook);
+    const mate = span(GROSS_NET_SIGN_FLIP_WALLET);
+
+    expect(book.first).toBe('2026-03-14T17:28:20Z');
+    expect(book.last).toBe('2026-05-25T12:02:46Z'); // "March–May", from this deployer's side
+    expect(mate.first).toBe('2026-05-26T21:18:06Z');
+    const gapHours = (Date.parse(mate.first) - Date.parse(book.last)) / 3_600_000;
+    expect(gapHours).toBeGreaterThan(0);
+    expect(gapHours).toBeLessThan(48);
+
+    // On-chain the first wallet ran four months past its last launch here — the tape sees
+    // the handover, not the retirement. IMPORT.md "Corrections", item 1.
+    expect(Date.parse(BOOK_MEMBER_OUTSIDER.retiredUtc)).toBeGreaterThan(Date.parse(book.last));
   });
 });
 

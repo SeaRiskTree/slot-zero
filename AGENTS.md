@@ -20,8 +20,10 @@ what is established and what is open.
 
 `data/population-tape-2026-07-29/` is a **primary record — never reformat, re-sort or
 "clean" a row.** Column semantics are in its `README.md`, findings in its `report.md`,
-import and exclusion decisions in its `IMPORT.md`. `sigindex/` (97 MB of raw RPC signature
-cache) and a superseded `tape/` probe were excluded; everything else is verbatim.
+import, exclusion and **correction** decisions in its `IMPORT.md`. `sigindex/` (97 MB of raw
+RPC signature cache) and a superseded `tape/` probe were excluded; everything else is
+verbatim. When later evidence contradicts the imported prose, add to `IMPORT.md`
+→ "Corrections"; do not edit `report.md` or the dataset `README.md`.
 
 Three traps that each silently corrupted an analysis during the research. The loader makes
 all three compile errors — do not work around them, and read `src/types.ts` before adding a
@@ -34,13 +36,19 @@ view:
 3. **`dev_exit_complete = 0`** marks seven window-truncated launches; `DevExitTruncated`
    has no complete net figure, only a pointer to the correct file.
 
-Two data hazards the loader handles and callers must not undo:
+Three data hazards the loader handles and callers must not undo:
 
 - **Symbols are not unique — key on `mint`.** Two launches are called `maxxing`, one of them
   the operator's best result ever.
 - **All 239 mints have a `window/*.jsonl.gz`, but four never reached the mint.** Coverage is
   `meta.reached_mint`, not file existence; the four partial files hold unrelated later
   trading. `Tape.windowTape()` gates on this, `incompleteWindowTape()` is the diagnostic.
+- **A counterparty row is not a trader.** `EgQX9R3Q…` (+47.1 SOL) and `2CQgjcdN…`
+  (−12.2 SOL) are two rows of one sniping book run off a single bankroll, and nothing in this
+  tape reveals it — they never share a launch. `SETTLED_OUTSIDERS` in `src/cohort.ts` makes
+  the book member's address unreachable without discriminating; **do not give
+  `BookMemberOutsider` a `wallet` field.** Both wallets *are* settled outsiders — the
+  question the repo used to be gated on is answered; see `README.md`, "What is open".
 
 ## pump.fun / Solana provider facts
 
@@ -78,6 +86,23 @@ Learned at real cost; the citations are to
   unit for who paid. `onchain_*.csv` carries `is_fee_payer` for exactly this reason.
 - **The public RPC sheds load with `null` results inside batches rather than erroring.**
   Treat a null as "retry", never as "absent".
+- **`getSignaturesForAddress`'s `before` accepts a *foreign* signature**, one that is not in
+  the queried address's index at all. `kol-cohort-vs-outsider-funding/report.md` §9.1: so a
+  wallet's genesis can be **binary-searched by slot**, pulling cursor signatures from
+  arbitrary blocks with `getBlock(slot, transactionDetails='signatures')` — ~22 iterations
+  regardless of index size. That found one wallet's genesis in **66 requests against a
+  ~1,000,000-entry index**, where the naive walk was ~1,000 pages. This is the general form of
+  `kol-deployer-entity-cluster/report.md` §3.1's trick (use the wallet's WSOL ATA's oldest
+  signature as the cursor), which is free when it works and fails when the ATA is itself
+  large — 41,000+ transactions on the wallet above. Try the ATA cursor, fall back to bisection.
+- **`solana-rpc.publicnode.com` 403s this client outright** — every request, with or without
+  a browser `User-Agent` (§9.3). It is in the entity report's endpoint list; **anything
+  copying that list sends half its batches to a dead host**, and the retry backoff hides it
+  (it stalled a job for 40 minutes). `api.mainnet-beta.solana.com` is the only working keyless
+  endpoint found, and it rate-limits **globally** across `getSignaturesForAddress` and
+  `getTransaction` — the tape report §9.4's "separate buckets" did not hold, and two
+  concurrent jobs earned a sustained 429 lockout. Sustainable: one process, batches of 5–8
+  `getTransaction`, ~1.4 s between requests.
 
 ## Maintaining this file
 

@@ -123,27 +123,31 @@ venue, on-chain evidence cannot see the relationship.* Named first by
 `kol-cohort-vs-outsider-funding/report.md` §8.2 — "**Custodial walls are walls.**"
 
 **Here it is not hypothetical; it is measured.** The `9BhkaAyb…` book and the operation
-demonstrably hold accounts at the same venue (`slot-zero-bankroll-book-pnl/report.md` §5.2,
-§5.3, the source for every figure in this section):
+demonstrably hold accounts at the same venue. Every figure below is from
+`slot-zero-bankroll-book-pnl/report.md`, cited by section as it is used:
 
-- Across the **complete nine-month life** of the book's bankroll — **all 4,806 transactions,
-  before any materiality filter** — **zero** name the deployer or any of the six cohort
-  wallets in any capacity. That is one of the two complete sets the negative rests on — the
-  other is the operation's own; `EgQX9R3Q…`'s own index is not one of them. See "Which side
-  each negative is complete on" below, which owns that accounting.
+- The book's bankroll has a **complete lifetime signature index** walked to genesis — **all
+  4,806 transactions fetched and parsed, zero unresolved** (§2.1). *(The funding report's own
+  §1 table records the same index as 4,802: the two counts are the same index read at
+  different times — §2.1 accounts for the difference — not a conflict.)*
+- Across that complete nine-month life, **before any materiality filter**, **zero** of the
+  4,806 name the deployer or any of the six cohort wallets in any capacity (§5.1). That is one
+  of the two complete sets the negative rests on — the other is the operation's own;
+  `EgQX9R3Q…`'s own index is not one of them. See "Which side each negative is complete on"
+  below, which owns that accounting.
 - Four transactions touch the operation's *custodial endpoints* rather than its wallets, and
   exactly one of them is above one lamport: on **2026-05-12** the bankroll received
   **149.999 SOL** from `5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9`, a wallet holding
-  ~1.1 million SOL that the deployer also deposits its profits into.
+  ~1.1 million SOL that the deployer also deposits its profits into (§5.2).
 - **That transaction is not evidence of common ownership.** It pays **eight** recipients
   irregular, user-shaped amounts (0.711940000, 0.291915860, 10.071917000 …) in a single batch
   signed with a **durable nonce** — an exchange withdrawal processor serving unrelated
-  parties, with seven strangers in the same transaction as the bankroll.
+  parties, with seven strangers in the same transaction as the bankroll (§5.2).
 - The other three contacts are **1-lamport address-poisoning spam signed by strangers**, each
-  naming both the bankroll and a large custodial wallet. Recorded so a later reader does not
-  rediscover them as signal: they are not.
+  naming both the bankroll and a large custodial wallet (§5.2). Recorded so a later reader does
+  not rediscover them as signal: they are not.
 
-**The verdicts stand, and this does not widen them.** The book is unaffiliated with the
+**The verdicts stand, and this does not widen them** (§5.3). The book is unaffiliated with the
 operation, and so is `5brv79eF…`. What the shared venue adds is the exact reading of the word:
 "unaffiliated" here means *no on-chain relationship, tested on complete sets* — not *provably
 unrelated*. Those are different claims and no on-chain measurement closes the gap.
@@ -190,8 +194,8 @@ intersection test, which needs one complete side, not two.
   signature set for the wallet itself exists: its index is ~1,000,000 entries and the walk was
   abandoned at 550,000 (§10.2 item 2, §9.1). Its negative rests on the operation's complete
   sets plus the complete set of the `9BhkaAyb…` bankroll that funds it and receives its sweeps
-  — all 4,806 transactions of its nine-month life, zero contact
-  (`slot-zero-bankroll-book-pnl/report.md` §5.1–§5.2, via "The ceiling of the method" above).
+  — all 4,806 transactions of its nine-month life (`slot-zero-bankroll-book-pnl/report.md`
+  §2.1), zero contact (its §5.1), both via "The ceiling of the method" above.
   §10.2 item 2 notes that obtaining the wallet's own set would upgrade this to "complete on
   both".
 

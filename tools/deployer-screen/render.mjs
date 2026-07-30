@@ -178,7 +178,10 @@ export function renderStage0(r, vendorReadings) {
  *   Two very different things used to share one `truncated` flag: a run that finished but whose
  *   candidate cap dropped seeded wallets, and a run that died at a request. Only the first may say
  *   every candidate was evaluated, so the renderer is told which happened rather than guessing.
- * @param {boolean} run.truncated Either kind of incompleteness.
+ *
+ *   The record's own `truncated` is deliberately NOT an input: it is the disjunction of those two
+ *   states, and this function needs them apart. It reads `completed` for the abort and
+ *   `coverage.coverageTruncated` for the cap.
  * @param {string | null} run.truncationReason
  * @param {number} run.prefiltered
  * @param {import('./seed.mjs').SeedCoverage} run.coverage

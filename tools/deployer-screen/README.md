@@ -221,6 +221,53 @@ Test fixtures are **synthetic**, hand-written to the observed shape and never ca
 committing real per-token records would be the accumulation (d) prohibits, in a git history that
 cannot be un-published.
 
+## The run-record schema, and the completeness contract
+
+**Read this before consuming a record.** It is a contract, not advice: the prediction-grading lane
+reads these files, and the naive read of one of them is wrong.
+
+Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.**
+
+| version | what it carries |
+|---|---|
+| 1 (absent) | no `completed`. `truncated` and `truncationReason` only. |
+| 2 | `completed`, plus `coverage` separating candidate-cap truncation from an abort. |
+
+Committed records are **evidence and are never retro-edited** to fit a newer schema — a lane whose
+purpose is grading what past runs predicted cannot also be rewriting them. So version skew is real
+and permanent, and the reader is what has to be correct.
+
+### `completed` is three-state: `true`, `false`, or absent-and-UNKNOWN
+
+**A record without `completed` predates the field. It MUST be read as UNKNOWN — never as `false`.**
+
+`runs/2026-07-29-elite.json` is exactly this case, and it is why the rule matters rather than being
+pedantry. That run **finished**; its `truncated: true` means only that the candidate cap dropped
+wallets it never gated. A consumer that reads `record.completed` gets `undefined`, which is falsy,
+which reads as `false` — so the naive read turns a completed run into an aborted one and grades a
+real measurement as a failure.
+
+Two things are therefore forbidden:
+
+- **Do not collapse unknown into `true` or `false`**, by defaulting or otherwise. Propagate it, or
+  refuse to grade the record, but do not pick a side.
+- **Do not infer completeness from `truncated` or `truncationReason`.** Those describe *what is
+  missing*, not *whether the run reached the end*. The committed record is the counterexample: its
+  truncation is a benign cap, not a failure.
+
+Use `record.mjs` → `completenessOf(record)`, which returns `'complete' | 'incomplete' | 'unknown'`
+and never a boolean, so `if (completed)` cannot be accidentally right. `schemaVersionOf(record)` and
+`describeCompleteness(state)` are alongside it. The contract is pinned by
+`test/deployer-screen.test.ts` → *"the run-record completeness contract"*, including against a
+synthetic schema-1 fixture.
+
+For version 2 onwards the pairing to read is:
+
+- `completed: false` — the run aborted. Nothing in it is a measured negative.
+- `completed: true` with `coverage.coverageTruncated: true` — the run finished; it simply did not gate
+  everything enumeration surfaced.
+- `completed: true` with `coverage.coverageTruncated: false` — a full run over its whole seeded pool.
+
 ## Bounds
 
 Enforced in code, with no flag that disables one. Pinned in `thresholds.json` → `budget`.

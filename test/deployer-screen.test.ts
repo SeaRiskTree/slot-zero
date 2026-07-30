@@ -61,6 +61,12 @@ import {
   partialOutPath,
 } from '../tools/deployer-screen/screen.mjs';
 import { LIMITATIONS, renderStage1 } from '../tools/deployer-screen/render.mjs';
+import {
+  RECORD_SCHEMA_VERSION,
+  completenessOf,
+  describeCompleteness,
+  schemaVersionOf,
+} from '../tools/deployer-screen/record.mjs';
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
 
@@ -1021,7 +1027,6 @@ describe('an incomplete run can never read as a measured negative', () => {
       elapsedMs: 1000,
       startedAtIso: '2026-07-29T00:00:00.000Z',
       completed: o.completed,
-      truncated: !o.completed || (o.coverageTruncated ?? false),
       truncationReason: o.completed ? 'the candidate cap dropped 8 seeded wallet(s)' : 'HTTP 429 — rate-limited',
       prefiltered: 0,
       coverage: {
@@ -1090,6 +1095,82 @@ describe('an incomplete run can never read as a measured negative', () => {
     for (const p of ['runs/2026-07-29.json', '/abs/path/run.json', 'runs/record']) {
       expect(partialOutPath(p)).not.toBe(p);
       expect(partialOutPath(p).endsWith('.partial.json')).toBe(true);
+    }
+  });
+});
+
+describe('the run-record completeness contract', () => {
+  /**
+   * A SYNTHETIC schema-1 record: the shape that predates `completed`. Hand-built, not copied from
+   * the committed artefact — and it carries the trap deliberately, `truncated: true` for the benign
+   * reason (the candidate cap), which is precisely the state a careless reader misgrades.
+   */
+  const schema1 = {
+    tool: 'deployer-screen',
+    truncated: true,
+    truncationReason: 'the candidate cap of 12 dropped 10 seeded wallet(s) before they were measured',
+    coverage: { coverageTruncated: true, droppedByCandidateCap: 10 },
+    candidates: [],
+  };
+
+  it('reads a record without `completed` as UNKNOWN, never as false', () => {
+    expect(completenessOf(schema1)).toBe('unknown');
+    // The whole point: unknown must not be either boolean, so `if (completed)` cannot be right.
+    expect(completenessOf(schema1)).not.toBe(false);
+    expect(completenessOf(schema1)).not.toBe(true);
+    expect(completenessOf(schema1)).not.toBe('incomplete');
+    expect(completenessOf(schema1)).not.toBe('complete');
+  });
+
+  it('never infers completeness from truncated or truncationReason', () => {
+    // `truncated` describes WHAT IS MISSING, not whether the run reached the end. A schema-1 record
+    // whose truncation is a benign cap must still resolve to unknown rather than to incomplete.
+    expect(completenessOf({ ...schema1, truncated: true })).toBe('unknown');
+    expect(completenessOf({ ...schema1, truncated: false, truncationReason: null })).toBe('unknown');
+    expect(completenessOf({ truncationReason: 'HTTP 429 — rate-limited' })).toBe('unknown');
+  });
+
+  it('reads schema 2 as the boolean it records', () => {
+    expect(completenessOf({ schemaVersion: 2, completed: true, truncated: true })).toBe('complete');
+    expect(completenessOf({ schemaVersion: 2, completed: false, truncated: true })).toBe('incomplete');
+    // A non-boolean `completed` is not a third opinion — it is unreadable, so unknown.
+    expect(completenessOf({ schemaVersion: 2, completed: 'yes' })).toBe('unknown');
+    expect(completenessOf(null)).toBe('unknown');
+    expect(completenessOf('not a record')).toBe('unknown');
+  });
+
+  it('treats an absent schemaVersion as 1', () => {
+    expect(schemaVersionOf(schema1)).toBe(1);
+    expect(schemaVersionOf({ schemaVersion: 2 })).toBe(2);
+    expect(schemaVersionOf({ schemaVersion: 'two' })).toBe(1);
+    expect(schemaVersionOf(null)).toBe(1);
+    // This build writes the current version, and it is >= 2 (the version that added `completed`).
+    expect(RECORD_SCHEMA_VERSION).toBeGreaterThanOrEqual(2);
+  });
+
+  it('gives the unknown state somewhere honest to go', () => {
+    expect(describeCompleteness('unknown')).toMatch(/UNKNOWN/);
+    expect(describeCompleteness('unknown')).toMatch(/must not be guessed/);
+    expect(describeCompleteness('incomplete')).toMatch(/nothing in it is a measured negative/);
+    expect(describeCompleteness('complete')).toMatch(/reached the end/);
+  });
+
+  it('the committed record predates the field and resolves to unknown, not incomplete', () => {
+    // The artefact is left byte-for-byte as the run wrote it: a committed record is evidence for the
+    // grading lane, so it is not retro-edited to fit a later schema. This asserts the consequence —
+    // that a reader following the contract cannot mistake that finished run for an aborted one.
+    const records = readAll(join(TOOL_DIR, 'runs'), '', /\.json$/);
+    expect(records.size).toBeGreaterThan(0);
+    for (const [file, text] of records) {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const state = completenessOf(parsed);
+      expect(['complete', 'incomplete', 'unknown'], file).toContain(state);
+      if (schemaVersionOf(parsed) === 1) {
+        expect(state, `${file} is schema 1, so completeness is unknowable`).toBe('unknown');
+        expect(parsed['completed'], file).toBeUndefined();
+      } else {
+        expect(state, `${file} is schema 2+, so it must state completeness`).not.toBe('unknown');
+      }
     }
   });
 });

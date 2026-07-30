@@ -35,6 +35,7 @@ import { fileURLToPath } from 'node:url';
 import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
 import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
+import { RECORD_SCHEMA_VERSION } from './record.mjs';
 import { KeylessClient, readCreatorHistory } from './pumpfun.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
@@ -504,6 +505,7 @@ export async function main(opts, env, out, err) {
       ranked,
       record: {
         tool: 'deployer-screen',
+        schemaVersion: RECORD_SCHEMA_VERSION,
         scope: 'STAGE 1 GATE ONLY — this tool does not recommend. Stage 2 scoring is not built.',
         thresholdsVersion: T['version'],
         startedAtIso,
@@ -548,7 +550,6 @@ export async function main(opts, env, out, err) {
           elapsedMs: record.elapsedMs,
           startedAtIso,
           completed: record.completed,
-          truncated: record.truncated,
           truncationReason: record.truncationReason,
           prefiltered: prefiltered.length,
           coverage: record.coverage,

@@ -28,8 +28,17 @@ node tools/deployer-screen/screen.mjs --help
 
 Exit codes are distinct because the worst failure mode for a screen is an empty result that reads
 like a real negative: `0` ran (possibly with zero survivors — a measured outcome), `2` usage,
-`3` no credential, `4` credential rejected, `5` quota, `6` ceiling reached, `7` upstream,
-`8` Stage 0 failed.
+`3` no credential, `4` credential rejected (401/403), `5` quota (429), `6` ceiling reached,
+`7` upstream, `8` Stage 0 failed.
+
+An **HTTP 400 exits `7`, not `4`.** A 400 is our query shape, not the vendor's verdict on the
+credential; on a tier where keys expire every 30 days, reporting it as a rejected key would send an
+operator to rotate one that works.
+
+A run that stops early still writes its record (`--out`) and still prints it (`--json`), flagged
+`truncated` with a reason, and still exits non-zero. A ceiling hit after fifteen profiles must not
+discard fifteen paid-for measurements — re-spending a shared allowance to learn the same thing is the
+cost being avoided.
 
 ## The credential
 
@@ -99,10 +108,67 @@ So enumeration runs over `recent-bonds` (best seed — a deployer there is bondi
 the gate is designed for. An untiered run surfaces active spam deployers launching 70 tokens in
 under four days at 1–7% completion; the gate rejects them all, correctly.
 
+**The elite-tier recent-bond feed is `recent-bonds?tier=elite` — a tier filter on the shared feed,
+not a distinct endpoint.** Their OpenAPI v1.17.0 exposes no separate elite path; `tier` is a query
+parameter with enum `elite|good|moderate|rising|cold`, and `--tier elite` threads it through every
+seed. The committed run under `runs/` exercises it and records its own wallet count.
+
+### Two of the three seeds used to yield nothing, silently
+
+Measured and fixed. `recent-bonds` and `alerts` nest their deployer block under **`deployers`** —
+plural — and `recent-bonds` wraps its rows in `tokens`, not `bonds`. The reader looked only for the
+singular `deployer`, so both seeds extracted **zero wallets** while still costing a keyed request
+each. Nothing surfaced it: the run printed one merged total, and the record carried no per-query
+figure. Both committed runs were therefore leaderboard-only pools — indistinguishable, from their
+output, from properly seeded ones.
+
+Two changes, because the shape bug alone would have left the class of defect in place:
+
+- `extractWallets` accepts either nesting (`seed.mjs` → `BLOCK_KEYS`).
+- **Every seed now reports its row count *and* its wallet count**, printed and persisted under
+  `coverage.seeds` in the run record, with zero-yield seeds named in `coverage.inertSeeds`. Rows
+  present and wallets zero is the fingerprint of *our reader* being wrong rather than the vendor being
+  empty, and the two are now distinguishable at a glance.
+
+The run record also carries the full coverage chain — wallets seeded, prefiltered out, worth a
+request, **dropped by the candidate cap**, gated — and sets `truncated` when the cap dropped anyone.
+Run records are the future grading lane's input, so a capped run must not read as a screen of
+everything enumeration found.
+
+The superseded untiered run record (`runs/2026-07-29-stage1.json`) was **deleted rather than
+re-run**: its numbers came from the inert seeds, and reproducing that configuration would cost
+another ~15 keyed requests against a shared allowance the captain has declared unaffordable.
+
+### The committed run, with all three seeds working
+
+`runs/2026-07-29-elite.json`, one `--tier elite --candidates 12 --max-requests 20 --consistency`
+invocation, 15 keyed and 11 keyless requests. These figures **replace** the earlier leaderboard-only
+elite result:
+
+| | before (inert seeds) | after |
+|---|---|---|
+| wallets from `recent-bonds:elite` | 0 | 12 |
+| wallets from `alerts:elite` | 0 | 50 |
+| wallets from `leaderboard:total_bonded:elite` | 12 | 12 |
+| distinct wallets seeded | 12 | **22** |
+| gate passed / gated | 8 of 12 | **5 of 12** |
+
+Fewer survivors, from a pool nearly twice as large and drawn from three orderings instead of one. The
+seven rejections are six samples under 25 tokens and one 3-day burst. Ten of the 22 seeded wallets
+were dropped by the candidate cap and never measured, which is why the record is flagged `truncated`.
+Our own subject deployer `7ufmve7Z…` was surfaced by all three seeds and passed at 38/70 over 35
+days — the wallet Stage 0 exists to show this gate passing.
+
 `prefilterReason` in `seed.mjs` is the **only** place a vendor aggregate is read, and it can only
 ever cause the tool to *skip a request*. It never reaches a rate, a verdict, or an output number.
 Its bias is stated there: because their counters are a trailing window, a floor on them is a
 cadence filter, so it is set low.
+
+`mergeSeeds`'s comparator deliberately does **not** consult `vendorDeployed`. The sorted list is
+truncated by the candidate cap, so anything the comparator reads decides which wallets get gated and
+therefore which appear in the output at all — an aggregate there would be an aggregate reaching an
+output. Ordering is provenance count, then first-seen rank, then address, and a test asserts that two
+wallets identical but for `vendorDeployed` order by address.
 
 ## Retention — MadeOnSol terms §5a(d)
 
@@ -115,9 +181,12 @@ cadence filter, so it is set low.
 - Per-token records are held **in memory only**, for the duration of one run, and dropped when the
   process exits. There is no cache, no database, and no backfill.
 - Nothing is written to disk unless `--out` is passed. Persistence is opt-in.
-- What a run record contains, per wallet: the address, which queries surfaced it, `tokens`,
-  `completed`, `completionRate`, `spanDays`, the window's two boundary dates, a truncation flag, the
-  verdict and its rationale. **Eleven fields, all of them ours.**
+- What a run record contains, per wallet — **thirteen fields, all of them ours**: `wallet`,
+  `seededBy`, `tokens`, `completed`, `completionRate`, `spanDays`, `windowFirstDeploy`,
+  `windowLastDeploy`, `vendorPageCapped`, `verdict`, `rationale`, `gateReasons`, `consistency`. The
+  exact key set is asserted by `test/deployer-screen.test.ts` → *"a committed run record persists
+  derived fields only"*, against the committed records themselves, so this ToS-facing claim cannot
+  drift from the code.
 - What it does **not** contain: any mint, token name, symbol, market cap, bond timestamp,
   time-to-bond, or per-token row of any kind. Roughly 70 vendor records per wallet are read, reduced
   to one row of derived counts, and discarded. Verified on the committed run records — none of
@@ -161,6 +230,13 @@ claiming it. Also checks ground truth has not moved, that the curve inversion is
 1.4e-14 SOL over 70 control launches), and that the Stage 2 seam still reproduces the published
 §5.1 era split.
 
+That last check now asserts a **minimum n per era and a finite median** before comparing. It has to:
+`median([])` is `NaN`, `Math.abs(NaN - published) > 0.02` is `false`, so an era bucket matching no
+launches used to record no failure and report **PASSED** — and a passing Stage 0 is what authorises
+spending keyed quota on strangers. Anything that empties the filter (renamed window files, every
+`reached_mint` false, a `--data-dir` pointing at a differently dated tape, a shifted date range) hit
+exactly that case. The buckets hold 45 and 89 launches as committed; the floor is 20.
+
 **Built — Stage 1**, the keyed gate: enumerate, compute the rate ourselves, apply pinned thresholds.
 
 **Not built — Stage 2**, the score: how much of its opening window a deployer and its own wallets
@@ -172,8 +248,13 @@ is built, validated and regression-tested here:**
 | `measure.mjs` `measureCreateSlot(fills)` | → `CreateSlotMeasurement` (`devSol`, `coordinatedSol`, `independentSol`, `operationShare`, `roomLeft`, …) |
 | `measure.mjs` `solBetweenPrices(from, to)` | SOL added to the curve between two prices; exact |
 | `measure.mjs` `parseFill` / `pumpfun.mjs` `parseFillLoose` | → `Fill` |
-| `pumpfun.mjs` `readLaunchWindow`, `KeylessClient` | bounded, paced keyless fill access |
+| `pumpfun.mjs` `windowFilter`, `extractTradeRows`, `slotFromSlotIndexId` | opening-window filtering and live-row field handling |
+| `pumpfun.mjs` `KeylessClient` | bounded, paced, serialised keyless access |
 | `stage0.mjs` `measureSubjectLaunches(dataDir)` | per-launch `CreateSlotMeasurement` from the committed tape |
+
+The fill-tape **pager** is deliberately absent. A `readLaunchWindow` existed here with no caller and
+no test, so its coverage logic was never exercised; rather than leave a half-validated function
+described above as tested, it was deleted. Stage 2's lane writes it against a real caller.
 
 The co-ordination rule that makes it work on a stranger: **a create-slot transaction carrying two or
 more distinct swapping wallets is a bundle, and every wallet in it is co-ordinated** — independent
@@ -204,7 +285,9 @@ The boundary is the directory, and `test/deployer-screen.test.ts` asserts the ot
   constants in `measure.mjs` are this boundary's cost, paid deliberately.
 - Only `client.mjs` and `pumpfun.mjs` may call `fetch`.
 - Only `credential.mjs` and `screen.mjs` may name `MADEONSOL_API_KEY`.
-- No file under the tool may contain a key-shaped string.
+- **No committed file under the tool may contain a key-shaped string** — every file, not only the
+  sources. `runs/*.json`, `thresholds.json` and this README are where an accidental paste would most
+  plausibly land, and a source-only filter never read any of them.
 
 ## What the output does not claim
 

@@ -5,7 +5,13 @@
  * Every rendered surface carries {@link LIMITATIONS}. That is deliberate and it is not boilerplate:
  * a ranking read out of context is exactly how a gate becomes a recommendation, and the person most
  * likely to read this output in six months has forgotten which stages were built.
+ *
+ * That includes the surfaces which show no verdict at all — the dry-run plan and the `--stage0`
+ * report. Their omission was an oversight rather than a decision: a reader who sees a request plan
+ * naming `elite` deployers has already begun forming a conclusion, and the block costs nothing.
  */
+
+import { buildPath } from './client.mjs';
 
 /**
  * The standing limitation block. Printed on every human-readable surface and embedded in every
@@ -160,6 +166,7 @@ export function renderStage0(r, vendorReadings) {
  * @param {boolean} run.truncated
  * @param {string | null} run.truncationReason
  * @param {number} run.prefiltered
+ * @param {import('./seed.mjs').SeedCoverage} run.coverage
  * @param {Record<string, unknown>} run.thresholds
  * @returns {string}
  */
@@ -180,10 +187,33 @@ export function renderStage1(run) {
   L.push(`candidates gated   ${run.candidates.length}`);
   L.push(`gate passed        ${passed.length}`);
   L.push(`gate failed        ${failed.length}`);
-  if (run.truncated) {
+  L.push('');
+
+  const cov = run.coverage;
+  L.push('SEED YIELD — per query, because an inert seed is otherwise invisible');
+  L.push(`  ${pad('query', 34)}${padl('rows', 6)}  ${padl('wallets', 8)}`);
+  for (const s of cov.seeds) {
+    L.push(`  ${pad(s.label, 34)}${padl(String(s.rowsReturned), 6)}  ${padl(String(s.walletsReturned), 8)}`);
+  }
+  if (cov.inertSeeds.length > 0) {
     L.push('');
-    L.push(`!! RUN TRUNCATED — ${run.truncationReason ?? 'unknown reason'}`);
-    L.push('   The list below is INCOMPLETE. It is not a negative result.');
+    L.push(`  !! ${cov.inertSeeds.length} SEED(S) YIELDED NO WALLET: ${cov.inertSeeds.join(', ')}`);
+    L.push('     Each still cost a keyed request. If its row count is non-zero the vendor answered');
+    L.push('     and OUR READER is wrong — check the envelope and block keys in seed.mjs.');
+  }
+  L.push('');
+  L.push('COVERAGE — what enumeration surfaced versus what was actually gated');
+  L.push(`  ${padl(String(cov.distinctWalletsSeeded), 4)} distinct wallets seeded`);
+  L.push(`  ${padl(String(cov.prefilteredOut), 4)} prefiltered out before spending a request`);
+  L.push(`  ${padl(String(cov.worthARequest), 4)} worth a request, against a candidate cap of ${cov.candidateCap}`);
+  L.push(`  ${padl(String(cov.droppedByCandidateCap), 4)} dropped by the candidate cap, never measured`);
+  L.push(`  ${padl(String(cov.gated), 4)} gated`);
+
+  if (run.truncated || cov.coverageTruncated) {
+    L.push('');
+    L.push(`!! RUN TRUNCATED — ${run.truncationReason ?? 'the candidate cap dropped seeded wallets'}`);
+    L.push('   The list below is INCOMPLETE. It is not a negative result, and it is not a screen of');
+    L.push('   everything enumeration found.');
   }
   L.push('');
 
@@ -209,6 +239,9 @@ export function renderStage1(run) {
       );
       if (c.consistency !== null) {
         L.push(`      consistency: ${c.consistency.state.toUpperCase()} — ${c.consistency.note}`);
+        if (c.consistency.historyTruncated) {
+          L.push('      ^ computed over a PAGE-CAPPED creator walk, so it is a lower bound twice over.');
+        }
       } else {
         L.push('      consistency over time: UNMEASURED (pass --consistency to measure, keyless)');
       }
@@ -217,7 +250,7 @@ export function renderStage1(run) {
     L.push('  n    = tokens in the denominator we computed ourselves');
     L.push('  done = of those, how many completed the bonding curve');
     L.push('  cap  = the vendor page was full, so older launches exist that it does not show');
-    L.push('  seeds= how many of the 3 leaderboard orderings surfaced this wallet');
+    L.push('  seeds= how many of the 3 enumeration queries surfaced this wallet');
   }
 
   if (failed.length > 0) {
@@ -273,11 +306,10 @@ export function renderDryRun(plan) {
 
   L.push(`KEYED — MadeOnSol, ${plan.seedPlan.length} enumeration requests, exactly these:`);
   for (const e of plan.seedPlan) {
-    const qs = Object.entries(e.query)
-      .sort(([a], [b]) => (a < b ? -1 : 1))
-      .map(([k, v]) => `${k}=${v}`)
-      .join('&');
-    L.push(`  GET ${e.path}?${qs}`);
+    // The real run's own path builder, not a re-implementation of it. That is what makes
+    // "byte-identical URLs" a property rather than a coincidence that holds while every planned
+    // value happens to need no percent-encoding.
+    L.push(`  GET ${buildPath(e.path, e.query)}`);
   }
   L.push('');
   L.push('KEYED — then one profile request per candidate, up to the candidate cap:');
@@ -302,6 +334,9 @@ export function renderDryRun(plan) {
   L.push('NOT REQUESTED, deliberately:');
   L.push('  /deployer-hunter/{wallet}/tokens   — bonded-only, so it has no denominator at all.');
   L.push('  /deployer-hunter/{wallet}/history  — PRO+. This tool is Free tier only.');
+  L.push('');
+  L.push('='.repeat(78));
+  for (const line of LIMITATIONS) L.push(line);
   L.push('='.repeat(78));
   return L.join('\n');
 }

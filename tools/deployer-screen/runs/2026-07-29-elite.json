@@ -2,13 +2,43 @@
   "tool": "deployer-screen",
   "scope": "STAGE 1 GATE ONLY — this tool does not recommend. Stage 2 scoring is not built.",
   "thresholdsVersion": "2.0.0",
-  "startedAtIso": "2026-07-30T00:55:56.549Z",
-  "finishedAtIso": "2026-07-30T00:57:58.476Z",
+  "startedAtIso": "2026-07-30T01:34:30.254Z",
+  "finishedAtIso": "2026-07-30T01:36:22.573Z",
   "keyedRequests": 15,
-  "keylessRequests": 16,
-  "elapsedMs": 121927,
-  "truncated": false,
-  "truncationReason": null,
+  "keylessRequests": 11,
+  "elapsedMs": 112319,
+  "truncated": true,
+  "truncationReason": "the candidate cap of 12 dropped 10 seeded wallet(s) before they were measured",
+  "coverage": {
+    "seeds": [
+      {
+        "label": "recent-bonds:elite",
+        "path": "/deployer-hunter/recent-bonds",
+        "rowsReturned": 12,
+        "walletsReturned": 12
+      },
+      {
+        "label": "alerts:elite",
+        "path": "/deployer-hunter/alerts",
+        "rowsReturned": 50,
+        "walletsReturned": 50
+      },
+      {
+        "label": "leaderboard:total_bonded:elite",
+        "path": "/deployer-hunter/leaderboard",
+        "rowsReturned": 12,
+        "walletsReturned": 12
+      }
+    ],
+    "inertSeeds": [],
+    "distinctWalletsSeeded": 22,
+    "prefilteredOut": 0,
+    "worthARequest": 22,
+    "candidateCap": 12,
+    "droppedByCandidateCap": 10,
+    "gated": 12,
+    "coverageTruncated": true
+  },
   "prefilteredOut": [],
   "thresholds": {
     "stage1_gate": {
@@ -108,6 +138,7 @@
     {
       "wallet": "yHCxHBEaJW5tbndqC8JciSThr7U1cqLpdcsvHcx6PRe",
       "seededBy": [
+        "alerts:elite",
         "leaderboard:total_bonded:elite"
       ],
       "tokens": 70,
@@ -127,12 +158,14 @@
         "maxEpochRate": null,
         "dispersion": null,
         "streaky": false,
+        "historyTruncated": true,
         "note": "only 2 of 2 30-day epochs carry the 12 tokens needed for a rate; 3 qualifying epochs required"
       }
     },
     {
       "wallet": "GeBJSHK4WsGrz2HRvTbqvWGx4JRMpHfJG2ikzrYBDuwR",
       "seededBy": [
+        "alerts:elite",
         "leaderboard:total_bonded:elite"
       ],
       "tokens": 70,
@@ -152,37 +185,15 @@
         "maxEpochRate": null,
         "dispersion": null,
         "streaky": false,
+        "historyTruncated": true,
         "note": "only 2 of 3 30-day epochs carry the 12 tokens needed for a rate; 3 qualifying epochs required"
-      }
-    },
-    {
-      "wallet": "HyYNVYmnFmi87NsQqWzLJhUTPBKQUfgfhdbBa554nMFF",
-      "seededBy": [
-        "leaderboard:total_bonded:elite"
-      ],
-      "tokens": 70,
-      "completed": 41,
-      "completionRate": 0.585714,
-      "spanDays": 374.14,
-      "windowFirstDeploy": "2025-06-21T02:58:43.044Z",
-      "windowLastDeploy": "2026-06-30T06:15:39.000Z",
-      "vendorPageCapped": true,
-      "verdict": "gate-passed",
-      "rationale": "completed 41/70 launches (58.6%) over 374 days, on a TRUNCATED page so older launches exist that this surface hides. Competent enough to be worth measuring. NOT a recommendation: whether this deployer leaves an outsider any room, and whether that room is profitable, is UNMEASURED here.",
-      "gateReasons": [],
-      "consistency": {
-        "state": "measured",
-        "epochs": 4,
-        "minEpochRate": 0.38095238095238093,
-        "maxEpochRate": 1,
-        "dispersion": 0.6190476190476191,
-        "streaky": true,
-        "note": "4 qualifying 30-day epochs, rate 0.381..1.000; STREAKY — spread 0.619 exceeds 0.35, so the pooled rate is carried by some epochs and not others"
       }
     },
     {
       "wallet": "7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL",
       "seededBy": [
+        "recent-bonds:elite",
+        "alerts:elite",
         "leaderboard:total_bonded:elite"
       ],
       "tokens": 70,
@@ -202,48 +213,25 @@
         "maxEpochRate": 0.6,
         "dispersion": 0.25,
         "streaky": false,
-        "note": "4 qualifying 30-day epochs, rate 0.350..0.600; spread 0.250 within 0.35"
+        "historyTruncated": true,
+        "note": "4 qualifying 30-day epochs, rate 0.350..0.600; spread 0.250 within 0.35; the creator listing is a LOWER BOUND — it lists by *current* creator, which moves on-chain, and the token that goes missing is the best one, and this walk also stopped at its page cap"
       }
     },
     {
-      "wallet": "GAKj13ZPPekCvYoXt2xwmsbtaQp7EcZxzdqjCUcmASmw",
+      "wallet": "3FiWnNDTZrKPbjPeMiTe2r5m5zygxSu57ePck5LUQp7d",
       "seededBy": [
-        "leaderboard:total_bonded:elite"
+        "recent-bonds:elite",
+        "alerts:elite"
       ],
-      "tokens": 54,
-      "completed": 33,
-      "completionRate": 0.611111,
-      "spanDays": 77.5,
-      "windowFirstDeploy": "2026-05-05T08:12:10.000Z",
-      "windowLastDeploy": "2026-07-21T20:13:37.000Z",
-      "vendorPageCapped": false,
-      "verdict": "gate-passed",
-      "rationale": "completed 33/54 launches (61.1%) over 78 days. Competent enough to be worth measuring. NOT a recommendation: whether this deployer leaves an outsider any room, and whether that room is profitable, is UNMEASURED here.",
-      "gateReasons": [],
-      "consistency": {
-        "state": "unmeasured",
-        "epochs": 0,
-        "minEpochRate": null,
-        "maxEpochRate": null,
-        "dispersion": null,
-        "streaky": false,
-        "note": "only 1 of 3 30-day epochs carry the 12 tokens needed for a rate; 3 qualifying epochs required"
-      }
-    },
-    {
-      "wallet": "2syzfo53Bt2yvTezwZMMwnAqdL3xss6ZKcjQDtYV94y2",
-      "seededBy": [
-        "leaderboard:total_bonded:elite"
-      ],
-      "tokens": 30,
+      "tokens": 63,
       "completed": 24,
-      "completionRate": 0.8,
-      "spanDays": 116.59,
-      "windowFirstDeploy": "2026-04-01T04:04:06.000Z",
-      "windowLastDeploy": "2026-07-26T18:13:55.000Z",
+      "completionRate": 0.380952,
+      "spanDays": 37.55,
+      "windowFirstDeploy": "2026-06-22T09:44:11.000Z",
+      "windowLastDeploy": "2026-07-29T22:53:24.000Z",
       "vendorPageCapped": false,
       "verdict": "gate-passed",
-      "rationale": "completed 24/30 launches (80.0%) over 117 days. Competent enough to be worth measuring. NOT a recommendation: whether this deployer leaves an outsider any room, and whether that room is profitable, is UNMEASURED here.",
+      "rationale": "completed 24/63 launches (38.1%) over 38 days. Competent enough to be worth measuring. NOT a recommendation: whether this deployer leaves an outsider any room, and whether that room is profitable, is UNMEASURED here.",
       "gateReasons": [],
       "consistency": {
         "state": "unmeasured",
@@ -252,12 +240,14 @@
         "maxEpochRate": null,
         "dispersion": null,
         "streaky": false,
-        "note": "only 1 of 4 30-day epochs carry the 12 tokens needed for a rate; 3 qualifying epochs required"
+        "historyTruncated": false,
+        "note": "only 2 of 2 30-day epochs carry the 12 tokens needed for a rate; 3 qualifying epochs required"
       }
     },
     {
       "wallet": "5KTX7LZyoewhQ2keNCNQ6qQCXW9uermzr8r5K6uss4PY",
       "seededBy": [
+        "alerts:elite",
         "leaderboard:total_bonded:elite"
       ],
       "tokens": 27,
@@ -277,32 +267,8 @@
         "maxEpochRate": null,
         "dispersion": null,
         "streaky": false,
+        "historyTruncated": false,
         "note": "only 1 of 2 30-day epochs carry the 12 tokens needed for a rate; 3 qualifying epochs required"
-      }
-    },
-    {
-      "wallet": "G4krkerMkeYw7ffTUgdf7qXEXnuMGHpWUESBQpYqvtwU",
-      "seededBy": [
-        "leaderboard:total_bonded:elite"
-      ],
-      "tokens": 25,
-      "completed": 19,
-      "completionRate": 0.76,
-      "spanDays": 78.55,
-      "windowFirstDeploy": "2026-05-10T08:42:22.000Z",
-      "windowLastDeploy": "2026-07-27T21:53:14.000Z",
-      "vendorPageCapped": false,
-      "verdict": "gate-passed",
-      "rationale": "completed 19/25 launches (76.0%) over 79 days. Competent enough to be worth measuring. NOT a recommendation: whether this deployer leaves an outsider any room, and whether that room is profitable, is UNMEASURED here.",
-      "gateReasons": [],
-      "consistency": {
-        "state": "unmeasured",
-        "epochs": 0,
-        "minEpochRate": null,
-        "maxEpochRate": null,
-        "dispersion": null,
-        "streaky": false,
-        "note": "only 1 of 3 30-day epochs carry the 12 tokens needed for a rate; 3 qualifying epochs required"
       }
     },
     {
@@ -325,27 +291,9 @@
       "consistency": null
     },
     {
-      "wallet": "wc26h2qZphG7c7VBR8Mrz98LGZjsaaV44YZHBgaMpSa",
-      "seededBy": [
-        "leaderboard:total_bonded:elite"
-      ],
-      "tokens": 48,
-      "completed": 27,
-      "completionRate": 0.5625,
-      "spanDays": 0.64,
-      "windowFirstDeploy": "2026-05-11T18:58:14.843Z",
-      "windowLastDeploy": "2026-05-12T10:25:30.086Z",
-      "vendorPageCapped": false,
-      "verdict": "gate-failed",
-      "rationale": "did not clear the completion gate: history spans 0.6 days < 14 required (a rate earned inside a burst is not a record)",
-      "gateReasons": [
-        "history spans 0.6 days < 14 required (a rate earned inside a burst is not a record)"
-      ],
-      "consistency": null
-    },
-    {
       "wallet": "EeLjBXRELqrcWAXbnj8T4jQPS9Qh7UGWiKxovsJ36pZY",
       "seededBy": [
+        "alerts:elite",
         "leaderboard:total_bonded:elite"
       ],
       "tokens": 16,
@@ -363,23 +311,101 @@
       "consistency": null
     },
     {
-      "wallet": "4di1gZxhWn8Xn49bPJRH2jTiYyZHyGDSSQdEPw8m6pYe",
+      "wallet": "Eh3q5AXnopCFULMLGv6QeVqpZhRvPgkWHBMKqNGQvQTX",
       "seededBy": [
-        "leaderboard:total_bonded:elite"
+        "alerts:elite"
       ],
-      "tokens": 0,
-      "completed": 0,
-      "completionRate": null,
-      "spanDays": 0,
-      "windowFirstDeploy": null,
-      "windowLastDeploy": null,
+      "tokens": 9,
+      "completed": 5,
+      "completionRate": 0.555556,
+      "spanDays": 146.98,
+      "windowFirstDeploy": "2026-03-05T00:18:32.000Z",
+      "windowLastDeploy": "2026-07-29T23:52:38.000Z",
       "vendorPageCapped": false,
       "verdict": "gate-failed",
-      "rationale": "did not clear the completion gate: sample too small: 0 tokens < 25 required (the vendor listed no tokens with a usable deploy time); completion rate is undefined (no usable token records); history spans 0.0 days < 14 required (a rate earned inside a burst is not a record)",
+      "rationale": "did not clear the completion gate: sample too small: 9 tokens < 25 required",
       "gateReasons": [
-        "sample too small: 0 tokens < 25 required (the vendor listed no tokens with a usable deploy time)",
-        "completion rate is undefined (no usable token records)",
-        "history spans 0.0 days < 14 required (a rate earned inside a burst is not a record)"
+        "sample too small: 9 tokens < 25 required"
+      ],
+      "consistency": null
+    },
+    {
+      "wallet": "F5ExBJxM7zJhowwSBYGMTQVesxWvNzsPJhJTuXxLHiyZ",
+      "seededBy": [
+        "recent-bonds:elite",
+        "alerts:elite"
+      ],
+      "tokens": 9,
+      "completed": 5,
+      "completionRate": 0.555556,
+      "spanDays": 48.87,
+      "windowFirstDeploy": "2026-06-10T19:13:40.000Z",
+      "windowLastDeploy": "2026-07-29T16:09:53.000Z",
+      "vendorPageCapped": false,
+      "verdict": "gate-failed",
+      "rationale": "did not clear the completion gate: sample too small: 9 tokens < 25 required",
+      "gateReasons": [
+        "sample too small: 9 tokens < 25 required"
+      ],
+      "consistency": null
+    },
+    {
+      "wallet": "ELcFk5c9pTiHcjMUoGgT2afHvvp6hmLhuJnhisgV6bXh",
+      "seededBy": [
+        "recent-bonds:elite",
+        "alerts:elite"
+      ],
+      "tokens": 7,
+      "completed": 7,
+      "completionRate": 1,
+      "spanDays": 244.41,
+      "windowFirstDeploy": "2025-11-27T06:04:34.000Z",
+      "windowLastDeploy": "2026-07-29T15:58:22.000Z",
+      "vendorPageCapped": false,
+      "verdict": "gate-failed",
+      "rationale": "did not clear the completion gate: sample too small: 7 tokens < 25 required",
+      "gateReasons": [
+        "sample too small: 7 tokens < 25 required"
+      ],
+      "consistency": null
+    },
+    {
+      "wallet": "3YpQRAGDCpraoXG9c9ntVaax9jRKPRSQQRXm7mg8YMiF",
+      "seededBy": [
+        "alerts:elite"
+      ],
+      "tokens": 6,
+      "completed": 5,
+      "completionRate": 0.833333,
+      "spanDays": 856.07,
+      "windowFirstDeploy": "2024-03-25T21:51:55.000Z",
+      "windowLastDeploy": "2026-07-29T23:37:18.000Z",
+      "vendorPageCapped": false,
+      "verdict": "gate-failed",
+      "rationale": "did not clear the completion gate: sample too small: 6 tokens < 25 required",
+      "gateReasons": [
+        "sample too small: 6 tokens < 25 required"
+      ],
+      "consistency": null
+    },
+    {
+      "wallet": "6Wg4aeZ29WRKDsM695c7tTT8oYAcbvFq7DYn8416BPBg",
+      "seededBy": [
+        "recent-bonds:elite",
+        "alerts:elite"
+      ],
+      "tokens": 5,
+      "completed": 5,
+      "completionRate": 1,
+      "spanDays": 1.73,
+      "windowFirstDeploy": "2026-07-27T16:11:07.000Z",
+      "windowLastDeploy": "2026-07-29T09:43:36.000Z",
+      "vendorPageCapped": false,
+      "verdict": "gate-failed",
+      "rationale": "did not clear the completion gate: sample too small: 5 tokens < 25 required; history spans 1.7 days < 14 required (a rate earned inside a burst is not a record)",
+      "gateReasons": [
+        "sample too small: 5 tokens < 25 required",
+        "history spans 1.7 days < 14 required (a rate earned inside a burst is not a record)"
       ],
       "consistency": null
     }

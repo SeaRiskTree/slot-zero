@@ -307,6 +307,7 @@ export function verifyCurveInversion(controls) {
  * @typedef {object} EraReproduction
  * @property {string} era
  * @property {number} n
+ * @property {number} minN Launches this bucket must hold for the comparison to mean anything.
  * @property {number} devSolMedian
  * @property {number} coordinatedSolMedian
  * @property {number} coordinatedWalletsMedian
@@ -343,7 +344,7 @@ export function runStage0(dataDir, gateThresholds) {
   const launches = measureSubjectLaunches(dataDir);
 
   // --- (1) the gate, applied to ground truth -------------------------------------------------
-  const subjectGate = applyGate({ completion: groundTruth, capped: false }, gateThresholds);
+  const subjectGate = applyGate({ completion: groundTruth }, gateThresholds);
   const subjectVerdict = verdictFor({
     gate: subjectGate,
     completion: groundTruth,
@@ -351,13 +352,20 @@ export function runStage0(dataDir, gateThresholds) {
   });
 
   // --- (4) the Stage 2 seam, reproduced against the published §5.1 split ---------------------
-  /** @type {{ era: string, lo: string, hi: string, share: number, published: string }[]} */
+  // `minN` is what stops this check passing vacuously. `median([])` is `NaN` and
+  // `Math.abs(NaN - published) > 0.02` is FALSE, so an era bucket that matched no launches used to
+  // report PASSED and then authorise keyed spending. Anything that empties the filter — renamed
+  // window files, every `reached_mint` false, a `--data-dir` pointing at a differently dated tape, a
+  // shifted date range — is exactly that case. The buckets hold 45 and 89 launches as committed, so
+  // a floor of 20 leaves room for ordinary variation while refusing a hollowed-out bucket.
+  /** @type {{ era: string, lo: string, hi: string, share: number, minN: number, published: string }[]} */
   const eras = [
     {
       era: '2026-05-01 … 06-03',
       lo: '2026-05-01',
       hi: '2026-06-03',
       share: 0.451,
+      minN: 20,
       published: 'dev 9.876543209 · co-ord 6.91 SOL · 5 wallets · independent 21.18 · share 0.451',
     },
     {
@@ -365,6 +373,7 @@ export function runStage0(dataDir, gateThresholds) {
       lo: REGIME_BOUNDARY,
       hi: '2026-07-30',
       share: 0.768,
+      minN: 20,
       published: 'dev 14.814814813 · co-ord 19.75 SOL · 6 wallets · independent 10.84 · share 0.768',
     },
   ];
@@ -378,6 +387,7 @@ export function runStage0(dataDir, gateThresholds) {
     return {
       era: e.era,
       n: inEra.length,
+      minN: e.minN,
       devSolMedian: median(cs.map((m) => m.devSol)),
       coordinatedSolMedian: median(cs.map((m) => m.coordinatedSol)),
       coordinatedWalletsMedian: median(cs.map((m) => m.coordinatedWallets)),
@@ -431,8 +441,25 @@ export function runStage0(dataDir, gateThresholds) {
   }
 
   // The seam must still reproduce the published figures, or the primitive the next lane inherits
-  // is not the one that was validated.
+  // is not the one that was validated. The n and finiteness checks come FIRST and are not
+  // decoration: without them an empty bucket makes the comparison below a no-op that reports
+  // PASSED, and a PASSED Stage 0 is what authorises spending keyed quota on strangers.
   for (const e of eraSplit) {
+    if (e.n < e.minN) {
+      failures.push(
+        `era ${e.era}: only ${e.n} launches matched, below the ${e.minN} this check needs to mean ` +
+          `anything. An empty or hollowed-out bucket makes the operation-share comparison vacuous ` +
+          `rather than failing it, so it is failed here instead — check the tape and --data-dir.`,
+      );
+      continue;
+    }
+    if (!Number.isFinite(e.operationShareMedian)) {
+      failures.push(
+        `era ${e.era}: operation share is not a finite number (${String(e.operationShareMedian)}) ` +
+          `over ${e.n} launches, so the seam did not reproduce anything`,
+      );
+      continue;
+    }
     if (Math.abs(e.operationShareMedian - e.publishedOperationShare) > 0.02) {
       failures.push(
         `era ${e.era}: operation share ${e.operationShareMedian.toFixed(3)} does not reproduce the ` +

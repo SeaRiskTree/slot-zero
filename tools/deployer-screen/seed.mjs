@@ -26,11 +26,21 @@
  * of which embeds a deployer block we can pre-filter on:
  *
  * - `recent-bonds` — tokens that graduated recently, from tracked deployers. The single best seed
- *   available: a deployer appearing here is bonding curves *now*.
+ *   available: a deployer appearing here is bonding curves *now*. The **elite-tier recent-bond feed
+ *   is this same endpoint under `?tier=elite`** — there is no separate path for it.
  * - `alerts` — recent launches from profiled deployers. Catches active deployers whose latest
  *   launches have not bonded, which `recent-bonds` structurally cannot.
  * - `leaderboard?sort=total_bonded` — kept as a third, different ordering so the pool is not purely
  *   recency-selected. Its top is spam, and the pre-filter below is what makes it survivable.
+ *
+ * ## Why a seed's wallet count is reported rather than merged silently
+ *
+ * The first committed runs spent two keyed requests per run on `recent-bonds` and `alerts` and got
+ * **zero wallets from each**, because both nest their deployer block under `deployers` (plural) and
+ * this module looked only for `deployer`. Nothing surfaced that: the run printed one merged total and
+ * the record carried no per-query figure, so a leaderboard-only pool was indistinguishable from a
+ * properly seeded one. {@link readSeedResponse} now returns a per-seed row count and wallet count,
+ * `screen.mjs` prints both and persists them, and a zero-yield seed is called out explicitly.
  *
  * ## The pre-filter, and the one place a vendor aggregate is allowed to be read
  *
@@ -129,6 +139,23 @@ export function buildSeedPlan(options) {
 }
 
 /**
+ * Envelope keys whose value, when an array, holds the seed's rows.
+ *
+ * Measured 2026-07-29: `recent-bonds` wraps its rows in `tokens`, `alerts` in `alerts`, the
+ * leaderboard in `deployers`. The rest are kept as tolerated alternatives.
+ */
+const ROW_KEYS = ['deployers', 'leaderboard', 'bonds', 'alerts', 'tokens', 'data', 'items', 'results'];
+
+/**
+ * Keys under which a row may nest its deployer block.
+ *
+ * **`deployers` — plural — is the one the vendor actually sends**, on both `recent-bonds` and
+ * `alerts`, measured 2026-07-29. Looking only for the singular `deployer` is what made both of
+ * those seeds yield nothing while still costing a keyed request each.
+ */
+const BLOCK_KEYS = ['deployers', 'deployer'];
+
+/**
  * Pull the rows out of whichever envelope arrived.
  *
  * Their OpenAPI document declares no response schemas at all — every operation is
@@ -142,7 +169,7 @@ export function extractRows(body) {
   if (Array.isArray(body)) return /** @type {Record<string, unknown>[]} */ (body);
   if (typeof body !== 'object' || body === null) return [];
   const obj = /** @type {Record<string, unknown>} */ (body);
-  for (const key of ['deployers', 'leaderboard', 'bonds', 'alerts', 'tokens', 'data', 'items', 'results']) {
+  for (const key of ROW_KEYS) {
     const v = obj[key];
     if (Array.isArray(v)) return /** @type {Record<string, unknown>[]} */ (v);
   }
@@ -159,10 +186,10 @@ export function extractRows(body) {
 /**
  * Read wallets, and the embedded deployer block where one is present, out of a seed response.
  *
- * `recent-bonds` and `alerts` nest the block under `deployer`; the leaderboard puts the fields on
- * the row itself. Both are handled, and a row carrying neither still yields its wallet — the
- * pre-filter treats an absent count as unknown rather than as zero, so a shape change costs
- * requests instead of silently emptying the candidate list.
+ * `recent-bonds` and `alerts` nest the block under **`deployers`** (see {@link BLOCK_KEYS}); the
+ * leaderboard puts the fields on the row itself. Both are handled, and a row carrying neither still
+ * yields its wallet — the pre-filter treats an absent count as unknown rather than as zero, so a
+ * shape change costs requests instead of silently emptying the candidate list.
  *
  * @param {unknown} body
  * @returns {ExtractedWallet[]}
@@ -178,9 +205,14 @@ export function extractWallets(body) {
     }
     if (typeof row !== 'object' || row === null) continue;
 
-    const nested = row['deployer'];
-    const block =
-      typeof nested === 'object' && nested !== null ? /** @type {Record<string, unknown>} */ (nested) : row;
+    let block = row;
+    for (const key of BLOCK_KEYS) {
+      const nested = row[key];
+      if (typeof nested === 'object' && nested !== null && !Array.isArray(nested)) {
+        block = /** @type {Record<string, unknown>} */ (nested);
+        break;
+      }
+    }
 
     const raw =
       block['wallet_address'] ??
@@ -200,6 +232,38 @@ export function extractWallets(body) {
     });
   }
   return out;
+}
+
+/**
+ * @typedef {object} SeedYield
+ * @property {string} label Provenance label of the query that produced these.
+ * @property {string} path  The endpoint, so a zero-yield seed names itself.
+ * @property {number} rowsReturned    Rows in the envelope. Separates "no data" from "shape moved".
+ * @property {number} walletsReturned Wallets we could actually read out of those rows.
+ * @property {ExtractedWallet[]} wallets
+ */
+
+/**
+ * Read one seed response into a counted result.
+ *
+ * The counts are the point. `rowsReturned` without `walletsReturned` is precisely the failure that
+ * went unnoticed for two committed runs: the vendor answered with data and we extracted nothing from
+ * it, because the block key had moved. Reporting both makes that state impossible to miss — rows
+ * present and wallets zero means our reader is wrong, not that the vendor is empty.
+ *
+ * @param {SeedPlanEntry} entry
+ * @param {unknown} body
+ * @returns {SeedYield}
+ */
+export function readSeedResponse(entry, body) {
+  const wallets = extractWallets(body);
+  return {
+    label: entry.label,
+    path: entry.path,
+    rowsReturned: extractRows(body).length,
+    walletsReturned: wallets.length,
+    wallets,
+  };
 }
 
 /**
@@ -226,6 +290,58 @@ export function prefilterReason(c, minDeployed = PREFILTER_MIN_DEPLOYED) {
 }
 
 /**
+ * @typedef {object} SeedCoverage
+ * @property {{ label: string, path: string, rowsReturned: number, walletsReturned: number }[]} seeds
+ *   Per-query yield, in plan order. A seed that returned rows but no wallets is a reader bug.
+ * @property {string[]} inertSeeds Labels of seeds that yielded no wallet at all.
+ * @property {number} distinctWalletsSeeded
+ * @property {number} prefilteredOut
+ * @property {number} worthARequest
+ * @property {number} candidateCap
+ * @property {number} droppedByCandidateCap
+ * @property {number} gated
+ * @property {boolean} coverageTruncated Whether any wallet the seeds surfaced went ungated.
+ */
+
+/**
+ * Account for what enumeration surfaced and what actually got gated.
+ *
+ * One place computes this, and both the rendered report and the persisted record read it from here.
+ * That matters because the two used to disagree by omission: the human line said "gating the first
+ * N of M" while the record stored neither figure and left `truncated` false, so a later reader — and
+ * run records are declared the grading lane's input — could not tell a fully-enumerated run from a
+ * capped one, and `--json` hid the disclosure entirely.
+ *
+ * @param {object} input
+ * @param {readonly SeedYield[]} input.seeds
+ * @param {number} input.distinctWalletsSeeded
+ * @param {number} input.prefilteredOut
+ * @param {number} input.worthARequest
+ * @param {number} input.candidateCap
+ * @param {number} input.gated
+ * @returns {SeedCoverage}
+ */
+export function summariseCoverage(input) {
+  const droppedByCandidateCap = Math.max(0, input.worthARequest - Math.min(input.worthARequest, input.candidateCap));
+  return {
+    seeds: input.seeds.map((s) => ({
+      label: s.label,
+      path: s.path,
+      rowsReturned: s.rowsReturned,
+      walletsReturned: s.walletsReturned,
+    })),
+    inertSeeds: input.seeds.filter((s) => s.walletsReturned === 0).map((s) => s.label),
+    distinctWalletsSeeded: input.distinctWalletsSeeded,
+    prefilteredOut: input.prefilteredOut,
+    worthARequest: input.worthARequest,
+    candidateCap: input.candidateCap,
+    droppedByCandidateCap,
+    gated: input.gated,
+    coverageTruncated: droppedByCandidateCap > 0 || input.gated < Math.min(input.worthARequest, input.candidateCap),
+  };
+}
+
+/**
  * Merge enumeration results into a deduplicated, provenance-carrying candidate list.
  *
  * Order is deterministic: wallets seen by more queries first (a name that recurs across three
@@ -233,6 +349,12 @@ export function prefilterReason(c, minDeployed = PREFILTER_MIN_DEPLOYED) {
  * first-seen position, then by address. Determinism matters because the candidate cap truncates
  * this list, and a non-deterministic order would make two runs spend quota on different wallets for
  * no reason.
+ *
+ * **The comparator does not consult `vendorDeployed`.** The candidate cap truncates this list, so an
+ * aggregate used here would decide which wallets get gated and therefore which appear in the output
+ * at all — which is a vendor aggregate reaching an output, exactly what {@link prefilterReason} is
+ * documented as the sole exception to. Ordering is provenance count, then first-seen rank, then
+ * address, and none of those are theirs.
  *
  * @param {readonly { label: string, wallets: readonly ExtractedWallet[] }[]} results
  * @returns {SeedCandidate[]}
@@ -273,11 +395,6 @@ export function mergeSeeds(results) {
 
   return [...seen.values()].sort((a, b) => {
     if (a.seededBy.length !== b.seededBy.length) return b.seededBy.length - a.seededBy.length;
-    // Then the most active by the vendor's own trailing count — a request-allocation heuristic, not
-    // a ranking. The gate still measures everything from scratch.
-    const ad = a.vendorDeployed ?? -1;
-    const bd = b.vendorDeployed ?? -1;
-    if (ad !== bd) return bd - ad;
     if (a.bestRank !== b.bestRank) return a.bestRank - b.bestRank;
     return a.wallet < b.wallet ? -1 : a.wallet > b.wallet ? 1 : 0;
   });

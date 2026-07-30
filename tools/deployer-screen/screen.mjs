@@ -16,8 +16,14 @@
  *   4  credential rejected (401/403) — on Free tier, most likely expired.
  *   5  quota exhausted or rate-limited (429).
  *   6  a request ceiling was reached before the run completed.
- *   7  upstream or transport failure.
+ *   7  upstream or transport failure, INCLUDING a 400 the vendor's own validator rejected. A
+ *      malformed query is our bug, not the operator's credential, and it must never send someone to
+ *      rotate a key that is working.
  *   8  Stage 0 validation failed — the screen no longer reproduces what we already know.
+ *
+ * A run that stops early still writes its record: `--out` is honoured and `--json` still prints,
+ * flagged `truncated`, with the non-zero exit preserved. Throwing away fifteen paid-for measurements
+ * because the sixteenth request hit the ceiling just spends the shared allowance twice.
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -30,7 +36,13 @@ import { measureCompletion, toTokenRecords } from './measure.mjs';
 import { KeylessClient, readCreatorHistory } from './pumpfun.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
-import { buildSeedPlan, extractWallets, mergeSeeds, prefilterReason } from './seed.mjs';
+import {
+  buildSeedPlan,
+  mergeSeeds,
+  prefilterReason,
+  readSeedResponse,
+  summariseCoverage,
+} from './seed.mjs';
 import { VENDOR_READINGS, runStage0 } from './stage0.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -79,7 +91,12 @@ CREDENTIAL
 
 EXIT CODES
   0 ok (possibly zero survivors — a measured outcome)   2 usage   3 no credential
-  4 credential rejected   5 quota   6 ceiling reached   7 upstream   8 stage 0 failed
+  4 credential rejected (401/403)   5 quota (429)   6 ceiling reached
+  7 upstream — transport, 5xx, or a 400 our query shape earned. NOT a credential problem.
+  8 stage 0 failed
+
+A run that stops early still writes its record (--out) and still prints it (--json), flagged
+truncated, and still exits non-zero. Paid-for measurements are not discarded.
 `;
 
 /**
@@ -186,6 +203,32 @@ export function parseArgs(argv) {
  * @property {boolean} help
  */
 
+/**
+ * Map a vendor refusal onto an exit code.
+ *
+ * The mapping is the whole point of having distinct codes, and one case is easy to get wrong: an
+ * **HTTP 400 is our query shape, not their verdict on the credential.** Reporting it as
+ * `credentialRejected` tells an operator to rotate a key that is working perfectly, which on a tier
+ * where keys expire every 30 days is a plausible and entirely wasted afternoon. It is an upstream
+ * failure, because the thing that failed is upstream of the key.
+ *
+ * @param {import('./credential.mjs').AuthFailureKind} kind
+ * @returns {number}
+ */
+export function exitForRefusal(kind) {
+  switch (kind) {
+    case 'quota-exhausted':
+      return EXIT.quota;
+    case 'malformed-request':
+      return EXIT.upstream;
+    case 'expired-or-revoked':
+    case 'wrong-tier':
+      return EXIT.credentialRejected;
+    default:
+      return EXIT.upstream;
+  }
+}
+
 /** @returns {Record<string, any>} */
 export function loadThresholds() {
   return JSON.parse(readFileSync(join(HERE, 'thresholds.json'), 'utf8'));
@@ -233,7 +276,7 @@ export async function main(opts, env, out, err) {
   }
 
   if (opts.stage0Only) {
-    if (opts.json) out(JSON.stringify({ stage0: summariseStage0(stage0) }, null, 2));
+    if (opts.json) out(JSON.stringify({ stage0: summariseStage0(stage0), limitations: LIMITATIONS }, null, 2));
     return EXIT.ok;
   }
 
@@ -278,6 +321,10 @@ export async function main(opts, env, out, err) {
   let truncationReason = null;
   /** @type {{ wallet: string, reason: string }[]} */
   let prefiltered = [];
+  /** @type {import('./seed.mjs').SeedYield[]} */
+  const seedYields = [];
+  let distinctWalletsSeeded = 0;
+  let worthARequestCount = 0;
 
   const client = new BoundedClient({
     key: resolution.key,
@@ -305,16 +352,25 @@ export async function main(opts, env, out, err) {
       out('STAGE 1 — enumerating candidates from the free leaderboard endpoints');
     }
 
-    /** @type {{ label: string, wallets: import('./seed.mjs').ExtractedWallet[] }[]} */
-    const seedResults = [];
     for (const entry of seedPlan) {
       const body = await client.getJson(entry.path, entry.query);
-      seedResults.push({ label: entry.label, wallets: extractWallets(body) });
+      const yielded = readSeedResponse(entry, body);
+      seedYields.push(yielded);
+      if (!opts.json) {
+        out(
+          `  ${yielded.label}: ${yielded.rowsReturned} row(s), ${yielded.walletsReturned} wallet(s)` +
+            (yielded.walletsReturned === 0
+              ? yielded.rowsReturned === 0
+                ? '  !! INERT — the vendor returned nothing'
+                : '  !! INERT — rows arrived but we read no wallet from them; OUR READER IS WRONG'
+              : ''),
+        );
+      }
     }
 
     // Pre-filter before spending a request. This reads the vendor's trailing-window counters and
     // can only ever SKIP a wallet; it never touches a rate, a verdict or an output number.
-    const merged = mergeSeeds(seedResults);
+    const merged = mergeSeeds(seedYields);
     /** @type {{ wallet: string, reason: string }[]} */
     const skipped = [];
     /** @type {import('./seed.mjs').SeedCandidate[]} */
@@ -325,19 +381,22 @@ export async function main(opts, env, out, err) {
       else skipped.push({ wallet: seed.wallet, reason });
     }
 
+    distinctWalletsSeeded = merged.length;
+    worthARequestCount = worthARequest.length;
+    prefiltered = skipped;
+
     if (!opts.json) {
       out(`  ${merged.length} distinct wallets seeded`);
       out(`  ${skipped.length} skipped before spending a request (vendor trailing count too low)`);
       out(`  gating the first ${Math.min(worthARequest.length, maxCandidates)} of ${worthARequest.length}`);
       out('');
     }
-    prefiltered = skipped;
 
     for (const seed of worthARequest.slice(0, maxCandidates)) {
       const profile = await client.getJson(`/deployer-hunter/${encodeURIComponent(seed.wallet)}`);
       const { records, capped } = toTokenRecords(profile);
       const completion = measureCompletion(records);
-      const gate = applyGate({ completion, capped }, gateThresholds);
+      const gate = applyGate({ completion }, gateThresholds);
       const { verdict, rationale } = verdictFor({ gate, completion, capped });
 
       candidates.push({
@@ -361,8 +420,12 @@ export async function main(opts, env, out, err) {
       for (const c of candidates) {
         if (c.verdict !== 'gate-passed') continue;
         try {
-          const { records } = await readCreatorHistory(keyless, c.wallet, 3);
-          c.consistency = measureConsistency(records, T['consistency_over_time']);
+          // `truncated` travels with the result. This is the only surface here making a
+          // long-horizon claim, and it is computed over a page-capped walk of a listing that is
+          // itself a lower bound — the run has already reported epoch dispersion up to 0.619 from
+          // exactly this walk, so the caveat is load-bearing rather than decorative.
+          const { records, truncated: historyTruncated } = await readCreatorHistory(keyless, c.wallet, 3);
+          c.consistency = measureConsistency(records, T['consistency_over_time'], historyTruncated);
         } catch (cause) {
           c.consistency = {
             state: 'unmeasured',
@@ -371,79 +434,112 @@ export async function main(opts, env, out, err) {
             maxEpochRate: Number.NaN,
             dispersion: Number.NaN,
             streaky: false,
+            historyTruncated: false,
             note: `keyless walk failed: ${cause instanceof Error ? cause.message : String(cause)}`,
           };
         }
       }
     }
   } catch (cause) {
-    // Every terminal path below exits non-zero, so a partial list can never be mistaken for a
-    // completed screen.
-    if (cause instanceof VendorRefused) {
-      err('');
-      err(cause.message);
-      emitPartial(candidates, out, opts, 'the vendor refused the request');
-      return cause.kind === 'quota-exhausted' ? EXIT.quota : EXIT.credentialRejected;
-    }
-    if (cause instanceof CeilingReached) {
-      truncated = true;
-      truncationReason = cause.message;
-      err('');
-      err(cause.message);
-      emitPartial(candidates, out, opts, cause.message);
-      return EXIT.ceiling;
-    }
+    // Every terminal path here exits non-zero, so a partial list can never be mistaken for a
+    // completed screen — but it is still WRITTEN and still PRINTED. A ceiling hit after fifteen
+    // profiles used to discard fifteen paid-for measurements, which just spends the shared
+    // allowance a second time to learn the same thing.
+    truncated = true;
+    truncationReason = cause instanceof Error ? cause.message : String(cause);
     err('');
-    err(`Upstream failure: ${cause instanceof Error ? cause.message : String(cause)}`);
-    emitPartial(candidates, out, opts, 'an upstream failure');
-    return EXIT.upstream;
+    err(truncationReason);
+
+    const code =
+      cause instanceof VendorRefused
+        ? exitForRefusal(cause.kind)
+        : cause instanceof CeilingReached
+          ? EXIT.ceiling
+          : EXIT.upstream;
+
+    emit(buildRecord(), code);
+    return code;
   }
 
-  const ranked = rankCandidates(candidates);
-  const stats = client.stats();
-  const record = {
-    tool: 'deployer-screen',
-    scope: 'STAGE 1 GATE ONLY — this tool does not recommend. Stage 2 scoring is not built.',
-    thresholdsVersion: T['version'],
-    startedAtIso,
-    finishedAtIso: new Date().toISOString(),
-    keyedRequests: stats.issued,
-    keylessRequests: keyless.issued(),
-    elapsedMs: Date.now() - startedAt,
-    truncated,
-    truncationReason,
-    prefilteredOut: prefiltered,
-    thresholds: { stage1_gate: T['stage1_gate'], budget: T['budget'] },
-    stage0: summariseStage0(stage0),
-    limitations: LIMITATIONS,
-    candidates: ranked.map(toRecordRow),
-  };
-
-  if (opts.json) out(JSON.stringify(record, null, 2));
-  else {
-    out('');
-    out(
-      renderStage1({
-        candidates: ranked,
-        keyedRequests: stats.issued,
-        keylessRequests: keyless.issued(),
-        elapsedMs: record.elapsedMs,
-        startedAtIso,
-        truncated,
-        truncationReason,
-        prefiltered: prefiltered.length,
-        thresholds: T['stage1_gate'],
-      }),
-    );
-  }
-
-  if (opts.out !== null) {
-    mkdirSync(dirname(resolve(opts.out)), { recursive: true });
-    writeFileSync(resolve(opts.out), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
-    if (!opts.json) out(`\nrun record written to ${opts.out}`);
-  }
-
+  emit(buildRecord(), EXIT.ok);
   return EXIT.ok;
+
+  /** Assemble the run record. Called on the completed path and on every terminal one. */
+  function buildRecord() {
+    const stats = client.stats();
+    const ranked = rankCandidates(candidates);
+    const coverage = summariseCoverage({
+      seeds: seedYields,
+      distinctWalletsSeeded,
+      prefilteredOut: prefiltered.length,
+      worthARequest: worthARequestCount,
+      candidateCap: maxCandidates,
+      gated: candidates.length,
+    });
+    return {
+      tool: 'deployer-screen',
+      scope: 'STAGE 1 GATE ONLY — this tool does not recommend. Stage 2 scoring is not built.',
+      thresholdsVersion: T['version'],
+      startedAtIso,
+      finishedAtIso: new Date().toISOString(),
+      keyedRequests: stats.issued,
+      keylessRequests: keyless.issued(),
+      elapsedMs: Date.now() - startedAt,
+      truncated: truncated || coverage.coverageTruncated,
+      truncationReason:
+        truncationReason ??
+        (coverage.coverageTruncated
+          ? `the candidate cap of ${maxCandidates} dropped ${coverage.droppedByCandidateCap} seeded wallet(s) before they were measured`
+          : null),
+      coverage,
+      prefilteredOut: prefiltered,
+      thresholds: { stage1_gate: T['stage1_gate'], budget: T['budget'] },
+      stage0: summariseStage0(stage0),
+      limitations: LIMITATIONS,
+      ranked,
+      candidates: ranked.map(toRecordRow),
+    };
+  }
+
+  /**
+   * Render and persist. One path, so `--out` and `--json` behave identically whether the run
+   * finished or stopped early.
+   *
+   * @param {ReturnType<typeof buildRecord>} record
+   * @param {number} code
+   */
+  function emit(record, code) {
+    const { ranked, ...persisted } = record;
+
+    if (opts.json) out(JSON.stringify(persisted, null, 2));
+    else {
+      out('');
+      out(
+        renderStage1({
+          candidates: ranked,
+          keyedRequests: persisted.keyedRequests,
+          keylessRequests: persisted.keylessRequests,
+          elapsedMs: persisted.elapsedMs,
+          startedAtIso,
+          truncated: persisted.truncated,
+          truncationReason: persisted.truncationReason,
+          prefiltered: prefiltered.length,
+          coverage: persisted.coverage,
+          thresholds: T['stage1_gate'],
+        }),
+      );
+      if (code !== EXIT.ok) {
+        out('');
+        out(`RUN STOPPED EARLY — exit ${code}. The above is an INCOMPLETE run, not a screen.`);
+      }
+    }
+
+    if (opts.out !== null) {
+      mkdirSync(dirname(resolve(opts.out)), { recursive: true });
+      writeFileSync(resolve(opts.out), `${JSON.stringify(persisted, null, 2)}\n`, 'utf8');
+      if (!opts.json) out(`\nrun record written to ${opts.out}`);
+    }
+  }
 }
 
 /**
@@ -497,27 +593,13 @@ function summariseStage0(s) {
     stage2SeamReproduction: s.eraSplit.map((e) => ({
       era: e.era,
       n: e.n,
+      // Persisted so a reader can see the comparison was not vacuous: an empty bucket yields a NaN
+      // median that no inequality catches, so `n >= minN` is what makes a PASSED here mean anything.
+      minN: e.minN,
       operationShareMeasured: Number(e.operationShareMedian.toFixed(4)),
       operationSharePublished: e.publishedOperationShare,
     })),
   };
-}
-
-/**
- * @param {readonly import('./rank.mjs').Candidate[]} candidates
- * @param {(line: string) => void} out
- * @param {Options} opts
- * @param {string} why
- */
-function emitPartial(candidates, out, opts, why) {
-  if (candidates.length === 0) return;
-  if (opts.json) return;
-  out('');
-  out(`PARTIAL RESULT — ${candidates.length} candidate(s) were gated before ${why}.`);
-  out('This is an incomplete run, not a screen. Do not read it as one.');
-  for (const c of rankCandidates(candidates)) {
-    out(`  ${c.wallet}  ${c.verdict}  ${c.completion.completed}/${c.completion.tokens}`);
-  }
 }
 
 // --- entry point ---------------------------------------------------------------------------

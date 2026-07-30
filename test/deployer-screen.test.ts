@@ -45,6 +45,8 @@ import {
   extractWallets,
   mergeSeeds,
   prefilterReason,
+  readSeedResponse,
+  summariseCoverage,
 } from '../tools/deployer-screen/seed.mjs';
 import {
   extractTradeRows,
@@ -52,7 +54,7 @@ import {
   slotFromSlotIndexId,
   windowFilter,
 } from '../tools/deployer-screen/pumpfun.mjs';
-import { parseArgs, loadThresholds } from '../tools/deployer-screen/screen.mjs';
+import { exitForRefusal, parseArgs, loadThresholds } from '../tools/deployer-screen/screen.mjs';
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
 
@@ -516,7 +518,7 @@ describe('the gate', () => {
     );
 
   it('passes a deployer that clears all three thresholds', () => {
-    const g = applyGate({ completion: completion(40, 20, 30), capped: false }, GATE);
+    const g = applyGate({ completion: completion(40, 20, 30) }, GATE);
     expect(g.passed).toBe(true);
     expect(g.reasons).toEqual([]);
   });
@@ -526,18 +528,18 @@ describe('the gate', () => {
     ['rate', 40, 4, 30, /completion rate/],
     ['span', 40, 20, 5, /spans/],
   ])('fails on %s and says which', (_label, n, done, span, re) => {
-    const g = applyGate({ completion: completion(n, done, span), capped: false }, GATE);
+    const g = applyGate({ completion: completion(n, done, span) }, GATE);
     expect(g.passed).toBe(false);
     expect(g.reasons.join(' ')).toMatch(re);
   });
 
   it('reports every failing reason, not just the first', () => {
-    const g = applyGate({ completion: completion(5, 0, 1), capped: false }, GATE);
+    const g = applyGate({ completion: completion(5, 0, 1) }, GATE);
     expect(g.reasons.length).toBe(3);
   });
 
   it('fails a wallet with no usable records rather than scoring it zero', () => {
-    const g = applyGate({ completion: measureCompletion([]), capped: false }, GATE);
+    const g = applyGate({ completion: measureCompletion([]) }, GATE);
     expect(g.passed).toBe(false);
     expect(g.reasons.join(' ')).toMatch(/undefined/);
   });
@@ -656,6 +658,31 @@ describe('consistency over time', () => {
     expect(r.state).toBe('measured');
     expect(r.streaky).toBe(false);
   });
+
+  it('carries the walk\'s truncation and the lower-bound caveat into the result', () => {
+    const records = Array.from({ length: 60 }, (_, i) => ({
+      deployedAtMs: T0 + i * 1.5 * DAY,
+      completed: i % 2 === 0,
+    }));
+
+    // This is the ONE surface here making a long-horizon claim, and it is computed over a
+    // page-capped walk of a listing that lists by *current* creator — which moves on-chain, and the
+    // token that goes missing is the deployer's best one. Both limits must travel with the number.
+    const capped = measureConsistency(records, C, true);
+    expect(capped.historyTruncated).toBe(true);
+    expect(capped.note).toMatch(/LOWER BOUND/);
+    expect(capped.note).toMatch(/current\* creator/);
+    expect(capped.note).toMatch(/page cap/);
+
+    const full = measureConsistency(records, C, false);
+    expect(full.historyTruncated).toBe(false);
+    // Even an untruncated walk is a lower bound, because the creator record can move.
+    expect(full.note).toMatch(/LOWER BOUND/);
+    expect(full.note).not.toMatch(/page cap/);
+
+    // The default must be the safe one, never an implied "complete".
+    expect(measureConsistency(records, C).historyTruncated).toBe(false);
+  });
 });
 
 describe('enumeration', () => {
@@ -689,8 +716,57 @@ describe('enumeration', () => {
     expect(plan[0]?.label).toContain(':elite');
   });
 
+  it('reads the elite recent-bond and alert shapes the vendor actually sends', () => {
+    // Measured 2026-07-29 against recent-bonds?tier=elite and alerts. Both nest the deployer block
+    // under `deployers` — PLURAL — and recent-bonds wraps its rows in `tokens`, not `bonds`. Looking
+    // only for the singular `deployer` is what made both seeds yield ZERO wallets while still
+    // costing a keyed request each, for two committed runs, invisibly.
+    const recentBondsElite = {
+      tokens: [
+        {
+          id: 'bc5ac976',
+          token_mint: 'GtK9NvPrVgmp9XFXvHiWh5awHy547agehcwjaMrYpump',
+          token_name: 'a token',
+          bonded_at: '2026-07-29T18:40:23.88+00:00',
+          time_to_bond_minutes: 162,
+          peak_market_cap: 24_820.27,
+          deployers: {
+            tier: 'elite',
+            wallet_address: 'ELITEwallet1',
+            total_tokens_deployed: 7,
+            total_bonded: 7,
+            bonding_rate: 1,
+          },
+        },
+      ],
+      limit: 2,
+      next_since: '2026-07-29T18:40:23.88+00:00',
+    };
+    expect(extractWallets(recentBondsElite)).toEqual([
+      { wallet: 'ELITEwallet1', vendorDeployed: 7, vendorBonded: 7 },
+    ]);
+
+    const alerts = {
+      alerts: [
+        {
+          id: '98d15b31',
+          token_mint: 'ALERTmint',
+          alert_type: 'bonded',
+          title: "Good deployer's token bonded!",
+          deployers: { tier: 'good', wallet_address: 'ALERTwallet1', total_tokens_deployed: 6, total_bonded: 4 },
+          kol_buys: { count: 6, total_sol: 24.35, kols: [] },
+        },
+      ],
+      limit: 2,
+      offset: 0,
+    };
+    expect(extractWallets(alerts)).toEqual([
+      { wallet: 'ALERTwallet1', vendorDeployed: 6, vendorBonded: 4 },
+    ]);
+  });
+
   it('reads the wallet and the embedded deployer block from either nesting', () => {
-    // recent-bonds and alerts nest the block under `deployer`; the leaderboard inlines it.
+    // The singular `deployer` is still tolerated; the leaderboard inlines the fields on the row.
     expect(
       extractWallets({ bonds: [{ token_mint: 'M', deployer: { wallet_address: 'a', total_tokens_deployed: 40, total_bonded: 20 } }] }),
     ).toEqual([{ wallet: 'a', vendorDeployed: 40, vendorBonded: 20 }]);
@@ -722,18 +798,120 @@ describe('enumeration', () => {
     expect(m.rate).toBeCloseTo(0.3, 10); // not the 1.0 every aggregate in the payload claims
   });
 
-  it('prefers wallets that recur across endpoints, then the most active, deterministically', () => {
+  it('prefers wallets that recur across endpoints, then first-seen rank, deterministically', () => {
     const w = (wallet: string, deployed: number | null) => ({ wallet, vendorDeployed: deployed, vendorBonded: null });
     const merged = mergeSeeds([
       { label: 'recent-bonds', wallets: [w('w1', 10), w('w2', 90)] },
       { label: 'alerts', wallets: [w('w1', 10), w('w9', 50)] },
     ]);
-    // w1 appears in both endpoints, so it earns a request before the busier w2 does.
+    // w1 appears in both endpoints, so it earns a request before w2 does.
     expect(merged[0]?.wallet).toBe('w1');
     expect(merged[0]?.seededBy).toEqual(['recent-bonds', 'alerts']);
-    // Among singly-seeded wallets, the busier one first.
+    // Among singly-seeded wallets, first-seen rank decides: w2 at index 1, w9 at index 1 too, so
+    // the address breaks the tie.
     expect(merged.slice(1).map((m) => m.wallet)).toEqual(['w2', 'w9']);
     expect(new Set(merged.map((m) => m.wallet)).size).toBe(merged.length);
+  });
+
+  it('THE INVARIANT: the comparator never consults the vendor aggregate', () => {
+    // The sorted list is truncated by the candidate cap, so anything the comparator reads decides
+    // which wallets get gated and therefore which appear in the output at all. A vendor aggregate
+    // there is a vendor aggregate reaching an output — and `prefilterReason` is documented as the
+    // ONE place one may be read. These two wallets are identical but for `vendorDeployed`, so if
+    // it were consulted `zzz` would sort first; ordering must fall through to the address. Each
+    // wallet is at index 0 of its own seed, so provenance count and bestRank tie exactly and
+    // `vendorDeployed` is the ONLY thing left that could separate them.
+    const zzzFirst = mergeSeeds([
+      { label: 'recent-bonds', wallets: [{ wallet: 'zzz', vendorDeployed: 9_999, vendorBonded: 9_999 }] },
+      { label: 'alerts', wallets: [{ wallet: 'aaa', vendorDeployed: 6, vendorBonded: 1 }] },
+    ]);
+    expect(zzzFirst.map((m) => m.wallet)).toEqual(['aaa', 'zzz']);
+    expect(zzzFirst[0]?.seededBy.length).toBe(zzzFirst[1]?.seededBy.length);
+    expect(zzzFirst[0]?.bestRank).toBe(zzzFirst[1]?.bestRank);
+    // The counters are still carried — the pre-filter needs them — just never used to order.
+    expect(zzzFirst[1]?.vendorDeployed).toBe(9_999);
+
+    // And it is still a total order, so two runs over the same data spend quota on the same wallets.
+    const aaaFirst = mergeSeeds([
+      { label: 'recent-bonds', wallets: [{ wallet: 'aaa', vendorDeployed: 6, vendorBonded: 1 }] },
+      { label: 'alerts', wallets: [{ wallet: 'zzz', vendorDeployed: 9_999, vendorBonded: 9_999 }] },
+    ]);
+    expect(aaaFirst.map((m) => m.wallet)).toEqual(['aaa', 'zzz']);
+  });
+
+  it('counts every seed\'s yield, so an inert seed cannot be invisible again', () => {
+    const plan = buildSeedPlan({ limit: 10, tier: 'elite' });
+    const recentBonds = plan[0]!;
+    const alerts = plan[1]!;
+
+    // The elite-tier recent-bond feed IS recent-bonds?tier=elite — there is no separate endpoint.
+    expect(recentBonds.path).toBe('/deployer-hunter/recent-bonds');
+    expect(recentBonds.query['tier']).toBe('elite');
+    expect(recentBonds.label).toBe('recent-bonds:elite');
+
+    const live = readSeedResponse(recentBonds, {
+      tokens: [{ deployers: { wallet_address: 'w1', total_tokens_deployed: 7, total_bonded: 7 } }],
+    });
+    expect(live).toMatchObject({
+      label: 'recent-bonds:elite',
+      path: '/deployer-hunter/recent-bonds',
+      rowsReturned: 1,
+      walletsReturned: 1,
+    });
+
+    // The exact regression: rows arrive and we read nothing out of them. `rowsReturned` without
+    // `walletsReturned` is the fingerprint of our reader being wrong rather than the vendor empty.
+    const shapeMoved = readSeedResponse(alerts, {
+      alerts: [{ token_mint: 'M', someFutureBlockName: { wallet_address: 'w1' } }],
+    });
+    expect(shapeMoved.rowsReturned).toBe(1);
+    expect(shapeMoved.walletsReturned).toBe(0);
+
+    const empty = readSeedResponse(alerts, { alerts: [] });
+    expect(empty.rowsReturned).toBe(0);
+    expect(empty.walletsReturned).toBe(0);
+  });
+
+  it('accounts for coverage, and names a zero-yield seed as inert', () => {
+    const cov = summariseCoverage({
+      seeds: [
+        { label: 'recent-bonds:elite', path: '/a', rowsReturned: 50, walletsReturned: 50, wallets: [] },
+        { label: 'alerts:elite', path: '/b', rowsReturned: 40, walletsReturned: 0, wallets: [] },
+      ],
+      distinctWalletsSeeded: 55,
+      prefilteredOut: 5,
+      worthARequest: 50,
+      candidateCap: 12,
+      gated: 12,
+    });
+    expect(cov.inertSeeds).toEqual(['alerts:elite']);
+    // 50 worth a request, cap of 12 — so 38 seeded wallets were never measured, and the run must
+    // say so rather than read as a screen of everything enumeration found.
+    expect(cov.droppedByCandidateCap).toBe(38);
+    expect(cov.coverageTruncated).toBe(true);
+
+    const complete = summariseCoverage({
+      seeds: [{ label: 's', path: '/a', rowsReturned: 8, walletsReturned: 8, wallets: [] }],
+      distinctWalletsSeeded: 8,
+      prefilteredOut: 2,
+      worthARequest: 6,
+      candidateCap: 20,
+      gated: 6,
+    });
+    expect(complete.inertSeeds).toEqual([]);
+    expect(complete.droppedByCandidateCap).toBe(0);
+    expect(complete.coverageTruncated).toBe(false);
+
+    // A run that stopped mid-gate is truncated even though the cap never bit.
+    const stoppedEarly = summariseCoverage({
+      seeds: [],
+      distinctWalletsSeeded: 8,
+      prefilteredOut: 0,
+      worthARequest: 8,
+      candidateCap: 20,
+      gated: 3,
+    });
+    expect(stoppedEarly.coverageTruncated).toBe(true);
   });
 
   it('keeps the largest counter when two endpoints disagree', () => {
@@ -805,6 +983,20 @@ describe('the CLI contract', () => {
     ]);
   });
 
+  it('never reports a malformed query as a rejected credential', () => {
+    // A 400 is OUR query shape. Telling an operator their key was rejected — on a tier where keys
+    // expire every 30 days, so expiry is the plausible reading — sends them to rotate a key that
+    // works. It is an upstream failure: the thing that failed is upstream of the credential.
+    expect(exitForRefusal('malformed-request')).toBe(7);
+    expect(exitForRefusal('expired-or-revoked')).toBe(4);
+    expect(exitForRefusal('wrong-tier')).toBe(4);
+    expect(exitForRefusal('quota-exhausted')).toBe(5);
+    // Every refusal kind the credential module can produce is mapped, and none of them maps to 0.
+    for (const kind of ['malformed-request', 'expired-or-revoked', 'wrong-tier', 'quota-exhausted'] as const) {
+      expect(exitForRefusal(kind)).not.toBe(0);
+    }
+  });
+
   it('bounds every run in the pinned budget', () => {
     const b = loadThresholds()['budget'];
     expect(b.maxKeyedRequests).toBeLessThanOrEqual(50); // a quarter of the shared 200/day
@@ -827,13 +1019,21 @@ describe('percentiles match the convention the tape report used', () => {
 const TOOL_DIR = fileURLToPath(new URL('../tools/deployer-screen/', import.meta.url));
 const SRC_DIR = fileURLToPath(new URL('../src/', import.meta.url));
 
-function readAll(dir: string, prefix: string): Map<string, string> {
+/**
+ * Read committed files under a directory.
+ *
+ * `pattern` defaults to source files, which is right for the import and `fetch` boundary assertions —
+ * those are statements about code. It is deliberately WIDENED for the key-shaped-string scan: a
+ * committed run record, `thresholds.json` or a README example is where an accidental paste of a real
+ * key would most plausibly land, and a source-only filter never looked at any of them.
+ */
+function readAll(dir: string, prefix: string, pattern = /\.(ts|mjs|js)$/): Map<string, string> {
   const out = new Map<string, string>();
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) {
-      for (const [k, v] of readAll(full, `${prefix}${entry}/`)) out.set(k, v);
-    } else if (/\.(ts|mjs|js)$/.test(entry)) {
+      for (const [k, v] of readAll(full, `${prefix}${entry}/`, pattern)) out.set(k, v);
+    } else if (pattern.test(entry)) {
       out.set(`${prefix}${entry}`, readFileSync(full, 'utf8'));
     }
   }
@@ -878,10 +1078,52 @@ describe('the keyless boundary holds in both directions', () => {
   });
 
   it('no committed file under the tool holds a key-shaped string', () => {
-    for (const [file, text] of readAll(TOOL_DIR, 'tools/deployer-screen/')) {
+    // EVERY committed file, not just the sources: runs/*.json, thresholds.json and README.md are
+    // the likeliest places a real key gets pasted by accident, and they went unscanned.
+    const all = readAll(TOOL_DIR, 'tools/deployer-screen/', /./);
+    expect([...all.keys()]).toContain('tools/deployer-screen/README.md');
+    expect([...all.keys()]).toContain('tools/deployer-screen/thresholds.json');
+    expect([...all.keys()].some((f) => f.startsWith('tools/deployer-screen/runs/'))).toBe(true);
+
+    for (const [file, text] of all) {
       // A real msk_ key is 47 characters. Test doubles are shorter or obviously fake, and no
-      // source file has any business containing one at all.
+      // committed file has any business containing one at all.
       expect(/msk_[A-Za-z0-9_-]{20,}/.test(text), `${file} may contain a real key`).toBe(false);
+    }
+  });
+
+  it('a committed run record persists derived fields only — ToS §5a(d), asserted', () => {
+    // The README makes a ToS-facing claim about exactly which fields survive a run. It is asserted
+    // here so the claim cannot drift from the code, and so a future field addition has to come and
+    // change this list on purpose.
+    const PERSISTED = [
+      'completed',
+      'completionRate',
+      'consistency',
+      'gateReasons',
+      'rationale',
+      'seededBy',
+      'spanDays',
+      'tokens',
+      'vendorPageCapped',
+      'verdict',
+      'wallet',
+      'windowFirstDeploy',
+      'windowLastDeploy',
+    ];
+    // Anything from the vendor's per-token records. None of these may appear in a candidate row.
+    const FORBIDDEN =
+      /"(mint|token_mint|token_name|token_symbol|symbol|name|peak_market_cap|mc_at_bond|bonded_at|deployed_at|time_to_bond_minutes|ath_market_cap|pool_address|token_image_url)"/;
+
+    const records = readAll(join(TOOL_DIR, 'runs'), '', /\.json$/);
+    expect(records.size).toBeGreaterThan(0);
+    for (const [file, text] of records) {
+      const parsed = JSON.parse(text) as { candidates: Record<string, unknown>[] };
+      expect(parsed.candidates.length, file).toBeGreaterThan(0);
+      for (const row of parsed.candidates) {
+        expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(PERSISTED);
+        expect(FORBIDDEN.test(JSON.stringify(row)), `${file} holds per-token vendor data`).toBe(false);
+      }
     }
   });
 });

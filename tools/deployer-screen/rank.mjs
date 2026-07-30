@@ -30,8 +30,11 @@
 /**
  * @typedef {object} GateInput
  * @property {import('./measure.mjs').CompletionMeasurement} completion
- * @property {boolean} capped Whether the vendor's token page was full, meaning older tokens exist
- *   that this surface will not show.
+ *
+ * Page truncation is deliberately **not** an input. The gate decides on the three pinned
+ * thresholds and nothing else; that the vendor's page was full is disclosed by
+ * {@link verdictFor} and carried in the record, but it must not be able to move a verdict, and a
+ * field the gate never reads would imply otherwise.
  */
 
 /**
@@ -81,6 +84,9 @@ export function applyGate(input, t) {
  * @property {number} maxEpochRate
  * @property {number} dispersion
  * @property {boolean} streaky
+ * @property {boolean} historyTruncated Whether the creator walk stopped at its page cap. See
+ *   {@link measureConsistency} — this is the one surface here making a long-horizon claim, so the
+ *   fact that it was computed over a bounded, lower-bound listing travels with the result.
  * @property {string} note
  */
 
@@ -174,11 +180,24 @@ export function rankCandidates(candidates) {
  * A high dispersion **flags** rather than excludes. The reader is entitled to see that a rate came
  * from one hot epoch; silently filtering on it would hide the very fact it exists to expose.
  *
+ * `historyTruncated` is a required argument rather than an optional flourish, because the two limits
+ * on the walk that produced `records` are exactly the ones a long-horizon claim must not hide: the
+ * walk is capped at a few pages, **and** pump.fun lists by *current* creator, which moves on-chain.
+ * So the history is a lower bound and the token most likely missing is the deployer's best one — the
+ * same trap that once deleted our own subject's `maxxing` launch from its own history. A dispersion
+ * figure computed over that has to say so.
+ *
  * @param {readonly import('./measure.mjs').TokenRecord[]} records
  * @param {{ minEpochs: number, minTokensPerEpoch: number, epochDays: number, maxDispersion: number }} t
+ * @param {boolean} [historyTruncated] Whether the creator walk hit its page cap.
  * @returns {ConsistencyResult}
  */
-export function measureConsistency(records, t) {
+export function measureConsistency(records, t, historyTruncated = false) {
+  const lowerBound =
+    '; the creator listing is a LOWER BOUND — it lists by *current* creator, which moves on-chain, ' +
+    'and the token that goes missing is the best one' +
+    (historyTruncated ? ', and this walk also stopped at its page cap' : '');
+
   const usable = records
     .filter((r) => Number.isFinite(r.deployedAtMs) && r.deployedAtMs > 0)
     .sort((a, b) => a.deployedAtMs - b.deployedAtMs);
@@ -191,6 +210,7 @@ export function measureConsistency(records, t) {
     maxEpochRate: Number.NaN,
     dispersion: Number.NaN,
     streaky: false,
+    historyTruncated,
     note,
   });
 
@@ -229,10 +249,12 @@ export function measureConsistency(records, t) {
     maxEpochRate: max,
     dispersion,
     streaky: dispersion > t.maxDispersion,
+    historyTruncated,
     note:
       `${qualifying.length} qualifying ${t.epochDays}-day epochs, rate ${min.toFixed(3)}..${max.toFixed(3)}` +
       (dispersion > t.maxDispersion
         ? `; STREAKY — spread ${dispersion.toFixed(3)} exceeds ${t.maxDispersion}, so the pooled rate is carried by some epochs and not others`
-        : `; spread ${dispersion.toFixed(3)} within ${t.maxDispersion}`),
+        : `; spread ${dispersion.toFixed(3)} within ${t.maxDispersion}`) +
+      lowerBound,
   };
 }

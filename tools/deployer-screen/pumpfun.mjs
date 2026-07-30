@@ -2,17 +2,16 @@
  * Keyless pump.fun clients. No credential, no account, no cost — but a shared public resource,
  * so the same bounds apply as to the keyed client.
  *
- * Two endpoints, both established by this project's own prior work rather than discovered here:
+ * One endpoint is fetched here: `frontend-api-v3.pump.fun/coins?creator=`, a creator's token
+ * listing, used only by the optional `--consistency` pass. It serves **70 per page regardless of the
+ * limit asked for**, and it lists by *current* creator, so a creator's listed history is a lower
+ * bound and the token that goes missing is exactly the good one.
  *
- * - `swap-api.pump.fun/v2/coins/{mint}/trades` — the per-token fill tape. 100 fills a page,
- *   the swapping wallet on every row, cursor `<slotIndexId>-<timestampMs>` whose **timestamp
- *   component seeks**, which is what makes reading a launch window cost 3-15 requests instead
- *   of walking a token's whole history. This is the endpoint the committed population tape was
- *   built from, which is why `measure.mjs` parses its rows and the tape's rows with one parser.
- * - `frontend-api-v3.pump.fun/coins?creator=` — a creator's token listing, used only by the
- *   optional `--consistency` pass. It serves **70 per page regardless of the limit asked for**,
- *   and it lists by *current* creator, so a creator's listed history is a lower bound and the
- *   token that goes missing is exactly the good one.
+ * The row parsers here — {@link parseFillLoose}, {@link windowFilter}, {@link extractTradeRows} —
+ * read `swap-api.pump.fun/v2/coins/{mint}/trades` rows, the per-token fill tape the committed
+ * population tape was built from. **Nothing in this module fetches that tape.** The paging walk that
+ * would is Stage 2's, and it belongs in the lane that has a caller to validate it against; a
+ * half-exercised pager described in the docs as tested is worse than an absent one.
  *
  * Pacing is not a guess: the June report measured sustainable keyless throughput at roughly
  * 0.5 requests/second with one request in flight, and found batching and concurrency both
@@ -21,8 +20,6 @@
 
 import { CeilingReached } from './client.mjs';
 
-/** Fill tape host. */
-export const SWAP_API = 'https://swap-api.pump.fun';
 /** Creator listing host. */
 export const FRONTEND_API = 'https://frontend-api-v3.pump.fun';
 
@@ -125,80 +122,6 @@ export class KeylessClient {
 }
 
 /**
- * Read the opening window of one launch: every fill from the mint up to `windowMs` after it.
- *
- * Pages **backwards** from the oldest fill using the cursor's seeking timestamp component, the
- * same way the population tape was harvested. Stops as soon as a page's oldest row predates the
- * window, so a launch costs a few requests rather than a walk of its whole history.
- *
- * @param {KeylessClient} client
- * @param {string} mint
- * @param {object} [options]
- * @param {number} [options.windowMs]  Default 60000 — the tape's own window.
- * @param {number} [options.maxPages]  Default 3.
- * @returns {Promise<{ fills: import('./measure.mjs').Fill[], pages: number, reachedMint: boolean }>}
- */
-export async function readLaunchWindow(client, mint, options) {
-  const maxPages = options?.maxPages ?? 3;
-  /** @type {Record<string, unknown>[]} */
-  const raw = [];
-  let pages = 0;
-  /** @type {string | null} */
-  let cursor = null;
-
-  for (; pages < maxPages; ) {
-    const url =
-      `${SWAP_API}/v2/coins/${encodeURIComponent(mint)}/trades?limit=100` +
-      (cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`);
-
-    const body = await client.getJson(url);
-    pages += 1;
-
-    const rows = extractTradeRows(body);
-    if (rows.length === 0) break;
-    raw.push(...rows);
-
-    // The oldest row on this page. Rows arrive newest-first.
-    const oldest = rows[rows.length - 1];
-    if (oldest === undefined) break;
-    const next = buildCursor(oldest);
-    if (next === null || next === cursor) break;
-    cursor = next;
-
-    if (rows.length < 100) break;
-  }
-
-  /** @type {import('./measure.mjs').Fill[]} */
-  const parsed = [];
-  for (const row of raw) {
-    try {
-      parsed.push(parseFillLoose(row));
-    } catch {
-      // A row we cannot classify is dropped rather than guessed at. `reachedMint` below is what
-      // decides whether the window is usable, and it does not depend on any single row.
-    }
-  }
-
-  // Coverage is "we can see the first curve buy", not "we got some rows". The population tape
-  // learned this the hard way: all 239 of its mints have a window file and four of them never
-  // reached the mint, holding unrelated later trading instead.
-  const curveBuys = parsed.filter((f) => f.side === 'buy' && f.venue === 'pump');
-  let reachedMint = false;
-  if (curveBuys.length > 0) {
-    // The create slot is only trustworthy if we actually paged back to the beginning, which the
-    // deployer's own first buy marks: it is the largest early buy and it precedes every other
-    // fill in its slot.
-    let minSlot = Infinity;
-    for (const f of curveBuys) if (f.slot < minSlot) minSlot = f.slot;
-    const earliest = parsed.filter((f) => f.slot === minSlot);
-    reachedMint = earliest.length > 0 && pages < maxPages ? true : raw.length < maxPages * 100;
-  }
-
-  const windowMs = options?.windowMs ?? 60_000;
-  return { fills: windowFilter(parsed, windowMs), pages, reachedMint };
-}
-
-/**
  * Keep only fills inside the opening window, measured in slots from the create slot.
  *
  * Slots are ~400ms, so a 60s window is ~150 slots. Using slots rather than the timestamp avoids
@@ -233,21 +156,6 @@ export function extractTradeRows(body) {
     }
   }
   return [];
-}
-
-/**
- * Build the endpoint's `<slotIndexId>-<timestampMs>` cursor from a row.
- *
- * @param {Record<string, unknown>} row
- * @returns {string | null}
- */
-export function buildCursor(row) {
-  const sid = row['sid'];
-  const ts = row['ts'];
-  if (sid === undefined || sid === null) return null;
-  const ms = typeof ts === 'number' ? ts : Date.parse(String(ts));
-  if (!Number.isFinite(ms)) return null;
-  return `${String(sid)}-${ms}`;
 }
 
 /**

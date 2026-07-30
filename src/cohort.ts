@@ -60,10 +60,16 @@ export const isCohort = (wallet: string): boolean => COHORT_SET.has(wallet);
  * none of them was the funding graph. That graph has since been built —
  * `kol-cohort-vs-outsider-funding/report.md`, read-only and keyless — and it settles both
  * wallets as **genuine outsiders, confidence high**: neither one's money touches the
- * deployer or any of the six cohort wallets at any point in either wallet's complete life
- * (§4.2, §4.5), and each traces to a distinct funding channel the operation never uses
- * (§5). The positive case survives. It does **not** follow that the strategy works; that
- * report answers whose money it is and says so explicitly (its §7, §10).
+ * deployer or any of the six cohort wallets, tested against **complete signature sets for
+ * the deployer and all six** so that any such transaction is necessarily inside them (§4.2,
+ * §4.5), and each traces to a distinct funding channel the operation never uses (§5). The
+ * positive case survives. It does **not** follow that the strategy works; that report
+ * answers whose money it is and says so explicitly (its §7, §10).
+ *
+ * **What "outsider" means here, exactly:** no on-chain relationship on complete sets — not
+ * provably unrelated. See {@link IndependentOutsider.outsiderConfidence} and the README's
+ * "The ceiling of the method: shared custodial venues", which owns that limit and is
+ * deliberately not restated here.
  *
  * ## What replaced it, and why it is a type rather than a comment
  *
@@ -72,12 +78,13 @@ export const isCohort = (wallet: string): boolean => COHORT_SET.has(wallet);
  * dataset's own worked example of a wallet that looks profitable and is not, at −12.2 SOL —
  * is in the same book (§8.1). Its +47.1 SOL and that wallet's −12.2 SOL are the same
  * operator's P&L, so a counterparty table that lists them as two rows is listing one trader
- * twice. **The book itself has not been measured.**
+ * twice. **The book itself is not measured here** — it has since been measured by
+ * `slot-zero-bankroll-book-pnl/report.md`, whose figures are another lane's to import.
  *
  * The two are therefore not the same kind of object, and this module stops pretending they
  * are. {@link IndependentOutsider} has a `wallet`; {@link BookMemberOutsider} does not —
  * only {@link BookMemberOutsider.oneWalletOfAnUnmeasuredBook}, beside the book it belongs
- * to and a pointer to the measurement nobody has taken. Reading an address off the
+ * to and a pointer to the measurement this repo does not hold. Reading an address off the
  * {@link Outsider} union without discriminating is a compile error, which is the point:
  * the filter that reads `EgQX9R3Q…`'s figures as an independent observation cannot be
  * written by accident. See this repo's README, "What is open".
@@ -96,7 +103,12 @@ export interface IndependentOutsider {
   readonly fundedBy: string;
   /** What that funder is. **Inference**, labelled as such in the funding report §7. */
   readonly fundingChannel: string;
-  /** The funding report's verdict block. */
+  /**
+   * The funding report's verdict block. This value means *no on-chain relationship on complete
+   * sets*, not *provably unrelated*. The README's "The ceiling of the method: shared custodial
+   * venues" owns that limit, its evidence and the decision taken on it; do not read this field
+   * as broader than what it says.
+   */
   readonly outsiderConfidence: 'high';
   /**
    * The observation date on which the funding report saw this wallet still trading — §6.2,
@@ -130,6 +142,19 @@ export interface BookMemberOutsider {
   readonly bookMates: readonly string[];
   /** Same address as {@link bankroll}: funded by, and returns to, one place (§3.2). */
   readonly fundedBy: string;
+  /**
+   * Same ceiling as {@link IndependentOutsider.outsiderConfidence}, and this is the wallet on
+   * which it is *measured*: the bankroll and the operation demonstrably hold accounts at one
+   * custodial venue. The negative holds regardless, but it is **complete on the bankroll side**
+   * rather than on this wallet's: no complete signature set for the wallet itself exists
+   * (~1,000,000 entries, walk abandoned at 550,000 —
+   * `kol-cohort-vs-outsider-funding/report.md` §10.2), so it rests on the operation's complete
+   * signature sets for the deployer and all six cohort wallets plus the `9BhkaAyb…` bankroll's
+   * complete set. That is sufficient: an intersection test needs one complete side, not two.
+   * Evidence and decision: the README's "The ceiling of the method: shared custodial venues";
+   * which side each negative is complete on, and how it differs from
+   * {@link INDEPENDENT_OUTSIDER}'s: the README's "What is open".
+   */
   readonly outsiderConfidence: 'high';
   /**
    * The whole book was drained in one batch here — two book-mates stopped within two
@@ -139,8 +164,8 @@ export interface BookMemberOutsider {
    * `data/population-tape-2026-07-29/IMPORT.md`, "Corrections".
    */
   readonly retiredUtc: string;
-  /** The measurement that would close this. It has not been taken. */
-  readonly seeAlso: 'the book is unmeasured — kol-cohort-vs-outsider-funding/report.md §8.1, §10.1';
+  /** Where the measurement that closes this lives; its figures are not imported here. */
+  readonly seeAlso: 'the book is unmeasured here, and measured in slot-zero-bankroll-book-pnl/report.md — kol-cohort-vs-outsider-funding/report.md §8.1, §10.1';
 }
 
 export type Outsider = IndependentOutsider | BookMemberOutsider;
@@ -170,7 +195,8 @@ export const BOOK_MEMBER_OUTSIDER: BookMemberOutsider = {
   fundedBy: '9BhkaAybG824w5Hk2A1Np22ZwYN74f6kisJtLEK9C6Ns',
   outsiderConfidence: 'high',
   retiredUtc: '2026-07-06T19:25:32Z',
-  seeAlso: 'the book is unmeasured — kol-cohort-vs-outsider-funding/report.md §8.1, §10.1',
+  seeAlso:
+    'the book is unmeasured here, and measured in slot-zero-bankroll-book-pnl/report.md — kol-cohort-vs-outsider-funding/report.md §8.1, §10.1',
 };
 
 /**

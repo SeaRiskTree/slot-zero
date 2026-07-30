@@ -96,7 +96,7 @@ the report's name and section inline; they are evidence from elsewhere, not repr
 - **The outsider edge is real, thin, and bought.** `5brv79eF…` keeps **+47.8 SOL of +100.9
   gross** over 49 exactly-priced launches — it pays away over half in priority fees, and is
   still the best unaffiliated result in 20,388 wallets. Its outsider status is settled, not
-  presumed — see below.
+  presumed — and bounded by the on-chain ceiling in "The ceiling of the method" below.
 - **Graduation is a curve constant.** 14.70× the initial price, from the curve parameters
   alone — confirmed here empirically on **18 launches whose raw tape window spans the switch
   to the graduated pool**, across dev buys from 3.46 to 56.30 SOL. At the current
@@ -108,6 +108,56 @@ the report's name and section inline; they are evidence from elsewhere, not repr
   −100.0 SOL**, profitable on 2% and 4%.
 - **The deployer takes 4,315 SOL over 228 complete exits** (median +21.66 per launch, gross
   of fees), and is out at a median +13 seconds — long before graduation, every time.
+
+---
+
+## The ceiling of the method: shared custodial venues
+
+Every "unaffiliated" verdict this repo carries is an **on-chain** verdict, and on-chain
+evidence has one blind spot that no further on-chain work removes. It is recorded here once,
+as a stated limit of the method: `src/cohort.ts` and "What is open" below refer here rather
+than restating it.
+
+**The limit.** *If the deployer and an outsider both hold accounts at the same custodial
+venue, on-chain evidence cannot see the relationship.* Named first by
+`kol-cohort-vs-outsider-funding/report.md` §8.2 — "**Custodial walls are walls.**"
+
+**Here it is not hypothetical; it is measured.** The `9BhkaAyb…` book and the operation
+demonstrably hold accounts at the same venue:
+
+- The book's bankroll has a **complete lifetime signature index** walked to genesis — **all
+  4,806 transactions fetched and parsed, zero unresolved**
+  (`slot-zero-bankroll-book-pnl/report.md` §2.1; its later sections are cited bare below).
+  *(The funding report's own §1 table records the same index as 4,802: the two counts are the
+  same index read at different times — §2.1 accounts for the difference — not a conflict.)*
+- Across that complete nine-month life, **before any materiality filter**, **zero** of the
+  4,806 name the deployer or any of the six cohort wallets in any capacity (§5.1). That is one
+  of the two complete sets the negative rests on — the other is the operation's own;
+  `EgQX9R3Q…`'s own index is not one of them. See "Which side each negative is complete on"
+  below, which owns that accounting.
+- Four transactions touch the operation's *custodial endpoints* rather than its wallets, and
+  exactly one of them is above one lamport: on **2026-05-12** the bankroll received
+  **149.999 SOL** from `5tzFkiKscXHK5ZXCGbXZxdw7gTjjD1mBwuoFbhUvuAi9`, a wallet holding
+  ~1.1 million SOL that the deployer also deposits its profits into (§5.2).
+- **That transaction is not evidence of common ownership.** It pays **eight** recipients
+  irregular, user-shaped amounts (0.711940000, 0.291915860, 10.071917000 …) in a single batch
+  signed with a **durable nonce** — an exchange withdrawal processor serving unrelated
+  parties, with seven strangers in the same transaction as the bankroll (§5.2).
+- The other three contacts are **1-lamport address-poisoning spam signed by strangers**, each
+  naming both the bankroll and a large custodial wallet (§5.2). Recorded so a later reader does
+  not rediscover them as signal: they are not.
+
+**The verdicts stand, and this does not widen them** (§5.3). The book is unaffiliated with the
+operation, and so is `5brv79eF…`. What the shared venue adds is the exact reading of the word:
+"unaffiliated" here means *no on-chain relationship, tested on complete sets* — not *provably
+unrelated*. Those are different claims and no on-chain measurement closes the gap.
+
+**It will not be tested.** Naming the venue and asking it would take off-chain enquiry. That
+option was put and **declined** (captain decision 114a, 2026-07-29). So this is a settled
+boundary of the method, not an open question and not a TODO: the ceiling is permanent, and
+every unaffiliated verdict this lab produces is to be read as carrying it.
+
+---
 
 ## What is open
 
@@ -121,23 +171,49 @@ both.** The funding graph this section used to say nobody had built has been bui
 requests.
 
 Neither `5brv79eF…`'s nor `EgQX9R3Q…`'s money touches the deployer or any of the six cohort
-wallets **at any point in either wallet's complete life** (§4.2's complete-signature-set
-matrix; §4.5 fetched and classified 1,504 of the 1,558 non-dust candidates one at a time and
-found no link, using a method shown twice to surface real links when they exist, §4.4). Each
-traces to a distinct, independently characterised funding channel the operation never uses,
-and neither shares a funder or a destination with it (§5).
+wallets, on complete signature sets for the deployer and all six (§4.2's matrix; §4.5 fetched
+and classified 1,504 of the 1,558 non-dust candidates one at a time and found no link, using a
+method shown twice to surface real links when they exist, §4.4). Each traces to a distinct,
+independently characterised funding channel the operation never uses, and neither shares a
+funder or a destination with it (§5).
+
+**Which side each negative is complete on**, because that is what the test rests on and the two
+wallets are not symmetric here. Common to both: the **operation's** side is complete — complete
+signature sets for the deployer and all six cohort wallets, so any transaction between the
+operation and either outsider is necessarily inside them. That alone is sufficient for an
+intersection test, which needs one complete side, not two.
+
+- **`5brv79eF…` is complete on both sides.** Its own complete lifetime signature index was
+  obtained — 347,230 transactions (the funding report's §1 evidence table, alongside the
+  deployer's 157,851 and the cohort's 115,082). What was *not* done is fetching every one of
+  those transactions to characterise its **inflows** (§10.2 item 4, which calls it not
+  warranted because the complete-set tests already cover every transaction it shares with the
+  operation). That is a limit on describing where its money comes from, not a gap in the
+  negative.
+- **`EgQX9R3Q…` is complete on the bankroll side** — the report's own phrase. No complete
+  signature set for the wallet itself exists: its index is ~1,000,000 entries and the walk was
+  abandoned at 550,000 (§10.2 item 2, §9.1). Its negative rests on the operation's complete
+  sets plus the complete set of the `9BhkaAyb…` bankroll that funds it and receives its sweeps
+  — all 4,806 transactions of its nine-month life (`slot-zero-bankroll-book-pnl/report.md`
+  §2.1), zero contact (its §5.1), both via "The ceiling of the method" above.
+  §10.2 item 2 notes that obtaining the wallet's own set would upgrade this to "complete on
+  both".
+
+One set is genuinely truncated and is not used as evidence anywhere: `2CQgjcdN…`'s, at
+2026-07-22 (§8.2). And **both negatives carry the shared-custodial-venue ceiling** recorded
+above; neither is a claim that the parties are provably unrelated.
 
 `5brv79eF…` in particular is exactly what it appeared to be: an unaffiliated, still-running,
 bridge-funded sniper that has taken money out of this operator's launches for four months and
 withdraws to a service the operator never touches (§3.1, §6.2). **It carries no further
-caveat from this evidence.**
+caveat from this evidence** beyond the ceiling every on-chain verdict here carries.
 
 **What this does not say.** Nothing above establishes that the strategy works, or that either
 wallet's edge is repeatable by a new entrant. The funding report answers whose money it is
 and says so itself (its §7 "Explicitly not claimed", §10). Every limit in "The rest" below
 survives it untouched.
 
-### What replaces it: `EgQX9R3Q…` is one wallet of a book, and the book was not measured
+### What replaces it: `EgQX9R3Q…` is one wallet of a book, and this dataset cannot measure the book
 
 `EgQX9R3Q…` is **not an individual trader**. It is one wallet of a sniping book of at least
 five run out of a single bankroll (`9BhkaAyb…`) — and `2CQgjcdN…`, this dataset's own
@@ -162,9 +238,10 @@ about the wallet. *(`launches.csv` `created_utc` joined to `wallet_launch_pnl.cs
 `test/reproduction.test.ts` → "the outsider question, settled". Reading the adjacency as a
 deliberate rotation is inference; the dates are measured.)*
 
-**Any strategy claim resting on `EgQX9R3Q…` must be evaluated at the book level, and the book
-has not been measured.** A separate investigation is measuring it; until it reports, treat
-that wallet's figures as one leg of an unknown total.
+**Any strategy claim resting on `EgQX9R3Q…` must be evaluated at the book level, and this repo
+holds no such measurement.** The book has since been measured by
+`slot-zero-bankroll-book-pnl/report.md`, but importing its figures is another lane's scope; until
+they land here, treat that wallet's figures as one leg of a total this repo does not hold.
 
 The loader encodes this rather than documenting it: `src/cohort.ts` → `SETTLED_OUTSIDERS` is
 a union in which only `IndependentOutsider` has a `wallet`, so filtering a P&L table by
@@ -174,7 +251,8 @@ the book beside it.
 **On the sentence that used to be here.** *"Do not build a strategy on this dataset until
 that question is answered"* is retired, because its stated condition is met. What survives of
 it is narrower and specific: any lane starting from `EgQX9R3Q…` is gated on the book
-measurement; `5brv79eF…` is an existence proof and not a base rate — one wallet out of
+measurement, which exists in `slot-zero-bankroll-book-pnl/report.md` but is not imported here;
+`5brv79eF…` is an existence proof and not a base rate — one wallet out of
 20,388, on an operator selected for being unusual; and the limits in "The rest" below still
 bind. That is a smaller hold than a blanket one, and it is the one the evidence supports.
 
@@ -254,12 +332,14 @@ than merely documented, which is the whole point of the loader. No runtime depen
 
 ## Provenance
 
-The dataset and the findings are the work of four read-only scout investigations, all
-carried out with zero metered provider requests. The population-tape report and its brief
+The dataset and the findings are the work of five read-only scout investigations — the four
+behind the dataset all carried out with zero metered provider requests. The population-tape report and its brief
 are reproduced in full under `data/population-tape-2026-07-29/`. The three companion reports
 — `kol-deployer-entity-cluster` (the operator behind the launches, and the creator-record
 mutability trap), `kol-dev-wallet-sell-side` (the exit-ladder measurement, and the
 Token-2022 and fee-payer method notes) and `kol-cohort-vs-outsider-funding` (the funding
 graph that settles the outsider question above, and the two corrections in
 `data/population-tape-2026-07-29/IMPORT.md`) — are not copied here; the facts from them that
-this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`.
+this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`. A later one,
+`slot-zero-bankroll-book-pnl` (the bankroll's complete transaction set, and the shared
+custodial venue in "The ceiling of the method" above), is likewise not copied here.

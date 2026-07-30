@@ -110,10 +110,11 @@ const _m = launch.nTrades;
 // -- 4. a book member is not an independent observation -----------------------------
 //
 // `EgQX9R3Q…` is a settled outsider (kol-cohort-vs-outsider-funding §4) and one wallet of a
-// sniping book of at least five whose total nobody has measured (its §8.1). Its +47.1 SOL
-// and its book-mate `2CQgjcdN…`'s −12.2 SOL are the same operator's, so reading its address
-// off the union and filtering a P&L table by it produces a number that is one leg of an
-// unknown total. That filter must not be writable by accident.
+// sniping book of at least five whose total this repo does not hold (its §8.1) — the book has
+// since been measured by slot-zero-bankroll-book-pnl/report.md, whose figures are another lane's
+// to import. Its +47.1 SOL and its book-mate `2CQgjcdN…`'s −12.2 SOL are the same operator's, so
+// reading its address off the union and filtering a P&L table by it produces a number that is one
+// leg of a total this dataset cannot see. That filter must not be writable by accident.
 
 declare const outsider: Outsider;
 declare const book: BookMemberOutsider;
@@ -138,7 +139,8 @@ if (outsider.unit === 'wallet') {
   const _ok12: string = outsider.wallet;
 } else {
   const _ok13: string = outsider.oneWalletOfAnUnmeasuredBook;
-  // The book it belongs to, and the measurement nobody has taken, are right beside it.
+  // The book it belongs to, and a pointer to the measurement this repo does not hold, are right
+  // beside it.
   const _ok14: readonly string[] = outsider.bookMates;
   const _ok15: string = outsider.seeAlso;
 }

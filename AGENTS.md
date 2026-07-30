@@ -39,7 +39,8 @@ view:
 3. **`dev_exit_complete = 0`** marks seven window-truncated launches; `DevExitTruncated`
    has no complete net figure, only a pointer to the correct file.
 
-Three data hazards the loader handles and callers must not undo:
+Four data hazards callers must not undo — the first three the loader handles, the fourth is a
+permanent limit of the evidence:
 
 - **Symbols are not unique — key on `mint`.** Two launches are called `maxxing`, one of them
   the operator's best result ever.
@@ -52,6 +53,12 @@ Three data hazards the loader handles and callers must not undo:
   the book member's address unreachable without discriminating; **do not give
   `BookMemberOutsider` a `wallet` field.** Both wallets *are* settled outsiders — the
   question the repo used to be gated on is answered; see `README.md`, "What is open".
+- **"Unaffiliated" here means *no on-chain relationship on complete sets*, never *provably
+  unrelated*.** Shared custodial venues are invisible to on-chain evidence, and this operation
+  and the book demonstrably share one. That ceiling is permanent and off-chain enquiry to test
+  it was declined (captain decision 114a). `README.md` → "The ceiling of the method: shared
+  custodial venues" owns the claim: cite it, do not restate it, and do not let a verdict in a
+  new view read broader than it.
 
 ## pump.fun / Solana provider facts
 

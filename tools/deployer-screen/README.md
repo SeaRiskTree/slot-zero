@@ -35,10 +35,21 @@ An **HTTP 400 exits `7`, not `4`.** A 400 is our query shape, not the vendor's v
 credential; on a tier where keys expire every 30 days, reporting it as a rejected key would send an
 operator to rotate one that works.
 
-A run that stops early still writes its record (`--out`) and still prints it (`--json`), flagged
-`truncated` with a reason, and still exits non-zero. A ceiling hit after fifteen profiles must not
-discard fifteen paid-for measurements — re-spending a shared allowance to learn the same thing is the
-cost being avoided.
+A run that stops early still records what it paid for and still exits non-zero. A ceiling hit after
+fifteen profiles must not discard fifteen paid-for measurements — re-spending a shared allowance to
+learn the same thing is the cost being avoided. Two rules keep that from doing damage of its own:
+
+- **An incomplete run is never rendered as a measured outcome.** The record carries `completed:
+  false`, and the report leads with `!! RUN STOPPED EARLY`. In particular it does **not** print "no
+  candidate cleared the gate … the run completed and every candidate was evaluated" — candidates that
+  were never requested cannot have failed, and an empty ranking that reads as a real negative is the
+  one output this tool exists to make impossible. `completed: true` with
+  `coverage.coverageTruncated: true` is the different, benign case: the run finished, and the
+  candidate cap simply meant it did not gate everything enumeration surfaced.
+- **An incomplete run writes to `<--out>.partial.json`, leaving `<--out>` untouched.** The documented
+  invocation is `--out runs/$(date +%F).json`, so a same-day retry that hits a 401 or a 429 would
+  otherwise overwrite that day's good record with `candidates: []`. Both artefacts survive, because
+  run records are the grading lane's declared input.
 
 ## The credential
 
@@ -105,8 +116,14 @@ limitation, and the enumeration is shaped around what their endpoints actually r
 
 So enumeration runs over `recent-bonds` (best seed — a deployer there is bonding curves *now*),
 `alerts`, and `leaderboard?sort=total_bonded`, and a `--tier` filter is how you reach the population
-the gate is designed for. An untiered run surfaces active spam deployers launching 70 tokens in
-under four days at 1–7% completion; the gate rejects them all, correctly.
+the gate is designed for.
+
+> **Superseded observation, no committed artefact.** An untiered run was seen to surface active spam
+> deployers launching 70 tokens in under four days at 1–7% completion, all of which the gate
+> rejected. That reading came from `runs/2026-07-29-stage1.json`, whose record was **deleted** — its
+> figures were produced by the inert seeds described below, and re-running untiered to re-evidence a
+> side observation was ruled out under the quota bound. So this paragraph is a recollection, not
+> evidence: nothing committed backs it, and it should not be cited as though something did.
 
 **The elite-tier recent-bond feed is `recent-bonds?tier=elite` — a tier filter on the shared feed,
 not a distinct endpoint.** Their OpenAPI v1.17.0 exposes no separate elite path; `tier` is a query

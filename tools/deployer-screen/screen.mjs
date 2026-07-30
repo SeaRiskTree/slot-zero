@@ -21,9 +21,11 @@
  *      rotate a key that is working.
  *   8  Stage 0 validation failed — the screen no longer reproduces what we already know.
  *
- * A run that stops early still writes its record: `--out` is honoured and `--json` still prints,
- * flagged `truncated`, with the non-zero exit preserved. Throwing away fifteen paid-for measurements
- * because the sixteenth request hit the ceiling just spends the shared allowance twice.
+ * A run that stops early still writes its record and `--json` still prints it, flagged
+ * `completed: false`, with the non-zero exit preserved. Throwing away fifteen paid-for measurements
+ * because the sixteenth request hit the ceiling just spends the shared allowance twice. But it is
+ * written to `<--out>.partial.json`, never to the requested path: a same-day retry that dies on a
+ * 401 must not overwrite that day's good record with an empty one.
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -75,7 +77,8 @@ OPTIONS
   --tier <t>          Restrict enumeration to one tier: elite|good|moderate|rising|cold.
   --consistency       Also measure long-horizon consistency for gate survivors, via a keyless
                       pump.fun creator walk. Costs no MadeOnSol quota.
-  --out <path>        Write the run record as JSON. Default: nothing is written.
+  --out <path>        Write the run record as JSON. Default: nothing is written. An INCOMPLETE run
+                      writes <path>.partial.json instead, leaving <path> untouched.
   --json              Print the run record as JSON instead of text.
   --data-dir <path>   Population tape location. Default data/population-tape-2026-07-29.
   --help              This text.
@@ -95,8 +98,9 @@ EXIT CODES
   7 upstream — transport, 5xx, or a 400 our query shape earned. NOT a credential problem.
   8 stage 0 failed
 
-A run that stops early still writes its record (--out) and still prints it (--json), flagged
-truncated, and still exits non-zero. Paid-for measurements are not discarded.
+A run that stops early still records what it paid for and still exits non-zero, but it is labelled
+an incomplete run — never as a measured negative — and it is written to <--out>.partial.json so a
+failed retry cannot destroy a good record.
 `;
 
 /**
@@ -317,6 +321,7 @@ export async function main(opts, env, out, err) {
   const startedAt = Date.now();
   const startedAtIso = new Date(startedAt).toISOString();
   let truncated = false;
+  let completed = true;
   /** @type {string | null} */
   let truncationReason = null;
   /** @type {{ wallet: string, reason: string }[]} */
@@ -445,6 +450,7 @@ export async function main(opts, env, out, err) {
     // completed screen — but it is still WRITTEN and still PRINTED. A ceiling hit after fifteen
     // profiles used to discard fifteen paid-for measurements, which just spends the shared
     // allowance a second time to learn the same thing.
+    completed = false;
     truncated = true;
     truncationReason = cause instanceof Error ? cause.message : String(cause);
     err('');
@@ -457,14 +463,23 @@ export async function main(opts, env, out, err) {
           ? EXIT.ceiling
           : EXIT.upstream;
 
-    emit(buildRecord(), code);
+    emit(code);
     return code;
   }
 
-  emit(buildRecord(), EXIT.ok);
+  emit(EXIT.ok);
   return EXIT.ok;
 
-  /** Assemble the run record. Called on the completed path and on every terminal one. */
+  /**
+   * Assemble the persistable run record and, separately, the ranked candidates.
+   *
+   * They are two return values rather than one object with a field the caller must remember to
+   * strip. `ranked` holds full `Candidate` objects — every gate reason, every measurement — and the
+   * ToS 5a(d) containment is that only {@link toRecordRow}'s projection is ever written. When the
+   * record carried `ranked` and the writer removed it by destructuring, that containment rested on
+   * one line in one caller; anything else that stringified the record would have persisted more than
+   * the asserted field set. Now the record's own shape is the guarantee.
+   */
   function buildRecord() {
     const stats = client.stats();
     const ranked = rankCandidates(candidates);
@@ -476,70 +491,106 @@ export async function main(opts, env, out, err) {
       candidateCap: maxCandidates,
       gated: candidates.length,
     });
+
+    const reasons = [];
+    if (truncationReason !== null) reasons.push(truncationReason);
+    if (coverage.coverageTruncated) {
+      reasons.push(
+        `the candidate cap of ${maxCandidates} dropped ${coverage.droppedByCandidateCap} seeded wallet(s) before they were measured`,
+      );
+    }
+
     return {
-      tool: 'deployer-screen',
-      scope: 'STAGE 1 GATE ONLY — this tool does not recommend. Stage 2 scoring is not built.',
-      thresholdsVersion: T['version'],
-      startedAtIso,
-      finishedAtIso: new Date().toISOString(),
-      keyedRequests: stats.issued,
-      keylessRequests: keyless.issued(),
-      elapsedMs: Date.now() - startedAt,
-      truncated: truncated || coverage.coverageTruncated,
-      truncationReason:
-        truncationReason ??
-        (coverage.coverageTruncated
-          ? `the candidate cap of ${maxCandidates} dropped ${coverage.droppedByCandidateCap} seeded wallet(s) before they were measured`
-          : null),
-      coverage,
-      prefilteredOut: prefiltered,
-      thresholds: { stage1_gate: T['stage1_gate'], budget: T['budget'] },
-      stage0: summariseStage0(stage0),
-      limitations: LIMITATIONS,
       ranked,
-      candidates: ranked.map(toRecordRow),
+      record: {
+        tool: 'deployer-screen',
+        scope: 'STAGE 1 GATE ONLY — this tool does not recommend. Stage 2 scoring is not built.',
+        thresholdsVersion: T['version'],
+        startedAtIso,
+        finishedAtIso: new Date().toISOString(),
+        keyedRequests: stats.issued,
+        keylessRequests: keyless.issued(),
+        elapsedMs: Date.now() - startedAt,
+        // `completed` is whether the run reached the end; `truncated` is whether anything is
+        // missing for any reason. A completed run whose candidate cap bit is truncated but NOT
+        // incomplete, and only the second may be read as a measured outcome.
+        completed,
+        truncated: truncated || coverage.coverageTruncated,
+        truncationReason: reasons.length === 0 ? null : reasons.join('; '),
+        coverage,
+        prefilteredOut: prefiltered,
+        thresholds: { stage1_gate: T['stage1_gate'], budget: T['budget'] },
+        stage0: summariseStage0(stage0),
+        limitations: LIMITATIONS,
+        candidates: ranked.map(toRecordRow),
+      },
     };
   }
 
   /**
    * Render and persist. One path, so `--out` and `--json` behave identically whether the run
-   * finished or stopped early.
+   * finished or stopped early — but an incomplete run is labelled as one and written to a
+   * DIFFERENT file. See {@link partialOutPath}.
    *
-   * @param {ReturnType<typeof buildRecord>} record
    * @param {number} code
    */
-  function emit(record, code) {
-    const { ranked, ...persisted } = record;
+  function emit(code) {
+    const { ranked, record } = buildRecord();
 
-    if (opts.json) out(JSON.stringify(persisted, null, 2));
+    if (opts.json) out(JSON.stringify(record, null, 2));
     else {
       out('');
       out(
         renderStage1({
           candidates: ranked,
-          keyedRequests: persisted.keyedRequests,
-          keylessRequests: persisted.keylessRequests,
-          elapsedMs: persisted.elapsedMs,
+          keyedRequests: record.keyedRequests,
+          keylessRequests: record.keylessRequests,
+          elapsedMs: record.elapsedMs,
           startedAtIso,
-          truncated: persisted.truncated,
-          truncationReason: persisted.truncationReason,
+          completed: record.completed,
+          truncated: record.truncated,
+          truncationReason: record.truncationReason,
           prefiltered: prefiltered.length,
-          coverage: persisted.coverage,
+          coverage: record.coverage,
           thresholds: T['stage1_gate'],
         }),
       );
-      if (code !== EXIT.ok) {
+      if (!record.completed) {
         out('');
         out(`RUN STOPPED EARLY — exit ${code}. The above is an INCOMPLETE run, not a screen.`);
       }
     }
 
     if (opts.out !== null) {
-      mkdirSync(dirname(resolve(opts.out)), { recursive: true });
-      writeFileSync(resolve(opts.out), `${JSON.stringify(persisted, null, 2)}\n`, 'utf8');
-      if (!opts.json) out(`\nrun record written to ${opts.out}`);
+      const target = record.completed ? resolve(opts.out) : partialOutPath(resolve(opts.out));
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+      if (!opts.json) {
+        out(
+          record.completed
+            ? `\nrun record written to ${opts.out}`
+            : `\nINCOMPLETE run record written to ${partialOutPath(opts.out)}` +
+                `\n  (${opts.out} was left untouched — an aborted retry must not destroy a good record)`,
+        );
+      }
     }
   }
+}
+
+/**
+ * Where an incomplete run's record goes.
+ *
+ * A truncated record must never land on the path a complete one would use. The README's own
+ * documented invocation is `--out runs/$(date +%F).json`, so a same-day rerun that dies on a 401 or
+ * a 429 would otherwise overwrite that day's good record with `candidates: []` — and run records are
+ * the grading lane's declared input. Both artefacts have to survive, which is why this is a distinct
+ * name rather than a refusal to write.
+ *
+ * @param {string} path
+ * @returns {string}
+ */
+export function partialOutPath(path) {
+  return path.endsWith('.json') ? `${path.slice(0, -'.json'.length)}.partial.json` : `${path}.partial.json`;
 }
 
 /**

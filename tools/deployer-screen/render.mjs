@@ -6,9 +6,16 @@
  * a ranking read out of context is exactly how a gate becomes a recommendation, and the person most
  * likely to read this output in six months has forgotten which stages were built.
  *
- * That includes the surfaces which show no verdict at all — the dry-run plan and the `--stage0`
- * report. Their omission was an oversight rather than a decision: a reader who sees a request plan
- * naming `elite` deployers has already begun forming a conclusion, and the block costs nothing.
+ * That includes the surfaces which show no verdict at all: {@link renderDryRun} and BOTH halves of
+ * the `--stage0` report, its text here and its JSON in `screen.mjs`. Their omission was an oversight
+ * rather than a decision — a reader who sees a request plan naming `elite` deployers has already
+ * begun forming a conclusion, and the block costs nothing. `--stage0` is the surface a human runs
+ * first, so it was the worst one to be missing it.
+ *
+ * The other honesty this module owns is the difference between a run that **finished** and one that
+ * **died**. `renderStage1` is told which, because "no candidate cleared the gate" is a measured
+ * outcome in the first case and meaningless in the second, and printing the first sentence over the
+ * second state is the single output this tool exists to make impossible.
  */
 
 import { buildPath } from './client.mjs';
@@ -151,6 +158,10 @@ export function renderStage0(r, vendorReadings) {
     for (const f of r.failures) L.push(`  · ${f}`);
   }
   L.push('-'.repeat(78));
+  L.push('');
+  L.push('='.repeat(78));
+  for (const line of LIMITATIONS) L.push(line);
+  L.push('='.repeat(78));
   return L.join('\n');
 }
 
@@ -163,7 +174,11 @@ export function renderStage0(r, vendorReadings) {
  * @param {number} run.keylessRequests
  * @param {number} run.elapsedMs
  * @param {string} run.startedAtIso
- * @param {boolean} run.truncated
+ * @param {boolean} run.completed Whether enumeration and gating ran to the end. **Load-bearing.**
+ *   Two very different things used to share one `truncated` flag: a run that finished but whose
+ *   candidate cap dropped seeded wallets, and a run that died at a request. Only the first may say
+ *   every candidate was evaluated, so the renderer is told which happened rather than guessing.
+ * @param {boolean} run.truncated Either kind of incompleteness.
  * @param {string | null} run.truncationReason
  * @param {number} run.prefiltered
  * @param {import('./seed.mjs').SeedCoverage} run.coverage
@@ -209,20 +224,37 @@ export function renderStage1(run) {
   L.push(`  ${padl(String(cov.droppedByCandidateCap), 4)} dropped by the candidate cap, never measured`);
   L.push(`  ${padl(String(cov.gated), 4)} gated`);
 
-  if (run.truncated || cov.coverageTruncated) {
+  if (!run.completed) {
     L.push('');
-    L.push(`!! RUN TRUNCATED — ${run.truncationReason ?? 'the candidate cap dropped seeded wallets'}`);
-    L.push('   The list below is INCOMPLETE. It is not a negative result, and it is not a screen of');
-    L.push('   everything enumeration found.');
+    L.push(`!! RUN STOPPED EARLY — ${run.truncationReason ?? 'the run did not reach the end'}`);
+    L.push('   THIS IS NOT A SCREEN AND NOT A MEASURED OUTCOME. The run died before it finished, so');
+    L.push('   wallets below this point were never requested and nothing here is a negative result.');
+    L.push('   The record is kept only so the requests already paid for are not spent twice.');
+  } else if (cov.coverageTruncated) {
+    L.push('');
+    L.push(`!! COVERAGE TRUNCATED — ${run.truncationReason ?? 'the candidate cap dropped seeded wallets'}`);
+    L.push('   The run completed and every candidate it gated was evaluated, but it is NOT a screen');
+    L.push('   of everything enumeration found.');
   }
   L.push('');
 
   if (passed.length === 0) {
-    L.push('NO CANDIDATE CLEARED THE GATE.');
-    L.push('');
-    L.push('This is a real measured outcome, not an error — the run completed and every candidate');
-    L.push('was evaluated. If the run had failed instead, it would have exited non-zero and said so');
-    L.push('above. The per-candidate reasons are listed below.');
+    if (run.completed) {
+      L.push('NO CANDIDATE CLEARED THE GATE.');
+      L.push('');
+      L.push('This is a real measured outcome, not an error — the run completed and every candidate');
+      L.push('was evaluated. If the run had failed instead, it would have exited non-zero and said so');
+      L.push('above. The per-candidate reasons are listed below.');
+    } else {
+      // Never the completion language on an aborted run: an empty ranking that reads as a real
+      // negative is the one output this tool exists to make impossible.
+      L.push('NO CANDIDATE HAD CLEARED THE GATE WHEN THE RUN DIED.');
+      L.push('');
+      L.push('THIS IS NOT A NEGATIVE RESULT. The run did not complete, so "nothing cleared the gate"');
+      L.push('here means "the run stopped", not "these deployers are not competent". Candidates that');
+      L.push('were never requested cannot have failed. Resolve the failure above and rerun; the');
+      L.push('screen is stateless.');
+    }
   } else {
     L.push('CLEARED THE GATE — eligible for Stage 2 scoring, which is NOT BUILT');
     L.push('');

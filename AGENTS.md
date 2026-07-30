@@ -145,6 +145,13 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
   1 deploy / 1 bond / rate 1.0 (their `rising` tier), some last active in **May 2024**;
   `sort=total_bonded` DESC is industrial spam (8,518 deployed / 127 bonded = **0.0149**). Seed from
   `recent-bonds` and `alerts` instead, and use `--tier` to reach a usable population.
+- **Those two seeds nest the deployer block under `deployers` — PLURAL — and `recent-bonds` wraps its
+  rows in `tokens`, not `bonds`.** Reading the singular `deployer` extracts **zero wallets while still
+  spending a keyed request**, and it is silent: two committed runs were leaderboard-only pools before
+  anyone noticed. Whatever reads these feeds must report rows *and* wallets per seed, because rows
+  present with wallets zero is the only visible sign that the reader — not the vendor — is wrong.
+- **The elite-tier recent-bond feed is `recent-bonds?tier=elite`**, a `tier` filter on the shared
+  feed (enum `elite|good|moderate|rising|cold`); there is no separate elite endpoint to hunt for.
 - **Free tier only** — ~200 requests/day, ~10/min, **shared** across whatever holds the key, and keys
   expire every 30 days. `/{wallet}/history` is PRO+. Paid tiers are refused standing policy.
 - **ToS §5a(b)/(d) bind us**: internal research only, and no accumulation beyond what is necessary.

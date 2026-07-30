@@ -54,7 +54,13 @@ import {
   slotFromSlotIndexId,
   windowFilter,
 } from '../tools/deployer-screen/pumpfun.mjs';
-import { exitForRefusal, parseArgs, loadThresholds } from '../tools/deployer-screen/screen.mjs';
+import {
+  exitForRefusal,
+  parseArgs,
+  loadThresholds,
+  partialOutPath,
+} from '../tools/deployer-screen/screen.mjs';
+import { LIMITATIONS, renderStage1 } from '../tools/deployer-screen/render.mjs';
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
 
@@ -1003,6 +1009,88 @@ describe('the CLI contract', () => {
     expect(b.maxCandidates).toBeLessThanOrEqual(20);
     expect(b.keyedMinIntervalMs).toBeGreaterThanOrEqual(6_000); // Free tier bursts at ~10/min
     expect(b.keylessMinIntervalMs).toBeGreaterThanOrEqual(2_000); // measured pump.fun pacing
+  });
+});
+
+describe('an incomplete run can never read as a measured negative', () => {
+  const render = (o: { completed: boolean; candidates?: unknown[]; coverageTruncated?: boolean }) =>
+    renderStage1({
+      candidates: (o.candidates ?? []) as never,
+      keyedRequests: 4,
+      keylessRequests: 0,
+      elapsedMs: 1000,
+      startedAtIso: '2026-07-29T00:00:00.000Z',
+      completed: o.completed,
+      truncated: !o.completed || (o.coverageTruncated ?? false),
+      truncationReason: o.completed ? 'the candidate cap dropped 8 seeded wallet(s)' : 'HTTP 429 — rate-limited',
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 20,
+        prefilteredOut: 0,
+        worthARequest: 20,
+        candidateCap: 12,
+        droppedByCandidateCap: o.coverageTruncated ? 8 : 0,
+        gated: o.candidates?.length ?? 0,
+        coverageTruncated: o.coverageTruncated ?? false,
+      },
+      thresholds: {},
+    });
+
+  const COMPLETION_CLAIM = /the run completed and every candidate/;
+
+  it('does NOT claim completion when the run died with nothing passing', () => {
+    const text = render({ completed: false });
+    // The exact prohibited output: an empty ranking that reads as a real negative result.
+    expect(text).not.toMatch(COMPLETION_CLAIM);
+    expect(text).not.toMatch(/This is a real measured outcome/);
+    expect(text).toMatch(/RUN STOPPED EARLY/);
+    expect(text).toMatch(/NOT A NEGATIVE RESULT/);
+    // It must name why, and say the unrequested wallets cannot have failed.
+    expect(text).toMatch(/429/);
+    expect(text).toMatch(/never requested cannot have failed/);
+  });
+
+  it('still claims completion when the run genuinely completed with nothing passing', () => {
+    const text = render({ completed: true });
+    expect(text).toMatch(/NO CANDIDATE CLEARED THE GATE\./);
+    expect(text).toMatch(COMPLETION_CLAIM);
+    expect(text).not.toMatch(/RUN STOPPED EARLY/);
+  });
+
+  it('separates a capped-coverage run from an aborted one', () => {
+    // A completed run whose candidate cap bit is truncated but NOT incomplete: every candidate it
+    // gated really was evaluated. Conflating the two is what produced the false claim.
+    const capped = render({ completed: true, coverageTruncated: true });
+    expect(capped).toMatch(/COVERAGE TRUNCATED/);
+    expect(capped).toMatch(/The run completed and every candidate it gated was evaluated/);
+    expect(capped).not.toMatch(/RUN STOPPED EARLY/);
+
+    const aborted = render({ completed: false, coverageTruncated: true });
+    expect(aborted).toMatch(/RUN STOPPED EARLY/);
+    expect(aborted).not.toMatch(/COVERAGE TRUNCATED/);
+    expect(aborted).not.toMatch(COMPLETION_CLAIM);
+  });
+
+  it('carries the limitation block whether or not the run finished', () => {
+    for (const completed of [true, false]) {
+      expect(render({ completed })).toContain(LIMITATIONS[0] as string);
+    }
+  });
+
+  it('writes an incomplete record beside the good one, never over it', () => {
+    // The documented invocation is --out runs/$(date +%F).json, so a same-day retry that dies on a
+    // 401 must not overwrite that day's good record with candidates: [].
+    expect(partialOutPath('runs/2026-07-29.json')).toBe('runs/2026-07-29.partial.json');
+    expect(partialOutPath('/abs/path/run.json')).toBe('/abs/path/run.partial.json');
+    // No .json extension to replace — append rather than mangle the name.
+    expect(partialOutPath('runs/record')).toBe('runs/record.partial.json');
+    // Whatever the input, the result is never the input.
+    for (const p of ['runs/2026-07-29.json', '/abs/path/run.json', 'runs/record']) {
+      expect(partialOutPath(p)).not.toBe(p);
+      expect(partialOutPath(p).endsWith('.partial.json')).toBe(true);
+    }
   });
 });
 

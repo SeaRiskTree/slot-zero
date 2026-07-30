@@ -363,7 +363,7 @@ real lead time, independence of the actors, and realised profit reported as a di
 rate. **This tool measures none of the last three.** A high completion rate does not imply a
 profitable entry, and we hold the counterexample rather than the worry: our subject deployer
 completes 43% of its launches and its create-slot window has been unprofitable for outsiders since
-2026-06-04 (`data/slot-zero-june-regime-change/report.md` §5, §6.1).
+2026-06-04 (`slot-zero-june-regime-change/report.md` §5, §6.1).
 
 The rate is computed over roughly 35 days and about 70 tokens. It is a **recency** measure, not a
 lifetime record. Long-horizon consistency is reported **UNMEASURED** unless `--consistency` is

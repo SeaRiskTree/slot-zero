@@ -337,7 +337,7 @@ JSDoc types so it runs on the Node 20 floor with no build step; `tsc --noEmit` c
 
 ## Provenance
 
-The dataset and the findings are the work of five read-only scout investigations — the four
+The dataset and the findings are the work of six read-only scout investigations — the four
 behind the dataset all carried out with zero metered provider requests. The population-tape report and its brief
 are reproduced in full under `data/population-tape-2026-07-29/`. The three companion reports
 — `kol-deployer-entity-cluster` (the operator behind the launches, and the creator-record
@@ -345,6 +345,8 @@ mutability trap), `kol-dev-wallet-sell-side` (the exit-ladder measurement, and t
 Token-2022 and fee-payer method notes) and `kol-cohort-vs-outsider-funding` (the funding
 graph that settles the outsider question above, and the two corrections in
 `data/population-tape-2026-07-29/IMPORT.md`) — are not copied here; the facts from them that
-this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`. A later one,
+this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`. Two later ones,
 `slot-zero-bankroll-book-pnl` (the bankroll's complete transaction set, and the shared
-custodial venue in "The ceiling of the method" above), is likewise not copied here.
+custodial venue in "The ceiling of the method" above) and `slot-zero-june-regime-change` (the
+create slot's unprofitability for outsiders since 2026-06-04, and the *operation's share of the
+curve's bottom* method that `tools/deployer-screen/` cites), are likewise not copied here.

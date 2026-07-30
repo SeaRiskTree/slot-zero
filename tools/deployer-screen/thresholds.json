@@ -79,7 +79,7 @@
       "Nothing in the shipped tool consumes this block, and no verdict depends on it.",
       "",
       "What stage 2 will do: score a gate survivor on how much of its opening window the deployer",
-      "and its own wallets take — the method of data/slot-zero-june-regime-change/report.md 5.1,",
+      "and its own wallets take — the method of slot-zero-june-regime-change/report.md 5.1,",
       "'the operation's share of the curve's bottom'. Keyless, from pump.fun fills.",
       "",
       "The interface it consumes is already built, validated and regression-tested here:",

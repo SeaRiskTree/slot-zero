@@ -9,7 +9,7 @@
  *   deployer completes 43% of its launches — genuinely good, and it clears every threshold here
  *   comfortably — while its opening window has been unprofitable for outsiders since 2026-06-04,
  *   because the operation's own group takes 97% of the profit available there
- *   (`data/slot-zero-june-regime-change/report.md` §6.1). A completion-rate ranking would have
+ *   (`slot-zero-june-regime-change/report.md` §6.1). A completion-rate ranking would have
  *   put that wallet first.
  * - Stage 0 makes that concrete: it asserts the gate **passes** the one deployer we already know
  *   is not worth the time. A gate that could not do that would be hiding the limitation instead

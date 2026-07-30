@@ -107,7 +107,7 @@ export function parseFill(raw) {
 /**
  * Measure how much of a launch's opening window the deployer and its own wallets take.
  *
- * This is the method of `data/slot-zero-june-regime-change/report.md` §5.1 — *the operation's
+ * This is the method of `slot-zero-june-regime-change/report.md` §5.1 — *the operation's
  * share of the curve's bottom* — and the reason it can be pointed at a stranger is the
  * co-ordination rule:
  *

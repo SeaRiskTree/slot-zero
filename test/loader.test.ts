@@ -228,21 +228,46 @@ describe('the raw window tape', () => {
 
 // --------------------------------------------------------------------------------
 
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SRC_DIR = fileURLToPath(new URL('../src/', import.meta.url));
 
+/**
+ * Every source file under `src/`, recursively.
+ *
+ * The recursion is deliberate and was added when `tools/deployer-screen/` introduced the repo's
+ * first network client. The guarantee below is now a *boundary* — `src/` is keyless, `tools/` is
+ * where a credential is allowed to exist — and a boundary that only checked the top level of
+ * `src/` would be satisfied by a `src/net/client.ts` that nothing scanned. Nothing about the
+ * intent changed; the scan simply reaches everywhere it always claimed to.
+ *
+ * The other half of the boundary is asserted in `test/deployer-screen.test.ts`: the network tool
+ * may not import from `src/`, `src/` may not import from `tools/`, and only two named modules
+ * under `tools/` may call `fetch`.
+ */
 function readSources(): Map<string, string> {
   const out = new Map<string, string>();
-  for (const f of readdirSync(SRC_DIR)) {
-    if (f.endsWith('.ts')) out.set(`src/${f}`, readFileSync(join(SRC_DIR, f), 'utf8'));
-  }
+  const walk = (dir: string, prefix: string) => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full, `${prefix}${entry}/`);
+      else if (entry.endsWith('.ts')) out.set(`${prefix}${entry}`, readFileSync(full, 'utf8'));
+    }
+  };
+  walk(SRC_DIR, 'src/');
   return out;
 }
 
 describe('this repo does not reach the network and reads no credential', () => {
+  it('scans every source file, at every depth', () => {
+    // A guard that silently scanned nothing would pass every assertion below.
+    const files = readSources();
+    expect(files.size).toBeGreaterThanOrEqual(7);
+    expect([...files.keys()]).toContain('src/index.ts');
+  });
+
   it('no source file performs a network call', () => {
     // The spend bound is structural, not a promise. Everything the loader needs is on
     // disk; nothing in src/ may open a socket.

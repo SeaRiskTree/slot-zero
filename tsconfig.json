@@ -13,7 +13,11 @@
     "verbatimModuleSyntax": true,
     "isolatedModules": true,
     "skipLibCheck": true,
+    // tools/ is JavaScript so the screen runs on the Node 20 floor with no build step.
+    // checkJs holds it to the same strict settings as src/ via JSDoc types.
+    "allowJs": true,
+    "checkJs": true,
     "noEmit": true
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "tools"]
 }

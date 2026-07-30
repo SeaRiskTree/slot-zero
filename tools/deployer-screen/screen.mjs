@@ -1,0 +1,541 @@
+#!/usr/bin/env node
+/**
+ * deployer-screen — a rerunnable completion-rate GATE over MadeOnSol's free Deployer Hunter
+ * endpoints. No agent required: `node tools/deployer-screen/screen.mjs --help`.
+ *
+ * **This tool gates. It does not recommend.** See README.md for the scope statement and
+ * `thresholds.json` → `stage2_seam` for what is deliberately not built.
+ *
+ * Exit codes are distinct on purpose, because the worst failure mode for a screen is an empty
+ * result that looks like a real negative:
+ *
+ *   0  ran to completion. A ranking was produced, possibly with zero survivors — which is a
+ *      measured outcome and is labelled as one.
+ *   2  usage error.
+ *   3  credential missing or malformed.
+ *   4  credential rejected (401/403) — on Free tier, most likely expired.
+ *   5  quota exhausted or rate-limited (429).
+ *   6  a request ceiling was reached before the run completed.
+ *   7  upstream or transport failure.
+ *   8  Stage 0 validation failed — the screen no longer reproduces what we already know.
+ */
+
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
+import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
+import { measureCompletion, toTokenRecords } from './measure.mjs';
+import { KeylessClient, readCreatorHistory } from './pumpfun.mjs';
+import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
+import { renderDryRun, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
+import { buildSeedPlan, extractWallets, mergeSeeds, prefilterReason } from './seed.mjs';
+import { VENDOR_READINGS, runStage0 } from './stage0.mjs';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(HERE, '..', '..');
+const DEFAULT_DATA_DIR = join(REPO_ROOT, 'data', 'population-tape-2026-07-29');
+
+const EXIT = {
+  ok: 0,
+  usage: 2,
+  credentialMissing: 3,
+  credentialRejected: 4,
+  quota: 5,
+  ceiling: 6,
+  upstream: 7,
+  stage0: 8,
+};
+
+const USAGE = `deployer-screen — completion-rate gate over MadeOnSol's free Deployer Hunter endpoints
+
+  node tools/deployer-screen/screen.mjs [options]
+
+MODES
+  --stage0            Run only the local validation. No network, no key, no quota. Always safe.
+  --dry-run           Print exactly what a real run would fetch, and fetch nothing.
+  (default)           Run Stage 0, then Stage 1 (enumerate + gate). Stage 0 must pass first.
+
+OPTIONS
+  --candidates <n>    Max deployers to gate. Default and ceiling from thresholds.json.
+  --max-requests <n>  Hard keyed-request ceiling. Cannot exceed the pinned budget.
+  --tier <t>          Restrict enumeration to one tier: elite|good|moderate|rising|cold.
+  --consistency       Also measure long-horizon consistency for gate survivors, via a keyless
+                      pump.fun creator walk. Costs no MadeOnSol quota.
+  --out <path>        Write the run record as JSON. Default: nothing is written.
+  --json              Print the run record as JSON instead of text.
+  --data-dir <path>   Population tape location. Default data/population-tape-2026-07-29.
+  --help              This text.
+
+CREDENTIAL
+  Reads ${KEY_ENV_VAR} from the environment. Never printed, never logged, never written to disk,
+  and never stored in this repository. Free-tier keys expire every 30 days; a rejected key exits 4
+  with a specific message rather than an empty result.
+
+      export ${KEY_ENV_VAR}="$(your-secret-manager read madeonsol)"
+      # or, from a dotenv file kept OUTSIDE this repo:
+      set -a; . /path/to/.env; set +a
+
+EXIT CODES
+  0 ok (possibly zero survivors — a measured outcome)   2 usage   3 no credential
+  4 credential rejected   5 quota   6 ceiling reached   7 upstream   8 stage 0 failed
+`;
+
+/**
+ * @param {readonly string[]} argv
+ * @returns {{ ok: true, opts: Options } | { ok: false, message: string }}
+ */
+export function parseArgs(argv) {
+  /** @type {Options} */
+  const opts = {
+    stage0Only: false,
+    dryRun: false,
+    candidates: null,
+    maxRequests: null,
+    tier: undefined,
+    consistency: false,
+    out: null,
+    json: false,
+    dataDir: DEFAULT_DATA_DIR,
+    help: false,
+  };
+
+  const TIERS = ['elite', 'good', 'moderate', 'rising', 'cold'];
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    /** @returns {string | null} */
+    const next = () => {
+      const v = argv[i + 1];
+      if (v === undefined || v.startsWith('--')) return null;
+      i += 1;
+      return v;
+    };
+
+    switch (arg) {
+      case '--help':
+      case '-h':
+        opts.help = true;
+        break;
+      case '--stage0':
+        opts.stage0Only = true;
+        break;
+      case '--dry-run':
+        opts.dryRun = true;
+        break;
+      case '--consistency':
+        opts.consistency = true;
+        break;
+      case '--json':
+        opts.json = true;
+        break;
+      case '--candidates': {
+        const v = next();
+        const n = v === null ? Number.NaN : Number(v);
+        if (!Number.isInteger(n) || n < 1) return { ok: false, message: '--candidates needs a positive integer' };
+        opts.candidates = n;
+        break;
+      }
+      case '--max-requests': {
+        const v = next();
+        const n = v === null ? Number.NaN : Number(v);
+        if (!Number.isInteger(n) || n < 1) return { ok: false, message: '--max-requests needs a positive integer' };
+        opts.maxRequests = n;
+        break;
+      }
+      case '--tier': {
+        const v = next();
+        if (v === null || !TIERS.includes(v)) {
+          return { ok: false, message: `--tier must be one of ${TIERS.join('|')}` };
+        }
+        opts.tier = v;
+        break;
+      }
+      case '--out': {
+        const v = next();
+        if (v === null) return { ok: false, message: '--out needs a path' };
+        opts.out = v;
+        break;
+      }
+      case '--data-dir': {
+        const v = next();
+        if (v === null) return { ok: false, message: '--data-dir needs a path' };
+        opts.dataDir = v;
+        break;
+      }
+      default:
+        return { ok: false, message: `unknown option '${String(arg)}'` };
+    }
+  }
+
+  return { ok: true, opts };
+}
+
+/**
+ * @typedef {object} Options
+ * @property {boolean} stage0Only
+ * @property {boolean} dryRun
+ * @property {number | null} candidates
+ * @property {number | null} maxRequests
+ * @property {string | undefined} tier
+ * @property {boolean} consistency
+ * @property {string | null} out
+ * @property {boolean} json
+ * @property {string} dataDir
+ * @property {boolean} help
+ */
+
+/** @returns {Record<string, any>} */
+export function loadThresholds() {
+  return JSON.parse(readFileSync(join(HERE, 'thresholds.json'), 'utf8'));
+}
+
+/**
+ * @param {Options} opts
+ * @param {Record<string, string | undefined>} env
+ * @param {(line: string) => void} out
+ * @param {(line: string) => void} err
+ * @returns {Promise<number>} Process exit code.
+ */
+export async function main(opts, env, out, err) {
+  if (opts.help) {
+    out(USAGE);
+    return EXIT.ok;
+  }
+
+  const T = loadThresholds();
+  const gateThresholds = {
+    minTokens: T['stage1_gate'].minTokens,
+    minCompletionRate: T['stage1_gate'].minCompletionRate,
+    minSpanDays: T['stage1_gate'].minSpanDays,
+  };
+  const budget = T['budget'];
+
+  // ---- Stage 0. Always runs. Nothing keyed happens until it has passed. -------------------
+  /** @type {import('./stage0.mjs').Stage0Result} */
+  let stage0;
+  try {
+    stage0 = runStage0(opts.dataDir, gateThresholds);
+  } catch (cause) {
+    err(`Stage 0 could not run: ${cause instanceof Error ? cause.message : String(cause)}`);
+    err(`  Is --data-dir correct? Tried: ${opts.dataDir}`);
+    return EXIT.stage0;
+  }
+
+  if (!opts.json) out(renderStage0(stage0, VENDOR_READINGS));
+
+  if (!stage0.passed) {
+    err('');
+    err('Refusing to spend quota: Stage 0 failed, so the screen no longer reproduces the answers');
+    err('we already hold. Fix the drift before pointing it at strangers.');
+    return EXIT.stage0;
+  }
+
+  if (opts.stage0Only) {
+    if (opts.json) out(JSON.stringify({ stage0: summariseStage0(stage0) }, null, 2));
+    return EXIT.ok;
+  }
+
+  // ---- Plan ------------------------------------------------------------------------------
+  const maxCandidates = Math.min(opts.candidates ?? budget.maxCandidates, budget.maxCandidates);
+  const maxKeyed = Math.min(opts.maxRequests ?? budget.maxKeyedRequests, budget.maxKeyedRequests);
+  const seedPlan = buildSeedPlan({
+    limit: Math.min(50, Math.max(maxCandidates, 10)),
+    ...(opts.tier === undefined ? {} : { tier: opts.tier }),
+  });
+
+  const resolution = resolveKey(env);
+
+  if (opts.dryRun) {
+    out('');
+    out(
+      renderDryRun({
+        seedPlan,
+        maxCandidates,
+        maxKeyedRequests: maxKeyed,
+        consistency: opts.consistency,
+        maxKeylessRequests: budget.maxKeylessRequests,
+        keyDescription: resolution.ok ? resolution.description : null,
+      }),
+    );
+    return EXIT.ok;
+  }
+
+  if (!resolution.ok) {
+    err('');
+    err(`CREDENTIAL PROBLEM — no deployer was screened, and this is NOT a negative result.`);
+    err('');
+    err(resolution.message);
+    return EXIT.credentialMissing;
+  }
+
+  // ---- Stage 1 ---------------------------------------------------------------------------
+  const startedAt = Date.now();
+  const startedAtIso = new Date(startedAt).toISOString();
+  let truncated = false;
+  /** @type {string | null} */
+  let truncationReason = null;
+  /** @type {{ wallet: string, reason: string }[]} */
+  let prefiltered = [];
+
+  const client = new BoundedClient({
+    key: resolution.key,
+    maxRequests: maxKeyed,
+    minIntervalMs: budget.keyedMinIntervalMs,
+    onRequest: (path, attempt) => {
+      if (!opts.json) out(`  → GET ${path}${attempt > 0 ? ` (retry ${attempt})` : ''}`);
+    },
+  });
+
+  const keyless = new KeylessClient({
+    maxRequests: budget.maxKeylessRequests,
+    minIntervalMs: budget.keylessMinIntervalMs,
+    onRequest: (url) => {
+      if (!opts.json) out(`  → GET ${url}`);
+    },
+  });
+
+  /** @type {import('./rank.mjs').Candidate[]} */
+  const candidates = [];
+
+  try {
+    if (!opts.json) {
+      out('');
+      out('STAGE 1 — enumerating candidates from the free leaderboard endpoints');
+    }
+
+    /** @type {{ label: string, wallets: import('./seed.mjs').ExtractedWallet[] }[]} */
+    const seedResults = [];
+    for (const entry of seedPlan) {
+      const body = await client.getJson(entry.path, entry.query);
+      seedResults.push({ label: entry.label, wallets: extractWallets(body) });
+    }
+
+    // Pre-filter before spending a request. This reads the vendor's trailing-window counters and
+    // can only ever SKIP a wallet; it never touches a rate, a verdict or an output number.
+    const merged = mergeSeeds(seedResults);
+    /** @type {{ wallet: string, reason: string }[]} */
+    const skipped = [];
+    /** @type {import('./seed.mjs').SeedCandidate[]} */
+    const worthARequest = [];
+    for (const seed of merged) {
+      const reason = prefilterReason(seed);
+      if (reason === null) worthARequest.push(seed);
+      else skipped.push({ wallet: seed.wallet, reason });
+    }
+
+    if (!opts.json) {
+      out(`  ${merged.length} distinct wallets seeded`);
+      out(`  ${skipped.length} skipped before spending a request (vendor trailing count too low)`);
+      out(`  gating the first ${Math.min(worthARequest.length, maxCandidates)} of ${worthARequest.length}`);
+      out('');
+    }
+    prefiltered = skipped;
+
+    for (const seed of worthARequest.slice(0, maxCandidates)) {
+      const profile = await client.getJson(`/deployer-hunter/${encodeURIComponent(seed.wallet)}`);
+      const { records, capped } = toTokenRecords(profile);
+      const completion = measureCompletion(records);
+      const gate = applyGate({ completion, capped }, gateThresholds);
+      const { verdict, rationale } = verdictFor({ gate, completion, capped });
+
+      candidates.push({
+        wallet: seed.wallet,
+        seededBy: seed.seededBy,
+        completion,
+        completionCapped: capped,
+        gate,
+        verdict,
+        rationale,
+        consistency: null,
+      });
+    }
+
+    // Optional keyless consistency pass, survivors only.
+    if (opts.consistency) {
+      if (!opts.json) {
+        out('');
+        out('CONSISTENCY — keyless pump.fun creator walk for gate survivors (no quota cost)');
+      }
+      for (const c of candidates) {
+        if (c.verdict !== 'gate-passed') continue;
+        try {
+          const { records } = await readCreatorHistory(keyless, c.wallet, 3);
+          c.consistency = measureConsistency(records, T['consistency_over_time']);
+        } catch (cause) {
+          c.consistency = {
+            state: 'unmeasured',
+            epochs: 0,
+            minEpochRate: Number.NaN,
+            maxEpochRate: Number.NaN,
+            dispersion: Number.NaN,
+            streaky: false,
+            note: `keyless walk failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          };
+        }
+      }
+    }
+  } catch (cause) {
+    // Every terminal path below exits non-zero, so a partial list can never be mistaken for a
+    // completed screen.
+    if (cause instanceof VendorRefused) {
+      err('');
+      err(cause.message);
+      emitPartial(candidates, out, opts, 'the vendor refused the request');
+      return cause.kind === 'quota-exhausted' ? EXIT.quota : EXIT.credentialRejected;
+    }
+    if (cause instanceof CeilingReached) {
+      truncated = true;
+      truncationReason = cause.message;
+      err('');
+      err(cause.message);
+      emitPartial(candidates, out, opts, cause.message);
+      return EXIT.ceiling;
+    }
+    err('');
+    err(`Upstream failure: ${cause instanceof Error ? cause.message : String(cause)}`);
+    emitPartial(candidates, out, opts, 'an upstream failure');
+    return EXIT.upstream;
+  }
+
+  const ranked = rankCandidates(candidates);
+  const stats = client.stats();
+  const record = {
+    tool: 'deployer-screen',
+    scope: 'STAGE 1 GATE ONLY — this tool does not recommend. Stage 2 scoring is not built.',
+    thresholdsVersion: T['version'],
+    startedAtIso,
+    finishedAtIso: new Date().toISOString(),
+    keyedRequests: stats.issued,
+    keylessRequests: keyless.issued(),
+    elapsedMs: Date.now() - startedAt,
+    truncated,
+    truncationReason,
+    prefilteredOut: prefiltered,
+    thresholds: { stage1_gate: T['stage1_gate'], budget: T['budget'] },
+    stage0: summariseStage0(stage0),
+    limitations: LIMITATIONS,
+    candidates: ranked.map(toRecordRow),
+  };
+
+  if (opts.json) out(JSON.stringify(record, null, 2));
+  else {
+    out('');
+    out(
+      renderStage1({
+        candidates: ranked,
+        keyedRequests: stats.issued,
+        keylessRequests: keyless.issued(),
+        elapsedMs: record.elapsedMs,
+        startedAtIso,
+        truncated,
+        truncationReason,
+        prefiltered: prefiltered.length,
+        thresholds: T['stage1_gate'],
+      }),
+    );
+  }
+
+  if (opts.out !== null) {
+    mkdirSync(dirname(resolve(opts.out)), { recursive: true });
+    writeFileSync(resolve(opts.out), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+    if (!opts.json) out(`\nrun record written to ${opts.out}`);
+  }
+
+  return EXIT.ok;
+}
+
+/**
+ * Project a candidate onto the row that may be persisted.
+ *
+ * **This is the ToS clause 5a(d) containment, implemented rather than promised.** What survives a
+ * run is a derived statistic: five numbers and a verdict per wallet. What does not survive is every
+ * per-token record the numbers were computed from — no mint, no token name, no symbol, no market
+ * cap, no bond time, no per-token row of any kind. Roughly 70 vendor records per wallet are read,
+ * reduced, and dropped when the process exits.
+ *
+ * The wallet address is ours to keep: it is public on-chain data, not vendor data. The counts and
+ * the rate are our computation. Nothing here can reconstruct any part of their database.
+ *
+ * @param {import('./rank.mjs').Candidate} c
+ */
+function toRecordRow(c) {
+  return {
+    wallet: c.wallet,
+    seededBy: c.seededBy,
+    tokens: c.completion.tokens,
+    completed: c.completion.completed,
+    completionRate: Number.isFinite(c.completion.rate) ? Number(c.completion.rate.toFixed(6)) : null,
+    spanDays: Number(c.completion.spanDays.toFixed(2)),
+    windowFirstDeploy: c.completion.firstDeployIso,
+    windowLastDeploy: c.completion.lastDeployIso,
+    vendorPageCapped: c.completionCapped,
+    verdict: c.verdict,
+    rationale: c.rationale,
+    gateReasons: c.gate.reasons,
+    consistency: c.consistency,
+  };
+}
+
+/** @param {import('./stage0.mjs').Stage0Result} s */
+function summariseStage0(s) {
+  return {
+    passed: s.passed,
+    failures: s.failures,
+    groundTruth: {
+      tokens: s.groundTruth.tokens,
+      completed: s.groundTruth.completed,
+      rate: Number(s.groundTruth.rate.toFixed(6)),
+      spanDays: Number(s.groundTruth.spanDays.toFixed(2)),
+    },
+    subjectVerdict: s.subjectVerdict.verdict,
+    subjectVerdictMeaning:
+      'The gate PASSES our subject deployer, whose opening window is known to be unprofitable for ' +
+      'outsiders since 2026-06-04. Passing this gate does not mean a deployer is worth the time.',
+    curveInversionMaxErrorSol: s.curveCheck.maxAbsErrorSol,
+    stage2SeamReproduction: s.eraSplit.map((e) => ({
+      era: e.era,
+      n: e.n,
+      operationShareMeasured: Number(e.operationShareMedian.toFixed(4)),
+      operationSharePublished: e.publishedOperationShare,
+    })),
+  };
+}
+
+/**
+ * @param {readonly import('./rank.mjs').Candidate[]} candidates
+ * @param {(line: string) => void} out
+ * @param {Options} opts
+ * @param {string} why
+ */
+function emitPartial(candidates, out, opts, why) {
+  if (candidates.length === 0) return;
+  if (opts.json) return;
+  out('');
+  out(`PARTIAL RESULT — ${candidates.length} candidate(s) were gated before ${why}.`);
+  out('This is an incomplete run, not a screen. Do not read it as one.');
+  for (const c of rankCandidates(candidates)) {
+    out(`  ${c.wallet}  ${c.verdict}  ${c.completion.completed}/${c.completion.tokens}`);
+  }
+}
+
+// --- entry point ---------------------------------------------------------------------------
+// `import.meta.main` is not available on the Node 20 floor, so compare argv[1] instead.
+const invokedDirectly =
+  process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+
+if (invokedDirectly) {
+  const parsed = parseArgs(process.argv.slice(2));
+  if (!parsed.ok) {
+    process.stderr.write(`${parsed.message}\n\n${USAGE}`);
+    process.exit(EXIT.usage);
+  }
+  const code = await main(
+    parsed.opts,
+    process.env,
+    (line) => process.stdout.write(`${line}\n`),
+    (line) => process.stderr.write(`${line}\n`),
+  );
+  process.exit(code);
+}

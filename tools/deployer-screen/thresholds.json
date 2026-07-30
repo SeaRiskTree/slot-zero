@@ -1,65 +1,46 @@
 {
   "$comment": [
-    "PINNED SCREEN PARAMETERS. Written before the screen was run against any stranger wallet.",
-    "Every number here is anchored to a measurement that already exists in this repository or in",
-    "a committed scout report, and the anchor is named in `justification`. Do not move a value to",
-    "fit an output. If a value must change, change it here, say why in the PR, and re-run Stage 0",
-    "first: a screen that no longer reproduces the one answer we already know is not ready to",
-    "judge strangers. tools/deployer-screen/SCREEN.md is the long-form version of this file."
+    "PINNED SCREEN PARAMETERS. Written before the screen was run against any stranger wallet, and",
+    "committed in their own commit so the ordering is the audit trail. Every number is anchored to a",
+    "measurement that already exists in this repository or in a committed scout report, and the",
+    "anchor is named in `justification`. Do not move a value to fit an output. If a value must",
+    "change, change it here, say why in the PR, and re-run Stage 0 first: a screen that no longer",
+    "reproduces the answers we already know is not ready to judge strangers.",
+    "SCOPE: this tool GATES. It does not recommend. See `stage2_seam`."
   ],
-  "version": "1.0.0",
+  "version": "2.0.0",
   "pinnedAt": "2026-07-29",
 
   "stage1_gate": {
     "$comment": [
       "Keyed, MadeOnSol, one request per candidate. A GATE, not a score: it asks whether a",
-      "deployer is competent, which is necessary and nowhere near sufficient. The denominator is",
-      "`profile.pump_tokens[].complete` and nothing else — never `bonding_rate`, `total_bonded`,",
-      "`total_tokens_deployed`, `recent_bond_rate`, `recent_outcomes` or `best_token_peak_mc`, all",
-      "of which are trailing windows or stale, and never /deployer-hunter/{wallet}/tokens, which",
-      "is bonded-only and so has no denominator at all."
+      "deployer is competent, which is necessary and nowhere near sufficient. Stage 0 demonstrates",
+      "the gap empirically — it shows the gate PASSING the one deployer we know is not worth the",
+      "time.",
+      "The denominator is `profile.pump_tokens[].complete` and nothing else. Never `bonding_rate`,",
+      "`total_bonded`, `total_tokens_deployed`, `recent_bond_rate`, `recent_outcomes` or",
+      "`best_token_peak_mc`, which are trailing windows or stale; and never",
+      "/deployer-hunter/{wallet}/tokens, which is bonded-only and so has no denominator at all."
     ],
     "completionRateSource": "profile.pump_tokens[].complete",
     "minTokens": 25,
     "minCompletionRate": 0.25,
     "minSpanDays": 14,
     "justification": {
-      "minTokens": "MadeOnSol's own spec tells consumers to gate on labeled_tokens >= 3. That is far too low: on our subject deployer a 22-token window read 0.6818 against a true 0.4310, so a window of ~22 was enough to be wrong by 58% relative. 25 is the floor at which the vendor's own sliding-window artefact stops being the whole measurement, and it is 8x their published gate. It is NOT enough for a lifetime claim, which is why the rate is a gate and the span is reported.",
+      "minTokens": "MadeOnSol's own spec tells consumers to gate on labeled_tokens >= 3. That is far too low: on our subject deployer a 22-token window read 0.6818 against a true 0.4310, so a window of ~22 was enough to be wrong by 58% relative. 25 is the floor at which their sliding-window artefact stops being the whole measurement, and it is 8x their published gate. It is NOT enough for a lifetime claim, which is why the span is reported alongside and why long-horizon consistency is reported UNMEASURED.",
       "minCompletionRate": "0.25 is MadeOnSol's own published 'good' tier lifetime bar. Our subject deployer's true lifetime rate is 0.4310 (239 launches, 103 bonded) and it is a genuinely competent operator, so a bar meaningfully below that admits the population we care about while excluding deployers that mostly fail.",
-      "minSpanDays": "A high rate earned inside a single day is a burst, not a record. 14 days is the shortest span over which pump.fun's own time-to-bond distribution puts a majority of eventual graduations behind us: on our tape 82.5% of graduations occur within 7 days and 85.4% within 14."
-    }
-  },
-
-  "stage2_score": {
-    "$comment": [
-      "Keyless, pump.fun, the actual recommendation. Reproduces the method of",
-      "data/slot-zero-june-regime-change/report.md §5.1: the operation's share of the curve's",
-      "bottom = (dev buy + co-ordinated stake) / (dev buy + all create-slot stake). Co-ordination",
-      "is detected structurally, not from any wallet list: a single transaction carrying two or",
-      "more distinct swapping wallets is a bundle, and independent traders cannot share a",
-      "transaction. Verified to recover our subject's known six-wallet cohort without being told",
-      "who it is — see SCREEN.md, Stage 0."
-    ],
-    "metric": "roomLeft = 1 - median(operationShareOfCurveBottom)",
-    "minRoomLeft": 0.55,
-    "minLaunchesSampled": 8,
-    "maxLaunchesSampled": 12,
-    "coordinationRule": "a create-slot transaction carrying >= 2 distinct swapping wallets marks every wallet in it as co-ordinated",
-    "justification": {
-      "minRoomLeft": "Anchored on the only regime this project has ever MEASURED as profitable for create-slot outsiders. June report §5.1: operation share was 0.451 before 2026-06-04 (room 0.549) and 0.768 after (room 0.232). §6.1: outsiders in the create slot took +6.54 SOL per launch before, +1.79 after, and outsiders entering later went from +5.43 to -0.74. So room >= 0.55 is the pre-step regime and nothing tighter has ever been observed to pay. This threshold deliberately REJECTS our own subject deployer, which is the point of Stage 0.",
-      "minLaunchesSampled": "8 launches is the smallest sample whose median is not one launch's accident, at a per-launch cost of 1-3 keyless requests. Below 8 the candidate is reported as UNSCORED rather than scored, because a thin median here would be read as a recommendation.",
-      "maxLaunchesSampled": "12 caps the keyless spend per candidate. The June report measured sustainable keyless pacing at roughly 0.5 requests/second with one request in flight; 12 launches x up to 3 pages is ~36 requests, about 70 seconds per candidate."
+      "minSpanDays": "A high rate earned inside a single day is a burst, not a record. 14 days is the shortest span over which pump.fun's own time-to-bond distribution puts a large majority of eventual graduations behind us: on our tape 82.5% of graduations occur within 7 days and 85.4% within 14."
     }
   },
 
   "consistency_over_time": {
     "$comment": [
       "The captain's word was 'consistently'. MadeOnSol cannot answer it: their only",
-      "denominator-complete surface (profile.pump_tokens) is capped at 70 records and about 35",
-      "days. Manufacturing a long-horizon claim from a 35-day window is exactly the defect we",
-      "found in their own aggregate, so the tool does not do it. Long-horizon consistency is",
-      "reported as UNMEASURED unless --consistency is passed, which runs a keyless pump.fun",
-      "creator walk on stage-2 survivors only."
+      "denominator-complete surface (profile.pump_tokens) is capped at 70 records and about 35 days.",
+      "Manufacturing a long-horizon claim from a 35-day window is exactly the defect we found in",
+      "their own aggregate, so the tool does not do it. Long-horizon consistency is reported as",
+      "UNMEASURED unless --consistency is passed, which pages a keyless pump.fun creator listing and",
+      "spends no quota."
     ],
     "default": "UNMEASURED",
     "optIn": "--consistency",
@@ -68,26 +49,59 @@
     "epochDays": 30,
     "maxDispersion": 0.35,
     "justification": {
-      "epochDays": "30-day epochs are long enough that a prolific deployer's epoch is not one week of luck and short enough that a 6-month history yields the 3 epochs required.",
-      "maxDispersion": "max(epoch rate) - min(epoch rate) > 0.35 flags a deployer as STREAKY rather than excluding it. A flag, not a filter: the whole point of the exercise is that one hot window must not read as a record, and the reader is entitled to see the spread rather than have it silently applied."
+      "epochDays": "30-day epochs are long enough that an epoch is not one week of luck, and short enough that a 6-month history yields the 3 required.",
+      "maxDispersion": "max(epoch rate) - min(epoch rate) > 0.35 FLAGS a deployer as streaky rather than excluding it. A flag, not a filter: the point of the exercise is that one hot window must not read as a record, and the reader is entitled to see the spread rather than have it silently applied."
     }
   },
 
   "budget": {
     "$comment": [
-      "Hard bounds. The key is the captain's own and its Free-tier allowance (about 200",
-      "requests/day, 10/minute) is SHARED. Every ceiling here is enforced in code, and there is no",
-      "flag that disables one."
+      "Hard bounds, enforced in code. There is no flag that disables one. The key is the captain's",
+      "own and its Free-tier allowance (about 200 requests/day, 10/minute) is SHARED with whatever",
+      "else holds it."
     ],
     "maxKeyedRequests": 45,
-    "maxKeylessRequests": 400,
+    "maxKeylessRequests": 200,
     "maxCandidates": 20,
     "keyedMinIntervalMs": 6500,
     "keylessMinIntervalMs": 2000,
     "justification": {
       "maxKeyedRequests": "Enumeration costs 3 (one leaderboard page per sort key) and the gate costs 1 per candidate, so 20 candidates cost 23. The 45 ceiling leaves headroom for a retry and a second enumeration page while staying under a quarter of the shared daily allowance.",
-      "keyedMinIntervalMs": "Free tier bursts at ~10/minute. 6.5s between request starts keeps a run under that with margin, and margin matters because the allowance is shared with whatever else holds this key.",
-      "keylessMinIntervalMs": "The June report measured sustainable keyless pump.fun pacing at ~0.5 requests/second with one request in flight; batching and concurrency were both measured harmful. 2000ms is that pacing with margin."
+      "keyedMinIntervalMs": "Free tier bursts at ~10/minute. 6.5s between request starts keeps a run under that with margin, and margin matters because the allowance is shared.",
+      "keylessMinIntervalMs": "The June report measured sustainable keyless pump.fun pacing at ~0.5 requests/second with one request in flight, and found batching and concurrency both actively harmful. 2000ms is that pacing with margin. Only the optional --consistency pass uses it."
+    }
+  },
+
+  "stage2_seam": {
+    "$comment": [
+      "NOT ACTIVE. Deliberately unbuilt in this lane and reserved for a fresh worker. These values",
+      "are recorded because they were derived and validated here, not because anything reads them.",
+      "Nothing in the shipped tool consumes this block, and no verdict depends on it.",
+      "",
+      "What stage 2 will do: score a gate survivor on how much of its opening window the deployer",
+      "and its own wallets take — the method of data/slot-zero-june-regime-change/report.md 5.1,",
+      "'the operation's share of the curve's bottom'. Keyless, from pump.fun fills.",
+      "",
+      "The interface it consumes is already built, validated and regression-tested here:",
+      "  measure.mjs  measureCreateSlot(fills) -> CreateSlotMeasurement",
+      "  measure.mjs  solBetweenPrices(from, to) -> SOL added to the curve between two prices",
+      "  measure.mjs  parseFill / pumpfun.mjs parseFillLoose -> Fill",
+      "  stage0.mjs   measureSubjectLaunches(dataDir) -> per-launch CreateSlotMeasurement",
+      "Stage 0 asserts that measureCreateSlot reproduces the published 5.1 era split to within",
+      "0.02, so the next lane inherits a proven primitive rather than a description of one.",
+      "",
+      "Two further dimensions are specified but NOT built here, each its own lane: the exit trap",
+      "(when the dev sells relative to mint and to outsider inflow, whether the trigger is a SIZE",
+      "and therefore caps position size, and whether an outsider could have exited first) and the",
+      "prediction-grading loop (a dated immutable record per run so a later run can grade the",
+      "screen's own hit rate). Entry room and exit feasibility must be scored SEPARATELY and never",
+      "collapsed into one number."
+    ],
+    "active": false,
+    "reservedMinRoomLeft": 0.55,
+    "reservedMinLaunchesSampled": 8,
+    "reservedJustification": {
+      "reservedMinRoomLeft": "Anchored on the only regime this project has MEASURED as profitable for create-slot outsiders. June report 5.1 puts the operation's share of the curve's bottom at 0.451 before 2026-06-04 (room 0.549) and 0.768 after (room 0.232); 6.1 puts create-slot outsiders at +6.54 then +1.79 SOL per launch, and later entrants at +5.43 then -0.74. So room >= 0.55 is the pre-step regime and nothing tighter has ever been observed to pay. Recorded, not applied."
     }
   }
 }

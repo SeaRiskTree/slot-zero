@@ -14,10 +14,19 @@ what is established and what is open.
 - CI is `.github/workflows/ci.yml` (PRs and pushes to `main`): `npm ci` then `npm test` on
   Node 20 — the `engines` floor, not the dev box's version. That is the whole check set on
   purpose; there is no lint script and no coverage, audit or matrix gate to satisfy.
-- **Nothing in this repo may reach the network or read a credential.** Enforced structurally
-  by `test/loader.test.ts` → "this repo does not reach the network and reads no credential",
-  which greps `src/` for sockets, `process.env` and key-shaped strings. Keep it that way; the
-  entire dataset was built keyless and its value depends on staying reproducible offline.
+- **`src/` may never reach the network or read a credential.** Enforced structurally by
+  `test/loader.test.ts` → "this repo does not reach the network and reads no credential", which
+  scans `src/` **recursively** for sockets, `process.env` and key-shaped strings. Keep it that
+  way; the entire dataset was built keyless and its value depends on staying reproducible offline.
+- **The one network-capable area is `tools/`, and the boundary is the directory.** `tools/deployer-screen/`
+  holds a keyed MadeOnSol client; `test/deployer-screen.test.ts` asserts the other half of the
+  boundary — no imports across `src/`↔`tools/`, only `client.mjs`/`pumpfun.mjs` may call `fetch`,
+  only `credential.mjs`/`screen.mjs` may name `MADEONSOL_API_KEY`, and no file there may contain a
+  key-shaped string. Duplicated curve constants between `src/index.ts` and
+  `tools/deployer-screen/measure.mjs` are this boundary's deliberate cost — do not "fix" them by
+  importing across it.
+- `tools/` is plain `.mjs` with JSDoc types so it runs on the Node 20 floor with no build step;
+  `tsconfig.json` covers it with `allowJs`+`checkJs`, so `tsc --noEmit` type-checks it too.
 
 ## The dataset
 
@@ -113,6 +122,34 @@ Learned at real cost; the citations are to
   `getTransaction` — the tape report §9.4's "separate buckets" did not hold, and two
   concurrent jobs earned a sustained 429 lockout. Sustainable: one process, batches of 5–8
   `getTransaction`, ~1.4 s between requests.
+
+## MadeOnSol Deployer Hunter facts
+
+Measured 2026-07-29 against our own ground truth. Long form and reproduction in
+`tools/deployer-screen/README.md`; the screen itself is `node tools/deployer-screen/screen.mjs`.
+
+- **Their per-token records are trustworthy; every aggregate they publish is not.**
+  `profile.pump_tokens` agreed with our tape **67/67 exactly** on the completion flag with no
+  in-window launch missing. But `bonding_rate` / `total_bonded` / `total_tokens_deployed` are a
+  trailing **~7.5-day** window their own alert text calls "lifetime": read 22/15/0.6818 and then
+  20/13/0.6500 two hours later, against a ground truth of 239/103/**0.4310**. It **slid and shrank**
+  while the deployer launched again, which is how we know it is a time window and not a count.
+- **`GET /deployer-hunter/{wallet}/tokens` is BONDED-ONLY, so it has no denominator.** 100 records
+  fetched for our subject: 98 in our graduated set, **zero** of our 136 failed launches, `total: 101`
+  against our 103 bonded, and `only_bonded=true` returns the identical total (the flag is a no-op).
+  `bonded/total` from it is **1.0000 for every deployer alive**. Never compute a completion rate from
+  it; use `profile.pump_tokens`, which carries both outcomes.
+- **The spec lies about that endpoint's limit.** `?limit=100` returns **HTTP 400**; the real cap is
+  **50**. Their OpenAPI document declares **no response schemas at all**, so shapes are discovered.
+- **The free leaderboard's extremes are both degenerate.** `sort=bonding_rate` DESC is wallets with
+  1 deploy / 1 bond / rate 1.0 (their `rising` tier), some last active in **May 2024**;
+  `sort=total_bonded` DESC is industrial spam (8,518 deployed / 127 bonded = **0.0149**). Seed from
+  `recent-bonds` and `alerts` instead, and use `--tier` to reach a usable population.
+- **Free tier only** — ~200 requests/day, ~10/min, **shared** across whatever holds the key, and keys
+  expire every 30 days. `/{wallet}/history` is PRO+. Paid tiers are refused standing policy.
+- **ToS §5a(b)/(d) bind us**: internal research only, and no accumulation beyond what is necessary.
+  The screen derives and discards — per-token records live in memory for one run; only derived counts
+  are ever written, and only with `--out`. Test fixtures are synthetic, never captured payloads.
 
 ## Maintaining this file
 

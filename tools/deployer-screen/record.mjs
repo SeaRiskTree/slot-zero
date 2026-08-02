@@ -139,7 +139,14 @@ const BASE58_SHAPED = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g;
  * `swap-api.pump.fun/v2/coins/<MINT>/trades` straight into `coverage.dropNotes` and out to `--out`.
  * The committed-record test only forbade mint-shaped *keys*, so a mint inside a sentence passed it.
  *
- * Applied to every free-text field a record persists. Structured fields are not passed through it —
+ * **Applied to named fields, not to every free-text field a record persists.** Covered today: the
+ * entry half's `rationale`, `caveats` and `dropNotes` (`stage2.mjs` → `toEntryRecordRow`); the gate
+ * half's `rationale`, `gateReasons` and `consistency.note` (`screen.mjs` → `toRecordRow`); and the
+ * run-level `truncationReason`. NOT covered: `creation.listingUnmeasuredNote`, `creation.stopDetail`
+ * and the run-level `unmeasured[]` array — whose `detail` this same file documents below as
+ * embedding a per-wallet URL. That is a known pre-existing gap left to a separate containment lane,
+ * not an oversight; `README.md` → "Nothing vendor-derived survives in a note, either" owns the long
+ * form, so read it before adding a note field. Structured fields are not passed through it —
  * a candidate's own `wallet` is public on-chain data we deliberately keep, and it is stored as a
  * field precisely so it is never confused with an incidental one.
  *

@@ -432,8 +432,8 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
   cannot leave.
 - **Everything Stage 2 measures about profit is gross of fees and therefore an upper bound**, so
   its field leg can only ever *veto* a verdict, never earn one. The counterexample is on our own
-  subject: 76.5% of post-break closed round trips are positive gross, and the same population is
-  not worth trading fee-inclusive.
+  subject: 76.3% of post-break closed round trips are positive gross (351 / 460), and the same
+  population is not worth trading fee-inclusive.
 - **Every P&L here is bounded by a 60-second window** (300 s on 21 launches, 120 s on 4).
   48% of pairs close inside it; the other 52% are late, small and still holding, and their
   outcome is unknown. A whole-life tape is the same endpoint with no window bound — roughly

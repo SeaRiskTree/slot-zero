@@ -38,18 +38,28 @@ beforeAll(() => {
  * Launches whose raw window tape contains the moment trading moved from the bonding curve
  * to the graduated PumpSwap pool, with the last curve price before that switch — and, since
  * the switch is visible on the tape, **the only launches whose graduation time this repo
- * knows exactly**. Everything in `IMPORT.md` corrections 4, 6 and 7 is measured off these.
+ * knows to within a second without a fetch**. Everything in `IMPORT.md` corrections 4, 6 and
+ * 7 is measured off these.
  */
 interface GraduationSpan {
+  /** The key. Symbols are not unique in this dataset — two launches are called `Sol`. */
+  readonly mint: string;
   readonly symbol: string;
   readonly lastCurvePrice: number;
   readonly priceDevbuy: number;
   readonly devSolIn: number;
-  /** Seconds from the mint to the first `pump_amm` fill. Exact, not the `curveLastTxS` proxy. */
+  /**
+   * Seconds from the mint to the first `pump_amm` fill, at the tape's one-second resolution:
+   * a *tight* upper bound on the migration instant rather than the `curveLastTxS` proxy's
+   * loose one. The residual error runs the conservative way — a bond earlier than the first
+   * pool fill only widens the proxy's overshoot — so every ratio below still holds.
+   */
   readonly graduatedAtS: number;
   /** `curve_last_tx_s` for the same launch — the proxy correction 4 disqualifies as a timing. */
   readonly curveLastTxS: number | null;
-  /** `dev_zero_s`, or null on the seven large-buy launches whose exit is outside the window. */
+  /** `dev_exit_complete`: false on the seven large-buy launches whose exit is outside the window. */
+  readonly devExitComplete: boolean;
+  /** `dev_zero_s`, which is itself nullable on a complete exit — see `devExitComplete`. */
   readonly devZeroS: number | null;
   /** Venue of the deployer's last sell inside the window; null when it makes none. */
   readonly lastDevSellVenue: 'pump' | 'pump_amm' | null;
@@ -85,12 +95,14 @@ function graduationSpanningWindows(): readonly GraduationSpan[] {
     const first = trades[firstPool] as (typeof trades)[number];
     const devSells = trades.filter((t) => t.wallet === DEPLOYER && t.side === 'sell');
     out.push({
+      mint: l.mint,
       symbol: l.symbol,
       lastCurvePrice,
       priceDevbuy: l.priceDevbuy,
       devSolIn,
       graduatedAtS: (Date.parse(first.ts) - meta.createdTimestamp) / 1000,
       curveLastTxS: l.curveLastTxS,
+      devExitComplete: l.dev.complete,
       devZeroS: l.dev.complete ? l.dev.zeroS : null,
       lastDevSellVenue:
         devSells.length === 0
@@ -640,6 +652,29 @@ describe('graduation is a curve constant (report §3.5)', () => {
  * elsewhere and nothing below depends on them.
  */
 describe('graduation timing (report §3.5, IMPORT.md corrections 4-7)', () => {
+  /**
+   * The launches these corrections name, by mint. Symbols are not unique in this dataset —
+   * `Trump` and `Sol` each occur twice in `launches.csv` — so every assertion below keys on
+   * mint and carries the symbol only as the human-readable half of the expected value.
+   */
+  const MINT = {
+    Bullieve: '7Gs7gFKec9xPQgoX4LnkaHMcUwHatdiRcwfUQ97Hpump',
+    Bulls: '3ySgaPqYE2XWsepKi6drYFnKhzsa4MUFPNk1uomepump',
+    Float: 'V2ZjLZT5cCfLZXUukcG72Xz1BxSPMyD6FPtgg58pump',
+    Lockin: '6DoLTBDEsvDswhUo6HwXPH5kDhY85k9x3pC7g6KVpump',
+    Milly: 'FKeaJZ1nKME7uhkC1bUFGHUg33C52uLVH5bVMTetpump',
+    Trump: 'AXWqvGRy7q4e4xpZY1F3N7fjfZ1QgiY3weZCLxefpump',
+    float: 'Cw8pzbFogvkryGDS8fZkjFrVueaur1taynqRu1rtpump',
+    Dummy: '3BhUv3FtuuqBgM1n6yYEhEvQ78dpdR99v4frjmXUpump',
+    Lala: '3ujG4J8UVbyi5Kke7cZVe3qRirnbQvnAup9TtmBdpump',
+    Slap: 'EDbFTcQsdezqk1HNxnciwbVYPFWovz6ibZgUVp59pump',
+    Sol: '7333nQt9wsxqaYipXdC96Jq3wNZZpVoFf4tiFraEpump',
+    papoi: 'AxshJi4UveAFeB7gz1XJmPbqQz86mLSSGTLJKyrNpump',
+    大坏蛋: 'FjLbCT5pj246VsQmJ5fj4za7nULWQPv5cwipFKmJpump',
+    TruthGPT: '99hKZwdnirySMKgsiM5obGiMuU5sSEpLoaB7GBZepump',
+    Fox: 'C34Zcw52YyAsVcBfFhmaVpsGnHKEPZQHg2pqujdspump',
+  } as const;
+
   /** The proxy over truth, with truth floored at 1 s — `Lockin` and `Trump` bond at +0 s. */
   const overshoot = (s: { curveLastTxS: number | null; graduatedAtS: number }): number =>
     (s.curveLastTxS as number) / Math.max(s.graduatedAtS, 1);
@@ -658,7 +693,7 @@ describe('graduation timing (report §3.5, IMPORT.md corrections 4-7)', () => {
     expect(ratios.filter((r) => r > 100)).toHaveLength(10);
 
     const worst = spans.reduce((a, b) => (overshoot(a) > overshoot(b) ? a : b));
-    expect(worst.symbol).toBe('Bullieve');
+    expect([worst.mint, worst.symbol]).toEqual([MINT.Bullieve, 'Bullieve']);
     expect(worst.graduatedAtS).toBe(1);
     expect(worst.curveLastTxS).toBe(1_036_042); // six orders of magnitude, not five
   });
@@ -666,8 +701,15 @@ describe('graduation timing (report §3.5, IMPORT.md corrections 4-7)', () => {
   it('the six launches §3.5 names are not a 0-70% validation of the proxy (correction 4)', () => {
     // §10.6's "six checks" are unidentified; these are the six §3.5 names, and the proxy's
     // error on them runs 22% to 1,505,160%.
-    const named = ['Dummy', 'Lala', 'Slap', 'Sol', 'papoi', '大坏蛋'];
-    const six = graduationSpanningWindows().filter((s) => named.includes(s.symbol));
+    const named: readonly string[] = [
+      MINT.Dummy,
+      MINT.Lala,
+      MINT.Slap,
+      MINT.Sol,
+      MINT.papoi,
+      MINT.大坏蛋,
+    ];
+    const six = graduationSpanningWindows().filter((s) => named.includes(s.mint));
     expect(six).toHaveLength(6);
     const errors = six.map((s) => overshoot(s) - 1).sort((a, b) => a - b);
     expect(errors.filter((e) => e <= 0.7)).toHaveLength(2); // Lala 0.22, 大坏蛋 0.47
@@ -694,9 +736,19 @@ describe('graduation timing (report §3.5, IMPORT.md corrections 4-7)', () => {
 
     // The seven large-buy launches (§3.6): they bond inside 8 seconds having sold nothing at
     // all, which is what dev_exit_complete = 0 records. No chain reconstruction needed.
-    const largeBuy = spans.filter((s) => s.devZeroS === null);
-    expect(largeBuy.map((s) => s.symbol).sort()).toEqual(
-      ['Bullieve', 'Bulls', 'Float', 'Lockin', 'Milly', 'Trump', 'float'].sort(),
+    const largeBuy = spans.filter((s) => !s.devExitComplete);
+    const byMint = (a: readonly unknown[], b: readonly unknown[]) =>
+      (a[0] as string) < (b[0] as string) ? -1 : 1;
+    expect(largeBuy.map((s) => [s.mint, s.symbol]).sort(byMint)).toEqual(
+      [
+        [MINT.Bullieve, 'Bullieve'],
+        [MINT.Bulls, 'Bulls'],
+        [MINT.Float, 'Float'],
+        [MINT.Lockin, 'Lockin'],
+        [MINT.Milly, 'Milly'],
+        [MINT.Trump, 'Trump'],
+        [MINT.float, 'float'],
+      ].sort(byMint),
     );
     for (const s of largeBuy) {
       expect(s.graduatedAtS, s.symbol).toBeLessThanOrEqual(8);
@@ -710,22 +762,26 @@ describe('graduation timing (report §3.5, IMPORT.md corrections 4-7)', () => {
 
     // The three ordinary stakes where the sniper flood alone completed the curve. On each the
     // deployer's last sell in the window executes in the graduated pool, not on the curve.
-    const early = spans.filter((s) => s.devZeroS !== null && s.graduatedAtS <= s.devZeroS);
+    const early = spans.filter(
+      (s) => s.devExitComplete && s.devZeroS !== null && s.graduatedAtS <= s.devZeroS,
+    );
     expect(
       early
-        .map((s) => [s.symbol, s.graduatedAtS, s.devZeroS])
-        .sort((a, b) => (a[1] as number) - (b[1] as number)),
+        .map((s) => [s.mint, s.symbol, s.graduatedAtS, s.devZeroS])
+        .sort((a, b) => (a[2] as number) - (b[2] as number)),
     ).toEqual([
-      ['TruthGPT', 3, 42],
-      ['Sol', 5, 17],
-      ['Fox', 10, 47],
+      [MINT.TruthGPT, 'TruthGPT', 3, 42],
+      [MINT.Sol, 'Sol', 5, 17],
+      [MINT.Fox, 'Fox', 10, 47],
     ]);
     for (const s of early) expect(s.lastDevSellVenue, s.symbol).toBe('pump_amm');
 
     expect(largeBuy.length + early.length).toBe(10);
 
     // The other eight bond after the exit, and there the last deployer sell is on the curve.
-    const after = spans.filter((s) => s.devZeroS !== null && s.graduatedAtS > s.devZeroS);
+    const after = spans.filter(
+      (s) => s.devExitComplete && s.devZeroS !== null && s.graduatedAtS > s.devZeroS,
+    );
     expect(after).toHaveLength(8);
     for (const s of after) expect(s.lastDevSellVenue, s.symbol).toBe('pump');
   });
@@ -749,10 +805,9 @@ describe('graduation timing (report §3.5, IMPORT.md corrections 4-7)', () => {
 
     // …and yet TruthGPT, whose exit is the 0.156 low end of that same range, had bonded 39
     // seconds earlier. Keyed on mint, not symbol — two launches here are called `Sol`.
-    const truthGptMint = '99hKZwdnirySMKgsiM5obGiMuU5sSEpLoaB7GBZepump';
-    const truthGpt = complete.find((l) => l.mint === truthGptMint);
+    const truthGpt = complete.find((l) => l.mint === MINT.TruthGPT);
     expect((truthGpt?.priceDevZero as number) / graduationPrice).toBeCloseTo(0.156, 3);
-    const span = graduationSpanningWindows().find((s) => s.symbol === 'TruthGPT');
+    const span = graduationSpanningWindows().find((s) => s.mint === MINT.TruthGPT);
     expect(span?.graduatedAtS).toBe(3);
     expect(span?.devZeroS).toBe(42);
   });

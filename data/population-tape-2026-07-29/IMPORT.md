@@ -88,7 +88,8 @@ across, and what is re-derivable in this repo is asserted in `test/reproduction.
    upper-bound proxy" for graduation and §10.6 quotes "a validated error of 0–70 % on six checks".
    Against the 103 directly measured graduation times the overshoot ratio (proxy ÷ truth, with the
    truth floored at 1 s because two launches bond at +0 s) runs **p25 1.48 · median 8.85 · p75 126 ·
-   p90 1,934 · p95 11,994**, with **32 of 102 within 2× and 27 over 100×** — re-derived here by
+   p90 1,934 · p95 11,994**, with **32 of 102 within 2× and 27 over 100×** — 102 and not 103 because
+   `maxxing` carries no `curve_last_tx_s` (correction 5) — re-derived here by
    joining the bond-timing report's Appendix A to this directory's `launches.csv`, reproducing its
    §4.1 to rounding. The cause is `report.md` §9.1's own finding seen from the other side:
    `getSignaturesForAddress` keeps returning *referencing* transactions — bot sweeps that move no
@@ -102,7 +103,10 @@ across, and what is re-derivable in this repo is asserted in `test/reproduction.
    as a third undershoot although the ratio is exactly 1.000×.
 
    **This directory proves it on its own files, with no fetch,** on the 18 launches whose window tape
-   spans the migration and whose graduation time is therefore exact (correction 7). The proxy
+   spans the migration and whose graduation time is therefore known to the second — the first
+   `pump_amm` fill, itself a *tight* upper bound rather than the migration instant exactly, and one
+   that errs the conservative way: a bond earlier than that fill only widens the overshoot, so every
+   ratio below is a floor and the figures stand (correction 7). The proxy
    overshoots on **all 18**, from **1.22×** (`Lala`, +245 s true against +300 s proxy) to
    **1,036,042×** (`Bullieve`, **+1 s true against +1,036,042 s proxy**); 2 of 18 land within 2× and
    10 of 18 are over 100×. Two things fall out that the bond-timing report did not state: `Bullieve` is

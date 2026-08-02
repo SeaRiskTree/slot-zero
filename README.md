@@ -175,7 +175,7 @@ the report's name and section inline; they are evidence from elsewhere, not repr
   alone — confirmed here empirically on **18 launches whose raw tape window spans the switch
   to the graduated pool**, across dev buys from 3.46 to 56.30 SOL. At the current
   14.8148-SOL preset that is 6.59× the deployer's entry, and the median launch never gets
-  there (median lifetime ATH 5.08×). `report.md` §244 puts the deployer's finishing sale at
+  there (median lifetime ATH 5.08×). `report.md` §3.5 puts the deployer's finishing sale at
   **~35% of graduation on the dev-buy basis** — the 6.5856× multiple of its own entry price,
   which holds for the standard preset only.
 - **Somebody is already running the fast-reacting-bot strategy, and it is the largest loser
@@ -317,12 +317,16 @@ funder or a destination with it (§5).
 
 **And then the answer stopped being worth anything on this deployer.** The positive result the
 question was gating is a create-slot result, and the create slot on `7ufmve7Z…` closed to outsiders
-on 2026-06-04 — see "The one window, and what closed it" above. Neither rotated out: at the tape's
-end the wallet `5brv79eF…` was still trading this deployer on a collapsed return (0.576 → 0.196
-gross ROI), and so was the `9BhkaAyb…` book that `EgQX9R3Q…` belongs to, measured as the one unit
-its five wallets are (0.540 → 0.097). *(`analysis/window-population/README.md` §6.3 — the second
-row is a book aggregate, not one wallet's observation.)* So the settled outsider status is a fact
-about who those wallets are, and no
+on 2026-06-04 — see "The one window, and what closed it" above. **Neither unit rotated out when the
+seat closed; both went on trading this deployer across the break, on a collapsed return.** The
+wallet `5brv79eF…` — its own unit — went **0.576 → 0.196** gross ROI, and its 97 launches here run
+from 2026-03-14 to the tape's final launch on 2026-07-28. The `9BhkaAyb…` book that `EgQX9R3Q…`
+belongs to went **0.540 → 0.097** measured as the one unit its five wallets are, and its whole
+post-break leg on this deployer is the book-mate `2CQgjcdN…` (62 launches, 2026-05-26 onward) —
+**not `EgQX9R3Q…`**, whose own last launch here is 2026-05-25, before the break.
+*(`analysis/window-population/README.md` §6.3 — the second row is a book aggregate, not one
+wallet's observation. Dates: `wallet_launch_pnl.csv` joined to `launches.csv` `created_utc`.)*
+So the settled outsider status is a fact about who those wallets are, and no
 part of it says the seat they sat in is still there.
 
 **Which side each negative is complete on**, because that is what the test rests on and the two

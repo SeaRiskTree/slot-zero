@@ -46,7 +46,8 @@
 import { CeilingReached } from './client.mjs';
 import { measureLaunchEntry, scoreEntry } from './entry.mjs';
 import { toLaunchRefs } from './measure.mjs';
-import { readLaunchWindow } from './pumpfun.mjs';
+import { KeylessHttpError, readLaunchWindow } from './pumpfun.mjs';
+import { redactAll, redactVendorIdentifiers } from './record.mjs';
 
 /**
  * @typedef {object} Stage2Thresholds
@@ -59,6 +60,8 @@ import { readLaunchWindow } from './pumpfun.mjs';
  * @property {number} maxRequestsPerLaunch
  * @property {number} tradePageLimit
  * @property {number} windowMs
+ * @property {number} seekMarginMs
+ * @property {number} windowSlotSpan
  * @property {number} maxKeylessRequests
  * @property {readonly number[]} [keylessRetryBackoffMs]
  */
@@ -88,9 +91,6 @@ import { readLaunchWindow } from './pumpfun.mjs';
  * @property {number} launchesUsable       Windows walked back past the mint.
  * @property {number} launchesDropped      Windows dropped for incomplete coverage.
  * @property {Stage2DropReasons} dropsByReason  The same total, broken out by cause.
- * @property {number} windowsWithUnseenTail Measured windows whose fills stop short of the full slot
- *   window. Not a drop — a quiet launch and a mint time that seeks early look the same from the
- *   tape — but reported, because a systematic version of it undercounts the field.
  * @property {number} requestsIssued
  * @property {boolean} stoppedForBudget    Whether the stage ceiling ended the walk early.
  * @property {string[]} dropNotes          One line per dropped window, so a drop is never silent.
@@ -153,6 +153,25 @@ export function emptyDropReasons() {
 }
 
 /**
+ * Describe a failed launch walk **without repeating anything the vendor told us.**
+ *
+ * A drop note is persisted, and this client's URLs carry the mint, so `cause.message` is not
+ * usable here: `HTTP 400 on https://swap-api.pump.fun/v2/coins/<MINT>/trades?…` would put a
+ * vendor-derived token address into a run record and break the containment
+ * {@link toEntryRecordRow} claims. {@link KeylessHttpError} carries its status as a field for
+ * exactly this reason, and anything else is reduced to its constructor name — which is the part
+ * that identifies the failure, and the only part that cannot be carrying an identifier.
+ *
+ * @param {unknown} cause
+ * @returns {string}
+ */
+export function describeTransportFailure(cause) {
+  if (cause instanceof KeylessHttpError) return `HTTP ${cause.status}`;
+  if (cause instanceof Error) return cause.name === '' ? 'an unnamed error' : cause.name;
+  return 'a non-Error throw';
+}
+
+/**
  * Score one candidate's entry room and field.
  *
  * The unusable-window rule is the load-bearing one: a window that could not be walked back to the
@@ -186,7 +205,6 @@ export async function scoreCandidateEntry(client, input) {
   const dropsByReason = noDrops();
   let attempted = 0;
   let dropped = 0;
-  let unseenTail = 0;
   let stoppedForBudget = false;
   const requestsBefore = client.issued();
 
@@ -211,6 +229,8 @@ export async function scoreCandidateEntry(client, input) {
         mint: ref.mint,
         createdAtMs: ref.deployedAtMs,
         windowMs: t.windowMs,
+        seekMarginMs: t.seekMarginMs,
+        windowSlotSpan: t.windowSlotSpan,
         maxRequests: t.maxRequestsPerLaunch,
         pageLimit: t.tradePageLimit,
       });
@@ -224,7 +244,7 @@ export async function scoreCandidateEntry(client, input) {
       }
       dropped += 1;
       dropsByReason.transportError += 1;
-      dropNotes.push(`DROPPED: ${cause instanceof Error ? cause.message : String(cause)}`);
+      dropNotes.push(`DROPPED (transport error): ${describeTransportFailure(cause)}`);
       continue;
     }
 
@@ -234,11 +254,6 @@ export async function scoreCandidateEntry(client, input) {
       dropNotes.push(window.note);
       input.log?.(`    ${window.note}`);
       continue;
-    }
-
-    if (window.windowTailUnseen) {
-      unseenTail += 1;
-      input.log?.(`    ${window.note}`);
     }
 
     const entry = measureLaunchEntry(window.fills);
@@ -259,7 +274,6 @@ export async function scoreCandidateEntry(client, input) {
     candidateWallet: input.wallet,
     launchesDropped: dropped,
     mintTimeDisagreements: dropsByReason.mintTimeDisagreement,
-    windowsWithUnseenTail: unseenTail,
   });
 
   return {
@@ -270,7 +284,6 @@ export async function scoreCandidateEntry(client, input) {
       launchesUsable: measured.length,
       launchesDropped: dropped,
       dropsByReason,
-      windowsWithUnseenTail: unseenTail,
       requestsIssued: client.issued() - requestsBefore,
       stoppedForBudget,
       dropNotes,
@@ -288,6 +301,12 @@ export async function scoreCandidateEntry(client, input) {
  * Wallet addresses are also dropped. The field is reported as a distribution and a hit rate — which
  * is the whole point of the leg — and a list of who was in it would be an accumulation with no
  * question attached to it.
+ *
+ * Every FREE-TEXT field is passed through `record.mjs` → `redactVendorIdentifiers` on the way out.
+ * The structured fields cannot leak — they are numbers — but a sentence can, and one did: a
+ * transport failure's message carried the trade URL, mint and all, into `dropNotes`. Notes are now
+ * built without it (see {@link describeTransportFailure}) AND scrubbed here, because the containment
+ * claim should not rest on every future note-writer remembering.
  *
  * @param {import('./entry.mjs').EntryScore} s
  * @param {Stage2Coverage} coverage
@@ -309,7 +328,7 @@ export function toEntryRecordRow(s, coverage) {
 
   return {
     verdict: s.verdict,
-    rationale: s.rationale,
+    rationale: redactVendorIdentifiers(s.rationale),
     launchesSampled: s.launchesSampled,
     launchesWithNoOutsider: s.launchesWithNoOutsider,
     roomLeft: dist(s.roomLeft),
@@ -327,7 +346,7 @@ export function toEntryRecordRow(s, coverage) {
     fieldClosedRoundTrips: s.fieldClosedRoundTrips,
     fieldOpenPositions: s.fieldOpenPositions,
     deployerMismatches: s.deployerMismatches,
-    caveats: s.caveats,
+    caveats: redactAll(s.caveats),
     coverage: {
       launchRefsAvailable: coverage.launchRefsAvailable,
       launchesAttempted: coverage.launchesAttempted,
@@ -336,10 +355,9 @@ export function toEntryRecordRow(s, coverage) {
       // Broken out by cause, not a lump total: the whole point of the mint-time tripwire is that a
       // run can be read for whether it fired, and a total cannot be.
       dropsByReason: { ...coverage.dropsByReason },
-      windowsWithUnseenTail: coverage.windowsWithUnseenTail,
       requestsIssued: coverage.requestsIssued,
       stoppedForBudget: coverage.stoppedForBudget,
-      dropNotes: coverage.dropNotes,
+      dropNotes: redactAll(coverage.dropNotes),
     },
   };
 }

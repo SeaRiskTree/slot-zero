@@ -321,8 +321,6 @@ export const ENTRY_VERDICTS = [
  * @param {number} [context.mintTimeDisagreements] Of those, the ones dropped because the vendor's
  *   mint time and the fill tape disagreed. Called out separately because it is the one drop cause
  *   that says the method's own assumption has broken rather than that a launch was awkward.
- * @param {number} [context.windowsWithUnseenTail] Measured windows whose fills stop short of the
- *   full slot window, so the field may be undercounted.
  * @returns {EntryScore}
  */
 export function scoreEntry(launches, t, context = {}) {
@@ -364,7 +362,6 @@ export function scoreEntry(launches, t, context = {}) {
 
   const dropped = context.launchesDropped ?? 0;
   const clockDrops = context.mintTimeDisagreements ?? 0;
-  const unseenTail = context.windowsWithUnseenTail ?? 0;
   if (dropped > 0) {
     score.caveats.push(
       `${dropped} launch window(s) could not be walked back to the mint and were DROPPED rather ` +
@@ -380,13 +377,6 @@ export function scoreEntry(launches, t, context = {}) {
         `pump.fun's fill tape DISAGREED (fills older than the recorded creation). On the committed ` +
         `tape that gap is exactly 0 on all 235 covered launches, so a non-zero count here means the ` +
         `clock assumption this measurement rests on has broken and the sample is no longer what it seems.`,
-    );
-  }
-  if (unseenTail > 0) {
-    score.caveats.push(
-      `${unseenTail} measured window(s) hold no fill in the later part of the slot window. Either ` +
-        `those launches went quiet or the mint time seeks early; the two are not separable from the ` +
-        `tape, and in the second case the field is undercounted rather than absent.`,
     );
   }
   if (deployerMismatches > 0) {

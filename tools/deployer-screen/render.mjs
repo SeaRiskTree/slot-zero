@@ -155,12 +155,6 @@ export function renderEntry(e, coverage) {
         (coverage.stoppedForBudget ? ', STOPPED EARLY on the stage request ceiling' : ''),
     );
     for (const line of renderDropTally(coverage.launchesDropped, coverage.dropsByReason, '      ')) L.push(line);
-    if (coverage.windowsWithUnseenTail > 0) {
-      L.push(
-        `      ${coverage.windowsWithUnseenTail} measured window(s) hold no fill late in the slot ` +
-          `window — quiet launch or an early-seeking mint time; the field may be undercounted`,
-      );
-    }
     for (const note of coverage.dropNotes) L.push(`        · ${note}`);
   }
   for (const c of e.caveats) {
@@ -604,7 +598,7 @@ export function renderDryRun(plan) {
   if (plan.stage2) {
     const worstCase = plan.maxScored * t.maxLaunchesPerCandidate * t.maxRequestsPerLaunch;
     L.push('KEYLESS — STAGE 2, the ENTRY score. pump.fun fill tape, for gate survivors only:');
-    L.push('  GET https://swap-api.pump.fun/v2/coins/{mint}/trades?limit=' + `${t.tradePageLimit}&cursor=0-{windowEndMs}`);
+    L.push('  GET https://swap-api.pump.fun/v2/coins/{mint}/trades?limit=' + `${t.tradePageLimit}&cursor=0-{seekFromMs}`);
     L.push('');
     L.push('  This stage spends NO KEYED REQUEST. The mint list comes from the profile Stage 1 has');
     L.push('  already paid for, so the shared vendor allowance is untouched by everything below.');
@@ -624,8 +618,11 @@ export function renderDryRun(plan) {
         : '  !! The worst case EXCEEDS the ceiling — the ceiling binds and the run will stop early.',
     );
     L.push('  A launch is only started when a full page-cap of headroom remains, so no launch is');
-    L.push(`  ever abandoned half-walked. Window measured: ${t.windowMs / 1000}s from the mint, at the`);
-    L.push('  pinned keyless pacing, one request in flight.');
+    L.push(`  ever abandoned half-walked. Window measured: ${t.windowSlotSpan} SLOTS from the create`);
+    L.push(`  slot — the chain's own ordering, not the vendor's clock. The seek starts ${t.seekMarginMs / 1000}s past`);
+    L.push(`  the nominal ${t.windowMs / 1000}s end so an early vendor mint time cannot truncate the tail; that`);
+    L.push('  margin is a cursor hint and never a tolerance on the pre-mint drop. Pinned keyless');
+    L.push('  pacing, one request in flight.');
   } else {
     L.push('KEYLESS — STAGE 2 DISABLED (--no-stage2). No entry measurement would be taken, so the');
     L.push('  run would report competence only and nothing about whether a window is enterable.');

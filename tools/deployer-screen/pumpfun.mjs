@@ -62,6 +62,29 @@ export const DEFAULT_RETRY_BACKOFF_MS = [3_000, 9_000];
 const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * A refused keyless request, carrying its status **as a field**.
+ *
+ * The status is structured rather than only formatted into the message because a caller that has to
+ * report the failure must be able to do so **without repeating the URL** — and this client's URLs
+ * embed the mint. A drop note built from `error.message` would carry a vendor-derived token address
+ * into a persisted run record, which is exactly what MadeOnSol terms §5a(d) and the containment
+ * claim in `stage2.mjs` → `toEntryRecordRow` forbid. `record.mjs` → `redactVendorIdentifiers`
+ * catches it at the boundary as well; this is the half that means it never has to.
+ */
+export class KeylessHttpError extends Error {
+  /**
+   * @param {number} status
+   * @param {string} url
+   */
+  constructor(status, url) {
+    super(`HTTP ${status} on ${url}`);
+    this.name = 'KeylessHttpError';
+    /** @type {number} */
+    this.status = status;
+  }
+}
+
+/**
  * A serialised, ceiling-bounded, paced client for pump.fun's keyless endpoints.
  *
  * Deliberately a separate class from {@link import('./client.mjs').BoundedClient} rather than a
@@ -175,7 +198,7 @@ export class KeylessClient {
 
       if (response.ok) return response.json();
 
-      last = new Error(`HTTP ${response.status} on ${url}`);
+      last = new KeylessHttpError(response.status, url);
       // 429 and 5xx are the endpoint shedding load, which it does constantly. A 4xx that is not a
       // 429 is our query shape, and retrying it just spends the allowance to be told off twice.
       if (response.status !== 429 && response.status < 500) throw last;
@@ -186,22 +209,29 @@ export class KeylessClient {
 }
 
 /**
- * Keep only fills inside the opening window, measured in slots from the create slot.
+ * Keep only fills inside the opening window, measured in **slots** from the create slot.
  *
- * Slots are ~400ms, so a 60s window is ~150 slots. Using slots rather than the timestamp avoids
- * depending on the endpoint's second-resolution `ts`, which cannot order fills inside one slot.
+ * Using slots rather than the timestamp avoids depending on the endpoint's second-resolution `ts`,
+ * which cannot order fills inside one slot, and on the vendor's mint time, which is a second clock
+ * with nothing to reconcile it against.
+ *
+ * The span is a **pinned parameter, deliberately not `ceil(windowMs / 400)`.** That nominal
+ * conversion gives 150 for a 60s window and is measurably too narrow: across the 210 committed
+ * 60-second launches the observed slot span runs p50 151 / p90 155 / max 158, and 51% of them hold
+ * at least one fill beyond `createSlot + 150`. Those trailing fills are disproportionately late
+ * sells, and dropping one flips a wallet from closed to open — which shrinks
+ * `fieldClosedRoundTrips`, itself a gate. See `thresholds.json` → `stage2_entry.windowSlotSpan`.
  *
  * @param {readonly import('./measure.mjs').Fill[]} fills
- * @param {number} windowMs
+ * @param {number} windowSlotSpan Slots after the create slot that remain inside the window.
  * @returns {import('./measure.mjs').Fill[]}
  */
-export function windowFilter(fills, windowMs) {
+export function windowFilter(fills, windowSlotSpan) {
   const curveBuys = fills.filter((f) => f.side === 'buy' && f.venue === 'pump');
   if (curveBuys.length === 0) return [];
   let createSlot = Infinity;
   for (const f of curveBuys) if (f.slot < createSlot) createSlot = f.slot;
-  const slotSpan = Math.ceil(windowMs / 400);
-  return fills.filter((f) => f.slot >= createSlot && f.slot <= createSlot + slotSpan);
+  return fills.filter((f) => f.slot >= createSlot && f.slot <= createSlot + windowSlotSpan);
 }
 
 /**
@@ -366,9 +396,6 @@ export function parseFillLoose(row) {
  * @property {boolean} hitRequestCap  Whether it stopped because of `maxRequests`.
  * @property {boolean} mintTimeDisagreement Whether a row older than the supplied mint time came
  *   back — proof the two clocks disagree, and a hard drop. See {@link readLaunchWindow}.
- * @property {boolean} windowTailUnseen Whether the fills stop short of the full slot window. Not a
- *   drop: a quiet launch looks the same as a mint time that seeks too early, and the two are not
- *   separable from the tape. Reported so a systematic version of it cannot pass unnoticed.
  * @property {boolean} usable         Whether this window may be measured at all.
  * @property {LaunchWindowDropReason | null} dropReason `null` exactly when `usable`.
  * @property {string} note            Why, in one sentence. Always populated.
@@ -412,9 +439,19 @@ export function parseFillLoose(row) {
  * figure. So the launch is **dropped**, and the drop is counted and reported per run.
  *
  * **The measured window is anchored on the chain's own ordering, not on the vendor's clock.** Fills
- * are trimmed by {@link windowFilter}, i.e. by slot span from the earliest curve buy, so the
- * timestamp survives only as the seek cursor hint and never decides membership. A clock disagreement
- * therefore cannot quietly shift which fills are measured; it can only trip the tripwire above.
+ * are trimmed by {@link windowFilter}, i.e. by `windowSlotSpan` slots from the earliest curve buy, so
+ * the timestamp survives only as the seek cursor hint and never decides membership. A clock
+ * disagreement therefore cannot quietly shift which fills are measured; it can only trip the
+ * tripwire above.
+ *
+ * **`seekMarginMs` and the pre-mint tripwire are DIFFERENT MECHANISMS with different rules, and a
+ * reader must not merge them.** The margin is added to the *cursor* only: the walk starts from
+ * `createdAtMs + windowMs + seekMarginMs` so that a vendor mint time running *early* by less than the
+ * margin cannot cut the tail off the window before the slot trim ever sees it. It buys back rows the
+ * seek would otherwise never fetch. It is **not** a tolerance on any proof: the pre-mint tripwire
+ * still compares `ts < createdAtMs` with **zero slack** (the measured gap is exactly 0 on all 235
+ * committed launches, so there is no slack to spend), and coverage is still discharged only by the
+ * endpoint explicitly saying nothing older exists. Widening the margin can never soften either.
  *
  * `usable` is what a caller must branch on, and `dropReason` is why. An unusable window is **dropped
  * and counted**, never measured — a launch missing from the sample shrinks `n` visibly, whereas a
@@ -439,14 +476,17 @@ export function parseFillLoose(row) {
  * @param {string} opts.mint
  * @param {number} opts.createdAtMs Mint time. The seek cursor's hint and the disagreement tripwire —
  *   **not** the window boundary.
- * @param {number} opts.windowMs    Opening window length. 60000 matches the committed tape.
+ * @param {number} opts.windowMs    Opening window length, for the seek only. 60000 matches the tape.
+ * @param {number} opts.seekMarginMs Extra time past the nominal window end to start the seek from,
+ *   so an early vendor mint time cannot truncate the tail. A cursor hint, never a proof tolerance.
+ * @param {number} opts.windowSlotSpan Slots after the create slot that count as inside the window.
  * @param {number} opts.maxRequests Hard per-launch request cap, retries included.
  * @param {number} opts.pageLimit   Rows per request.
  * @returns {Promise<LaunchWindow>}
  */
 export async function readLaunchWindow(client, opts) {
-  const { mint, createdAtMs, windowMs, maxRequests, pageLimit } = opts;
-  const windowEndMs = createdAtMs + windowMs;
+  const { mint, createdAtMs, windowMs, seekMarginMs, windowSlotSpan, maxRequests, pageLimit } = opts;
+  const seekFromMs = createdAtMs + windowMs + seekMarginMs;
   const issuedBefore = client.issued();
   const spent = () => client.issued() - issuedBefore;
   const perPageCost = client.attemptsPerRequest();
@@ -464,8 +504,9 @@ export async function readLaunchWindow(client, opts) {
   let mintTimeDisagreement = false;
 
   // The slot half of the cursor is ignored by the seek; only the timestamp is honoured. Sending a
-  // literal 0 says so, rather than implying a slot we did not measure.
-  let cursor = `0-${windowEndMs}`;
+  // literal 0 says so, rather than implying a slot we did not measure. The margin only widens where
+  // the walk STARTS — what ends up in the window is decided by `windowSlotSpan` below.
+  let cursor = `0-${seekFromMs}`;
 
   while (spent() + perPageCost <= maxRequests) {
     const url =
@@ -495,6 +536,9 @@ export async function readLaunchWindow(client, opts) {
         unparsedRows += 1;
         continue;
       }
+      // ZERO SLACK, deliberately, and `seekMarginMs` is not admitted here. The margin is a cursor
+      // hint; this is a proof. A real token has no pre-mint trade, so any row older than the
+      // recorded creation means the two clocks disagree.
       if (ts < createdAtMs) {
         mintTimeDisagreement = true;
         continue;
@@ -535,15 +579,7 @@ export async function readLaunchWindow(client, opts) {
 
   // Anchored on the earliest curve buy's own slot. Slots are a monotonic sequence the chain itself
   // maintains; the vendor's wall clock is a second opinion we have no way to reconcile.
-  const fills = mintTimeDisagreement ? [] : windowFilter(collected, windowMs);
-  const slotSpan = Math.ceil(windowMs / 400);
-  let firstSlot = Infinity;
-  let lastSlot = -Infinity;
-  for (const f of fills) {
-    if (f.slot < firstSlot) firstSlot = f.slot;
-    if (f.slot > lastSlot) lastSlot = f.slot;
-  }
-  const windowTailUnseen = fills.length > 0 && lastSlot < firstSlot + slotSpan;
+  const fills = mintTimeDisagreement ? [] : windowFilter(collected, windowSlotSpan);
 
   const usable = reachedCreateSlot && unparsedRows === 0 && fills.length > 0;
   /** @type {LaunchWindowDropReason | null} */
@@ -564,12 +600,8 @@ export async function readLaunchWindow(client, opts) {
                 : 'no-fills';
 
   const note = usable
-    ? `${fills.length} fill(s) in the opening ${windowMs / 1000}s over ${pages} page(s) and ` +
-      `${spent()} request(s), walked back past the mint` +
-      (windowTailUnseen
-        ? `; the last fill sits ${lastSlot - firstSlot} slot(s) into the ~${slotSpan}-slot window, so ` +
-          `either the launch went quiet or the mint time seeks early — the field may be undercounted`
-        : '')
+    ? `${fills.length} fill(s) in the opening ${windowSlotSpan} slot(s) over ${pages} page(s) and ` +
+      `${spent()} request(s), walked back past the mint`
     : dropReason === 'mint-time-disagreement'
       ? `DROPPED (mint-time disagreement): the endpoint returned fill(s) OLDER than the recorded mint ` +
         `time, which a real token does not have. The vendor's creation time and the fill tape ` +
@@ -585,12 +617,13 @@ export async function readLaunchWindow(client, opts) {
               `exists, so coverage back to the mint is UNPROVEN. The earliest slot seen is merely the ` +
               `earliest seen, which is not the create slot.`
             : dropReason === 'request-cap'
-              ? `DROPPED: spent the ${maxRequests}-request cap on ${rowsSeen} row(s) without reaching the mint, ` +
-                `so the earliest slot seen is NOT the create slot. This launch was busier than the cap ` +
-                `allows for, and busy launches are exactly the interesting ones — see the sampling caveat.`
+              ? `DROPPED: spent ${spent()} of the ${maxRequests}-request cap on ${rowsSeen} row(s) without ` +
+                `reaching the mint, and the remaining headroom is less than one page costs, so the ` +
+                `earliest slot seen is NOT the create slot. This launch was busier than the cap allows ` +
+                `for, and busy launches are exactly the interesting ones — see the sampling caveat.`
               : dropReason === 'unparsed-rows'
                 ? `DROPPED: ${unparsedRows} of ${rowsSeen} row(s) could not be read — the endpoint's shape may have changed`
-                : `DROPPED: no fill in the opening ${windowMs / 1000}s (is the mint time right?)`;
+                : `DROPPED: no fill in the opening ${windowSlotSpan} slot(s) (is the mint time right?)`;
 
   return {
     mint,
@@ -602,7 +635,6 @@ export async function readLaunchWindow(client, opts) {
     reachedCreateSlot,
     hitRequestCap,
     mintTimeDisagreement,
-    windowTailUnseen,
     usable,
     dropReason,
     note,

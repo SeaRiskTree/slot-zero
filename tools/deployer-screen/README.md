@@ -410,6 +410,20 @@ budget, or the reverse.
 Every run prints its request count, shed count and elapsed time. There is no poller, sweep, daemon,
 cron, or cache-warmer, and adding one would be a policy breach rather than an optimisation.
 
+### Nothing vendor-derived survives in a note, either
+
+The retention claim is about free text as much as fields. A drop note built from a thrown error used
+to carry `swap-api.pump.fun/v2/coins/<MINT>/trades` into `coverage.dropNotes` and out through
+`--out`, because `KeylessClient` formats the URL into its message — and the committed-record test
+only forbade mint-shaped *keys*, so a mint inside a sentence passed it. Two changes, both kept:
+
+- `KeylessHttpError` carries its **status as a field**, so `stage2.mjs` → `describeTransportFailure`
+  can report `HTTP 400` without repeating anything the vendor sent. Anything that is not one is
+  reduced to its constructor name.
+- `record.mjs` → `redactVendorIdentifiers` scrubs every free-text field on the way into a record —
+  rationale, caveats, drop notes, `truncationReason` — stripping URLs and base58 address runs. The
+  containment does not rest on every future note-writer remembering.
+
 ## What walking the fill tape actually costs — measured, not estimated
 
 Every `window/*.meta.json` in the committed tape records the request stats of the walk that produced
@@ -470,22 +484,51 @@ entire create slot, whose rows share the mint's exact millisecond, leaving the w
 mid-window slot with the wrong deployer, a near-zero dev buy and an inflated room figure. So such a
 launch is **dropped**, with `dropReason: 'mint-time-disagreement'`.
 
-Separately, the measured window is trimmed by `windowFilter` — **slot span from the earliest curve
-buy** — so the vendor timestamp never decides which fills are in it. Slots are the chain's own
-monotonic sequence; the wall clock is a second opinion with nothing to reconcile it against.
+Separately, the measured window is trimmed by `windowFilter` — **`windowSlotSpan` slots from the
+earliest curve buy** — so the vendor timestamp never decides which fills are in it. Slots are the
+chain's own monotonic sequence; the wall clock is a second opinion with nothing to reconcile it
+against.
 
-**Every run reports its drops per cause, per wallet and in total**, in the record (`entry.coverage.
-dropsByReason` and the run-level `entryDrops`) and in the rendered output. A non-zero
+The span is **pinned at 160 slots and is deliberately not `ceil(60000 / 400) = 150`.** Measured over
+the 210 committed 60-second launches, the observed slot span is p50 151, p90 155, max 158, and 51% of
+them hold at least one fill beyond `createSlot + 150`. Those trailing fills are disproportionately
+late sells, and dropping one flips a wallet from closed to open — which shrinks
+`fieldClosedRoundTrips`, itself a gate at `minFieldRoundTrips: 10`. A too-narrow span therefore moves
+gate outcomes silently. 160 covers 100% of observed windows with margin over the observed max.
+
+**Stage 0 deliberately does not use the span**, and the two paths must not be reconciled: it measures
+each committed launch over that launch's own stored window, because `wallet_launch_pnl.csv` — the
+1,502-pair reproduction that licenses believing the live recipe at all — is computed that way. The
+comment at `stage0.mjs` → `measureSubjectLaunches` says so at the point of divergence.
+
+### The mirror case: a mint time that seeks EARLY
+
+A vendor mint time running *early* trips no tripwire — there are no pre-mint rows — and instead
+truncates the **tail** of the window, because the seek never asks for the last rows. It is not
+detectable after the fact: launches routinely stop trading before the nominal window end (observed
+p50 span 151 against a 160-slot window), so any tail detector fires on nearly every launch and
+carries no information at all.
+
+So it is designed out rather than reported. The walk seeks from `createdAtMs + windowMs +
+seekMarginMs`, with the margin pinned at **5s**, so an early skew smaller than that cannot cut the
+tail off before the slot trim ever sees it. The cost is bounded: the walk still pages *backwards* to
+the mint and still trims by slot afterwards, so the margin only adds rows at the newest end — about
+5s of trading, roughly 32 fills at the tape's p50 of 381 fills per 60s, i.e. at most one extra page.
+That fits inside the 18-request per-launch cap and the `3 × 8 × 18 = 432` arithmetic is unchanged.
+
+**The margin is a cursor hint and never a proof tolerance.** The pre-mint tripwire still compares
+`ts < createdAtMs` with zero slack, and coverage is still discharged only by an explicit
+`hasMore === false` or a readable empty page. Widening the margin cannot soften either.
+
+**Every run reports its drops per cause, per wallet and in total**, in the record (`entry.coverage.dropsByReason`
+and the run-level `entryDrops`) and in the rendered output. A non-zero
 `mintTimeDisagreement` is treated as a **reportable event, not a footnote**: all 235 clock
 observations come from our own tape and this lane has never held a vendor key, so whether the two
 clocks agree on *stranger* wallets is untested. If they routinely disagree, the tripwire stops being
 free and starts discarding real launches at scale — and a visible per-run count is what stops that
 happening silently.
 
-The mirror-image case, a mint time that seeks *early*, trips no tripwire and instead truncates the
-tail of the window. It is not separable from a launch that simply went quiet, so it is not a drop; it
-is reported as `windowsWithUnseenTail` and as a caveat, because the field is undercounted rather than
-absent.
+
 
 ### The live path, checked against ground truth
 
@@ -501,11 +544,14 @@ A third, much older launch shed persistently through all three attempts and the 
 failed — which in a real run is a *dropped launch with a note*, not a corrupted measurement. That is
 the drop path working.
 
-**One comparability caveat.** A live run measures a fixed 60s window (the tape's modal `window_ms`,
-210 of 235 launches). Stage 0's control measures over each launch's stored window, 25 of which are
-120s or 300s. Longer windows give a position more time to close, so Stage 0's closed-round-trip
-count is if anything *more* generous than a live 60s run — which strengthens the known-negative
-control rather than weakening it.
+**One comparability caveat.** A live run measures a fixed **160-slot** window from the create slot,
+not a wall-clock one. Stage 0's control measures over each launch's own stored window. Against the
+210 committed launches whose stored `window_ms` is 60000 — the tape's modal value — a 160-slot span
+covers **100% of the observed spans** (p50 151, p90 155, max 158), so the live window is at least as
+wide as the stored one on every one of them. The remaining 25 launches store 120s or 300s windows,
+which are wider still. Longer windows give a position more time to close, so Stage 0's
+closed-round-trip count is if anything *more* generous than a live run — which strengthens the
+known-negative control rather than weakening it.
 
 ## Scope: what is and is not built
 

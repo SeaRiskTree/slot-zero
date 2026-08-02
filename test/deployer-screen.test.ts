@@ -80,6 +80,7 @@ import {
   RECORD_SCHEMA_VERSION,
   completenessOf,
   describeCompleteness,
+  redactVendorIdentifiers,
   schemaVersionOf,
 } from '../tools/deployer-screen/record.mjs';
 
@@ -478,7 +479,7 @@ describe('the co-ordination rule — the Stage 2 seam', () => {
 
   it('windowFilter keeps the opening slots and drops later trading', () => {
     const fills = [fill({ slot: 1000 }), fill({ slot: 1100 }), fill({ slot: 99_999 })];
-    const kept = windowFilter(fills, 60_000); // 60s ≈ 150 slots
+    const kept = windowFilter(fills, 160); // the pinned live span, stage2_entry.windowSlotSpan
     expect(kept.map((f) => f.slot)).toEqual([1000, 1100]);
   });
 });
@@ -1450,6 +1451,11 @@ const ENTRY_T: EntryThresholds = {
   minFieldHitRateGross: 0.5,
 };
 
+// Read from the pinned file rather than restated, so a test can never quietly disagree with the
+// parameter a real run uses.
+const WINDOW_SLOT_SPAN = loadThresholds()['stage2_entry'].windowSlotSpan as number;
+const SEEK_MARGIN_MS = loadThresholds()['stage2_entry'].seekMarginMs as number;
+
 describe('distributions and a hit rate, never a mean', () => {
   it('reports quantiles and NO mean — the captain bar, enforced on the shape', () => {
     const d = distribution([1, 2, 3, 4, 100]);
@@ -1794,6 +1800,8 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       mint: MINT,
       createdAtMs: CREATED,
       windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
       maxRequests: 10,
       pageLimit: 100,
     });
@@ -1801,7 +1809,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
     expect(w.reachedCreateSlot).toBe(true);
     // The FIRST request already carries the cursor. That seek is what makes this affordable: it
     // turns walking a token's whole history into a handful of requests.
-    expect(calls[0]).toContain(`cursor=0-${CREATED + 60_000}`);
+    expect(calls[0]).toContain(`cursor=0-${CREATED + 60_000 + SEEK_MARGIN_MS}`);
     expect(w.fills.map((f) => f.wallet).sort()).toEqual(['dev', 'outsider', 'outsider']);
     expect(w.dropReason).toBeNull();
     expect(w.mintTimeDisagreement).toBe(false);
@@ -1819,6 +1827,8 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       mint: MINT,
       createdAtMs: CREATED,
       windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
       maxRequests: 10,
       pageLimit: 100,
     });
@@ -1826,23 +1836,69 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
     expect(w.fills.map((f) => f.wallet)).not.toContain('latecomer');
   });
 
-  it('a mint time that seeks EARLY still measures the right window, and says the tail is unseen', async () => {
-    // Negative skew: the vendor's creation time precedes the truth, so the seek starts early and the
-    // walk cannot see the end of the window. It trips no tripwire — there are no pre-mint rows — so
-    // the only defence is that it is REPORTED rather than quietly returning a smaller field.
-    const { fetchImpl } = fakeEndpoint(history());
+  it('seeks past the nominal window end, so an EARLY vendor mint time cannot truncate the tail', async () => {
+    // Negative skew: the vendor's creation time precedes the truth, so a seek from exactly
+    // createdAtMs + windowMs would start early and never fetch the end of the window. That trips no
+    // tripwire — there are no pre-mint rows — so the margin has to design the failure out rather
+    // than detect it. A detector could not have discriminated anyway: launches routinely stop
+    // trading before the nominal end, so it would have fired on nearly all of them.
+    const skewMs = 4_000; // inside the pinned 5s margin
+    const { fetchImpl, calls } = fakeEndpoint([
+      ...history(),
+      row({ ms: CREATED + 58_000, wallet: 'lateseller', sol: 3, seq: 4, type: 'sell' }),
+    ]);
     const w = await readLaunchWindow(client(fetchImpl), {
       mint: MINT,
-      createdAtMs: CREATED - 30_000,
+      createdAtMs: CREATED - skewMs,
       windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
       maxRequests: 10,
       pageLimit: 100,
     });
+    expect(calls[0]).toContain(`cursor=0-${CREATED - skewMs + 60_000 + SEEK_MARGIN_MS}`);
     expect(w.usable).toBe(true);
-    // The window is anchored on the create slot itself, so the whole opening is still measured.
+    // The late sell is the fill that matters: dropping one flips a wallet from closed to open and
+    // shrinks fieldClosedRoundTrips, which is itself a gate.
+    expect(w.fills.map((f) => f.wallet)).toContain('lateseller');
     expect(measureLaunchEntry(w.fills)!.createSlot.deployer).toBe('dev');
-    expect(w.windowTailUnseen).toBe(true);
-    expect(w.note).toMatch(/mint time seeks early/);
+  });
+
+  it('the seek margin is a CURSOR HINT and never a tolerance on the pre-mint tripwire', async () => {
+    // The two mechanisms sit next to each other and must not be mistaken for one. A row one
+    // millisecond older than the recorded mint is still a hard drop, however wide the margin is.
+    const { fetchImpl } = fakeEndpoint(history());
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED + 1,
+      windowMs: 60_000,
+      seekMarginMs: 600_000,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.dropReason).toBe('mint-time-disagreement');
+    expect(w.usable).toBe(false);
+  });
+
+  it('measures a 160-SLOT window, not ceil(windowMs / 400) = 150', async () => {
+    // Measured on the 210 committed 60-second launches: observed slot span p50 151, p90 155, max
+    // 158, with 51% holding a fill beyond createSlot + 150. Those trailing fills are
+    // disproportionately late sells, so a 150-slot span silently moves closure verdicts.
+    const at155 = row({ ms: CREATED + 59_000, wallet: 'tail155', sol: 1, sid: String(SLOT0 + 155).padStart(12, '0') + '0000000001' });
+    const at161 = row({ ms: CREATED + 59_500, wallet: 'tail161', sol: 1, sid: String(SLOT0 + 161).padStart(12, '0') + '0000000001' });
+    const { fetchImpl } = fakeEndpoint([...history(), at155, at161]);
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED,
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.fills.map((f) => f.wallet)).toContain('tail155');
+    expect(w.fills.map((f) => f.wallet)).not.toContain('tail161');
   });
 
   it('DROPS a launch whose fills predate the recorded mint — the two clocks disagree', async () => {
@@ -1855,6 +1911,8 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       mint: MINT,
       createdAtMs: CREATED + 1, // one millisecond of positive skew is enough
       windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
       maxRequests: 10,
       pageLimit: 100,
     });
@@ -1880,6 +1938,8 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
         mint: MINT,
         createdAtMs: CREATED,
         windowMs: 60_000,
+        seekMarginMs: SEEK_MARGIN_MS,
+        windowSlotSpan: WINDOW_SLOT_SPAN,
         maxRequests: 10,
         pageLimit: 100,
       });
@@ -1916,6 +1976,8 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       mint: MINT,
       createdAtMs: CREATED,
       windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
       maxRequests: 10,
       pageLimit: 100,
     });
@@ -1952,6 +2014,8 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       mint: MINT,
       createdAtMs: CREATED,
       windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
       maxRequests: 3,
       pageLimit: 1,
     });
@@ -1975,6 +2039,8 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       mint: MINT,
       createdAtMs: CREATED + 500,
       windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
       maxRequests: 10,
       pageLimit: 1,
     });
@@ -1989,6 +2055,8 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       mint: MINT,
       createdAtMs: CREATED,
       windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
       maxRequests: 10,
       pageLimit: 2,
     });
@@ -2003,6 +2071,8 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       mint: MINT,
       createdAtMs: CREATED,
       windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
       maxRequests: 10,
       pageLimit: 100,
     });
@@ -2035,6 +2105,8 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
           mint: MINT,
           createdAtMs: CREATED,
           windowMs: 60_000,
+          seekMarginMs: SEEK_MARGIN_MS,
+          windowSlotSpan: WINDOW_SLOT_SPAN,
           maxRequests: cap,
           pageLimit: 1,
         });
@@ -2252,7 +2324,6 @@ describe('what a Stage 2 run record may persist', () => {
       launchesUsable: 8,
       launchesDropped: 0,
       dropsByReason: emptyDropReasons(),
-      windowsWithUnseenTail: 0,
       requestsIssued: 34,
       stoppedForBudget: false,
       dropNotes: [],
@@ -2278,7 +2349,6 @@ describe('what a Stage 2 run record may persist', () => {
       launchesUsable: 0,
       launchesDropped: 0,
       dropsByReason: emptyDropReasons(),
-      windowsWithUnseenTail: 0,
       requestsIssued: 0,
       stoppedForBudget: false,
       dropNotes: [],
@@ -2286,6 +2356,53 @@ describe('what a Stage 2 run record may persist', () => {
     expect(row.roomLeft.median).toBeNull();
     expect(row.fieldHitRateGrossOfFees.rate).toBeNull();
     expect(row.verdict).toBe('entry-unmeasured');
+  });
+
+  it('persists NO mint when a launch walk fails at the transport — the path that used to leak', async () => {
+    // The containment test above only ever exercised the happy path, which is exactly how this got
+    // through: `KeylessClient` throws `HTTP 400 on https://swap-api.pump.fun/v2/coins/<MINT>/trades`,
+    // and a note built from that message carried a vendor-derived token address into the record.
+    const CREATED_AT = Date.parse('2026-07-28T12:00:00Z');
+    const fetchImpl = (async () => ({ ok: false, status: 400, json: async () => ({}) })) as unknown as typeof fetch;
+    const client = new KeylessClient({ maxRequests: 400, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const T = loadThresholds()['stage2_entry'] as Record<string, number>;
+
+    const { score, coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: {
+        pump_tokens: [
+          { mint: 'MINTaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapump', created_timestamp: CREATED_AT, complete: true },
+        ],
+      },
+      nowMs: CREATED_AT + 3_600_000,
+      thresholds: T as never,
+    });
+
+    expect(coverage.dropsByReason.transportError).toBe(1);
+    // The status is what identifies the failure, and it is the only part that cannot carry an
+    // identifier. It comes off the error as a FIELD, not out of its message.
+    expect(coverage.dropNotes.join(' ')).toMatch(/transport error\): HTTP 400/);
+    expect(coverage.dropNotes.join(' ')).not.toMatch(/MINT[0-9a-zA-Z]*pump/);
+
+    const json = JSON.stringify(toEntryRecordRow(score, coverage));
+    expect(json).not.toMatch(/MINT[0-9a-zA-Z]*pump/);
+    expect(json).not.toMatch(/swap-api/);
+  });
+
+  it('redacts a URL or an address that reaches a persisted string by any other route', () => {
+    // The boundary half of the fix. Building notes without identifiers is the first line; this is
+    // what stops the claim resting on every future note-writer remembering to.
+    const leaky = 'HTTP 400 on https://swap-api.pump.fun/v2/coins/MINTaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapump/trades?limit=100';
+    expect(redactVendorIdentifiers(leaky)).not.toMatch(/MINT[0-9a-zA-Z]*pump/);
+    expect(redactVendorIdentifiers(leaky)).not.toMatch(/swap-api/);
+    expect(redactVendorIdentifiers(leaky)).toMatch(/HTTP 400/);
+    expect(redactVendorIdentifiers('7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL bought first')).toBe(
+      '[address redacted] bought first',
+    );
+    // Ordinary prose is left alone — a redactor that mangled the caveats would hide the reporting
+    // this record exists to carry.
+    const caveat = 'Every P&L above is GROSS OF FEES and is therefore an UPPER BOUND.';
+    expect(redactVendorIdentifiers(caveat)).toBe(caveat);
   });
 });
 
@@ -2379,6 +2496,8 @@ describe('the keyless client retries a shed request, and a retry is not free', (
       mint: 'MINTaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapump',
       createdAtMs: CREATED,
       windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
       maxRequests: 6,
       pageLimit: 1,
     });

@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url';
 import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
 import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
-import { RECORD_SCHEMA_VERSION } from './record.mjs';
+import { RECORD_SCHEMA_VERSION, redactVendorIdentifiers } from './record.mjs';
 import { KeylessClient, readCreatorHistory } from './pumpfun.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
@@ -610,7 +610,10 @@ export async function main(opts, env, out, err) {
         // incomplete, and only the second may be read as a measured outcome.
         completed,
         truncated: truncated || coverage.coverageTruncated,
-        truncationReason: reasons.length === 0 ? null : reasons.join('; '),
+        // Redacted for the same reason `toEntryRecordRow` redacts its notes: this string can be
+        // built from a thrown error, and an error's message is exactly where a vendor-derived
+        // identifier arrives without anyone deciding to persist one.
+        truncationReason: reasons.length === 0 ? null : redactVendorIdentifiers(reasons.join('; ')),
         coverage,
         scoringCap: { max: maxScored, survivorsUnscored: scoringTruncatedBy, enabled: opts.stage2 },
         // Run-level Stage 2 drop tally, broken out by cause. `mintTimeDisagreement` is the one to
@@ -622,14 +625,7 @@ export async function main(opts, env, out, err) {
             (acc, c) => (c.entryCoverage === null ? acc : addDropReasons(acc, c.entryCoverage.dropsByReason)),
             emptyDropReasons(),
           );
-          return {
-            total: totalDrops(by),
-            byReason: by,
-            windowsWithUnseenTail: candidates.reduce(
-              (n, c) => n + (c.entryCoverage === null ? 0 : c.entryCoverage.windowsWithUnseenTail),
-              0,
-            ),
-          };
+          return { total: totalDrops(by), byReason: by };
         })(),
         prefilteredOut: prefiltered,
         thresholds: { stage1_gate: T['stage1_gate'], stage2_entry: T['stage2_entry'], budget: T['budget'] },

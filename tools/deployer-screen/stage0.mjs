@@ -181,6 +181,16 @@ export function readGroundTruthCompletion(dataDir) {
  * over committed fills and, in a live run, over `swap-api` rows — one implementation, two callers,
  * because the tape's rows *are* the endpoint's rows.
  *
+ * **ONE DELIBERATE ASYMMETRY, AND IT MUST NOT BE TIDIED AWAY.** This function measures each launch
+ * over the launch's OWN STORED WINDOW — every fill in the tape file — while a live run trims to
+ * `thresholds.json` → `stage2_entry.windowSlotSpan` slots from the create slot. That is not an
+ * oversight and the two paths must not be made to agree. `wallet_launch_pnl.csv`, which
+ * {@link verifyFieldReproduction} checks against on 1,502 create-slot outsider pairs with zero
+ * closure mismatches, is itself computed over each launch's stored window. Imposing a slot span here
+ * would move closure verdicts at the tail and break that reproduction — which is the regression guard
+ * that makes the live recipe trustworthy in the first place. A live run has no stored window to use,
+ * which is exactly why it needs a pinned span; this one does, so it uses it.
+ *
  * @param {string} dataDir Path to `data/population-tape-2026-07-29`.
  * @returns {TapedLaunch[]} Oldest first.
  */

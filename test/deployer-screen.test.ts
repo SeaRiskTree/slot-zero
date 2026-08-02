@@ -4116,6 +4116,50 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     expect(coverage.launchesAttempted).toBe(2);
   });
 
+  it('and younger than the CURSOR it seeks from, which is the bound that actually binds', async () => {
+    // The gap this closes. The walk seeks from `createdAtMs + windowMs + seekMarginMs` and measures
+    // `windowSlotSpan` slots from the create slot, but eligibility asked only for `windowMs`. So a
+    // launch aged 60-65s passed "has finished happening" while part of its measured window had not
+    // happened yet — the same tail truncation `seekMarginMs` exists to prevent, arriving from the
+    // future side, and silent in the worst way: an absent tail reads as a quiet one.
+    const { fetchImpl } = insatiable();
+    const client = () =>
+      new KeylessClient({ maxRequests: 200, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const cursorMs = (T.windowMs as number) + (T.seekMarginMs as number);
+
+    const cases: [number, number][] = [
+      [T.windowMs as number, 0], // exactly the old bound, which used to admit it
+      [cursorMs - 1, 0], // one millisecond short of the cursor
+      [cursorMs, 1], // the cursor is in the past, so the walk may start
+    ];
+    for (const [ageMs, attempted] of cases) {
+      const { coverage } = await scoreCandidateEntry(client(), {
+        wallet: 'dev',
+        profile: profile(1),
+        nowMs: CREATED + ageMs,
+        thresholds: T as never,
+      });
+      expect(coverage.launchRefsAvailable, `age ${ageMs}ms`).toBe(1);
+      expect(coverage.launchesAttempted, `age ${ageMs}ms`).toBe(attempted);
+    }
+  });
+
+  it('that one bound covers the measured span too, so widening the span cannot reopen the gap', () => {
+    // Two quantities reach forward from the mint: the seek cursor at `windowMs + seekMarginMs`
+    // (65s), and the measured window at `windowSlotSpan` slots — 64.0s at this repo's nominal
+    // 400ms/slot, ~63.5s at the tape's observed ~397ms. The cursor dominates, which is why ONE gate
+    // suffices. That domination is a property of the pinned values, not a law: a span past 162
+    // slots would put the tail of the measured window back beyond the gate.
+    const NOMINAL_MS_PER_SLOT = 400;
+    expect((T.windowSlotSpan as number) * NOMINAL_MS_PER_SLOT).toBeLessThanOrEqual(
+      (T.windowMs as number) + (T.seekMarginMs as number),
+    );
+    // And the gate is the sum, asserted on the source so it cannot drift back to `windowMs` alone.
+    expect(readFileSync(join(TOOL_DIR, 'stage2.mjs'), 'utf8')).toMatch(
+      /const minAgeMs = t\.windowMs \+ t\.seekMarginMs;/,
+    );
+  });
+
   it('reads the mint list from the profile Stage 1 already paid for — no second vendor call', () => {
     const refs = toLaunchRefs(profile(5));
     expect(refs).toHaveLength(5);
@@ -4245,6 +4289,23 @@ describe('what a Stage 2 run record may persist', () => {
     // this record exists to carry.
     const caveat = 'Every P&L above is GROSS OF FEES and is therefore an UPPER BOUND.';
     expect(redactVendorIdentifiers(caveat)).toBe(caveat);
+  });
+
+  it('the GATE half of the record routes its free text through the same boundary', () => {
+    // The boundary was applied to the Stage 2 projection only, so `toRecordRow`'s own free text —
+    // `rationale`, `gateReasons`, `consistency.note` — reached the record verbatim. All three are
+    // template-generated from counts and rates today, so nothing leaked; the point is that
+    // containment for that half was back to depending on every future writer remembering, which is
+    // exactly how a mint reached `coverage.dropNotes`.
+    const projection = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    const row = projection.slice(projection.indexOf('function toRecordRow'));
+    expect(row).toMatch(/rationale: redactVendorIdentifiers\(c\.rationale\)/);
+    expect(row).toMatch(/gateReasons: redactAll\(c\.gate\.reasons\)/);
+    expect(row).toMatch(/note: redactVendorIdentifiers\(c\.consistency\.note\)/);
+    // NOT a blanket sweep, and this is why: `wallet` is base58 of exactly the shape the redactor
+    // strikes, and it is the one identifier the record exists to carry.
+    expect(row).toMatch(/\bwallet: c\.wallet,/);
+    expect(redactVendorIdentifiers('7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL')).toBe('[address redacted]');
   });
 });
 

@@ -41,6 +41,7 @@ import {
   RECORD_SCHEMA_VERSION,
   deriveTruncation,
   describeUnmeasured,
+  redactAll,
   redactVendorIdentifiers,
   unmeasuredBecause,
   unmeasuredNoSource,
@@ -1042,6 +1043,11 @@ export function partialOutPath(path) {
  * The wallet address is ours to keep: it is public on-chain data, not vendor data. The counts and
  * the rate are our computation. Nothing here can reconstruct any part of their database.
  *
+ * Every FREE-TEXT field here — `rationale`, `gateReasons`, `consistency.note` — is routed through
+ * `record.mjs` → `redactVendorIdentifiers`, as {@link toEntryRecordRow} routes its own. Structured
+ * fields are not, deliberately: `wallet` is base58 of exactly the shape the redactor strikes, so a
+ * blanket sweep would delete the one identifier this record exists to carry.
+ *
  * @param {import('./rank.mjs').Candidate} c
  */
 function toRecordRow(c) {
@@ -1076,9 +1082,19 @@ function toRecordRow(c) {
     verdictChanged: c.verdict !== 'gate-unmeasured' && c.verdict !== c.vendorVerdict,
     creation: c.creation,
     verdict: c.verdict,
-    rationale: c.rationale,
-    gateReasons: c.gate.reasons,
-    consistency: c.consistency,
+    // FREE TEXT, so it goes through the redaction boundary — the same one `toEntryRecordRow`
+    // applies to its half. These three are all template-generated from counts and rates today
+    // (`rank.mjs` → `verdictFor` / `applyGate` / `measureConsistency`), so nothing leaks now; the
+    // point is that containment must not go back to depending on every future writer remembering,
+    // which is how a mint reached `coverage.dropNotes` in the first place.
+    // NOT A BLANKET SWEEP: `wallet` above is a 44-character base58 string this record deliberately
+    // keeps, and `redactVendorIdentifiers` would strike it. Only free text is routed.
+    rationale: redactVendorIdentifiers(c.rationale),
+    gateReasons: redactAll(c.gate.reasons),
+    consistency:
+      c.consistency === null
+        ? null
+        : { ...c.consistency, note: redactVendorIdentifiers(c.consistency.note) },
     // Stage 2's own projection, which is subject to the same containment: quantiles, counts and a
     // hit rate over pump.fun's public fills. No mint — Stage 2 held a list of them in memory to do
     // the walk and dropped it — and no counterparty wallet address.

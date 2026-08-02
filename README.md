@@ -5,7 +5,8 @@ a token launch, who profits, and whether any of it is capturable.
 
 This repo is the foundation, and only the foundation. It holds one primary dataset, a typed
 loader over it, a test that reproduces the published numbers, one offline measurement over the
-tape, and one screening tool over a provider API. **There is no strategy, backtest, signal or trading logic here.** The question
+tape, and one screening tool over a provider API and pump.fun's public fill tape. **There is no
+strategy, backtest, signal or trading logic here.** The question
 that used to gate that work — whether the two winning outsiders were the operator's own book —
 has been answered; what is still gated, and what no longer is, is stated at the bottom of this
 file.
@@ -33,7 +34,7 @@ Private. Nothing here is production.
 | `data/population-tape-2026-07-29/` | The population tape. 239 launches, 107,439 fills, 20,388 counterparty wallets, reconstructed keyless. Column semantics in its `README.md`, findings in its `report.md`, import and correction decisions in its `IMPORT.md`. |
 | `src/` | The loader. Per-launch, per-wallet and per-(wallet, launch) views, plus the raw per-fill tape. No runtime dependencies. |
 | `test/reproduction.test.ts` | The published headline numbers, asserted against the loaded data. |
-| `tools/deployer-screen/` | The only keyed, network-capable area. A rerunnable completion-rate **gate** over MadeOnSol's free Deployer Hunter endpoints — it gates, it does not recommend. Usage, credential handling, quota bounds and scope in its `README.md`. |
+| `tools/deployer-screen/` | The only keyed, network-capable area. A rerunnable completion-rate **gate** over MadeOnSol's free Deployer Hunter endpoints, plus a keyless **entry score** from pump.fun's fill tape — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |
 | `analysis/window-population/` | How many profitable windows the tape contains, how long, how fast they close, how many at once. **One window**, 2026-03-12 → 2026-06-04, closing in a single launch. Offline like `src/`. Findings and definitions in its `README.md`. |
 | `test/type-guards.test-d.ts` | Compile-time proof that the three traps below are unreachable — and that `EgQX9R3Q…`'s figures cannot be read as an independent observation. |
 | `AGENTS.md` | Provider facts that cost real time to learn. Read before touching pump.fun or Solana RPC. |

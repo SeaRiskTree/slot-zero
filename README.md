@@ -522,7 +522,7 @@ plain `.mjs` with JSDoc types so they run on the Node 20 floor with no build ste
 
 ## Provenance
 
-The dataset and the findings are the work of six read-only scout investigations — the four
+The dataset and the findings are the work of seven read-only scout investigations — the four
 behind the dataset all carried out with zero metered provider requests. The population-tape report and its brief
 are reproduced in full under `data/population-tape-2026-07-29/`. The three companion reports
 — `kol-deployer-entity-cluster` (the operator behind the launches, and the creator-record
@@ -530,14 +530,17 @@ mutability trap), `kol-dev-wallet-sell-side` (the exit-ladder measurement, and t
 Token-2022 and fee-payer method notes) and `kol-cohort-vs-outsider-funding` (the funding
 graph that settles the outsider question above, and the two corrections in
 `data/population-tape-2026-07-29/IMPORT.md`) — are not copied here; the facts from them that
-this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`. Two later ones,
+this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`. Three later ones,
 `slot-zero-bankroll-book-pnl` (the bankroll's complete transaction set, and the shared
-custodial venue in "The ceiling of the method" above) and `slot-zero-june-regime-change` (the
+custodial venue in "The ceiling of the method" above), `slot-zero-june-regime-change` (the
 create slot's unprofitability for outsiders since 2026-06-04, and the *operation's share of the
-curve's bottom* method that `tools/deployer-screen/` cites), are likewise not copied here.
-**None of the five companion reports is committed to this repo** — only the population-tape
-report and its brief are — so any figure attributed to one of the five is evidence from elsewhere
-and is not asserted by any test here. `analysis/window-population/`
-re-derives `slot-zero-june-regime-change`'s 2026-06-04 date and its closed-regime prize from the
-local tape by an independent route, which is the one place a companion finding is confirmed
-in-repo.
+curve's bottom* method that `tools/deployer-screen/` cites) and `kol-bond-timing-vs-dev-exit`
+(the directly measured graduation times behind `data/population-tape-2026-07-29/IMPORT.md`
+corrections 4–7), are likewise not copied here.
+**None of the six companion reports is committed to this repo** — only the population-tape
+report and its brief are — so any figure attributed to one of the six is evidence from elsewhere
+and is not asserted by any test here. Two of them are confirmed in-repo by an independent
+route: `analysis/window-population/` re-derives `slot-zero-june-regime-change`'s 2026-06-04
+date and its closed-regime prize from the local tape, and `test/reproduction.test.ts` asserts
+the part of `kol-bond-timing-vs-dev-exit`'s §4 that the committed files can measure —
+`IMPORT.md` corrections 4, 6 and 7. Its population-level figures still cannot be.

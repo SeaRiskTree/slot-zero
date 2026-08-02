@@ -73,6 +73,18 @@ import { SUBJECT_DEPLOYER, VENDOR_READINGS, runStage0 } from './stage0.mjs';
  */
 const LISTING_PAGES_FOR_MERGE = 4;
 
+/**
+ * How often the creation walk prints a liveness line, in RPC requests.
+ *
+ * The other three clients print one line per request, and that is right for them: they issue tens
+ * of requests over a run. This one issues up to 100 per candidate across up to 195 candidates, so
+ * the same treatment would bury the report under ~20,000 lines. Silence is the worse failure
+ * though — this is the leg that dominates the wall clock, and an operator watching a still terminal
+ * kills a healthy run. So: every 10th request, which at the pinned 2.5s pacing is a line about
+ * every 25 seconds, plus the first request of each candidate so a walk is seen to start at all.
+ */
+const RPC_HEARTBEAT_EVERY = 10;
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
 const DEFAULT_DATA_DIR = join(REPO_ROOT, 'data', 'population-tape-2026-07-29');
@@ -593,9 +605,24 @@ export async function main(opts, env, out, err) {
       let { verdict, rationale } = vendorVerdict;
 
       if (!opts.ownershipOnly) {
+        let rpcTicks = 0;
         const rpc = new SolanaRpcClient({
           maxRequests: walkBounds.maxRpcRequestsPerCandidate,
           minIntervalMs: walkBounds.rpcMinIntervalMs,
+          // Same `!opts.json` guard as the other three clients, so --json stays machine-readable.
+          ...(opts.json
+            ? {}
+            : {
+                /** @param {string} label */
+                onRequest: (label) => {
+                  rpcTicks += 1;
+                  if (rpcTicks !== 1 && rpcTicks % RPC_HEARTBEAT_EVERY !== 0) return;
+                  out(
+                    `    · ${seed.wallet}: ${rpcTicks}/${walkBounds.maxRpcRequestsPerCandidate} ` +
+                      `RPC request(s) — ${label}`,
+                  );
+                },
+              }),
         });
         const walk = await readCreatedHistory(rpc, seed.wallet, {
           maxSignaturePages: walkBounds.maxSignaturePages,

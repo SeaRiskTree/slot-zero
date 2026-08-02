@@ -2474,6 +2474,39 @@ describe('the keyless boundary holds in both directions', () => {
     expect(branch.slice(0, branch.indexOf('\n        }\n'))).toMatch(/unmeasured\.push\(/);
   });
 
+  it('the creation walk emits the heartbeat the operator guidance tells a reader to watch', () => {
+    // Docs and behaviour have to agree, and here the disagreement is consequential: it is the
+    // difference between letting a healthy 13-hour run finish and killing it. The walk was the one
+    // client built without an onRequest logger while the README told operators to watch a counter.
+    const source = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    const construction = source.slice(
+      source.indexOf('new SolanaRpcClient('),
+      source.indexOf('readCreatedHistory(rpc'),
+    );
+    expect(construction).toMatch(/onRequest:/);
+    // Suppressed under --json, like every other logger here, so the record stays machine-readable.
+    expect(construction).toMatch(/opts\.json/);
+    // A heartbeat, not a line per request: up to 100 x 195 requests would bury the report.
+    expect(construction).toMatch(/RPC_HEARTBEAT_EVERY/);
+
+    const every = Number(/const RPC_HEARTBEAT_EVERY = (\d+)/.exec(source)?.[1]);
+    expect(every).toBeGreaterThan(1);
+
+    // And the prose must describe THAT cadence rather than a per-request one. The pacing is pinned
+    // in thresholds.json, so the interval the README quotes is derived rather than asserted.
+    const thresholds = JSON.parse(readFileSync(join(TOOL_DIR, 'thresholds.json'), 'utf8')) as {
+      creation_walk: { rpcMinIntervalMs: number };
+    };
+    const seconds = (every * thresholds.creation_walk.rpcMinIntervalMs) / 1000;
+    const readme = readFileSync(join(TOOL_DIR, 'README.md'), 'utf8');
+    expect(readme).toMatch(/\*\*every tenth\*\*/);
+    expect(readme).toMatch(new RegExp(`every ${seconds} seconds`));
+    expect(readme, 'the withdrawn per-request claim must not survive anywhere').not.toMatch(
+      /counter, which advances on every request/,
+    );
+    expect(readFileSync(join(TOOL_DIR, 'thresholds.json'), 'utf8')).toMatch(/PERIODIC HEARTBEAT/);
+  });
+
   it('the pinned keyless ceiling covers BOTH passes that share the frontend-api-v3 client', () => {
     // The ceiling was justified on the consistency pass alone — 3 pages per gate survivor — while
     // the GATE spends 4 pages per CANDIDATE on the same client. At the default candidate cap that
@@ -2909,6 +2942,40 @@ describe('the Solana RPC client is bounded the same way the keyed one is', () =>
     ]);
     expect(out).toEqual(['a', 'b']);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('announces every request it issues, retries included, so a caller can prove liveness', async () => {
+    // This is the leg that dominates a default run's wall clock — ~13.5 hours worst case — and a
+    // silent terminal is what gets a healthy run killed. The client reports each request; deciding
+    // how often to SHOW one is the caller's, because a line per request here is ~20,000 lines.
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls += 1;
+      return calls === 1
+        ? { ok: false, status: 429, json: async () => ({}) }
+        : { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: 0, result: 'ok' }) };
+    }) as unknown as typeof fetch;
+
+    const labels: string[] = [];
+    const rpc = new SolanaRpcClient({
+      maxRequests: 10,
+      minIntervalMs: 0,
+      backoffMs: 0,
+      fetchImpl,
+      sleepImpl: async () => {},
+      onRequest: (label) => labels.push(label),
+    });
+
+    await rpc.call('getSignaturesForAddress', []);
+    await rpc.batch([{ method: 'getTransaction', params: ['a'] }]);
+    // The shed attempt counts against the ceiling, so it has to be visible too — a heartbeat that
+    // stalls during a 429 storm reads exactly like the hang it exists to rule out.
+    expect(labels).toEqual([
+      'getSignaturesForAddress',
+      'getSignaturesForAddress',
+      'batch:getTransaction',
+    ]);
+    expect(labels).toHaveLength(rpc.issued());
   });
 
   it('refuses a batch larger than the measured cap', async () => {

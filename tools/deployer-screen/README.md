@@ -612,13 +612,29 @@ prints these same figures for whatever flags you actually pass:
 So: **~15 hours** for a default run, **~15.5** with `--consistency`. The earlier "about 47 minutes"
 predated the creation walk and counted only the keyed and `frontend-api-v3` legs; it is wrong by a
 factor of twenty and is withdrawn. **Do not kill a default run because it is still going after an
-hour** — check the printed request counter, which advances on every request.
+hour.**
+
+**How to tell a live run from a hung one.** The keyed and `frontend-api-v3` legs print `→ GET …`
+once per request. The creation walk does not — at up to 100 requests per candidate across up to 195
+candidates that would be some twenty thousand lines — so it prints a **periodic heartbeat instead**:
+
+```
+    · 7ufmve7Z…: 1/100 RPC request(s) — getSignaturesForAddress
+    · 7ufmve7Z…: 10/100 RPC request(s) — batch:getTransaction
+    · 7ufmve7Z…: 20/100 RPC request(s) — batch:getTransaction
+```
+
+The first request of each candidate, then **every tenth** — so at the pinned 2.5s pacing a line
+roughly **every 25 seconds**, carrying that candidate's spend against its per-candidate ceiling.
+That counter, not a per-request one, is the liveness signal to watch. It is suppressed under
+`--json` so machine-readable output stays machine-readable.
 
 Typical is far below worst case and is not predictable from the wallet address: the walk's cost
 scales with the fraction of a wallet's signature index that *succeeded*, measured between 1.7% and
 99.7% (see [What that costs, measured](#what-that-costs-measured)), so one candidate can finish in
-seconds and the next can spend the whole per-candidate ceiling. A run is not hung merely because it
-has been quiet for 2.5 seconds.
+seconds and the next can spend the whole per-candidate ceiling — a cheap candidate may print only
+its first heartbeat line before moving on. A run is not hung merely because it has been quiet for
+half a minute, and a candidate whose walk is retrying through a 429 storm can be quiet for longer.
 
 Two levers already exist, and this is what they are for:
 

@@ -774,7 +774,8 @@ only forbade mint-shaped *keys*, so a mint inside a sentence passed it. Two chan
   **Not covered, and the enumeration above is not full coverage of the record.** Three error-derived
   paths still reach `--out` verbatim: `creation.listingUnmeasuredNote` (`screen.mjs` →
   `describeUnmeasured`, whose `summary` is a raw `Error.message`), `creation.stopDetail`
-  (`pumpfun.mjs`, a raw `cause.message`), and the run-level `unmeasured[]` array, whose `detail`
+  (`pumpfun.mjs`, a raw `cause.message` under `upstream-error`; under `request-ceiling` it is that
+  client's own fixed ceiling wording, which names no vendor data), and the run-level `unmeasured[]` array, whose `detail`
   field `record.mjs` itself documents as embedding a per-wallet URL — so a keyless listing failure
   can persist a URL containing the wallet, which is the exact leak class this boundary exists for.
   That is a known open gap, deliberately left to a separate lane rather than an oversight; do not

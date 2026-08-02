@@ -214,7 +214,10 @@ export function readCurveState(base64Data) {
  *   a 56-year window that contains every timestamp, which made the merge below delete real
  *   launches. Anything comparing against this must handle `null` — {@link mergeHistories} treats an
  *   absent floor as an EMPTY window, never an infinite one.
- * @property {number} toMs   Newest block time the signature scan started from.
+ * @property {number} toMs   Newest block time the signature scan started from, and `0` when it
+ *   never reached one — a walk that resolved no page has no ceiling either. It is a `number` only
+ *   because the walk seeds it that way; put it through {@link coveredBoundMs} like the floor rather
+ *   than formatting it, or an empty window reports 1970 at both ends.
  * @property {boolean} exhausted True when the walk reached the end of the wallet's index, so
  *   `fromMs` is the wallet's genesis rather than a ceiling.
  */

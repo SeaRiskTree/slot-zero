@@ -40,8 +40,11 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
 /**
  * Schema version of records this build writes.
  *
- * - **absent** — schema 1. Predates `completed`; completeness is unknowable from the record.
- * - **2** — carries `completed`, and `coverage` distinguishing cap truncation from an abort.
+ * - **absent** — schema 1. Predates `completed`; completeness is unknowable from the record. It
+ *   does carry `coverage`, so the presence of `coverage` is NOT evidence of schema 2 — the
+ *   committed `runs/2026-07-29-elite.json` holds `coverageTruncated` and `droppedByCandidateCap`
+ *   under schema 1. Read `coverage` on every record; version-detect on `completed`.
+ * - **2** — adds `completed`, and only `completed`.
  * - **3** — adds `spend`: the keyed ceiling, what was left unspent, the planned worst case, and the
  *   endpoints actually called with each one's per-call cost. A schema-2 record carries only the
  *   `keyedRequests` total, so on those `spend` is genuinely absent and must not be reconstructed —

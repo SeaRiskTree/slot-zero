@@ -14,6 +14,14 @@ what is established and what is open.
 - CI is `.github/workflows/ci.yml` (PRs and pushes to `main`): `npm ci` then `npm test` on
   Node 20 — the `engines` floor, not the dev box's version. That is the whole check set on
   purpose; there is no lint script and no coverage, audit or matrix gate to satisfy.
+- **The type surface is pinned to the engines floor major, not to the dev box.** `@types/node`
+  tracks Node 20 so a Node 22-only API cannot type-check clean and then throw on the supported
+  runtime. `test/toolchain.test.ts` asserts `engines`, the CI `node-version`, the declared and
+  installed `@types/node` majors and the tsconfig `lib`/`target` all agree; raising the floor means
+  moving all of them together, and that is a captain decision, not a dependency bump. The
+  `lib`/`target` ceiling is derived from the floor via `ES_CEILING_BY_NODE_MAJOR` in that test —
+  extend the map in the same commit that raises `engines`, and keep the CI `node-version` a
+  literal, since the guard refuses a matrix reference rather than half-checking it.
 - **`src/` may never reach the network or read a credential.** Enforced structurally by
   `test/loader.test.ts` → "this repo does not reach the network and reads no credential", which
   scans `src/` **recursively** for sockets, `process.env` and key-shaped strings. Keep it that

@@ -1,5 +1,7 @@
 {
   "compilerOptions": {
+    // Capped by the `engines` floor, not by the dev box: ES2022 is all Node 20 fully
+    // provides. `test/toolchain.test.ts` fails if this outruns the floor.
     "target": "ES2022",
     "lib": ["ES2022"],
     "module": "NodeNext",

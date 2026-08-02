@@ -77,10 +77,11 @@ asserts **both** halves of it every run:
 
 It is competent (103 of 239 launches bonded, 0.4310) and it is **not beatable**: since 2026-06-04
 its own group takes the bottom of its own curve. Stage 2 scores it `entry-room-absent` on both the
-recent-launch slice a live run would score and the whole 89-launch post-break regime. That pairing
+recent-launch slice a live run would score and the whole post-break regime, over its 86 **proven**
+launches. That pairing
 is what stops the tool from grading itself favourably, and `stage0.mjs` fails loudly if a later lane
 loosens a bar enough to admit the wallet. It matters most because the **field** leg on that same
-wallet reads 362 of 473 closed round trips positive gross of fees — followed on its own it would
+wallet reads 351 of 460 closed round trips positive gross of fees — followed on its own it would
 call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md`.
 
 ---

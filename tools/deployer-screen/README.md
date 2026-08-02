@@ -1037,7 +1037,9 @@ That last check now asserts a **minimum n per era and a finite median** before c
 launches used to record no failure and report **PASSED** — and a passing Stage 0 is what authorises
 spending keyed quota on strangers. Anything that empties the filter (renamed window files, every
 `reached_mint` false, a `--data-dir` pointing at a differently dated tape, a shifted date range) hit
-exactly that case. The buckets hold 45 and 89 launches as committed; the floor is 20.
+exactly that case. The buckets hold 45 and 86 launches as committed — 86 rather than 89 because the
+split is filtered on `roomIsProven` and three era-2 launches carry no bundled create-slot
+transaction; the floor is 20.
 
 **Built — Stage 1**, the keyed gate: enumerate, compute the rate ourselves, apply pinned thresholds.
 

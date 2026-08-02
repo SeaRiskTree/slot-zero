@@ -151,7 +151,9 @@ export function hitRate(values, predicate) {
  * @typedef {object} LaunchEntry
  * @property {import('./measure.mjs').CreateSlotMeasurement} createSlot
  * @property {FieldEntrant[]} field  Every competing wallet in the create slot. May be empty, which
- *   is itself a finding: nine of our subject's 89 post-break launches had no outsider at all.
+ *   is itself a finding: eight of our subject's 86 proven post-break launches had no outsider at
+ *   all. Refusing the unproven openings did not move that count — it is eight over all 89 too,
+ *   because none of the three refused launches was outsider-free.
  */
 
 /**

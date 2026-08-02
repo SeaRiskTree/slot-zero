@@ -645,8 +645,10 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
   // `Math.abs(NaN - published) > 0.02` is FALSE, so an era bucket that matched no launches used to
   // report PASSED and then authorise keyed spending. Anything that empties the filter — renamed
   // window files, every `reached_mint` false, a `--data-dir` pointing at a differently dated tape, a
-  // shifted date range — is exactly that case. The buckets hold 45 and 89 launches as committed, so
-  // a floor of 20 leaves room for ordinary variation while refusing a hollowed-out bucket.
+  // shifted date range — is exactly that case. The buckets hold 45 and 86 launches as committed —
+  // 86 and not 89 because this split is filtered on `roomIsProven` and three era-2 launches carry
+  // no bundled create-slot transaction — so a floor of 20 leaves room for ordinary variation while
+  // refusing a hollowed-out bucket.
   //
   // THE ERA-2 CONSTANT IS RE-PINNED, AND THE TOLERANCE IS NOT THE FIX (captain decision 135c).
   // The June report's §5.1 table prints `0.768` for era 2, and that cell is **not the median of its

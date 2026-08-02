@@ -26,7 +26,15 @@
  * worth trading, or worth entering, or good. `gate-passed` means one thing — it survived the
  * competence filter and is eligible for the measurement that has not been built yet.
  *
- * @typedef {'gate-passed' | 'gate-failed'} Verdict
+ * `gate-unmeasured` is the third value and it is **not a rejection**. The history a candidate is
+ * judged on can be incomplete in ways the thresholds cannot see: a launch whose bonded status
+ * neither the on-chain curve nor the ownership listing can answer, or an ownership listing that
+ * failed to read at all. A `gate-failed` carrying an ordinary rationale over a reading that was
+ * never actually taken is precisely the invisible false rejection this tool exists to remove, so
+ * the state lives in the VERDICT and not only in the wording beside it — a reader filtering a run
+ * record on `verdict` must not be able to miss it.
+ *
+ * @typedef {'gate-passed' | 'gate-unmeasured' | 'gate-failed'} Verdict
  */
 
 /**
@@ -111,11 +119,15 @@ export function applyGate(input, t) {
  * @property {number} signaturesScanned
  * @property {number} signaturesSucceeded
  * @property {number} transactionsInspected
- * @property {number} unresolvedTransactions
- * @property {number} curvesUnread Creations whose curve account went unread. Each counts as NOT
- *   bonded, so this is the amount by which the completion rate is knowably deflated.
+ * @property {number} unresolvedTransactions Transactions the endpoint never returned, retry
+ *   included. Non-zero means the window is NOT exact, and `windowExact` below says so.
+ * @property {number} curvesUnread Creations whose curve account went unread. Their bonded status
+ *   falls back to the ownership listing; `bondedUndecidable` is what neither source could answer.
  * @property {number} listingRows
  * @property {boolean} listingPageCapped
+ * @property {string | null} listingUnmeasuredNote Why the ownership listing could not be read at
+ *   all, when it could not. Non-null makes the whole reading unmeasured — the listing supplies
+ *   everything before the creation window, so without it the history is a fragment.
  * @property {number} createdInWindow
  * @property {number} listedInWindow
  * @property {number} hiddenByOwnership Created inside the window, absent from the ownership
@@ -123,6 +135,12 @@ export function applyGate(input, t) {
  * @property {number} notCreatedByWallet
  * @property {number} movedCreator
  * @property {number} listedOutsideWindow
+ * @property {number} listedInWindowCarried
+ * @property {boolean} windowExact
+ * @property {number} bondedFromCurve Launches whose bonded status came from the on-chain curve.
+ * @property {number} bondedFromListing Launches whose bonded status came from the listing's flag.
+ * @property {number} bondedUndecidable Launches neither source could answer for. Any non-zero
+ *   value makes the candidate's verdict `gate-unmeasured`.
  */
 
 /**
@@ -161,11 +179,28 @@ export function applyGate(input, t) {
  * the profit leg is unmeasured, and never uses a word like "candidate" or "gem" unqualified,
  * because a later reader will quote this line out of context.
  *
+ * `notMeasured` outranks the gate itself. When the reading the thresholds were applied to is
+ * incomplete, the thresholds have not decided anything, and the rationale says so in the same
+ * breath as the verdict rather than qualifying an otherwise ordinary sentence.
+ *
  * @param {{ gate: GateResult, completion: import('./measure.mjs').CompletionMeasurement,
- *           capped: boolean }} input
+ *           capped: boolean, notMeasured?: readonly string[] }} input
  * @returns {{ verdict: Verdict, rationale: string }}
  */
 export function verdictFor(input) {
+  const notMeasured = input.notMeasured ?? [];
+  if (notMeasured.length > 0) {
+    return {
+      verdict: 'gate-unmeasured',
+      rationale:
+        `GATE UNMEASURED — this is NOT a rejection and NOT a pass. The launch history the gate ` +
+        `would have judged is incomplete: ${notMeasured.join('; ')}. On that incomplete reading ` +
+        `the thresholds would have ${input.gate.passed ? 'passed' : 'failed'} it, which is not a ` +
+        `result and must not be quoted as one. Absence of a finding here is not a finding; rerun ` +
+        `to measure this wallet.`,
+    };
+  }
+
   if (!input.gate.passed) {
     return {
       verdict: 'gate-failed',
@@ -191,7 +226,11 @@ export function verdictFor(input) {
  * Presentational rather than a ranking claim: `render.mjs` prints the result as a table of measured
  * results, not as a league table. Three keys, in this order:
  *
- * 1. **Gate class.** Survivors before rejections.
+ * 1. **Gate class.** Survivors, then candidates whose reading was never measured, then rejections.
+ *    `gate-unmeasured` sits between the two because it is neither: sorting it with the rejections
+ *    would bury a wallet nobody has judged among the wallets that were judged and failed. The map
+ *    is total over {@link Verdict} — an unhandled value would make the comparator return NaN, which
+ *    is not a strict weak ordering and would silently break the byte-identical-output guarantee.
  * 2. **Measured entry room, descending** — the promise the Stage 1 lane made when it left the seam:
  *    once Stage 2 landed, room-left would become the sort key. A candidate with **no** entry score
  *    sorts *after* every scored one rather than being interleaved at some imputed room, because an
@@ -208,7 +247,7 @@ export function verdictFor(input) {
  */
 export function rankCandidates(candidates) {
   /** @type {Record<Verdict, number>} */
-  const classOrder = { 'gate-passed': 0, 'gate-failed': 1 };
+  const classOrder = { 'gate-passed': 0, 'gate-unmeasured': 1, 'gate-failed': 2 };
   /** @param {Candidate} c @returns {number} */
   const roomKey = (c) =>
     c.entry === null || !Number.isFinite(c.entry.roomLeft.median) ? Number.NEGATIVE_INFINITY : c.entry.roomLeft.median;

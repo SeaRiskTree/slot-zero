@@ -408,6 +408,28 @@ export async function main(opts, env, out, err) {
     return EXIT.usage;
   }
 
+  // **The same refusal for the keyless ceiling.** It bounds a shared public resource rather than a
+  // metered allowance, but the failure it prevents is worse: the keyless work happens AFTER the
+  // keyed allowance has been spent, so a ceiling discovered half-way through wastes the quota it
+  // already paid for. The gate's own ownership listing costs up to `LISTING_PAGES_FOR_MERGE` per
+  // candidate and `--consistency` costs up to 3 more per gate survivor, of which every candidate
+  // could be one.
+  const listingPagesPerCandidate = opts.ownershipOnly ? 0 : LISTING_PAGES_FOR_MERGE;
+  const worstCaseKeyless = maxCandidates * (listingPagesPerCandidate + (opts.consistency ? 3 : 0));
+  if (worstCaseKeyless > budget.maxKeylessRequests) {
+    err(
+      `Refusing to start: the plan's worst case is ${maxCandidates} candidate x ` +
+        `${listingPagesPerCandidate + (opts.consistency ? 3 : 0)} keyless page(s) = ${worstCaseKeyless} ` +
+        `requests, above the pinned keyless ceiling of ${budget.maxKeylessRequests}.`,
+    );
+    err(
+      `  Lower --candidates to ${Math.floor(budget.maxKeylessRequests / Math.max(1, listingPagesPerCandidate + (opts.consistency ? 3 : 0)))} ` +
+        `or fewer, drop --consistency, or raise thresholds.json budget.maxKeylessRequests.`,
+    );
+    err('  Nothing was requested, so no quota was spent.');
+    return EXIT.usage;
+  }
+
   const resolution = resolveKey(env);
 
   if (opts.dryRun) {
@@ -582,19 +604,59 @@ export async function main(opts, env, out, err) {
         rpcRequests += rpc.issued();
         rpcLoadShedEvents += rpc.loadShedEvents();
 
-        const listing = await readCreatorHistory(keyless, seed.wallet, LISTING_PAGES_FOR_MERGE);
+        // Guarded per candidate, exactly as the consistency pass is. A CeilingReached or a
+        // transport failure on one wallet's listing used to reach the outer catch and abort a run
+        // whose keyed MadeOnSol allowance was already spent — one wallet's bad luck throwing away
+        // every measurement paid for before it. It degrades this candidate's reading instead, and
+        // the reading then reads as unmeasured rather than as a rejection.
+        /** @type {{ records: import('./pumpfun.mjs').ListedToken[], truncated: boolean }} */
+        let listing = { records: [], truncated: false };
+        /** @type {string | null} */
+        let listingUnmeasuredNote = null;
+        try {
+          listing = await readCreatorHistory(keyless, seed.wallet, LISTING_PAGES_FOR_MERGE);
+        } catch (cause) {
+          const entry = unmeasuredBecause('the ownership listing the creation window merges with', seed.wallet, cause, {
+            budget: 'keyless pump.fun',
+            ceiling: budget.maxKeylessRequests,
+            setting: 'thresholds.json budget.maxKeylessRequests',
+          });
+          unmeasured.push(entry);
+          listingUnmeasuredNote = describeUnmeasured(entry);
+        }
+
         const merged = mergeHistories({
           creates: walk.creates,
           wallet: seed.wallet,
           curves: walk.curves,
           listed: listing.records,
           covered: walk.covered,
+          unresolvedTransactions: walk.unresolvedTransactions,
         });
 
         completion = measureCompletion(merged.records);
         gateReadingCapped = listing.truncated;
         gate = applyGate({ completion }, gateThresholds);
-        ({ verdict, rationale } = verdictFor({ gate, completion, capped: gateReadingCapped }));
+        // What makes this reading unjudgeable, if anything. Both entries describe a history the
+        // thresholds were applied to but could not actually decide over, and either one is enough:
+        // a rejection computed on it would be exactly the invisible false rejection this lane
+        // exists to remove, and a pass would be no better founded.
+        /** @type {string[]} */
+        const notMeasured = [];
+        if (merged.bondedUndecidable > 0) {
+          notMeasured.push(
+            `${merged.bondedUndecidable} of ${merged.records.length} launch(es) have no bonded ` +
+              `status from EITHER source — the bonding-curve account could not be read and the ` +
+              `ownership listing has no row for them (which is what a hidden launch looks like)`,
+          );
+        }
+        if (listingUnmeasuredNote !== null) {
+          notMeasured.push(
+            `the ownership listing, which supplies every launch before the creation window, could ` +
+              `not be read: ${listingUnmeasuredNote}`,
+          );
+        }
+        ({ verdict, rationale } = verdictFor({ gate, completion, capped: gateReadingCapped, notMeasured }));
         creation = {
           coveredFromIso: walk.covered.fromMs === 0 ? null : new Date(walk.covered.fromMs).toISOString(),
           coveredToIso: walk.covered.toMs === 0 ? null : new Date(walk.covered.toMs).toISOString(),
@@ -611,12 +673,18 @@ export async function main(opts, env, out, err) {
           curvesUnread: walk.curvesUnread,
           listingRows: listing.records.length,
           listingPageCapped: listing.truncated,
+          listingUnmeasuredNote,
           createdInWindow: merged.createdInWindow,
           listedInWindow: merged.listedInWindow,
           hiddenByOwnership: merged.hiddenByOwnership,
           notCreatedByWallet: merged.notCreatedByWallet,
           movedCreator: merged.movedCreator,
           listedOutsideWindow: merged.listedOutsideWindow,
+          listedInWindowCarried: merged.listedInWindowCarried,
+          windowExact: merged.windowExact,
+          bondedFromCurve: merged.bondedFromCurve,
+          bondedFromListing: merged.bondedFromListing,
+          bondedUndecidable: merged.bondedUndecidable,
         };
 
         if (!opts.json) {
@@ -626,6 +694,9 @@ export async function main(opts, env, out, err) {
               `${merged.notCreatedByWallet} acquired, ${merged.movedCreator} creator moved), ` +
               `+${merged.listedOutsideWindow} carried over — stopped on ${walk.stopReason}`,
           );
+          if (notMeasured.length > 0) {
+            out(`      ^ READING NOT MEASURED — verdict ${verdict}, not a rejection: ${notMeasured.join('; ')}`);
+          }
         }
       }
 
@@ -957,7 +1028,11 @@ function toRecordRow(c) {
       : null,
     vendorSpanDays: Number(c.vendorCompletion.spanDays.toFixed(2)),
     vendorVerdict: c.vendorVerdict,
-    verdictChanged: c.verdict !== c.vendorVerdict,
+    // Only a MEASURED gate verdict can differ from the vendor's. `gate-unmeasured` is not a
+    // different answer to the same question, it is the absence of one, and recording it as a
+    // changed verdict would put it into the very gap-tracking figure this record exists to keep
+    // honest. The `verdict` field carries the state; this flag stays a comparison of two results.
+    verdictChanged: c.verdict !== 'gate-unmeasured' && c.verdict !== c.vendorVerdict,
     creation: c.creation,
     verdict: c.verdict,
     rationale: c.rationale,

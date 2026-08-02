@@ -416,6 +416,7 @@ export function renderStage0(r, vendorReadings) {
 export function renderStage1(run) {
   const L = [];
   const passed = run.candidates.filter((c) => c.verdict === 'gate-passed');
+  const notMeasured = run.candidates.filter((c) => c.verdict === 'gate-unmeasured');
   const failed = run.candidates.filter((c) => c.verdict === 'gate-failed');
 
   L.push('='.repeat(78));
@@ -434,6 +435,7 @@ export function renderStage1(run) {
   L.push(`prefiltered out    ${run.prefiltered}  (skipped before spending a request)`);
   L.push(`candidates gated   ${run.candidates.length}`);
   L.push(`gate passed        ${passed.length}`);
+  L.push(`gate unmeasured    ${notMeasured.length}  (reading incomplete — NOT rejections)`);
   L.push(`gate failed        ${failed.length}`);
 
   // Run-level drop tally. A per-wallet count can look like one awkward launch; the total across the
@@ -524,6 +526,12 @@ export function renderStage1(run) {
       L.push('This is a real measured outcome, not an error — the run completed and every candidate');
       L.push('was evaluated. If the run had failed instead, it would have exited non-zero and said so');
       L.push('above. The per-candidate reasons are listed below.');
+      if (notMeasured.length > 0) {
+        L.push('');
+        L.push(`EXCEPT for ${notMeasured.length} candidate(s) whose reading was NOT MEASURED — see the`);
+        L.push('GATE UNMEASURED section below. Those wallets were not judged at all, so "no candidate');
+        L.push('cleared the gate" does not cover them.');
+      }
     } else {
       // Never the completion language on an aborted run: an empty ranking that reads as a real
       // negative is the one output this tool exists to make impossible.
@@ -563,8 +571,16 @@ export function renderStage1(run) {
         }
         if (c.creation.curvesUnread > 0) {
           L.push(
-            `      ^ ${c.creation.curvesUnread} curve account(s) unread, each counted as NOT bonded — ` +
-              `the rate above is deflated by up to that much`,
+            `      ^ ${c.creation.curvesUnread} curve account(s) unread; bonded status came from ` +
+              `the on-chain curve for ${c.creation.bondedFromCurve} launch(es) and from the ` +
+              `ownership listing for ${c.creation.bondedFromListing}`,
+          );
+        }
+        if (!c.creation.windowExact) {
+          L.push(
+            `      ^ ${c.creation.unresolvedTransactions} transaction(s) never resolved, so the walk ` +
+              `is NOT authoritative inside its own window: ${c.creation.listedInWindowCarried} ` +
+              `in-window listing row(s) were carried rather than read as acquired`,
           );
         }
       }
@@ -603,6 +619,32 @@ export function renderStage1(run) {
     L.push('  ENTRY-ROOM-PRESENT IS NOT "BEATABLE". It means the opening window is not already');
     L.push('  closed, so the EXIT question is worth asking. Exit is unmeasured here, and every');
     L.push('  realised figure above is gross of fees and therefore an upper bound.');
+  }
+
+  // Its own section, never folded into either list. A candidate that appeared in neither would
+  // vanish from the report entirely, and one listed among the rejections would be read as judged
+  // and found wanting — which is the false rejection this whole reading exists to remove, restored
+  // at the last step.
+  if (notMeasured.length > 0) {
+    L.push('');
+    L.push('GATE UNMEASURED — THIS IS NOT A NEGATIVE RESULT');
+    L.push('  These wallets were NOT judged. The launch history the gate reads was incomplete, so');
+    L.push('  the thresholds decided nothing about them: they are neither rejected nor passed, and');
+    L.push('  the absence of a finding here is not a finding. Rerun to measure them.');
+    for (const c of notMeasured) {
+      L.push(`  ${c.wallet}`);
+      L.push(`      · ${c.rationale}`);
+      if (c.creation !== null && c.creation.bondedUndecidable > 0) {
+        L.push(
+          `      · bonded status: ${c.creation.bondedFromCurve} from the on-chain curve, ` +
+            `${c.creation.bondedFromListing} from the ownership listing, ` +
+            `${c.creation.bondedUndecidable} UNDECIDABLE`,
+        );
+      }
+      if (c.creation !== null && c.creation.listingUnmeasuredNote !== null) {
+        L.push(`      · ownership listing unread: ${c.creation.listingUnmeasuredNote}`);
+      }
+    }
   }
 
   if (failed.length > 0) {
@@ -762,7 +804,7 @@ export function renderDryRun(plan) {
     L.push('');
     L.push('KEYLESS — pump.fun creator listing, the ownership reading, for every candidate:');
     L.push('  GET https://frontend-api-v3.pump.fun/coins?creator={wallet}&offset=...');
-    L.push(`  up to 4 pages per candidate, ceiling ${plan.maxKeylessRequests}. Costs no quota.`);
+    L.push(`  up to 4 pages per candidate, so up to ${4 * plan.maxCandidates} for the gate alone.`);
   } else {
     L.push('KEYLESS — Solana RPC: NONE. --ownership-only was passed, so the gate reads the');
     L.push('  ownership listing alone. That reading is BIASED TOWARDS REJECTION and the record');
@@ -771,12 +813,32 @@ export function renderDryRun(plan) {
   if (plan.consistency) {
     L.push('');
     L.push('KEYLESS — a further creator walk for gate survivors, for long-horizon consistency:');
-    L.push(`  up to 3 pages per survivor, ceiling ${plan.maxKeylessRequests}. Costs no quota.`);
+    L.push(`  up to 3 pages per survivor, so up to ${3 * plan.maxCandidates} if every candidate survives.`);
   } else {
     L.push('KEYLESS — no consistency pass. Pass --consistency to measure it (no quota cost).');
     L.push('');
     L.push('Long-horizon consistency: UNMEASURED. Pass --consistency (no quota cost).');
   }
+  // Both frontend-api-v3 passes share ONE client and ONE ceiling, so the plan a reader has to check
+  // is their sum. A per-pass figure invites the arithmetic that let the gate quietly overrun a
+  // ceiling justified for the consistency walk alone.
+  const keylessWorstCase =
+    plan.maxCandidates * ((plan.historySource === 'creation-derived' ? 4 : 0) + (plan.consistency ? 3 : 0));
+  L.push('');
+  L.push(
+    `  KEYLESS WORST CASE, frontend-api-v3 (one client, one ceiling): ${keylessWorstCase} request(s) ` +
+      `against a ceiling of ${plan.maxKeylessRequests}.`,
+  );
+  L.push(
+    keylessWorstCase <= plan.maxKeylessRequests
+      ? '  It fits, so the plan above is the whole exposure. A plan that did not fit would be'
+      : '  !! IT DOES NOT FIT — a real run is REFUSED before its first request rather than allowed',
+  );
+  L.push(
+    keylessWorstCase <= plan.maxKeylessRequests
+      ? '  refused before the first request, not discovered after the keyed allowance was spent.'
+      : '  to die half-way through, after the keyed allowance has already been spent.',
+  );
   L.push('');
   L.push('NOT REQUESTED, deliberately:');
   L.push('  /deployer-hunter/{wallet}/tokens   — bonded-only, so it has no denominator at all.');

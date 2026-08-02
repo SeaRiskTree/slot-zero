@@ -1007,9 +1007,10 @@ export class SolanaRpcClient {
  * @property {number} transactionsInspected
  * @property {number} unresolvedTransactions Transactions the endpoint never returned. Coverage
  *   inside the window is only exact when this is zero, so it travels with the result.
- * @property {number} curvesUnread Creations whose bonding-curve account could not be read. Each
- *   one counts as NOT bonded downstream, so a non-zero value means the completion rate is deflated
- *   by a known amount rather than wrong by an unknown one.
+ * @property {number} curvesUnread Creations whose bonding-curve account could not be read. Their
+ *   bonded status falls back to the ownership listing's own `complete` flag in
+ *   {@link import('./creation.mjs').mergeHistories}, and only where that has no row either is the
+ *   launch undecidable — at which point the reading is UNMEASURED rather than a rejection.
  * @property {'index-exhausted' | 'page-cap' | 'transaction-cap' | 'request-ceiling' | 'upstream-error'} stopReason
  *   Why the walk stopped. `index-exhausted` is the only value for which `covered` spans the
  *   wallet's whole history; every other value means the window is a ceiling, and a caller that
@@ -1080,12 +1081,24 @@ export async function readCreatedHistory(rpc, wallet, bounds) {
   // caller unable to tell a bounded window from an error.
   try {
     walk: while (pages < bounds.maxSignaturePages) {
-      const page = await rpc.call('getSignaturesForAddress', [
-        wallet,
-        { limit: 1000, ...(before === undefined ? {} : { before }) },
-      ]);
+      const params = [wallet, { limit: 1000, ...(before === undefined ? {} : { before }) }];
+      // A NULL IS RETRY, NEVER ABSENT. `call` returns null both when the public RPC sheds load and
+      // when the JSON-RPC envelope carries an `error` instead of a `result`, and neither means the
+      // index ended. Reading one as the end of the index would record page 2 of 200 as the wallet's
+      // whole history under `index-exhausted` — a ceiling presented as a measurement, which is the
+      // one output this lane exists to make impossible. Only an ARRAY resolves a page; a genuinely
+      // empty array is a real end of index, an unresolved page ends the walk on `upstream-error`.
+      let page = await rpc.call('getSignaturesForAddress', params);
+      if (!Array.isArray(page)) page = await rpc.call('getSignaturesForAddress', params);
+      if (!Array.isArray(page)) {
+        stopReason = 'upstream-error';
+        stopDetail =
+          'getSignaturesForAddress returned no result, and the one retry returned none either. ' +
+          'A null from this endpoint is load-shedding, so the index is NOT known to have ended here.';
+        break;
+      }
       pages += 1;
-      if (!Array.isArray(page) || page.length === 0) break;
+      if (page.length === 0) break;
 
       /** @type {{ signature: string, blockTime: number, err: unknown }[]} */
       const rows = [];
@@ -1099,7 +1112,13 @@ export async function readCreatedHistory(rpc, wallet, bounds) {
           err: r['err'] ?? null,
         });
       }
-      if (rows.length === 0) break;
+      // A non-empty page none of whose entries carries a signature is a shape we do not understand,
+      // not an exhausted index — the same distinction the null check above draws.
+      if (rows.length === 0) {
+        stopReason = 'upstream-error';
+        stopDetail = `getSignaturesForAddress served ${page.length} row(s) carrying no signature`;
+        break;
+      }
 
       const newest = rows[0];
       const oldest = rows[rows.length - 1];

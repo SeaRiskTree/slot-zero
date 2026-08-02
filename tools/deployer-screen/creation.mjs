@@ -227,8 +227,26 @@ export function readCurveState(base64Data) {
  *   the opposite error, an over-count from tokens the wallet acquired rather than launched.
  * @property {number} listedOutsideWindow Launches carried over from the ownership surface because
  *   the walk never reached them. **These are still a lower bound** and are counted as one.
+ * @property {number} listedInWindowCarried Launches carried over from the ownership surface from
+ *   INSIDE the window, which only happens when the walk left transactions unresolved and is
+ *   therefore not authoritative there. Zero whenever {@link MergedHistory.windowExact} is true.
+ * @property {boolean} windowExact True when the walk resolved every transaction it inspected, so
+ *   the set of creates inside `covered` is exact and a listed token it never saw was acquired
+ *   rather than missed. False means the walk may have missed a real create, and the listing's
+ *   in-window rows are carried rather than reclassified.
  * @property {number} movedCreator       Launches inside the window whose on-chain creator is no
  *   longer the wallet that created them.
+ * @property {number} bondedFromCurve    Launches whose bonded status was decided by the on-chain
+ *   bonding-curve `complete` byte — the authoritative source.
+ * @property {number} bondedFromListing  Launches whose bonded status was decided by the ownership
+ *   listing's own `complete` flag, because the curve account could not be read. A weaker source but
+ *   a well-founded one: it is the same field a vendor mirror of agreed with our own tape 67/67.
+ * @property {number} bondedUndecidable  Launches NEITHER source can answer for. Counted as
+ *   not-bonded so the rate can only be understated, but the reading is then UNMEASURED and no
+ *   verdict may be read off it. Not hypothetical: a launch hidden from the ownership listing — the
+ *   very thing this route exists to find — has no listing row by definition.
+ *
+ * `bondedFromCurve + bondedFromListing + bondedUndecidable === records.length`, always.
  */
 
 /**
@@ -247,6 +265,19 @@ export function readCurveState(base64Data) {
  * covered two days would otherwise turn a 200-launch history into a 4-launch one and fail the
  * deployer on sample size — which is the same invisible false rejection, just from the other end.
  *
+ * ## Two claims the merge refuses to make
+ *
+ * - **"Inside the window the walk is authoritative" holds only when the walk resolved everything it
+ *   inspected.** `readCreatedHistory` retries an unresolved `getTransaction` once and then gives up
+ *   on it, so `unresolvedTransactions > 0` means a create may simply never have come back. Under
+ *   that, an in-window listed token the walk did not see is carried over as a launch rather than
+ *   relabelled "acquired" and dropped — dropping it would delete a real launch, and its bonded
+ *   flag, from both sides of the gate's fraction.
+ * - **A launch whose curve went unread is not automatically a launch that failed.** Bonded status
+ *   is resolved curve → listing flag → undecidable, and which source answered is counted, so a
+ *   completion rate computed over undecidable launches can be recognised as unmeasured rather than
+ *   read as a rejection.
+ *
  * @param {object} input
  * @param {readonly CreateRecord[]} input.creates Creations found by the walk, any creator.
  * @param {string} input.wallet
@@ -254,26 +285,63 @@ export function readCurveState(base64Data) {
  * @param {readonly { mint: string, deployedAtMs: number, completed: boolean }[]} input.listed
  *   The ownership listing, with mints so the two sets can be reconciled by identity.
  * @param {CoveredWindow} input.covered
+ * @param {number} [input.unresolvedTransactions] Transactions the walk asked for and never got.
+ *   Defaults to 0, which is the claim that the window is exact — pass the walk's own count.
  * @returns {MergedHistory}
  */
 export function mergeHistories(input) {
   const { creates, wallet, curves, listed, covered } = input;
+  const unresolvedTransactions = input.unresolvedTransactions ?? 0;
+  const windowExact = unresolvedTransactions === 0;
 
   /** @param {number} ms */
   const inWindow = (ms) => Number.isFinite(ms) && ms >= covered.fromMs && ms <= covered.toMs;
+
+  // The listing is deduplicated by mint FIRST. `overlap` below counts listing rows against a set of
+  // distinct created mints, so a mint the endpoint served twice — the same row reached from two
+  // offsets while the deployer launched again mid-walk — would make `overlap` exceed
+  // `createdInWindow` and drive `hiddenByOwnership` negative. This measurement sizes a bias, so it
+  // is the one measurement that cannot carry one. Rows with no mint cannot collide and are kept.
+  /** @type {{ mint: string, deployedAtMs: number, completed: boolean }[]} */
+  const listedRows = [];
+  /** @type {Set<string>} */
+  const seenListedMints = new Set();
+  for (const row of listed) {
+    if (row.mint !== '') {
+      if (seenListedMints.has(row.mint)) continue;
+      seenListedMints.add(row.mint);
+    }
+    listedRows.push(row);
+  }
+  /** The listing's own `complete` flag, the fallback source for a launch whose curve went unread. */
+  /** @type {Map<string, boolean>} */
+  const listedCompletion = new Map();
+  for (const row of listedRows) if (row.mint !== '') listedCompletion.set(row.mint, row.completed);
 
   /** @type {Map<string, import('./measure.mjs').TokenRecord>} */
   const byMint = new Map();
   /** Mints this wallet created **inside** the window — the only set comparable to the listing. */
   const createdInWindowMints = new Set();
   let movedCreator = 0;
+  let bondedFromCurve = 0;
+  let bondedFromListing = 0;
+  let bondedUndecidable = 0;
 
   for (const c of creates) {
     if (c.creator !== wallet) continue;
+    if (byMint.has(c.mint)) continue;
     const curve = curves.get(c.mint);
-    // A launch whose curve account cannot be read is counted as a launch that did not bond. It is
-    // the conservative direction: it can only lower the rate, never inflate it.
-    byMint.set(c.mint, { deployedAtMs: c.createdAtMs, completed: curve?.complete === true });
+    let completed = false;
+    if (curve !== undefined) {
+      completed = curve.complete;
+      bondedFromCurve += 1;
+    } else if (listedCompletion.has(c.mint)) {
+      completed = listedCompletion.get(c.mint) === true;
+      bondedFromListing += 1;
+    } else {
+      bondedUndecidable += 1;
+    }
+    byMint.set(c.mint, { deployedAtMs: c.createdAtMs, completed });
     if (curve !== undefined && curve.creator !== wallet) movedCreator += 1;
     // Every create found is a proven launch and belongs in `records` — but only those inside the
     // covered window may be COMPARED against the listing. The walk abandons a page part-way when a
@@ -285,17 +353,32 @@ export function mergeHistories(input) {
   let listedInWindow = 0;
   let overlap = 0;
   let listedOutsideWindow = 0;
-  for (const row of listed) {
+  let listedInWindowCarried = 0;
+  let notCreatedByWallet = 0;
+  for (const row of listedRows) {
     if (inWindow(row.deployedAtMs)) {
       listedInWindow += 1;
-      // Inside the window the walk is authoritative, so a listed token it never saw was not
-      // created by this wallet — it was acquired.
-      if (createdInWindowMints.has(row.mint)) overlap += 1;
+      if (createdInWindowMints.has(row.mint)) {
+        overlap += 1;
+        continue;
+      }
+      if (windowExact) {
+        // The walk saw every transaction inside the window, so a listed token it never saw was not
+        // created by this wallet — it was acquired.
+        notCreatedByWallet += 1;
+        continue;
+      }
+      if (!byMint.has(row.mint)) {
+        byMint.set(row.mint, { deployedAtMs: row.deployedAtMs, completed: row.completed });
+        bondedFromListing += 1;
+        listedInWindowCarried += 1;
+      }
       continue;
     }
     listedOutsideWindow += 1;
     if (!byMint.has(row.mint)) {
       byMint.set(row.mint, { deployedAtMs: row.deployedAtMs, completed: row.completed });
+      bondedFromListing += 1;
     }
   }
 
@@ -310,8 +393,13 @@ export function mergeHistories(input) {
     createdInWindow,
     listedInWindow,
     hiddenByOwnership: createdInWindow - overlap,
-    notCreatedByWallet: listedInWindow - overlap,
+    notCreatedByWallet,
     listedOutsideWindow,
+    listedInWindowCarried,
+    windowExact,
     movedCreator,
+    bondedFromCurve,
+    bondedFromListing,
+    bondedUndecidable,
   };
 }

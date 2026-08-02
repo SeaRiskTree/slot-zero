@@ -644,6 +644,41 @@ describe('the gate', () => {
     expect(fail.verdict).toBe('gate-failed');
   });
 
+  it('never emits a measured verdict over a reading that was not measured', () => {
+    // A gate-failed carrying an ordinary rationale over a history nobody actually read is the
+    // invisible false rejection this whole reading exists to remove. The state has to live in the
+    // VERDICT, not only in the wording beside it — a reader filtering on `verdict` must not miss it.
+    const v = verdictFor({
+      gate: { passed: false, reasons: ['completion rate 0.1000 < 0.25 required'] },
+      completion: completion(40, 4, 30),
+      capped: false,
+      notMeasured: ['3 of 40 launch(es) have no bonded status from EITHER source'],
+    });
+    expect(v.verdict).toBe('gate-unmeasured');
+    expect(v.rationale).toMatch(/NOT a rejection/);
+    expect(v.rationale).toMatch(/no bonded status/);
+    expect(v.rationale).not.toMatch(/did not clear the completion gate/);
+
+    // It outranks a PASS too: an unmeasured reading is no better founded in that direction.
+    const passing = verdictFor({
+      gate: { passed: true, reasons: [] },
+      completion: completion(40, 20, 30),
+      capped: false,
+      notMeasured: ['the ownership listing could not be read'],
+    });
+    expect(passing.verdict).toBe('gate-unmeasured');
+
+    // And an empty list is not an unmeasured reading.
+    expect(
+      verdictFor({
+        gate: { passed: true, reasons: [] },
+        completion: completion(40, 20, 30),
+        capped: false,
+        notMeasured: [],
+      }).verdict,
+    ).toBe('gate-passed');
+  });
+
   it('says so when the vendor page was truncated', () => {
     const v = verdictFor({
       gate: { passed: true, reasons: [] },
@@ -659,7 +694,7 @@ describe('ordering is deterministic and not a league table', () => {
     wallet: string,
     n: number,
     done: number,
-    verdict: 'gate-passed' | 'gate-failed',
+    verdict: 'gate-passed' | 'gate-unmeasured' | 'gate-failed',
     roomMedian?: number,
   ) => {
     const completion = measureCompletion(
@@ -709,6 +744,23 @@ describe('ordering is deterministic and not a league table', () => {
     expect(ranked.map((c) => c.wallet)).toEqual(['aaa', 'zzz', 'fff']);
     // Sample size leads rate deliberately: 29/30 is weaker evidence than 35/70.
     expect(ranked[0]?.completion.tokens).toBe(70);
+  });
+
+  it('orders the unmeasured between the survivors and the rejections, and stays total', () => {
+    // The class map must cover EVERY verdict. An unhandled value makes the comparator return NaN,
+    // which is not a strict weak ordering and silently breaks the byte-identical-output guarantee.
+    // And an unmeasured candidate is not a rejection, so it must not be buried among them.
+    const input = [
+      candidate('rejected', 10, 10, 'gate-failed'),
+      candidate('unjudged', 40, 20, 'gate-unmeasured'),
+      candidate('passed', 40, 20, 'gate-passed'),
+    ];
+    expect(rankCandidates(input).map((c) => c.wallet)).toEqual(['passed', 'unjudged', 'rejected']);
+    expect(rankCandidates([...input].reverse()).map((c) => c.wallet)).toEqual([
+      'passed',
+      'unjudged',
+      'rejected',
+    ]);
   });
 
   it('is a total order, so two runs over the same data agree byte for byte', () => {
@@ -2061,6 +2113,79 @@ describe('a ceiling hit is never recordable as a measured result', () => {
     });
     expect(text).not.toMatch(/NOT TAKEN/);
   });
+
+  it('gives an unmeasured reading its own section, never the rejection list and never nowhere', () => {
+    // A third verdict that appears in neither printed list disappears from the report entirely —
+    // the exact silent drop this repo keeps getting bitten by — and one printed among the
+    // rejections reads as judged and found wanting, which is the false rejection restored.
+    const unjudged = {
+      wallet: 'WalletUnjudged1111111111111111111111111111',
+      seededBy: ['alerts'],
+      completion: measureCompletion([{ deployedAtMs: T0, completed: false }]),
+      completionCapped: false,
+      gate: { passed: false, reasons: ['completion rate 0.0000 < 0.25 required'] },
+      verdict: 'gate-unmeasured',
+      rationale: 'GATE UNMEASURED — this is NOT a rejection and NOT a pass. 3 launches undecidable.',
+      consistency: null,
+      entry: null,
+      entryCoverage: null,
+      historySource: 'creation-derived',
+      vendorCompletion: measureCompletion([{ deployedAtMs: T0, completed: false }]),
+      vendorVerdict: 'gate-failed',
+      vendorPageCapped: false,
+      creation: {
+        bondedFromCurve: 5,
+        bondedFromListing: 2,
+        bondedUndecidable: 3,
+        curvesUnread: 5,
+        listingUnmeasuredNote: null,
+        wholeHistory: true,
+        stopReason: 'index-exhausted',
+        coveredDays: 30,
+        coveredFromIso: null,
+        listedOutsideWindow: 0,
+        windowExact: true,
+        listedInWindowCarried: 0,
+        unresolvedTransactions: 0,
+      },
+    };
+
+    const text = renderStage1({
+      candidates: [unjudged] as never,
+      keyedRequests: 4,
+      keylessRequests: 0,
+      rpcRequests: 10,
+      rpcLoadShedEvents: 0,
+      historySource: 'creation-derived' as const,
+      elapsedMs: 1000,
+      startedAtIso: '2026-08-02T00:00:00.000Z',
+      completed: true,
+      truncationReason: null,
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 1,
+        prefilteredOut: 0,
+        worthARequest: 1,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 1,
+        coverageTruncated: false,
+      },
+      thresholds: {},
+    });
+
+    expect(text).toMatch(/GATE UNMEASURED — THIS IS NOT A NEGATIVE RESULT/);
+    expect(text).toMatch(/gate unmeasured\s+1/);
+    expect(text).toContain(unjudged.wallet);
+    expect(text).toMatch(/3 UNDECIDABLE/);
+    // It must NOT be listed under the rejections, and the "nothing cleared the gate" language must
+    // not silently cover a wallet nobody judged.
+    const rejections = text.slice(text.indexOf('DID NOT CLEAR THE GATE'));
+    expect(text).toMatch(/EXCEPT for 1 candidate\(s\) whose reading was NOT MEASURED/);
+    if (text.includes('DID NOT CLEAR THE GATE')) expect(rejections).not.toContain(unjudged.wallet);
+  });
 });
 
 describe('the run-record completeness contract', () => {
@@ -2285,6 +2410,24 @@ describe('the keyless boundary holds in both directions', () => {
         expect(FORBIDDEN.test(JSON.stringify(row)), `${file} holds per-token vendor data`).toBe(false);
       }
     }
+  });
+
+  it('the pinned keyless ceiling covers BOTH passes that share the frontend-api-v3 client', () => {
+    // The ceiling was justified on the consistency pass alone — 3 pages per gate survivor — while
+    // the GATE spends 4 pages per CANDIDATE on the same client. At the default candidate cap that
+    // already overran it, and because the keyless work runs AFTER the keyed allowance is spent, the
+    // overrun would have thrown away a run that was already paid for in vendor quota.
+    const thresholds = JSON.parse(readFileSync(join(TOOL_DIR, 'thresholds.json'), 'utf8')) as {
+      budget: { maxCandidates: number; maxKeylessRequests: number };
+    };
+    const source = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    const listingPages = Number(/const LISTING_PAGES_FOR_MERGE = (\d+)/.exec(source)?.[1]);
+    expect(listingPages).toBeGreaterThan(0);
+
+    const worstCase = thresholds.budget.maxCandidates * (listingPages + 3);
+    expect(worstCase).toBeLessThanOrEqual(thresholds.budget.maxKeylessRequests);
+    // And the refusal exists, so a plan that ever stops fitting is refused rather than discovered.
+    expect(source).toMatch(/worstCaseKeyless/);
   });
 
   it('the row this build writes matches the schema it declares', () => {
@@ -2525,16 +2668,101 @@ describe('merging a bounded creation walk with the ownership listing', () => {
     expect(merged.createdInWindow).toBe(1);
   });
 
-  it('counts a launch whose curve could not be read as NOT bonded', () => {
-    // The conservative direction: an unreadable curve can only lower the rate, never inflate it.
+  it('falls back to the ownership listing when a launch\'s curve could not be read', () => {
+    // The curve byte is authoritative; the listing's own `complete` flag is a weaker but
+    // well-founded second source — the same field a vendor mirror of agreed with our tape 67/67.
+    // Scoring straight to not-bonded would deflate the very rate this reading exists to widen.
     const merged = mergeHistories({
-      creates: [create('unknown', 1)],
+      creates: [create('readable', 1), create('unread', 2)],
+      wallet: WALLET,
+      curves: new Map([['readable', { complete: false, creator: WALLET }]]),
+      listed: [listed('readable', 1), listed('unread', 2, true)],
+      covered,
+    });
+    expect(merged.bondedFromCurve).toBe(1);
+    expect(merged.bondedFromListing).toBe(1);
+    expect(merged.bondedUndecidable).toBe(0);
+    expect(merged.records.filter((r) => r.completed)).toHaveLength(1);
+    expect(measureCompletion(merged.records).completed).toBe(1);
+  });
+
+  it('leaves a launch UNDECIDABLE when neither source can answer, and says so', () => {
+    // Not hypothetical: a launch HIDDEN from the ownership listing has no row by definition, and
+    // that is exactly the launch this whole route exists to find. Counting it as a failure would
+    // reintroduce the invisible false rejection at the last step.
+    const merged = mergeHistories({
+      creates: [create('hidden', 1)],
       wallet: WALLET,
       curves: new Map(),
       listed: [],
       covered,
     });
+    expect(merged.bondedUndecidable).toBe(1);
+    expect(merged.bondedFromCurve).toBe(0);
+    expect(merged.bondedFromListing).toBe(0);
+    // Still counted as not-bonded so the rate can only be understated — but the reading is now
+    // recognisably unmeasured rather than a confident rejection.
     expect(merged.records[0]?.completed).toBe(false);
+  });
+
+  it('reconciles the three bonded-provenance counts with the launch count, always', () => {
+    const merged = mergeHistories({
+      creates: [create('curve', 1), create('viaListing', 2), create('neither', 3)],
+      wallet: WALLET,
+      curves: new Map([['curve', { complete: true, creator: WALLET }]]),
+      listed: [listed('viaListing', 2, true), listed('old', -40, true), listed('older', -90)],
+      covered,
+    });
+    expect(merged.bondedFromCurve + merged.bondedFromListing + merged.bondedUndecidable).toBe(
+      merged.records.length,
+    );
+    expect(merged.bondedUndecidable).toBe(1);
+  });
+
+  it('does not let a duplicated listing row drive the under-count negative', () => {
+    // `overlap` counts listing rows against a set of distinct created mints, so a mint the endpoint
+    // served twice — the same row reached from two offsets while the deployer launched again — used
+    // to make overlap exceed createdInWindow. This measurement sizes a bias; it cannot carry one.
+    const merged = mergeHistories({
+      creates: [create('dup', 1)],
+      wallet: WALLET,
+      curves: new Map([['dup', { complete: false, creator: WALLET }]]),
+      listed: [listed('dup', 1), listed('dup', 1), listed('dup', 1)],
+      covered,
+    });
+    expect(merged.listedInWindow).toBe(1);
+    expect(merged.hiddenByOwnership).toBe(0);
+    expect(merged.hiddenByOwnership).toBeGreaterThanOrEqual(0);
+    expect(merged.notCreatedByWallet).toBe(0);
+    expect(merged.records).toHaveLength(1);
+  });
+
+  it('keeps an in-window listing row when the walk left transactions unresolved', () => {
+    // "Inside the window the walk is authoritative" holds only when unresolvedTransactions is 0.
+    // A getTransaction that never came back may have been a create, so relabelling its listing row
+    // "acquired" and dropping it would delete a real launch — and its bonded flag — from BOTH sides
+    // of the gate's fraction.
+    const input = {
+      creates: [create('seen', 1)],
+      wallet: WALLET,
+      curves: new Map([['seen', { complete: false, creator: WALLET }]]),
+      listed: [listed('seen', 1), listed('missed', 3, true)],
+      covered,
+    };
+
+    const exact = mergeHistories(input);
+    expect(exact.windowExact).toBe(true);
+    expect(exact.notCreatedByWallet).toBe(1);
+    expect(exact.listedInWindowCarried).toBe(0);
+    expect(exact.records).toHaveLength(1);
+
+    const partial = mergeHistories({ ...input, unresolvedTransactions: 2 });
+    expect(partial.windowExact).toBe(false);
+    expect(partial.listedInWindowCarried).toBe(1);
+    // Carried, not reclassified — and notCreatedByWallet must not be inflated by it either.
+    expect(partial.notCreatedByWallet).toBe(0);
+    expect(partial.records).toHaveLength(2);
+    expect(measureCompletion(partial.records).completed).toBe(1);
   });
 });
 
@@ -2726,6 +2954,70 @@ describe('the creation walk is bounded, and says which bound bit', () => {
     expect(walk.stopReason).toBe('upstream-error');
     expect(walk.stopDetail).toMatch(/503/);
     expect(walk.covered.exhausted).toBe(false);
+  });
+
+  it('never reads a shed or errored signature page as the end of the index', async () => {
+    // `call` returns null both when the public RPC sheds load and when the JSON-RPC envelope
+    // carries an `error` instead of a `result`. Reading either as an empty page would record page 2
+    // of 200 as the wallet's WHOLE history under `index-exhausted` — a ceiling presented as a
+    // measurement, which is the one output this lane exists to make impossible.
+    for (const shed of [
+      { id: 0, error: { code: -32603, message: 'load shed' } },
+      { id: 0, result: null },
+    ]) {
+      // A FULL page, so the walk carries on to a second one instead of stopping on a short page.
+      // Every signature failed, so no getTransaction is spent reaching the shed page.
+      const first = Array.from({ length: 1000 }, (_, i) => sig(1000 - i, { InstructionError: [0, 'x'] }));
+      let served = 0;
+      const fetchImpl = vi.fn(async (_url: unknown, init: RequestInit) => {
+        const body = JSON.parse(String(init.body));
+        const one = Array.isArray(body) ? body[0] : body;
+        if (one.method === 'getSignaturesForAddress') {
+          served += 1;
+          // The first page resolves; every later attempt sheds, including the retry.
+          return served === 1
+            ? { ok: true, status: 200, json: async () => ({ id: 0, result: first }) }
+            : { ok: true, status: 200, json: async () => shed };
+        }
+        if (one.method === 'getMultipleAccounts') {
+          return { ok: true, status: 200, json: async () => ({ id: 0, result: { value: [] } }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ id: one.id ?? 0, result: null }) };
+      }) as unknown as typeof fetch;
+
+      const rpc = new SolanaRpcClient({
+        maxRequests: 40,
+        minIntervalMs: 0,
+        fetchImpl,
+        sleepImpl: async () => {},
+      });
+      const walk = await readCreatedHistory(rpc, DEV, {
+        maxSignaturePages: 10,
+        maxTransactions: 100,
+        txBatchSize: 1,
+      });
+
+      expect(walk.stopReason).not.toBe('index-exhausted');
+      expect(walk.stopReason).toBe('upstream-error');
+      expect(walk.covered.exhausted).toBe(false);
+      expect(walk.stopDetail).toMatch(/load-shedding|no result/i);
+      // The page was RETRIED before the walk gave up on it: a null is retry, never absent.
+      expect(served).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('still calls a genuinely empty page the end of the index', async () => {
+    // The distinction the fix rests on: an empty ARRAY is a real end of index, an unresolved page
+    // is not. Collapsing the two in either direction loses a real property of the walk.
+    const fetchImpl = fakeRpc([[sig(2), sig(1)]], { s2: createTx(), s1: createTx() });
+    const rpc = new SolanaRpcClient({ maxRequests: 20, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreatedHistory(rpc, DEV, {
+      maxSignaturePages: 5,
+      maxTransactions: 50,
+      txBatchSize: 1,
+    });
+    expect(walk.stopReason).toBe('index-exhausted');
+    expect(walk.covered.exhausted).toBe(true);
   });
 });
 

@@ -141,6 +141,35 @@ is found; outside it the ownership listing is carried over unchanged and the rec
 rows that is. `stopReason: "index-exhausted"` is the only value under which the window is the
 wallet's whole history.
 
+Three rules keep that window from claiming more than it covers.
+
+- **A null page is a retry, never an end of index.** `getSignaturesForAddress` returns `null` both
+  when the public RPC sheds load and when the JSON-RPC envelope carries an `error` — neither means
+  the wallet's index ran out. The page is retried once, and a page that still does not resolve ends
+  the walk on `upstream-error` with `wholeHistory: false`. Reading one as an empty page would have
+  recorded page 2 of 200 as the wallet's whole history under `index-exhausted`: a ceiling presented
+  as a measurement. Only a genuinely **empty array** is an exhausted index.
+- **"Inside the window the walk is authoritative" holds only when `unresolvedTransactions` is 0.**
+  A `getTransaction` that never came back may have been a create, so under a non-zero count an
+  in-window listing row the walk did not see is **carried over as a launch** rather than relabelled
+  acquired and dropped — dropping it would delete a real launch, and its bonded flag, from both
+  sides of the gate's fraction. `creation.windowExact` says which case a row is,
+  `listedInWindowCarried` says how many rows it moved.
+- **An unread bonding curve is not a failed launch.** Bonded status resolves in a stated order and
+  the record counts which source answered: `bondedFromCurve` (the on-chain `complete` byte,
+  authoritative), then `bondedFromListing` (the ownership listing's own `complete` flag — the same
+  field a vendor mirror of agreed with our tape 67/67), then `bondedUndecidable`. The three sum to
+  the launch count. A launch **hidden from the ownership listing has no row by definition**, so a
+  failed curve read on exactly the launch this route exists to find is undecidable rather than
+  quietly scored as a failure.
+
+**Any undecidable launch makes the whole reading unmeasured**, and so does an ownership listing that
+could not be read at all. The verdict is then `gate-unmeasured` — a third value in the gate's
+vocabulary, printed under its own `GATE UNMEASURED — THIS IS NOT A NEGATIVE RESULT` heading and
+never folded in with the rejections. A `gate-failed` carrying an ordinary rationale over a history
+that was never actually measured is precisely the invisible false rejection this whole reading
+exists to remove, so the state lives in the verdict and not only in the wording beside it.
+
 ### What it turned out to be worth
 
 **A measured zero, on every wallet that could be checked.** Five wallets have both readings: four
@@ -160,6 +189,10 @@ Every candidate row carries both readings and the verdict each produced: `tokens
 ownership-derived reading, kept whole), `verdictChanged`, and `creation` with the walk's coverage,
 bounds and per-direction counts. Findings from the first measurement are in
 [CREATION-DERIVED.md](./CREATION-DERIVED.md).
+
+`verdictChanged` compares two **results**, so it is false whenever `verdict` is `gate-unmeasured`:
+the absence of an answer is not a different answer, and counting it as one would corrupt the very
+gap figure the row exists to keep honest. The state is in `verdict`.
 
 One field is easy to misread. `creation.movedCreator` counts launches whose **on-chain** curve
 creator is no longer the wallet. That is **not** the same as being absent from the ownership
@@ -545,9 +578,9 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 |---|---|---|
 | keyed request ceiling | 200 | The **whole** MadeOnSol Free-tier daily allowance. Captain's instruction, 2026-08-02: there is no free substitute for this data, so spend the allowance when spending it gets results. The earlier ceiling of 45 was this tool's own quarter-allowance caution and is **withdrawn** — do not re-derive it. |
 | candidate cap | 195 | 200 − 3 enumeration − 2 retry headroom. It is what the allowance leaves, not a judgement about how many deployers are worth grading, and it is above what the three seeds can surface — so a **default run grades everything it surfaces**. |
-| over-budget plan | refused before the first request | `3 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. |
+| over-budget plan | refused before the first request | `3 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. **The keyless plan is refused the same way**, and it matters more: the keyless work happens *after* the keyed allowance is spent, so a ceiling discovered half-way through wastes quota that was already paid. |
 | keyed pacing | 6.5s between request starts | Free tier bursts at ~10/min, and the allowance is **shared** with whatever else holds this key. |
-| keyless request ceiling, `frontend-api-v3` only | 600 | Sized to **cover** the candidate cap, not to bound it: the `--consistency` walk costs up to 3 pages per gate survivor, so 195 candidates cost 585 worst case and the remaining 15 are retry headroom. A ceiling below that stops the tool looking part-way through a run already paid for in keyed quota. It does not lean harder on pump.fun — the pacing below is unchanged, so what it buys is wall clock. |
+| keyless request ceiling, `frontend-api-v3` only | 1,400 | One client serves **two** passes on this host and the ceiling has to cover both. The gate reads the ownership listing it merges the creation window with, up to 4 pages **per candidate** — 195 × 4 = 780 — and `--consistency` then costs up to 3 pages per gate survivor, of which every candidate can be one: 195 × 3 = 585. So 1,365 worst case, and the remaining 35 are retry headroom. The earlier 600 was justified on the consistency pass alone and was already exceeded by gating at the default candidate cap. It does not lean harder on pump.fun — the pacing below is unchanged, so what it buys is wall clock. |
 | keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here, and it bounds a shared public resource rather than expressing our own caution, so the MadeOnSol relaxation does not touch it. The fill host is paced separately — see below. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does — but a 429, a 5xx or a timeout means the request was not served, so re-issuing it is nearer to one successful request than to two. Without it the caller re-runs the whole walk, which is worse for pump.fun too. A 4xx that is not a 429 is never retried: it is the endpoint's considered answer. |
@@ -556,8 +589,9 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | `getTransaction` batch size | **1** | Measured harmful above 1 — see [Which history the gate counts](#which-history-the-gate-counts). |
 | RPC retries | 3 with exponential backoff, each attempt counted against the ceiling | Unlike the keyed client, a 429 here is load-shedding and not a verdict — but a 429 storm still cannot outlast the ceiling. |
 
-**A full default run takes about 40 minutes**, not 21: ~21 for the 198 keyed requests at 6.5s, plus
-~19.5 for 585 keyless pages at 2.0s when `--consistency` is passed. Both figures are in
+**A full default run takes about 47 minutes**, not 21: ~21 for the 198 keyed requests at 6.5s, plus
+~26 for the gate's own 780 keyless listing pages at 2.0s — and a further ~19.5 for 585 more pages
+when `--consistency` is passed, so **about 67 minutes** for that. Every figure is in
 `thresholds.json` → `justification`. A run still going at the 25-minute mark has not hung.
 
 The conditional in the instruction binds: ***"if it gets results"***. It licenses sizing a run by
@@ -639,13 +673,15 @@ only between pages would let a walk sitting at 17 spent requests start a page th
 finish at 20, and `3 × 8 × 20 = 480` overruns the 432 ceiling the dry run prints as the entire
 exposure — surfacing as a mid-walk ceiling error and a dropped launch.
 
-Note also that the **600 keyless ceiling in `budget` is a per-client ceiling, not a run total**:
+Note also that the **1,400 keyless ceiling in `budget` is a per-client ceiling, not a run total**:
 `screen.mjs` builds two independent keyless clients, and Stage 2's 432 sits on its own. The enforced
-combined worst case is 1,032. The 600 is **derived from the candidate cap**, not chosen: the
-`--consistency` pass walks 3 pages per gate survivor, so a 195-candidate cap puts its worst case at
-585, and the 500 that was sized when the cap was 20 would have ended a full consistency run on a
-ceiling rather than on a measurement. Keeping the two ceilings separate is what stops Stage 2 eating
-the consistency pass's budget, or the reverse.
+combined worst case is 1,832. The 1,400 is **derived from the candidate cap**, not chosen, and it is
+derived over both passes that share the `frontend-api-v3` client: the gate's ownership listing at 4
+pages per candidate (780) plus `--consistency` at 3 pages per gate survivor (585) is 1,365 worst
+case. The previous 600 counted only the consistency pass, so gating at the default candidate cap
+already overran it — and because the keyless work runs *after* the keyed allowance is spent, that
+overrun would have thrown away a paid-for run. Keeping Stage 2's ceiling separate is what stops it
+eating this budget, or the reverse; a plan that does not fit either one is refused up front.
 
 Every run prints its request count, shed count and elapsed time.
 

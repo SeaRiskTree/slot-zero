@@ -217,4 +217,16 @@ rather than its count, because that is precisely the launch the ownership readin
   `hiddenByOwnership` measures the bias.
 - **A creation window is not a history.** Only `stopReason: "index-exhausted"` means the walk saw
   the wallet's whole index. Under any other value the launches before `coveredFromIso` come from
-  the ownership listing and are a lower bound, as they always were.
+  the ownership listing and are a lower bound, as they always were. A page the endpoint never
+  resolved cannot produce that value: a `null` from `getSignaturesForAddress` is load-shedding, it
+  is retried once, and a page that still does not resolve stops the walk on `upstream-error`.
+- **`gate-unmeasured` is not a rejection, and none of the numbers above came from one.** Three
+  sources decide whether a launch bonded, in order: the on-chain curve's `complete` byte
+  (`bondedFromCurve`), then the ownership listing's own flag (`bondedFromListing`), then nothing
+  (`bondedUndecidable`). A launch **hidden from the ownership listing has no row by definition** —
+  which is exactly the launch this whole measurement exists to find — so a failed curve read on one
+  leaves it undecidable rather than scored as a failure. Any undecidable launch, or an ownership
+  listing that failed to read at all, makes the candidate's whole reading unmeasured and its
+  verdict `gate-unmeasured`. Do not aggregate those rows with `gate-failed` ones: the wallet was
+  not judged, and treating "not judged" as "judged and rejected" would reintroduce the invisible
+  false rejection this document is about, one layer up.

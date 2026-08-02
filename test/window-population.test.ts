@@ -5,13 +5,18 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import {
+  BOOK,
+  COHORT,
+  DEPLOYER as ANALYSIS_DEPLOYER,
   WINDOW_CLOSE,
   WINDOW_OPEN,
   changepoints,
   closeDetectionLatency,
+  createSlotPriceMultiples,
   median,
   perLaunchSeries,
   percentile,
+  readCsv,
   rankSumZ,
   regimeOf,
   regimeStats,
@@ -19,6 +24,8 @@ import {
   unitLedger,
   type LaunchRow,
 } from '../analysis/window-population/measure.mjs';
+import { BOOK_MEMBER_OUTSIDER, CREATE_SLOT_COHORT, DEPLOYER } from '../src/index.js';
+import { CREDENTIAL_PATTERNS, KEY_SHAPED, NETWORK_PATTERNS } from './offline-guard.js';
 
 let series: LaunchRow[];
 let measurable: LaunchRow[];
@@ -195,6 +202,40 @@ describe('what the tape cannot answer', () => {
     expect(creators.size).toBe(70); // one launch each: no creator appears twice
   });
 
+  it('the control bounds the search space only on its own basis: 6 of 70, not 14 of 70', () => {
+    // The comparison is a necessary structural condition and never a statement about profit,
+    // and it is only worth anything like for like. `control_create_slot.csv`'s
+    // `n_create_slot_wallets` excludes the creator (22 rows read 0 wallets against >= 1 trade)
+    // but includes whatever helpers that deployer runs, which the file cannot separate out. So
+    // the subject's comparable figure is its create-slot total of 10, not the 6 outsiders the
+    // rest of this report measures — and controls reaching it are one in twelve, not one in five.
+    const control = readCsv('control_create_slot.csv');
+    expect(control.length).toBe(70);
+    expect(control.every((c) => c['creator_is_first'] === '1')).toBe(true);
+    expect(
+      control.every(
+        (c) => Number(c['n_create_slot_wallets']) < Number(c['n_create_slot_trades']),
+      ),
+    ).toBe(true);
+
+    const open = series.filter((r) => regimeOf(r.date) === 'open');
+    expect(median(open.map((r) => r.createSlotWallets))).toBe(10);
+    expect(median(open.map((r) => r.outsiderWallets))).toBe(6);
+
+    const wallets = control.map((c) => Number(c['n_create_slot_wallets']));
+    expect(median(wallets)).toBe(2);
+    expect(wallets.filter((w) => w >= 10).length).toBe(6);
+    expect(wallets.filter((w) => w >= 6).length).toBe(14); // the outsider-only figure, for contrast
+
+    // The price multiple beside it *is* like for like: the control's `p0` is the creator's own
+    // dev-buy price — on the 24 control launches using the same 14.814814813-SOL preset it is
+    // this deployer's own `price_devbuy` to ten significant figures — so both sides read the top
+    // create-slot fill against the deployer's own buy.
+    const mults = control.map((c) => Number(c['last_create_slot_price']) / Number(c['p0']));
+    expect(median(mults)).toBeCloseTo(1.04, 2);
+    expect(median(createSlotPriceMultiples(open))).toBeCloseTo(2.25, 2);
+  });
+
   it('every launch in the tape is the same one deployer', () => {
     // The population of deployers this measurement is drawn from is n = 1.
     const rows = readFileSync(
@@ -231,19 +272,40 @@ function readAll(dir: string, prefix: string, pattern = /\.(ts|mjs|js|md|json)$/
 
 describe('analysis/ reaches no network and reads no credential', () => {
   // The brief for this measurement was "local tape only, no vendor spend at all". That is a
-  // property of the code, so it is asserted like one — the same scan test/loader.test.ts runs
-  // over src/. tools/deployer-screen/ remains the only network-capable area in the repo.
-  it('no socket, no credential, no key-shaped string', () => {
+  // property of the code, so it is asserted like one — literally the same patterns
+  // test/loader.test.ts runs over src/, imported from test/offline-guard.ts so the two guards
+  // cannot drift. tools/deployer-screen/ remains the only network-capable area in the repo.
+  it('no socket and no credential, on the same list src/ is held to', () => {
+    const code = readAll(ANALYSIS_DIR, 'analysis/', /\.(ts|mjs|js)$/);
+    expect(code.size).toBeGreaterThan(0);
+    expect([...code.keys()]).toContain('analysis/window-population/measure.mjs');
+    for (const [file, text] of code) {
+      for (const re of [...NETWORK_PATTERNS, ...CREDENTIAL_PATTERNS]) {
+        expect(re.test(text), `${file} matches ${re}`).toBe(false);
+      }
+    }
+  });
+
+  it('no key-shaped string anywhere, prose and data included', () => {
     const all = readAll(ANALYSIS_DIR, 'analysis/');
     expect(all.size).toBeGreaterThan(0);
-    expect([...all.keys()]).toContain('analysis/window-population/measure.mjs');
     expect([...all.keys()]).toContain('analysis/window-population/README.md');
     for (const [file, text] of all) {
-      expect(/\bfetch\s*\(/.test(text), `${file} must not call fetch`).toBe(false);
-      expect(/require\(['"]node:(https?|net|dgram|tls)['"]\)|from ['"]node:(https?|net|dgram|tls)['"]/.test(text), `${file} must not open a socket`).toBe(false);
-      expect(/process\.env/.test(text), `${file} must not read the environment`).toBe(false);
-      expect(/msk_[A-Za-z0-9_-]{20,}/.test(text), `${file} may contain a real key`).toBe(false);
+      expect(KEY_SHAPED.test(text), `${file} may contain a real key`).toBe(false);
     }
+  });
+
+  it('its cohort constants are the same set as src/cohort.ts, wallet for wallet', () => {
+    // analysis/ may not import src/ — it is plain .mjs on the Node 20 floor with no build step
+    // — so the wallets are duplicated there. test/ can see both trees, so the duplication is
+    // asserted rather than trusted: a cohort or book wallet added on one side and not the other
+    // would silently reclassify that wallet as an outsider and as its own trading unit, moving
+    // the window's prize and the 73%-to-two-units result with every other test still green.
+    expect(ANALYSIS_DEPLOYER).toBe(DEPLOYER);
+    expect([...COHORT].sort()).toEqual([...CREATE_SLOT_COHORT].sort());
+    expect([...BOOK].sort()).toEqual(
+      [BOOK_MEMBER_OUTSIDER.oneWalletOfAnUnmeasuredBook, ...BOOK_MEMBER_OUTSIDER.bookMates].sort(),
+    );
   });
 
   it('it does not import the keyed tool, and the keyed tool does not import it', () => {

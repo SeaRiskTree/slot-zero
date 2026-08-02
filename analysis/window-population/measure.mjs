@@ -88,21 +88,38 @@ export function parseCsv(text) {
   return rows;
 }
 
+/** @type {Map<string, Array<Record<string, string>>>} Parsed once per file per process. */
+const csvCache = new Map();
+
 /**
+ * The dataset is a primary record, so a row that does not match its header is an error and not
+ * something to skip: a quoting regression would otherwise delete evidence in silence. The one
+ * tolerated deviation is a single empty trailing row.
+ *
  * @param {string} name File name inside {@link DATA_DIR}.
  * @returns {Array<Record<string, string>>}
  */
 export function readCsv(name) {
+  const cached = csvCache.get(name);
+  if (cached !== undefined) return cached;
   const rows = parseCsv(readFileSync(DATA_DIR + name, 'utf8'));
   const head = rows[0];
   if (head === undefined) throw new Error(`${name}: empty`);
   /** @type {Array<Record<string, string>>} */ const out = [];
-  for (const cells of rows.slice(1)) {
-    if (cells.length !== head.length) continue;
+  for (let r = 1; r < rows.length; r++) {
+    const cells = rows[r] ?? [];
+    if (cells.length !== head.length) {
+      const emptyTrailing = r === rows.length - 1 && cells.every((c) => c === '');
+      if (emptyTrailing) continue;
+      throw new Error(
+        `${name}: line ${r + 1} has ${cells.length} fields, header has ${head.length}`,
+      );
+    }
     /** @type {Record<string, string>} */ const o = {};
     for (let i = 0; i < head.length; i++) o[head[i] ?? ''] = cells[i] ?? '';
     out.push(o);
   }
+  csvCache.set(name, out);
   return out;
 }
 
@@ -156,6 +173,10 @@ export const quantiles = (xs) => {
  * @property {number} cohortStake Cohort create-slot stake, SOL, all pairs.
  * @property {number} outsiderStakeAll Non-cohort create-slot stake, SOL, all pairs.
  * @property {number} outsiderWallets Non-cohort wallets reaching the create slot.
+ * @property {number} createSlotWallets Every wallet reaching the create slot bar the deployer,
+ *   straight off `launches.csv`. Cohort included — this is the figure the control's
+ *   `n_create_slot_wallets` is comparable to, because that column counts a control deployer's
+ *   own helpers too and nothing on the tape says which of them are helpers.
  * @property {number} stake Non-cohort create-slot stake over **closed** round trips only.
  * @property {number} gross Their realised SOL, **gross of every fee**.
  * @property {number} trips Closed round trips behind `stake`/`gross`.
@@ -188,6 +209,7 @@ export function perLaunchSeries() {
     byMint.set(mint, {
       mint, symbol: l['symbol'] ?? '', date: l['created_utc'] ?? '', taped: l['tape'] !== 'none',
       devBuy: num(l['dev_sol_in']), cohortStake: 0, outsiderStakeAll: 0, outsiderWallets: 0,
+      createSlotWallets: num(l['n_createslot_wallets']) ?? 0,
       stake: 0, gross: 0, trips: 0, net: 0, netTrips: 0, lateStake: 0, lateGross: 0, lateTrips: 0,
     });
   }
@@ -246,6 +268,58 @@ export function perLaunchSeries() {
 // ---------------------------------------------------------------------------------
 
 /**
+ * Mid-ranks of `values`, ties averaged. The ranking does not depend on where the series is
+ * split, so it is computed once per candidate segment rather than once per split.
+ *
+ * @param {readonly number[]} values
+ * @returns {number[]} `rank[i]` is the mid-rank of `values[i]`, 1-based.
+ */
+export function rankVector(values) {
+  const order = values.map((v, i) => /** @type {[number, number]} */ ([v, i])).sort((a, b) => a[0] - b[0]);
+  /** @type {number[]} */ const rank = new Array(values.length).fill(0);
+  let i = 0;
+  while (i < order.length) {
+    let j = i;
+    while (j + 1 < order.length && (order[j + 1]?.[0] ?? NaN) === (order[i]?.[0] ?? NaN)) j++;
+    const r = (i + j) / 2 + 1;
+    for (let t = i; t <= j; t++) rank[order[t]?.[1] ?? 0] = r;
+    i = j + 1;
+  }
+  return rank;
+}
+
+/**
+ * Running sums of a rank vector: `prefix[k]` is the rank sum of the first `k` observations, so
+ * every split of one series costs O(1) once this is built.
+ *
+ * @param {readonly number[]} rank
+ * @returns {number[]} Length `rank.length + 1`.
+ */
+export function rankPrefix(rank) {
+  /** @type {number[]} */ const prefix = new Array(rank.length + 1).fill(0);
+  for (let i = 0; i < rank.length; i++) prefix[i + 1] = (prefix[i] ?? 0) + (rank[i] ?? 0);
+  return prefix;
+}
+
+/**
+ * Standardised Mann–Whitney rank-sum statistic for the split `[0…k) | [k…n)` of a series whose
+ * rank prefix sums are `prefix`.
+ *
+ * @param {readonly number[]} prefix From {@link rankPrefix}.
+ * @param {number} k
+ * @param {number} minSegment
+ * @returns {number} z. 0 when either side is shorter than `minSegment`.
+ */
+export function rankSumZFromPrefix(prefix, k, minSegment = 8) {
+  const n = prefix.length - 1, n1 = k, n2 = n - k;
+  if (n1 < minSegment || n2 < minSegment) return 0;
+  const r1 = prefix[k] ?? 0;
+  const mu = (n1 * (n + 1)) / 2;
+  const sd = Math.sqrt((n1 * n2 * (n + 1)) / 12);
+  return (r1 - mu) / sd;
+}
+
+/**
  * Standardised Mann–Whitney rank-sum statistic for the split `values[0…k) | values[k…]`.
  *
  * Rank-based on purpose: the per-launch prize is heavy-tailed (one launch is +27 SOL) and a
@@ -257,23 +331,8 @@ export function perLaunchSeries() {
  * @returns {number} z. 0 when either side is shorter than `minSegment`.
  */
 export function rankSumZ(values, k, minSegment = 8) {
-  const n = values.length, n1 = k, n2 = n - k;
-  if (n1 < minSegment || n2 < minSegment) return 0;
-  const order = values.map((v, i) => /** @type {[number, number]} */ ([v, i])).sort((a, b) => a[0] - b[0]);
-  /** @type {number[]} */ const rank = new Array(n).fill(0);
-  let i = 0;
-  while (i < order.length) {
-    let j = i;
-    while (j + 1 < order.length && (order[j + 1]?.[0] ?? NaN) === (order[i]?.[0] ?? NaN)) j++;
-    const r = (i + j) / 2 + 1;
-    for (let t = i; t <= j; t++) rank[order[t]?.[1] ?? 0] = r;
-    i = j + 1;
-  }
-  let r1 = 0;
-  for (let t = 0; t < k; t++) r1 += rank[t] ?? 0;
-  const mu = (n1 * (n + 1)) / 2;
-  const sd = Math.sqrt((n1 * n2 * (n + 1)) / 12);
-  return (r1 - mu) / sd;
+  if (k < minSegment || values.length - k < minSegment) return 0;
+  return rankSumZFromPrefix(rankPrefix(rankVector(values)), k, minSegment);
 }
 
 /**
@@ -302,9 +361,10 @@ export function changepoints(values, minZ = 4, minSegment = 8) {
   const recurse = (lo, hi, depth) => {
     const slice = values.slice(lo, hi);
     if (slice.length < minSegment * 2 + 4) return;
+    const prefix = rankPrefix(rankVector(slice));
     let best = { z: 0, k: -1 };
     for (let k = minSegment; k <= slice.length - minSegment; k++) {
-      const z = Math.abs(rankSumZ(slice, k, minSegment));
+      const z = Math.abs(rankSumZFromPrefix(prefix, k, minSegment));
       if (z > best.z) best = { z, k };
     }
     if (best.k < 0 || best.z < minZ) return;
@@ -422,6 +482,9 @@ export function closeDetectionLatency(series, ks = [1, 3, 5, 7]) {
   return ks.map((k) => {
     /** @param {number} i */ const trail = (i) => median(roi.slice(Math.max(0, i - k + 1), i + 1));
     const alarm = percentile(asc(openIdx.filter((i) => i >= openStart + k).map(trail)), 0.05);
+    // No closed regime in the series means there is no break to be late to. Without this the
+    // breach loop would start at index -1 and time a close that never happened.
+    if (firstAfter < 0) return { k, alarm, launchesAfterBreak: null, daysAfterBreak: null, at: null };
     let hit = -1;
     for (let i = firstAfter; i < rows.length; i++) if (trail(i) < alarm) { hit = i; break; }
     const breakRow = rows[firstAfter];
@@ -438,14 +501,31 @@ export function closeDetectionLatency(series, ks = [1, 3, 5, 7]) {
 }
 
 /**
+ * @typedef {object} UnitBucket One regime's closed create-slot result for one trading unit.
+ * @property {number} trips
+ * @property {number} gross SOL, gross of every fee.
+ * @property {number} stake SOL.
+ */
+
+/**
+ * @typedef {object} UnitLedgerRow
+ * @property {string} unit
+ * @property {string} first
+ * @property {string} last
+ * @property {UnitBucket} before
+ * @property {UnitBucket} open
+ * @property {UnitBucket} after
+ */
+
+/**
  * Every outsider trading unit's create-slot result, split by regime. The book counts once.
  *
- * @returns {Array<{unit: string, first: string, last: string, before: {trips: number, gross: number}, open: {trips: number, gross: number, stake: number}, after: {trips: number, gross: number, stake: number}}>}
+ * @returns {UnitLedgerRow[]}
  */
 export function unitLedger() {
   const pairs = readCsv('wallet_launch_pnl.csv');
   const dateOf = new Map(readCsv('launches.csv').map((l) => [l['mint'] ?? '', l['created_utc'] ?? '']));
-  /** @type {Map<string, {unit: string, first: string, last: string, before: {trips: number, gross: number}, open: {trips: number, gross: number, stake: number}, after: {trips: number, gross: number, stake: number}}>} */
+  /** @type {Map<string, UnitLedgerRow>} */
   const units = new Map();
   for (const p of pairs) {
     if (p['closed_in_window'] !== '1' || p['in_create_slot'] !== '1') continue;
@@ -456,7 +536,12 @@ export function unitLedger() {
     const u = unitOf(wallet);
     let e = units.get(u);
     if (e === undefined) {
-      e = { unit: u, first: date, last: date, before: { trips: 0, gross: 0 }, open: { trips: 0, gross: 0, stake: 0 }, after: { trips: 0, gross: 0, stake: 0 } };
+      e = {
+        unit: u, first: date, last: date,
+        before: { trips: 0, gross: 0, stake: 0 },
+        open: { trips: 0, gross: 0, stake: 0 },
+        after: { trips: 0, gross: 0, stake: 0 },
+      };
       units.set(u, e);
     }
     if (date < e.first) e.first = date;
@@ -464,9 +549,37 @@ export function unitLedger() {
     const bucket = e[regimeOf(date)];
     bucket.trips += 1;
     bucket.gross += num(p['realised_sol']) ?? 0;
-    if ('stake' in bucket) bucket.stake += num(p['sol_in']) ?? 0;
+    bucket.stake += num(p['sol_in']) ?? 0;
   }
   return [...units.values()];
+}
+
+/**
+ * The subject's create-slot price multiple, on the control's own basis.
+ *
+ * `control_create_slot.csv` publishes `last_create_slot_price / p0`, and `p0` is the creator's
+ * own dev-buy price — on the 24 control launches using the identical 14.814814813-SOL preset it
+ * is this deployer's own `price_devbuy` to ten significant figures. The subject's counterpart is
+ * the highest create-slot fill as a multiple of its own dev buy: `first30s_best.csv`'s
+ * `fill_mult_vs_devbuy` over `slots_after_create = 0`. Buys only move the curve up, so the last
+ * fill in the slot and the highest fill in the slot are the same reading either side.
+ *
+ *
+ * @param {readonly LaunchRow[]} series
+ * @returns {number[]} One multiple per launch that has a create-slot fill.
+ */
+export function createSlotPriceMultiples(series) {
+  const wanted = new Set(series.map((r) => r.mint));
+  /** @type {Map<string, number>} */ const best = new Map();
+  for (const r of readCsv('first30s_best.csv')) {
+    if (r['slots_after_create'] !== '0') continue;
+    const mint = r['mint'] ?? '';
+    if (!wanted.has(mint)) continue;
+    const mult = num(r['fill_mult_vs_devbuy']);
+    if (mult === null || !Number.isFinite(mult)) continue;
+    best.set(mint, Math.max(best.get(mint) ?? -Infinity, mult));
+  }
+  return [...best.values()];
 }
 
 // ---------------------------------------------------------------------------------
@@ -483,7 +596,8 @@ export function main() {
   const measurable = series.filter((r) => r.trips > 0);
   const first = series[0], last = series[series.length - 1];
   console.log(`population tape: ${series.length} launches, ${first?.date.slice(0, 10)} → ${last?.date.slice(0, 10)}`);
-  console.log(`measurable (>=1 closed outsider create-slot round trip): ${measurable.length}\n`);
+  console.log(`measurable (>=1 closed outsider create-slot round trip): ${measurable.length}` +
+    `   of the rest, ${series.filter((r) => !r.taped).length} have no tape at all\n`);
 
   console.log('CHANGEPOINTS — binary segmentation, |z| >= 4, minimum segment 8 launches');
   for (const [name, pick] of /** @type {Array<[string, (r: LaunchRow) => number]>} */ ([
@@ -601,9 +715,17 @@ export function main() {
   console.log(`  ${control.length} other deployers, one launch each, no dates and no P&L — 0 window observations`);
   console.log(`  create-slot wallets        p10/p25/p50/p75/p90 = ${qline(quantiles(wallets), 1)}`);
   console.log(`  create-slot price multiple p10/p25/p50/p75/p90 = ${qline(quantiles(mults), 2)}`);
-  const subjectMedian = median(open.map((r) => r.outsiderWallets));
-  console.log(`  subject's open-window median outsider create-slot wallets: ${f(subjectMedian, 1)};` +
-    ` control deployers reaching it: ${wallets.filter((w) => w >= subjectMedian).length} of ${control.length}`);
+  // Like for like: the control column counts every create-slot wallet bar the creator, so it
+  // carries a control deployer's own helpers as well as its outsiders and nothing in that file
+  // separates the two. The subject's comparable figure is therefore its total — cohort included
+  // — not the outsider-only count the rest of this report is built on.
+  const subjectMedian = median(open.map((r) => r.createSlotWallets));
+  console.log(`  subject's open-window median create-slot wallets (cohort included, deployer excluded,` +
+    ` the control column's own basis): ${f(subjectMedian, 1)}` +
+    `   — outsiders alone: ${f(median(open.map((r) => r.outsiderWallets)), 1)}`);
+  console.log(`  control deployers reaching that level: ${wallets.filter((w) => w >= subjectMedian).length} of ${control.length}`);
+  console.log(`  subject's open-window median create-slot price multiple, same basis (see` +
+    ` createSlotPriceMultiples): ${f(median(createSlotPriceMultiples(open)), 2)}`);
 }
 
 if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) main();

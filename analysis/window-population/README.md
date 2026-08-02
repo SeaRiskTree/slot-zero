@@ -337,12 +337,26 @@ Concurrency of windows requires at least two deployers with history. The tape ha
   There is no timestamp to place a launch in time and no realised P&L to say whether anyone made
   money. **70 rows, 0 window observations.**
 
-What the control *can* bound is the search space, on a necessary condition only. At the moment it
-was sampled, the median other deployer had **2** wallets in its create slot against this one's 6
-outsider wallets inside its window; **14 of 70** reach 6 or more, and the median create-slot
-price multiple is 1.04 against this deployer's 2.25. So deployers that even *look* like this one
-are a minority — roughly one in five — and that is a statement about structure, never about
-profit.
+What the control *can* bound is the search space, on a necessary condition only, and only if the
+two sides are counted the same way. `n_create_slot_wallets` excludes the creator — 22 of the 70
+rows read 0 wallets against at least one create-slot trade — but it includes whatever helper
+wallets that deployer runs, and nothing in the file separates a helper from an outsider. The
+subject's comparable figure is therefore its **create-slot total of 10** (`launches.csv`
+`n_createslot_wallets`, open-window median, cohort included, deployer excluded), not the **6**
+outsiders the rest of this report measures.
+
+At the moment it was sampled, the median other deployer had **2** wallets in its create slot
+against this one's 10, and **6 of 70** reach 10 or more. So deployers that even *look* like this
+one are a minority — **roughly one in twelve** — and that is a statement about structure, never
+about profit. (Against the outsider-only 6 the count would be 14 of 70, one in five; that
+comparison is not like for like and this report does not make it.)
+
+The price multiple beside it *is* like for like: the control's median create-slot price multiple
+is **1.04** against this deployer's **2.25**. `p0` is the creator's own dev-buy price — on the 24
+control launches using the identical 14.814814813-SOL preset it is this deployer's own
+`price_devbuy` to ten significant figures — and the subject's side is the top create-slot fill
+against the same denominator (`first30s_best.csv` `fill_mult_vs_devbuy` over
+`slots_after_create = 0`, open-window median). Both numbers are asserted in the test.
 
 ### 7.2 Earners inside one window: **about 2**
 

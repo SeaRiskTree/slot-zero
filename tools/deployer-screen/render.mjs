@@ -86,27 +86,6 @@ const pad = (s, w) => (s.length >= w ? s : s + ' '.repeat(w - s.length));
 const padl = (s, w) => (s.length >= w ? s : ' '.repeat(w - s.length) + s);
 
 /**
- * Launches in the gate's history that the ownership listing did not supply — the creates the walk
- * proved itself.
- *
- * `merged.records` is creates ∪ listing, so under an EMPTY window (nothing to compare the two
- * readings over) the listing's contribution is `listedOutsideWindow` and the remainder is what the
- * walk proved on the page it abandoned. Those are precisely the launches ownership hides, so no
- * sentence about an uncovered window may quote the listing count as if it were the whole reading:
- * the number a rejection row prints has to be the number the gate read, never a subset of it.
- *
- * Clamped at zero because the two counts come from one record and a hand-edited or older one need
- * not be self-consistent; a negative here would be printed prose, not a thrown error.
- *
- * @param {import('./rank.mjs').Candidate} c
- * @returns {number}
- */
-function provenOutsideWindow(c) {
-  if (c.creation === null) return 0;
-  return Math.max(0, c.completion.tokens - c.creation.listedOutsideWindow);
-}
-
-/**
  * One line of a distribution: label, n, and the quantiles.
  *
  * There is no mean column and there is not going to be one. The captain's standing bar for this
@@ -591,13 +570,16 @@ export function renderStage1(run) {
         // An empty window withdraws the right to call a listed token "acquired"; it does NOT
         // discard the creates the walk proved on the page it abandoned, and those are exactly the
         // launches ownership hides, so the sentence has to count them in rather than claim the
-        // listing is the whole of it.
+        // listing is the whole of it. The two parts are NAMED and only the listing's row count is
+        // quoted: the walk-proven remainder is not a number this record can derive, because a
+        // listing row with no timestamp or no mint counts once here and not at all in the gate's
+        // history, and printing a derived difference would be printing a number we do not have.
         if (c.creation.coveredFromIso === null) {
           L.push(
             `      ^ the walk stopped on ${c.creation.stopReason} before covering ANY window, so ` +
-              `these ${c.completion.tokens} launch(es) are ${c.creation.listedOutsideWindow} from ` +
-              `the ownership listing plus ${provenOutsideWindow(c)} the walk proved — a LOWER ` +
-              `BOUND, biased towards rejection`,
+              `these ${c.completion.tokens} launch(es) are the ownership listing ` +
+              `(${c.creation.listedOutsideWindow} row(s)) plus whatever creates the walk proved ` +
+              `before stopping — a LOWER BOUND, biased towards rejection`,
           );
         } else if (!c.creation.wholeHistory) {
           L.push(
@@ -700,9 +682,9 @@ export function renderStage1(run) {
         // which is the same rendered-prose-contradicts-the-reading defect this lane exists to close.
         L.push(
           `      · the creation walk covered NO window (stopped on ${c.creation.stopReason}), so ` +
-            `this was computed over ${c.completion.tokens} launch(es) — ` +
-            `${c.creation.listedOutsideWindow} ownership-listed plus ${provenOutsideWindow(c)} the ` +
-            `walk proved — the biased reading`,
+            `this was computed over ${c.completion.tokens} launch(es) — the ownership listing ` +
+            `(${c.creation.listedOutsideWindow} row(s)) plus whatever creates the walk proved ` +
+            `before stopping — the biased reading`,
         );
       } else if (c.creation !== null && !c.creation.wholeHistory) {
         L.push(

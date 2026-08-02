@@ -40,6 +40,14 @@ export const LIMITATIONS = [
   '    before anyone else is filled, and what the OTHER sniping wallets on those same launches',
   '    achieved: fill, queue position, and realised P&L. Distributions and a hit rate, never a mean.',
   '',
+  'WHICH HISTORY IT COUNTS: the tokens the wallet CREATED, read from pump.fun create transactions.',
+  'NOT the tokens it owns now, which is what every vendor surface answers. Ownership on pump.fun',
+  'is a sellable position — the owner collects the creator fees — so the ownership reading',
+  'understates launches, understates BONDED launches by more, and scores the better deployer',
+  'worse. Both readings are in every candidate row, with the verdict each one produced.',
+  'The creation walk covers a BOUNDED WINDOW backwards from now; outside it the ownership listing',
+  'is carried over unchanged and the row says how much of the history that is.',
+  '',
   'WHAT IT DOES NOT MEASURE, and none of these are minor:',
   '  · EXIT. Room to enter is not room to leave. When the dev sells, whether its trigger is a SIZE',
   '    that our own buy would count towards and would therefore cap our position, and whether an',
@@ -61,9 +69,10 @@ export const LIMITATIONS = [
   'operation\'s own group takes 97% of the profit available. Stage 0 shows the gate PASSING that',
   'wallet and Stage 2 REFUSING it.',
   '',
-  'The completion rate is computed over roughly 35 days and about 70 tokens. It is a RECENCY',
-  'measure, not a lifetime record, and long-horizon consistency is reported UNMEASURED unless',
-  '--consistency was passed.',
+  'The completion rate is a RECENCY measure, not a lifetime record, and long-horizon consistency',
+  'is reported UNMEASURED unless --consistency was passed. Read each row\'s creation window before',
+  'reading its rate as a record: a wallet whose walk stopped on a ceiling has a rate computed over',
+  'that window plus whatever the ownership listing carried over from before it.',
 ];
 
 /** @param {number} n @param {number} [dp] */
@@ -377,6 +386,9 @@ export function renderStage0(r, vendorReadings) {
  *   Printed because on this endpoint a LOW shed count is the surprising one — the committed tape's
  *   own build shed 24.7% — so a zero here is a hint that the walk did not happen rather than that it
  *   went well.
+ * @param {number} run.rpcRequests
+ * @param {number} run.rpcLoadShedEvents
+ * @param {'creation-derived' | 'ownership-only'} run.historySource
  * @param {number} run.elapsedMs
  * @param {string} run.startedAtIso
  * @param {boolean} run.completed Whether enumeration and gating ran to the end. **Load-bearing.**
@@ -416,6 +428,8 @@ export function renderStage1(run) {
     `keyless requests   ${run.keylessRequests}  (pump.fun)` +
       (run.keylessShed === undefined ? '' : `, ${run.keylessShed} shed and retried`),
   );
+  L.push(`solana rpc         ${run.rpcRequests}  (creation-derived history; ${run.rpcLoadShedEvents} load-shed)`);
+  L.push(`history source     ${run.historySource}${run.historySource === 'ownership-only' ? '  !! BIASED TOWARDS REJECTION' : ''}`);
   L.push(`elapsed            ${(run.elapsedMs / 1000).toFixed(1)}s`);
   L.push(`prefiltered out    ${run.prefiltered}  (skipped before spending a request)`);
   L.push(`candidates gated   ${run.candidates.length}`);
@@ -534,6 +548,32 @@ export function renderStage1(run) {
           `${padl(num(c.completion.spanDays, 0), 5)}  ${pad(c.completionCapped ? 'yes' : 'no', 4)}  ` +
           `${c.seededBy.length}`,
       );
+      if (c.creation !== null) {
+        L.push(
+          `      created ${c.creation.createdInWindow} in a ${num(c.creation.coveredDays, 1)}d window ` +
+            `(ownership showed ${c.creation.listedInWindow}: ${c.creation.hiddenByOwnership} HIDDEN, ` +
+            `${c.creation.notCreatedByWallet} acquired, ${c.creation.movedCreator} creator moved); ` +
+            `+${c.creation.listedOutsideWindow} carried over from the listing`,
+        );
+        if (!c.creation.wholeHistory) {
+          L.push(
+            `      ^ the walk stopped on ${c.creation.stopReason}, so anything created before ` +
+              `${c.creation.coveredFromIso ?? 'the window'} is a LOWER BOUND from the ownership listing`,
+          );
+        }
+        if (c.creation.curvesUnread > 0) {
+          L.push(
+            `      ^ ${c.creation.curvesUnread} curve account(s) unread, each counted as NOT bonded — ` +
+              `the rate above is deflated by up to that much`,
+          );
+        }
+      }
+      if (c.verdict !== c.vendorVerdict) {
+        L.push(
+          `      ^ VERDICT CHANGED: the ownership reading (${c.vendorCompletion.completed}/` +
+            `${c.vendorCompletion.tokens}) would have said ${c.vendorVerdict}`,
+        );
+      }
       if (c.entry !== null) {
         L.push('');
         for (const line of renderEntry(c.entry, c.entryCoverage)) L.push(line);
@@ -552,9 +592,12 @@ export function renderStage1(run) {
       }
     }
     L.push('');
-    L.push('  n    = tokens in the denominator we computed ourselves');
+    L.push('  n    = launches in the denominator we computed ourselves — CREATED by this wallet');
+  L.push('         inside the creation window, plus whatever the ownership listing showed before it');
     L.push('  done = of those, how many completed the bonding curve');
-    L.push('  cap  = the vendor page was full, so older launches exist that it does not show');
+    L.push('  cap  = the page the GATE\'S reading came from was full, so older launches exist that');
+  L.push('         it does not show. Under creation-derived history that is the ownership listing,');
+  L.push('         which supplies everything before the creation window.');
     L.push('  seeds= how many of the 3 enumeration queries surfaced this wallet');
     L.push('');
     L.push('  ENTRY-ROOM-PRESENT IS NOT "BEATABLE". It means the opening window is not already');
@@ -565,9 +608,21 @@ export function renderStage1(run) {
   if (failed.length > 0) {
     L.push('');
     L.push('DID NOT CLEAR THE GATE');
+    L.push('  (a false rejection here is INVISIBLE — the wallet is dropped and nothing downstream');
+    L.push('   contradicts it — so each row states which history the rejection was computed over)');
     for (const c of failed) {
       L.push(`  ${c.wallet}`);
       for (const reason of c.gate.reasons) L.push(`      · ${reason}`);
+      if (c.creation !== null && !c.creation.wholeHistory) {
+        L.push(
+          `      · computed over a ${num(c.creation.coveredDays, 1)}d creation window ` +
+            `(stopped on ${c.creation.stopReason}) plus ${c.creation.listedOutsideWindow} ` +
+            `ownership-listed launches before it`,
+        );
+      }
+      if (c.historySource === 'ownership-only') {
+        L.push('      · OWNERSHIP-ONLY run: this rejection was computed on the biased reading');
+      }
     }
   }
 
@@ -595,6 +650,8 @@ export function renderStage1(run) {
  * @param {boolean} plan.stage2
  * @param {number} plan.maxScored
  * @param {import('./stage2.mjs').Stage2Thresholds} plan.entryThresholds
+ * @param {'creation-derived' | 'ownership-only'} plan.historySource
+ * @param {{ maxRpcRequestsPerCandidate: number, rpcMinIntervalMs: number }} plan.creationWalk
  * @param {{ length: number, hasDocumentedPrefix: boolean } | null} plan.keyDescription
  * @returns {string}
  */
@@ -690,12 +747,35 @@ export function renderDryRun(plan) {
   }
   L.push('');
 
-  if (plan.consistency) {
-    L.push('KEYLESS — pump.fun creator listing, for gate survivors only:');
+  if (plan.historySource === 'creation-derived') {
+    const w = plan.creationWalk;
+    L.push('KEYLESS — Solana RPC, the creation-derived launch history. THE EXPENSIVE PART:');
+    L.push('  POST https://api.mainnet-beta.solana.com  getSignaturesForAddress + getTransaction');
+    L.push(`  up to ${w.maxRpcRequestsPerCandidate} requests per candidate, ` +
+      `so up to ${w.maxRpcRequestsPerCandidate * plan.maxCandidates} in total.`);
+    L.push(`  At the measured ${w.rpcMinIntervalMs}ms pacing that is up to ` +
+      `${Math.round((w.maxRpcRequestsPerCandidate * plan.maxCandidates * w.rpcMinIntervalMs) / 60000)} minutes.`);
+    L.push('  Cost per candidate is NOT predictable from the wallet address: it scales with the');
+    L.push('  fraction of that wallet\'s signature index that SUCCEEDED, measured between 1.7% and');
+    L.push('  99.7% across the twelve wallets of runs/2026-07-29-elite.json. Whichever bound bites');
+    L.push('  is recorded per candidate; it is a window, not a whole history, unless it says so.');
+    L.push('');
+    L.push('KEYLESS — pump.fun creator listing, the ownership reading, for every candidate:');
     L.push('  GET https://frontend-api-v3.pump.fun/coins?creator={wallet}&offset=...');
+    L.push(`  up to 4 pages per candidate, ceiling ${plan.maxKeylessRequests}. Costs no quota.`);
+  } else {
+    L.push('KEYLESS — Solana RPC: NONE. --ownership-only was passed, so the gate reads the');
+    L.push('  ownership listing alone. That reading is BIASED TOWARDS REJECTION and the record');
+    L.push('  will be stamped historySource: "ownership-only".');
+  }
+  if (plan.consistency) {
+    L.push('');
+    L.push('KEYLESS — a further creator walk for gate survivors, for long-horizon consistency:');
     L.push(`  up to 3 pages per survivor, ceiling ${plan.maxKeylessRequests}. Costs no quota.`);
   } else {
     L.push('KEYLESS — no consistency pass. Pass --consistency to measure it (no quota cost).');
+    L.push('');
+    L.push('Long-horizon consistency: UNMEASURED. Pass --consistency (no quota cost).');
   }
   L.push('');
   L.push('NOT REQUESTED, deliberately:');

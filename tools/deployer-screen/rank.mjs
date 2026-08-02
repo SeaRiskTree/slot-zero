@@ -93,12 +93,49 @@ export function applyGate(input, t) {
  */
 
 /**
+ * @typedef {object} CreationReading
+ * What the creation-derived walk found, and every bound that shaped it.
+ *
+ * Recorded whole rather than reduced to the two counts the gate uses. The counts alone would let a
+ * two-day window read exactly like a two-year one, and this project has already shipped two wrong
+ * committed numbers to silent truncation that looked like healthy data.
+ * @property {string | null} coveredFromIso
+ * @property {string | null} coveredToIso
+ * @property {number} coveredDays
+ * @property {boolean} wholeHistory True only when the walk reached the end of the wallet's
+ *   signature index. Under anything else the window is a ceiling, not a record.
+ * @property {'index-exhausted' | 'page-cap' | 'transaction-cap' | 'request-ceiling' | 'upstream-error'} stopReason
+ * @property {string | null} stopDetail
+ * @property {number} rpcRequests
+ * @property {number} loadShedEvents
+ * @property {number} signaturesScanned
+ * @property {number} signaturesSucceeded
+ * @property {number} transactionsInspected
+ * @property {number} unresolvedTransactions
+ * @property {number} curvesUnread Creations whose curve account went unread. Each counts as NOT
+ *   bonded, so this is the amount by which the completion rate is knowably deflated.
+ * @property {number} listingRows
+ * @property {boolean} listingPageCapped
+ * @property {number} createdInWindow
+ * @property {number} listedInWindow
+ * @property {number} hiddenByOwnership Created inside the window, absent from the ownership
+ *   surface. The under-count this whole route exists to measure.
+ * @property {number} notCreatedByWallet
+ * @property {number} movedCreator
+ * @property {number} listedOutsideWindow
+ */
+
+/**
  * @typedef {object} Candidate
  * @property {string} wallet
  * @property {string[]} seededBy  Which enumeration queries surfaced it. Provenance, so a rerun
  *   can tell a leaderboard artefact from a genuinely recurring name.
- * @property {import('./measure.mjs').CompletionMeasurement} completion
- * @property {boolean} completionCapped
+ * @property {import('./measure.mjs').CompletionMeasurement} completion The history the gate read.
+ * @property {boolean} completionCapped Whether the surface the GATE'S reading came from was page
+ *   capped — the ownership listing under `creation-derived`, the vendor profile under
+ *   `ownership-only`. Distinct from {@link Candidate.vendorPageCapped}, which always describes the
+ *   vendor profile: showing the vendor's cap flag beside a creation-derived count would describe a
+ *   surface the number did not come from.
  * @property {GateResult} gate
  * @property {Verdict} verdict
  * @property {string} rationale
@@ -109,6 +146,12 @@ export function applyGate(input, t) {
  *   {@link Verdict}: competence and entry room are different claims, and collapsing them would put
  *   this module back in the business of recommending.
  * @property {import('./stage2.mjs').Stage2Coverage | null} entryCoverage
+ * @property {'creation-derived' | 'ownership-only'} historySource
+ * @property {import('./measure.mjs').CompletionMeasurement} vendorCompletion The ownership-derived
+ *   reading this gate used before creation-derived history landed. Kept so the gap stays visible.
+ * @property {Verdict} vendorVerdict What the old reading would have decided.
+ * @property {boolean} vendorPageCapped Whether MadeOnSol's profile page was full.
+ * @property {CreationReading | null} creation `null` under `--ownership-only`.
  */
 
 /**

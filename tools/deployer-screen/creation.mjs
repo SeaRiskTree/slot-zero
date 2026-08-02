@@ -1,0 +1,317 @@
+/**
+ * Creation-derived launch history. Pure: parsers and a merge, no I/O and no clock.
+ *
+ * ## The defect this exists to fix
+ *
+ * Every launch-history surface pump.fun and its resellers publish answers *"which tokens does this
+ * wallet OWN NOW"*. On pump.fun the owner collects the token's creator fees, so ownership is a live
+ * economic position that can be sold, handed to a community takeover, or migrated into a fee-sharing
+ * config — and **the ones worth handing on are the winners**. The question a competence gate means to
+ * ask is *"which tokens did this wallet CREATE"*, and the two answers are not the same set.
+ *
+ * The bias has a direction and it is the bad one. A dev that creates 20, bonds 9 and then hands on 3
+ * of the winners reads as 17 launches / 6 bonded — 35% instead of 45%. A gate at 40% rejects a good
+ * dev, and **a false rejection is invisible**: the wallet is dropped, never researched, and nothing
+ * downstream ever contradicts it.
+ *
+ * The premise is not inherited from a comment. It was observed on-chain 2026-08-02:
+ * mint `32CdQdBU…pump` (`maxxing`, ATH $7.72M) was created by our subject deployer
+ * `7ufmve7Z…` in transaction
+ * `64pCziaL1tpcXKNtamcrryukkZjpY37tJoWEcLj8Emao4Gp7GQraReGVSJYJXYK4x1EEeAp1oQzBq433JZTviSEU`
+ * (slot 383821204, pump.fun `CreateV2`), and its creator record has since moved twice — to a
+ * community-takeover wallet, and then, in transaction
+ * `5fjZDdFQFpn69AhXnXg3WdKFFqeLUFeBbwxnQxz4paaYcbG1AoxggMFZPbM8ZKf4eBS2VYWBuvDtPHnxc9H1yryr`
+ * (slot 398086225, `CreateFeeSharingConfig` + `MigrateBondingCurveCreator`), to a fee-sharing config
+ * account that is not a wallet at all. `?creator=7ufmve7Z…` cannot return that mint, and it is the
+ * single best launch in the deployer's 239-launch record.
+ *
+ * ## Why the on-chain route, and what it costs
+ *
+ * There is no keyless surface indexed by *original* creator. Probed 2026-08-02:
+ * `frontend-api-v3/coins?creator=` is by current creator; `frontend-api-v3/coins/{mint}.creator` and
+ * `.cto_address` are current; `advanced-api-v2/coins/metadata/{mint}.dev` is current too — it reads
+ * the takeover wallet for `maxxing`, not the deployer. `coins/user-created-coins/{w}`,
+ * `coins/created-by/{w}` and `swap-api/v2/creators/{w}/coins` are 404, and `coins/list` silently
+ * ignores `dev=` / `devAddress=` filters rather than applying them.
+ *
+ * So creation is only recoverable from the create transaction itself, and the only keyless index
+ * that reaches it is the wallet's own signature index. That walk is expensive and its ceilings are
+ * declared in `thresholds.json` → `creation_walk`; {@link mergeHistories} makes what the walk did
+ * *not* cover an explicit, recorded fallback rather than a silent one.
+ */
+
+/** pump.fun's bonding-curve program. */
+export const PUMP_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
+
+/**
+ * Layout of the `BondingCurve` account, validated 2026-08-02 rather than assumed.
+ *
+ * `report.md` records offset 49 for the creator; the account is 151 bytes and the fields after it
+ * are not documented here because nothing reads them. The offset was checked against a control token
+ * whose creator has never moved (`EijM3FJm…pump`, curve `Xeka4UrE…`), where it reads the deployer
+ * exactly — CLAUDE.md's instruction to validate the offset on a known token before trusting it.
+ *
+ * `complete` sits one byte earlier and survives graduation: it still reads 1 on a token that has
+ * long since migrated to PumpSwap and had its reserves zeroed.
+ */
+export const CURVE_COMPLETE_OFFSET = 48;
+/** @see CURVE_COMPLETE_OFFSET */
+export const CURVE_CREATOR_OFFSET = 49;
+
+const BASE58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+/**
+ * Base58-encode 32 bytes, so an account field can be compared with a wallet address.
+ *
+ * Hand-rolled because this repo has no runtime dependencies and is not about to grow one to read a
+ * public key. Leading zero bytes become leading `1`s, which is the part a naive big-integer
+ * implementation drops.
+ *
+ * @param {Uint8Array} bytes
+ * @returns {string}
+ */
+export function base58Encode(bytes) {
+  let n = 0n;
+  for (const b of bytes) n = n * 256n + BigInt(b);
+  let s = '';
+  while (n > 0n) {
+    const r = Number(n % 58n);
+    s = BASE58[r] + s;
+    n /= 58n;
+  }
+  for (const b of bytes) {
+    if (b !== 0) break;
+    s = `1${s}`;
+  }
+  return s === '' ? '1' : s;
+}
+
+/**
+ * @typedef {object} CreateRecord
+ * A launch, as the create transaction itself reports it.
+ * @property {string} mint
+ * @property {string} bondingCurve  Read out of the create instruction, so no PDA derivation is
+ *   needed and no seed convention can drift.
+ * @property {string} creator       The wallet that created the token, forever.
+ * @property {number} createdAtMs
+ * @property {string} signature
+ */
+
+/**
+ * Recognise a pump.fun token creation and pull the launch out of it.
+ *
+ * Two identification rules, both structural:
+ *
+ * 1. **The log line, not the instruction data.** `Instruction: Create` / `CreateV2` is emitted by
+ *    the program itself, so it survives the discriminator changing between program versions.
+ * 2. **The creator is the create instruction's non-mint signer, not the fee payer.** These come
+ *    apart: `report.md` §9.3 records that in a bundled transaction `accountKeys[0]` is one cohort
+ *    wallet paying for three wallets' instructions, so fee-payer attribution merges distinct actors.
+ *    A pump.fun create needs the mint keypair's signature (it initialises the mint) and the
+ *    creator's (it pays the curve's rent), so "the signer that is not the mint" names the creator
+ *    even when somebody else pays. If that leaves anything other than exactly one candidate the
+ *    transaction is refused rather than guessed at.
+ *
+ * @param {unknown} tx A `getTransaction` result in `jsonParsed` encoding.
+ * @returns {CreateRecord | null} `null` when this is not a pump.fun creation.
+ */
+export function parseCreateTransaction(tx) {
+  if (typeof tx !== 'object' || tx === null) return null;
+  const root = /** @type {Record<string, unknown>} */ (tx);
+
+  const meta = /** @type {Record<string, unknown> | undefined} */ (root['meta']);
+  if (meta === undefined || meta === null) return null;
+  if (meta['err'] !== null && meta['err'] !== undefined) return null;
+
+  const logs = meta['logMessages'];
+  if (!Array.isArray(logs)) return null;
+  if (!logs.some((l) => typeof l === 'string' && /^Program log: Instruction: Create(V\d+)?$/.test(l))) {
+    return null;
+  }
+
+  const transaction = /** @type {Record<string, unknown> | undefined} */ (root['transaction']);
+  if (transaction === undefined || transaction === null) return null;
+  const message = /** @type {Record<string, unknown> | undefined} */ (transaction['message']);
+  if (message === undefined || message === null) return null;
+
+  const accountKeys = message['accountKeys'];
+  if (!Array.isArray(accountKeys)) return null;
+  /** @type {Set<string>} */
+  const signers = new Set();
+  for (const entry of accountKeys) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const row = /** @type {Record<string, unknown>} */ (entry);
+    if (row['signer'] === true && typeof row['pubkey'] === 'string') signers.add(row['pubkey']);
+  }
+
+  const instructions = message['instructions'];
+  if (!Array.isArray(instructions)) return null;
+
+  for (const entry of instructions) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const ix = /** @type {Record<string, unknown>} */ (entry);
+    if (ix['programId'] !== PUMP_PROGRAM_ID) continue;
+    const accounts = ix['accounts'];
+    if (!Array.isArray(accounts) || accounts.length < 3) continue;
+
+    const mint = accounts[0];
+    const bondingCurve = accounts[2];
+    if (typeof mint !== 'string' || typeof bondingCurve !== 'string') continue;
+    // The mint keypair signs its own initialisation. An instruction whose first account is not a
+    // signer is a buy or a sell that happens to share the transaction, not the create.
+    if (!signers.has(mint)) continue;
+
+    const creators = accounts.filter((a) => typeof a === 'string' && a !== mint && signers.has(a));
+    if (creators.length !== 1) return null;
+    const creator = creators[0];
+    if (typeof creator !== 'string') return null;
+
+    const blockTime = root['blockTime'];
+    if (typeof blockTime !== 'number' || !Number.isFinite(blockTime)) return null;
+
+    const signatures = transaction['signatures'];
+    const signature = Array.isArray(signatures) && typeof signatures[0] === 'string' ? signatures[0] : '';
+
+    return { mint, bondingCurve, creator, createdAtMs: blockTime * 1000, signature };
+  }
+
+  return null;
+}
+
+/**
+ * @typedef {object} CurveState
+ * @property {boolean} complete Whether the curve bonded. Survives migration to PumpSwap.
+ * @property {string} creator   The curve's creator **now**, which is the field that moves.
+ */
+
+/**
+ * Read the two bytes of a bonding-curve account that matter here.
+ *
+ * Both come out of the same account, so the batch that establishes whether a launch bonded also
+ * establishes whether its creator record has moved since — the movement measurement is free.
+ *
+ * @param {string} base64Data Account data, base64.
+ * @returns {CurveState | null} `null` when the account is absent or too short to trust.
+ */
+export function readCurveState(base64Data) {
+  if (typeof base64Data !== 'string' || base64Data === '') return null;
+  const raw = Buffer.from(base64Data, 'base64');
+  if (raw.length < CURVE_CREATOR_OFFSET + 32) return null;
+  const complete = raw[CURVE_COMPLETE_OFFSET];
+  if (complete === undefined) return null;
+  return {
+    complete: complete === 1,
+    creator: base58Encode(raw.subarray(CURVE_CREATOR_OFFSET, CURVE_CREATOR_OFFSET + 32)),
+  };
+}
+
+/**
+ * @typedef {object} CoveredWindow
+ * @property {number} fromMs Oldest block time the signature scan actually reached.
+ * @property {number} toMs   Newest block time the signature scan started from.
+ * @property {boolean} exhausted True when the walk reached the end of the wallet's index, so
+ *   `fromMs` is the wallet's genesis rather than a ceiling.
+ */
+
+/**
+ * @typedef {object} MergedHistory
+ * @property {import('./measure.mjs').TokenRecord[]} records The history the gate reads.
+ * @property {number} createdInWindow    Launches the create transactions prove, inside the window.
+ *   `records` may hold more than this: a walk that abandoned a page part-way can prove a launch
+ *   below `covered.fromMs`, and that is still a launch even though it is outside the range the two
+ *   readings may be compared over.
+ * @property {number} listedInWindow     Launches the ownership surface shows, inside the window.
+ * @property {number} hiddenByOwnership  Created inside the window and ABSENT from the ownership
+ *   surface. This is the under-count, measured rather than assumed.
+ * @property {number} notCreatedByWallet Listed inside the window but created by somebody else —
+ *   the opposite error, an over-count from tokens the wallet acquired rather than launched.
+ * @property {number} listedOutsideWindow Launches carried over from the ownership surface because
+ *   the walk never reached them. **These are still a lower bound** and are counted as one.
+ * @property {number} movedCreator       Launches inside the window whose on-chain creator is no
+ *   longer the wallet that created them.
+ */
+
+/**
+ * Merge a bounded creation walk with the ownership listing into the history the gate reads.
+ *
+ * The merge is windowed on purpose, and the window is the walk's actual coverage:
+ *
+ * - **Inside** `covered`, the signature scan saw every transaction the wallet took part in, so the
+ *   set of creates is exact. Ownership is not consulted there at all: it can only be wrong, in
+ *   either direction.
+ * - **Outside** it, there is nothing but the ownership listing, so its rows are carried over
+ *   unchanged and {@link MergedHistory.listedOutsideWindow} says how many. That part of the history
+ *   is still a lower bound and the record has to keep saying so.
+ *
+ * Merging rather than replacing is what keeps this honest under a truncated walk: a walk that
+ * covered two days would otherwise turn a 200-launch history into a 4-launch one and fail the
+ * deployer on sample size — which is the same invisible false rejection, just from the other end.
+ *
+ * @param {object} input
+ * @param {readonly CreateRecord[]} input.creates Creations found by the walk, any creator.
+ * @param {string} input.wallet
+ * @param {ReadonlyMap<string, CurveState>} input.curves Curve state by mint, where known.
+ * @param {readonly { mint: string, deployedAtMs: number, completed: boolean }[]} input.listed
+ *   The ownership listing, with mints so the two sets can be reconciled by identity.
+ * @param {CoveredWindow} input.covered
+ * @returns {MergedHistory}
+ */
+export function mergeHistories(input) {
+  const { creates, wallet, curves, listed, covered } = input;
+
+  /** @param {number} ms */
+  const inWindow = (ms) => Number.isFinite(ms) && ms >= covered.fromMs && ms <= covered.toMs;
+
+  /** @type {Map<string, import('./measure.mjs').TokenRecord>} */
+  const byMint = new Map();
+  /** Mints this wallet created **inside** the window — the only set comparable to the listing. */
+  const createdInWindowMints = new Set();
+  let movedCreator = 0;
+
+  for (const c of creates) {
+    if (c.creator !== wallet) continue;
+    const curve = curves.get(c.mint);
+    // A launch whose curve account cannot be read is counted as a launch that did not bond. It is
+    // the conservative direction: it can only lower the rate, never inflate it.
+    byMint.set(c.mint, { deployedAtMs: c.createdAtMs, completed: curve?.complete === true });
+    if (curve !== undefined && curve.creator !== wallet) movedCreator += 1;
+    // Every create found is a proven launch and belongs in `records` — but only those inside the
+    // covered window may be COMPARED against the listing. The walk abandons a page part-way when a
+    // bound bites, so the last few creates can sit below `covered.fromMs`; counting one of those as
+    // hidden while its listing row counts as outside-window would invent a gap that is not there.
+    if (inWindow(c.createdAtMs)) createdInWindowMints.add(c.mint);
+  }
+
+  let listedInWindow = 0;
+  let overlap = 0;
+  let listedOutsideWindow = 0;
+  for (const row of listed) {
+    if (inWindow(row.deployedAtMs)) {
+      listedInWindow += 1;
+      // Inside the window the walk is authoritative, so a listed token it never saw was not
+      // created by this wallet — it was acquired.
+      if (createdInWindowMints.has(row.mint)) overlap += 1;
+      continue;
+    }
+    listedOutsideWindow += 1;
+    if (!byMint.has(row.mint)) {
+      byMint.set(row.mint, { deployedAtMs: row.deployedAtMs, completed: row.completed });
+    }
+  }
+
+  // Both gaps are the two set differences, counted directly. Deriving one by subtracting the other
+  // from a total looks equivalent and is not: the two sides are timestamped by different sources
+  // (a create's `blockTime`, a listing row's `created_timestamp`), so a launch landing on the
+  // window boundary can be in-window on one side and out on the other, and the subtraction would
+  // then report a NEGATIVE under-count. This measurement exists to size a bias; it cannot have one.
+  const createdInWindow = createdInWindowMints.size;
+  return {
+    records: [...byMint.values()],
+    createdInWindow,
+    listedInWindow,
+    hiddenByOwnership: createdInWindow - overlap,
+    notCreatedByWallet: listedInWindow - overlap,
+    listedOutsideWindow,
+    movedCreator,
+  };
+}

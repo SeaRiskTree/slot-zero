@@ -9,14 +9,13 @@
     "SCOPE: this tool GATES on competence and SCORES ENTRY. It does not recommend, and it does not",
     "score EXIT — see `stage2_entry`."
   ],
-  "version": "3.0.0",
+  "version": "4.0.0",
   "pinnedAt": "2026-07-29",
-
   "stage1_gate": {
     "$comment": [
       "Keyed, MadeOnSol, one request per candidate. A GATE, not a score: it asks whether a",
       "deployer is competent, which is necessary and nowhere near sufficient. Stage 0 demonstrates",
-      "the gap empirically — it shows the gate PASSING the one deployer we know is not worth the",
+      "the gap empirically \u2014 it shows the gate PASSING the one deployer we know is not worth the",
       "time.",
       "The denominator is `profile.pump_tokens[].complete` and nothing else. Never `bonding_rate`,",
       "`total_bonded`, `total_tokens_deployed`, `recent_bond_rate`, `recent_outcomes` or",
@@ -33,7 +32,6 @@
       "minSpanDays": "A high rate earned inside a single day is a burst, not a record. 14 days is the shortest span over which pump.fun's own time-to-bond distribution puts a large majority of eventual graduations behind us: on our tape 82.5% of graduations occur within 7 days and 85.4% within 14."
     }
   },
-
   "consistency_over_time": {
     "$comment": [
       "The captain's word was 'consistently'. MadeOnSol cannot answer it: their only",
@@ -54,7 +52,34 @@
       "maxDispersion": "max(epoch rate) - min(epoch rate) > 0.35 FLAGS a deployer as streaky rather than excluding it. A flag, not a filter: the point of the exercise is that one hot window must not read as a record, and the reader is entitled to see the spread rather than have it silently applied."
     }
   },
-
+  "creation_walk": {
+    "$comment": [
+      "Bounds for the creation-derived launch history \u2014 the walk that answers 'which tokens did this",
+      "wallet CREATE' instead of 'which tokens does it OWN NOW'. See creation.mjs for why the two",
+      "differ and for the on-chain observation that established it.",
+      "",
+      "This walk is the expensive part of a run by an order of magnitude, because the only keyless",
+      "index that reaches a create transaction is the wallet's own signature index, and for a pump.fun",
+      "deployer that index is dominated by strangers' failed trades. Every bound here is therefore a",
+      "hard ceiling, and readCreatedHistory reports which one bit rather than truncating silently.",
+      "",
+      "The walk covers a CONTIGUOUS WINDOW BACKWARDS FROM NOW. Inside it every creation is found;",
+      "outside it none is, and mergeHistories falls back to the ownership listing and says so. A",
+      "create count read as a lifetime figure under any stopReason other than 'index-exhausted' is",
+      "wrong in the same direction as the vendor's sliding 'lifetime' window."
+    ],
+    "maxRpcRequestsPerCandidate": 100,
+    "maxSignaturePages": 200,
+    "maxTransactionsPerCandidate": 8000,
+    "txBatchSize": 1,
+    "rpcMinIntervalMs": 2500,
+    "justification": {
+      "maxRpcRequestsPerCandidate": "Measured 2026-08-02: sustained keyless throughput against api.mainnet-beta is about 0.42 transactions/second, i.e. roughly one request per 2.4s including backoff, and a create is found by inspecting every SUCCEEDED signature in the wallet's index. The success fraction varies enormously between deployers \u2014 1.7% on the busiest wallet screened, 99.7% on another \u2014 so the cost of a full history ranged from 7 minutes to 84 hours across the 12 wallets of runs/2026-07-29-elite.json. 100 requests is a per-candidate ceiling that keeps a 12-candidate run inside about 50 minutes; on a quiet wallet it is the whole history, on a busy one it is a window of hours and the record says so. See CREATION-DERIVED.md for the per-wallet costs.",
+      "maxSignaturePages": "200 pages is 200,000 signatures, past which no keyless walk is finishing inside a session. It exists so a wallet with an enormous index cannot turn the request ceiling into the only brake.",
+      "txBatchSize": "1, and the 1 is measured. report.md 9.4 recorded batches of 5-8 getTransaction as sustainable, and that no longer holds: on 2026-08-02, fetching the same transactions at batch=1 took 58s with ZERO load-shed events, batch=4 took 76s with 7, and batch=8 took 110s with 11. Throughput was 0.42 tx/s at batch=1 and 0.36 tx/s at batch=8 \u2014 the endpoint weights each entry of a JSON-RPC batch against its limiter, so a batch of 8 spends 8 tokens and buys nothing but backoff. Batching is therefore actively harmful HERE TOO, exactly as it is on pump.fun's keyless endpoints. The client still supports batching, capped at 8, because the endpoint's behaviour is the vendor's to change and re-measuring is cheaper than rebuilding.",
+      "rpcMinIntervalMs": "1,400ms is the documented floor, but a 200-request run at that pace on 2026-08-02 took over 890 seconds instead of the expected 280 \u2014 the endpoint was shedding load and the retry backoff was paying for it. 2,500ms is the observed rate at which that stops happening, so it is faster in wall-clock than the nominally quicker setting. api.mainnet-beta rate-limits GLOBALLY across getSignaturesForAddress and getTransaction, and two concurrent jobs earned a sustained 429 lockout, so this is one queue with one request in flight."
+    }
+  },
   "budget": {
     "$comment": [
       "Hard bounds, enforced in code. There is no flag that disables one.",

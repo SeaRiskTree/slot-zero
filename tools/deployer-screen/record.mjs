@@ -48,8 +48,15 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   the total cannot say which endpoint the requests went to. Also adds `unmeasured`: every
  *   measurement the run could not take and why, which `truncated` and `truncationReason` now
  *   account for. Its absence on an older record means unknown, not none.
+ * - **4** — the gate reads a CREATION-derived launch history rather than an ownership-derived one.
+ *   Candidate rows gain `historySource`, the `vendor*` fields holding the old reading whole, and
+ *   `creation` holding the walk's coverage and bounds. A schema-1, schema-2 or schema-3 record's
+ *   `tokens` and `completionRate` are the OWNERSHIP reading — biased towards rejection, and
+ *   understating a bonded count more than a launch count. **Do not compare them with a schema-4
+ *   `completionRate` as though they answered the same question**; compare against
+ *   `vendorCompletionRate`, which is the same measurement the older records hold.
  */
-export const RECORD_SCHEMA_VERSION = 3;
+export const RECORD_SCHEMA_VERSION = 4;
 
 /**
  * Completeness of a run, as the record can actually support.

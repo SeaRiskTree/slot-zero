@@ -1,11 +1,19 @@
 /**
- * Keyless pump.fun clients. No credential, no account, no cost — but a shared public resource,
- * so the same bounds apply as to the keyed client.
+ * Keyless clients — pump.fun's public API and the public Solana RPC. No credential, no account, no
+ * cost, but both are shared public resources, so the same bounds apply as to the keyed client.
  *
- * One endpoint is fetched here: `frontend-api-v3.pump.fun/coins?creator=`, a creator's token
- * listing, used only by the optional `--consistency` pass. It serves **70 per page regardless of the
- * limit asked for**, and it lists by *current* creator, so a creator's listed history is a lower
- * bound and the token that goes missing is exactly the good one.
+ * Two hosts are fetched here.
+ *
+ * `frontend-api-v3.pump.fun/coins?creator=` is a creator's token listing. It serves **70 per page
+ * regardless of the limit asked for**, and it lists by *current* creator, so a creator's listed
+ * history is a lower bound and the token that goes missing is exactly the good one. It is the
+ * **ownership-derived** reading, and `creation.mjs` documents why that is the wrong question.
+ *
+ * `api.mainnet-beta.solana.com` is the only working keyless RPC found — `solana-rpc.publicnode.com`
+ * 403s this client outright on every request (report §9.3), and anything copying the entity report's
+ * endpoint list sends half its batches to a dead host while the retry backoff hides it. It is used
+ * by {@link readCreatedHistory} to recover the **creation-derived** reading from create transactions,
+ * which is the only keyless route to it: no pump.fun surface is indexed by original creator.
  *
  * The row parsers here — {@link parseFillLoose}, {@link windowFilter}, {@link extractTradeRows} —
  * read `swap-api.pump.fun/v2/coins/{mint}/trades` rows, the per-token fill tape the committed
@@ -19,12 +27,23 @@
  */
 
 import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs';
+import { parseCreateTransaction, readCurveState } from './creation.mjs';
 
 /** Creator listing host. */
 export const FRONTEND_API = 'https://frontend-api-v3.pump.fun';
 
 /** Per-token fill tape host. The affordable route to a launch window — see {@link readLaunchWindow}. */
 export const SWAP_API = 'https://swap-api.pump.fun';
+
+/**
+ * The only keyless Solana RPC endpoint that works for this client.
+ *
+ * Pinned as a constant with no override on purpose. The alternative in the entity report's endpoint
+ * list, `solana-rpc.publicnode.com`, 403s every request with or without a browser `User-Agent`, and
+ * a job that sent it half its batches stalled for 40 minutes behind retry backoff before anyone
+ * noticed the host was dead.
+ */
+export const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
 
 /**
  * @typedef {object} KeylessOptions
@@ -691,20 +710,37 @@ export async function readLaunchWindow(client, opts) {
 }
 
 /**
- * Page a creator's token listing for the optional `--consistency` pass.
+ * @typedef {object} ListedToken
+ * A row of the ownership-derived listing. A {@link import('./measure.mjs').TokenRecord} plus the
+ * mint, which is what lets {@link import('./creation.mjs').mergeHistories} reconcile this listing
+ * against the create transactions by identity rather than by counting.
  *
- * Two traps this respects rather than works around. The server serves **70 per page regardless
- * of the limit**, so paging is by offset and a full page never means the end. And the listing is
- * by *current* creator, which can move on-chain — so what comes back is a **lower bound** on a
- * creator's history, and the token most likely to be missing is its best one.
+ * The mint is held in memory for the length of a run and is **never persisted** — no run record
+ * carries a per-token row, and `test/deployer-screen.test.ts` asserts that.
+ * @property {number} deployedAtMs
+ * @property {boolean} completed
+ * @property {string} mint
+ */
+
+/**
+ * Page a creator's token listing — the **ownership-derived** reading.
+ *
+ * Three traps this respects rather than works around. The server serves **70 per page regardless
+ * of the limit**, so paging is by offset and a full page never means the end. The listing has a
+ * ceiling around 1,050 results, so a deployer past that is truncated no matter how many pages are
+ * asked for. And it lists by *current* creator, which moves on-chain — so what comes back is a
+ * **lower bound**, and the token most likely to be missing is its best one. That last one is not a
+ * caveat to be carried any more: {@link readCreatedHistory} measures it.
  *
  * @param {KeylessClient} client
  * @param {string} creator
  * @param {number} maxPages
- * @returns {Promise<{ records: import('./measure.mjs').TokenRecord[], pages: number, truncated: boolean }>}
+ * @returns {Promise<{ records: ListedToken[], pages: number, truncated: boolean }>}
+ *   `truncated` means the page cap bit. It does **not** cover the ~1,050-result server ceiling or
+ *   the creator-moved lower bound, which apply to every reading this endpoint can produce.
  */
 export async function readCreatorHistory(client, creator, maxPages) {
-  /** @type {import('./measure.mjs').TokenRecord[]} */
+  /** @type {ListedToken[]} */
   const records = [];
   let pages = 0;
   let truncated = false;
@@ -725,6 +761,7 @@ export async function readCreatorHistory(client, creator, maxPages) {
       records.push({
         deployedAtMs: Number(row['created_timestamp']),
         completed: row['complete'] === true,
+        mint: typeof row['mint'] === 'string' ? row['mint'] : '',
       });
     }
 
@@ -733,4 +770,441 @@ export async function readCreatorHistory(client, creator, maxPages) {
   }
 
   return { records, pages, truncated };
+}
+
+// --- the creation-derived reading ------------------------------------------------------------
+
+/**
+ * A serialised, ceiling-bounded, paced JSON-RPC client for the public Solana endpoint.
+ *
+ * A third client rather than a reuse of {@link KeylessClient}, for the same reason that one is not
+ * {@link import('./client.mjs').BoundedClient}: it POSTs a JSON-RPC envelope to a different host
+ * with different failure semantics, and keeping the three apart means no refactor can send one
+ * host's headers, pacing or credential to another.
+ *
+ * Two endpoint-specific behaviours are handled here rather than left to callers:
+ *
+ * - **A `null` result means retry, never "absent".** The public RPC sheds load by returning nulls
+ *   inside batches instead of erroring, and a caller that reads one as an empty answer silently
+ *   loses records. {@link batch} retries the null entries and reports what never resolved.
+ * - **Rate limiting is global across methods.** `report.md` §9.4's "separate buckets" for
+ *   `getSignaturesForAddress` and `getTransaction` did not hold, and two concurrent jobs earned a
+ *   sustained 429 lockout. So there is one queue, one request in flight, and the interval is shared.
+ * - **A 429 here is load-shedding, not a verdict.** This is the opposite of
+ *   {@link import('./client.mjs').BoundedClient}, where 429 means a metered allowance is spent and
+ *   retrying is just spending it again — so there it is terminal. On a free public endpoint it means
+ *   *slow down*, and a client that gives up on the first one abandons the walk over a condition that
+ *   clears in seconds. It is retried with exponential backoff, and **every attempt counts against
+ *   the ceiling**, so a 429 storm still cannot turn a bounded walk into an unbounded one.
+ *
+ * @typedef {object} RpcOptions
+ * @property {number} maxRequests
+ * @property {number} [minIntervalMs] Default 2500. See `thresholds.json` → `creation_walk`: the
+ *   nominally faster 1400 was measured *slower* in wall-clock once backoff is counted.
+ * @property {number} [timeoutMs]     Default 40000.
+ * @property {number} [maxRetriesPerRequest] Default 3. Each attempt counts against the ceiling.
+ * @property {number} [backoffMs]     Default 5000, doubling per attempt.
+ * @property {(label: string) => void} [onRequest]
+ * @property {typeof fetch} [fetchImpl]
+ * @property {(ms: number) => Promise<void>} [sleepImpl]
+ */
+export class SolanaRpcClient {
+  /** @param {RpcOptions} options */
+  constructor(options) {
+    if (!Number.isInteger(options.maxRequests) || options.maxRequests < 1) {
+      throw new TypeError('maxRequests must be a positive integer');
+    }
+    this.#ceiling = options.maxRequests;
+    this.#minIntervalMs = options.minIntervalMs ?? 2_500;
+    this.#timeoutMs = options.timeoutMs ?? 40_000;
+    this.#maxRetries = options.maxRetriesPerRequest ?? 3;
+    this.#backoffMs = options.backoffMs ?? 5_000;
+    this.#onRequest = options.onRequest;
+    this.#fetch = options.fetchImpl ?? globalThis.fetch;
+    this.#sleep = options.sleepImpl ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  }
+
+  /** @type {number} */ #ceiling;
+  /** @type {number} */ #minIntervalMs;
+  /** @type {number} */ #timeoutMs;
+  /** @type {number} */ #maxRetries;
+  /** @type {number} */ #backoffMs;
+  /** @type {((label: string) => void) | undefined} */ #onRequest;
+  /** @type {typeof fetch} */ #fetch;
+  /** @type {(ms: number) => Promise<void>} */ #sleep;
+  /** @type {number} */ #issued = 0;
+  /** @type {number} */ #shedEvents = 0;
+  /** @type {number} */ #lastStartedAt = 0;
+  /** @type {Promise<unknown>} */ #queue = Promise.resolve();
+
+  /** @returns {number} */
+  issued() {
+    return this.#issued;
+  }
+
+  /**
+   * How many attempts were refused with a 429 or a 5xx.
+   *
+   * Recorded because backoff is exactly the thing that hides a problem: a walk that took four times
+   * as long as its pacing implies has been shedding, and without this the record shows only the
+   * elapsed time and no reason for it.
+   *
+   * @returns {number}
+   */
+  loadShedEvents() {
+    return this.#shedEvents;
+  }
+
+  /** @returns {number} */
+  remaining() {
+    return Math.max(0, this.#ceiling - this.#issued);
+  }
+
+  /**
+   * One RPC method call.
+   *
+   * @param {string} method
+   * @param {unknown[]} params
+   * @returns {Promise<unknown>}
+   */
+  async call(method, params) {
+    const [result] = await this.#send([{ method, params }], method);
+    return result ?? null;
+  }
+
+  /**
+   * Several method calls in one HTTP request.
+   *
+   * Batching is what makes the creation walk affordable: the walk inspects thousands of
+   * transactions and one request per transaction would not fit inside any honest ceiling. The size
+   * is the caller's, capped at 8 — `report.md` §9.4's measured sustainable batch. Note this is the
+   * **opposite** of the pump.fun rule encoded in {@link KeylessClient}, where batching and
+   * concurrency were both measured actively harmful; the two hosts do not behave alike.
+   *
+   * @param {readonly { method: string, params: unknown[] }[]} requests
+   * @returns {Promise<(unknown | null)[]>} `null` for entries the endpoint never resolved.
+   */
+  async batch(requests) {
+    if (requests.length === 0) return [];
+    if (requests.length > 8) throw new RangeError(`batch of ${requests.length} exceeds the measured cap of 8`);
+
+    let out = await this.#send(requests, `batch:${requests[0]?.method ?? '?'}`);
+    // One retry for the nulls only. A null is load-shedding, so re-asking for the whole batch would
+    // spend the ceiling re-fetching entries that already arrived.
+    const missing = out.flatMap((v, i) => (v === null ? [i] : []));
+    if (missing.length > 0 && this.remaining() > 0) {
+      const retried = await this.#send(
+        missing.map((i) => {
+          const r = requests[i];
+          if (r === undefined) throw new Error('unreachable: index came from this array');
+          return r;
+        }),
+        'batch:retry',
+      );
+      out = [...out];
+      missing.forEach((slot, k) => {
+        out[slot] = retried[k] ?? null;
+      });
+    }
+    return out;
+  }
+
+  /**
+   * @param {readonly { method: string, params: unknown[] }[]} requests
+   * @param {string} label
+   * @returns {Promise<(unknown | null)[]>}
+   */
+  async #send(requests, label) {
+    const run = this.#queue.then(
+      () => this.#execute(requests, label),
+      () => this.#execute(requests, label),
+    );
+    this.#queue = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * @param {readonly { method: string, params: unknown[] }[]} requests
+   * @param {string} label
+   * @returns {Promise<(unknown | null)[]>}
+   */
+  async #execute(requests, label) {
+    const envelope = requests.map((r, i) => ({ jsonrpc: '2.0', id: i, method: r.method, params: r.params }));
+    const body = JSON.stringify(requests.length === 1 ? envelope[0] : envelope);
+    /** @type {unknown} */
+    let lastFailure = new Error(`no attempt was made for ${label}`);
+
+    for (let attempt = 0; attempt <= this.#maxRetries; attempt++) {
+      // Checked immediately before each attempt, so a retry cannot smuggle a request past the
+      // ceiling — the same rule the keyed client applies to the metered allowance.
+      if (this.#issued >= this.#ceiling) throw new CeilingReached(this.#ceiling, label);
+
+      const wait = this.#minIntervalMs - (Date.now() - this.#lastStartedAt);
+      if (this.#lastStartedAt !== 0 && wait > 0) await this.#sleep(wait);
+
+      this.#issued += 1;
+      this.#lastStartedAt = Date.now();
+      this.#onRequest?.(label);
+
+      try {
+        const response = await this.#fetch(SOLANA_RPC, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          body,
+          signal: AbortSignal.timeout(this.#timeoutMs),
+        });
+
+        if (response.status === 429 || response.status >= 500) {
+          this.#shedEvents += 1;
+          lastFailure = new Error(`HTTP ${response.status} from ${SOLANA_RPC} on ${label}`);
+          if (attempt < this.#maxRetries) {
+            await this.#sleep(this.#backoffMs * 2 ** attempt);
+            continue;
+          }
+          throw lastFailure;
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status} from ${SOLANA_RPC} on ${label}`);
+
+        const parsed = await response.json();
+        const rows = Array.isArray(parsed) ? parsed : [parsed];
+        /** @type {(unknown | null)[]} */
+        const out = new Array(requests.length).fill(null);
+        for (const row of rows) {
+          if (typeof row !== 'object' || row === null) continue;
+          const r = /** @type {Record<string, unknown>} */ (row);
+          const id = typeof r['id'] === 'number' ? r['id'] : 0;
+          if (id < 0 || id >= out.length) continue;
+          out[id] = r['result'] ?? null;
+        }
+        return out;
+      } catch (cause) {
+        if (cause instanceof CeilingReached) throw cause;
+        lastFailure = cause;
+        if (attempt >= this.#maxRetries) break;
+        await this.#sleep(this.#backoffMs * 2 ** attempt);
+      }
+    }
+    throw lastFailure instanceof Error ? lastFailure : new Error(String(lastFailure));
+  }
+}
+
+/**
+ * @typedef {object} CreationWalkBounds
+ * @property {number} maxSignaturePages Pages of `getSignaturesForAddress`, 1000 signatures each.
+ * @property {number} maxTransactions   Transactions inspected with `getTransaction`.
+ * @property {number} txBatchSize       1..8.
+ */
+
+/**
+ * @typedef {object} CreationWalkResult
+ * @property {import('./creation.mjs').CreateRecord[]} creates Every pump.fun creation seen, by any
+ *   creator. Filtering to the wallet is {@link import('./creation.mjs').mergeHistories}'s job.
+ * @property {Map<string, import('./creation.mjs').CurveState>} curves Curve state by mint.
+ * @property {import('./creation.mjs').CoveredWindow} covered
+ * @property {number} pages
+ * @property {number} signaturesScanned
+ * @property {number} signaturesSucceeded
+ * @property {number} transactionsInspected
+ * @property {number} unresolvedTransactions Transactions the endpoint never returned. Coverage
+ *   inside the window is only exact when this is zero, so it travels with the result.
+ * @property {number} curvesUnread Creations whose bonding-curve account could not be read. Each
+ *   one counts as NOT bonded downstream, so a non-zero value means the completion rate is deflated
+ *   by a known amount rather than wrong by an unknown one.
+ * @property {'index-exhausted' | 'page-cap' | 'transaction-cap' | 'request-ceiling' | 'upstream-error'} stopReason
+ *   Why the walk stopped. `index-exhausted` is the only value for which `covered` spans the
+ *   wallet's whole history; every other value means the window is a ceiling, and a caller that
+ *   reads the create count as a lifetime figure under one of them is wrong in the same direction as
+ *   the vendor's sliding "lifetime" window.
+ * @property {string | null} stopDetail The upstream message, when `stopReason` is `upstream-error`.
+ */
+
+/**
+ * Recover a wallet's launch history from **create transactions**, keylessly and under an explicit
+ * ceiling.
+ *
+ * ## The shape of the walk, and why it is this shape
+ *
+ * `getSignaturesForAddress` returns *referencing* transactions rather than authored ones, which for
+ * a pump.fun deployer means the index is dominated by other people's trades — the pump.fun buy and
+ * sell instructions take the creator account, so every stranger's failed sniper attempt lands in it.
+ * Measured on our subject deployer 2026-08-02: **956 of 1000 signatures carry an error**, matching
+ * the 953-per-1000 the sell-side report recorded. Creations always succeed, so filtering on
+ * `err === null` discards ~95% of the index for free, before a single `getTransaction` is spent.
+ *
+ * **That success fraction is the whole cost model, and it is not a constant.** Across the twelve
+ * wallets of `runs/2026-07-29-elite.json` it ranged from 1.7% to 99.7%, so the price of a full
+ * history ranged from about 170 requests to about 127,000 — 7 minutes to 84 hours at the measured
+ * 0.42 requests/second. A caller cannot assume this walk is cheap for the next wallet because it
+ * was cheap for the last one, which is why both bounds are arguments with no default and why the
+ * result reports which one bit.
+ *
+ * ## The ceiling, stated rather than left to truncate silently
+ *
+ * The walk covers a **contiguous window backwards from now**, and `covered.fromMs` is where it
+ * stopped. It is not a sample and not a best-effort: inside the window every creation is found,
+ * outside it none is. `stopReason` distinguishes reaching the wallet's genesis
+ * (`index-exhausted`, so the window is the whole history) from hitting either cap. A caller that
+ * ignores this and reads `creates.length` as a lifetime launch count gets a number that shrinks as
+ * the wallet gets busier, which is the same class of error as the vendor's sliding "lifetime"
+ * window.
+ *
+ * @param {SolanaRpcClient} rpc
+ * @param {string} wallet
+ * @param {CreationWalkBounds} bounds
+ * @returns {Promise<CreationWalkResult>}
+ */
+export async function readCreatedHistory(rpc, wallet, bounds) {
+  const batchSize = Math.max(1, Math.min(8, bounds.txBatchSize));
+
+  /** @type {import('./creation.mjs').CreateRecord[]} */
+  const creates = [];
+  /** @type {Map<string, import('./creation.mjs').CurveState>} */
+  const curves = new Map();
+
+  let pages = 0;
+  let signaturesScanned = 0;
+  let signaturesSucceeded = 0;
+  let transactionsInspected = 0;
+  let unresolvedTransactions = 0;
+  let toMs = 0;
+  let fromMs = 0;
+  /** @type {'index-exhausted' | 'page-cap' | 'transaction-cap' | 'request-ceiling' | 'upstream-error'} */
+  let stopReason = 'index-exhausted';
+  /** @type {string | null} */
+  let stopDetail = null;
+  /** @type {string | undefined} */
+  let before;
+
+  // A ceiling hit is a stop, not a failure. Throwing here would discard every create already paid
+  // for — the same mistake the screen's own `emit` path exists to avoid — and would leave the
+  // caller unable to tell a bounded window from an error.
+  try {
+    walk: while (pages < bounds.maxSignaturePages) {
+      const page = await rpc.call('getSignaturesForAddress', [
+        wallet,
+        { limit: 1000, ...(before === undefined ? {} : { before }) },
+      ]);
+      pages += 1;
+      if (!Array.isArray(page) || page.length === 0) break;
+
+      /** @type {{ signature: string, blockTime: number, err: unknown }[]} */
+      const rows = [];
+      for (const entry of page) {
+        if (typeof entry !== 'object' || entry === null) continue;
+        const r = /** @type {Record<string, unknown>} */ (entry);
+        if (typeof r['signature'] !== 'string') continue;
+        rows.push({
+          signature: r['signature'],
+          blockTime: typeof r['blockTime'] === 'number' ? r['blockTime'] : 0,
+          err: r['err'] ?? null,
+        });
+      }
+      if (rows.length === 0) break;
+
+      const newest = rows[0];
+      const oldest = rows[rows.length - 1];
+      if (newest === undefined || oldest === undefined) break;
+      if (toMs === 0) toMs = newest.blockTime * 1000;
+      before = oldest.signature;
+
+      signaturesScanned += rows.length;
+      // Creations always succeed, so a failed signature can be discarded without being fetched.
+      // On a busy deployer that is ~95% of the index, and it is the only reason this walk is
+      // affordable at all.
+      const succeeded = rows.filter((r) => r.err === null);
+      signaturesSucceeded += succeeded.length;
+
+      for (let i = 0; i < succeeded.length; i += batchSize) {
+        if (transactionsInspected >= bounds.maxTransactions) {
+          stopReason = 'transaction-cap';
+          break walk;
+        }
+        // Stop while there is still budget to CLASSIFY what has been found. A launch whose curve
+        // was never read counts as not-bonded, so a walk that spends its last request finding one
+        // more creation has bought a launch it must then score as a failure — it deflates the very
+        // rate it was widening. Reserve one request per 100 creations, plus one.
+        if (rpc.remaining() <= Math.ceil(creates.length / 100) + 1) {
+          stopReason = 'request-ceiling';
+          break walk;
+        }
+        const slice = succeeded.slice(i, i + batchSize);
+        const results = await rpc.batch(
+          slice.map((sig) => ({
+            method: 'getTransaction',
+            params: [sig.signature, { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 }],
+          })),
+        );
+        transactionsInspected += slice.length;
+        for (const tx of results) {
+          if (tx === null) {
+            unresolvedTransactions += 1;
+            continue;
+          }
+          const create = parseCreateTransaction(tx);
+          if (create !== null) creates.push(create);
+        }
+      }
+
+      // Only advance the covered floor once the whole page has been inspected. A page abandoned
+      // half-way must not widen the window it did not actually cover.
+      fromMs = oldest.blockTime * 1000;
+      if (rows.length < 1000) break;
+      if (pages >= bounds.maxSignaturePages) stopReason = 'page-cap';
+    }
+  } catch (cause) {
+    // Same rule for an upstream failure as for the ceiling: keep what was paid for, label why it
+    // stopped, and let the caller decide. What must never happen is a short window presented as a
+    // measured history.
+    stopReason = cause instanceof CeilingReached ? 'request-ceiling' : 'upstream-error';
+    stopDetail = cause instanceof Error ? cause.message : String(cause);
+  }
+
+  // Curve state for every creation found, 100 accounts per request. This settles whether each
+  // launch bonded AND whether its creator record has since moved, from the same bytes.
+  //
+  // Guarded like the walk itself. A ceiling reached here used to throw away every creation already
+  // paid for — the walk's most expensive output — to fail on its cheapest step.
+  try {
+    for (let i = 0; i < creates.length; i += 100) {
+      const slice = creates.slice(i, i + 100);
+      const accounts = await rpc.call('getMultipleAccounts', [
+        slice.map((c) => c.bondingCurve),
+        { encoding: 'base64' },
+      ]);
+      const value =
+        typeof accounts === 'object' && accounts !== null
+          ? /** @type {Record<string, unknown>} */ (accounts)['value']
+          : null;
+      if (!Array.isArray(value)) continue;
+      value.forEach((account, k) => {
+        const mint = slice[k]?.mint;
+        if (mint === undefined) return;
+        if (typeof account !== 'object' || account === null) return;
+        const data = /** @type {Record<string, unknown>} */ (account)['data'];
+        const encoded = Array.isArray(data) && typeof data[0] === 'string' ? data[0] : '';
+        const state = readCurveState(encoded);
+        if (state !== null) curves.set(mint, state);
+      });
+    }
+  } catch {
+    // Deliberately swallowed: `curvesUnread` below reports exactly how many launches this cost,
+    // and it must be visible because an unread curve counts as NOT bonded, which deflates the
+    // completion rate. A silent deflation is the failure mode this whole lane exists to remove.
+  }
+
+  return {
+    creates,
+    curves,
+    // `pages > 0` matters: a zero page bound would otherwise report an untouched index as
+    // exhausted, i.e. claim a whole history it never looked at.
+    covered: { fromMs, toMs, exhausted: stopReason === 'index-exhausted' && pages > 0 },
+    pages,
+    signaturesScanned,
+    signaturesSucceeded,
+    transactionsInspected,
+    unresolvedTransactions,
+    curvesUnread: creates.length - curves.size,
+    stopReason,
+    stopDetail,
+  };
 }

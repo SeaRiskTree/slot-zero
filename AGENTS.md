@@ -192,7 +192,8 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
   `recent-bonds:good` reads `50 rows / 50 wallets` and contributes **19** distinct wallets. Its job is
   to separate "vendor sent nothing" from "our reader is wrong", and it does that; it is not a yield.
   Distinct per-seed yield must be recomputed from `candidates[].seededBy`, and only gated wallets
-  carry provenance — prefiltered entries record a reason and no seed.
+  carry provenance — prefiltered entries record a reason and no seed. `tools/deployer-screen/README.md`
+  → "Two of the three seeds used to yield nothing, silently" owns the field's semantics.
 - **Free tier only** — ~200 requests/day, ~10/min, **shared** across whatever holds the key, and keys
   expire every 30 days. `/{wallet}/history` is PRO+. Paid tiers are refused standing policy.
 - **Spend the whole MadeOnSol daily allowance when a run will answer something** (captain, 2026-08-02:

@@ -149,7 +149,13 @@ the gate is designed for.
 **The elite-tier recent-bond feed is `recent-bonds?tier=elite` — a tier filter on the shared feed,
 not a distinct endpoint.** Their OpenAPI v1.17.0 exposes no separate elite path; `tier` is a query
 parameter with enum `elite|good|moderate|rising|cold`, and `--tier elite` threads it through every
-seed. The committed run under `runs/` exercises it and records its own wallet count.
+seed. The committed runs under `runs/` exercise it — `2026-07-29-elite.json` on `elite`,
+`2026-08-02-good.json` on `good` — and each records its own wallet count.
+
+**The tiers are not disjoint and membership is not stable**, so `--tier` selects a population, it
+does not partition one: a wallet seen under `elite` can come back under `good` days later with its
+own numbers unchanged. `runs/2026-08-02-good-vs-elite.md` → *"Two findings about the vendor's tiers"*
+owns that measurement. Nothing here may treat "outside elite" as a property of a wallet.
 
 ### Two of the three seeds used to yield nothing, silently
 
@@ -157,8 +163,8 @@ Measured and fixed. `recent-bonds` and `alerts` nest their deployer block under 
 plural — and `recent-bonds` wraps its rows in `tokens`, not `bonds`. The reader looked only for the
 singular `deployer`, so both seeds extracted **zero wallets** while still costing a keyed request
 each. Nothing surfaced it: the run printed one merged total, and the record carried no per-query
-figure. Both committed runs were therefore leaderboard-only pools — indistinguishable, from their
-output, from properly seeded ones.
+figure. Both runs committed at the time were therefore leaderboard-only pools — indistinguishable,
+from their output, from properly seeded ones.
 
 Two changes, because the shape bug alone would have left the class of defect in place:
 
@@ -166,7 +172,11 @@ Two changes, because the shape bug alone would have left the class of defect in 
 - **Every seed now reports its row count *and* its wallet count**, printed and persisted under
   `coverage.seeds` in the run record, with zero-yield seeds named in `coverage.inertSeeds`. Rows
   present and wallets zero is the fingerprint of *our reader* being wrong rather than the vendor being
-  empty, and the two are now distinguishable at a glance.
+  empty, and the two are now distinguishable at a glance. **`walletsReturned` is a per-row count —
+  rows we could read a wallet out of — never a distinct-deployer count**, and it is not a yield:
+  `recent-bonds:good` read `50 rows / 50 wallets` and contributed 19 distinct deployers. Distinct
+  per-seed yield has to be recomputed from `candidates[].seededBy`, which only gated wallets carry
+  (prefiltered entries record a reason and no provenance).
 
 The run record also carries the full coverage chain — wallets seeded, prefiltered out, worth a
 request, **dropped by the candidate cap**, gated — and sets `truncated` when the cap dropped anyone.
@@ -178,7 +188,7 @@ re-run**: its numbers came from the inert seeds, and re-running that configurati
 re-evidence a side observation, which the *"if it gets results"* conditional in [Bounds](#bounds)
 does not license however much allowance is left.
 
-### The committed run, with all three seeds working
+### The first committed run, with all three seeds working
 
 `runs/2026-07-29-elite.json`, one `--tier elite --candidates 12 --max-requests 20 --consistency`
 invocation, 15 keyed and 11 keyless requests. These figures **replace** the earlier leaderboard-only
@@ -212,6 +222,14 @@ truncated by the candidate cap, so anything the comparator reads decides which w
 therefore which appear in the output at all — an aggregate there would be an aggregate reaching an
 output. Ordering is provenance count, then first-seen rank, then address, and a test asserts that two
 wallets identical but for `vendorDeployed` order by address.
+
+### The second committed run, on `--tier good`
+
+`runs/2026-08-02-good.json` (schema 3, `completed: true`), the first run to grade its whole seeded
+pool — 72 seeded, 7 prefiltered, **65 gated, 0 dropped by the candidate cap** — and the first with a
+Stage 2 entry score in it. Read it through `runs/2026-08-02-good-vs-elite.md`, which owns the
+comparison against the elite baseline, the spend accounting, and the reasons the two gate hit rates
+are **not** like-for-like. Do not re-derive those figures here.
 
 ## Retention — MadeOnSol terms §5a(d)
 
@@ -730,10 +748,11 @@ signal reaches any number Stage 2 produces. Its own lane, and it is blocked on t
 **Not built — the prediction-grading loop.** A dated immutable record per run so a later run can
 grade the screen's own hit rate. Its own lane. Run records under `runs/` are the input it will read.
 
-**No Stage 2 run record is committed.** This lane held no MadeOnSol key, so no candidate was ever
-enumerated. What *is* committed as evidence of the plan is the `--dry-run` output, which is produced
-by the same functions a real run uses, and the live-vs-tape check above, which exercised the whole
-keyless half against the real endpoint.
+**A Stage 2 run record is committed**: `runs/2026-08-02-good.json` scored 3 gate survivors on live
+fills, and `runs/2026-08-02-good-vs-elite.md` reads it. It carries this tool's first
+`entry-room-present` verdict on a stranger wallet, and that document states the five reasons the
+verdict is marginal — it is one candidate worth a closer look, not a finding. The `--dry-run` output
+and the live-vs-tape check above remain the keyless evidence that the walk is the same code path.
 
 ## The keyless boundary
 

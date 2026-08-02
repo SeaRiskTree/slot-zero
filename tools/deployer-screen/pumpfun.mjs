@@ -46,6 +46,16 @@ export const SWAP_API = 'https://swap-api.pump.fun';
 export const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
 
 /**
+ * What a {@link SolanaRpcClient} ceiling actually stops, and the lever that raises it — persisted
+ * verbatim as `creation.stopDetail` in a run record, so it has to be true of THIS ceiling.
+ */
+const RPC_CEILING_REMEDY =
+  'This is the PER-CANDIDATE RPC ceiling, so the run has not stopped: it bounds how far back ' +
+  'this one wallet\'s creation window reaches, and everything before it comes from the ownership ' +
+  'listing instead. The lever is thresholds.json → creation_walk.maxRpcRequestsPerCandidate, ' +
+  'which has no command-line flag; --max-requests is the keyed vendor ceiling and cannot move it.';
+
+/**
  * @typedef {object} KeylessOptions
  * @property {number} maxRequests
  * @property {number} [minIntervalMs] Default 2000 — the June report's measured pacing, plus margin.
@@ -937,7 +947,13 @@ export class SolanaRpcClient {
     for (let attempt = 0; attempt <= this.#maxRetries; attempt++) {
       // Checked immediately before each attempt, so a retry cannot smuggle a request past the
       // ceiling — the same rule the keyed client applies to the metered allowance.
-      if (this.#issued >= this.#ceiling) throw new CeilingReached(this.#ceiling, label);
+      //
+      // Its own message, not the keyed client's. This one lands in a run record's
+      // `creation.stopDetail`, and this ceiling is PER CANDIDATE: hitting it bounds one wallet's
+      // creation window and stops nothing else, so "the run stopped early" would contradict the
+      // `completed: true` in the same file, and `--max-requests` is a keyed lever that cannot move
+      // it.
+      if (this.#issued >= this.#ceiling) throw new CeilingReached(this.#ceiling, label, RPC_CEILING_REMEDY);
 
       const wait = this.#minIntervalMs - (Date.now() - this.#lastStartedAt);
       if (this.#lastStartedAt !== 0 && wait > 0) await this.#sleep(wait);
@@ -1016,7 +1032,10 @@ export class SolanaRpcClient {
  *   wallet's whole history; every other value means the window is a ceiling, and a caller that
  *   reads the create count as a lifetime figure under one of them is wrong in the same direction as
  *   the vendor's sliding "lifetime" window.
- * @property {string | null} stopDetail The upstream message, when `stopReason` is `upstream-error`.
+ * @property {string | null} stopDetail The upstream message, when `stopReason` is `upstream-error`,
+ *   or the ceiling's own message when `request-ceiling` threw. It is persisted verbatim in the run
+ *   record, so it must describe THIS walk's ceiling — a per-candidate bound — and never claim the
+ *   run stopped.
  */
 
 /**
@@ -1042,7 +1061,9 @@ export class SolanaRpcClient {
  * ## The ceiling, stated rather than left to truncate silently
  *
  * The walk covers a **contiguous window backwards from now**, and `covered.fromMs` is where it
- * stopped. It is not a sample and not a best-effort: inside the window every creation is found,
+ * stopped — or `null` when it stopped before finishing even its first signature page, which is the
+ * normal case for a busy wallet under a 100-request ceiling against 1,000-entry pages. It is not a
+ * sample and not a best-effort: inside the window every creation is found,
  * outside it none is. `stopReason` distinguishes reaching the wallet's genesis
  * (`index-exhausted`, so the window is the whole history) from hitting either cap. A caller that
  * ignores this and reads `creates.length` as a lifetime launch count gets a number that shrinks as
@@ -1068,7 +1089,12 @@ export async function readCreatedHistory(rpc, wallet, bounds) {
   let transactionsInspected = 0;
   let unresolvedTransactions = 0;
   let toMs = 0;
-  let fromMs = 0;
+  // NULL, not 0. `0` is a real instant — 1970 — and a consumer comparing against it reads a walk
+  // that covered nothing as a walk that covered everything since the epoch. That is not
+  // hypothetical: it deleted 29 of one wallet's 30 launches in a live run. "Covered nothing" has to
+  // be representable, and the type makes a consumer that ignores it a compile error.
+  /** @type {number | null} */
+  let fromMs = null;
   /** @type {'index-exhausted' | 'page-cap' | 'transaction-cap' | 'request-ceiling' | 'upstream-error'} */
   let stopReason = 'index-exhausted';
   /** @type {string | null} */
@@ -1165,7 +1191,8 @@ export async function readCreatedHistory(rpc, wallet, bounds) {
       }
 
       // Only advance the covered floor once the whole page has been inspected. A page abandoned
-      // half-way must not widen the window it did not actually cover.
+      // half-way must not widen the window it did not actually cover — and until one page is
+      // inspected whole, the floor stays `null`, i.e. the window is EMPTY rather than infinite.
       fromMs = oldest.blockTime * 1000;
       if (rows.length < 1000) break;
       if (pages >= bounds.maxSignaturePages) stopReason = 'page-cap';

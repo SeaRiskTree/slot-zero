@@ -563,10 +563,19 @@ export function renderStage1(run) {
             `${c.creation.notCreatedByWallet} acquired, ${c.creation.movedCreator} creator moved); ` +
             `+${c.creation.listedOutsideWindow} carried over from the listing`,
         );
-        if (!c.creation.wholeHistory) {
+        // A walk that covered nothing gets its own sentence rather than the general one with a
+        // hole where the date should be. "Before null" tells a reader nothing, and the state it
+        // stands for — the entire reading is the ownership listing, none of it creation-derived —
+        // is the one they most need to know before reading the rate above as a correction.
+        if (c.creation.coveredFromIso === null) {
+          L.push(
+            `      ^ the walk stopped on ${c.creation.stopReason} before covering ANY window, so ` +
+              `this entire reading is the ownership listing — a LOWER BOUND, biased towards rejection`,
+          );
+        } else if (!c.creation.wholeHistory) {
           L.push(
             `      ^ the walk stopped on ${c.creation.stopReason}, so anything created before ` +
-              `${c.creation.coveredFromIso ?? 'the window'} is a LOWER BOUND from the ownership listing`,
+              `${c.creation.coveredFromIso} is a LOWER BOUND from the ownership listing`,
           );
         }
         if (c.creation.curvesUnread > 0) {
@@ -655,7 +664,16 @@ export function renderStage1(run) {
     for (const c of failed) {
       L.push(`  ${c.wallet}`);
       for (const reason of c.gate.reasons) L.push(`      · ${reason}`);
-      if (c.creation !== null && !c.creation.wholeHistory) {
+      if (c.creation !== null && c.creation.coveredFromIso === null) {
+        // The heading above promises each row states which history it was rejected over. A walk
+        // that covered no window at all was rejected over the ownership listing alone, and saying
+        // "a 0.0d creation window" without saying that would leave the promise unkept.
+        L.push(
+          `      · the creation walk covered NO window (stopped on ${c.creation.stopReason}), so ` +
+            `this was computed over ${c.creation.listedOutsideWindow} ownership-listed launch(es) ` +
+            `alone — the biased reading`,
+        );
+      } else if (c.creation !== null && !c.creation.wholeHistory) {
         L.push(
           `      · computed over a ${num(c.creation.coveredDays, 1)}d creation window ` +
             `(stopped on ${c.creation.stopReason}) plus ${c.creation.listedOutsideWindow} ` +

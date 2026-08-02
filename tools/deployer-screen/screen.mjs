@@ -665,7 +665,7 @@ export async function main(opts, env, out, err) {
 
         completion = measureCompletion(merged.records);
         gateReadingCapped = listing.truncated;
-        gate = applyGate({ completion }, gateThresholds);
+        gate = applyGate({ completion, historySource }, gateThresholds);
         // What makes this reading unjudgeable, if anything. Both entries describe a history the
         // thresholds were applied to but could not actually decide over, and either one is enough:
         // a rejection computed on it would be exactly the invisible false rejection this lane
@@ -699,10 +699,15 @@ export async function main(opts, env, out, err) {
           );
         }
         ({ verdict, rationale } = verdictFor({ gate, completion, capped: gateReadingCapped, notMeasured }));
+        const covFrom = walk.covered.fromMs;
         creation = {
-          coveredFromIso: walk.covered.fromMs === 0 ? null : new Date(walk.covered.fromMs).toISOString(),
+          // `coveredFromIso: null` means the walk never finished a signature page, so it covered
+          // NOTHING and `coveredDays` is 0 — not a 56-year window, which is what the epoch floor
+          // this replaced used to report. Under it the whole ownership listing is carried over as
+          // `listedOutsideWindow`, and that is what the gate reads.
+          coveredFromIso: covFrom === null ? null : new Date(covFrom).toISOString(),
           coveredToIso: walk.covered.toMs === 0 ? null : new Date(walk.covered.toMs).toISOString(),
-          coveredDays: Number(((walk.covered.toMs - walk.covered.fromMs) / 86_400_000).toFixed(2)),
+          coveredDays: covFrom === null ? 0 : Number(((walk.covered.toMs - covFrom) / 86_400_000).toFixed(2)),
           wholeHistory: walk.covered.exhausted,
           stopReason: walk.stopReason,
           stopDetail: walk.stopDetail,

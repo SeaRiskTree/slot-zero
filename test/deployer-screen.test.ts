@@ -1080,6 +1080,11 @@ describe('the CLI contract', () => {
     // And it says out loud that the stage costs no vendor quota, which is the fact a reviewer of a
     // provider-bound change most needs.
     expect(text).toMatch(/NO KEYED REQUEST/);
+    // And the WALL CLOCK, derived from the pinned pacing rather than written down once. An estimate
+    // stale in the optimistic direction gets a run killed by an operator who thinks it has hung.
+    expect(text).toMatch(/about 17 min typical/);
+    expect(text).toMatch(/about 50 min worst case/);
+    expect(text).toMatch(/7s between requests, swap-api ONLY/);
     // With --no-stage2 the plan must say what is NOT being measured, not merely go quiet.
     const off = renderDryRun({
       seedPlan: [],
@@ -1150,7 +1155,26 @@ describe('the CLI contract', () => {
     expect(b.maxKeyedRequests).toBeLessThanOrEqual(50); // a quarter of the shared 200/day
     expect(b.maxCandidates).toBeLessThanOrEqual(20);
     expect(b.keyedMinIntervalMs).toBeGreaterThanOrEqual(6_000); // Free tier bursts at ~10/min
-    expect(b.keylessMinIntervalMs).toBeGreaterThanOrEqual(2_000); // measured pump.fun pacing
+    expect(b.keylessMinIntervalMs).toBeGreaterThanOrEqual(2_000); // conservative carry-over, frontend-api-v3
+  });
+
+  it('paces the fill host on its own pin, and does not slow the host that never shed', () => {
+    const T = loadThresholds();
+    // Pinned per HOST. At the general 2s, swap-api shed half a live run's launches past all their
+    // retries and the verdict degraded to `entry-unmeasured` where the truth was
+    // `entry-room-absent` — a quiet failure, so the pacing is pinned above it deliberately.
+    expect(T['stage2_entry'].keylessMinIntervalMs).toBe(7_000);
+    // frontend-api-v3 has shed nothing here and must NOT be slowed for another host's fault.
+    expect(T['budget'].keylessMinIntervalMs).toBe(2_000);
+    expect(T['stage2_entry'].keylessMinIntervalMs).toBeGreaterThan(T['budget'].keylessMinIntervalMs);
+    // Pacing moves the wall clock, never the exposure: the stage arithmetic is untouched.
+    const s2 = T['stage2_entry'];
+    expect(s2.maxCandidatesScored * s2.maxLaunchesPerCandidate * s2.maxRequestsPerLaunch).toBe(432);
+    // Each justification must name the host it governs, or the next reader re-inherits the
+    // misattribution this pin exists to correct.
+    expect(s2.justification.keylessMinIntervalMs).toMatch(/swap-api/);
+    expect(T['budget'].justification.keylessMinIntervalMs).toMatch(/frontend-api-v3/);
+    expect(T['budget'].justification.keylessMinIntervalMs).toMatch(/api\.mainnet-beta\.solana\.com/);
   });
 });
 

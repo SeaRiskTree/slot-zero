@@ -369,7 +369,7 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | keyed request ceiling | 45 | 3 enumeration + 20 candidates = 23; headroom for a retry. Under a quarter of the shared 200/day. |
 | candidate cap | 20 | |
 | keyed pacing | 6.5s between request starts | Free tier bursts at ~10/min, and the allowance is **shared** with whatever else holds this key. |
-| keyless pacing | 2.0s | The June report measured sustainable pump.fun throughput at ~0.5 req/s with one request in flight; batching and concurrency were both measured harmful. |
+| keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here. The fill host is paced separately — see below. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does. |
 
@@ -385,12 +385,34 @@ profile Stage 1 has already paid for, so the shared vendor allowance — which p
 | launches per survivor | 8 |
 | **requests per launch, retries included** | 18 |
 | stage ceiling, on its own client | **432** |
+| pacing, `swap-api` only | **7.0s** |
 
 `3 × 8 × 18 = 432` — **the declared worst case and the ceiling are the same number**, so the plan
 `--dry-run` prints is the whole exposure and no plan-level truncation is possible. A launch is only
 started when a full per-launch cap of headroom remains, so a run never abandons one half-walked.
 Typical cost is far lower: at the measured median of 4 pages plus shedding, about 6 requests a launch
-and ~144 for a full run.
+and ~144 for a full run. **In wall-clock terms that is about 17 minutes typical and about 50 minutes
+worst case**, and `--dry-run` prints both — a run this long must not be mistaken for a hang.
+
+### Why the fill host is paced at 7s and the other keyless host is not
+
+Pacing is pinned **per host**, because the two keyless hosts do not behave alike. Two independent
+readings of `swap-api` set 7s:
+
+1. **Live.** At 2.0s, two consecutive Stage 2 runs against `swap-api` each lost 4 of the subject's 8
+   launches to HTTP 429 *after all three attempts*. The drop path did exactly what it is built to do
+   — dropped, counted, reported, never truncated — so the run reported `entry-unmeasured` where the
+   truth is `entry-room-absent`. The same code at 7.0s walked all 8 and produced
+   `entry-room-absent`. **A fast wrong answer is worth nothing**, and this failure is quiet: it
+   degrades a verdict rather than announcing that the pacing is wrong.
+2. **The tape builder's own record against this same endpoint.** The committed
+   `window/*.meta.json` `delay` field — the adaptive delay each build settled on — reads p50 4.92s,
+   p75 15s, p90 15.5s, max 40s, with only p10–p25 near 1.2s. Its shed share is ~24–25% **flat across
+   every delay bucket**, so backing off buys no immunity and there is no cheap corner to sit in.
+
+7s therefore sits deliberately between that p50 and p75 rather than at the bottom of the range. The
+`--consistency` walk on `frontend-api-v3` stays at 2.0s: it has shed nothing in this tool's use of
+it, and it is not slowed for a fault on a host it is not.
 
 The per-launch cap counts **requests, not pages**, and that is load-bearing — see the shed rate
 below. A cap on successful pages would have let a launch cost three times the printed number.

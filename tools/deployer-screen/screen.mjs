@@ -384,7 +384,11 @@ export async function main(opts, env, out, err) {
   // cannot eat each other's budget and neither can silently exceed what the dry run printed.
   const stage2Keyless = new KeylessClient({
     maxRequests: entryThresholds.maxKeylessRequests,
-    minIntervalMs: budget.keylessMinIntervalMs,
+    // Its OWN pacing, not `budget.keylessMinIntervalMs`, because it reaches a different host. At the
+    // 2s that host-agnostic value would impose, swap-api shed half this run's launches to 429 and the
+    // verdict degraded to `entry-unmeasured`; 7s walked all of them. The consistency walk on
+    // frontend-api-v3 keeps 2s — it has shed nothing, so it is not slowed for another host's fault.
+    minIntervalMs: entryThresholds.keylessMinIntervalMs,
     // The fill endpoint sheds about a quarter of what it is asked for — measured on the committed
     // tape's own build metadata — so a walk without retry cannot finish. Every attempt still counts
     // against the ceiling, so this widens no bound.

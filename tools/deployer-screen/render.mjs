@@ -612,6 +612,20 @@ export function renderDryRun(plan) {
         `${t.maxRequestsPerLaunch} = ${worstCase} request(s)`,
     );
     L.push(`  stage ceiling                 ${t.maxKeylessRequests}, enforced on its own client`);
+    // The wall clock, not just the request count. An estimate that is stale in the OPTIMISTIC
+    // direction gets a run killed by an operator who thinks the tool has hung, so this is derived
+    // from the pinned pacing rather than written down once.
+    const typicalRequests = plan.maxScored * t.maxLaunchesPerCandidate * 6;
+    /** @param {number} requests */
+    const minutes = (requests) => Math.round((requests * t.keylessMinIntervalMs) / 60_000);
+    L.push(
+      `  pacing                        ${t.keylessMinIntervalMs / 1000}s between requests, ` +
+        `swap-api ONLY (this host sheds ~25%)`,
+    );
+    L.push(
+      `  TIME                          about ${minutes(typicalRequests)} min typical ` +
+        `(~6 requests/launch at the measured p50), about ${minutes(worstCase)} min worst case`,
+    );
     L.push(
       worstCase <= t.maxKeylessRequests
         ? '  The worst case is at or under the ceiling, so the plan above is the WHOLE exposure.'

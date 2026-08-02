@@ -13,6 +13,15 @@
  * | launches per candidate | `stage2_entry.maxLaunchesPerCandidate` | 8 |
  * | requests per launch, RETRIES INCLUDED | `stage2_entry.maxRequestsPerLaunch` | 18 |
  * | requests for the whole stage | `stage2_entry.maxKeylessRequests`, on its own client | 432 |
+ * | pacing, this host only | `stage2_entry.keylessMinIntervalMs` | 7s |
+ *
+ * That pacing is pinned **per host**. swap-api sheds about a quarter of what it is asked for, and at
+ * the 2s the general keyless client uses it shed half of a real run's launches past all their
+ * retries — which does not announce itself, it just degrades the verdict to `entry-unmeasured`. The
+ * `--consistency` walk on frontend-api-v3 keeps 2s; it has shed nothing and is not slowed for this.
+ * The request arithmetic below is unchanged by it, but the wall clock is: **a typical run takes
+ * about 17 minutes and the worst case about 50**, which `--dry-run` prints so that a slow walk is
+ * not mistaken for a hang.
  *
  * `3 × 8 × 18 = 432` — the declared worst case and the stage ceiling are **the same number**, so no
  * plan-level truncation is possible and the printed plan is the whole exposure. A launch is only
@@ -63,6 +72,7 @@ import { redactAll, redactVendorIdentifiers } from './record.mjs';
  * @property {number} seekMarginMs
  * @property {number} windowSlotSpan
  * @property {number} maxKeylessRequests
+ * @property {number} keylessMinIntervalMs Pacing for the FILL host only; see the module header.
  * @property {readonly number[]} [keylessRetryBackoffMs]
  */
 

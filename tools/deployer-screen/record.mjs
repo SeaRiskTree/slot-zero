@@ -154,21 +154,34 @@ export function redactAll(lines) {
 }
 
 /**
+ * Why a measurement could not be taken. The two are not interchangeable and the record keeps them
+ * apart:
+ *
+ * - **`budget-exhausted`** — a request ceiling. A wall: the tool stopped looking and will stop at
+ *   the same place on a rerun, so it is genuine truncation of the run's coverage.
+ * - **`page-failure`** — one request was retried and still failed. The run kept going and the next
+ *   candidate was measured normally.
+ *
+ * @typedef {'budget-exhausted' | 'page-failure'} UnmeasuredKind
+ */
+
+/**
  * One measurement the run could not take, and why.
  *
  * @typedef {object} Unmeasured
- * @property {string} measurement       What was not measured, named as the record names it.
- * @property {string} subject           The wallet it was not measured for.
- * @property {string} why               A sentence naming the cause and the budget behind it.
- * @property {boolean} budgetExhausted  Whether a request ceiling, rather than an error, stopped it.
+ * @property {string} measurement    What was not measured, named as the record names it.
+ * @property {string} subject        The wallet it was not measured for.
+ * @property {UnmeasuredKind} kind   A wall, or a request that did not come back.
+ * @property {string} why            A sentence naming the cause and the budget behind it.
  */
 
 /**
  * Record that a measurement pass could not run.
  *
- * A ceiling in particular has to name the budget that ran out and the setting that governs it,
- * because the fix is a number in `thresholds.json` and not a retry — an operator who reads "walk
- * failed" reruns the job and spends the keyed allowance again to reach the same wall.
+ * A ceiling has to name the budget that ran out and the setting that governs it, because the fix is
+ * a number in `thresholds.json` and not a retry — an operator who reads "walk failed" reruns the
+ * job and spends the keyed allowance again to reach the same wall. A page failure has the opposite
+ * advice, so it must not borrow that sentence.
  *
  * @param {string} measurement
  * @param {string} subject
@@ -177,14 +190,20 @@ export function redactAll(lines) {
  * @returns {Unmeasured}
  */
 export function unmeasuredBecause(measurement, subject, cause, spent) {
-  const budgetExhausted = cause instanceof CeilingReached;
-  const why = budgetExhausted
+  const exhausted = cause instanceof CeilingReached;
+  const why = exhausted
     ? `the ${spent.budget} request ceiling of ${spent.ceiling} was reached, so ${measurement} was ` +
       `never looked up for this wallet. Raise ${spent.setting} or lower the candidate cap; ` +
       `rerunning alone reaches the same wall`
-    : `the ${spent.budget} walk failed, so ${measurement} was never measured for this wallet: ` +
-      `${cause instanceof Error ? cause.message : String(cause)}`;
-  return { measurement, subject, why, budgetExhausted };
+    : `a ${spent.budget} request was retried and still failed, so ${measurement} is missing for ` +
+      `this wallet. The run continued and later candidates were measured normally; a rerun may ` +
+      `well succeed: ${cause instanceof Error ? cause.message : String(cause)}`;
+  return {
+    measurement,
+    subject,
+    kind: exhausted ? 'budget-exhausted' : 'page-failure',
+    why,
+  };
 }
 
 /**
@@ -204,6 +223,19 @@ export function groupUnmeasured(unmeasured) {
 }
 
 /**
+ * Split unmeasured entries by whether they truncate the run.
+ *
+ * @param {readonly Unmeasured[]} unmeasured
+ * @returns {{ budgetExhausted: Unmeasured[], pageFailures: Unmeasured[] }}
+ */
+export function partitionUnmeasured(unmeasured) {
+  return {
+    budgetExhausted: unmeasured.filter((u) => u.kind === 'budget-exhausted'),
+    pageFailures: unmeasured.filter((u) => u.kind === 'page-failure'),
+  };
+}
+
+/**
  * Fold everything missing from a run into one truncation verdict and one sentence.
  *
  * `truncated` is "is anything missing, for any reason". `completed` — "did the run reach the end" —
@@ -212,6 +244,13 @@ export function groupUnmeasured(unmeasured) {
  * gate every candidate it planned to, and still have failed to measure something; before this, that
  * was visible only in the affected candidate's own note, so the record read `completed: true,
  * truncated: false` — a screen claiming to have measured what it had not.
+ *
+ * **Only a `budget-exhausted` entry truncates.** A page failure is still unmeasured, still recorded
+ * with its own reason, and still forbidden from reading as a measured negative — but it does not
+ * declare the run truncated, because the run did not stop looking. The distinction is what keeps
+ * the flag worth reading: on the flakiest surface in the tool, one retried-and-failed page out of
+ * up to 585 would otherwise set `truncated: true` on nearly every run, and a flag that is always on
+ * carries no information and teaches its reader to skip it.
  *
  * @param {object} input
  * @param {string | null} input.abortReason  Why the run died, or null if it did not.
@@ -229,7 +268,7 @@ export function deriveTruncation({ abortReason, coverage, unmeasured }) {
         `seeded wallet(s) before they were measured`,
     );
   }
-  for (const [why, n] of groupUnmeasured(unmeasured)) {
+  for (const [why, n] of groupUnmeasured(partitionUnmeasured(unmeasured).budgetExhausted)) {
     reasons.push(`${n} candidate(s) went unmeasured — ${why}`);
   }
   return {

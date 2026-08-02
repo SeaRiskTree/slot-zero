@@ -169,6 +169,18 @@ export class KeylessClient {
   }
 
   /**
+   * One retry, matching the keyed client's allowance.
+   *
+   * A 5xx or a timeout means the request was **not served**, so re-issuing it once is closer to one
+   * successful request than to two — which is why the courtesy this class owes a shared public
+   * endpoint is the pacing, left untouched at the measured interval, and not the retry count. The
+   * alternative is worse for pump.fun as well as for us: without a retry the caller re-runs the
+   * whole walk. Every attempt still counts against the ceiling, and the ceiling is re-checked
+   * before each one, so a retry cannot smuggle a request past it.
+   *
+   * A 4xx is not retried. It is the endpoint's considered answer, and asking again spends a
+   * request to be told the same thing.
+   *
    * @param {string} url
    * @returns {Promise<unknown>}
    */
@@ -190,11 +202,23 @@ export class KeylessClient {
       this.#lastStartedAt = Date.now();
       this.#onRequest?.(url);
 
-      const response = await this.#fetch(url, {
-        method: 'GET',
-        headers: { accept: 'application/json' },
-        signal: AbortSignal.timeout(this.#timeoutMs),
-      });
+      // A transport failure — a timeout, a reset, a DNS blip — means the request was never served,
+      // so it is retried on the same budget as a shed one rather than ending the walk. The attempt
+      // has already been counted above, which is the point: the ceiling bounds what we sent, not
+      // what came back.
+      let response;
+      try {
+        response = await this.#fetch(url, {
+          method: 'GET',
+          headers: { accept: 'application/json' },
+          signal: AbortSignal.timeout(this.#timeoutMs),
+        });
+      } catch (cause) {
+        last = new Error(
+          `Transport failure on ${url}: ${cause instanceof Error ? cause.message : String(cause)}`,
+        );
+        continue;
+      }
 
       if (response.ok) return response.json();
 

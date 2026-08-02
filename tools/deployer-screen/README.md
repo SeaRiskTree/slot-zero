@@ -289,16 +289,28 @@ Two things are therefore forbidden:
 
 ### A ceiling hit is never a measured result
 
-**If the tool could not look, the record says it could not look.** A request ceiling, an exhausted
-budget or a failed walk contributes an entry to `unmeasured` — what was not measured, for which
-wallet, and why, naming the setting that governs the budget so an operator does not just rerun into
-the same wall — and that entry sets `truncated` and lands in `truncationReason`. `renderStage1`
-prints it as its own block, not only as a per-candidate note.
+**If the tool could not look, the record says it could not look.** A request ceiling or a failed walk
+contributes an entry to `unmeasured` — what was not measured, for which wallet, and why — and
+`renderStage1` prints it as its own block, not only as a per-candidate note. The affected candidate
+reads `UNMEASURED` and never as a measured negative.
 
-`completed` is untouched by this: it stays "did the run reach the end", and a run that finishes with
-an unmeasured consistency pass is `completed: true, truncated: true`. `record.mjs` →
-`unmeasuredBecause` and `deriveTruncation` are the general form, so a future budget with the same
-failure mode inherits the behaviour rather than needing its own special case.
+Entries carry a `kind`, and **only one of the two truncates the run**:
+
+| kind | means | truncates? |
+|---|---|---|
+| `budget-exhausted` | a request ceiling — a wall. The tool stopped looking, and a rerun stops in the same place, so the reason names the setting to change. | **yes** |
+| `page-failure` | one request was retried and still failed. The run kept going and later candidates were measured normally, so the reason says a rerun may well succeed. | no |
+
+The split is what keeps the flag worth reading. A keyless walk issues up to 585 requests against the
+flakiest surface in the tool; if one retried-and-failed page set `truncated: true`, the flag would be
+on for nearly every run, and **a flag that is always on carries no information and teaches its reader
+to skip it**. An operator has to be able to tell *"we ran out of allowance and stopped looking"* from
+*"one page hiccuped"*.
+
+`completed` is untouched by any of this: it stays "did the run reach the end", so a run that finishes
+having hit the keyless ceiling is `completed: true, truncated: true`. `record.mjs` →
+`unmeasuredBecause`, `partitionUnmeasured` and `deriveTruncation` are the general form, so a future
+budget with the same failure mode inherits the behaviour rather than needing its own special case.
 
 Use `record.mjs` → `completenessOf(record)`, which returns `'complete' | 'incomplete' | 'unknown'`
 and never a boolean, so `if (completed)` cannot be accidentally right. `schemaVersionOf(record)` and
@@ -391,10 +403,14 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | candidate cap | 195 | 200 − 3 enumeration − 2 retry headroom. It is what the allowance leaves, not a judgement about how many deployers are worth grading, and it is above what the three seeds can surface — so a **default run grades everything it surfaces**. |
 | over-budget plan | refused before the first request | `3 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. |
 | keyed pacing | 6.5s between request starts | Free tier bursts at ~10/min, and the allowance is **shared** with whatever else holds this key. |
-| keyless request ceiling, `frontend-api-v3` only | 600 | Sized to **cover** the candidate cap, not to bound it: the `--consistency` walk costs up to 3 pages per gate survivor, so 195 candidates cost 585 worst case. A ceiling below that stops the tool looking part-way through a run already paid for in keyed quota. It does not lean harder on pump.fun — the pacing below is unchanged, so this only changes how long a full run takes. |
-| keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here, and it is a shared-resource limit rather than our own caution, so the MadeOnSol relaxation does not touch it. The fill host is paced separately — see below. |
+| keyless request ceiling, `frontend-api-v3` only | 600 | Sized to **cover** the candidate cap, not to bound it: the `--consistency` walk costs up to 3 pages per gate survivor, so 195 candidates cost 585 worst case and the remaining 15 are retry headroom. A ceiling below that stops the tool looking part-way through a run already paid for in keyed quota. It does not lean harder on pump.fun — the pacing below is unchanged, so what it buys is wall clock. |
+| keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here, and it bounds a shared public resource rather than expressing our own caution, so the MadeOnSol relaxation does not touch it. The fill host is paced separately — see below. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
-| retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does. |
+| retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does — but a 429, a 5xx or a timeout means the request was not served, so re-issuing it is nearer to one successful request than to two. Without it the caller re-runs the whole walk, which is worse for pump.fun too. A 4xx that is not a 429 is never retried: it is the endpoint's considered answer. |
+
+**A full default run takes about 40 minutes**, not 21: ~21 for the 198 keyed requests at 6.5s, plus
+~19.5 for 585 keyless pages at 2.0s when `--consistency` is passed. Both figures are in
+`thresholds.json` → `justification`. A run still going at the 25-minute mark has not hung.
 
 The conditional in the instruction binds: ***"if it gets results"***. It licenses sizing a run by
 what the question needs. It does **not** license sweeping, idle retrying, or re-running to

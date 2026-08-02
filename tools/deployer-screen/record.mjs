@@ -48,8 +48,15 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   the total cannot say which endpoint the requests went to. Also adds `unmeasured`: every
  *   measurement the run could not take and why, which `truncated` and `truncationReason` now
  *   account for. Its absence on an older record means unknown, not none.
+ * - **4** — the gate reads a CREATION-derived launch history rather than an ownership-derived one.
+ *   Candidate rows gain `historySource`, the `vendor*` fields holding the old reading whole, and
+ *   `creation` holding the walk's coverage and bounds. A schema-1, schema-2 or schema-3 record's
+ *   `tokens` and `completionRate` are the OWNERSHIP reading — biased towards rejection, and
+ *   understating a bonded count more than a launch count. **Do not compare them with a schema-4
+ *   `completionRate` as though they answered the same question**; compare against
+ *   `vendorCompletionRate`, which is the same measurement the older records hold.
  */
-export const RECORD_SCHEMA_VERSION = 3;
+export const RECORD_SCHEMA_VERSION = 4;
 
 /**
  * Completeness of a run, as the record can actually support.
@@ -162,8 +169,14 @@ export function redactAll(lines) {
  * rule above exists to prevent, so a cause that cannot be identified is reported as unidentified
  * rather than rounded to the likeliest story.
  *
+ * Not every unmeasured thing is a failed request. `no-source` is the case where every request
+ * succeeded and no surface we are entitled to read carries the fact — a limit of the evidence
+ * rather than of the run. It is still unmeasured, and it still must not read as a measured
+ * negative, which is exactly why it belongs in this vocabulary rather than being rounded into
+ * `local-error` (it is not our bug) or `unclassified` (the cause is known precisely).
+ *
  * @typedef {'budget-exhausted' | 'page-failure' | 'not-retried-failure' | 'vendor-refusal'
- *   | 'unparseable-body' | 'local-error' | 'unclassified'} UnmeasuredKind
+ *   | 'unparseable-body' | 'local-error' | 'no-source' | 'unclassified'} UnmeasuredKind
  */
 
 /**
@@ -205,6 +218,11 @@ export const UNMEASURED_KINDS = {
     truncates: false,
     heading: 'LOCAL ERROR — this failed in our own code, having never reached the endpoint.',
     advice: 'No request was retried and one may never have been made. This is our bug to fix.',
+  },
+  'no-source': {
+    truncates: false,
+    heading: 'NO SOURCE COULD ANSWER — every request succeeded and no surface carries the fact.',
+    advice: 'A limit of the evidence, not of the run. A plain rerun reaches the same silence.',
   },
   unclassified: {
     truncates: false,
@@ -349,6 +367,37 @@ export function unmeasuredBecause(measurement, subject, cause, spent) {
   }
 
   return { measurement, subject, kind, summary, detail };
+}
+
+/**
+ * Record that a measurement could not be taken even though nothing failed.
+ *
+ * The companion to {@link unmeasuredBecause}, for the case that has no exception to classify: every
+ * request was served and no surface we may read carries the answer. It exists so such a case still
+ * reaches the run-level `unmeasured` collection, because the rule this module enforces is about the
+ * RECORD and not about the cause — a run that reports a candidate it could not judge, while its own
+ * `unmeasured` reads empty and `truncated` reads false, has told its reader it measured everything.
+ *
+ * `sources` is the wallet-independent half and belongs in the summary; anything per-candidate goes
+ * in `detail`, which is never a grouping key.
+ *
+ * @param {string} measurement
+ * @param {string} subject
+ * @param {string} sources What was asked and came back silent, stated the same way every time.
+ * @param {string | null} [detail]
+ * @returns {Unmeasured}
+ */
+export function unmeasuredNoSource(measurement, subject, sources, detail = null) {
+  return {
+    measurement,
+    subject,
+    kind: 'no-source',
+    summary:
+      `${measurement} could not be established: every request was served, and ${sources}. This is ` +
+      `a limit of the evidence rather than of the run — no budget was reached and nothing failed, ` +
+      `so a plain rerun reaches the same silence. It is NOT a negative result about this wallet`,
+    detail,
+  };
 }
 
 /**

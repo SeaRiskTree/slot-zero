@@ -9,14 +9,13 @@
     "SCOPE: this tool GATES on competence and SCORES ENTRY. It does not recommend, and it does not",
     "score EXIT — see `stage2_entry`."
   ],
-  "version": "3.0.0",
+  "version": "4.0.0",
   "pinnedAt": "2026-07-29",
-
   "stage1_gate": {
     "$comment": [
       "Keyed, MadeOnSol, one request per candidate. A GATE, not a score: it asks whether a",
       "deployer is competent, which is necessary and nowhere near sufficient. Stage 0 demonstrates",
-      "the gap empirically — it shows the gate PASSING the one deployer we know is not worth the",
+      "the gap empirically \u2014 it shows the gate PASSING the one deployer we know is not worth the",
       "time.",
       "The denominator is `profile.pump_tokens[].complete` and nothing else. Never `bonding_rate`,",
       "`total_bonded`, `total_tokens_deployed`, `recent_bond_rate`, `recent_outcomes` or",
@@ -33,7 +32,6 @@
       "minSpanDays": "A high rate earned inside a single day is a burst, not a record. 14 days is the shortest span over which pump.fun's own time-to-bond distribution puts a large majority of eventual graduations behind us: on our tape 82.5% of graduations occur within 7 days and 85.4% within 14."
     }
   },
-
   "consistency_over_time": {
     "$comment": [
       "The captain's word was 'consistently'. MadeOnSol cannot answer it: their only",
@@ -54,7 +52,34 @@
       "maxDispersion": "max(epoch rate) - min(epoch rate) > 0.35 FLAGS a deployer as streaky rather than excluding it. A flag, not a filter: the point of the exercise is that one hot window must not read as a record, and the reader is entitled to see the spread rather than have it silently applied."
     }
   },
-
+  "creation_walk": {
+    "$comment": [
+      "Bounds for the creation-derived launch history \u2014 the walk that answers 'which tokens did this",
+      "wallet CREATE' instead of 'which tokens does it OWN NOW'. See creation.mjs for why the two",
+      "differ and for the on-chain observation that established it.",
+      "",
+      "This walk is the expensive part of a run by an order of magnitude, because the only keyless",
+      "index that reaches a create transaction is the wallet's own signature index, and for a pump.fun",
+      "deployer that index is dominated by strangers' failed trades. Every bound here is therefore a",
+      "hard ceiling, and readCreatedHistory reports which one bit rather than truncating silently.",
+      "",
+      "The walk covers a CONTIGUOUS WINDOW BACKWARDS FROM NOW. Inside it every creation is found;",
+      "outside it none is, and mergeHistories falls back to the ownership listing and says so. A",
+      "create count read as a lifetime figure under any stopReason other than 'index-exhausted' is",
+      "wrong in the same direction as the vendor's sliding 'lifetime' window."
+    ],
+    "maxRpcRequestsPerCandidate": 100,
+    "maxSignaturePages": 200,
+    "maxTransactionsPerCandidate": 8000,
+    "txBatchSize": 1,
+    "rpcMinIntervalMs": 2500,
+    "justification": {
+      "maxRpcRequestsPerCandidate": "Measured 2026-08-02: sustained keyless throughput against api.mainnet-beta is about 0.42 transactions/second, i.e. roughly one request per 2.4s including backoff, and a create is found by inspecting every SUCCEEDED signature in the wallet's index. The success fraction varies enormously between deployers \u2014 1.7% on the busiest wallet screened, 99.7% on another \u2014 so the cost of a full history ranged from 7 minutes to 84 hours across the 12 wallets of runs/2026-07-29-elite.json. 100 requests is a per-candidate ceiling that keeps a 12-candidate run inside about 50 minutes; on a quiet wallet it is the whole history, on a busy one it is a window of hours and the record says so. NOTE THE OTHER END OF THAT ARITHMETIC: at the 195-candidate cap it is 19,500 requests and ~13.5 HOURS, which is the dominant cost of a default run — --candidates N is the lever that bounds it, and --ownership-only skips it for a fast pass whose bias is stamped into the record. See CREATION-DERIVED.md for the per-wallet costs.",
+      "maxSignaturePages": "200 pages is 200,000 signatures, past which no keyless walk is finishing inside a session. It exists so a wallet with an enormous index cannot turn the request ceiling into the only brake.",
+      "txBatchSize": "1, and the 1 is measured. report.md 9.4 recorded batches of 5-8 getTransaction as sustainable, and that no longer holds: on 2026-08-02, fetching the same transactions at batch=1 took 58s with ZERO load-shed events, batch=4 took 76s with 7, and batch=8 took 110s with 11. Throughput was 0.42 tx/s at batch=1 and 0.36 tx/s at batch=8 \u2014 the endpoint weights each entry of a JSON-RPC batch against its limiter, so a batch of 8 spends 8 tokens and buys nothing but backoff. Batching is therefore actively harmful HERE TOO, exactly as it is on pump.fun's keyless endpoints. The client still supports batching, capped at 8, because the endpoint's behaviour is the vendor's to change and re-measuring is cheaper than rebuilding.",
+      "rpcMinIntervalMs": "1,400ms is the documented floor, but a 200-request run at that pace on 2026-08-02 took over 890 seconds instead of the expected 280 \u2014 the endpoint was shedding load and the retry backoff was paying for it. 2,500ms is the observed rate at which that stops happening, so it is faster in wall-clock than the nominally quicker setting. api.mainnet-beta rate-limits GLOBALLY across getSignaturesForAddress and getTransaction, and two concurrent jobs earned a sustained 429 lockout, so this is one queue with one request in flight."
+    }
+  },
   "budget": {
     "$comment": [
       "Hard bounds, enforced in code. There is no flag that disables one.",
@@ -77,16 +102,16 @@
       "self-imposed caution, so keyedMinIntervalMs stays."
     ],
     "maxKeyedRequests": 200,
-    "maxKeylessRequests": 600,
+    "maxKeylessRequests": 1400,
     "maxCandidates": 195,
     "keyedMinIntervalMs": 6500,
     "keylessMinIntervalMs": 2000,
     "justification": {
       "maxKeyedRequests": "200 is the whole Free-tier daily allowance as measured (see tools/deployer-screen/README.md). Enumeration costs 3 (recent-bonds, alerts, leaderboard) and the gate costs 1 per candidate, so the 195-candidate cap costs 198 worst case and the remaining 2 are the retry headroom. A run whose PLANNED worst case exceeds this is refused before its first request rather than allowed to die part-way through. STAGE 2 ADDS NOTHING TO THIS: it reuses the profile Stage 1 already fetched and spends no keyed request of its own.",
       "maxCandidates": "195 = 200 - 3 enumeration - 2 retry headroom, i.e. the cap is whatever the allowance leaves rather than a judgement about how many deployers are worth grading. It is also well above what the three enumeration queries can surface (50 + 100 + 50 rows, heavily overlapping and then pre-filtered), so the DEFAULT run grades everything it surfaces and coverage truncation becomes the exception it is supposed to be.",
-      "keyedMinIntervalMs": "Free tier bursts at ~10/minute. 6.5s between request starts keeps a run under that with margin, and margin matters because the allowance is shared. This is the vendor's rate limit, not our caution, so raising the daily bounds does not touch it. A full 198-request run therefore takes about 21 minutes, which is the intended cost of respecting the burst limit — and with --consistency the keyless walk adds ~19.5 minutes on top of it, so budget ABOUT 40 MINUTES end to end for a full default run rather than 21. A run still going at the 25-minute mark has not hung.",
-      "keylessMinIntervalMs": "GOVERNS ONE HOST: frontend-api-v3.pump.fun, the --consistency creator walk. It does NOT govern the Stage 2 fill walk, which has its own pinned pacing (`stage2_entry.keylessMinIntervalMs`) because it reaches a different host that behaves differently. THIS VALUE IS A CONSERVATIVE CARRY-OVER, NOT A MEASUREMENT OF THE ENDPOINT IT GOVERNS, and the correction matters: the ~0.5 requests/second figure this was originally justified by was measured against api.mainnet-beta.solana.com, and the June report's own spend table records BOTH swap-api.pump.fun and frontend-api-v3.pump.fun as NOT CONTACTED — so it was never a pump.fun measurement at all. It is kept because it is conservative and because frontend-api-v3 has shed nothing in this tool's use of it; if that host is ever measured, this number should be re-derived from that measurement rather than from a different host's. Either way it bounds a shared public resource rather than expressing our own caution, so the MadeOnSol relaxation does not touch it. The RETRY COUNT is a separate question and is not this bound: a keyless request is retried on a 429 or a 5xx, and each attempt counts against maxKeylessRequests.",
-      "maxKeylessRequests": "A PER-CLIENT CEILING, NOT A RUN TOTAL, and the distinction is what the code enforces: screen.mjs builds TWO independent keyless clients, and this value bounds only the general one (the --consistency creator walk). Stage 2 runs on its own client under its own `stage2_entry.maxKeylessRequests` of 432, which this number neither contains nor constrains, so the enforced combined worst case is 600 + 432 = 1,032 requests. 600 is sized to COVER the candidate cap rather than to bound it: the consistency walk costs up to 3 pages per gate survivor, so 195 candidates cost 585 worst case, and the remaining 15 are the retry headroom. A keyless ceiling below that would make the tool stop looking part-way through a run it had already paid for in keyed quota, and an unmeasured candidate is not a measured one. Raising the count does not lean harder on pump.fun — keylessMinIntervalMs is unchanged, so what it buys is wall-clock time and nothing else: 585 requests at 2s is ~19.5 minutes, which on top of the keyed run's ~21 makes a full --consistency run ABOUT 40 MINUTES. The June report sustained 460 consecutive keyless requests at 1.4s apart with zero shedding. These are pump.fun's free endpoints — no key, no vendor allowance, and no shared quota is touched by any of it."
+      "keyedMinIntervalMs": "Free tier bursts at ~10/minute. 6.5s between request starts keeps a run under that with margin, and margin matters because the allowance is shared. This is the vendor's rate limit, not our caution, so raising the daily bounds does not touch it. A full 198-request run therefore takes about 21 minutes, which is the intended cost of respecting the burst limit — but THAT IS NO LONGER THE RUN'S WALL CLOCK AND MUST NOT BE READ AS ONE. The default history source is creation-derived, and the Solana RPC walk dominates everything else by an order of magnitude: 195 candidates x 100 requests x 2.5s is ~13.5 HOURS on its own. Add ~21 minutes keyed, ~26 for the gate's ownership listing on frontend-api-v3, ~50 for Stage 2 on swap-api, and a further ~19.5 with --consistency, and a full default run at the candidate cap is ABOUT 15 HOURS end to end, or ~15.5 with --consistency. An earlier version of this note said 47 minutes; it predated the creation walk and was wrong by a factor of twenty. DO NOT KILL A DEFAULT RUN FOR STILL GOING AFTER AN HOUR. The liveness signal is not the same on every leg: the keyed and frontend-api-v3 clients print one line per request, but the creation walk would emit ~20,000 of those, so it prints a PERIODIC HEARTBEAT — the first request of each candidate and then every tenth, i.e. a line roughly every 25 seconds at this walk's 2.5s pacing, showing that candidate's spend against maxRpcRequestsPerCandidate. Watch that counter rather than expecting a line per request, and use --candidates N to bound the run (the RPC leg is N x 100 x 2.5s) or --ownership-only to skip the walk entirely for a fast pass whose bias towards rejection is stamped into the record. renderDryRun prints this arithmetic for whatever flags are actually passed.",
+      "keylessMinIntervalMs": "GOVERNS ONE HOST: frontend-api-v3.pump.fun — the gate's ownership listing and the --consistency creator walk, which share one client. It does NOT govern the Stage 2 fill walk, which has its own pinned pacing (`stage2_entry.keylessMinIntervalMs`) because it reaches a different host that behaves differently. THIS VALUE IS A CONSERVATIVE CARRY-OVER, NOT A MEASUREMENT OF THE ENDPOINT IT GOVERNS, and the correction matters: the ~0.5 requests/second figure this was originally justified by was measured against api.mainnet-beta.solana.com, and the June report's own spend table records BOTH swap-api.pump.fun and frontend-api-v3.pump.fun as NOT CONTACTED — so it was never a pump.fun measurement at all. It is kept because it is conservative and because frontend-api-v3 has shed nothing in this tool's use of it; if that host is ever measured, this number should be re-derived from that measurement rather than from a different host's. Either way it bounds a shared public resource rather than expressing our own caution, so the MadeOnSol relaxation does not touch it. The RETRY COUNT is a separate question and is not this bound: a keyless request is retried on a 429 or a 5xx, and each attempt counts against maxKeylessRequests.",
+      "maxKeylessRequests": "A PER-CLIENT CEILING, NOT A RUN TOTAL, and the distinction is what the code enforces: screen.mjs builds TWO independent keyless clients, and this value bounds only the general one (frontend-api-v3). Stage 2 runs on its own client under its own `stage2_entry.maxKeylessRequests` of 432, which this number neither contains nor constrains, so the enforced combined worst case is 1,400 + 432 = 1,832 requests. 1,400 is sized to COVER the candidate cap rather than to bound it, and it is sized for what the code now actually spends on this client, which is TWO passes and not one. The GATE reads the ownership listing it merges the creation window with, up to 4 pages PER CANDIDATE (screen.mjs LISTING_PAGES_FOR_MERGE); the --consistency pass then costs up to 3 pages per gate SURVIVOR, and every candidate can be one. So 195 candidates cost 195 x 4 = 780 for the gate plus 195 x 3 = 585 for consistency = 1,365 worst case, and the remaining 35 are the retry headroom. The earlier 600 was justified on the consistency pass alone and was already exceeded by gating at the default candidate cap. A keyless ceiling below the plan would make the tool stop looking part-way through a run it had already paid for in KEYED quota, and an unmeasured candidate is not a measured one — so screen.mjs now also REFUSES a plan whose keyless worst case does not fit, before its first request, exactly as it does for the keyed one. Raising the count does not lean harder on pump.fun — keylessMinIntervalMs is unchanged, so what it buys is wall-clock time and nothing else: 1,365 requests at 2s is ~45.5 minutes, of which ~26 is the gate's own 780 pages. That is a minority of the run's wall clock rather than the whole of it — see keyedMinIntervalMs, where the creation walk's ~13.5 hours puts a full default run at ABOUT 15 HOURS. The June report sustained 460 consecutive keyless requests at 1.4s apart with zero shedding. These are pump.fun's free endpoints — no key, no vendor allowance, and no shared quota is touched by any of it."
     }
   },
 

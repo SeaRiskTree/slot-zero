@@ -58,7 +58,7 @@ top of this file. Answering it means screening *other* deployers, present tense.
 | | |
 |---|---|
 | **Stage 0** — local validation, no network, no key | `tools/deployer-screen/stage0.mjs` |
-| **Stage 1** — the keyed completion-rate **gate** over MadeOnSol | `tools/deployer-screen/screen.mjs` |
+| **Stage 1** — the completion-rate **gate**: keyed MadeOnSol counts, over a launch history derived from the keyless on-chain **create** transactions rather than from who owns the tokens now | `tools/deployer-screen/screen.mjs` |
 | **Stage 2** — the keyless **entry** score: room in the opening window, and what the field there achieved | `tools/deployer-screen/stage2.mjs`, `entry.mjs` |
 | **The window-population measurement** — how many profitable windows the tape contains, how long, how fast they close | `analysis/window-population/` |
 | **CI** — `npm test` on the Node 20 engines floor | `.github/workflows/ci.yml` |

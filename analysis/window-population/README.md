@@ -515,8 +515,8 @@ reported.*
 - **Fee-inclusive pricing for the window's first 72 launches.** The dates do not move — they are
   established on gross, and gross and net move together on every launch where both exist — but
   the ≈ 320 SOL estimate would become a measurement. It would need on-chain pricing of those
-  launches' create-slot transactions: keyless, `api.mainnet-beta.solana.com`, one process,
-  batches of 5–8, ~1.4 s apart (`AGENTS.md`).
+  launches' create-slot transactions: keyless, `api.mainnet-beta.solana.com`, one process, at the
+  pacing `AGENTS.md` records for that host (batching there is measured harmful, so budget by it).
 - **A launch of this deployer that the universe missed.** `?creator=` lists by *current* creator
   and the record moves; the one launch known to have gone missing was this operation's best ever.
   If a missing launch sat in the "before" period, the open date could be earlier than 2026-03-12.

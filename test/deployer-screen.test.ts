@@ -72,12 +72,21 @@ import {
 } from '../tools/deployer-screen/seed.mjs';
 import {
   KeylessClient,
+  SolanaRpcClient,
   extractTradeRows,
   parseFillLoose,
+  readCreatedHistory,
   readLaunchWindow,
   slotFromSlotIndexId,
   windowFilter,
 } from '../tools/deployer-screen/pumpfun.mjs';
+import {
+  PUMP_PROGRAM_ID,
+  base58Encode,
+  mergeHistories,
+  parseCreateTransaction,
+  readCurveState,
+} from '../tools/deployer-screen/creation.mjs';
 import {
   exitForRefusal,
   main,
@@ -101,6 +110,7 @@ import {
   redactVendorIdentifiers,
   schemaVersionOf,
   unmeasuredBecause,
+  unmeasuredNoSource,
 } from '../tools/deployer-screen/record.mjs';
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
@@ -635,6 +645,41 @@ describe('the gate', () => {
     expect(fail.verdict).toBe('gate-failed');
   });
 
+  it('never emits a measured verdict over a reading that was not measured', () => {
+    // A gate-failed carrying an ordinary rationale over a history nobody actually read is the
+    // invisible false rejection this whole reading exists to remove. The state has to live in the
+    // VERDICT, not only in the wording beside it — a reader filtering on `verdict` must not miss it.
+    const v = verdictFor({
+      gate: { passed: false, reasons: ['completion rate 0.1000 < 0.25 required'] },
+      completion: completion(40, 4, 30),
+      capped: false,
+      notMeasured: ['3 of 40 launch(es) have no bonded status from EITHER source'],
+    });
+    expect(v.verdict).toBe('gate-unmeasured');
+    expect(v.rationale).toMatch(/NOT a rejection/);
+    expect(v.rationale).toMatch(/no bonded status/);
+    expect(v.rationale).not.toMatch(/did not clear the completion gate/);
+
+    // It outranks a PASS too: an unmeasured reading is no better founded in that direction.
+    const passing = verdictFor({
+      gate: { passed: true, reasons: [] },
+      completion: completion(40, 20, 30),
+      capped: false,
+      notMeasured: ['the ownership listing could not be read'],
+    });
+    expect(passing.verdict).toBe('gate-unmeasured');
+
+    // And an empty list is not an unmeasured reading.
+    expect(
+      verdictFor({
+        gate: { passed: true, reasons: [] },
+        completion: completion(40, 20, 30),
+        capped: false,
+        notMeasured: [],
+      }).verdict,
+    ).toBe('gate-passed');
+  });
+
   it('says so when the vendor page was truncated', () => {
     const v = verdictFor({
       gate: { passed: true, reasons: [] },
@@ -650,25 +695,33 @@ describe('ordering is deterministic and not a league table', () => {
     wallet: string,
     n: number,
     done: number,
-    verdict: 'gate-passed' | 'gate-failed',
+    verdict: 'gate-passed' | 'gate-unmeasured' | 'gate-failed',
     roomMedian?: number,
-  ) => ({
-    wallet,
-    seededBy: ['leaderboard:total_bonded'],
-    completion: measureCompletion(
+  ) => {
+    const completion = measureCompletion(
       Array.from({ length: n }, (_, i) => ({ deployedAtMs: T0 + i * DAY, completed: i < done })),
-    ),
-    completionCapped: false,
-    gate: { passed: verdict === 'gate-passed', reasons: [] },
-    verdict,
-    rationale: '',
-    consistency: null,
-    entry:
-      roomMedian === undefined
-        ? null
-        : ({ roomLeft: { ...distribution([roomMedian]) } } as unknown as EntryScore),
-    entryCoverage: null,
-  });
+    );
+    return {
+      wallet,
+      seededBy: ['leaderboard:total_bonded'],
+      completion,
+      completionCapped: false,
+      gate: { passed: verdict === 'gate-passed', reasons: [] as string[] },
+      verdict,
+      rationale: '',
+      consistency: null,
+      historySource: 'creation-derived' as const,
+      vendorCompletion: completion,
+      vendorVerdict: verdict,
+      vendorPageCapped: false,
+      creation: null,
+      entry:
+        roomMedian === undefined
+          ? null
+          : ({ roomLeft: { ...distribution([roomMedian]) } } as unknown as EntryScore),
+      entryCoverage: null,
+    };
+  };
 
   it('sorts by MEASURED entry room, and puts unscored candidates after every scored one', () => {
     // The promise the Stage 1 lane made when it left the seam: once Stage 2 landed, room-left
@@ -692,6 +745,23 @@ describe('ordering is deterministic and not a league table', () => {
     expect(ranked.map((c) => c.wallet)).toEqual(['aaa', 'zzz', 'fff']);
     // Sample size leads rate deliberately: 29/30 is weaker evidence than 35/70.
     expect(ranked[0]?.completion.tokens).toBe(70);
+  });
+
+  it('orders the unmeasured between the survivors and the rejections, and stays total', () => {
+    // The class map must cover EVERY verdict. An unhandled value makes the comparator return NaN,
+    // which is not a strict weak ordering and silently breaks the byte-identical-output guarantee.
+    // And an unmeasured candidate is not a rejection, so it must not be buried among them.
+    const input = [
+      candidate('rejected', 10, 10, 'gate-failed'),
+      candidate('unjudged', 40, 20, 'gate-unmeasured'),
+      candidate('passed', 40, 20, 'gate-passed'),
+    ];
+    expect(rankCandidates(input).map((c) => c.wallet)).toEqual(['passed', 'unjudged', 'rejected']);
+    expect(rankCandidates([...input].reverse()).map((c) => c.wallet)).toEqual([
+      'passed',
+      'unjudged',
+      'rejected',
+    ]);
   });
 
   it('is a total order, so two runs over the same data agree byte for byte', () => {
@@ -1121,6 +1191,8 @@ describe('the CLI contract', () => {
       maxKeyedRequests: 45,
       consistency: false,
       maxKeylessRequests: T['budget'].maxKeylessRequests,
+      historySource: 'creation-derived' as const,
+      creationWalk: T['creation_walk'],
       stage2: true,
       maxScored: T['stage2_entry'].maxCandidatesScored,
       entryThresholds: T['stage2_entry'],
@@ -1148,6 +1220,8 @@ describe('the CLI contract', () => {
       maxKeyedRequests: 45,
       consistency: false,
       maxKeylessRequests: T['budget'].maxKeylessRequests,
+      historySource: 'creation-derived' as const,
+      creationWalk: T['creation_walk'],
       stage2: false,
       maxScored: 0,
       entryThresholds: T['stage2_entry'],
@@ -1339,6 +1413,9 @@ describe('spend is reported concretely, by endpoint', () => {
       candidates: [],
       keyedRequests: 5,
       keylessRequests: 0,
+      rpcRequests: 0,
+      rpcLoadShedEvents: 0,
+      historySource: 'creation-derived' as const,
       elapsedMs: 1000,
       startedAtIso: '2026-08-02T00:00:00.000Z',
       completed: true,
@@ -1381,6 +1458,9 @@ describe('an incomplete run can never read as a measured negative', () => {
       candidates: (o.candidates ?? []) as never,
       keyedRequests: 4,
       keylessRequests: 0,
+      rpcRequests: 0,
+      rpcLoadShedEvents: 0,
+      historySource: 'creation-derived' as const,
       elapsedMs: 1000,
       startedAtIso: '2026-07-29T00:00:00.000Z',
       completed: o.completed,
@@ -1823,6 +1903,28 @@ describe('a ceiling hit is never recordable as a measured result', () => {
     expect(UNMEASURED_KINDS['budget-exhausted'].truncates).toBe(true);
   });
 
+  it('records a measurement nothing could answer, without claiming a failure or a wall', () => {
+    // Not every unmeasured thing is a failed request. When every request was served and no surface
+    // carries the fact, the honest kind is its own — rounding it into `local-error` would blame our
+    // code for a limit of the evidence, and into `unclassified` would disclaim a cause we know.
+    const u = unmeasuredNoSource(
+      'the bonded status of a creation-derived launch history',
+      'WalletAaa',
+      'neither the on-chain curve nor the ownership listing could answer',
+      '3 of 40 launch(es) undecidable',
+    );
+    expect(u.kind).toBe('no-source');
+    expect(u.summary).toMatch(/NOT a negative result/);
+    expect(u.summary).not.toMatch(/WalletAaa/);
+    expect(describeUnmeasured(u)).toMatch(/3 of 40/);
+
+    // It is unmeasured, so it must be reported — but it is not a budget wall, so it must not
+    // manufacture truncation on a run that never stopped looking.
+    const t = deriveTruncation({ abortReason: null, coverage: COVERAGE_OK, unmeasured: [u] });
+    expect(t.truncated).toBe(false);
+    expect(kindMetaOf(u.kind).truncates).toBe(false);
+  });
+
   it('makes an unmeasured candidate truncate the run, with a reason naming what went unmeasured', () => {
     const unmeasured = ['A', 'B', 'C'].map((w) =>
       unmeasuredBecause('consistency-over-time', w, new CeilingReached(600, '/x'), KEYLESS),
@@ -1891,6 +1993,9 @@ describe('a ceiling hit is never recordable as a measured result', () => {
       candidates: [],
       keyedRequests: 8,
       keylessRequests: 600,
+      rpcRequests: 0,
+      rpcLoadShedEvents: 0,
+      historySource: 'creation-derived' as const,
       elapsedMs: 1000,
       startedAtIso: '2026-08-02T00:00:00.000Z',
       completed: true,
@@ -1932,6 +2037,9 @@ describe('a ceiling hit is never recordable as a measured result', () => {
       candidates: [],
       keyedRequests: 8,
       keylessRequests: 12,
+      rpcRequests: 0,
+      rpcLoadShedEvents: 0,
+      historySource: 'creation-derived' as const,
       elapsedMs: 1000,
       startedAtIso: '2026-08-02T00:00:00.000Z',
       completed: true,
@@ -1971,6 +2079,9 @@ describe('a ceiling hit is never recordable as a measured result', () => {
       candidates: [],
       keyedRequests: 8,
       keylessRequests: 12,
+      rpcRequests: 0,
+      rpcLoadShedEvents: 0,
+      historySource: 'creation-derived' as const,
       elapsedMs: 1000,
       startedAtIso: '2026-08-02T00:00:00.000Z',
       completed: true,
@@ -2002,6 +2113,9 @@ describe('a ceiling hit is never recordable as a measured result', () => {
       candidates: [],
       keyedRequests: 4,
       keylessRequests: 0,
+      rpcRequests: 0,
+      rpcLoadShedEvents: 0,
+      historySource: 'creation-derived' as const,
       elapsedMs: 1000,
       startedAtIso: '2026-08-02T00:00:00.000Z',
       completed: true,
@@ -2021,6 +2135,79 @@ describe('a ceiling hit is never recordable as a measured result', () => {
       thresholds: {},
     });
     expect(text).not.toMatch(/NOT TAKEN/);
+  });
+
+  it('gives an unmeasured reading its own section, never the rejection list and never nowhere', () => {
+    // A third verdict that appears in neither printed list disappears from the report entirely —
+    // the exact silent drop this repo keeps getting bitten by — and one printed among the
+    // rejections reads as judged and found wanting, which is the false rejection restored.
+    const unjudged = {
+      wallet: 'WalletUnjudged1111111111111111111111111111',
+      seededBy: ['alerts'],
+      completion: measureCompletion([{ deployedAtMs: T0, completed: false }]),
+      completionCapped: false,
+      gate: { passed: false, reasons: ['completion rate 0.0000 < 0.25 required'] },
+      verdict: 'gate-unmeasured',
+      rationale: 'GATE UNMEASURED — this is NOT a rejection and NOT a pass. 3 launches undecidable.',
+      consistency: null,
+      entry: null,
+      entryCoverage: null,
+      historySource: 'creation-derived',
+      vendorCompletion: measureCompletion([{ deployedAtMs: T0, completed: false }]),
+      vendorVerdict: 'gate-failed',
+      vendorPageCapped: false,
+      creation: {
+        bondedFromCurve: 5,
+        bondedFromListing: 2,
+        bondedUndecidable: 3,
+        curvesUnread: 5,
+        listingUnmeasuredNote: null,
+        wholeHistory: true,
+        stopReason: 'index-exhausted',
+        coveredDays: 30,
+        coveredFromIso: null,
+        listedOutsideWindow: 0,
+        windowExact: true,
+        listedInWindowCarried: 0,
+        unresolvedTransactions: 0,
+      },
+    };
+
+    const text = renderStage1({
+      candidates: [unjudged] as never,
+      keyedRequests: 4,
+      keylessRequests: 0,
+      rpcRequests: 10,
+      rpcLoadShedEvents: 0,
+      historySource: 'creation-derived' as const,
+      elapsedMs: 1000,
+      startedAtIso: '2026-08-02T00:00:00.000Z',
+      completed: true,
+      truncationReason: null,
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 1,
+        prefilteredOut: 0,
+        worthARequest: 1,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 1,
+        coverageTruncated: false,
+      },
+      thresholds: {},
+    });
+
+    expect(text).toMatch(/GATE UNMEASURED — THIS IS NOT A NEGATIVE RESULT/);
+    expect(text).toMatch(/gate unmeasured\s+1/);
+    expect(text).toContain(unjudged.wallet);
+    expect(text).toMatch(/3 UNDECIDABLE/);
+    // It must NOT be listed under the rejections, and the "nothing cleared the gate" language must
+    // not silently cover a wallet nobody judged.
+    const rejections = text.slice(text.indexOf('DID NOT CLEAR THE GATE'));
+    expect(text).toMatch(/EXCEPT for 1 candidate\(s\) whose reading was NOT MEASURED/);
+    if (text.includes('DID NOT CLEAR THE GATE')) expect(rejections).not.toContain(unjudged.wallet);
   });
 });
 
@@ -2135,6 +2322,42 @@ function readAll(dir: string, prefix: string, pattern = /\.(ts|mjs|js)$/): Map<s
 }
 
 describe('the keyless boundary holds in both directions', () => {
+  const PERSISTED_BY_SCHEMA: Record<number, string[]> = {
+    1: [
+      'completed',
+      'completionRate',
+      'consistency',
+      'gateReasons',
+      'rationale',
+      'seededBy',
+      'spanDays',
+      'tokens',
+      'vendorPageCapped',
+      'verdict',
+      'wallet',
+      'windowFirstDeploy',
+      'windowLastDeploy',
+    ],
+  };
+  PERSISTED_BY_SCHEMA[2] = PERSISTED_BY_SCHEMA[1]!;
+  // Schema 3 adds Stage 2's own projection, `entry` — quantiles, counts and a hit rate, no mint and
+  // no counterparty address — plus the run-level `spend` block, which is not a candidate field.
+  PERSISTED_BY_SCHEMA[3] = [...PERSISTED_BY_SCHEMA[1]!, 'entry'].sort();
+  // Schema 4 adds the creation-derived reading and keeps the ownership one beside it. `creation`
+  // is an object of counts and bounds; it carries no per-token row, which FORBIDDEN below asserts.
+  PERSISTED_BY_SCHEMA[4] = [
+    ...PERSISTED_BY_SCHEMA[3]!,
+    'creation',
+    'gateReadingPageCapped',
+    'historySource',
+    'vendorCompleted',
+    'vendorCompletionRate',
+    'vendorSpanDays',
+    'vendorTokens',
+    'vendorVerdict',
+    'verdictChanged',
+  ].sort();
+
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
     // The boundary is the directory. src/ is provably keyless (test/loader.test.ts) and must stay
     // that way; a dependency in either direction would blur the line that guarantee rests on.
@@ -2190,26 +2413,10 @@ describe('the keyless boundary holds in both directions', () => {
     // The README makes a ToS-facing claim about exactly which fields survive a run. It is asserted
     // here so the claim cannot drift from the code, and so a future field addition has to come and
     // change this list on purpose.
-    // An ALLOWED SET rather than an exact list, because committed records are evidence and are
-    // never retro-edited: the schema-1 record predates `entry` and legitimately lacks it. The
-    // ToS-facing claim is that nothing OUTSIDE this set is ever persisted, and a subset check is
-    // exactly that claim. The current writer's own row shape is pinned separately, below.
-    const ALLOWED = new Set([
-      'completed',
-      'completionRate',
-      'consistency',
-      'entry',
-      'gateReasons',
-      'rationale',
-      'seededBy',
-      'spanDays',
-      'tokens',
-      'vendorPageCapped',
-      'verdict',
-      'wallet',
-      'windowFirstDeploy',
-      'windowLastDeploy',
-    ]);
+    //
+    // Keyed by schema version rather than replaced, because run records are the grading lane's
+    // declared input and are never retro-edited to fit a newer schema — record.mjs owns that rule.
+    // A single flat list would have forced exactly the retro-edit it forbids.
     // Anything from the vendor's per-token records. None of these may appear in a candidate row.
     const FORBIDDEN =
       /"(mint|token_mint|token_name|token_symbol|symbol|name|peak_market_cap|mc_at_bond|bonded_at|deployed_at|time_to_bond_minutes|ath_market_cap|pool_address|token_image_url)"/;
@@ -2219,13 +2426,859 @@ describe('the keyless boundary holds in both directions', () => {
     for (const [file, text] of records) {
       const parsed = JSON.parse(text) as { candidates: Record<string, unknown>[] };
       expect(parsed.candidates.length, file).toBeGreaterThan(0);
+      const expected = PERSISTED_BY_SCHEMA[schemaVersionOf(parsed)];
+      expect(expected, `${file} has an unknown schemaVersion`).toBeDefined();
       for (const row of parsed.candidates) {
-        for (const key of Object.keys(row)) {
-          expect(ALLOWED.has(key), `${file} candidate row persists unexpected field '${key}'`).toBe(true);
-        }
+        expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(expected);
         expect(FORBIDDEN.test(JSON.stringify(row)), `${file} holds per-token vendor data`).toBe(false);
       }
     }
+  });
+
+  it('a record can never report an unjudged candidate while claiming it measured everything', () => {
+    // The invariant, stated once: if any candidate row carries `gate-unmeasured`, the RUN level has
+    // to say so too. `unmeasured: []` with `truncated: false` is a record telling its reader it
+    // measured everything it reports — which, next to a wallet nobody judged, is the same invisible
+    // false rejection this whole reading exists to remove, one level up.
+    const violates = (r: {
+      candidates?: { verdict?: string }[];
+      unmeasured?: unknown[];
+      truncated?: boolean;
+    }) =>
+      (r.candidates ?? []).some((c) => c.verdict === 'gate-unmeasured') &&
+      (r.unmeasured ?? []).length === 0 &&
+      r.truncated !== true;
+
+    // The checker is not vacuous: a record in the prohibited shape is recognised as one.
+    expect(
+      violates({ candidates: [{ verdict: 'gate-unmeasured' }], unmeasured: [], truncated: false }),
+    ).toBe(true);
+    expect(
+      violates({
+        candidates: [{ verdict: 'gate-unmeasured' }],
+        unmeasured: [
+          unmeasuredNoSource('the bonded status of a launch history', 'W', 'nothing could answer'),
+        ],
+        truncated: false,
+      }),
+    ).toBe(false);
+
+    for (const [file, text] of readAll(join(TOOL_DIR, 'runs'), '', /\.json$/)) {
+      expect(violates(JSON.parse(text)), `${file} reports an unjudged candidate as measured`).toBe(false);
+    }
+
+    // And the one branch that can mint a `gate-unmeasured` without a thrown cause must be the same
+    // branch that files the run-level entry, or the invariant holds only until the next edit.
+    const source = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    const branch = source.slice(source.indexOf('if (merged.bondedUndecidable > 0)'));
+    expect(branch.slice(0, branch.indexOf('\n        }\n'))).toMatch(/unmeasured\.push\(/);
+  });
+
+  it('the creation walk emits the heartbeat the operator guidance tells a reader to watch', () => {
+    // Docs and behaviour have to agree, and here the disagreement is consequential: it is the
+    // difference between letting a healthy 13-hour run finish and killing it. The walk was the one
+    // client built without an onRequest logger while the README told operators to watch a counter.
+    const source = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    const construction = source.slice(
+      source.indexOf('new SolanaRpcClient('),
+      source.indexOf('readCreatedHistory(rpc'),
+    );
+    expect(construction).toMatch(/onRequest:/);
+    // Suppressed under --json, like every other logger here, so the record stays machine-readable.
+    expect(construction).toMatch(/opts\.json/);
+    // A heartbeat, not a line per request: up to 100 x 195 requests would bury the report.
+    expect(construction).toMatch(/RPC_HEARTBEAT_EVERY/);
+
+    const every = Number(/const RPC_HEARTBEAT_EVERY = (\d+)/.exec(source)?.[1]);
+    expect(every).toBeGreaterThan(1);
+
+    // And the prose must describe THAT cadence rather than a per-request one. The pacing is pinned
+    // in thresholds.json, so the interval the README quotes is derived rather than asserted.
+    const thresholds = JSON.parse(readFileSync(join(TOOL_DIR, 'thresholds.json'), 'utf8')) as {
+      creation_walk: { rpcMinIntervalMs: number };
+    };
+    const seconds = (every * thresholds.creation_walk.rpcMinIntervalMs) / 1000;
+    const readme = readFileSync(join(TOOL_DIR, 'README.md'), 'utf8');
+    expect(readme).toMatch(/\*\*every tenth\*\*/);
+    expect(readme).toMatch(new RegExp(`every ${seconds} seconds`));
+    expect(readme, 'the withdrawn per-request claim must not survive anywhere').not.toMatch(
+      /counter, which advances on every request/,
+    );
+    expect(readFileSync(join(TOOL_DIR, 'thresholds.json'), 'utf8')).toMatch(/PERIODIC HEARTBEAT/);
+  });
+
+  it('the pinned keyless ceiling covers BOTH passes that share the frontend-api-v3 client', () => {
+    // The ceiling was justified on the consistency pass alone — 3 pages per gate survivor — while
+    // the GATE spends 4 pages per CANDIDATE on the same client. At the default candidate cap that
+    // already overran it, and because the keyless work runs AFTER the keyed allowance is spent, the
+    // overrun would have thrown away a run that was already paid for in vendor quota.
+    const thresholds = JSON.parse(readFileSync(join(TOOL_DIR, 'thresholds.json'), 'utf8')) as {
+      budget: { maxCandidates: number; maxKeylessRequests: number };
+    };
+    const source = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    const listingPages = Number(/const LISTING_PAGES_FOR_MERGE = (\d+)/.exec(source)?.[1]);
+    expect(listingPages).toBeGreaterThan(0);
+
+    const worstCase = thresholds.budget.maxCandidates * (listingPages + 3);
+    expect(worstCase).toBeLessThanOrEqual(thresholds.budget.maxKeylessRequests);
+    // And the refusal exists, so a plan that ever stops fitting is refused rather than discovered.
+    expect(source).toMatch(/worstCaseKeyless/);
+  });
+
+  it('the row this build writes matches the schema it declares', () => {
+    // The assertion above only sees COMMITTED records, so a shape change would go unnoticed until
+    // the next run was committed — by which time the record it would have caught already exists.
+    const source = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    const projection = source.slice(source.indexOf('function toRecordRow'));
+    for (const field of PERSISTED_BY_SCHEMA[RECORD_SCHEMA_VERSION]!) {
+      expect(projection, `toRecordRow must emit ${field}`).toMatch(new RegExp(`\\b${field}:`));
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Creation-derived launch history.
+//
+// The defect these cover: every vendor surface answers "which tokens does this wallet OWN NOW",
+// and ownership on pump.fun is a sellable position whose fees make the winners the ones worth
+// selling. So the ownership reading understates launches, understates bonded launches by more, and
+// scores the better deployer worse — a bias towards REJECTION, which is the invisible direction.
+//
+// Fixtures are hand-written to the shape of transactions observed on-chain 2026-08-02. The
+// canonical one is the real `maxxing` creation, whose signature and account layout are in
+// creation.mjs's module comment; the values below are that shape with the addresses shortened.
+
+const MINT = 'MintMintMintMintMintMintMintMintMintMintMi1';
+const CURVE = 'CurveCurveCurveCurveCurveCurveCurveCurveCu1';
+const DEV = 'DevDevDevDevDevDevDevDevDevDevDevDevDevDev1';
+const BUNDLER = 'PayerPayerPayerPayerPayerPayerPayerPayerPa1';
+
+function createTx(
+  overrides: {
+    signers?: string[];
+    accounts?: string[];
+    logs?: string[];
+    err?: unknown;
+    blockTime?: number;
+    programId?: string;
+  } = {},
+) {
+  const signers = overrides.signers ?? [DEV, MINT];
+  const accounts = overrides.accounts ?? [MINT, 'meta', CURVE, 'abc', 'global', DEV];
+  return {
+    blockTime: overrides.blockTime ?? 1_764_617_879,
+    meta: {
+      err: overrides.err ?? null,
+      logMessages: overrides.logs ?? ['Program log: Instruction: CreateV2'],
+    },
+    transaction: {
+      signatures: ['SigSigSig'],
+      message: {
+        accountKeys: [
+          ...signers.map((pubkey) => ({ pubkey, signer: true, writable: true })),
+          { pubkey: 'notASigner', signer: false, writable: true },
+        ],
+        instructions: [
+          { programId: '11111111111111111111111111111111', parsed: {} },
+          { programId: overrides.programId ?? PUMP_PROGRAM_ID, accounts },
+        ],
+      },
+    },
+  };
+}
+
+describe('a launch is read from the create transaction, not from who owns it now', () => {
+  it('reads mint, curve, creator and time out of a pump.fun creation', () => {
+    const parsed = parseCreateTransaction(createTx());
+    expect(parsed).toEqual({
+      mint: MINT,
+      bondingCurve: CURVE,
+      creator: DEV,
+      createdAtMs: 1_764_617_879_000,
+      signature: 'SigSigSig',
+    });
+  });
+
+  it('credits the creator, NOT the fee payer, when a bundler paid', () => {
+    // report.md §9.3's counter-trap runs in this direction too: in a bundled transaction
+    // accountKeys[0] is whoever paid, not whoever acted, and fee-payer attribution would credit
+    // the launch to the bankroll. A pump.fun create needs the creator's own signature because it
+    // funds the curve's rent, so "the signer inside the create instruction that is not the mint"
+    // names the creator even when somebody else is first in the account list.
+    const parsed = parseCreateTransaction(createTx({ signers: [BUNDLER, DEV, MINT] }));
+    expect(parsed?.creator).toBe(DEV);
+    expect(parsed?.creator).not.toBe(BUNDLER);
+  });
+
+  it('refuses when no signer appears in the create instruction at all', () => {
+    // Nothing left to credit. Refusing beats falling back to the fee payer.
+    expect(
+      parseCreateTransaction(
+        createTx({ signers: [BUNDLER, MINT], accounts: [MINT, 'meta', CURVE, 'abc', 'global'] }),
+      ),
+    ).toBeNull();
+  });
+
+  it('accepts every Create version the program has emitted, and nothing else', () => {
+    for (const log of ['Instruction: Create', 'Instruction: CreateV2', 'Instruction: CreateV3']) {
+      expect(parseCreateTransaction(createTx({ logs: [`Program log: ${log}`] }))).not.toBeNull();
+    }
+    for (const log of ['Instruction: Buy', 'Instruction: Sell', 'Instruction: CreateFeeSharingConfig']) {
+      expect(parseCreateTransaction(createTx({ logs: [`Program log: ${log}`] }))).toBeNull();
+    }
+  });
+
+  it('refuses a failed transaction, a foreign program, and an unsigned first account', () => {
+    expect(parseCreateTransaction(createTx({ err: { InstructionError: [1, 'x'] } }))).toBeNull();
+    expect(parseCreateTransaction(createTx({ programId: 'SomeOtherProgram1111111111' }))).toBeNull();
+    // The mint keypair signs its own initialisation. Without that, this is a trade sharing the
+    // transaction with something that logged a Create.
+    expect(parseCreateTransaction(createTx({ signers: [DEV] }))).toBeNull();
+  });
+
+  it('refuses rather than guesses when the creator is ambiguous', () => {
+    const parsed = parseCreateTransaction(
+      createTx({ signers: [DEV, MINT, 'SecondSigner'], accounts: [MINT, 'meta', CURVE, 'SecondSigner', DEV] }),
+    );
+    expect(parsed).toBeNull();
+  });
+
+  it('survives a malformed response instead of throwing', () => {
+    for (const junk of [null, undefined, {}, { meta: null }, { meta: { err: null } }, 'nope']) {
+      expect(parseCreateTransaction(junk)).toBeNull();
+    }
+  });
+});
+
+describe('the bonding-curve account settles both bonded and moved-on', () => {
+  // Byte layout validated 2026-08-02 against a control token whose creator has never moved.
+  const curveData = (complete: number, creator: Uint8Array) => {
+    const raw = Buffer.alloc(151);
+    raw[48] = complete;
+    Buffer.from(creator).copy(raw, 49);
+    return raw.toString('base64');
+  };
+  const key = (fill: number) => Uint8Array.from({ length: 32 }, () => fill);
+
+  it('reads the complete flag and the current creator from one account', () => {
+    const state = readCurveState(curveData(1, key(7)));
+    expect(state?.complete).toBe(true);
+    expect(state?.creator).toBe(base58Encode(key(7)));
+
+    expect(readCurveState(curveData(0, key(7)))?.complete).toBe(false);
+  });
+
+  it('returns null rather than a wrong answer for an absent or short account', () => {
+    expect(readCurveState('')).toBeNull();
+    expect(readCurveState(Buffer.alloc(40).toString('base64'))).toBeNull();
+  });
+
+  it('base58-encodes leading zero bytes as leading ones', () => {
+    const withZeros = new Uint8Array(32);
+    withZeros[31] = 1;
+    expect(base58Encode(withZeros)).toBe(`${'1'.repeat(31)}2`);
+    expect(base58Encode(new Uint8Array(32))).toBe('1'.repeat(32));
+  });
+});
+
+describe('merging a bounded creation walk with the ownership listing', () => {
+  const WALLET = 'WalletWalletWalletWalletWalletWalletWallet1';
+  const OTHER = 'OtherOtherOtherOtherOtherOtherOtherOtherOt1';
+  const covered = { fromMs: T0, toMs: T0 + 10 * DAY, exhausted: false };
+
+  const create = (mint: string, dayOffset: number, creator = WALLET) => ({
+    mint,
+    bondingCurve: `curve-${mint}`,
+    creator,
+    createdAtMs: T0 + dayOffset * DAY,
+    signature: `sig-${mint}`,
+  });
+  const listed = (mint: string, dayOffset: number, completed = false) => ({
+    mint,
+    deployedAtMs: T0 + dayOffset * DAY,
+    completed,
+  });
+
+  it('counts the launches the ownership surface hid, which is the whole point', () => {
+    // Two created inside the window; ownership shows only one of them, because the other's creator
+    // record moved on. That is the `maxxing` case, and it is the launch worth having.
+    const merged = mergeHistories({
+      creates: [create('kept', 1), create('handedOn', 2)],
+      wallet: WALLET,
+      curves: new Map([
+        ['kept', { complete: false, creator: WALLET }],
+        ['handedOn', { complete: true, creator: OTHER }],
+      ]),
+      listed: [listed('kept', 1)],
+      covered,
+    });
+
+    expect(merged.createdInWindow).toBe(2);
+    expect(merged.listedInWindow).toBe(1);
+    expect(merged.hiddenByOwnership).toBe(1);
+    expect(merged.movedCreator).toBe(1);
+    // And the hidden one is the bonded one, so the rate moves further than the count does: the
+    // ownership reading would have said 0/1, the truth is 1/2.
+    expect(merged.records.filter((r) => r.completed)).toHaveLength(1);
+    expect(merged.records).toHaveLength(2);
+  });
+
+  it('counts tokens the wallet owns but did not create, the opposite error', () => {
+    const merged = mergeHistories({
+      creates: [create('mine', 1)],
+      wallet: WALLET,
+      curves: new Map([['mine', { complete: false, creator: WALLET }]]),
+      listed: [listed('mine', 1), listed('acquired', 3)],
+      covered,
+    });
+    expect(merged.notCreatedByWallet).toBe(1);
+    expect(merged.hiddenByOwnership).toBe(0);
+    // Inside the window the walk is authoritative, so the acquired token is not a launch.
+    expect(merged.records).toHaveLength(1);
+  });
+
+  it('carries the ownership listing over OUTSIDE the covered window and says how much', () => {
+    // A walk that covered two days must not turn a long history into a two-day one and fail the
+    // deployer on sample size. That is the same invisible false rejection from the other end.
+    const merged = mergeHistories({
+      creates: [create('recent', 1)],
+      wallet: WALLET,
+      curves: new Map([['recent', { complete: true, creator: WALLET }]]),
+      listed: [listed('recent', 1), listed('old', -40, true), listed('older', -90)],
+      covered,
+    });
+    expect(merged.listedOutsideWindow).toBe(2);
+    expect(merged.records).toHaveLength(3);
+    expect(measureCompletion(merged.records).completed).toBe(2);
+  });
+
+  it('ignores creations by other wallets that shared the walked index', () => {
+    const merged = mergeHistories({
+      creates: [create('mine', 1), create('strangers', 2, OTHER)],
+      wallet: WALLET,
+      curves: new Map(),
+      listed: [],
+      covered,
+    });
+    expect(merged.createdInWindow).toBe(1);
+  });
+
+  it('falls back to the ownership listing when a launch\'s curve could not be read', () => {
+    // The curve byte is authoritative; the listing's own `complete` flag is a weaker but
+    // well-founded second source — the same field a vendor mirror of agreed with our tape 67/67.
+    // Scoring straight to not-bonded would deflate the very rate this reading exists to widen.
+    const merged = mergeHistories({
+      creates: [create('readable', 1), create('unread', 2)],
+      wallet: WALLET,
+      curves: new Map([['readable', { complete: false, creator: WALLET }]]),
+      listed: [listed('readable', 1), listed('unread', 2, true)],
+      covered,
+    });
+    expect(merged.bondedFromCurve).toBe(1);
+    expect(merged.bondedFromListing).toBe(1);
+    expect(merged.bondedUndecidable).toBe(0);
+    expect(merged.records.filter((r) => r.completed)).toHaveLength(1);
+    expect(measureCompletion(merged.records).completed).toBe(1);
+  });
+
+  it('leaves a launch UNDECIDABLE when neither source can answer, and says so', () => {
+    // Not hypothetical: a launch HIDDEN from the ownership listing has no row by definition, and
+    // that is exactly the launch this whole route exists to find. Counting it as a failure would
+    // reintroduce the invisible false rejection at the last step.
+    const merged = mergeHistories({
+      creates: [create('hidden', 1)],
+      wallet: WALLET,
+      curves: new Map(),
+      listed: [],
+      covered,
+    });
+    expect(merged.bondedUndecidable).toBe(1);
+    expect(merged.bondedFromCurve).toBe(0);
+    expect(merged.bondedFromListing).toBe(0);
+    // Still counted as not-bonded so the rate can only be understated — but the reading is now
+    // recognisably unmeasured rather than a confident rejection.
+    expect(merged.records[0]?.completed).toBe(false);
+  });
+
+  it('reconciles the three bonded-provenance counts with the launch count, always', () => {
+    const merged = mergeHistories({
+      creates: [create('curve', 1), create('viaListing', 2), create('neither', 3)],
+      wallet: WALLET,
+      curves: new Map([['curve', { complete: true, creator: WALLET }]]),
+      listed: [listed('viaListing', 2, true), listed('old', -40, true), listed('older', -90)],
+      covered,
+    });
+    expect(merged.bondedFromCurve + merged.bondedFromListing + merged.bondedUndecidable).toBe(
+      merged.records.length,
+    );
+    expect(merged.bondedUndecidable).toBe(1);
+  });
+
+  it('does not let a duplicated listing row drive the under-count negative', () => {
+    // `overlap` counts listing rows against a set of distinct created mints, so a mint the endpoint
+    // served twice — the same row reached from two offsets while the deployer launched again — used
+    // to make overlap exceed createdInWindow. This measurement sizes a bias; it cannot carry one.
+    const merged = mergeHistories({
+      creates: [create('dup', 1)],
+      wallet: WALLET,
+      curves: new Map([['dup', { complete: false, creator: WALLET }]]),
+      listed: [listed('dup', 1), listed('dup', 1), listed('dup', 1)],
+      covered,
+    });
+    expect(merged.listedInWindow).toBe(1);
+    expect(merged.hiddenByOwnership).toBe(0);
+    expect(merged.hiddenByOwnership).toBeGreaterThanOrEqual(0);
+    expect(merged.notCreatedByWallet).toBe(0);
+    expect(merged.records).toHaveLength(1);
+  });
+
+  it('keeps an in-window listing row when the walk left transactions unresolved', () => {
+    // "Inside the window the walk is authoritative" holds only when unresolvedTransactions is 0.
+    // A getTransaction that never came back may have been a create, so relabelling its listing row
+    // "acquired" and dropping it would delete a real launch — and its bonded flag — from BOTH sides
+    // of the gate's fraction.
+    const input = {
+      creates: [create('seen', 1)],
+      wallet: WALLET,
+      curves: new Map([['seen', { complete: false, creator: WALLET }]]),
+      listed: [listed('seen', 1), listed('missed', 3, true)],
+      covered,
+    };
+
+    const exact = mergeHistories(input);
+    expect(exact.windowExact).toBe(true);
+    expect(exact.notCreatedByWallet).toBe(1);
+    expect(exact.listedInWindowCarried).toBe(0);
+    expect(exact.records).toHaveLength(1);
+
+    const partial = mergeHistories({ ...input, unresolvedTransactions: 2 });
+    expect(partial.windowExact).toBe(false);
+    expect(partial.listedInWindowCarried).toBe(1);
+    // Carried, not reclassified — and notCreatedByWallet must not be inflated by it either.
+    expect(partial.notCreatedByWallet).toBe(0);
+    expect(partial.records).toHaveLength(2);
+    expect(measureCompletion(partial.records).completed).toBe(1);
+  });
+});
+
+describe('the Solana RPC client is bounded the same way the keyed one is', () => {
+  const okBody = (result: unknown) => ({
+    ok: true,
+    status: 200,
+    json: async () => ({ jsonrpc: '2.0', id: 0, result }),
+  });
+
+  it('refuses to exceed its ceiling', async () => {
+    const fetchImpl = vi.fn(async () => okBody('x')) as unknown as typeof fetch;
+    const rpc = new SolanaRpcClient({ maxRequests: 2, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    await rpc.call('getSlot', []);
+    await rpc.call('getSlot', []);
+    await expect(rpc.call('getSlot', [])).rejects.toThrow(CeilingReached);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a 429 with backoff, and every attempt counts against the ceiling', async () => {
+    // The opposite of the keyed client, where 429 means a metered allowance is spent and retrying
+    // just spends it again. On a free public endpoint it means slow down.
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls += 1;
+      return calls < 3 ? { ok: false, status: 429, json: async () => ({}) } : okBody('done');
+    }) as unknown as typeof fetch;
+    const slept: number[] = [];
+    const rpc = new SolanaRpcClient({
+      maxRequests: 10,
+      minIntervalMs: 0,
+      backoffMs: 100,
+      fetchImpl,
+      sleepImpl: async (ms) => {
+        slept.push(ms);
+      },
+    });
+
+    expect(await rpc.call('getSlot', [])).toBe('done');
+    expect(rpc.issued()).toBe(3);
+    expect(rpc.loadShedEvents()).toBe(2);
+    expect(slept).toEqual([100, 200]);
+  });
+
+  it('a 429 storm still cannot outlast the ceiling', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 429, json: async () => ({}) })) as unknown as typeof fetch;
+    const rpc = new SolanaRpcClient({
+      maxRequests: 3,
+      minIntervalMs: 0,
+      backoffMs: 0,
+      maxRetriesPerRequest: 99,
+      fetchImpl,
+      sleepImpl: async () => {},
+    });
+    await expect(rpc.call('getSlot', [])).rejects.toThrow(CeilingReached);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('treats a null inside a batch as retry, never as absent', async () => {
+    // The public RPC sheds load by returning nulls inside batches rather than erroring. A caller
+    // that reads one as an empty answer silently loses records.
+    let round = 0;
+    const fetchImpl = vi.fn(async () => {
+      round += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () =>
+          round === 1
+            ? [
+                { id: 0, result: 'a' },
+                { id: 1, result: null },
+              ]
+            : [{ id: 0, result: 'b' }],
+      };
+    }) as unknown as typeof fetch;
+
+    const rpc = new SolanaRpcClient({ maxRequests: 5, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const out = await rpc.batch([
+      { method: 'getTransaction', params: ['a'] },
+      { method: 'getTransaction', params: ['b'] },
+    ]);
+    expect(out).toEqual(['a', 'b']);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('announces every request it issues, retries included, so a caller can prove liveness', async () => {
+    // This is the leg that dominates a default run's wall clock — ~13.5 hours worst case — and a
+    // silent terminal is what gets a healthy run killed. The client reports each request; deciding
+    // how often to SHOW one is the caller's, because a line per request here is ~20,000 lines.
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls += 1;
+      return calls === 1
+        ? { ok: false, status: 429, json: async () => ({}) }
+        : { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: 0, result: 'ok' }) };
+    }) as unknown as typeof fetch;
+
+    const labels: string[] = [];
+    const rpc = new SolanaRpcClient({
+      maxRequests: 10,
+      minIntervalMs: 0,
+      backoffMs: 0,
+      fetchImpl,
+      sleepImpl: async () => {},
+      onRequest: (label) => labels.push(label),
+    });
+
+    await rpc.call('getSignaturesForAddress', []);
+    await rpc.batch([{ method: 'getTransaction', params: ['a'] }]);
+    // The shed attempt counts against the ceiling, so it has to be visible too — a heartbeat that
+    // stalls during a 429 storm reads exactly like the hang it exists to rule out.
+    expect(labels).toEqual([
+      'getSignaturesForAddress',
+      'getSignaturesForAddress',
+      'batch:getTransaction',
+    ]);
+    expect(labels).toHaveLength(rpc.issued());
+  });
+
+  it('refuses a batch larger than the measured cap', async () => {
+    const fetchImpl = vi.fn(async () => okBody('x')) as unknown as typeof fetch;
+    const rpc = new SolanaRpcClient({ maxRequests: 5, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    await expect(
+      rpc.batch(Array.from({ length: 9 }, () => ({ method: 'getTransaction', params: [] }))),
+    ).rejects.toThrow(RangeError);
+  });
+});
+
+describe('the creation walk is bounded, and says which bound bit', () => {
+  /** A fake endpoint holding one page of signatures and the transactions behind them. */
+  function fakeRpc(pages: { signature: string; blockTime: number; err: unknown }[][], txs: Record<string, unknown>) {
+    return vi.fn(async (_url: unknown, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      const one = Array.isArray(body) ? body[0] : body;
+      if (one.method === 'getSignaturesForAddress') {
+        const before = one.params[1]?.before;
+        const idx = before === undefined ? 0 : pages.findIndex((p) => p[p.length - 1]?.signature === before) + 1;
+        return { ok: true, status: 200, json: async () => ({ id: 0, result: pages[idx] ?? [] }) };
+      }
+      if (one.method === 'getMultipleAccounts') {
+        return { ok: true, status: 200, json: async () => ({ id: 0, result: { value: [] } }) };
+      }
+      const rows = (Array.isArray(body) ? body : [body]).map((r: { id: number; params: string[] }) => ({
+        id: r.id,
+        result: txs[r.params[0] as string] ?? null,
+      }));
+      return { ok: true, status: 200, json: async () => (Array.isArray(body) ? rows : rows[0]) };
+    }) as unknown as typeof fetch;
+  }
+
+  const sig = (n: number, err: unknown = null) => ({ signature: `s${n}`, blockTime: 1_700_000_000 + n, err });
+
+  it('inspects only succeeded signatures — creations never fail', async () => {
+    const page = [sig(3), sig(2, { InstructionError: [0, 'x'] }), sig(1)];
+    const fetchImpl = fakeRpc([page], { s3: createTx({ blockTime: 1_700_000_003 }), s1: createTx() });
+    const rpc = new SolanaRpcClient({ maxRequests: 20, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+
+    const walk = await readCreatedHistory(rpc, DEV, {
+      maxSignaturePages: 5,
+      maxTransactions: 50,
+      txBatchSize: 1,
+    });
+    expect(walk.signaturesScanned).toBe(3);
+    expect(walk.signaturesSucceeded).toBe(2);
+    expect(walk.transactionsInspected).toBe(2);
+    expect(walk.creates).toHaveLength(2);
+    expect(walk.stopReason).toBe('index-exhausted');
+    expect(walk.covered.exhausted).toBe(true);
+  });
+
+  it('stops at the transaction cap and reports the window it actually covered', async () => {
+    const page = Array.from({ length: 6 }, (_, i) => sig(i));
+    const fetchImpl = fakeRpc([page], {});
+    const rpc = new SolanaRpcClient({ maxRequests: 50, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+
+    const walk = await readCreatedHistory(rpc, DEV, {
+      maxSignaturePages: 5,
+      maxTransactions: 3,
+      txBatchSize: 1,
+    });
+    expect(walk.stopReason).toBe('transaction-cap');
+    expect(walk.covered.exhausted).toBe(false);
+    // The floor only advances once a page is fully inspected, so an abandoned page must not widen
+    // the window it did not cover.
+    expect(walk.covered.fromMs).toBe(0);
+  });
+
+  it('keeps what it paid for when the request ceiling bites', async () => {
+    const page = [sig(2), sig(1)];
+    const fetchImpl = fakeRpc([page], { s2: createTx() });
+    // 3: one for the signature page, one for a transaction, one held back for the curve read.
+    const rpc = new SolanaRpcClient({ maxRequests: 3, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+
+    const walk = await readCreatedHistory(rpc, DEV, {
+      maxSignaturePages: 5,
+      maxTransactions: 50,
+      txBatchSize: 1,
+    });
+    expect(walk.stopReason).toBe('request-ceiling');
+    expect(walk.creates).toHaveLength(1);
+    // This fixture's curve account comes back empty, so the launch still counts as not-bonded
+    // downstream. That has to be visible: a silently deflated completion rate is the failure mode
+    // this lane removes.
+    expect(walk.curvesUnread).toBe(1);
+  });
+
+  it('labels an upstream failure as a stop, not as an empty history', async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch;
+    const rpc = new SolanaRpcClient({
+      maxRequests: 20,
+      minIntervalMs: 0,
+      backoffMs: 0,
+      maxRetriesPerRequest: 1,
+      fetchImpl,
+      sleepImpl: async () => {},
+    });
+    const walk = await readCreatedHistory(rpc, DEV, {
+      maxSignaturePages: 2,
+      maxTransactions: 10,
+      txBatchSize: 1,
+    });
+    expect(walk.stopReason).toBe('upstream-error');
+    expect(walk.stopDetail).toMatch(/503/);
+    expect(walk.covered.exhausted).toBe(false);
+  });
+
+  it('never reads a shed or errored signature page as the end of the index', async () => {
+    // `call` returns null both when the public RPC sheds load and when the JSON-RPC envelope
+    // carries an `error` instead of a `result`. Reading either as an empty page would record page 2
+    // of 200 as the wallet's WHOLE history under `index-exhausted` — a ceiling presented as a
+    // measurement, which is the one output this lane exists to make impossible.
+    for (const shed of [
+      { id: 0, error: { code: -32603, message: 'load shed' } },
+      { id: 0, result: null },
+    ]) {
+      // A FULL page, so the walk carries on to a second one instead of stopping on a short page.
+      // Every signature failed, so no getTransaction is spent reaching the shed page.
+      const first = Array.from({ length: 1000 }, (_, i) => sig(1000 - i, { InstructionError: [0, 'x'] }));
+      let served = 0;
+      const fetchImpl = vi.fn(async (_url: unknown, init: RequestInit) => {
+        const body = JSON.parse(String(init.body));
+        const one = Array.isArray(body) ? body[0] : body;
+        if (one.method === 'getSignaturesForAddress') {
+          served += 1;
+          // The first page resolves; every later attempt sheds, including the retry.
+          return served === 1
+            ? { ok: true, status: 200, json: async () => ({ id: 0, result: first }) }
+            : { ok: true, status: 200, json: async () => shed };
+        }
+        if (one.method === 'getMultipleAccounts') {
+          return { ok: true, status: 200, json: async () => ({ id: 0, result: { value: [] } }) };
+        }
+        return { ok: true, status: 200, json: async () => ({ id: one.id ?? 0, result: null }) };
+      }) as unknown as typeof fetch;
+
+      const rpc = new SolanaRpcClient({
+        maxRequests: 40,
+        minIntervalMs: 0,
+        fetchImpl,
+        sleepImpl: async () => {},
+      });
+      const walk = await readCreatedHistory(rpc, DEV, {
+        maxSignaturePages: 10,
+        maxTransactions: 100,
+        txBatchSize: 1,
+      });
+
+      expect(walk.stopReason).not.toBe('index-exhausted');
+      expect(walk.stopReason).toBe('upstream-error');
+      expect(walk.covered.exhausted).toBe(false);
+      expect(walk.stopDetail).toMatch(/load-shedding|no result/i);
+      // The page was RETRIED before the walk gave up on it: a null is retry, never absent.
+      expect(served).toBeGreaterThanOrEqual(3);
+    }
+  });
+
+  it('still calls a genuinely empty page the end of the index', async () => {
+    // The distinction the fix rests on: an empty ARRAY is a real end of index, an unresolved page
+    // is not. Collapsing the two in either direction loses a real property of the walk.
+    const fetchImpl = fakeRpc([[sig(2), sig(1)]], { s2: createTx(), s1: createTx() });
+    const rpc = new SolanaRpcClient({ maxRequests: 20, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreatedHistory(rpc, DEV, {
+      maxSignaturePages: 5,
+      maxTransactions: 50,
+      txBatchSize: 1,
+    });
+    expect(walk.stopReason).toBe('index-exhausted');
+    expect(walk.covered.exhausted).toBe(true);
+  });
+});
+
+describe('the merge compares only over the range it may compare over', () => {
+  const WALLET2 = 'Wallet2Wallet2Wallet2Wallet2Wallet2Wallet21';
+
+  it('does not invent a gap from creates found below the covered floor', () => {
+    // A walk that abandons a page part-way proves launches older than `covered.fromMs`. Counting
+    // one of those as "hidden" while its listing row counts as outside-window would manufacture an
+    // under-count that is not there — and this measurement exists to size a bias, so a bias in the
+    // measurement is the one defect it cannot have.
+    const covered = { fromMs: T0, toMs: T0 + 10 * DAY, exhausted: false };
+    const merged = mergeHistories({
+      creates: [
+        { mint: 'inside', bondingCurve: 'c1', creator: WALLET2, createdAtMs: T0 + DAY, signature: 's1' },
+        { mint: 'below', bondingCurve: 'c2', creator: WALLET2, createdAtMs: T0 - DAY, signature: 's2' },
+      ],
+      wallet: WALLET2,
+      curves: new Map(),
+      listed: [
+        { mint: 'inside', deployedAtMs: T0 + DAY, completed: false },
+        { mint: 'below', deployedAtMs: T0 - DAY, completed: false },
+      ],
+      covered,
+    });
+
+    expect(merged.createdInWindow).toBe(1);
+    expect(merged.listedInWindow).toBe(1);
+    expect(merged.hiddenByOwnership).toBe(0);
+    // Both are still real launches, proven by their create transactions.
+    expect(merged.records).toHaveLength(2);
+  });
+});
+
+describe('the two gap counts are set differences, never a subtraction', () => {
+  const W3 = 'Wallet3Wallet3Wallet3Wallet3Wallet3Wallet31';
+
+  it('a launch on the window boundary cannot produce a negative under-count', () => {
+    // The two sides are timestamped by different sources — a create's on-chain `blockTime` and a
+    // listing row's `created_timestamp` — so one launch can be in-window on one side and out on
+    // the other. Deriving `hiddenByOwnership` by subtracting the overlap out of a total would then
+    // report a negative gap, i.e. a bias in the instrument built to measure a bias.
+    const covered = { fromMs: T0, toMs: T0 + 10 * DAY, exhausted: false };
+    const merged = mergeHistories({
+      creates: [
+        // Created one millisecond BELOW the floor; its listing row is one millisecond above it.
+        { mint: 'edge', bondingCurve: 'c', creator: W3, createdAtMs: T0 - 1, signature: 's' },
+      ],
+      wallet: W3,
+      curves: new Map(),
+      listed: [{ mint: 'edge', deployedAtMs: T0 + 1, completed: false }],
+      covered,
+    });
+
+    expect(merged.hiddenByOwnership).toBeGreaterThanOrEqual(0);
+    expect(merged.notCreatedByWallet).toBeGreaterThanOrEqual(0);
+    // And the launch is still counted exactly once, from its create transaction.
+    expect(merged.records).toHaveLength(1);
+  });
+
+  it('never reports a launch it holds the create transaction for as acquired', () => {
+    // Same clock mismatch, the other diagnostic. An abandoned page still PROVES the create, so a
+    // mint below `covered.fromMs` whose listing row is dated inside the window is a launch this
+    // wallet demonstrably made — calling it "acquired by somebody else" contradicts evidence in
+    // hand, and it is the ownership surface's own timestamp doing the contradicting.
+    const covered = { fromMs: T0, toMs: T0 + 10 * DAY, exhausted: false };
+    const merged = mergeHistories({
+      creates: [
+        { mint: 'proven', bondingCurve: 'c', creator: W3, createdAtMs: T0 - DAY, signature: 's' },
+      ],
+      wallet: W3,
+      curves: new Map([['proven', { complete: true, creator: W3 }]]),
+      listed: [{ mint: 'proven', deployedAtMs: T0 + DAY, completed: true }],
+      covered,
+    });
+
+    expect(merged.windowExact).toBe(true);
+    expect(merged.notCreatedByWallet).toBe(0);
+    expect(merged.listedInWindow).toBe(1);
+    expect(merged.records).toHaveLength(1);
+  });
+});
+
+describe('the walk keeps enough budget to classify what it found', () => {
+  it('stops before it can no longer read the curves of the launches it found', async () => {
+    // Spending the last request on one more creation buys a launch that must then be scored as
+    // not-bonded, because its curve was never read. That deflates the completion rate the walk
+    // exists to widen — a correction that makes the number worse is not a correction.
+    const page = Array.from({ length: 20 }, (_, i) => ({
+      signature: `s${i}`,
+      blockTime: 1_700_000_000 + i,
+      err: null,
+    }));
+    const tx = {
+      blockTime: 1_700_000_000,
+      meta: { err: null, logMessages: ['Program log: Instruction: CreateV2'] },
+      transaction: {
+        signatures: ['sig'],
+        message: {
+          accountKeys: [
+            { pubkey: DEV, signer: true, writable: true },
+            { pubkey: MINT, signer: true, writable: true },
+          ],
+          instructions: [{ programId: PUMP_PROGRAM_ID, accounts: [MINT, 'meta', CURVE, DEV] }],
+        },
+      },
+    };
+
+    let sawGetMultipleAccounts = false;
+    const fetchImpl = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      const one = Array.isArray(body) ? body[0] : body;
+      if (one.method === 'getSignaturesForAddress') {
+        return { ok: true, status: 200, json: async () => ({ id: 0, result: page }) };
+      }
+      if (one.method === 'getMultipleAccounts') {
+        sawGetMultipleAccounts = true;
+        return { ok: true, status: 200, json: async () => ({ id: 0, result: { value: [] } }) };
+      }
+      return { ok: true, status: 200, json: async () => ({ id: one.id ?? 0, result: tx }) };
+    }) as unknown as typeof fetch;
+
+    const rpc = new SolanaRpcClient({ maxRequests: 6, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreatedHistory(rpc, DEV, {
+      maxSignaturePages: 5,
+      maxTransactions: 100,
+      txBatchSize: 1,
+    });
+
+    expect(walk.stopReason).toBe('request-ceiling');
+    expect(walk.creates.length).toBeGreaterThan(0);
+    expect(sawGetMultipleAccounts, 'the curve read must still have been affordable').toBe(true);
   });
 });
 

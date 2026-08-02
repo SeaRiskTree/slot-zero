@@ -21,6 +21,10 @@ That splits in two, and only the first half is here:
 Room to enter is not room to leave, and the two are scored **separately and never collapsed** — no
 exit signal reaches any number Stage 2 produces. See [Scope](#scope-what-is-and-is-not-built).
 
+The denominator of that question is **launches the wallet created**, not tokens it owns now. Those
+are different sets and the difference is not neutral — see
+[Which history the gate counts](#which-history-the-gate-counts).
+
 ## Run it
 
 No agent, no build step, no dependencies. Node 20+.
@@ -35,12 +39,22 @@ node tools/deployer-screen/screen.mjs --dry-run
 # A real run. Needs a key (see below). Stage 2 is ON by default. Leave --candidates unset: the
 # default grades everything enumeration surfaces, up to the budget. Passing a number below the
 # ceiling silently truncates coverage, which is exactly how the first elite run graded 12 of the
-# 22 wallets it seeded.
+# 22 wallets it seeded. Budget HOURS, not minutes — up to about 15 at the candidate cap: the
+# creation-derived history is walked from on-chain create transactions, and at the pinned bounds
+# that walk alone is ~13.5 hours worst case. --dry-run prints the arithmetic for your own flags.
 node tools/deployer-screen/screen.mjs --tier elite \
   --consistency --out tools/deployer-screen/runs/$(date +%F).json
 
+# Bound the run instead. The RPC walk is N x 100 x 2.5s, so this is ~40 minutes, not ~13.5 hours.
+# It truncates coverage, and the record says so.
+node tools/deployer-screen/screen.mjs --tier elite --candidates 12
+
 # The competence gate alone, which answers nothing about whether a window is enterable.
 node tools/deployer-screen/screen.mjs --no-stage2
+
+# The old, fast, BIASED reading — it skips the creation walk, so under an hour rather than ~15.
+# Stamped historySource: "ownership-only" in the record, because the bias must travel with it.
+node tools/deployer-screen/screen.mjs --tier elite --ownership-only
 
 node tools/deployer-screen/screen.mjs --help
 ```
@@ -69,6 +83,128 @@ learn the same thing is the cost being avoided. Two rules keep that from doing d
   invocation is `--out runs/$(date +%F).json`, so a same-day retry that hits a 401 or a 429 would
   otherwise overwrite that day's good record with `candidates: []`. Both artefacts survive, because
   run records are the grading lane's declared input.
+
+## Which history the gate counts
+
+Every surface pump.fun and its resellers publish answers **"which tokens does this wallet OWN
+NOW"**. The gate needs **"which tokens did this wallet CREATE"**. They come apart because on
+pump.fun the owner collects the token's creator fees, so ownership is a live economic position that
+can be sold, handed to a community takeover, or migrated into a fee-sharing config.
+
+**The ones worth handing on are the winners.** So the ownership reading understates a dev's launch
+count, understates its *bonded* count by more, and therefore **scores the better dev worse**. A dev
+that creates 20, bonds 9, then hands on 3 of the winners reads as 17 launches / 6 bonded = 35%
+instead of the true 45%. A gate set at 40% rejects it — and **a false rejection is invisible**: the
+wallet is dropped, never researched, and nothing downstream contradicts it. A false *acceptance* at
+least gets caught by the beatability screen later. The bias runs the wrong way.
+
+### The premise, observed rather than inherited
+
+Mint `32CdQdBUxbCsLy5AUHWmyidfwhgGUr9N573NBUrDpump` — `maxxing`, ATH $7.72M, the single best launch
+in our subject deployer's 239-launch record — was created by `7ufmve7Z…` in transaction
+`64pCziaL…` (slot 383821204, 2025-12-01, pump.fun `CreateV2`, sole non-mint signer `7ufmve7Z…`).
+Today `frontend-api-v3/coins/{mint}` reports `creator` and `cto_address` as `CnV5TnQr…`, and the
+bonding curve's own `creator` field reads `9v45QaQt…`, a fee-sharing config that is not a wallet at
+all. The second move is transaction `5fjZDdFQ…` (slot 398086225, 2026-02-04,
+`CreateFeeSharingConfig` → `MigrateBondingCurveCreator` → `MigratePoolCoinCreator`).
+
+`?creator=7ufmve7Z…` cannot return that mint. It is 1 of 239 launches — and it is number 1 by ATH,
+by a factor of 8 over the next.
+
+### There is no keyless index by original creator
+
+Probed 2026-08-02, all of these answer *current* owner or do not exist:
+
+| surface | result |
+|---|---|
+| `frontend-api-v3/coins?creator=` | current creator |
+| `frontend-api-v3/coins/{mint}` → `creator`, `cto_address` | current |
+| `advanced-api-v2/coins/metadata/{mint}` → `dev` | current — reads the takeover wallet for `maxxing` |
+| `advanced-api-v2/coins/list?dev=` / `?devAddress=` | filter silently **ignored**, not applied |
+| `frontend-api-v3/coins/user-created-coins/{w}`, `/coins/created-by/{w}`, `swap-api/v2/creators/{w}/coins` | 404 |
+
+So creation is only recoverable from the create transaction, and the only keyless index that
+reaches one is the wallet's own signature index. `pumpfun.mjs` → `readCreatedHistory` walks it;
+`creation.mjs` parses it.
+
+### What that costs, measured
+
+`getSignaturesForAddress` returns *referencing* transactions, and for a pump.fun deployer the index
+is dominated by strangers' **failed** trades — the buy and sell instructions take the creator
+account. Creations always succeed, so filtering `err === null` discards most of the index for free.
+The **success fraction is the entire cost model, and it is not a constant**: across the twelve
+wallets of `runs/2026-07-29-elite.json` it ranged from **1.7% to 99.7%**, putting a full history
+between **170 requests (~7 minutes)** and **127,000 (~84 hours)**. All twelve would be ~153 hours.
+
+Sustained throughput is **0.42 requests/second**, and **batching is actively harmful** — the same
+transactions took 58s at batch=1 with *zero* load-shed events, 76s at batch=4 with 7, and 110s at
+batch=8 with 11. The endpoint weights each batch entry against its limiter. This corrects
+`report.md` §9.4's "batches of 5–8 sustainable"; the measurement lives in `thresholds.json` →
+`creation_walk.txBatchSize`.
+
+Because of that, the walk covers a **bounded window backwards from now**. Inside it every creation
+is found; outside it the ownership listing is carried over unchanged and the record says how many
+rows that is. `stopReason: "index-exhausted"` is the only value under which the window is the
+wallet's whole history.
+
+Three rules keep that window from claiming more than it covers.
+
+- **A null page is a retry, never an end of index.** `getSignaturesForAddress` returns `null` both
+  when the public RPC sheds load and when the JSON-RPC envelope carries an `error` — neither means
+  the wallet's index ran out. The page is retried once, and a page that still does not resolve ends
+  the walk on `upstream-error` with `wholeHistory: false`. Reading one as an empty page would have
+  recorded page 2 of 200 as the wallet's whole history under `index-exhausted`: a ceiling presented
+  as a measurement. Only a genuinely **empty array** is an exhausted index.
+- **"Inside the window the walk is authoritative" holds only when `unresolvedTransactions` is 0.**
+  A `getTransaction` that never came back may have been a create, so under a non-zero count an
+  in-window listing row the walk did not see is **carried over as a launch** rather than relabelled
+  acquired and dropped — dropping it would delete a real launch, and its bonded flag, from both
+  sides of the gate's fraction. `creation.windowExact` says which case a row is,
+  `listedInWindowCarried` says how many rows it moved.
+- **An unread bonding curve is not a failed launch.** Bonded status resolves in a stated order and
+  the record counts which source answered: `bondedFromCurve` (the on-chain `complete` byte,
+  authoritative), then `bondedFromListing` (the ownership listing's own `complete` flag — the same
+  field a vendor mirror of agreed with our tape 67/67), then `bondedUndecidable`. The three sum to
+  the launch count. A launch **hidden from the ownership listing has no row by definition**, so a
+  failed curve read on exactly the launch this route exists to find is undecidable rather than
+  quietly scored as a failure.
+
+**Any undecidable launch makes the whole reading unmeasured**, and so does an ownership listing that
+could not be read at all. The verdict is then `gate-unmeasured` — a third value in the gate's
+vocabulary, printed under its own `GATE UNMEASURED — THIS IS NOT A NEGATIVE RESULT` heading and
+never folded in with the rejections. A `gate-failed` carrying an ordinary rationale over a history
+that was never actually measured is precisely the invisible false rejection this whole reading
+exists to remove, so the state lives in the verdict and not only in the wording beside it.
+
+### What it turned out to be worth
+
+**A measured zero, on every wallet that could be checked.** Five wallets have both readings: four
+show a gap of exactly zero launches, one — our subject deployer, where the answer is exact and
+complete — shows one launch in 239. No verdict changed. The reason is that creator records move
+*often* but almost always into a fee-sharing config pump.fun still attributes to the wallet; only a
+genuine handover removes the token, and that is rare. Numbers, distribution and per-wallet costs
+are in [CREATION-DERIVED.md](./CREATION-DERIVED.md).
+
+The correction is kept because it turns an unbounded unknown into a bounded, recorded one — not
+because it moved a rate. The day it stops being zero, the run record will show it.
+
+### Reading the record
+
+Every candidate row carries both readings and the verdict each produced: `tokens`/`completionRate`
+(what the gate read), `vendorTokens`/`vendorCompletionRate`/`vendorVerdict` (the old
+ownership-derived reading, kept whole), `verdictChanged`, and `creation` with the walk's coverage,
+bounds and per-direction counts. Findings from the first measurement are in
+[CREATION-DERIVED.md](./CREATION-DERIVED.md).
+
+`verdictChanged` compares two **results**, so it is false whenever `verdict` is `gate-unmeasured`:
+the absence of an answer is not a different answer, and counting it as one would corrupt the very
+gap figure the row exists to keep honest. The state is in `verdict`.
+
+One field is easy to misread. `creation.movedCreator` counts launches whose **on-chain** curve
+creator is no longer the wallet. That is **not** the same as being absent from the ownership
+listing: a fee-sharing migration moves the on-chain field to a config PDA while pump.fun still
+lists the token under the wallet. `hiddenByOwnership` is the count that matters for the bias, and
+it is measured directly rather than inferred from `movedCreator`.
 
 ## The credential
 
@@ -242,14 +378,22 @@ are **not** like-for-like. Do not re-derive those figures here.
 - Per-token records are held **in memory only**, for the duration of one run, and dropped when the
   process exits. There is no cache, no database, and no backfill.
 - Nothing is written to disk unless `--out` is passed. Persistence is opt-in.
-- What a run record contains, per wallet — **fourteen fields, all of them ours**: `wallet`,
-  `seededBy`, `tokens`, `completed`, `completionRate`, `spanDays`, `windowFirstDeploy`,
-  `windowLastDeploy`, `vendorPageCapped`, `verdict`, `rationale`, `gateReasons`, `consistency`, and
-  `entry`. That set is asserted by `test/deployer-screen.test.ts` → *"a committed run record persists
-  derived fields only"*, against the committed records themselves, so this ToS-facing claim cannot
-  drift from the code. It is asserted as an **allowed set** rather than an exact list, because
-  committed records are evidence and are never retro-edited: the schema-1 record legitimately
-  predates `entry`. The claim being made is that nothing *outside* the set is ever written.
+- What a run record contains, per wallet — **twenty-three fields at schema 4, all of them ours**:
+  the thirteen of schema 1 (`wallet`, `seededBy`, `tokens`, `completed`, `completionRate`,
+  `spanDays`, `windowFirstDeploy`, `windowLastDeploy`, `vendorPageCapped`, `verdict`, `rationale`,
+  `gateReasons`, `consistency`), plus `entry` from schema 3, plus `historySource`,
+  `gateReadingPageCapped`, `vendorTokens`, `vendorCompleted`, `vendorCompletionRate`,
+  `vendorSpanDays`, `vendorVerdict`, `verdictChanged` and `creation`. The exact key set **per schema
+  version** is asserted by `test/deployer-screen.test.ts` → *"a committed run record persists
+  derived fields only"*, against the committed records themselves, and a second assertion checks the
+  projection this build writes matches the schema it declares — so this ToS-facing claim cannot
+  drift from the code, and a committed record is never retro-edited to fit a newer schema. The
+  schema-1 record legitimately predates `entry` and the creation fields; the claim being made is
+  that nothing *outside* each schema's set is ever written.
+- `creation` is counts and bounds only. The creation walk reads **mints** — it must, to reconcile
+  the two histories by identity rather than by counting — and they are held in memory for one run
+  and never written. They are also not vendor data: they come from the create transaction and from
+  pump.fun's own keyless endpoint, not from MadeOnSol.
 - What it does **not** contain: any mint, token name, symbol, market cap, bond timestamp,
   time-to-bond, or per-token row of any kind. Roughly 70 vendor records per wallet are read, reduced
   to one row of derived counts, and discarded. Verified on the committed run records — none of
@@ -440,16 +584,69 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 |---|---|---|
 | keyed request ceiling | 200 | The **whole** MadeOnSol Free-tier daily allowance. Captain's instruction, 2026-08-02: there is no free substitute for this data, so spend the allowance when spending it gets results. The earlier ceiling of 45 was this tool's own quarter-allowance caution and is **withdrawn** — do not re-derive it. |
 | candidate cap | 195 | 200 − 3 enumeration − 2 retry headroom. It is what the allowance leaves, not a judgement about how many deployers are worth grading, and it is above what the three seeds can surface — so a **default run grades everything it surfaces**. |
-| over-budget plan | refused before the first request | `3 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. |
+| over-budget plan | refused before the first request | `3 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. **The keyless plan is refused the same way**, and it matters more: the keyless work happens *after* the keyed allowance is spent, so a ceiling discovered half-way through wastes quota that was already paid. |
 | keyed pacing | 6.5s between request starts | Free tier bursts at ~10/min, and the allowance is **shared** with whatever else holds this key. |
-| keyless request ceiling, `frontend-api-v3` only | 600 | Sized to **cover** the candidate cap, not to bound it: the `--consistency` walk costs up to 3 pages per gate survivor, so 195 candidates cost 585 worst case and the remaining 15 are retry headroom. A ceiling below that stops the tool looking part-way through a run already paid for in keyed quota. It does not lean harder on pump.fun — the pacing below is unchanged, so what it buys is wall clock. |
+| keyless request ceiling, `frontend-api-v3` only | 1,400 | One client serves **two** passes on this host and the ceiling has to cover both. The gate reads the ownership listing it merges the creation window with, up to 4 pages **per candidate** — 195 × 4 = 780 — and `--consistency` then costs up to 3 pages per gate survivor, of which every candidate can be one: 195 × 3 = 585. So 1,365 worst case, and the remaining 35 are retry headroom. The earlier 600 was justified on the consistency pass alone and was already exceeded by gating at the default candidate cap. It does not lean harder on pump.fun — the pacing below is unchanged, so what it buys is wall clock. |
 | keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here, and it bounds a shared public resource rather than expressing our own caution, so the MadeOnSol relaxation does not touch it. The fill host is paced separately — see below. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does — but a 429, a 5xx or a timeout means the request was not served, so re-issuing it is nearer to one successful request than to two. Without it the caller re-runs the whole walk, which is worse for pump.fun too. A 4xx that is not a 429 is never retried: it is the endpoint's considered answer. |
+| Solana RPC ceiling | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. The creation-derived walk. Whichever bound bites is recorded per candidate. |
+| Solana RPC pacing | 2.5s | Measured: the nominally faster 1.4s was *slower* in wall-clock once 429 backoff is counted. Rate limiting is global across `getSignaturesForAddress` and `getTransaction`. |
+| `getTransaction` batch size | **1** | Measured harmful above 1 — see [Which history the gate counts](#which-history-the-gate-counts). |
+| RPC retries | 3 with exponential backoff, each attempt counted against the ceiling | Unlike the keyed client, a 429 here is load-shedding and not a verdict — but a 429 storm still cannot outlast the ceiling. |
 
-**A full default run takes about 40 minutes**, not 21: ~21 for the 198 keyed requests at 6.5s, plus
-~19.5 for 585 keyless pages at 2.0s when `--consistency` is passed. Both figures are in
-`thresholds.json` → `justification`. A run still going at the 25-minute mark has not hung.
+### How long a run takes, and how to bound it
+
+**A full default run at the 195-candidate cap is worst-cased in HOURS, not minutes — about 15 —
+and the creation walk is essentially all of it.** The arithmetic is `renderDryRun`'s, so `--dry-run`
+prints these same figures for whatever flags you actually pass:
+
+| leg | worst case | at its pinned pacing |
+|---|---|---|
+| keyed MadeOnSol | 3 + 195 = 198 requests | 6.5s → **~21 min** |
+| **Solana RPC, the creation walk** | 195 × 100 = **19,500** requests | 2.5s → **~13.5 hours** |
+| keyless `frontend-api-v3`, the gate's ownership listing | 195 × 4 = 780 requests | 2.0s → ~26 min |
+| keyless `frontend-api-v3`, `--consistency` | 195 × 3 = 585 requests | 2.0s → ~19.5 min |
+| keyless `swap-api`, Stage 2 | 3 × 8 × 18 = 432 requests | 7.0s → ~50 min |
+
+So: **~15 hours** for a default run, **~15.5** with `--consistency`. The earlier "about 47 minutes"
+predated the creation walk and counted only the keyed and `frontend-api-v3` legs; it is wrong by a
+factor of twenty and is withdrawn. **Do not kill a default run because it is still going after an
+hour.**
+
+**How to tell a live run from a hung one.** The keyed and `frontend-api-v3` legs print `→ GET …`
+once per request. The creation walk does not — at up to 100 requests per candidate across up to 195
+candidates that would be some twenty thousand lines — so it prints a **periodic heartbeat instead**:
+
+```
+    · 7ufmve7Z…: 1/100 RPC request(s) — getSignaturesForAddress
+    · 7ufmve7Z…: 10/100 RPC request(s) — batch:getTransaction
+    · 7ufmve7Z…: 20/100 RPC request(s) — batch:getTransaction
+```
+
+The first request of each candidate, then **every tenth** — so at the pinned 2.5s pacing a line
+roughly **every 25 seconds**, carrying that candidate's spend against its per-candidate ceiling.
+That counter, not a per-request one, is the liveness signal to watch. It is suppressed under
+`--json` so machine-readable output stays machine-readable.
+
+Typical is far below worst case and is not predictable from the wallet address: the walk's cost
+scales with the fraction of a wallet's signature index that *succeeded*, measured between 1.7% and
+99.7% (see [What that costs, measured](#what-that-costs-measured)), so one candidate can finish in
+seconds and the next can spend the whole per-candidate ceiling — a cheap candidate may print only
+its first heartbeat line before moving on. A run is not hung merely because it has been quiet for
+half a minute, and a candidate whose walk is retrying through a 429 storm can be quiet for longer.
+
+Two levers already exist, and this is what they are for:
+
+- **`--candidates N`** bounds the whole run — the RPC leg is `N × 100 × 2.5s`, so `--candidates 12`
+  is ~40 minutes of walking rather than ~13.5 hours. It truncates coverage, and the record says so.
+- **`--ownership-only`** skips the creation walk entirely, which is the ~13.5 hours, leaving a run
+  of well under an hour. Its reading is **biased towards rejection** — that is the defect this whole
+  lane exists to fix — and the record is stamped `historySource: "ownership-only"` so the bias
+  travels with the numbers rather than being forgotten.
+
+Every figure above is in `thresholds.json` → `justification`, and `--dry-run` prints the plan
+without fetching anything.
 
 The conditional in the instruction binds: ***"if it gets results"***. It licenses sizing a run by
 what the question needs. It does **not** license sweeping, idle retrying, or re-running to
@@ -530,13 +727,15 @@ only between pages would let a walk sitting at 17 spent requests start a page th
 finish at 20, and `3 × 8 × 20 = 480` overruns the 432 ceiling the dry run prints as the entire
 exposure — surfacing as a mid-walk ceiling error and a dropped launch.
 
-Note also that the **600 keyless ceiling in `budget` is a per-client ceiling, not a run total**:
+Note also that the **1,400 keyless ceiling in `budget` is a per-client ceiling, not a run total**:
 `screen.mjs` builds two independent keyless clients, and Stage 2's 432 sits on its own. The enforced
-combined worst case is 1,032. The 600 is **derived from the candidate cap**, not chosen: the
-`--consistency` pass walks 3 pages per gate survivor, so a 195-candidate cap puts its worst case at
-585, and the 500 that was sized when the cap was 20 would have ended a full consistency run on a
-ceiling rather than on a measurement. Keeping the two ceilings separate is what stops Stage 2 eating
-the consistency pass's budget, or the reverse.
+combined worst case is 1,832. The 1,400 is **derived from the candidate cap**, not chosen, and it is
+derived over both passes that share the `frontend-api-v3` client: the gate's ownership listing at 4
+pages per candidate (780) plus `--consistency` at 3 pages per gate survivor (585) is 1,365 worst
+case. The previous 600 counted only the consistency pass, so gating at the default candidate cap
+already overran it — and because the keyless work runs *after* the keyed allowance is spent, that
+overrun would have thrown away a paid-for run. Keeping Stage 2's ceiling separate is what stops it
+eating this budget, or the reverse; a plan that does not fit either one is refused up front.
 
 Every run prints its request count, shed count and elapsed time.
 

@@ -37,9 +37,9 @@ for size other than the two directories named above.
 
 ## Corrections
 
-Later evidence has contradicted the imported prose twice. **The originals stay unmodified** —
+Later evidence has contradicted the imported prose three times. **The originals stay unmodified** —
 that is what makes this directory a primary record — so the corrections live here, and this
-is the file to add to when it happens again. Both come from
+is the file to add to when it happens again. The first two come from
 `kol-cohort-vs-outsider-funding/report.md` (2026-07-29, read-only, keyless, zero metered
 requests), recommendation 4. **Neither touches a measured figure in this directory; both are
 about what a figure means.**
@@ -67,7 +67,15 @@ about what a figure means.**
    dates are measured; reading the adjacency as a deliberate rotation is inference, and it is
    only available once the funding graph says the two are one operator.)
 
-The same investigation settles `report.md` §10.3 — **both `5brv79eF…` and `EgQX9R3Q…` are
+3. **`report.md` §9.4's public-RPC pacing no longer holds.** Its "batches of 5–8 `getTransaction`,
+   separate rate-limit buckets" guidance (and `brief.md`'s "batch 5–8 with 3s pacing") was
+   re-measured on `api.mainnet-beta.solana.com` on **2026-08-02** and batching is now actively
+   harmful — the limiter weights each batch entry. **No figure in this directory changes**; only
+   the advice for a *new* walk does. The measurement and the sustainable pacing are owned by
+   `AGENTS.md` → "pump.fun / Solana provider facts" and pinned in
+   `tools/deployer-screen/thresholds.json` → `creation_walk`; do not re-derive them here.
+
+The funding investigation also settles `report.md` §10.3 — **both `5brv79eF…` and `EgQX9R3Q…` are
 genuine outsiders, confidence high** — and strengthens §7's "the six create-slot wallets are
 part of the operation" from inference toward evidence. Neither is a correction to this
 directory; see the repo `README.md`, "What is open".

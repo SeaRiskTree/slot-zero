@@ -34,6 +34,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
+import { mergeHistories } from './creation.mjs';
 import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
 import {
@@ -42,8 +43,14 @@ import {
   describeUnmeasured,
   redactVendorIdentifiers,
   unmeasuredBecause,
+  unmeasuredNoSource,
 } from './record.mjs';
-import { KeylessClient, readCreatorHistory } from './pumpfun.mjs';
+import {
+  KeylessClient,
+  SolanaRpcClient,
+  readCreatedHistory,
+  readCreatorHistory,
+} from './pumpfun.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
 import { addDropReasons, emptyDropReasons, scoreCandidateEntry, toEntryRecordRow, totalDrops } from './stage2.mjs';
@@ -55,6 +62,28 @@ import {
   summariseCoverage,
 } from './seed.mjs';
 import { SUBJECT_DEPLOYER, VENDOR_READINGS, runStage0 } from './stage0.mjs';
+
+/**
+ * Pages of the ownership listing read per candidate for the merge.
+ *
+ * 70 rows a page, so 4 pages is 280 — already four times the 70 the vendor's own surface caps at,
+ * and it bounds the keyless spend at 4 requests per candidate rather than the ~1,050-result server
+ * ceiling. `readCreatorHistory` reports when the cap bit and the record carries it as
+ * `listingPageCapped`.
+ */
+const LISTING_PAGES_FOR_MERGE = 4;
+
+/**
+ * How often the creation walk prints a liveness line, in RPC requests.
+ *
+ * The other three clients print one line per request, and that is right for them: they issue tens
+ * of requests over a run. This one issues up to 100 per candidate across up to 195 candidates, so
+ * the same treatment would bury the report under ~20,000 lines. Silence is the worse failure
+ * though — this is the leg that dominates the wall clock, and an operator watching a still terminal
+ * kills a healthy run. So: every 10th request, which at the pinned 2.5s pacing is a line about
+ * every 25 seconds, plus the first request of each candidate so a walk is seen to start at all.
+ */
+const RPC_HEARTBEAT_EVERY = 10;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
@@ -94,11 +123,31 @@ OPTIONS
   --score <n>         Max gate survivors to score in Stage 2. Cannot exceed the pinned cap.
   --consistency       Also measure long-horizon consistency for gate survivors, via a keyless
                       pump.fun creator walk. Costs no MadeOnSol quota.
+  --ownership-only    Gate on the OWNERSHIP reading alone and skip the creation-derived walk.
+                      Fast and free of Solana RPC, and BIASED TOWARDS REJECTION — see below.
+                      The record is stamped historySource: "ownership-only" so a run made this
+                      way can never be mistaken for a creation-derived one.
   --out <path>        Write the run record as JSON. Default: nothing is written. An INCOMPLETE run
                       writes <path>.partial.json instead, leaving <path> untouched.
   --json              Print the run record as JSON instead of text.
   --data-dir <path>   Population tape location. Default data/population-tape-2026-07-29.
   --help              This text.
+
+WHICH HISTORY THE GATE READS
+  By default the gate reads a CREATION-DERIVED history: which tokens this wallet CREATED, recovered
+  from pump.fun create transactions over the public Solana RPC. Keyless, and bounded by
+  thresholds.json -> creation_walk.
+
+  The alternative, which every vendor surface answers, is which tokens the wallet OWNS NOW. On
+  pump.fun the owner collects the token's creator fees, so ownership is a live position that can be
+  sold or handed on -- and the ones worth handing on are the winners. That reading understates a
+  dev's launches, understates its bonded count by MORE, and so scores the better dev worse. A dev
+  that creates 20, bonds 9 and hands on 3 winners reads 17/6 = 35% instead of 45%; a gate at 40%
+  rejects it, and a false rejection is invisible.
+
+  The walk covers a bounded window backwards from now. Outside that window there is nothing but the
+  ownership listing, so those rows are carried over unchanged and counted in the record. Every
+  candidate row carries both readings and the verdict each one would have produced.
 
 CREDENTIAL
   Reads ${KEY_ENV_VAR} from the environment. Never printed, never logged, never written to disk,
@@ -138,6 +187,7 @@ export function parseArgs(argv) {
     stage2: true,
     scoreCandidates: null,
     consistency: false,
+    ownershipOnly: false,
     out: null,
     json: false,
     dataDir: DEFAULT_DATA_DIR,
@@ -180,6 +230,9 @@ export function parseArgs(argv) {
         opts.scoreCandidates = n;
         break;
       }
+      case '--ownership-only':
+        opts.ownershipOnly = true;
+        break;
       case '--json':
         opts.json = true;
         break;
@@ -235,6 +288,7 @@ export function parseArgs(argv) {
  * @property {boolean} stage2
  * @property {number | null} scoreCandidates
  * @property {boolean} consistency
+ * @property {boolean} ownershipOnly
  * @property {string | null} out
  * @property {boolean} json
  * @property {string} dataDir
@@ -297,6 +351,9 @@ export async function main(opts, env, out, err) {
   // The scoring cap can be lowered from the command line and never raised. Same rule as the
   // candidate cap: a pinned bound that a flag can widen is not a bound.
   const maxScored = Math.min(opts.scoreCandidates ?? entryThresholds.maxCandidatesScored, entryThresholds.maxCandidatesScored);
+
+  /** @type {'creation-derived' | 'ownership-only'} */
+  const historySource = opts.ownershipOnly ? 'ownership-only' : 'creation-derived';
 
   // ---- Stage 0. Always runs. Nothing keyed happens until it has passed. -------------------
   /** @type {import('./stage0.mjs').Stage0Result} */
@@ -364,6 +421,28 @@ export async function main(opts, env, out, err) {
     return EXIT.usage;
   }
 
+  // **The same refusal for the keyless ceiling.** It bounds a shared public resource rather than a
+  // metered allowance, but the failure it prevents is worse: the keyless work happens AFTER the
+  // keyed allowance has been spent, so a ceiling discovered half-way through wastes the quota it
+  // already paid for. The gate's own ownership listing costs up to `LISTING_PAGES_FOR_MERGE` per
+  // candidate and `--consistency` costs up to 3 more per gate survivor, of which every candidate
+  // could be one.
+  const listingPagesPerCandidate = opts.ownershipOnly ? 0 : LISTING_PAGES_FOR_MERGE;
+  const worstCaseKeyless = maxCandidates * (listingPagesPerCandidate + (opts.consistency ? 3 : 0));
+  if (worstCaseKeyless > budget.maxKeylessRequests) {
+    err(
+      `Refusing to start: the plan's worst case is ${maxCandidates} candidate x ` +
+        `${listingPagesPerCandidate + (opts.consistency ? 3 : 0)} keyless page(s) = ${worstCaseKeyless} ` +
+        `requests, above the pinned keyless ceiling of ${budget.maxKeylessRequests}.`,
+    );
+    err(
+      `  Lower --candidates to ${Math.floor(budget.maxKeylessRequests / Math.max(1, listingPagesPerCandidate + (opts.consistency ? 3 : 0)))} ` +
+        `or fewer, drop --consistency, or raise thresholds.json budget.maxKeylessRequests.`,
+    );
+    err('  Nothing was requested, so no quota was spent.');
+    return EXIT.usage;
+  }
+
   const resolution = resolveKey(env);
 
   if (opts.dryRun) {
@@ -378,6 +457,8 @@ export async function main(opts, env, out, err) {
         stage2: opts.stage2,
         maxScored,
         entryThresholds,
+        historySource,
+        creationWalk: T['creation_walk'],
         keyDescription: resolution.ok ? resolution.description : null,
       }),
     );
@@ -442,6 +523,10 @@ export async function main(opts, env, out, err) {
     },
   });
 
+  const walkBounds = T['creation_walk'];
+  let rpcRequests = 0;
+  let rpcLoadShedEvents = 0;
+
   /** @type {import('./rank.mjs').Candidate[]} */
   const candidates = [];
   // Vendor profiles, held in memory for this run only so Stage 2 can read the mint list Stage 1
@@ -496,25 +581,183 @@ export async function main(opts, env, out, err) {
       out('');
     }
 
+    if (!opts.json && !opts.ownershipOnly) {
+      out('');
+      out('GATING — creation-derived history, from pump.fun create transactions (keyless RPC)');
+    }
+
     for (const seed of worthARequest.slice(0, maxCandidates)) {
       const profile = await client.getJson(`/deployer-hunter/${encodeURIComponent(seed.wallet)}`);
       const { records, capped } = toTokenRecords(profile);
-      const completion = measureCompletion(records);
-      const gate = applyGate({ completion }, gateThresholds);
-      const { verdict, rationale } = verdictFor({ gate, completion, capped });
+
+      // The vendor reading. It is the OLD gate input and it stays in the record verbatim, because a
+      // correction whose predecessor is not recorded alongside it becomes an invisible assumption
+      // one release later — which is how this defect survived as a comment for as long as it did.
+      const vendorCompletion = measureCompletion(records);
+      const vendorGate = applyGate({ completion: vendorCompletion }, gateThresholds);
+      const vendorVerdict = verdictFor({ gate: vendorGate, completion: vendorCompletion, capped });
+
+      /** @type {import('./rank.mjs').CreationReading | null} */
+      let creation = null;
+      let completion = vendorCompletion;
+      let gateReadingCapped = capped;
+      let gate = vendorGate;
+      let { verdict, rationale } = vendorVerdict;
+
+      if (!opts.ownershipOnly) {
+        let rpcTicks = 0;
+        const rpc = new SolanaRpcClient({
+          maxRequests: walkBounds.maxRpcRequestsPerCandidate,
+          minIntervalMs: walkBounds.rpcMinIntervalMs,
+          // Same `!opts.json` guard as the other three clients, so --json stays machine-readable.
+          ...(opts.json
+            ? {}
+            : {
+                /** @param {string} label */
+                onRequest: (label) => {
+                  rpcTicks += 1;
+                  if (rpcTicks !== 1 && rpcTicks % RPC_HEARTBEAT_EVERY !== 0) return;
+                  out(
+                    `    · ${seed.wallet}: ${rpcTicks}/${walkBounds.maxRpcRequestsPerCandidate} ` +
+                      `RPC request(s) — ${label}`,
+                  );
+                },
+              }),
+        });
+        const walk = await readCreatedHistory(rpc, seed.wallet, {
+          maxSignaturePages: walkBounds.maxSignaturePages,
+          maxTransactions: walkBounds.maxTransactionsPerCandidate,
+          txBatchSize: walkBounds.txBatchSize,
+        });
+        rpcRequests += rpc.issued();
+        rpcLoadShedEvents += rpc.loadShedEvents();
+
+        // Guarded per candidate, exactly as the consistency pass is. A CeilingReached or a
+        // transport failure on one wallet's listing used to reach the outer catch and abort a run
+        // whose keyed MadeOnSol allowance was already spent — one wallet's bad luck throwing away
+        // every measurement paid for before it. It degrades this candidate's reading instead, and
+        // the reading then reads as unmeasured rather than as a rejection.
+        /** @type {{ records: import('./pumpfun.mjs').ListedToken[], truncated: boolean }} */
+        let listing = { records: [], truncated: false };
+        /** @type {string | null} */
+        let listingUnmeasuredNote = null;
+        try {
+          listing = await readCreatorHistory(keyless, seed.wallet, LISTING_PAGES_FOR_MERGE);
+        } catch (cause) {
+          const entry = unmeasuredBecause('the ownership listing the creation window merges with', seed.wallet, cause, {
+            budget: 'keyless pump.fun',
+            ceiling: budget.maxKeylessRequests,
+            setting: 'thresholds.json budget.maxKeylessRequests',
+          });
+          unmeasured.push(entry);
+          listingUnmeasuredNote = describeUnmeasured(entry);
+        }
+
+        const merged = mergeHistories({
+          creates: walk.creates,
+          wallet: seed.wallet,
+          curves: walk.curves,
+          listed: listing.records,
+          covered: walk.covered,
+          unresolvedTransactions: walk.unresolvedTransactions,
+        });
+
+        completion = measureCompletion(merged.records);
+        gateReadingCapped = listing.truncated;
+        gate = applyGate({ completion }, gateThresholds);
+        // What makes this reading unjudgeable, if anything. Both entries describe a history the
+        // thresholds were applied to but could not actually decide over, and either one is enough:
+        // a rejection computed on it would be exactly the invisible false rejection this lane
+        // exists to remove, and a pass would be no better founded.
+        /** @type {string[]} */
+        const notMeasured = [];
+        if (merged.bondedUndecidable > 0) {
+          notMeasured.push(
+            `${merged.bondedUndecidable} of ${merged.records.length} launch(es) have no bonded ` +
+              `status from EITHER source — the bonding-curve account could not be read and the ` +
+              `ownership listing has no row for them (which is what a hidden launch looks like)`,
+          );
+          // The run level too, not only the candidate row. A record whose `unmeasured` reads empty
+          // and `truncated` reads false has told its reader it measured everything, and a wallet
+          // nobody judged sitting in the candidate list does not contradict that at a glance —
+          // which is the same invisible false rejection this lane exists to remove, one level up.
+          unmeasured.push(
+            unmeasuredNoSource(
+              'the bonded status of a creation-derived launch history',
+              seed.wallet,
+              'neither the on-chain bonding-curve account nor the ownership listing could say ' +
+                'whether some of this wallet\'s launches bonded, so the gate was not applied to it',
+              `${merged.bondedUndecidable} of ${merged.records.length} launch(es) undecidable`,
+            ),
+          );
+        }
+        if (listingUnmeasuredNote !== null) {
+          notMeasured.push(
+            `the ownership listing, which supplies every launch before the creation window, could ` +
+              `not be read: ${listingUnmeasuredNote}`,
+          );
+        }
+        ({ verdict, rationale } = verdictFor({ gate, completion, capped: gateReadingCapped, notMeasured }));
+        creation = {
+          coveredFromIso: walk.covered.fromMs === 0 ? null : new Date(walk.covered.fromMs).toISOString(),
+          coveredToIso: walk.covered.toMs === 0 ? null : new Date(walk.covered.toMs).toISOString(),
+          coveredDays: Number(((walk.covered.toMs - walk.covered.fromMs) / 86_400_000).toFixed(2)),
+          wholeHistory: walk.covered.exhausted,
+          stopReason: walk.stopReason,
+          stopDetail: walk.stopDetail,
+          rpcRequests: rpc.issued(),
+          loadShedEvents: rpc.loadShedEvents(),
+          signaturesScanned: walk.signaturesScanned,
+          signaturesSucceeded: walk.signaturesSucceeded,
+          transactionsInspected: walk.transactionsInspected,
+          unresolvedTransactions: walk.unresolvedTransactions,
+          curvesUnread: walk.curvesUnread,
+          listingRows: listing.records.length,
+          listingPageCapped: listing.truncated,
+          listingUnmeasuredNote,
+          createdInWindow: merged.createdInWindow,
+          listedInWindow: merged.listedInWindow,
+          hiddenByOwnership: merged.hiddenByOwnership,
+          notCreatedByWallet: merged.notCreatedByWallet,
+          movedCreator: merged.movedCreator,
+          listedOutsideWindow: merged.listedOutsideWindow,
+          listedInWindowCarried: merged.listedInWindowCarried,
+          windowExact: merged.windowExact,
+          bondedFromCurve: merged.bondedFromCurve,
+          bondedFromListing: merged.bondedFromListing,
+          bondedUndecidable: merged.bondedUndecidable,
+        };
+
+        if (!opts.json) {
+          out(
+            `  ${seed.wallet}: created ${merged.createdInWindow} in the ${creation.coveredDays}d window ` +
+              `(ownership showed ${merged.listedInWindow}; ${merged.hiddenByOwnership} hidden, ` +
+              `${merged.notCreatedByWallet} acquired, ${merged.movedCreator} creator moved), ` +
+              `+${merged.listedOutsideWindow} carried over — stopped on ${walk.stopReason}`,
+          );
+          if (notMeasured.length > 0) {
+            out(`      ^ READING NOT MEASURED — verdict ${verdict}, not a rejection: ${notMeasured.join('; ')}`);
+          }
+        }
+      }
 
       profiles.set(seed.wallet, profile);
       candidates.push({
         wallet: seed.wallet,
         seededBy: seed.seededBy,
         completion,
-        completionCapped: capped,
+        completionCapped: gateReadingCapped,
         gate,
         verdict,
         rationale,
         consistency: null,
         entry: null,
         entryCoverage: null,
+        historySource,
+        vendorCompletion,
+        vendorVerdict: vendorVerdict.verdict,
+        vendorPageCapped: capped,
+        creation,
       });
     }
 
@@ -676,6 +919,9 @@ export async function main(opts, env, out, err) {
           // projections of the same facts drift until whichever one a reader opens becomes the
           // truth. The spend block owes the endpoints and the per-call cost, which nothing else has.
         },
+        rpcRequests,
+        rpcLoadShedEvents,
+        historySource,
         elapsedMs: Date.now() - startedAt,
         // `completed` is whether the run reached the end; `truncated` is whether anything is
         // missing for any reason. A completed run whose candidate cap bit is truncated but NOT
@@ -700,7 +946,12 @@ export async function main(opts, env, out, err) {
           return { total: totalDrops(by), byReason: by };
         })(),
         prefilteredOut: prefiltered,
-        thresholds: { stage1_gate: T['stage1_gate'], stage2_entry: T['stage2_entry'], budget: T['budget'] },
+        thresholds: {
+          stage1_gate: T['stage1_gate'],
+          stage2_entry: T['stage2_entry'],
+          budget: T['budget'],
+          creation_walk: T['creation_walk'],
+        },
         stage0: summariseStage0(stage0),
         limitations: LIMITATIONS,
         candidates: ranked.map(toRecordRow),
@@ -727,6 +978,9 @@ export async function main(opts, env, out, err) {
           keyedRequests: record.keyedRequests,
           keylessRequests: record.keylessRequests,
           keylessShed: record.keylessShed,
+          rpcRequests: record.rpcRequests,
+          rpcLoadShedEvents: record.rpcLoadShedEvents,
+          historySource: record.historySource,
           elapsedMs: record.elapsedMs,
           startedAtIso,
           completed: record.completed,
@@ -794,13 +1048,33 @@ function toRecordRow(c) {
   return {
     wallet: c.wallet,
     seededBy: c.seededBy,
+    // What the gate actually read. Under the default `historySource` this is the creation-derived
+    // history; under --ownership-only it is the vendor reading and identical to `vendorTokens`.
     tokens: c.completion.tokens,
     completed: c.completion.completed,
     completionRate: Number.isFinite(c.completion.rate) ? Number(c.completion.rate.toFixed(6)) : null,
     spanDays: Number(c.completion.spanDays.toFixed(2)),
     windowFirstDeploy: c.completion.firstDeployIso,
     windowLastDeploy: c.completion.lastDeployIso,
-    vendorPageCapped: c.completionCapped,
+    vendorPageCapped: c.vendorPageCapped,
+    gateReadingPageCapped: c.completionCapped,
+    historySource: c.historySource,
+    // The OLD reading, kept whole and beside the new one. `vendorVerdict` is what this run would
+    // have decided before the correction, so the gap is a diff in the record rather than an
+    // archaeology exercise across two runs.
+    vendorTokens: c.vendorCompletion.tokens,
+    vendorCompleted: c.vendorCompletion.completed,
+    vendorCompletionRate: Number.isFinite(c.vendorCompletion.rate)
+      ? Number(c.vendorCompletion.rate.toFixed(6))
+      : null,
+    vendorSpanDays: Number(c.vendorCompletion.spanDays.toFixed(2)),
+    vendorVerdict: c.vendorVerdict,
+    // Only a MEASURED gate verdict can differ from the vendor's. `gate-unmeasured` is not a
+    // different answer to the same question, it is the absence of one, and recording it as a
+    // changed verdict would put it into the very gap-tracking figure this record exists to keep
+    // honest. The `verdict` field carries the state; this flag stays a comparison of two results.
+    verdictChanged: c.verdict !== 'gate-unmeasured' && c.verdict !== c.vendorVerdict,
+    creation: c.creation,
     verdict: c.verdict,
     rationale: c.rationale,
     gateReasons: c.gate.reasons,

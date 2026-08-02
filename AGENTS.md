@@ -112,12 +112,32 @@ Learned at real cost; the citations are to
 - **Per-launch request budgets: p50 4 pages, p90 8, p95 13, max 24** (same metadata; fills p50
   381, max 2,321). Bound a walk by **requests, not pages**, or the shed rate makes the true cost
   ~3x the plan.
-- **`?creator=` lists by *current* creator, and the creator record can move on-chain.**
-  §1.2 and `kol-deployer-entity-cluster/report.md` §6. This silently deleted this operation's
-  best launch (`maxxing`, $7.7M ATH, 83% of its lifetime creator-fee income) from its own
-  history. **A creator's listed history is a lower bound, and the token that goes missing is
-  exactly the good one.** Read the on-chain `creator` (bonding-curve PDA `["bonding-curve",
-  mint]`, offset 49) before trusting it, and validate the offset on a known token first.
+- **Every pump.fun surface answers "who OWNS this now", never "who CREATED it".** §1.2 and
+  `kol-deployer-entity-cluster/report.md` §6. Ownership is a sellable position — the owner collects
+  the creator fees — so the ones that move on are the winners, and a listed history understates
+  launches, understates *bonded* launches by more, and therefore **scores the better dev worse**.
+  The bias runs towards rejection, and a false rejection is invisible. Confirmed on-chain
+  2026-08-02: `maxxing` (`32CdQdBU…pump`, $7.7M ATH, this operation's best launch and 83% of its
+  lifetime creator-fee income) was created by
+  `7ufmve7Z…` in tx `64pCziaL…`, and its creator has since moved twice — the second time (tx
+  `5fjZDdFQ…`, `MigrateBondingCurveCreator`) to a fee-sharing config that is not a wallet at all.
+  **There is no keyless index by original creator**: `?creator=`, `/coins/{mint}.creator`,
+  `.cto_address` and `advanced-api-v2/…/metadata/{mint}.dev` are all current-owner, and
+  `coins/list?dev=` silently ignores the filter rather than applying it. The only route is the
+  create transaction — `tools/deployer-screen/creation.mjs` and its README section "Which history
+  the gate counts" own this, including what the walk costs and how to read the record.
+  **Measured size of the bias: nil so far.** Five wallets have both readings; four gaps of exactly
+  zero, one of 1 launch in 239, no verdict changed
+  (`tools/deployer-screen/CREATION-DERIVED.md`). The reason is worth knowing before re-deriving it:
+  creator records move *often* — up to 15 of 27 launches on one wallet — but nearly always into a
+  **fee-sharing config that pump.fun still attributes to the wallet**. Only a genuine handover or
+  CTO removes the token from `?creator=`. Counting "creator moved" as the bias overstates it by two
+  orders of magnitude.
+- **Bonding-curve account (`["bonding-curve", mint]`): `complete` at offset 48, `creator` at offset
+  49**, both validated 2026-08-02 against a control token whose creator never moved. One
+  `getMultipleAccounts` reads both for 100 mints. Note the on-chain `creator` moving is **not** the
+  same as the token leaving that wallet's `?creator=` listing — a fee-sharing migration moves the
+  on-chain field while pump.fun still lists the token under the wallet.
 - **Graduation is a fixed curve constant, not a measurement.** §3.5: **14.70× the initial
   price**, from the curve parameters, independent of the deployer's stake. `CURVE` in
   `src/index.ts` carries the parameters, and the reproduction test confirms 14.70× on 18
@@ -136,7 +156,14 @@ Learned at real cost; the citations are to
   per-fill wallet (`u`) is the right unit for who traded; the fee payer is only the right
   unit for who paid. `onchain_*.csv` carries `is_fee_payer` for exactly this reason.
 - **The public RPC sheds load with `null` results inside batches rather than erroring.**
-  Treat a null as "retry", never as "absent".
+  Treat a null as "retry", never as "absent". A 429 from it is load-shedding rather than a verdict —
+  back off and retry, unlike a keyed 429 where the allowance is genuinely spent.
+- **`getSignaturesForAddress` on a deployer is ~95% other people's FAILED trades, and that is a
+  gift**: creations always succeed, so `err === null` discards most of the index before a single
+  `getTransaction` is spent. **The surviving fraction is the whole cost model and it is not a
+  constant** — measured 1.7% to 99.7% across twelve elite wallets, i.e. 170 to 127,000 requests for
+  one wallet's full history, 7 minutes to 84 hours. Never assume this walk is cheap for the next
+  wallet because it was cheap for the last one.
 - **`getSignaturesForAddress`'s `before` accepts a *foreign* signature**, one that is not in
   the queried address's index at all. `kol-cohort-vs-outsider-funding/report.md` §9.1: so a
   wallet's genesis can be **binary-searched by slot**, pulling cursor signatures from
@@ -152,8 +179,12 @@ Learned at real cost; the citations are to
   (it stalled a job for 40 minutes). `api.mainnet-beta.solana.com` is the only working keyless
   endpoint found, and it rate-limits **globally** across `getSignaturesForAddress` and
   `getTransaction` — the tape report §9.4's "separate buckets" did not hold, and two
-  concurrent jobs earned a sustained 429 lockout. Sustainable: one process, batches of 5–8
-  `getTransaction`, ~1.4 s between requests.
+  concurrent jobs earned a sustained 429 lockout. **Re-measured 2026-08-02, §9.4's "batches of 5–8"
+  no longer holds either: batching is now actively harmful.** The same transactions took 58 s at
+  batch=1 with *zero* load-shed events, 76 s at batch=4 with 7, and 110 s at batch=8 with 11 — the
+  endpoint weights each batch entry against its limiter. Sustainable: one process, **one**
+  `getTransaction` per request, ~2.5 s between requests, giving ~0.42 requests/second. The
+  nominally faster 1.4 s is *slower* in wall-clock once backoff is counted.
 
 ## MadeOnSol Deployer Hunter facts
 

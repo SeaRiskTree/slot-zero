@@ -79,7 +79,7 @@ function declaredNodeVersions(workflow: string): string[] {
     .split('\n')
     .filter((line) => !line.trimStart().startsWith('#'))
     .flatMap((line) => {
-      const m = /node-version:\s*(.+)/.exec(line);
+      const m = /^\s*node-version:\s*(.+)/.exec(line);
       if (!m) return [];
       return [
         (m[1] ?? '')
@@ -88,6 +88,24 @@ function declaredNodeVersions(workflow: string): string[] {
           .replace(/^['"]|['"]$/g, ''),
       ];
     });
+}
+
+/**
+ * The `lib` entries and `target` a tsconfig actually declares, as bare literals.
+ * A `//` line is not a declaration, for the same reason a `#` line is not one in a workflow:
+ * a parked entry read as live reports a divergence nothing compiles with.
+ */
+function declaredEsEntries(tsconfig: string): string[] {
+  const live = tsconfig
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('//'))
+    .join('\n');
+  const lib = /"lib"\s*:\s*\[([^\]]*)\]/.exec(live)?.[1] ?? '';
+  const target = /"target"\s*:\s*"([^"]+)"/.exec(live)?.[1] ?? '';
+  return [
+    ...lib.split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean),
+    ...(target ? [target] : []),
+  ];
 }
 
 describe('the type surface matches the runtime the repo says it supports', () => {
@@ -140,6 +158,33 @@ describe('the type surface matches the runtime the repo says it supports', () =>
     expect(declaredNodeVersions(workflow)).toEqual(['20']);
   });
 
+  it('a node-version named in a trailing comment is not read as a declaration', () => {
+    const workflow = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/setup-node@v4',
+      '        with:',
+      "          cache: npm # was node-version: '22'",
+      "          node-version: '20'",
+    ].join('\n');
+    expect(declaredNodeVersions(workflow)).toEqual(['20']);
+  });
+
+  it('a commented-out lib or target is not read as a declaration', () => {
+    const tsconfig = [
+      '{',
+      '  "compilerOptions": {',
+      '    // "lib": ["ESNext"],',
+      '    // "target": "ESNext",',
+      '    "target": "ES2022",',
+      '    "lib": ["ES2022"]',
+      '  }',
+      '}',
+    ].join('\n');
+    expect(declaredEsEntries(tsconfig)).toEqual(['ES2022', 'ES2022']);
+  });
+
   it("tsconfig's lib does not promise more than the floor runtime provides", () => {
     const ceiling = ES_CEILING_BY_NODE_MAJOR.get(enginesMajor);
     expect(
@@ -148,13 +193,7 @@ describe('the type surface matches the runtime the repo says it supports', () =>
         'ES_CEILING_BY_NODE_MAJOR in the commit that raises engines',
     ).toBeDefined();
 
-    const tsconfig = read('tsconfig.json');
-    const lib = /"lib"\s*:\s*\[([^\]]*)\]/.exec(tsconfig)?.[1] ?? '';
-    const target = /"target"\s*:\s*"([^"]+)"/.exec(tsconfig)?.[1] ?? '';
-    const entries = [
-      ...lib.split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean),
-      ...(target ? [target] : []),
-    ];
+    const entries = declaredEsEntries(read('tsconfig.json'));
     expect(entries.length, 'tsconfig declares neither lib nor target').toBeGreaterThan(0);
     for (const entry of entries) {
       const year = esYear(entry);

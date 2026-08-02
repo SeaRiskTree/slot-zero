@@ -143,19 +143,40 @@ export function parseFill(raw) {
 export function measureCreateSlot(fills) {
   const groups = createSlotGroups(fills);
   if (groups === null) return null;
+  return tallyCreateSlot(groups).measurement;
+}
+
+/**
+ * @typedef {object} CreateSlotTally
+ * @property {CreateSlotMeasurement} measurement
+ * @property {Set<string>} outsiders Create-slot wallets left unattributed to the operation — the
+ *   exact population `measurement.independentWallets` counts, handed over rather than recounted.
+ */
+
+/**
+ * The create-slot arithmetic, over {@link createSlotGroups}' partition.
+ *
+ * Separated from {@link measureCreateSlot} so that it and `entry.mjs`'s field measurement share
+ * **one** definition of who the operation is *and* one definition of the arithmetic on top of it.
+ * The two numbers are read side by side, so a change to either has to move both or neither.
+ *
+ * @param {CreateSlotGroups} groups
+ * @returns {CreateSlotTally}
+ */
+export function tallyCreateSlot(groups) {
   const { slot, deployer, coordinated, inSlot, bundledTx, maxWalletsInOneTx } = groups;
 
   let devSol = 0;
   let coordinatedSol = 0;
   let independentSol = 0;
   /** @type {Set<string>} */
-  const independentWallets = new Set();
+  const outsiders = new Set();
   for (const f of inSlot) {
     if (f.wallet === deployer) devSol += f.sol;
     else if (coordinated.has(f.wallet)) coordinatedSol += f.sol;
     else {
       independentSol += f.sol;
-      independentWallets.add(f.wallet);
+      outsiders.add(f.wallet);
     }
   }
 
@@ -166,18 +187,21 @@ export function measureCreateSlot(fills) {
   const operationShare = denominator > 0 ? (devSol + coordinatedSol) / denominator : 1;
 
   return {
-    slot,
-    deployer,
-    devSol,
-    coordinatedSol,
-    independentSol,
-    totalOtherSol,
-    coordinatedWallets: coordinated.size,
-    independentWallets: independentWallets.size,
-    bundledTx,
-    maxWalletsInOneTx,
-    operationShare,
-    roomLeft: 1 - operationShare,
+    measurement: {
+      slot,
+      deployer,
+      devSol,
+      coordinatedSol,
+      independentSol,
+      totalOtherSol,
+      coordinatedWallets: coordinated.size,
+      independentWallets: outsiders.size,
+      bundledTx,
+      maxWalletsInOneTx,
+      operationShare,
+      roomLeft: 1 - operationShare,
+    },
+    outsiders,
   };
 }
 

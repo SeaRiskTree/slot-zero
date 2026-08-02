@@ -40,7 +40,7 @@ import { RECORD_SCHEMA_VERSION } from './record.mjs';
 import { KeylessClient, readCreatorHistory } from './pumpfun.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
-import { scoreCandidateEntry, toEntryRecordRow } from './stage2.mjs';
+import { addDropReasons, emptyDropReasons, scoreCandidateEntry, toEntryRecordRow, totalDrops } from './stage2.mjs';
 import {
   buildSeedPlan,
   mergeSeeds,
@@ -613,6 +613,24 @@ export async function main(opts, env, out, err) {
         truncationReason: reasons.length === 0 ? null : reasons.join('; '),
         coverage,
         scoringCap: { max: maxScored, survivorsUnscored: scoringTruncatedBy, enabled: opts.stage2 },
+        // Run-level Stage 2 drop tally, broken out by cause. `mintTimeDisagreement` is the one to
+        // read: it says the vendor's mint time and pump.fun's fills contradicted each other, which
+        // on our own tape never happens, so a non-zero value in a committed record is the evidence
+        // that the assumption has broken on strangers.
+        entryDrops: (() => {
+          const by = candidates.reduce(
+            (acc, c) => (c.entryCoverage === null ? acc : addDropReasons(acc, c.entryCoverage.dropsByReason)),
+            emptyDropReasons(),
+          );
+          return {
+            total: totalDrops(by),
+            byReason: by,
+            windowsWithUnseenTail: candidates.reduce(
+              (n, c) => n + (c.entryCoverage === null ? 0 : c.entryCoverage.windowsWithUnseenTail),
+              0,
+            ),
+          };
+        })(),
         prefilteredOut: prefiltered,
         thresholds: { stage1_gate: T['stage1_gate'], stage2_entry: T['stage2_entry'], budget: T['budget'] },
         stage0: summariseStage0(stage0),

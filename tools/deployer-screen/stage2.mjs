@@ -22,7 +22,17 @@
  *
  * The per-launch cap counts **requests, not pages**, because this endpoint sheds about a quarter of
  * what it is asked for and the client retries. A cap on successful pages would have let a launch
- * cost three times the printed number.
+ * cost three times the printed number. The walk also reserves the *whole* cost of a page — one
+ * attempt plus its backoffs — before starting one, so 18 is an exact bound rather than an
+ * approximate one and the `3 × 8 × 18` arithmetic above is true rather than nearly true.
+ *
+ * ## Drops are attributed, never lumped
+ *
+ * Every launch that leaves the sample is counted **by cause** ({@link Stage2DropReasons}), carried
+ * into the run record and rendered. The cause that matters is `mintTimeDisagreement`: it says the
+ * vendor's mint time and pump.fun's fill tape contradicted each other, which never happens on the
+ * committed tape and has never been checked on a stranger, because this lane has held no vendor key.
+ * A lump total could not be read for it, so there is no lump total.
  *
  * **No keyed request is issued here, ever.** The mint list comes from the profile Stage 1 already
  * paid for. The shared vendor allowance — which production also draws on — is untouched by this
@@ -54,15 +64,93 @@ import { readLaunchWindow } from './pumpfun.mjs';
  */
 
 /**
+ * Every way a launch can leave the sample. A lump total would hide the one that matters: a
+ * `mintTimeDisagreement` says the vendor's clock and the fill tape have come apart, which is a
+ * different event from a launch simply being too busy to walk inside the request cap.
+ *
+ * @typedef {object} Stage2DropReasons
+ * @property {number} mintTimeDisagreement Pre-mint rows came back. **A reportable event.**
+ * @property {number} coverageUnproven     The endpoint never said whether anything older exists.
+ * @property {number} unrecognisedBody     A body with no readable row list.
+ * @property {number} requestCap           Busier than the per-launch request cap allows for.
+ * @property {number} stalledCursor
+ * @property {number} unparsedRows
+ * @property {number} noFills
+ * @property {number} noCreateSlot         Walked, but with no bonding-curve buy to anchor on.
+ * @property {number} transportError
+ * @property {number} stageCeiling         The stage ceiling was reached mid-walk.
+ */
+
+/**
  * @typedef {object} Stage2Coverage
  * @property {number} launchRefsAvailable  Launches the vendor profile offered.
  * @property {number} launchesAttempted    Windows we started walking.
  * @property {number} launchesUsable       Windows walked back past the mint.
  * @property {number} launchesDropped      Windows dropped for incomplete coverage.
+ * @property {Stage2DropReasons} dropsByReason  The same total, broken out by cause.
+ * @property {number} windowsWithUnseenTail Measured windows whose fills stop short of the full slot
+ *   window. Not a drop — a quiet launch and a mint time that seeks early look the same from the
+ *   tape — but reported, because a systematic version of it undercounts the field.
  * @property {number} requestsIssued
  * @property {boolean} stoppedForBudget    Whether the stage ceiling ended the walk early.
  * @property {string[]} dropNotes          One line per dropped window, so a drop is never silent.
  */
+
+/** @returns {Stage2DropReasons} */
+function noDrops() {
+  return {
+    mintTimeDisagreement: 0,
+    coverageUnproven: 0,
+    unrecognisedBody: 0,
+    requestCap: 0,
+    stalledCursor: 0,
+    unparsedRows: 0,
+    noFills: 0,
+    noCreateSlot: 0,
+    transportError: 0,
+    stageCeiling: 0,
+  };
+}
+
+/** @type {Record<import('./pumpfun.mjs').LaunchWindowDropReason, keyof Stage2DropReasons>} */
+const DROP_REASON_KEY = {
+  'mint-time-disagreement': 'mintTimeDisagreement',
+  'coverage-unproven': 'coverageUnproven',
+  'unrecognised-body': 'unrecognisedBody',
+  'request-cap': 'requestCap',
+  'stalled-cursor': 'stalledCursor',
+  'unparsed-rows': 'unparsedRows',
+  'no-fills': 'noFills',
+};
+
+/**
+ * Add two drop tallies. Used to roll per-wallet counts up to a run total, which is the level at
+ * which a clock disagreement stops looking like one odd launch and starts looking like a broken
+ * assumption.
+ *
+ * @param {Stage2DropReasons} a
+ * @param {Stage2DropReasons} b
+ * @returns {Stage2DropReasons}
+ */
+export function addDropReasons(a, b) {
+  const sum = noDrops();
+  for (const key of /** @type {(keyof Stage2DropReasons)[]} */ (Object.keys(sum))) {
+    sum[key] = a[key] + b[key];
+  }
+  return sum;
+}
+
+/** @param {Stage2DropReasons} d @returns {number} */
+export function totalDrops(d) {
+  let n = 0;
+  for (const key of /** @type {(keyof Stage2DropReasons)[]} */ (Object.keys(d))) n += d[key];
+  return n;
+}
+
+/** @returns {Stage2DropReasons} */
+export function emptyDropReasons() {
+  return noDrops();
+}
 
 /**
  * Score one candidate's entry room and field.
@@ -95,8 +183,10 @@ export async function scoreCandidateEntry(client, input) {
   const measured = [];
   /** @type {string[]} */
   const dropNotes = [];
+  const dropsByReason = noDrops();
   let attempted = 0;
   let dropped = 0;
+  let unseenTail = 0;
   let stoppedForBudget = false;
   const requestsBefore = client.issued();
 
@@ -128,24 +218,33 @@ export async function scoreCandidateEntry(client, input) {
       if (cause instanceof CeilingReached) {
         stoppedForBudget = true;
         dropped += 1;
+        dropsByReason.stageCeiling += 1;
         dropNotes.push('the stage request ceiling was reached mid-walk');
         break;
       }
       dropped += 1;
+      dropsByReason.transportError += 1;
       dropNotes.push(`DROPPED: ${cause instanceof Error ? cause.message : String(cause)}`);
       continue;
     }
 
     if (!window.usable) {
       dropped += 1;
+      if (window.dropReason !== null) dropsByReason[DROP_REASON_KEY[window.dropReason]] += 1;
       dropNotes.push(window.note);
       input.log?.(`    ${window.note}`);
       continue;
     }
 
+    if (window.windowTailUnseen) {
+      unseenTail += 1;
+      input.log?.(`    ${window.note}`);
+    }
+
     const entry = measureLaunchEntry(window.fills);
     if (entry === null) {
       dropped += 1;
+      dropsByReason.noCreateSlot += 1;
       dropNotes.push('DROPPED: no bonding-curve buy in the window, so there is no create slot to anchor on');
       continue;
     }
@@ -156,7 +255,12 @@ export async function scoreCandidateEntry(client, input) {
     );
   }
 
-  const score = scoreEntry(measured, t, { candidateWallet: input.wallet, launchesDropped: dropped });
+  const score = scoreEntry(measured, t, {
+    candidateWallet: input.wallet,
+    launchesDropped: dropped,
+    mintTimeDisagreements: dropsByReason.mintTimeDisagreement,
+    windowsWithUnseenTail: unseenTail,
+  });
 
   return {
     score,
@@ -165,6 +269,8 @@ export async function scoreCandidateEntry(client, input) {
       launchesAttempted: attempted,
       launchesUsable: measured.length,
       launchesDropped: dropped,
+      dropsByReason,
+      windowsWithUnseenTail: unseenTail,
       requestsIssued: client.issued() - requestsBefore,
       stoppedForBudget,
       dropNotes,
@@ -227,6 +333,10 @@ export function toEntryRecordRow(s, coverage) {
       launchesAttempted: coverage.launchesAttempted,
       launchesUsable: coverage.launchesUsable,
       launchesDropped: coverage.launchesDropped,
+      // Broken out by cause, not a lump total: the whole point of the mint-time tripwire is that a
+      // run can be read for whether it fired, and a total cannot be.
+      dropsByReason: { ...coverage.dropsByReason },
+      windowsWithUnseenTail: coverage.windowsWithUnseenTail,
       requestsIssued: coverage.requestsIssued,
       stoppedForBudget: coverage.stoppedForBudget,
       dropNotes: coverage.dropNotes,

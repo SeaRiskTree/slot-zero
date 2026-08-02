@@ -119,6 +119,20 @@ export class KeylessClient {
   }
 
   /**
+   * The most requests one {@link getJson} can consume: the first attempt plus one per backoff.
+   *
+   * Exposed because a caller with a per-walk request cap has to **reserve** this much before
+   * starting a request, not discover it afterwards. Deriving it from the client rather than
+   * restating it in the caller is what keeps `maxRequestsPerLaunch` an exact bound rather than an
+   * approximate one — see {@link readLaunchWindow}.
+   *
+   * @returns {number}
+   */
+  attemptsPerRequest() {
+    return this.#retryBackoffMs.length + 1;
+  }
+
+  /**
    * @param {string} url Absolute URL.
    * @returns {Promise<unknown>}
    */
@@ -191,21 +205,63 @@ export function windowFilter(fills, windowMs) {
 }
 
 /**
- * The trade endpoint has returned both a bare array and an object wrapping one across versions.
- * Accept either rather than assume, and say so loudly if it becomes a third thing.
+ * @typedef {object} TradePage
+ * @property {Record<string, unknown>[]} rows
+ * @property {boolean} recognised Whether the body was a shape we can read rows out of **at all**.
+ *   `false` and `rows: []` are different findings: the first is "we do not understand the answer",
+ *   the second is "the endpoint says there is nothing". Collapsing them is what let an unrecognised
+ *   body read as proof that the walk had reached the mint.
+ * @property {boolean | null} hasMore    The endpoint's own statement, or `null` when it made none.
+ * @property {string | null} nextCursor
+ */
+
+/**
+ * Read one page of the trade endpoint.
+ *
+ * The endpoint has returned both a bare array and an object wrapping one across versions, so accept
+ * either rather than assume. But **only the wrapped shape carries `pagination`**, and pagination is
+ * the only thing that can prove a backwards walk has nothing older left to see. So the three facts
+ * are reported separately and a missing one is `null`, never a default: see {@link readLaunchWindow}
+ * for why an assumed `hasMore: false` is the exact silent failure this module exists to refuse.
+ *
+ * @param {unknown} body
+ * @returns {TradePage}
+ */
+export function extractTradePage(body) {
+  /** @type {TradePage} */
+  const none = { rows: [], recognised: false, hasMore: null, nextCursor: null };
+  if (Array.isArray(body)) {
+    return { rows: /** @type {Record<string, unknown>[]} */ (body), recognised: true, hasMore: null, nextCursor: null };
+  }
+  if (typeof body !== 'object' || body === null) return none;
+
+  const obj = /** @type {Record<string, unknown>} */ (body);
+  /** @type {Record<string, unknown>[] | null} */
+  let rows = null;
+  for (const key of ['trades', 'data', 'items', 'results']) {
+    const v = obj[key];
+    if (Array.isArray(v)) {
+      rows = /** @type {Record<string, unknown>[]} */ (v);
+      break;
+    }
+  }
+  if (rows === null) return none;
+
+  const raw = obj['pagination'];
+  const pagination = typeof raw === 'object' && raw !== null ? /** @type {Record<string, unknown>} */ (raw) : null;
+  const hasMore = pagination !== null && typeof pagination['hasMore'] === 'boolean' ? pagination['hasMore'] : null;
+  const next = pagination === null ? undefined : pagination['nextCursor'];
+  return { rows, recognised: true, hasMore, nextCursor: typeof next === 'string' ? next : null };
+}
+
+/**
+ * The rows of one trade page, for callers that only need the rows.
  *
  * @param {unknown} body
  * @returns {Record<string, unknown>[]}
  */
 export function extractTradeRows(body) {
-  if (Array.isArray(body)) return /** @type {Record<string, unknown>[]} */ (body);
-  if (typeof body === 'object' && body !== null) {
-    for (const key of ['trades', 'data', 'items', 'results']) {
-      const v = /** @type {Record<string, unknown>} */ (body)[key];
-      if (Array.isArray(v)) return /** @type {Record<string, unknown>[]} */ (v);
-    }
-  }
-  return [];
+  return extractTradePage(body).rows;
 }
 
 /**
@@ -288,16 +344,33 @@ export function parseFillLoose(row) {
 }
 
 /**
+ * Why a launch window was dropped. One value per cause, never a lump total, because the causes call
+ * for different actions: a request cap means the launch was busy, a `mint-time-disagreement` means
+ * the vendor's clock and the fill tape have come apart and the measurement is no longer resting on
+ * what we think it is.
+ *
+ * @typedef {'mint-time-disagreement' | 'coverage-unproven' | 'unrecognised-body' | 'request-cap'
+ *   | 'stalled-cursor' | 'unparsed-rows' | 'no-fills'} LaunchWindowDropReason
+ */
+
+/**
  * @typedef {object} LaunchWindow
  * @property {string} mint
- * @property {import('./measure.mjs').Fill[]} fills Fills inside `[createdAt, createdAt + windowMs]`.
+ * @property {import('./measure.mjs').Fill[]} fills Fills inside the opening window, **anchored on
+ *   the earliest curve buy's own slot** rather than on the supplied mint time.
  * @property {number} pages           Pages the walk consumed.
  * @property {number} requests        Requests it cost, **including retries of shed ones**.
  * @property {number} rowsSeen        Rows the endpoint returned, before window filtering.
  * @property {number} unparsedRows    Rows we could not read. Non-zero makes the launch unusable.
  * @property {boolean} reachedCreateSlot Whether the walk provably got back past the mint.
  * @property {boolean} hitRequestCap  Whether it stopped because of `maxRequests`.
+ * @property {boolean} mintTimeDisagreement Whether a row older than the supplied mint time came
+ *   back — proof the two clocks disagree, and a hard drop. See {@link readLaunchWindow}.
+ * @property {boolean} windowTailUnseen Whether the fills stop short of the full slot window. Not a
+ *   drop: a quiet launch looks the same as a mint time that seeks too early, and the two are not
+ *   separable from the tape. Reported so a systematic version of it cannot pass unnoticed.
  * @property {boolean} usable         Whether this window may be measured at all.
+ * @property {LaunchWindowDropReason | null} dropReason `null` exactly when `usable`.
  * @property {string} note            Why, in one sentence. Always populated.
  */
 
@@ -318,14 +391,34 @@ export function parseFillLoose(row) {
  * confident room figure for a launch whose opening it never saw. Nothing about the output would
  * look wrong.
  *
- * So coverage is a **proof obligation, not an assumption**: `reachedCreateSlot` is true only when
- * the walk saw a row older than the mint, or the endpoint told us there was nothing older. This is
- * the same distinction the population tape draws with `meta.reached_mint`, which the repo's loader
- * gates on because all 239 mints have a window file and four of them never reached the mint.
+ * So coverage is a **proof obligation, not an assumption**, and the only thing that discharges it is
+ * **the endpoint explicitly saying there is nothing older**: a `pagination.hasMore` of exactly
+ * `false`, or a recognised page with no rows on it. The *absence* of a pagination object proves
+ * nothing at all — {@link extractTradePage} deliberately tolerates a bare array and `data`/`items`/
+ * `results` wrappers, none of which carry one, and reading a missing `hasMore` as `false` would stop
+ * the walk after page one and call a partial window complete. An unrecognised body likewise proves
+ * nothing; it is a drop of its own. This is the same distinction the population tape draws with
+ * `meta.reached_mint`, which the repo's loader gates on because all 239 mints have a window file and
+ * four of them never reached the mint.
  *
- * `usable` is what a caller must branch on. An unusable window is **dropped and counted**, never
- * measured — a launch missing from the sample shrinks `n` visibly, whereas a launch measured from a
- * partial window is a wrong number that looks like a right one.
+ * **A row older than the mint is a DISAGREEMENT, not coverage.** `createdAtMs` comes from the
+ * vendor's `pump_tokens[].created_timestamp` while the fills come from pump.fun, and a real token has
+ * no pre-mint trades — so a pre-mint row means the two clocks have come apart, not that the walk
+ * arrived. Measured on the committed tape: **0 of 235 covered launches has any fill older than its
+ * recorded creation time, and the gap between that time and the first fill is exactly 0 on every one
+ * of them.** There is no slack to spend on a tolerance, and a positive skew of one millisecond would
+ * delete the entire create slot — whose rows share the mint's exact millisecond — leaving the walk
+ * anchored on a mid-window slot with the wrong deployer, a near-zero dev buy and an inflated room
+ * figure. So the launch is **dropped**, and the drop is counted and reported per run.
+ *
+ * **The measured window is anchored on the chain's own ordering, not on the vendor's clock.** Fills
+ * are trimmed by {@link windowFilter}, i.e. by slot span from the earliest curve buy, so the
+ * timestamp survives only as the seek cursor hint and never decides membership. A clock disagreement
+ * therefore cannot quietly shift which fills are measured; it can only trip the tripwire above.
+ *
+ * `usable` is what a caller must branch on, and `dropReason` is why. An unusable window is **dropped
+ * and counted**, never measured — a launch missing from the sample shrinks `n` visibly, whereas a
+ * launch measured from a partial window is a wrong number that looks like a right one.
  *
  * Ceiling errors are deliberately **not** caught here. A {@link CeilingReached} mid-launch is a
  * run-level terminal, and the caller is expected to reserve `maxRequests` of headroom before starting
@@ -335,12 +428,17 @@ export function parseFillLoose(row) {
  * roughly a quarter of what it is asked for (see {@link DEFAULT_RETRY_BACKOFF_MS}), and the client
  * retries. If the cap counted only successful pages, a launch's true cost would be the cap times
  * the retry count and the printed plan would understate the exposure by 3x. Counting requests makes
- * the per-launch bound exact: it cannot cost more than `maxRequests`, retries included.
+ * the per-launch bound exact — but only if the **whole** cost of a page is reserved before it is
+ * started, since one {@link KeylessClient#getJson} may spend up to {@link
+ * KeylessClient#attemptsPerRequest} requests. Checking the cap between pages instead would let a walk
+ * with one request of headroom left spend three, and the stage's declared worst case is arithmetic
+ * the dry run prints as the entire exposure. It cannot cost more than `maxRequests`, retries included.
  *
  * @param {KeylessClient} client
  * @param {object} opts
  * @param {string} opts.mint
- * @param {number} opts.createdAtMs Mint time. The walk's stopping post.
+ * @param {number} opts.createdAtMs Mint time. The seek cursor's hint and the disagreement tripwire —
+ *   **not** the window boundary.
  * @param {number} opts.windowMs    Opening window length. 60000 matches the committed tape.
  * @param {number} opts.maxRequests Hard per-launch request cap, retries included.
  * @param {number} opts.pageLimit   Rows per request.
@@ -351,94 +449,148 @@ export async function readLaunchWindow(client, opts) {
   const windowEndMs = createdAtMs + windowMs;
   const issuedBefore = client.issued();
   const spent = () => client.issued() - issuedBefore;
+  const perPageCost = client.attemptsPerRequest();
 
   /** @type {import('./measure.mjs').Fill[]} */
-  const fills = [];
+  const collected = [];
   let pages = 0;
   let rowsSeen = 0;
   let unparsedRows = 0;
   let reachedCreateSlot = false;
   let hitRequestCap = false;
   let stalled = false;
+  let unrecognisedBody = false;
+  let coverageUnproven = false;
+  let mintTimeDisagreement = false;
 
   // The slot half of the cursor is ignored by the seek; only the timestamp is honoured. Sending a
   // literal 0 says so, rather than implying a slot we did not measure.
   let cursor = `0-${windowEndMs}`;
 
-  while (spent() < maxRequests) {
+  while (spent() + perPageCost <= maxRequests) {
     const url =
       `${SWAP_API}/v2/coins/${encodeURIComponent(mint)}/trades` +
       `?limit=${pageLimit}&cursor=${encodeURIComponent(cursor)}`;
     const body = await client.getJson(url);
     pages += 1;
 
-    const rows = extractTradeRows(body);
-    rowsSeen += rows.length;
-    if (rows.length === 0) {
-      // Nothing older than the cursor exists, so the walk is behind the mint by construction.
+    const page = extractTradePage(body);
+    if (!page.recognised) {
+      // We do not understand the answer. That is not the same as being told there is nothing older,
+      // and treating it as such is what would mark a partial window usable.
+      unrecognisedBody = true;
+      break;
+    }
+    rowsSeen += page.rows.length;
+    if (page.rows.length === 0) {
+      // A page we could read that carries no row: the endpoint says nothing older than the cursor
+      // exists, so the walk is behind the mint by construction.
       reachedCreateSlot = true;
       break;
     }
 
-    let crossedTheMint = false;
-    for (const row of rows) {
+    for (const row of page.rows) {
       const ts = Date.parse(String(row['timestamp'] ?? row['ts'] ?? ''));
       if (!Number.isFinite(ts)) {
         unparsedRows += 1;
         continue;
       }
       if (ts < createdAtMs) {
-        crossedTheMint = true;
+        mintTimeDisagreement = true;
         continue;
       }
-      // The seek lands on the first row at or before the cursor timestamp, but a cursor is not a
-      // filter — drop anything past the window rather than letting it into the measurement.
-      if (ts > windowEndMs) continue;
       try {
-        fills.push(parseFillLoose(row));
+        collected.push(parseFillLoose(row));
       } catch {
         unparsedRows += 1;
       }
     }
 
-    if (crossedTheMint) {
-      reachedCreateSlot = true;
-      break;
-    }
+    if (mintTimeDisagreement) break;
 
-    const pagination = /** @type {Record<string, unknown>} */ (
-      typeof body === 'object' && body !== null ? (/** @type {any} */ (body)['pagination'] ?? {}) : {}
-    );
-    const next = pagination['nextCursor'];
-    if (pagination['hasMore'] !== true) {
-      // The endpoint says the token has no older fills, so we are behind the mint.
+    if (page.hasMore === false) {
+      // The endpoint says the token has no older fills, so we are behind the mint. This is the ONLY
+      // pagination-derived proof, and every walk that has ever succeeded ended here.
       reachedCreateSlot = true;
       break;
     }
-    if (typeof next !== 'string' || next === '' || next === cursor) {
+    if (page.hasMore !== true) {
+      // No pagination at all. Nothing is proved either way, and a walk that cannot prove coverage is
+      // dropped rather than measured.
+      coverageUnproven = true;
+      break;
+    }
+    if (page.nextCursor === null || page.nextCursor === '' || page.nextCursor === cursor) {
       // A cursor that does not advance would loop forever against the page cap and then report a
       // page-cap truncation, which is the wrong diagnosis for a broken cursor.
       stalled = true;
       break;
     }
-    cursor = next;
+    cursor = page.nextCursor;
   }
 
-  if (!reachedCreateSlot && !stalled) hitRequestCap = spent() >= maxRequests;
+  if (!reachedCreateSlot && !stalled && !unrecognisedBody && !coverageUnproven && !mintTimeDisagreement) {
+    hitRequestCap = spent() + perPageCost > maxRequests;
+  }
+
+  // Anchored on the earliest curve buy's own slot. Slots are a monotonic sequence the chain itself
+  // maintains; the vendor's wall clock is a second opinion we have no way to reconcile.
+  const fills = mintTimeDisagreement ? [] : windowFilter(collected, windowMs);
+  const slotSpan = Math.ceil(windowMs / 400);
+  let firstSlot = Infinity;
+  let lastSlot = -Infinity;
+  for (const f of fills) {
+    if (f.slot < firstSlot) firstSlot = f.slot;
+    if (f.slot > lastSlot) lastSlot = f.slot;
+  }
+  const windowTailUnseen = fills.length > 0 && lastSlot < firstSlot + slotSpan;
 
   const usable = reachedCreateSlot && unparsedRows === 0 && fills.length > 0;
+  /** @type {LaunchWindowDropReason | null} */
+  const dropReason = usable
+    ? null
+    : mintTimeDisagreement
+      ? 'mint-time-disagreement'
+      : stalled
+        ? 'stalled-cursor'
+        : unrecognisedBody
+          ? 'unrecognised-body'
+          : coverageUnproven
+            ? 'coverage-unproven'
+            : hitRequestCap
+              ? 'request-cap'
+              : unparsedRows > 0
+                ? 'unparsed-rows'
+                : 'no-fills';
+
   const note = usable
     ? `${fills.length} fill(s) in the opening ${windowMs / 1000}s over ${pages} page(s) and ` +
-      `${spent()} request(s), walked back past the mint`
-    : stalled
-      ? `DROPPED: the cursor stopped advancing after ${spent()} request(s), so the walk never reached the mint`
-      : hitRequestCap
-        ? `DROPPED: spent the ${maxRequests}-request cap on ${rowsSeen} row(s) without reaching the mint, ` +
-          `so the earliest slot seen is NOT the create slot. This launch was busier than the cap ` +
-          `allows for, and busy launches are exactly the interesting ones — see the sampling caveat.`
-        : unparsedRows > 0
-          ? `DROPPED: ${unparsedRows} of ${rowsSeen} row(s) could not be read — the endpoint's shape may have changed`
-          : `DROPPED: no fill in the opening ${windowMs / 1000}s (is the mint time right?)`;
+      `${spent()} request(s), walked back past the mint` +
+      (windowTailUnseen
+        ? `; the last fill sits ${lastSlot - firstSlot} slot(s) into the ~${slotSpan}-slot window, so ` +
+          `either the launch went quiet or the mint time seeks early — the field may be undercounted`
+        : '')
+    : dropReason === 'mint-time-disagreement'
+      ? `DROPPED (mint-time disagreement): the endpoint returned fill(s) OLDER than the recorded mint ` +
+        `time, which a real token does not have. The vendor's creation time and the fill tape ` +
+        `disagree, so the create slot cannot be trusted and this launch is not measured. A NON-ZERO ` +
+        `COUNT OF THESE IS A REPORTABLE EVENT: it means the clock assumption this walk rests on has broken.`
+      : dropReason === 'stalled-cursor'
+        ? `DROPPED: the cursor stopped advancing after ${spent()} request(s), so the walk never reached the mint`
+        : dropReason === 'unrecognised-body'
+          ? `DROPPED: the endpoint returned a body with no readable row list after ${pages} page(s) — ` +
+            `its shape may have changed, and an answer we cannot read is NOT proof that the walk reached the mint`
+          : dropReason === 'coverage-unproven'
+            ? `DROPPED: the endpoint returned ${rowsSeen} row(s) but never said whether anything older ` +
+              `exists, so coverage back to the mint is UNPROVEN. The earliest slot seen is merely the ` +
+              `earliest seen, which is not the create slot.`
+            : dropReason === 'request-cap'
+              ? `DROPPED: spent the ${maxRequests}-request cap on ${rowsSeen} row(s) without reaching the mint, ` +
+                `so the earliest slot seen is NOT the create slot. This launch was busier than the cap ` +
+                `allows for, and busy launches are exactly the interesting ones — see the sampling caveat.`
+              : dropReason === 'unparsed-rows'
+                ? `DROPPED: ${unparsedRows} of ${rowsSeen} row(s) could not be read — the endpoint's shape may have changed`
+                : `DROPPED: no fill in the opening ${windowMs / 1000}s (is the mint time right?)`;
 
   return {
     mint,
@@ -449,7 +601,10 @@ export async function readLaunchWindow(client, opts) {
     unparsedRows,
     reachedCreateSlot,
     hitRequestCap,
+    mintTimeDisagreement,
+    windowTailUnseen,
     usable,
+    dropReason,
     note,
   };
 }

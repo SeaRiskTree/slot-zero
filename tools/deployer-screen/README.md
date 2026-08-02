@@ -395,6 +395,18 @@ and ~144 for a full run.
 The per-launch cap counts **requests, not pages**, and that is load-bearing — see the shed rate
 below. A cap on successful pages would have let a launch cost three times the printed number.
 
+The bound is **exact, not approximate**. One page can cost up to three requests (one attempt plus two
+backoffs), so the walk reserves the whole per-page cost *before* starting a page. Checking the cap
+only between pages would let a walk sitting at 17 spent requests start a page that sheds twice and
+finish at 20, and `3 × 8 × 20 = 480` overruns the 432 ceiling the dry run prints as the entire
+exposure — surfacing as a mid-walk ceiling error and a dropped launch.
+
+Note also that the **500 keyless ceiling in `budget` is a per-client ceiling, not a run total**:
+`screen.mjs` builds two independent keyless clients, and Stage 2's 432 sits on its own. The enforced
+combined worst case is 932; the realistic one is 492, because the `--consistency` pass cannot exceed
+60 requests. Keeping the two ceilings separate is what stops Stage 2 eating the consistency pass's
+budget, or the reverse.
+
 Every run prints its request count, shed count and elapsed time. There is no poller, sweep, daemon,
 cron, or cache-warmer, and adding one would be a policy breach rather than an optimisation.
 
@@ -431,11 +443,49 @@ the earliest one it happened to see — and `measureCreateSlot` would then ancho
 some mid-window sniper "the deployer", and report a confident room figure for a launch whose opening
 it never saw. Nothing about the output would look wrong.
 
-So `readLaunchWindow` sets `reachedCreateSlot` **only** when the walk saw a row older than the mint,
-or the endpoint said there was nothing older. Anything else is `usable: false`, and an unusable
-window is **dropped and counted**, never measured. This is the same distinction the population tape
-draws with `meta.reached_mint`, which the repo's loader gates on because all 239 mints have a window
-file and four of them never reached the mint.
+So `readLaunchWindow` sets `reachedCreateSlot` **only** when the endpoint explicitly said there was
+nothing older: a `pagination.hasMore` of exactly `false`, or a readable page with no rows on it.
+Anything else is `usable: false` with a specific `dropReason`, and an unusable window is **dropped
+and counted**, never measured. This is the same distinction the population tape draws with
+`meta.reached_mint`, which the repo's loader gates on because all 239 mints have a window file and
+four of them never reached the mint.
+
+Two shapes that are explicitly **not** proof, because both used to be read as if they were:
+
+- **A missing `pagination` object.** The endpoint has served a bare array and `data`/`items`/
+  `results` wrappers across versions, none of which carry one. Treating an absent `hasMore` as
+  `false` would have stopped the walk after page one and marked a partial window usable.
+- **A body we cannot read at all.** "We do not understand the answer" is not "there is nothing
+  older", and collapsing the two would let an unparseable page on page 2+ certify the fills already
+  in hand.
+
+### The mint time is a seek hint, not a boundary — and a pre-mint row is a DISAGREEMENT
+
+`createdAtMs` comes from MadeOnSol's `pump_tokens[].created_timestamp`; the fills come from pump.fun.
+A real token has no pre-mint trade, so a row older than the recorded mint means **the two clocks have
+come apart**, not that the walk arrived. Measured on the committed tape: **0 of 235 covered launches
+has a fill older than its recorded creation, and the gap to the first fill is exactly 0 on every one
+of them.** There is no slack for a tolerance — one millisecond of positive skew would delete the
+entire create slot, whose rows share the mint's exact millisecond, leaving the walk anchored on a
+mid-window slot with the wrong deployer, a near-zero dev buy and an inflated room figure. So such a
+launch is **dropped**, with `dropReason: 'mint-time-disagreement'`.
+
+Separately, the measured window is trimmed by `windowFilter` — **slot span from the earliest curve
+buy** — so the vendor timestamp never decides which fills are in it. Slots are the chain's own
+monotonic sequence; the wall clock is a second opinion with nothing to reconcile it against.
+
+**Every run reports its drops per cause, per wallet and in total**, in the record (`entry.coverage.
+dropsByReason` and the run-level `entryDrops`) and in the rendered output. A non-zero
+`mintTimeDisagreement` is treated as a **reportable event, not a footnote**: all 235 clock
+observations come from our own tape and this lane has never held a vendor key, so whether the two
+clocks agree on *stranger* wallets is untested. If they routinely disagree, the tripwire stops being
+free and starts discarding real launches at scale — and a visible per-run count is what stops that
+happening silently.
+
+The mirror-image case, a mint time that seeks *early*, trips no tripwire and instead truncates the
+tail of the window. It is not separable from a launch that simply went quiet, so it is not a drop; it
+is reported as `windowsWithUnseenTail` and as a caveat, because the field is undercounted rather than
+absent.
 
 ### The live path, checked against ground truth
 

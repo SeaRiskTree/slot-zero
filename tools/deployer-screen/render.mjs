@@ -19,6 +19,7 @@
  */
 
 import { buildPath } from './client.mjs';
+import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
 
 /**
  * The standing limitation block. Printed on every human-readable surface and embedded in every
@@ -153,10 +154,61 @@ export function renderEntry(e, coverage) {
         `(${coverage.launchRefsAvailable} available), ${coverage.requestsIssued} keyless request(s)` +
         (coverage.stoppedForBudget ? ', STOPPED EARLY on the stage request ceiling' : ''),
     );
+    for (const line of renderDropTally(coverage.launchesDropped, coverage.dropsByReason, '      ')) L.push(line);
+    if (coverage.windowsWithUnseenTail > 0) {
+      L.push(
+        `      ${coverage.windowsWithUnseenTail} measured window(s) hold no fill late in the slot ` +
+          `window — quiet launch or an early-seeking mint time; the field may be undercounted`,
+      );
+    }
     for (const note of coverage.dropNotes) L.push(`        · ${note}`);
   }
   for (const c of e.caveats) {
     for (const line of wrap(c, 84)) L.push(`      ! ${line}`);
+  }
+  return L;
+}
+
+/** Human labels for {@link import('./stage2.mjs').Stage2DropReasons}, in reporting order. */
+const DROP_LABELS = /** @type {const} */ ([
+  ['mintTimeDisagreement', 'mint-time disagreement'],
+  ['coverageUnproven', 'coverage unproven'],
+  ['unrecognisedBody', 'unreadable body'],
+  ['requestCap', 'busier than the request cap'],
+  ['stalledCursor', 'stalled cursor'],
+  ['unparsedRows', 'unreadable row'],
+  ['noFills', 'no fill in the window'],
+  ['noCreateSlot', 'no create slot to anchor on'],
+  ['transportError', 'transport error'],
+  ['stageCeiling', 'stage ceiling reached mid-walk'],
+]);
+
+/**
+ * Render a drop tally broken out by cause.
+ *
+ * The tripwire count gets its own line rather than a share of one, because a non-zero
+ * `mintTimeDisagreement` is a **reportable event**: it says the vendor's clock and pump.fun's fill
+ * tape have come apart, which is the assumption the whole walk rests on. On the committed tape that
+ * gap is exactly zero across all 235 covered launches — but this lane has never held a vendor key,
+ * so the stranger case is untested and only a visible per-run count can keep it from staying that way.
+ *
+ * @param {number} total
+ * @param {import('./stage2.mjs').Stage2DropReasons} by
+ * @param {string} indent
+ * @returns {string[]}
+ */
+export function renderDropTally(total, by, indent) {
+  if (total === 0) return [];
+  const L = [];
+  const parts = DROP_LABELS.filter(([key]) => by[key] > 0).map(([key, label]) => `${by[key]} ${label}`);
+  L.push(`${indent}${total} launch(es) DROPPED: ${parts.length === 0 ? 'cause unrecorded' : parts.join(', ')}`);
+  if (by.mintTimeDisagreement > 0) {
+    L.push(
+      `${indent}!! REPORTABLE: ${by.mintTimeDisagreement} drop(s) were a MINT-TIME DISAGREEMENT — the`,
+    );
+    L.push(`${indent}   vendor's creation time and pump.fun's fills contradict each other. On our own`);
+    L.push(`${indent}   tape that gap is exactly 0 on all 235 launches, so this is not a footnote: the`);
+    L.push(`${indent}   clock assumption has broken and the measurement is not resting on what we think.`);
   }
   return L;
 }
@@ -366,6 +418,20 @@ export function renderStage1(run) {
   L.push(`candidates gated   ${run.candidates.length}`);
   L.push(`gate passed        ${passed.length}`);
   L.push(`gate failed        ${failed.length}`);
+
+  // Run-level drop tally. A per-wallet count can look like one awkward launch; the total across the
+  // run is the level at which a systematic clock disagreement becomes visible, and it is the only
+  // reason we would ever learn that the stranger case does not behave like our own tape.
+  const runDrops = run.candidates.reduce(
+    (acc, c) => (c.entryCoverage === null ? acc : addDropReasons(acc, c.entryCoverage.dropsByReason)),
+    emptyDropReasons(),
+  );
+  const runDropTotal = totalDrops(runDrops);
+  if (runDropTotal > 0) {
+    L.push('');
+    L.push('STAGE 2 DROPS — every launch window the entry walk refused, across the whole run');
+    for (const line of renderDropTally(runDropTotal, runDrops, '  ')) L.push(line);
+  }
   L.push('');
 
   const cov = run.coverage;

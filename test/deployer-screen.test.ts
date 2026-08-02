@@ -45,7 +45,7 @@ import {
   scoreEntry,
 } from '../tools/deployer-screen/entry.mjs';
 import type { EntryScore, EntryThresholds } from '../tools/deployer-screen/entry.mjs';
-import { scoreCandidateEntry, toEntryRecordRow } from '../tools/deployer-screen/stage2.mjs';
+import { emptyDropReasons, scoreCandidateEntry, toEntryRecordRow } from '../tools/deployer-screen/stage2.mjs';
 import { runStage0 } from '../tools/deployer-screen/stage0.mjs';
 import {
   applyGate,
@@ -1752,25 +1752,37 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
     return { fetchImpl, calls };
   };
 
-  const row = (o: { ms: number; wallet: string; sol: number; sid: string; tx?: string; type?: string }) => ({
-    slotIndexId: o.sid,
-    tx: o.tx ?? `tx-${o.sid}`,
-    timestamp: new Date(o.ms).toISOString(),
-    userAddress: o.wallet,
-    type: o.type ?? 'buy',
-    program: 'pump',
-    amountSol: String(o.sol),
-    baseAmount: '1000',
-    priceSol: '0.0000001',
-  });
+  /**
+   * Slots at the chain's own ~400ms cadence, because the measured window is anchored on the SLOT of
+   * the earliest curve buy and not on the vendor's wall clock. `slotIndexId`'s first 12 digits are
+   * the slot; the remainder orders fills inside it.
+   */
+  const SLOT0 = 400_000_000;
+  const sidAt = (ms: number, seq: number) =>
+    String(SLOT0 + Math.floor((ms - CREATED) / 400)).padStart(12, '0') + String(seq).padStart(10, '0');
+
+  const row = (o: { ms: number; wallet: string; sol: number; sid?: string; seq?: number; tx?: string; type?: string }) => {
+    const sid = o.sid ?? sidAt(o.ms, o.seq ?? 1);
+    return {
+      slotIndexId: sid,
+      tx: o.tx ?? `tx-${sid}`,
+      timestamp: new Date(o.ms).toISOString(),
+      userAddress: o.wallet,
+      type: o.type ?? 'buy',
+      program: 'pump',
+      amountSol: String(o.sol),
+      baseAmount: '1000',
+      priceSol: '0.0000001',
+    };
+  };
 
   /** The pre-mint history a real token does not have, used to prove the walk stops on time. */
   const history = () => [
-    row({ ms: CREATED, wallet: 'dev', sol: 10, sid: '0004000000000000000001' }),
-    row({ ms: CREATED + 1000, wallet: 'outsider', sol: 2, sid: '0004000000000000000002' }),
-    row({ ms: CREATED + 30_000, wallet: 'outsider', sol: 5, sid: '0004000000000000000003', type: 'sell' }),
+    row({ ms: CREATED, wallet: 'dev', sol: 10, seq: 1 }),
+    row({ ms: CREATED + 1000, wallet: 'outsider', sol: 2, seq: 2 }),
+    row({ ms: CREATED + 30_000, wallet: 'outsider', sol: 5, seq: 3, type: 'sell' }),
     // Outside the window, and therefore not part of the opening at all.
-    row({ ms: CREATED + 120_000, wallet: 'latecomer', sol: 9, sid: '0004000000000000000009' }),
+    row({ ms: CREATED + 120_000, wallet: 'latecomer', sol: 9, seq: 9 }),
   ];
 
   const client = (fetchImpl: typeof fetch, maxRequests = 10) =>
@@ -1790,10 +1802,126 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
     // The FIRST request already carries the cursor. That seek is what makes this affordable: it
     // turns walking a token's whole history into a handful of requests.
     expect(calls[0]).toContain(`cursor=0-${CREATED + 60_000}`);
-    // Fills outside the window are dropped even though the endpoint returned them.
     expect(w.fills.map((f) => f.wallet).sort()).toEqual(['dev', 'outsider', 'outsider']);
+    expect(w.dropReason).toBeNull();
+    expect(w.mintTimeDisagreement).toBe(false);
     const e = measureLaunchEntry(w.fills)!;
     expect(e.createSlot.deployer).toBe('dev');
+  });
+
+  it('anchors the measured window on the earliest curve buy SLOT, not on the vendor clock', async () => {
+    // A row inside the timestamp window but hundreds of slots past the create slot. Slots are the
+    // chain's own monotonic sequence; the vendor's wall clock is a second opinion we cannot
+    // reconcile, so membership is decided by the first one and never by the second.
+    const wayLater = row({ ms: CREATED + 59_000, wallet: 'latecomer', sol: 9, sid: '000400000900' + '0000000001' });
+    const { fetchImpl } = fakeEndpoint([...history(), wayLater]);
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED,
+      windowMs: 60_000,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.usable).toBe(true);
+    expect(w.fills.map((f) => f.wallet)).not.toContain('latecomer');
+  });
+
+  it('a mint time that seeks EARLY still measures the right window, and says the tail is unseen', async () => {
+    // Negative skew: the vendor's creation time precedes the truth, so the seek starts early and the
+    // walk cannot see the end of the window. It trips no tripwire — there are no pre-mint rows — so
+    // the only defence is that it is REPORTED rather than quietly returning a smaller field.
+    const { fetchImpl } = fakeEndpoint(history());
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED - 30_000,
+      windowMs: 60_000,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.usable).toBe(true);
+    // The window is anchored on the create slot itself, so the whole opening is still measured.
+    expect(measureLaunchEntry(w.fills)!.createSlot.deployer).toBe('dev');
+    expect(w.windowTailUnseen).toBe(true);
+    expect(w.note).toMatch(/mint time seeks early/);
+  });
+
+  it('DROPS a launch whose fills predate the recorded mint — the two clocks disagree', async () => {
+    // On the committed tape the gap between the vendor's creation time and the first fill is exactly
+    // 0 on all 235 covered launches, so this branch is dead code on correct data and fires ONLY when
+    // the clocks come apart. Continuing past the row would delete the create slot — whose rows share
+    // the mint's exact millisecond — and leave the walk anchored on a mid-window sniper.
+    const { fetchImpl } = fakeEndpoint(history());
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED + 1, // one millisecond of positive skew is enough
+      windowMs: 60_000,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.mintTimeDisagreement).toBe(true);
+    expect(w.usable).toBe(false);
+    expect(w.dropReason).toBe('mint-time-disagreement');
+    expect(w.reachedCreateSlot).toBe(false);
+    expect(w.fills).toEqual([]);
+    expect(w.note).toMatch(/REPORTABLE EVENT/);
+  });
+
+  it('refuses to read a MISSING pagination object as proof that nothing older exists', async () => {
+    // The subtlest failure in the module: a bare array and the data/items/results wrappers carry no
+    // pagination at all, and reading the absent `hasMore` as `false` would stop the walk after page
+    // one and mark a partial window usable.
+    for (const body of [
+      [row({ ms: CREATED + 30_000, wallet: 'sniper', sol: 1, seq: 1 })],
+      { data: [row({ ms: CREATED + 30_000, wallet: 'sniper', sol: 1, seq: 1 })] },
+      { trades: [row({ ms: CREATED + 30_000, wallet: 'sniper', sol: 1, seq: 1 })], pagination: { nextCursor: 'x' } },
+    ]) {
+      const fetchImpl = (async () => ({ ok: true, status: 200, json: async () => body })) as unknown as typeof fetch;
+      const w = await readLaunchWindow(client(fetchImpl), {
+        mint: MINT,
+        createdAtMs: CREATED,
+        windowMs: 60_000,
+        maxRequests: 10,
+        pageLimit: 100,
+      });
+      expect(w.usable).toBe(false);
+      expect(w.dropReason).toBe('coverage-unproven');
+      expect(w.reachedCreateSlot).toBe(false);
+      expect(w.note).toMatch(/UNPROVEN/);
+      // One page, then a drop: an unprovable walk is not worth more requests.
+      expect(w.pages).toBe(1);
+    }
+  });
+
+  it('refuses to read an UNRECOGNISED body as proof either, on any page', async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            trades: [row({ ms: CREATED + 30_000, wallet: 'sniper', sol: 1, seq: 1 })],
+            pagination: { hasMore: true, nextCursor: `0-${CREATED + 20_000}` },
+          }),
+        };
+      }
+      // Page 2 is a shape we do not understand. `extractTradeRows` would hand back `[]`, and an
+      // empty list used to mean "nothing older exists" — so a partial window would have been marked
+      // usable by a response we could not even read.
+      return { ok: true, status: 200, json: async () => ({ unexpected: 'shape' }) };
+    }) as unknown as typeof fetch;
+
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED,
+      windowMs: 60_000,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.usable).toBe(false);
+    expect(w.dropReason).toBe('unrecognised-body');
+    expect(w.reachedCreateSlot).toBe(false);
   });
 
   /**
@@ -1830,9 +1958,13 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
     expect(w.hitRequestCap).toBe(true);
     expect(w.reachedCreateSlot).toBe(false);
     expect(w.usable).toBe(false);
+    expect(w.dropReason).toBe('request-cap');
     expect(w.note).toMatch(/DROPPED/);
     expect(w.note).toMatch(/NOT the create slot/);
-    expect(w.pages).toBe(3);
+    // One page, then a stop: the walk reserves the WHOLE cost of a page (one attempt plus two
+    // backoffs) before starting it, so a 3-request cap can only afford one page.
+    expect(w.pages).toBe(1);
+    expect(w.requests).toBeLessThanOrEqual(3);
   });
 
   it('DROPS a window whose cursor stops advancing, and says so specifically', async () => {
@@ -1879,16 +2011,37 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
     expect(w.note).toMatch(/shape may have changed/);
   });
 
-  it('never issues more requests than its page cap, whatever the endpoint says', async () => {
-    const { fetchImpl, count } = neverReachesMint();
-    await readLaunchWindow(client(fetchImpl, 100), {
-      mint: MINT,
-      createdAtMs: CREATED,
-      windowMs: 60_000,
-      maxRequests: 4,
-      pageLimit: 1,
-    });
-    expect(count()).toBe(4);
+  it('never issues more requests than its cap, whatever the endpoint says or sheds', async () => {
+    // The bound has to be EXACT, not approximate: the stage arithmetic (3 x 8 x 18 = 432) is printed
+    // by the dry run as the entire exposure, and a walk that overshot by a retry would make the
+    // printed plan a lie and surface as a mid-walk CeilingReached and a dropped launch.
+    for (const cap of [1, 2, 3, 4, 5, 6, 7, 8, 17, 18]) {
+      for (const shedEvery of [0, 2, 3]) {
+        let calls = 0;
+        const fetchImpl = (async () => {
+          calls += 1;
+          if (shedEvery !== 0 && calls % shedEvery !== 0) return { ok: false, status: 429, json: async () => ({}) };
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              trades: [row({ ms: CREATED + 30_000, wallet: `w${calls}`, sol: 1, seq: calls })],
+              pagination: { hasMore: true, nextCursor: `0-${CREATED + 30_000 - calls}`, limit: 1 },
+            }),
+          };
+        }) as unknown as typeof fetch;
+
+        const w = await readLaunchWindow(client(fetchImpl, 1000), {
+          mint: MINT,
+          createdAtMs: CREATED,
+          windowMs: 60_000,
+          maxRequests: cap,
+          pageLimit: 1,
+        });
+        expect(calls, `cap ${cap} shedEvery ${shedEvery}`).toBeLessThanOrEqual(cap);
+        expect(w.requests, `cap ${cap} shedEvery ${shedEvery}`).toBeLessThanOrEqual(cap);
+      }
+    }
   });
 });
 
@@ -1955,7 +2108,63 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     // Every window was unusable, so nothing was measured from a partial walk.
     expect(coverage.launchesUsable).toBe(0);
     expect(coverage.launchesDropped).toBe(T.maxLaunchesPerCandidate);
+    // The drops are attributed, not lumped: this endpoint is simply busier than the cap allows for,
+    // which is a different event from the clocks disagreeing.
+    expect(coverage.dropsByReason.requestCap).toBe(T.maxLaunchesPerCandidate);
+    expect(coverage.dropsByReason.mintTimeDisagreement).toBe(0);
     expect(score.verdict).toBe('entry-unmeasured');
+  });
+
+  it('counts a mint-time disagreement separately and reports it as an event, per wallet', async () => {
+    // The assumption under test is that the vendor's creation time and pump.fun's fills agree. It
+    // holds to the millisecond on all 235 of our own launches, and has NEVER been checked on a
+    // stranger — this lane has held no vendor key. A visible per-run count is what stops it being
+    // untested forever, and stops the tripwire from silently discarding real launches at scale.
+    const fetchImpl = (async (url: string | URL) => {
+      // The cursor is `0-<windowEnd>`, so this serves a row five seconds before whichever launch's
+      // mint time the walk is currently seeking from.
+      const cursorMs = Number(String(new URL(String(url)).searchParams.get('cursor')).split('-')[1]);
+      return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        trades: [
+          {
+            slotIndexId: '0004000000000000000001',
+            tx: 'tx1',
+            // Older than the mint time the profile records. A real token has no pre-mint trade.
+            timestamp: new Date(cursorMs - 60_000 - 5_000).toISOString(),
+            userAddress: 'w',
+            type: 'buy',
+            program: 'pump',
+            amountSol: '1',
+            baseAmount: '1000',
+            priceSol: '0.0000001',
+          },
+        ],
+        pagination: { hasMore: true, nextCursor: '0-1', limit: 1 },
+      }),
+      };
+    }) as unknown as typeof fetch;
+
+    const client = new KeylessClient({ maxRequests: 400, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const { score, coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: profile(8),
+      nowMs: NOW,
+      thresholds: T as never,
+    });
+    expect(coverage.launchesUsable).toBe(0);
+    expect(coverage.dropsByReason.mintTimeDisagreement).toBe(8);
+    expect(coverage.launchesDropped).toBe(8);
+    expect(score.caveats.join(' ')).toMatch(/REPORTABLE: 8 of those 8/);
+    expect(score.caveats.join(' ')).toMatch(/DISAGREED/);
+    expect(score.verdict).toBe('entry-unmeasured');
+
+    // And the same count reaches the rendered output, where a human sees it.
+    const rendered = renderEntry(score, coverage).join('\n');
+    expect(rendered).toMatch(/8 mint-time disagreement/);
+    expect(rendered).toMatch(/!! REPORTABLE/);
   });
 
   it('never starts a launch it cannot finish, and says why it stopped', async () => {
@@ -1971,9 +2180,12 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     });
     expect(coverage.launchesAttempted).toBe(2);
     expect(coverage.stoppedForBudget).toBe(true);
-    expect(count()).toBe((T.maxRequestsPerLaunch as number) * 2);
+    // Each launch stops one page short of its own cap, because it reserves the full three-request
+    // cost of a page before starting one. Under the cap is the only side of it that is safe.
+    expect(count()).toBeLessThanOrEqual((T.maxRequestsPerLaunch as number) * 2);
     // The remainder is left unspent rather than half-walking a third launch for nothing.
-    expect(client.remaining()).toBe(3);
+    expect(client.remaining()).toBeGreaterThanOrEqual(3);
+    expect(client.remaining()).toBeLessThan(T.maxRequestsPerLaunch as number);
     expect(coverage.dropNotes.join(' ')).toMatch(/never started unless it can be finished/);
   });
 
@@ -2039,6 +2251,8 @@ describe('what a Stage 2 run record may persist', () => {
       launchesAttempted: 8,
       launchesUsable: 8,
       launchesDropped: 0,
+      dropsByReason: emptyDropReasons(),
+      windowsWithUnseenTail: 0,
       requestsIssued: 34,
       stoppedForBudget: false,
       dropNotes: [],
@@ -2063,6 +2277,8 @@ describe('what a Stage 2 run record may persist', () => {
       launchesAttempted: 0,
       launchesUsable: 0,
       launchesDropped: 0,
+      dropsByReason: emptyDropReasons(),
+      windowsWithUnseenTail: 0,
       requestsIssued: 0,
       stoppedForBudget: false,
       dropNotes: [],
@@ -2166,10 +2382,13 @@ describe('the keyless client retries a shed request, and a retry is not free', (
       maxRequests: 6,
       pageLimit: 1,
     });
-    expect(calls).toBe(6);
-    expect(w.requests).toBe(6);
-    expect(w.pages).toBe(3); // half of them were shed and retried
-    expect(c.shed()).toBe(3);
+    // A page can cost up to three requests, so the walk reserves three before starting one. From
+    // four spent it stops rather than starting a fifth page that could take it to seven — the
+    // overshoot that would have broken the stage's declared worst case.
+    expect(calls).toBe(4);
+    expect(w.requests).toBe(4);
+    expect(w.pages).toBe(2); // half of them were shed and retried
+    expect(c.shed()).toBe(2);
     expect(w.hitRequestCap).toBe(true);
     expect(w.usable).toBe(false);
   });

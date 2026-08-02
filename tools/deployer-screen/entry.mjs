@@ -55,7 +55,7 @@
  * the consequence on the one wallet where we hold the answer.
  */
 
-import { createSlotGroups, median, percentile } from './measure.mjs';
+import { createSlotGroups, median, percentile, tallyCreateSlot } from './measure.mjs';
 
 /**
  * A position counts as closed when the residual is within 0.1% of the tokens bought.
@@ -164,41 +164,11 @@ export function hitRate(values, predicate) {
 export function measureLaunchEntry(fills) {
   const groups = createSlotGroups(fills);
   if (groups === null) return null;
-  const { slot, deployer, coordinated, inSlot } = groups;
+  const { inSlot } = groups;
 
-  let devSol = 0;
-  let coordinatedSol = 0;
-  let independentSol = 0;
-  /** @type {Set<string>} */
-  const outsiders = new Set();
-  for (const f of inSlot) {
-    if (f.wallet === deployer) devSol += f.sol;
-    else if (coordinated.has(f.wallet)) coordinatedSol += f.sol;
-    else {
-      independentSol += f.sol;
-      outsiders.add(f.wallet);
-    }
-  }
-
-  const totalOtherSol = coordinatedSol + independentSol;
-  const denominator = devSol + totalOtherSol;
-  const operationShare = denominator > 0 ? (devSol + coordinatedSol) / denominator : 1;
-
-  /** @type {import('./measure.mjs').CreateSlotMeasurement} */
-  const createSlot = {
-    slot,
-    deployer,
-    devSol,
-    coordinatedSol,
-    independentSol,
-    totalOtherSol,
-    coordinatedWallets: coordinated.size,
-    independentWallets: outsiders.size,
-    bundledTx: groups.bundledTx,
-    maxWalletsInOneTx: groups.maxWalletsInOneTx,
-    operationShare,
-    roomLeft: 1 - operationShare,
-  };
+  // The room figure and the population it is a statement about come from ONE tally, so the two
+  // cannot drift apart under a change to the co-ordination rule.
+  const { measurement: createSlot, outsiders } = tallyCreateSlot(groups);
 
   // Queue position and the SOL already ahead, walked in the venue's own within-slot order.
   /** @type {Map<string, { aheadSol: number, position: number, fillSol: number }>} */
@@ -348,6 +318,11 @@ export const ENTRY_VERDICTS = [
  * @param {object} [context]
  * @param {string} [context.candidateWallet] Wallet the launches were sampled for, when known.
  * @param {number} [context.launchesDropped] Windows that could not be measured and were excluded.
+ * @param {number} [context.mintTimeDisagreements] Of those, the ones dropped because the vendor's
+ *   mint time and the fill tape disagreed. Called out separately because it is the one drop cause
+ *   that says the method's own assumption has broken rather than that a launch was awkward.
+ * @param {number} [context.windowsWithUnseenTail] Measured windows whose fills stop short of the
+ *   full slot window, so the field may be undercounted.
  * @returns {EntryScore}
  */
 export function scoreEntry(launches, t, context = {}) {
@@ -388,10 +363,30 @@ export function scoreEntry(launches, t, context = {}) {
   };
 
   const dropped = context.launchesDropped ?? 0;
+  const clockDrops = context.mintTimeDisagreements ?? 0;
+  const unseenTail = context.windowsWithUnseenTail ?? 0;
   if (dropped > 0) {
     score.caveats.push(
       `${dropped} launch window(s) could not be walked back to the mint and were DROPPED rather ` +
         `than measured from a partial window`,
+    );
+  }
+  if (clockDrops > 0) {
+    // A REPORTABLE EVENT, not a footnote. The zero-gap agreement between the vendor's mint time and
+    // the first fill was measured on our OWN tape, and this lane has never held a vendor key — so
+    // whether it holds for strangers is untested, and this count is the test.
+    score.caveats.push(
+      `REPORTABLE: ${clockDrops} of those ${dropped} were dropped because the vendor's mint time and ` +
+        `pump.fun's fill tape DISAGREED (fills older than the recorded creation). On the committed ` +
+        `tape that gap is exactly 0 on all 235 covered launches, so a non-zero count here means the ` +
+        `clock assumption this measurement rests on has broken and the sample is no longer what it seems.`,
+    );
+  }
+  if (unseenTail > 0) {
+    score.caveats.push(
+      `${unseenTail} measured window(s) hold no fill in the later part of the slot window. Either ` +
+        `those launches went quiet or the mint time seeks early; the two are not separable from the ` +
+        `tape, and in the second case the field is undercounted rather than absent.`,
     );
   }
   if (deployerMismatches > 0) {

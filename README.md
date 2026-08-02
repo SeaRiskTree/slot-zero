@@ -1,15 +1,24 @@
 # slot-zero
 
-A research lab for **pump.fun launch microstructure**: what happens in the first seconds of
-a token launch, who profits, and whether any of it is capturable.
+A research lab for **pump.fun launch microstructure**, working one question — the captain's, verbatim:
 
-This repo is the foundation, and only the foundation. It holds one primary dataset, a typed
-loader over it, a test that reproduces the published numbers, one offline measurement over the
-tape, and one screening tool over a provider API and pump.fun's public fill tape. **There is no
-strategy, backtest, signal or trading logic here.** The question
-that used to gate that work — whether the two winning outsiders were the operator's own book —
-has been answered; what is still gated, and what no longer is, is stated at the bottom of this
-file.
+> "Can I beat the dev and all other wallets sniping the same tokens created by the dev currently?"
+
+Three things that question demands, and nothing here may blur them:
+
+- **Profit against the field that is actually there**, not a quality score on the deployer. A
+  deployer can complete bonding curves reliably and still run an opening window nobody outside its
+  own wallets can profit in. This lab holds that exact wallet and uses it as a control.
+- **Both legs, on the same tokens.** The dev *and* every other sniping wallet, measured on the
+  launches under consideration — not on two separately assembled populations.
+- **Present tense.** This is PvP, devs adapt, and a window that closes is expected behaviour rather
+  than a defect. Nothing here claims an edge is durable. The one window this lab has measured end to
+  end was shut by the deployer in a single launch.
+
+**What is here is the foundation and the entry half of the answer.** One primary dataset, a typed
+loader over it, a test that reproduces the published numbers, one offline measurement over the tape,
+and one screening tool that **gates on competence and scores entry**. Exit is a separate, unbuilt
+stage. **There is no strategy, backtest, signal or trading logic here.**
 
 **The analysis core under `src/` reaches no network and reads no credential**, and
 `test/loader.test.ts` proves it; `analysis/` is held to the same list by
@@ -23,7 +32,56 @@ npm ci
 npm test        # tsc --noEmit, then vitest run
 ```
 
+CI (`.github/workflows/ci.yml`) runs exactly that on Node 20 for every PR and every push to `main`.
+
 Private. Nothing here is production.
+
+---
+
+## Where the lab stands
+
+**The founding question is closed.** It was whether the two winning outsiders were the operator's
+own book. They are not: both are settled outsiders, confidence high, on complete signature sets —
+see "What is open" below, which now records what that answer did and did not buy.
+
+**And the follow-on measurement killed the opportunity it was gating.** On this deployer the
+opening window is no longer enterable by outsiders. The break is **2026-06-04**, it took one launch,
+and the cause was **the deployer raising its own buy — not the flood of competing bots.** Both the
+bot flood and the parameter change are measured; only the parameter change tracks both ends of the
+window. See "The one window, and what closed it" below.
+
+That is why the mission moved from *"is the positive result real?"* to the captain's question at the
+top of this file. Answering it means screening *other* deployers, present tense.
+
+**What has landed toward that:**
+
+| | |
+|---|---|
+| **Stage 0** — local validation, no network, no key | `tools/deployer-screen/stage0.mjs` |
+| **Stage 1** — the keyed completion-rate **gate** over MadeOnSol | `tools/deployer-screen/screen.mjs` |
+| **Stage 2** — the keyless **entry** score: room in the opening window, and what the field there achieved | `tools/deployer-screen/stage2.mjs`, `entry.mjs` |
+| **The window-population measurement** — how many profitable windows the tape contains, how long, how fast they close | `analysis/window-population/` |
+| **CI** — `npm test` on the Node 20 engines floor | `.github/workflows/ci.yml` |
+
+**Stage 2 scores entry and deliberately does not score exit.** Room to enter is not room to leave,
+and a single blended score cannot be read back apart, so no exit signal reaches any number Stage 2
+produces. **Stage 3 — exit — is a separate lane and is not built.** So is the prediction-grading
+loop that would read the run records under `tools/deployer-screen/runs/`.
+
+### The known-negative control
+
+`7ufmve7Z…` — the deployer this whole dataset is built from — is the lab's control, and Stage 0
+asserts **both** halves of it every run:
+
+> **The gate must PASS it, and Stage 2 must REFUSE it.**
+
+It is competent (103 of 239 launches bonded, 0.4310) and it is **not beatable**: since 2026-06-04
+its own group takes the bottom of its own curve. Stage 2 scores it `entry-room-absent` on both the
+recent-8-launch slice a live run would use and the whole 89-launch post-break regime. That pairing
+is what stops the tool from grading itself favourably, and `stage0.mjs` fails loudly if a later lane
+loosens a bar enough to admit the wallet. It matters most because the **field** leg on that same
+wallet reads 362 of 473 closed round trips positive gross of fees — followed on its own it would
+call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md`.
 
 ---
 
@@ -34,15 +92,17 @@ Private. Nothing here is production.
 | `data/population-tape-2026-07-29/` | The population tape. 239 launches, 107,439 fills, 20,388 counterparty wallets, reconstructed keyless. Column semantics in its `README.md`, findings in its `report.md`, import and correction decisions in its `IMPORT.md`. |
 | `src/` | The loader. Per-launch, per-wallet and per-(wallet, launch) views, plus the raw per-fill tape. No runtime dependencies. |
 | `test/reproduction.test.ts` | The published headline numbers, asserted against the loaded data. |
-| `tools/deployer-screen/` | The only keyed, network-capable area. A rerunnable completion-rate **gate** over MadeOnSol's free Deployer Hunter endpoints, plus a keyless **entry score** from pump.fun's fill tape — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |
-| `analysis/window-population/` | How many profitable windows the tape contains, how long, how fast they close, how many at once. **One window**, 2026-03-12 → 2026-06-04, closing in a single launch. Offline like `src/`. Findings and definitions in its `README.md`. |
-| `test/type-guards.test-d.ts` | Compile-time proof that the three traps below are unreachable — and that `EgQX9R3Q…`'s figures cannot be read as an independent observation. |
+| `test/type-guards.test-d.ts` | Compile-time proof that the **four** guards below bite. Type-checked, never executed. |
+| `tools/deployer-screen/` | The only keyed, network-capable area. The competence **gate** (stages 0–1, keyed) plus the keyless **entry score** (stage 2) — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |
+| `analysis/window-population/` | How many profitable windows the tape contains, how long, and how fast they close. **One window**, 2026-03-12 → 2026-06-04, **83 days**, closed in a single launch over **24.7 hours** — and **n = 1**, so "are windows numerous?" is *unmeasured*. Offline like `src/`. Findings, definitions and limits in its `README.md`. |
+| `.github/workflows/ci.yml` | `npm ci` then `npm test` on Node 20, on PRs and pushes to `main`. The whole check set, on purpose. |
 | `AGENTS.md` | Provider facts that cost real time to learn. Read before touching pump.fun or Solana RPC. |
 
-### The three traps the loader makes unreachable
+### The four guards the loader makes compile errors
 
-Each of these silently corrupted an analysis during the research. Each is now a compile
-error, not a convention.
+The first three each silently corrupted an analysis during the research. The fourth is the
+counterparty hazard that replaced the founding question. Each is now a compile error rather than a
+convention, and each is asserted in `test/type-guards.test-d.ts`.
 
 1. **Tape-derived P&L is gross of fees.** `GrossSol` and `NetSol` are mutually unassignable
    brands; every tape field is named `…GrossOfFees`. Only `onchain_*.csv` is fee-inclusive.
@@ -54,6 +114,10 @@ error, not a convention.
 3. **`dev_exit_complete = 0`** marks the seven launches whose deployer figures are
    window-truncated. `DevExitTruncated` exposes no complete net figure — only a
    `windowTruncated…` field and a pointer to the file that has the real number.
+4. **A counterparty row is not a trader.** `EgQX9R3Q…` is one wallet of a sniping book this
+   dataset cannot see the total of, so the `Outsider` union has no `wallet` field to filter a P&L
+   table by — only `IndependentOutsider` does. Reading its address without discriminating, or
+   passing a book member where an independent observation is wanted, does not compile.
 
 ```ts
 import { Tape, medianGross, medianNet, fractionPositive } from 'slot-zero';
@@ -84,11 +148,14 @@ the report's name and section inline; they are evidence from elsewhere, not repr
   that is within half a hundredth of a SOL of zero.
   *(`wallet_launch_pnl.csv`, closed rows, grouped by `first_slot` − create slot.)*
 - **Six wallets are inside the launch, not competing for it.** `2CHrnc2L…` is in the create
-  slot of **235 of 235** reconstructed launches over eight months, fills at 1.08× the
-  deployer's own price where outsiders pay 2–3×, pays 0.0009 SOL of fees to get there, and
-  appears in **zero of 70 other deployers' launches**. Fee-inclusive, the cohort's median
-  create-slot round trip is **+0.838 SOL**; the non-cohort median is **+0.035 SOL**.
-  *(`counterparties.csv`; `onchain_create_slot_pnl.csv` for the fee-inclusive figures.)*
+  slot of **235 of 235** reconstructed launches over eight months, pays 0.0009 SOL of fees to get
+  there, and appears in **zero of 70 other deployers' launches**. The six fill at 1.08–1.41× the
+  deployer's own price where outsiders pay 2–3× — *that* range is `report.md` §5.4's, carried in
+  `src/cohort.ts` and not reproduced here, because the only committed file with a fill multiple
+  (`first30s_best.csv`) holds the ten best entrants per launch rather than all of them.
+  Fee-inclusive, the cohort's median create-slot round trip is **+0.838 SOL**; the non-cohort
+  median is **+0.035 SOL**. *(`counterparties.csv`; `onchain_create_slot_pnl.csv` for the
+  fee-inclusive figures.)*
   That the six are *part of the operation* was an inference when the source report was
   written; the funding graph has since turned it into an artefact. **The discriminator is the
   operator's own tooling, host and handle on the cohort's own launches:** `2CHrnc2L…` is
@@ -102,8 +169,8 @@ the report's name and section inline; they are evidence from elsewhere, not repr
   on-chain proves ownership. *(`kol-cohort-vs-outsider-funding/report.md` §2.1, §6.3.)*
 - **The outsider edge is real, thin, and bought.** `5brv79eF…` keeps **+47.8 SOL of +100.9
   gross** over 49 exactly-priced launches — it pays away over half in priority fees, and is
-  still the best unaffiliated result in 20,388 wallets. Its outsider status is settled, not
-  presumed — and bounded by the on-chain ceiling in "The ceiling of the method" below.
+  still the best result in 20,388 wallets outside the operation's own six. Its outsider status is
+  settled, not presumed — and bounded by the on-chain ceiling in "The ceiling of the method" below.
 - **Graduation is a curve constant.** 14.70× the initial price, from the curve parameters
   alone — confirmed here empirically on **18 launches whose raw tape window spans the switch
   to the graduated pool**, across dev buys from 3.46 to 56.30 SOL. At the current
@@ -111,10 +178,70 @@ the report's name and section inline; they are evidence from elsewhere, not repr
   there (median lifetime ATH 5.08×). The deployer finishes selling at ~35% of graduation.
 - **Somebody is already running the fast-reacting-bot strategy, and it is the largest loser
   in the dataset.** `C989QoG3…` and `4o9ndxqo…`: 51 and 52 launches, entering a median one
-  second after the mint at ~3× the deployer's price, holding ~42 seconds. **−106.8 and
-  −100.0 SOL**, profitable on 2% and 4%.
+  second after the mint at ~3× the deployer's price, holding ~42 seconds, never once in the create
+  slot. **−106.8 and −100.0 SOL**, profitable on 2% and 4%.
 - **The deployer takes 4,315 SOL over 228 complete exits** (median +21.66 per launch, gross
-  of fees), and is out at a median +13 seconds — long before graduation, every time.
+  of fees), and is out at a median +13 seconds. **Long before graduation, every time:** on all
+  228 complete exits the price it finishes selling at is below the graduation price, the highest
+  reaching 79% of it.
+
+---
+
+## The one window, and what closed it
+
+`analysis/window-population/` measures the tape for profitable windows: intervals in which the
+outsiders who reached a launch's create slot, taken together, closed their round trips for more than
+they staked. Its README owns the definitions, the method and the limits; this is the summary the
+rest of the repo cites.
+
+**One window. 2026-03-12 → 2026-06-04. 83 days, 129 launches.** Both ends are *observed* — 91 days
+of no window before it and 54 days after — so the duration is a measurement rather than a lower
+bound. Both dates fall out of a **blind changepoint scan** given no candidate dates, on two
+independent series (return per SOL and prize in SOL) that agree.
+
+**It closed in one launch, over 24.7 hours,** between `Banknote` (2026-06-03 11:25, +2.61 SOL) and
+`Peque` (2026-06-04 12:08, −1.27 SOL). There was no decay. A participant watching only its own P&L
+needed 2–3 days and 2–4 launches to tell the change from ordinary variance.
+
+**Whether such windows are *numerous* is unmeasured, and this tape structurally cannot say.**
+All 239 launches are one deployer, so **n = 1**. The 70-deployer control is one launch per creator
+with no dates and no P&L — 70 rows, **zero** window observations. Nothing here gives an arrival rate,
+a concurrency, or an idle time between windows, and no further work on this tape produces a second
+observation.
+
+**What closed it was the deployer's own parameter change.** Two facts, both measured on the tape:
+
+- The change is atomic and lands on the launch the scan picks out. Median dev buy per regime runs
+  **3.000 → 4.444 → 14.815 SOL** and median cohort create-slot stake **3.00 → 6.00 → 19.75 SOL**,
+  while median *outsider* create-slot stake goes **1.64 → 15.47 → 10.84**. The operation's share of
+  the bottom of its own curve reads **0.773 before / 0.413 inside / 0.771 after**. It was crowding
+  in, not being crowded out.
+- That indicator separates **both** ends of the window. The competing-bot flood only exists at one
+  of them: across the same 2026-06-04 break, per-launch median first-30-second transaction attempts
+  rose about **25×** (362 → 9,169) while fills barely moved (260 → 220), so the share of attempts
+  that got filled fell from **73% to 2%** — but nothing comparable happens at the March open, which
+  the operation's own share does separate. *(`launches.csv` `chain_tx_all_first30s`,
+  `chain_tx_ok_first30s`.)*
+
+Two caveats the measurement states about itself and this summary keeps. The share indicator is
+**not fully exogenous** — its denominator contains the outsiders' own stake — and the half of it the
+operation controls does not separate the regimes alone. And attributing the close to the parameter
+change is the reading the evidence supports across both ends; it is not an experiment.
+
+**The later seats broke on the same day** — entrants who were *not* in the create slot show one
+break, on 2026-06-05, median per-launch gross going +1.17 → −3.70 SOL. One close, one cause, not a
+second window.
+
+**What the window was worth, and to whom.** +591.7 SOL gross over twelve weeks, shared by 186
+trading units, **73% of it to two of them**; only 11 units cleared +5 SOL gross over the whole
+window. Applying the 0.540 net/gross ratio measured on its own last 30 launches gives ≈ 320 SOL net
+— an estimate, because the window's first 72 launches are not priced fee-inclusive.
+
+**And after it: not enterable.** Over the 80 post-break launches priced exactly, the *entire*
+outsider population made **+46.9 SOL net on 922 SOL of stake** — under 0.6 SOL per launch shared by
+everyone who entered — against +591.7 SOL gross in the window. Gross return per SOL fell 0.396 →
+0.173 and net/gross with it, 0.540 → 0.294. This is the measurement behind the known-negative
+control above.
 
 ---
 
@@ -168,9 +295,9 @@ every unaffiliated verdict this lab produces is to be read as carrying it.
 
 ## What is open
 
-Stated honestly, because the temptation is to read the section above as a green light.
+Stated honestly, because the temptation is to read the sections above as a green light.
 
-### The one that gated everything — answered
+### The founding question — answered, and the opportunity it gated is dead
 
 **Both wallets are genuine outsiders. The positive case survives. Confidence: high for
 both.** The funding graph this section used to say nobody had built has been built —
@@ -183,6 +310,13 @@ and classified 1,504 of the 1,558 non-dust candidates one at a time and found no
 method shown twice to surface real links when they exist, §4.4). Each traces to a distinct,
 independently characterised funding channel the operation never uses, and neither shares a
 funder or a destination with it (§5).
+
+**And then the answer stopped being worth anything on this deployer.** The positive result the
+question was gating is a create-slot result, and the create slot on `7ufmve7Z…` closed to outsiders
+on 2026-06-04 — see "The one window, and what closed it" above. Both of these wallets were still
+trading it at the tape's end, on a collapsed return (0.576 → 0.196 and 0.540 → 0.097 gross ROI);
+neither rotated out. So the settled outsider status is a fact about who those wallets are, and no
+part of it says the seat they sat in is still there.
 
 **Which side each negative is complete on**, because that is what the test rests on and the two
 wallets are not symmetric here. Common to both: the **operation's** side is complete — complete
@@ -210,17 +344,12 @@ One set is genuinely truncated and is not used as evidence anywhere: `2CQgjcdN�
 2026-07-22 (§8.2). And **both negatives carry the shared-custodial-venue ceiling** recorded
 above; neither is a claim that the parties are provably unrelated.
 
-`5brv79eF…` in particular is exactly what it appeared to be: an unaffiliated, still-running,
-bridge-funded sniper that has taken money out of this operator's launches for four months and
-withdraws to a service the operator never touches (§3.1, §6.2). **It carries no further
-caveat from this evidence** beyond the ceiling every on-chain verdict here carries.
-
 **What this does not say.** Nothing above establishes that the strategy works, or that either
 wallet's edge is repeatable by a new entrant. The funding report answers whose money it is
 and says so itself (its §7 "Explicitly not claimed", §10). Every limit in "The rest" below
 survives it untouched.
 
-### What replaces it: `EgQX9R3Q…` is one wallet of a book, and this dataset cannot measure the book
+### `EgQX9R3Q…` is one wallet of a book, and this dataset cannot measure the book
 
 `EgQX9R3Q…` is **not an individual trader**. It is one wallet of a sniping book of at least
 five run out of a single bankroll (`9BhkaAyb…`) — and `2CQgjcdN…`, this dataset's own
@@ -265,12 +394,20 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
 
 ### The rest
 
-- **The tape holds one deployer, and therefore one window.** `analysis/window-population/`
-  finds exactly one interval in which the create slot paid outsiders — 2026-03-12 to
-  2026-06-04 — with 91 days of no window observed before it and 54 days after. How *often* a
-  window arrives, and whether two are ever open at once, needs per-launch series for other
-  deployers over months; the 70-launch control is one launch per creator and carries zero
-  window observations.
+- **How often a window arrives is the question the mission now turns on, and it is unmeasured.**
+  The tape holds one deployer and therefore one window: **n = 1**. Answering it needs per-launch
+  create-slot series for 10–20 other prolific deployers over 6+ months each — keyless, roughly
+  6,000–12,000 pump.fun requests, costed in `analysis/window-population/README.md` §8. Until then,
+  no arrival rate, no concurrency, and no idle-time estimate exists here.
+- **Exit is not measured at all.** Stage 2 scores room to enter. Whether a position can be left —
+  when the dev sells relative to mint and to outsider inflow, whether the trigger is a **size**
+  that our own buy counts towards, whether an outsider could have exited first — is stage 3's
+  separate deliverable, and it is not built. An entry with room in it can still be a position you
+  cannot leave.
+- **Everything Stage 2 measures about profit is gross of fees and therefore an upper bound**, so
+  its field leg can only ever *veto* a verdict, never earn one. The counterexample is on our own
+  subject: 76.5% of post-break closed round trips are positive gross, and the same population is
+  not worth trading fee-inclusive.
 - **Every P&L here is bounded by a 60-second window** (300 s on 21 launches, 120 s on 4).
   48% of pairs close inside it; the other 52% are late, small and still holding, and their
   outcome is unknown. A whole-life tape is the same endpoint with no window bound — roughly
@@ -283,10 +420,9 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
   than it looks. The 70-launch control removes exactly one objection — that create-slot
   bundles are generic pump.fun mechanics — and no more. The +0.035 SOL outsider edge is
   measured on this operator's unusually well-attended launches only.
-- **Something changed in June 2026 and it was not the operator.** First-30-second attempts
-  rose roughly twentyfold while fills stayed flat: two thirds of entrants used to get filled,
-  now two per cent do. Slots 2–10 were break-even before and lose money after. Whether that
-  is specific to this operator or market-wide is untested.
+- **Whether the June regime change is specific to this operator or market-wide is untested.**
+  Both the operation's parameter change and the twenty-five-fold rise in competing attempts are
+  measured on one deployer's launches.
 - **Four launches have no tape at all** (`Marciana`, `Leo`, `Fridge`, `GLM`).
 - **Fee-inclusive P&L covers 123 of 239 launches.** The rest would tighten the tails of the
   one measurement that actually decides whether the window pays.
@@ -319,12 +455,16 @@ prose** — each assertion states what the data says.
    in `src/units.ts` implements that, with the reason recorded.
 5. **The dataset `README.md` says a `window/*.meta.json` "is not written" when the walk did
    not reach the mint. It is.** All 239 mints have one; four carry `reached_mint: false`
-   alongside a partial `.jsonl.gz` of unrelated later trading (`Marciana`'s 1,000 rows are
-   PumpSwap fills from six days after its launch). **This matters beyond pedantry:** the
-   documented resume rule is "a launch is done when its `meta.json` exists," and under that
-   rule those four launches would never be retried — which would explain `report.md` §10.1's
-   "returned an empty result across three passes" without the endpoint being at fault. Worth
-   checking before anyone spends time re-harvesting them. The loader gates on `reached_mint`.
+   alongside a partial `.jsonl.gz`. **This matters beyond pedantry:** the documented resume rule is
+   "a launch is done when its `meta.json` exists," and under that rule those four launches would
+   never be retried — which would explain `report.md` §10.1's "returned an empty result across
+   three passes" without the endpoint being at fault. Worth checking before anyone spends time
+   re-harvesting them. The loader gates on `reached_mint`.
+   **The partial files are not "unrelated later trading", which this README used to say.** Every
+   row in all four sits inside that launch's own 300-second window, minutes after its mint
+   (`GLM` 9 s to 5 min after create on the curve; `Marciana` 2:11 to 5:00 after create, on
+   PumpSwap). What they are missing is the *oldest* end — the walk never reached the create slot
+   — which is exactly why `reached_mint` and not row count is the coverage test.
 6. **§3.5 says "thirteen reconstructed windows span the moment the token graduated."** There
    are **18**. The six current-preset ones it names are exactly the six that reproduce
    6.5856×, so the finding is unaffected — the count is just low.
@@ -360,3 +500,8 @@ this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`. Two late
 custodial venue in "The ceiling of the method" above) and `slot-zero-june-regime-change` (the
 create slot's unprofitability for outsiders since 2026-06-04, and the *operation's share of the
 curve's bottom* method that `tools/deployer-screen/` cites), are likewise not copied here.
+**None of the six reports is committed to this repo**, so any figure attributed to one is
+evidence from elsewhere and is not asserted by any test here. `analysis/window-population/`
+re-derives `slot-zero-june-regime-change`'s 2026-06-04 date and its closed-regime prize from the
+local tape by an independent route, which is the one place a companion finding is confirmed
+in-repo.

@@ -58,8 +58,10 @@ permanent limit of the evidence:
 - **Symbols are not unique — key on `mint`.** Two launches are called `maxxing`, one of them
   the operator's best result ever.
 - **All 239 mints have a `window/*.jsonl.gz`, but four never reached the mint.** Coverage is
-  `meta.reached_mint`, not file existence; the four partial files hold unrelated later
-  trading. `Tape.windowTape()` gates on this, `incompleteWindowTape()` is the diagnostic.
+  `meta.reached_mint`, not file existence. The four partial files are **truncated at the
+  oldest end, not full of foreign rows**: every row sits inside that launch's own window,
+  minutes after its own mint — what is missing is the create slot the backwards walk never
+  reached. `Tape.windowTape()` gates on this, `incompleteWindowTape()` is the diagnostic.
 - **A counterparty row is not a trader.** `EgQX9R3Q…` (+47.1 SOL) and `2CQgjcdN…`
   (−12.2 SOL) are two rows of one sniping book run off a single bankroll, and nothing in this
   tape reveals it — they never share a launch. `SETTLED_OUTSIDERS` in `src/cohort.ts` makes

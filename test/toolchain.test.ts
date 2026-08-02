@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,39 +27,109 @@ function major(spec: string): number {
 
 const enginesMajor = major(pkg.engines.node);
 
+// Highest ES library year each Node major fully implements. The ceiling moves with the floor:
+// raising engines to >=22 makes lib/target ES2023 legal, and only then. A floor this map does
+// not know is a hard failure rather than a silent pass — extend it in the same commit.
+const ES_CEILING_BY_NODE_MAJOR = new Map([
+  [20, 2022],
+  [22, 2023],
+  [24, 2024],
+]);
+
+// Libraries that carry no ES year at all; they say nothing about the runtime's ES support.
+const NON_VERSIONED_LIBS = new Set([
+  'dom',
+  'webworker',
+  'scripthost',
+  'decorators',
+]);
+
+// Pre-2015 and the ES6/ES7 spellings TypeScript still accepts, mapped to their year.
+const LEGACY_LIB_YEARS = new Map([
+  ['es3', 1999],
+  ['es5', 2009],
+  ['es6', 2015],
+  ['es7', 2016],
+]);
+
+/**
+ * Year a tsconfig `lib`/`target` entry promises, or null if it promises no ES year.
+ * Case-insensitive, and sub-libraries compare on their parent's year: `ES2022.Array` → 2022.
+ * `ESNext` is Infinity — it is by construction newer than any released floor.
+ */
+function esYear(entry: string): number | null {
+  const head = entry.trim().toLowerCase().split('.')[0] ?? '';
+  if (NON_VERSIONED_LIBS.has(head)) return null;
+  if (head === 'esnext') return Number.POSITIVE_INFINITY;
+  const legacy = LEGACY_LIB_YEARS.get(head);
+  if (legacy !== undefined) return legacy;
+  const m = /^es(\d{4})$/.exec(head);
+  expect(m, `unrecognised tsconfig lib/target ${JSON.stringify(entry)}`).not.toBeNull();
+  return Number(m![1]);
+}
+
 describe('the type surface matches the runtime the repo says it supports', () => {
   it('@types/node is pinned to the engines floor major', () => {
     expect(major(pkg.devDependencies['@types/node']!)).toBe(enginesMajor);
   });
 
   it('the installed @types/node is that major too, not merely the declared range', () => {
-    const installed = JSON.parse(read('node_modules/@types/node/package.json')) as {
-      version: string;
-    };
+    const require = createRequire(import.meta.url);
+    let manifest: string;
+    try {
+      manifest = require.resolve('@types/node/package.json');
+    } catch {
+      throw new Error(
+        'cannot resolve @types/node/package.json — run `npm ci` before this test; ' +
+          'it checks the INSTALLED version, not just the declared range',
+      );
+    }
+    const installed = JSON.parse(readFileSync(manifest, 'utf8')) as { version: string };
     expect(major(installed.version)).toBe(enginesMajor);
   });
 
   it('CI type-checks and tests on the engines floor major', () => {
     const ci = read('.github/workflows/ci.yml');
-    const declared = [...ci.matchAll(/node-version:\s*'?"?([^\s'"#]+)/g)].map((m) => m[1]!);
+    const declared = [...ci.matchAll(/node-version:\s*(.+)/g)].map((m) =>
+      (m[1] ?? '').replace(/#.*$/, '').trim(),
+    );
     expect(declared.length, 'ci.yml declares no node-version').toBeGreaterThan(0);
-    for (const v of declared) expect(major(v)).toBe(enginesMajor);
+    for (const raw of declared) {
+      // A matrix reference or a list would let this guard check one entry, or none, while
+      // reading as if it checked them all. Neither is a divergence — but neither is a check.
+      const value = raw.replace(/^['"]|['"]$/g, '');
+      expect(
+        /^\d[\w.-]*$/.test(value),
+        `ci.yml node-version ${JSON.stringify(raw)} is not a literal version; this guard ` +
+          'cannot resolve matrix references or lists — inline the version, or teach it to',
+      ).toBe(true);
+      expect(major(value)).toBe(enginesMajor);
+    }
   });
 
   it("tsconfig's lib does not promise more than the floor runtime provides", () => {
-    // ES2022 is fully implemented on Node 20; anything later would reintroduce the same
-    // silent gap from the language-library side rather than the @types/node side.
+    const ceiling = ES_CEILING_BY_NODE_MAJOR.get(enginesMajor);
+    expect(
+      ceiling,
+      `no ES library ceiling recorded for the Node ${enginesMajor} floor — add it to ` +
+        'ES_CEILING_BY_NODE_MAJOR in the commit that raises engines',
+    ).toBeDefined();
+
     const tsconfig = read('tsconfig.json');
     const lib = /"lib"\s*:\s*\[([^\]]*)\]/.exec(tsconfig)?.[1] ?? '';
     const target = /"target"\s*:\s*"([^"]+)"/.exec(tsconfig)?.[1] ?? '';
-    const allowed = new Set(['ES5', 'ES2015', 'ES2016', 'ES2017', 'ES2018', 'ES2019', 'ES2020', 'ES2021', 'ES2022']);
-    for (const entry of lib.split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean)) {
-      expect(allowed.has(entry), `lib ${entry} is newer than the Node ${enginesMajor} floor`).toBe(
-        true,
-      );
+    const entries = [
+      ...lib.split(',').map((s) => s.trim().replace(/"/g, '')).filter(Boolean),
+      ...(target ? [target] : []),
+    ];
+    expect(entries.length, 'tsconfig declares neither lib nor target').toBeGreaterThan(0);
+    for (const entry of entries) {
+      const year = esYear(entry);
+      if (year === null) continue;
+      expect(
+        year <= ceiling!,
+        `${entry} is newer than ES${ceiling}, the most the Node ${enginesMajor} floor provides`,
+      ).toBe(true);
     }
-    expect(allowed.has(target), `target ${target} is newer than the Node ${enginesMajor} floor`).toBe(
-      true,
-    );
   });
 });

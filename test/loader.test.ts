@@ -197,11 +197,12 @@ describe('the raw window tape', () => {
   });
 
   it('the four un-taped launches yield no window tape, despite having a window file', () => {
-    // All 239 mints have a `.jsonl.gz` and a `.meta.json`. For these four the walk never
-    // reached the mint, and the file holds unrelated later trading — `Marciana`'s 1,000
-    // rows are PumpSwap fills from 2026-07-20, six days after it launched. A reader that
-    // gated on file existence rather than `reached_mint` would serve those as a launch
-    // window. That is exactly the bug this test exists to prevent.
+    // All 239 mints have a `.jsonl.gz` and a `.meta.json`. For these four the backwards walk
+    // never reached the create slot, so the file is truncated at the OLDEST end rather than
+    // holding foreign rows — `Marciana`'s 1,000 rows all sit 2:11 to 5:00 after its own mint,
+    // inside its own 300 s window. A reader that gated on file existence rather than
+    // `reached_mint` would serve that partial file as a launch window. That is exactly the
+    // bug this test exists to prevent.
     const untaped = tape.launches().filter((l) => l.tape === 'none');
     expect(untaped).toHaveLength(4);
     for (const l of untaped) {

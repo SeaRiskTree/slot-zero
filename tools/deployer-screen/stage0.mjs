@@ -172,8 +172,9 @@ export function readGroundTruthCompletion(dataDir) {
  * Measure every taped launch of the subject deployer from the committed window tapes.
  *
  * Gated on `reached_mint`, not on file existence. All 239 mints have a `window/*.jsonl.gz` but
- * four never reached the mint, and those four files hold unrelated later trading — a reader that
- * trusted the filename would serve six-days-later PumpSwap fills as a launch window. The live
+ * four never reached the mint, and those four files are truncated at the *oldest* end — their rows
+ * sit inside the launch's own window but the create slot is missing, so a reader that trusted the
+ * filename would crown a mid-window sniper as the deployer. The live
  * walk in `pumpfun.mjs` → `readLaunchWindow` reproduces that gate as a *proof obligation*, since
  * on a stranger's launch there is no committed `reached_mint` to consult.
  *

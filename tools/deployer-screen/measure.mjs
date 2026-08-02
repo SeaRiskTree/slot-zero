@@ -47,13 +47,21 @@ export function solBetweenPrices(from, to) {
  * @typedef {object} Fill
  * A single swap, in the shape both `window/*.jsonl.gz` and `swap-api.pump.fun` use.
  * @property {number} slot   Solana slot.
+ * @property {string} sid    pump.fun's within-slot ordering key (`sid` stored, `slotIndexId`
+ *   live). Slots hold many fills and a slot number cannot order them; this can, and it is what
+ *   "who was queued ahead of whom" is computed from — the June report §5.2 metric.
  * @property {string} tx     Transaction signature. The co-ordination key — see
  *   {@link measureCreateSlot}.
  * @property {string} wallet The **swapping** wallet. In a bundled transaction this is not the
  *   fee payer, which is why it and not the fee payer is the unit of "who traded".
  * @property {'buy' | 'sell'} side
  * @property {'pump' | 'pump_amm'} venue `pump` is the bonding curve.
- * @property {number} sol    Swap-quote SOL, gross of the venue fee and of priority fees.
+ * @property {number} sol    Swap-quote SOL, **gross of the venue fee and of priority fees**.
+ *   Every figure derived from it inherits that, which is why the P&L field names in `entry.mjs`
+ *   all carry `GrossOfFees`.
+ * @property {number} tokens Base-token amount moved by this fill. Required to decide whether a
+ *   wallet's position closed inside the window, which is the only condition under which its P&L
+ *   is complete at all.
  * @property {number} priceSol Price per token in SOL at this fill.
  */
 
@@ -79,11 +87,13 @@ export function parseFill(raw) {
   }
   return {
     slot: Number(raw['slot']),
+    sid: String(raw['sid']),
     tx: String(raw['tx']),
     wallet: String(raw['u']),
     side,
     venue,
     sol: Number(raw['sol']),
+    tokens: Number(raw['base']),
     priceSol: Number(raw['psol']),
   };
 }
@@ -131,45 +141,9 @@ export function parseFill(raw) {
  *   the create slot on, which is the honest answer for a launch we cannot see the start of.
  */
 export function measureCreateSlot(fills) {
-  const curveBuys = fills.filter((f) => f.side === 'buy' && f.venue === 'pump');
-  if (curveBuys.length === 0) return null;
-
-  // The create slot is the earliest slot carrying a curve buy, and the deployer is the wallet
-  // that buys first within it. Reading the deployer off the fills rather than trusting a
-  // `creator` field matters: pump.fun's creator record can move on-chain (CLAUDE.md), and the
-  // token that goes missing is exactly the good one.
-  let slot = Infinity;
-  for (const f of curveBuys) if (f.slot < slot) slot = f.slot;
-  const inSlot = curveBuys.filter((f) => f.slot === slot);
-
-  const first = inSlot[0];
-  if (first === undefined) return null;
-  const deployer = first.wallet;
-
-  // Group by transaction. A transaction with 2+ distinct wallets marks all of them.
-  /** @type {Map<string, Set<string>>} */
-  const walletsByTx = new Map();
-  for (const f of inSlot) {
-    let set = walletsByTx.get(f.tx);
-    if (set === undefined) {
-      set = new Set();
-      walletsByTx.set(f.tx, set);
-    }
-    set.add(f.wallet);
-  }
-
-  /** @type {Set<string>} */
-  const coordinated = new Set();
-  let bundledTx = 0;
-  let maxWalletsInOneTx = 0;
-  for (const set of walletsByTx.values()) {
-    if (set.size > maxWalletsInOneTx) maxWalletsInOneTx = set.size;
-    if (set.size >= 2) {
-      bundledTx += 1;
-      for (const w of set) coordinated.add(w);
-    }
-  }
-  coordinated.delete(deployer);
+  const groups = createSlotGroups(fills);
+  if (groups === null) return null;
+  const { slot, deployer, coordinated, inSlot, bundledTx, maxWalletsInOneTx } = groups;
 
   let devSol = 0;
   let coordinatedSol = 0;
@@ -205,6 +179,76 @@ export function measureCreateSlot(fills) {
     operationShare,
     roomLeft: 1 - operationShare,
   };
+}
+
+/**
+ * @typedef {object} CreateSlotGroups
+ * @property {number} slot                 The create slot.
+ * @property {string} deployer             Wallet credited with the launch (first curve buyer).
+ * @property {Set<string>} coordinated     Non-deployer wallets the bundle rule marks as the
+ *   operation's own. Never contains `deployer`.
+ * @property {Fill[]} inSlot               Create-slot bonding-curve buys, **ordered by `sid`** —
+ *   pump.fun's own within-slot ordering key, so the sequence is the fill queue as the venue saw
+ *   it, not the order the tape happened to arrive in.
+ * @property {number} bundledTx            Create-slot transactions carrying 2+ distinct wallets.
+ * @property {number} maxWalletsInOneTx    Largest wallet count in a single create-slot transaction.
+ */
+
+/**
+ * Partition a launch's create slot into deployer / co-ordinated / everyone else.
+ *
+ * Extracted so {@link measureCreateSlot} and `entry.mjs`'s field measurement share **one**
+ * definition of who the operation is. If they each derived it, a change to the co-ordination rule
+ * could move the room figure without moving the population it is a statement about — and the two
+ * numbers are read side by side.
+ *
+ * @param {readonly Fill[]} fills All fills for one launch, any order.
+ * @returns {CreateSlotGroups | null} `null` when there is no bonding-curve buy to anchor on.
+ */
+export function createSlotGroups(fills) {
+  const curveBuys = fills.filter((f) => f.side === 'buy' && f.venue === 'pump');
+  if (curveBuys.length === 0) return null;
+
+  // The create slot is the earliest slot carrying a curve buy, and the deployer is the wallet
+  // that buys first within it. Reading the deployer off the fills rather than trusting a
+  // `creator` field matters: pump.fun's creator record can move on-chain (CLAUDE.md), and the
+  // token that goes missing is exactly the good one.
+  let slot = Infinity;
+  for (const f of curveBuys) if (f.slot < slot) slot = f.slot;
+  const inSlot = curveBuys
+    .filter((f) => f.slot === slot)
+    .sort((a, b) => (a.sid < b.sid ? -1 : a.sid > b.sid ? 1 : 0));
+
+  const first = inSlot[0];
+  if (first === undefined) return null;
+  const deployer = first.wallet;
+
+  // Group by transaction. A transaction with 2+ distinct wallets marks all of them.
+  /** @type {Map<string, Set<string>>} */
+  const walletsByTx = new Map();
+  for (const f of inSlot) {
+    let set = walletsByTx.get(f.tx);
+    if (set === undefined) {
+      set = new Set();
+      walletsByTx.set(f.tx, set);
+    }
+    set.add(f.wallet);
+  }
+
+  /** @type {Set<string>} */
+  const coordinated = new Set();
+  let bundledTx = 0;
+  let maxWalletsInOneTx = 0;
+  for (const set of walletsByTx.values()) {
+    if (set.size > maxWalletsInOneTx) maxWalletsInOneTx = set.size;
+    if (set.size >= 2) {
+      bundledTx += 1;
+      for (const w of set) coordinated.add(w);
+    }
+  }
+  coordinated.delete(deployer);
+
+  return { slot, deployer, coordinated, inSlot, bundledTx, maxWalletsInOneTx };
 }
 
 /**
@@ -308,6 +352,56 @@ export function toTokenRecords(profile) {
   // 70 is the page pump.fun's creator listing serves regardless of the limit asked for, and
   // MadeOnSol mirrors one page. A full page means the history is truncated, not that it ended.
   return { records, capped: records.length >= 70 };
+}
+
+/**
+ * @typedef {object} LaunchRef
+ * @property {string} mint
+ * @property {number} deployedAtMs
+ */
+
+/**
+ * Project a vendor profile onto the launches Stage 2 will walk the keyless fill tape for.
+ *
+ * **This is why Stage 2 costs no keyed request at all.** Stage 1 has already paid for
+ * `/deployer-hunter/{wallet}`; the mint and deploy time it carries are enough to seek straight to
+ * each launch's opening window on pump.fun's free trade endpoint. Nothing here issues a request,
+ * and no second vendor surface is consulted.
+ *
+ * **Retention, MadeOnSol terms §5a(d).** These mints live in memory for the duration of one run and
+ * are dropped when the process exits. They are never written — not to `--out`, not to a cache, not
+ * to a log. What survives a run is the derived distribution computed from the *fills*, which are
+ * pump.fun's public data and not the vendor's. `screen.mjs` → `toRecordRow` is where that is
+ * enforced, and `test/deployer-screen.test.ts` asserts the persisted key set against the committed
+ * records so the claim cannot drift from the code.
+ *
+ * Returned newest first, because a run samples the most recent launches and "recent" is the only
+ * horizon this vendor surface can honestly speak to.
+ *
+ * @param {unknown} profile A parsed `/deployer-hunter/{wallet}` response.
+ * @returns {LaunchRef[]}
+ */
+export function toLaunchRefs(profile) {
+  if (typeof profile !== 'object' || profile === null) return [];
+  const raw = /** @type {Record<string, unknown>} */ (profile)['pump_tokens'];
+  if (!Array.isArray(raw)) return [];
+
+  /** @type {LaunchRef[]} */
+  const refs = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const row = /** @type {Record<string, unknown>} */ (entry);
+    const mint = row['mint'] ?? row['token_mint'] ?? row['address'];
+    const deployedAtMs = Number(row['created_timestamp']);
+    // A record without a usable mint or deploy time cannot be seeked to, and guessing either would
+    // point the walk at the wrong window rather than at no window.
+    if (typeof mint !== 'string' || mint === '' || !Number.isFinite(deployedAtMs) || deployedAtMs <= 0) {
+      continue;
+    }
+    refs.push({ mint, deployedAtMs });
+  }
+  refs.sort((a, b) => b.deployedAtMs - a.deployedAtMs);
+  return refs;
 }
 
 /**

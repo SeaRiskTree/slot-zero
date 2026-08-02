@@ -1,12 +1,25 @@
 # deployer-screen
 
-A rerunnable **completion-rate gate** over MadeOnSol's free Deployer Hunter endpoints, plus a local
-validation harness that runs with no key and no network.
+A rerunnable **competence gate** over MadeOnSol's free Deployer Hunter endpoints, plus an **entry
+score** measured keyless from pump.fun's fill tape, plus a local validation harness that runs with
+no key and no network.
 
-**This tool gates. It does not recommend.** It answers one question — *does this deployer complete
-bonding curves?* — and that question measures competence, not opportunity. The measurement that
-would turn a gate result into a candidate worth money is Stage 2, and it is deliberately not built
-here. See [Scope](#scope-what-is-and-is-not-built).
+**This tool gates and scores ENTRY. It does not recommend, and it does not score EXIT.**
+
+The question it serves is the captain's, verbatim (2026-07-29):
+
+> *"Can I beat the dev and all other wallets sniping the same tokens created by the dev currently?"*
+
+That splits in two, and only the first half is here:
+
+| stage | question | answer |
+|---|---|---|
+| 1 | Does this deployer complete bonding curves? | competence. Necessary, nowhere near sufficient. |
+| 2 | **Is there room in its opening window, and what does the field there actually achieve?** | **ENTRY.** |
+| 3 | Could you get back *out*? | **not built here.** Its own lane. |
+
+Room to enter is not room to leave, and the two are scored **separately and never collapsed** — no
+exit signal reaches any number Stage 2 produces. See [Scope](#scope-what-is-and-is-not-built).
 
 ## Run it
 
@@ -19,9 +32,12 @@ node tools/deployer-screen/screen.mjs --stage0
 # Show exactly what a real run would fetch, and fetch nothing.
 node tools/deployer-screen/screen.mjs --dry-run
 
-# A real run. Needs a key (see below).
+# A real run. Needs a key (see below). Stage 2 is ON by default.
 node tools/deployer-screen/screen.mjs --tier elite --candidates 12 \
   --consistency --out tools/deployer-screen/runs/$(date +%F).json
+
+# The competence gate alone, which answers nothing about whether a window is enterable.
+node tools/deployer-screen/screen.mjs --no-stage2
 
 node tools/deployer-screen/screen.mjs --help
 ```
@@ -198,17 +214,25 @@ wallets identical but for `vendorDeployed` order by address.
 - Per-token records are held **in memory only**, for the duration of one run, and dropped when the
   process exits. There is no cache, no database, and no backfill.
 - Nothing is written to disk unless `--out` is passed. Persistence is opt-in.
-- What a run record contains, per wallet — **thirteen fields, all of them ours**: `wallet`,
+- What a run record contains, per wallet — **fourteen fields, all of them ours**: `wallet`,
   `seededBy`, `tokens`, `completed`, `completionRate`, `spanDays`, `windowFirstDeploy`,
-  `windowLastDeploy`, `vendorPageCapped`, `verdict`, `rationale`, `gateReasons`, `consistency`. The
-  exact key set is asserted by `test/deployer-screen.test.ts` → *"a committed run record persists
+  `windowLastDeploy`, `vendorPageCapped`, `verdict`, `rationale`, `gateReasons`, `consistency`, and
+  `entry`. That set is asserted by `test/deployer-screen.test.ts` → *"a committed run record persists
   derived fields only"*, against the committed records themselves, so this ToS-facing claim cannot
-  drift from the code.
+  drift from the code. It is asserted as an **allowed set** rather than an exact list, because
+  committed records are evidence and are never retro-edited: the schema-1 record legitimately
+  predates `entry`. The claim being made is that nothing *outside* the set is ever written.
 - What it does **not** contain: any mint, token name, symbol, market cap, bond timestamp,
   time-to-bond, or per-token row of any kind. Roughly 70 vendor records per wallet are read, reduced
   to one row of derived counts, and discarded. Verified on the committed run records — none of
   `mint`, `token_mint`, `token_name`, `symbol`, `peak_market_cap`, `bonded_at`, `ath_market_cap` or
   `pool_address` appears anywhere in a candidate row.
+- **Stage 2 holds a mint list in memory and writes none of it.** It needs mints to seek the keyless
+  fill tape at all, and they come from the profile Stage 1 already fetched — `toLaunchRefs` in
+  `measure.mjs`. What survives is `entry`: quantiles, counts, a hit rate and a verdict, computed by
+  us from pump.fun's public fills. **Counterparty wallet addresses are also dropped**, because the
+  field is reported as a distribution and a list of who was in it would be an accumulation with no
+  question attached to it.
 - The wallet address is public on-chain data, not vendor data. The counts and the rate are our own
   computation from records we did not keep. Nothing persisted can reconstruct any part of their
   database.
@@ -268,9 +292,77 @@ For version 2 onwards the pairing to read is:
   everything enumeration surfaced.
 - `completed: true` with `coverage.coverageTruncated: false` — a full run over its whole seeded pool.
 
+## Stage 2 — ENTRY
+
+Two measurements per candidate, over that candidate's own most recent launches.
+
+### 1. Entry room
+
+How much of the opening window the deployer and its own wallets take before anybody else is filled:
+`(dev buy + co-ordinated stake) ÷ (dev buy + all create-slot stake)`, and `1 −` that is the room.
+This is the method of `slot-zero-june-regime-change/report.md` §5.1, the quantity that decided the
+2026-06-04 finding.
+
+**The framing to keep is the captain's, because they arrived at it independently: this measures how
+badly configured the dev's own launch bot is.** A bot that leaves the bottom of its own curve to
+strangers is a bot with room in it. A bot that takes it all has won the race before anyone else has
+had a chance to run it, and there is nothing to enter.
+
+Who counts as "the operation" is derived **structurally, with no wallet list and no prior
+knowledge**: a create-slot transaction carrying two or more distinct swapping wallets is a bundle,
+and every wallet in it is co-ordinated — independent traders cannot share a transaction. On our own
+subject this recovers the known six-wallet cohort without being told who it is.
+
+### 2. The field
+
+What every **other** sniping wallet on those same launches achieved: what it was filled for, how much
+SOL was queued ahead of it by pump.fun's own within-slot ordering key, and what it realised. The
+question is whether *we* beat them, so the competition is measured rather than assumed.
+
+**Only closed round trips have a P&L.** A position still open at the window's end is counted and
+reported, never marked to a price — the committed dataset's own `closed_in_window` rule (residual
+within 0.1% of tokens bought), reproduced exactly.
+
+### Distributions plus a hit rate, never a mean
+
+A standing bar from the captain for this class of claim, and it is a correctness rule rather than a
+presentational one. Sniper outcomes are heavy-tailed on both sides — on our subject's post-break
+launches the p90 outsider round trip is roughly twenty times the median — so a mean is carried by
+whichever tail is fatter and describes nobody. **A mean here is a wrong answer, not a rough one.**
+Nothing in `entry.mjs` computes one, and a test asserts the word does not appear in its executable
+half.
+
+### The two legs are not symmetric, and that is the design
+
+| leg | can it earn `entry-room-present`? | can it deny it? |
+|---|---|---|
+| room | **yes** | yes |
+| the field | **never** | yes |
+
+Because **everything Stage 2 measures is gross of fees.** The fill tape carries swap-quote SOL and
+no priority fee, landing tip, venue fee or rent, so every P&L is an upper bound. A field that loses
+money before costs certainly loses money after them — conclusive. A field that *makes* money before
+costs has established nothing at all.
+
+The size of that gap is measured rather than feared, on the one wallet where we hold the answer:
+
+| our subject `7ufmve7Z…`, post-2026-06-04 | reading |
+|---|---|
+| the field, **gross of fees**, as Stage 2 measures it | **362 / 473 closed round trips positive (76.5%)**, median **+0.120 SOL** |
+| the same population, **fee-inclusive**, from `onchain_create_slot_pnl.csv` | **+0.54 SOL per launch across 106 wallets, 51 of them negative** |
+
+Read naively, the field says this wallet is beatable. It is not. So the field can only ever veto.
+
+### Verdicts
+
+`entry-room-present` · `entry-room-absent` · `entry-field-loss-making` · `entry-unmeasured`
+
+Nothing in that vocabulary says beatable, profitable, or worth trading. **`entry-room-present` means
+the opening window is not already closed, so the exit question is worth asking** — and nothing more.
+
 ## Bounds
 
-Enforced in code, with no flag that disables one. Pinned in `thresholds.json` → `budget`.
+Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 
 | bound | value | why |
 |---|---|---|
@@ -279,10 +371,91 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json` �
 | keyed pacing | 6.5s between request starts | Free tier bursts at ~10/min, and the allowance is **shared** with whatever else holds this key. |
 | keyless pacing | 2.0s | The June report measured sustainable pump.fun throughput at ~0.5 req/s with one request in flight; batching and concurrency were both measured harmful. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
-| retries | 1, and each attempt counts against the ceiling | A retry spends a shared allowance. |
+| retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does. |
 
-Every run prints its request count and elapsed time. There is no poller, sweep, daemon, cron, or
-cache-warmer, and adding one would be a policy breach rather than an optimisation.
+### Stage 2's own bounds — and it spends no vendor quota at all
+
+**Stage 2 issues zero keyed requests.** The mint list comes from the `/deployer-hunter/{wallet}`
+profile Stage 1 has already paid for, so the shared vendor allowance — which production also draws on
+— is untouched by the entire entry measurement. Everything it fetches is pump.fun's free tape.
+
+| bound | value |
+|---|---|
+| gate survivors scored | 3 (`--score` can lower it, never raise it) |
+| launches per survivor | 8 |
+| **requests per launch, retries included** | 18 |
+| stage ceiling, on its own client | **432** |
+
+`3 × 8 × 18 = 432` — **the declared worst case and the ceiling are the same number**, so the plan
+`--dry-run` prints is the whole exposure and no plan-level truncation is possible. A launch is only
+started when a full per-launch cap of headroom remains, so a run never abandons one half-walked.
+Typical cost is far lower: at the measured median of 4 pages plus shedding, about 6 requests a launch
+and ~144 for a full run.
+
+The per-launch cap counts **requests, not pages**, and that is load-bearing — see the shed rate
+below. A cap on successful pages would have let a launch cost three times the printed number.
+
+Every run prints its request count, shed count and elapsed time. There is no poller, sweep, daemon,
+cron, or cache-warmer, and adding one would be a policy breach rather than an optimisation.
+
+## What walking the fill tape actually costs — measured, not estimated
+
+Every `window/*.meta.json` in the committed tape records the request stats of the walk that produced
+it. Across the 235 covered launches:
+
+| quantity | measured |
+|---|---|
+| pages per launch | p50 **4**, p90 **8**, p95 **13**, max **24** |
+| fills per launch | p50 381, p90 736, p95 1,222, max 2,321 |
+| **HTTP 429 shed rate** | **16,960 of 68,675 requests — 24.7%** |
+| launches that shed at least once | **221 of 235** |
+
+Two consequences, both of which corrected a first pass at this tool:
+
+- **A 429 on this endpoint is the normal case, not an incident.** The tape's own builder backed off
+  adaptively (its recorded `delay` ranges from 0.75s to 40s) and retried through them. A client that
+  treats a 429 as terminal cannot walk a launch window at all — the first live check of the pager
+  died on one, three launches in. `KeylessClient` now retries twice, at 3s and 9s.
+- **A 10-request cap was too small and its stated justification was wrong.** It had been anchored on
+  a single sampled window of 385 fills; the real distribution above shows 20 of 235 launches need 10
+  pages or more. The cap is 18 requests — about 13–14 successful pages at the measured shed rate,
+  covering roughly the 95th percentile. **The tail is dropped, not silently truncated:** a launch
+  that spends its cap without reaching the mint is reported `DROPPED` with its own note, and the
+  sampling bias is stated, because the launches too busy to walk are exactly the interesting ones.
+
+### Coverage is a proof obligation, not an assumption
+
+Rows come back newest-first, so the create slot is the **last** thing a backwards walk reaches. A
+walk that stops early still returns a plausible-looking pile of fills whose earliest slot is simply
+the earliest one it happened to see — and `measureCreateSlot` would then anchor on that slot, call
+some mid-window sniper "the deployer", and report a confident room figure for a launch whose opening
+it never saw. Nothing about the output would look wrong.
+
+So `readLaunchWindow` sets `reachedCreateSlot` **only** when the walk saw a row older than the mint,
+or the endpoint said there was nothing older. Anything else is `usable: false`, and an unusable
+window is **dropped and counted**, never measured. This is the same distinction the population tape
+draws with `meta.reached_mint`, which the repo's loader gates on because all 239 mints have a window
+file and four of them never reached the mint.
+
+### The live path, checked against ground truth
+
+`readLaunchWindow` + `measureLaunchEntry` were run against the **live** `swap-api` endpoint for
+committed launches and compared with the same measurement computed from the stored tape:
+
+| launch | pages / requests | fills live vs tape | deployer | create slot | room left Δ | field set | closed RTs | max realised Δ | max queued-ahead Δ |
+|---|---|---|---|---|---|---|---|---|---|
+| `Restoration` 2026-07-28 (the busiest committed window) | 12 / 12 | 1,105 vs 1,106 | match | match | **0.00** | match | 8 vs 8 | **8.9e-16 SOL** | **0.0** |
+| `Shiro` 2026-05-12 | 5 / 5 | 481 vs 481 | match | match | **0.00** | match | 10 vs 10 | **1.8e-15 SOL** | **0.0** |
+
+A third, much older launch shed persistently through all three attempts and the walk correctly
+failed — which in a real run is a *dropped launch with a note*, not a corrupted measurement. That is
+the drop path working.
+
+**One comparability caveat.** A live run measures a fixed 60s window (the tape's modal `window_ms`,
+210 of 235 launches). Stage 0's control measures over each launch's stored window, 25 of which are
+120s or 300s. Longer windows give a position more time to close, so Stage 0's closed-round-trip
+count is if anything *more* generous than a live 60s run — which strengthens the known-negative
+control rather than weakening it.
 
 ## Scope: what is and is not built
 
@@ -291,8 +464,9 @@ deployer (0.4310 over 239 launches), which is the point: that wallet's opening w
 unprofitable for outsiders since 2026-06-04 because its own group takes 97% of the profit there. A
 gate that passes it is a gate that measures competence, and Stage 0 makes that concrete instead of
 claiming it. Also checks ground truth has not moved, that the curve inversion is exact (max error
-1.4e-14 SOL over 70 control launches), and that the Stage 2 seam still reproduces the published
-§5.1 era split.
+1.4e-14 SOL over 70 control launches), that Stage 2's create-slot primitive still reproduces the
+published §5.1 era split, that its field measurement still reproduces `wallet_launch_pnl.csv`, and
+that Stage 2 still **refuses** the wallet the gate passes.
 
 That last check now asserts a **minimum n per era and a finite median** before comparing. It has to:
 `median([])` is `NaN`, `Math.abs(NaN - published) > 0.02` is `false`, so an era bucket matching no
@@ -303,36 +477,55 @@ exactly that case. The buckets hold 45 and 89 launches as committed; the floor i
 
 **Built — Stage 1**, the keyed gate: enumerate, compute the rate ourselves, apply pinned thresholds.
 
-**Not built — Stage 2**, the score: how much of its opening window a deployer and its own wallets
-take, and therefore how much room is left. Reserved for a fresh lane. **The interface it will consume
-is built, validated and regression-tested here:**
+**Built — Stage 2**, the ENTRY score. Room in the opening window, and what the field there achieved.
+Keyless, and it spends no vendor quota. Stage 0 validates it three ways before a single request is
+issued:
 
-| seam | contract |
+| check | result on the committed tape |
 |---|---|
-| `measure.mjs` `measureCreateSlot(fills)` | → `CreateSlotMeasurement` (`devSol`, `coordinatedSol`, `independentSol`, `operationShare`, `roomLeft`, …) |
-| `measure.mjs` `solBetweenPrices(from, to)` | SOL added to the curve between two prices; exact |
-| `measure.mjs` `parseFill` / `pumpfun.mjs` `parseFillLoose` | → `Fill` |
-| `pumpfun.mjs` `windowFilter`, `extractTradeRows`, `slotFromSlotIndexId` | opening-window filtering and live-row field handling |
-| `pumpfun.mjs` `KeylessClient` | bounded, paced, serialised keyless access |
-| `stage0.mjs` `measureSubjectLaunches(dataDir)` | per-launch `CreateSlotMeasurement` from the committed tape |
+| the create-slot primitive reproduces the published §5.1 era split | operation share 0.451 → 0.759 against a published 0.451 → 0.768 |
+| the **field** measurement reproduces `wallet_launch_pnl.csv` | **1,502 create-slot outsider pairs, 0 closure mismatches, max realised error 5.0e-7 SOL** |
+| **the known-negative control** | see below |
 
-The fill-tape **pager** is deliberately absent. A `readLaunchWindow` existed here with no caller and
-no test, so its coverage logic was never exercised; rather than leave a half-validated function
-described above as tested, it was deleted. Stage 2's lane writes it against a real caller.
+The `readLaunchWindow` that the previous lane deleted rather than ship half-validated is written
+here, against a real caller and against ground truth — see [the live path](#the-live-path-checked-against-ground-truth).
 
-The co-ordination rule that makes it work on a stranger: **a create-slot transaction carrying two or
-more distinct swapping wallets is a bundle, and every wallet in it is co-ordinated** — independent
-traders cannot share a transaction. On our subject this recovers the known six-wallet cohort *without
-being told who it is*, reproducing the published era split (operation share 0.451 → 0.759 against a
-published 0.451 → 0.768; co-ordinated stake 6.91 → 19.75 SOL; 5 → 6 wallets).
+### The known-negative control
 
-**Not built — the exit trap.** Room to enter is not room to leave. When the dev sells relative to
-mint and to outsider inflow, whether the trigger is a **size** (which would cap our position size,
-because our own buy counts towards it), and whether an outsider could have exited first. Entry room
-and exit feasibility must be scored **separately and never collapsed**. Its own lane.
+Stage 0 asserts the *counterpart* of the gate assertion, on the same wallet:
+
+> **The gate must PASS `7ufmve7Z…`, and Stage 2 must REFUSE it.**
+
+That wallet is competent — 103 of 239 launches bonded — and it is **not beatable**. That is measured,
+in `data/slot-zero-june-regime-change/report.md`, not assumed: since 2026-06-04 its own group takes
+97% of the profit available in its opening window, and the entire outsider population there has made
++0.54 SOL per launch with 51 of 106 wallets losing money.
+
+It is scored two ways, because both readings have to come out negative and they can fail apart:
+
+| slice | verdict | median room |
+|---|---|---|
+| the most recent 8 launches — exactly what a live run would score today | `entry-room-absent` | **0.284** |
+| the whole post-2026-06-04 regime, 89 launches | `entry-room-absent` | **0.241** |
+
+**And this is why it is an assertion rather than a threshold comparison:** on that same wallet the
+field leg reads 362/473 closed round trips positive. Followed on its own it would call the wallet
+beatable. The verdict has to survive a leg pointing the wrong way, and Stage 0 fails loudly if it
+ever stops doing so — including if a future lane quietly loosens `minRoomLeft` to fit an output.
+
+**Not built — the exit trap (stage 3).** Room to enter is not room to leave. When the dev sells
+relative to mint and to outsider inflow, whether the trigger is a **size** (which would cap our
+position size, because our own buy counts towards it), and whether an outsider could have exited
+first. Entry room and exit feasibility are scored **separately and never collapsed**, and no exit
+signal reaches any number Stage 2 produces. Its own lane, and it is blocked on this one.
 
 **Not built — the prediction-grading loop.** A dated immutable record per run so a later run can
 grade the screen's own hit rate. Its own lane. Run records under `runs/` are the input it will read.
+
+**No Stage 2 run record is committed.** This lane held no MadeOnSol key, so no candidate was ever
+enumerated. What *is* committed as evidence of the plan is the `--dry-run` output, which is produced
+by the same functions a real run uses, and the live-vs-tape check above, which exercised the whole
+keyless half against the real endpoint.
 
 ## The keyless boundary
 
@@ -360,10 +553,19 @@ context is exactly how a gate becomes a recommendation.
 
 Completion rate alone establishes no tradeable edge. The standing bar for a signal of this class is
 real lead time, independence of the actors, and realised profit reported as a distribution plus a hit
-rate. **This tool measures none of the last three.** A high completion rate does not imply a
-profitable entry, and we hold the counterexample rather than the worry: our subject deployer
-completes 43% of its launches and its create-slot window has been unprofitable for outsiders since
-2026-06-04 (`slot-zero-june-regime-change/report.md` §5, §6.1).
+rate. **Stage 2 clears the last of those three gross of fees only, and clears neither of the first
+two.**
+
+A high completion rate does not imply a profitable entry, and **a profitable-looking field does not
+imply one either.** We hold the counterexample to both, on the same wallet: our subject deployer
+completes 43% of its launches, gross of fees 76.5% of the closed round trips in its opening window
+are positive, and fee-inclusive that window has been unprofitable for outsiders since 2026-06-04
+(`slot-zero-june-regime-change/report.md` §5, §6.1). Stage 0 shows the gate passing it and Stage 2
+refusing it.
+
+**Everything Stage 2 reports about profit is an upper bound.** The fill tape has no priority fee, no
+landing tip, no venue fee and no rent in it. And exit is not measured at all — an entry with room in
+it can still be a position you cannot leave.
 
 The rate is computed over roughly 35 days and about 70 tokens. It is a **recency** measure, not a
 lifetime record. Long-horizon consistency is reported **UNMEASURED** unless `--consistency` is

@@ -15,8 +15,10 @@
  *   is not worth the time. A gate that could not do that would be hiding the limitation instead
  *   of demonstrating it.
  * - So the strongest verdict this module emits is {@link Verdict} `gate-passed`, meaning *worth
- *   scoring*, and the language that ships with it says so. Scoring is Stage 2, which is
- *   deliberately unbuilt here — see `thresholds.json` → `stage2_seam`.
+ *   scoring*, and the language that ships with it says so. The scoring itself is Stage 2, and it
+ *   lives in `entry.mjs` with **its own verdict vocabulary** — `entry-room-present` and friends —
+ *   deliberately not folded into this one. Competence and entry room are different claims about a
+ *   wallet, and a single merged verdict could not be read back apart into which leg carried it.
  */
 
 /**
@@ -101,6 +103,12 @@ export function applyGate(input, t) {
  * @property {Verdict} verdict
  * @property {string} rationale
  * @property {ConsistencyResult | null} consistency `null` unless `--consistency` was passed.
+ * @property {import('./entry.mjs').EntryScore | null} entry Stage 2's ENTRY score. `null` when the
+ *   candidate did not clear the gate, `--no-stage2` was passed, or the scoring cap dropped it.
+ *   Deliberately a separate field with its own verdict vocabulary rather than a component of
+ *   {@link Verdict}: competence and entry room are different claims, and collapsing them would put
+ *   this module back in the business of recommending.
+ * @property {import('./stage2.mjs').Stage2Coverage | null} entryCoverage
  */
 
 /**
@@ -137,10 +145,17 @@ export function verdictFor(input) {
 /**
  * Order candidates for presentation.
  *
- * Ordered by completion rate **only within the passed and failed classes**, and that ordering is
- * presentational rather than a ranking claim: `render.mjs` prints it as a table of gate results,
- * not as a league table. When Stage 2 lands, the sort key becomes room-left and completion rate
- * stops being an ordering input at all — which is the point of keeping this function small.
+ * Presentational rather than a ranking claim: `render.mjs` prints the result as a table of measured
+ * results, not as a league table. Three keys, in this order:
+ *
+ * 1. **Gate class.** Survivors before rejections.
+ * 2. **Measured entry room, descending** — the promise the Stage 1 lane made when it left the seam:
+ *    once Stage 2 landed, room-left would become the sort key. A candidate with **no** entry score
+ *    sorts *after* every scored one rather than being interleaved at some imputed room, because an
+ *    unscored candidate is not a low-room candidate and the two must not look alike in a list.
+ * 3. **Completion rate**, as the tiebreak among equally-unscored candidates only. Larger sample
+ *    first, then higher rate: a 0.9 over 26 tokens is weaker evidence than a 0.5 over 70, and
+ *    putting the rate first would invert that.
  *
  * The final tiebreak is the wallet address, so two runs over the same data produce byte-identical
  * output.
@@ -151,13 +166,18 @@ export function verdictFor(input) {
 export function rankCandidates(candidates) {
   /** @type {Record<Verdict, number>} */
   const classOrder = { 'gate-passed': 0, 'gate-failed': 1 };
+  /** @param {Candidate} c @returns {number} */
+  const roomKey = (c) =>
+    c.entry === null || !Number.isFinite(c.entry.roomLeft.median) ? Number.NEGATIVE_INFINITY : c.entry.roomLeft.median;
 
   return [...candidates].sort((a, b) => {
     const cls = classOrder[a.verdict] - classOrder[b.verdict];
     if (cls !== 0) return cls;
 
-    // Larger sample first, then higher rate. Sample size leads deliberately: a 0.9 over 26
-    // tokens is weaker evidence than a 0.5 over 70, and putting the rate first would invert that.
+    const ra = roomKey(a);
+    const rb = roomKey(b);
+    if (ra !== rb) return rb - ra;
+
     if (a.completion.tokens !== b.completion.tokens) {
       return b.completion.tokens - a.completion.tokens;
     }

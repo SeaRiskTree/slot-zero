@@ -31,24 +31,33 @@ export const LIMITATIONS = [
   'WHAT THIS IS: a candidate list for further research. Nothing here is a recommendation, and',
   'nothing here establishes a tradeable edge.',
   '',
-  'WHAT IT MEASURES: whether a deployer completes bonding curves — competence. One number,',
-  'computed by us from per-token records, over a window of about 35 days.',
+  'WHAT IT MEASURES:',
+  '  · STAGE 1, competence — whether a deployer completes bonding curves. One number, computed by',
+  '    us from per-token records, over a window of about 35 days.',
+  '  · STAGE 2, ENTRY — how much of its own opening window the deployer and its own wallets take',
+  '    before anyone else is filled, and what the OTHER sniping wallets on those same launches',
+  '    achieved: fill, queue position, and realised P&L. Distributions and a hit rate, never a mean.',
   '',
   'WHAT IT DOES NOT MEASURE, and none of these are minor:',
-  '  · Whether the deployer leaves an outsider any room in the opening window. NOT BUILT (Stage 2).',
-  '  · Whether it sets an exit trap — dumping its position once outsider money reaches some size,',
-  '    which would cap our position size regardless of how good the entry looks. NOT BUILT.',
-  '  · Realised profit, as a distribution and a hit rate. NOT MEASURED.',
+  '  · EXIT. Room to enter is not room to leave. When the dev sells, whether its trigger is a SIZE',
+  '    that our own buy would count towards and would therefore cap our position, and whether an',
+  '    outsider could have got out first, are ALL UNMEASURED here. No exit signal reaches any entry',
+  '    number in this output, deliberately: a blended score cannot be read back apart.',
+  '  · FEES. Every P&L above is gross of fees — no priority fee, no landing tip, no venue fee, no',
+  '    rent — and is therefore an UPPER BOUND on what any wallet actually took.',
   '  · Lead time, or the independence of the actors involved.',
   '',
   'The standing bar for acting on a signal of this class is real lead time, independence of the',
-  'actors, and realised profit reported as a distribution plus a hit rate. This tool clears none',
-  'of those. Passing the gate means "worth spending costlier research on", and nothing more.',
+  'actors, and realised profit reported as a distribution plus a hit rate. Stage 2 clears the last',
+  'of those three GROSS OF FEES only, and clears neither of the first two.',
   '',
-  'A HIGH COMPLETION RATE DOES NOT IMPLY A PROFITABLE ENTRY. We have measured the counterexample:',
-  'our own subject deployer completes 43% of its launches and its opening window has been',
-  'unprofitable for outsiders since 2026-06-04, because the operation\'s own group takes 97% of the',
-  'profit available there. Stage 0 shows this gate PASSING that wallet.',
+  'A HIGH COMPLETION RATE DOES NOT IMPLY A PROFITABLE ENTRY, and A PROFITABLE-LOOKING FIELD DOES',
+  'NOT IMPLY A PROFITABLE ENTRY EITHER. We hold the counterexample to both. Our own subject',
+  'deployer completes 43% of its launches, and gross of fees ~77% of the closed round trips in its',
+  'opening window are positive — yet fee-inclusive, the entire outsider population there has made',
+  '+0.54 SOL per launch since 2026-06-04 with 51 of 106 wallets losing money, because the',
+  'operation\'s own group takes 97% of the profit available. Stage 0 shows the gate PASSING that',
+  'wallet and Stage 2 REFUSING it.',
   '',
   'The completion rate is computed over roughly 35 days and about 70 tokens. It is a RECENCY',
   'measure, not a lifetime record, and long-horizon consistency is reported UNMEASURED unless',
@@ -64,6 +73,116 @@ const num = (n, dp = 2) => (Number.isFinite(n) ? n.toFixed(dp) : 'n/a');
 const pad = (s, w) => (s.length >= w ? s : s + ' '.repeat(w - s.length));
 /** @param {string} s @param {number} w */
 const padl = (s, w) => (s.length >= w ? s : ' '.repeat(w - s.length) + s);
+
+/**
+ * One line of a distribution: label, n, and the quantiles.
+ *
+ * There is no mean column and there is not going to be one. The captain's standing bar for this
+ * class of claim is distributions plus a hit rate, and it is a correctness rule rather than a
+ * presentational preference — sniper outcomes are heavy-tailed on both sides, so a mean is carried
+ * by whichever tail is fatter and describes nobody's experience.
+ *
+ * @param {string} label
+ * @param {import('./entry.mjs').Distribution} d
+ * @param {number} [dp]
+ * @returns {string}
+ */
+function distLine(label, d, dp = 3) {
+  return (
+    `    ${pad(label, 26)}${padl(String(d.n), 5)}  ${padl(num(d.min, dp), 9)}  ${padl(num(d.p10, dp), 9)}  ` +
+    `${padl(num(d.p25, dp), 9)}  ${padl(num(d.median, dp), 9)}  ${padl(num(d.p75, dp), 9)}  ` +
+    `${padl(num(d.p90, dp), 9)}  ${padl(num(d.max, dp), 9)}`
+  );
+}
+
+/** @returns {string} */
+function distHeader() {
+  return (
+    `    ${pad('', 26)}${padl('n', 5)}  ${padl('min', 9)}  ${padl('p10', 9)}  ${padl('p25', 9)}  ` +
+    `${padl('median', 9)}  ${padl('p75', 9)}  ${padl('p90', 9)}  ${padl('max', 9)}`
+  );
+}
+
+/**
+ * Render one candidate's ENTRY score.
+ *
+ * @param {import('./entry.mjs').EntryScore} e
+ * @param {import('./stage2.mjs').Stage2Coverage | null} coverage
+ * @returns {string[]}
+ */
+export function renderEntry(e, coverage) {
+  const L = [];
+  L.push(`      ENTRY: ${e.verdict.toUpperCase()}`);
+  for (const line of wrap(e.rationale, 84)) L.push(`        ${line}`);
+  L.push('');
+
+  L.push(`      ENTRY ROOM — how much of its own opening window the deployer leaves`);
+  L.push(distHeader());
+  L.push(distLine('room left', e.roomLeft));
+  L.push(distLine('operation share', e.operationShare));
+  L.push(distLine('dev buy (SOL)', e.devSol));
+  L.push(distLine('its own cohort (SOL)', e.coordinatedSol));
+  L.push(distLine('competing wallets', e.outsidersPerLaunch, 1));
+  L.push(
+    `      hit rate: ${e.roomHitRate.hits}/${e.roomHitRate.n} launches leave room ` +
+      `(${pct(e.roomHitRate.rate)}); ${e.launchesWithNoOutsider} launch(es) had no competitor at all`,
+  );
+  L.push('      ^ Read this the captain\'s way: it measures how badly configured the dev\'s own');
+  L.push('        launch bot is. A bot that takes the bottom of its own curve leaves us nothing.');
+  L.push('');
+
+  L.push('      THE FIELD — what every OTHER sniping wallet on those same launches achieved');
+  L.push(distHeader());
+  L.push(distLine('fill (SOL)', e.fieldFillSol));
+  L.push(distLine('SOL queued ahead', e.fieldSolQueuedAhead, 2));
+  L.push(distLine('realised SOL *GROSS*', e.fieldRealisedSolGrossOfFees));
+  L.push(distLine('return per SOL *GROSS*', e.fieldReturnPerSolGrossOfFees));
+  L.push(
+    `      hit rate: ${e.fieldHitRateGrossOfFees.hits}/${e.fieldHitRateGrossOfFees.n} closed round ` +
+      `trips positive (${pct(e.fieldHitRateGrossOfFees.rate)}) — GROSS OF FEES, so an UPPER BOUND`,
+  );
+  L.push(
+    `      ${e.fieldEntrants} field entr(y/ies), ${e.fieldClosedRoundTrips} closed, ` +
+      `${e.fieldOpenPositions} still open at the window's end and therefore with NO complete P&L`,
+  );
+  L.push('');
+
+  if (coverage !== null) {
+    L.push(
+      `      coverage: ${coverage.launchesUsable} usable of ${coverage.launchesAttempted} attempted ` +
+        `(${coverage.launchRefsAvailable} available), ${coverage.requestsIssued} keyless request(s)` +
+        (coverage.stoppedForBudget ? ', STOPPED EARLY on the stage request ceiling' : ''),
+    );
+    for (const note of coverage.dropNotes) L.push(`        · ${note}`);
+  }
+  for (const c of e.caveats) {
+    for (const line of wrap(c, 84)) L.push(`      ! ${line}`);
+  }
+  return L;
+}
+
+/**
+ * Wrap prose to a width so a long rationale stays readable in a terminal.
+ *
+ * @param {string} text
+ * @param {number} width
+ * @returns {string[]}
+ */
+function wrap(text, width) {
+  /** @type {string[]} */
+  const lines = [];
+  let line = '';
+  for (const word of text.split(/\s+/)) {
+    if (line === '') line = word;
+    else if (line.length + 1 + word.length <= width) line += ` ${word}`;
+    else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line !== '') lines.push(line);
+  return lines;
+}
 
 /**
  * Render the Stage 0 validation report.
@@ -118,8 +237,7 @@ export function renderStage0(r, vendorReadings) {
   );
   L.push('');
 
-  L.push('STAGE 2 SEAM — the create-slot primitive, reproduced against the published §5.1 split');
-  L.push('  (not wired into any verdict here; validated so the next lane inherits a proven tool)');
+  L.push('STAGE 2 — the create-slot primitive, reproduced against the published §5.1 split');
   L.push('');
   L.push(
     `  ${pad('era', 22)}${padl('n', 4)}  ${padl('dev', 14)}  ${padl('co-ord', 8)}  ` +
@@ -137,6 +255,42 @@ export function renderStage0(r, vendorReadings) {
   L.push('  The co-ordination rule — a create-slot transaction carrying 2+ distinct wallets marks');
   L.push('  every wallet in it — recovers the known six-wallet cohort WITHOUT being told who it is.');
   L.push('  That is what makes the method applicable to a stranger.');
+  L.push('');
+
+  L.push('FIELD MEASUREMENT — reproduced against the dataset\'s own committed P&L table');
+  L.push(
+    `  ${r.fieldCheck.pairs} create-slot outsider pair(s) recomputed from raw fills: ` +
+      `${r.fieldCheck.closureMismatches} closure mismatch(es), ${r.fieldCheck.missingFromCsv} absent ` +
+      `from the table, max realised error ${r.fieldCheck.maxRealisedErrorSol.toExponential(3)} SOL   ` +
+      `${r.fieldCheck.ok ? 'OK' : 'FAILED'}`,
+  );
+  L.push('  Only closed round trips carry a complete P&L, and that rule is the dataset\'s own —');
+  L.push('  reproducing it is what lets a live measurement be compared with the published one.');
+  L.push('');
+
+  L.push('THE KNOWN-NEGATIVE CONTROL — Stage 2 must REFUSE our subject deployer');
+  for (const [label, e] of /** @type {[string, import('./entry.mjs').EntryScore][]} */ ([
+    ['most recent launches (what a live run would score today)', r.subjectEntryRecent],
+    ['the whole post-2026-06-04 regime', r.subjectEntryPostBreak],
+  ])) {
+    L.push(
+      `  ${pad(label, 52)} ${pad(e.verdict.toUpperCase(), 24)} ` +
+        `room ${num(e.roomLeft.median, 3)} over ${e.launchesSampled} launches`,
+    );
+  }
+  L.push('');
+  L.push('  And here is the trap, on the one wallet where we hold the answer:');
+  L.push(
+    `    the FIELD leg reads ${r.subjectEntryPostBreak.fieldHitRateGrossOfFees.hits}/` +
+      `${r.subjectEntryPostBreak.fieldHitRateGrossOfFees.n} closed round trips POSITIVE ` +
+      `(${pct(r.subjectEntryPostBreak.fieldHitRateGrossOfFees.rate)}), median ` +
+      `${num(r.subjectEntryPostBreak.fieldRealisedSolGrossOfFees.median, 3)} SOL`,
+  );
+  L.push('    ...gross of fees. Fee-inclusive, that same population made +0.54 SOL PER LAUNCH across');
+  L.push('    106 wallets since the break, with 51 of them LOSING money. So the field leg, followed');
+  L.push('    on its own, would call this wallet beatable — and it is not. That is why the field can');
+  L.push('    only ever VETO a verdict here and never earn one, and why this check is the assertion');
+  L.push('    rather than a threshold comparison.');
   L.push('');
 
   L.push(`CONTROL POPULATION — ${r.controlPopulation.n} other deployers in the dataset's own control`);
@@ -172,6 +326,10 @@ export function renderStage0(r, vendorReadings) {
  * @param {readonly import('./rank.mjs').Candidate[]} run.candidates
  * @param {number} run.keyedRequests
  * @param {number} run.keylessRequests
+ * @param {number} [run.keylessShed] Requests pump.fun refused with a 429 or 5xx and we retried.
+ *   Printed because on this endpoint a LOW shed count is the surprising one — the committed tape's
+ *   own build shed 24.7% — so a zero here is a hint that the walk did not happen rather than that it
+ *   went well.
  * @param {number} run.elapsedMs
  * @param {string} run.startedAtIso
  * @param {boolean} run.completed Whether enumeration and gating ran to the end. **Load-bearing.**
@@ -199,7 +357,10 @@ export function renderStage1(run) {
   L.push('');
   L.push(`run started        ${run.startedAtIso}`);
   L.push(`keyed requests     ${run.keyedRequests}  (MadeOnSol, Free tier)`);
-  L.push(`keyless requests   ${run.keylessRequests}  (pump.fun)`);
+  L.push(
+    `keyless requests   ${run.keylessRequests}  (pump.fun)` +
+      (run.keylessShed === undefined ? '' : `, ${run.keylessShed} shed and retried`),
+  );
   L.push(`elapsed            ${(run.elapsedMs / 1000).toFixed(1)}s`);
   L.push(`prefiltered out    ${run.prefiltered}  (skipped before spending a request)`);
   L.push(`candidates gated   ${run.candidates.length}`);
@@ -259,7 +420,7 @@ export function renderStage1(run) {
       L.push('screen is stateless.');
     }
   } else {
-    L.push('CLEARED THE GATE — eligible for Stage 2 scoring, which is NOT BUILT');
+    L.push('CLEARED THE COMPETENCE GATE — and, where Stage 2 reached them, scored for ENTRY');
     L.push('');
     L.push(
       `  ${pad('wallet', 46)}${padl('n', 4)}  ${padl('done', 5)}  ${padl('rate', 7)}  ` +
@@ -272,6 +433,14 @@ export function renderStage1(run) {
           `${padl(num(c.completion.spanDays, 0), 5)}  ${pad(c.completionCapped ? 'yes' : 'no', 4)}  ` +
           `${c.seededBy.length}`,
       );
+      if (c.entry !== null) {
+        L.push('');
+        for (const line of renderEntry(c.entry, c.entryCoverage)) L.push(line);
+        L.push('');
+      } else {
+        L.push('      ENTRY: NOT SCORED — no entry measurement was taken for this wallet.');
+        L.push('      Passing the competence gate says nothing about whether its window is enterable.');
+      }
       if (c.consistency !== null) {
         L.push(`      consistency: ${c.consistency.state.toUpperCase()} — ${c.consistency.note}`);
         if (c.consistency.historyTruncated) {
@@ -286,6 +455,10 @@ export function renderStage1(run) {
     L.push('  done = of those, how many completed the bonding curve');
     L.push('  cap  = the vendor page was full, so older launches exist that it does not show');
     L.push('  seeds= how many of the 3 enumeration queries surfaced this wallet');
+    L.push('');
+    L.push('  ENTRY-ROOM-PRESENT IS NOT "BEATABLE". It means the opening window is not already');
+    L.push('  closed, so the EXIT question is worth asking. Exit is unmeasured here, and every');
+    L.push('  realised figure above is gross of fees and therefore an upper bound.');
   }
 
   if (failed.length > 0) {
@@ -318,6 +491,9 @@ export function renderStage1(run) {
  * @param {number} plan.maxKeyedRequests
  * @param {boolean} plan.consistency
  * @param {number} plan.maxKeylessRequests
+ * @param {boolean} plan.stage2
+ * @param {number} plan.maxScored
+ * @param {import('./stage2.mjs').Stage2Thresholds} plan.entryThresholds
  * @param {{ length: number, hasDocumentedPrefix: boolean } | null} plan.keyDescription
  * @returns {string}
  */
@@ -358,12 +534,44 @@ export function renderDryRun(plan) {
   L.push('  continuing past it.');
   L.push('');
 
+  const t = plan.entryThresholds;
+  if (plan.stage2) {
+    const worstCase = plan.maxScored * t.maxLaunchesPerCandidate * t.maxRequestsPerLaunch;
+    L.push('KEYLESS — STAGE 2, the ENTRY score. pump.fun fill tape, for gate survivors only:');
+    L.push('  GET https://swap-api.pump.fun/v2/coins/{mint}/trades?limit=' + `${t.tradePageLimit}&cursor=0-{windowEndMs}`);
+    L.push('');
+    L.push('  This stage spends NO KEYED REQUEST. The mint list comes from the profile Stage 1 has');
+    L.push('  already paid for, so the shared vendor allowance is untouched by everything below.');
+    L.push('');
+    L.push(`  survivors scored              up to ${plan.maxScored}  (pinned cap ${t.maxCandidatesScored})`);
+    L.push(`  launches per survivor         up to ${t.maxLaunchesPerCandidate}`);
+    L.push(`  requests per launch           up to ${t.maxRequestsPerLaunch}, RETRIES INCLUDED`);
+    L.push('                                (measured: p50 4 pages, p90 8, p95 13; ~25% shed rate)');
+    L.push(
+      `  WORST CASE                    ${plan.maxScored} x ${t.maxLaunchesPerCandidate} x ` +
+        `${t.maxRequestsPerLaunch} = ${worstCase} request(s)`,
+    );
+    L.push(`  stage ceiling                 ${t.maxKeylessRequests}, enforced on its own client`);
+    L.push(
+      worstCase <= t.maxKeylessRequests
+        ? '  The worst case is at or under the ceiling, so the plan above is the WHOLE exposure.'
+        : '  !! The worst case EXCEEDS the ceiling — the ceiling binds and the run will stop early.',
+    );
+    L.push('  A launch is only started when a full page-cap of headroom remains, so no launch is');
+    L.push(`  ever abandoned half-walked. Window measured: ${t.windowMs / 1000}s from the mint, at the`);
+    L.push('  pinned keyless pacing, one request in flight.');
+  } else {
+    L.push('KEYLESS — STAGE 2 DISABLED (--no-stage2). No entry measurement would be taken, so the');
+    L.push('  run would report competence only and nothing about whether a window is enterable.');
+  }
+  L.push('');
+
   if (plan.consistency) {
     L.push('KEYLESS — pump.fun creator listing, for gate survivors only:');
     L.push('  GET https://frontend-api-v3.pump.fun/coins?creator={wallet}&offset=...');
     L.push(`  up to 3 pages per survivor, ceiling ${plan.maxKeylessRequests}. Costs no quota.`);
   } else {
-    L.push('KEYLESS — none. Pass --consistency to measure long-horizon consistency (no quota cost).');
+    L.push('KEYLESS — no consistency pass. Pass --consistency to measure it (no quota cost).');
   }
   L.push('');
   L.push('NOT REQUESTED, deliberately:');

@@ -351,12 +351,23 @@ one are a minority — **roughly one in twelve** — and that is a statement abo
 about profit. (Against the outsider-only 6 the count would be 14 of 70, one in five; that
 comparison is not like for like and this report does not make it.)
 
-The price multiple beside it *is* like for like: the control's median create-slot price multiple
-is **1.04** against this deployer's **2.25**. `p0` is the creator's own dev-buy price — on the 24
-control launches using the identical 14.814814813-SOL preset it is this deployer's own
-`price_devbuy` to ten significant figures — and the subject's side is the top create-slot fill
-against the same denominator (`first30s_best.csv` `fill_mult_vs_devbuy` over
-`slots_after_create = 0`, open-window median). Both numbers are asserted in the test.
+The price multiple beside it is the same construction on both sides — **the last fill in the
+create slot over the deployer's own fill price** — and the control's median is **1.04** against
+this deployer's **2.46**. The control publishes it as `last_create_slot_price / p0`, where `p0`
+is the creator's own dev-buy price: on the 24 control launches using the identical
+14.814814813-SOL preset it is this deployer's own `price_devbuy` to ten significant figures. The
+subject's side is computed from the window tapes — the last non-deployer buy in the create slot,
+over `launches.csv`'s `price_devbuy`, gated on `meta.reached_mint` — and it covers **all 129**
+open-window launches, none dropped.
+
+It is deliberately **not** read off `first30s_best.csv`, which gives 2.25. That file is the ten
+best early entrants per launch, so it carries a median of 5 create-slot rows against the 10
+wallets actually in the slot, and two open-window launches have no row in it at all: its highest
+create-slot fill is below the slot's real last fill on most launches. "Buys only move the curve
+up" is true of the curve and false of a truncated file, and the correction runs against the
+subject — 2.46 is further from the control's 1.04 than 2.25 was. The honest caveat is one of
+coverage, not of construction: the subject's figure is 129 launches of one deployer, the
+control's is one launch each of 70. Both numbers are asserted in the test.
 
 ### 7.2 Earners inside one window: **about 2**
 

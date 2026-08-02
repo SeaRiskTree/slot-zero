@@ -15,8 +15,9 @@
  * authority on column semantics and on the three traps.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 
 /** @type {string} Absolute path of the dataset directory. */
 export const DATA_DIR = fileURLToPath(new URL('../../data/population-tape-2026-07-29/', import.meta.url));
@@ -555,31 +556,105 @@ export function unitLedger() {
 }
 
 /**
+ * The create slot of each launch: the `first_slot` shared by every pair the tape marks
+ * `in_create_slot`. Ambiguity is an error rather than a first-wins choice, the same way
+ * `src/tape.ts` treats it.
+ *
+ * @returns {Map<string, number>}
+ */
+export function createSlotByMint() {
+  /** @type {Map<string, number>} */ const cs = new Map();
+  for (const p of readCsv('wallet_launch_pnl.csv')) {
+    if (p['in_create_slot'] !== '1') continue;
+    const mint = p['mint'] ?? '';
+    const slot = num(p['first_slot']);
+    if (slot === null) continue;
+    const seen = cs.get(mint);
+    if (seen === undefined) cs.set(mint, slot);
+    else if (seen !== slot) throw new Error(`${mint}: create slot ambiguous (${seen} vs ${slot})`);
+  }
+  return cs;
+}
+
+/** @type {Map<string, number | null>} Last create-slot outsider fill price, SOL per token. */
+const lastFillCache = new Map();
+
+/**
+ * The price of the **last** non-deployer buy in a launch's create slot, straight off the window
+ * tape. `null` when the launch is not covered, has no create slot, or had no such buy.
+ *
+ * Coverage is `meta.reached_mint`, never file existence: all 239 mints have a tape and four of
+ * them never reached the mint, so their files hold unrelated later trading.
+ *
+ * @param {string} mint
+ * @param {ReadonlyMap<string, number>} createSlot
+ * @returns {number | null}
+ */
+function lastCreateSlotFillPrice(mint, createSlot) {
+  const cached = lastFillCache.get(mint);
+  if (cached !== undefined) return cached;
+  /** @type {number | null} */ let price = null;
+  const slot = createSlot.get(mint);
+  const metaPath = `${DATA_DIR}window/${mint}.meta.json`;
+  const tapePath = `${DATA_DIR}window/${mint}.jsonl.gz`;
+  if (slot !== undefined && existsSync(metaPath) && existsSync(tapePath)) {
+    const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+    if (meta?.reached_mint === true) {
+      const text = gunzipSync(readFileSync(tapePath)).toString('utf8');
+      for (const line of text.split('\n')) {
+        if (line === '') continue;
+        const t = JSON.parse(line);
+        if (t?.slot !== slot || t?.k !== 'buy' || t?.u === DEPLOYER) continue;
+        const psol = num(typeof t?.psol === 'string' ? t.psol : String(t?.psol ?? ''));
+        if (psol !== null && Number.isFinite(psol) && psol > 0) price = psol;
+      }
+    }
+  }
+  lastFillCache.set(mint, price);
+  return price;
+}
+
+/**
+ * @typedef {object} PriceMultipleResult
+ * @property {number[]} multiples One per launch the multiple could be computed on.
+ * @property {number} launches How many launches were offered.
+ * @property {{noCreateSlotFill: number, noDevBuyPrice: number}} skipped Why the rest are absent —
+ *   reported rather than left to vanish out of a median.
+ */
+
+/**
  * The subject's create-slot price multiple, on the control's own basis.
  *
- * `control_create_slot.csv` publishes `last_create_slot_price / p0`, and `p0` is the creator's
- * own dev-buy price — on the 24 control launches using the identical 14.814814813-SOL preset it
- * is this deployer's own `price_devbuy` to ten significant figures. The subject's counterpart is
- * the highest create-slot fill as a multiple of its own dev buy: `first30s_best.csv`'s
- * `fill_mult_vs_devbuy` over `slots_after_create = 0`. Buys only move the curve up, so the last
- * fill in the slot and the highest fill in the slot are the same reading either side.
+ * `control_create_slot.csv` publishes `last_create_slot_price / p0`: the **last** fill in the
+ * create slot over the creator's own dev-buy price. `p0` is that dev-buy price — on the 24
+ * control launches using the identical 14.814814813-SOL preset it is this deployer's own
+ * `price_devbuy` to ten significant figures — so the subject's counterpart is the same
+ * construction, and it is built here from the window tape: the last non-deployer buy in the
+ * create slot, over `launches.csv`'s `price_devbuy`.
  *
+ * It is **not** taken from `first30s_best.csv`. That file is the ten best early entrants per
+ * launch, a truncated subset — a median of 5 create-slot rows per open-window launch against a
+ * median of 10 wallets actually in the slot — so its highest fill is below the slot's real last
+ * fill on most launches, and two open-window launches have no row in it at all.
  *
  * @param {readonly LaunchRow[]} series
- * @returns {number[]} One multiple per launch that has a create-slot fill.
+ * @returns {PriceMultipleResult}
  */
 export function createSlotPriceMultiples(series) {
-  const wanted = new Set(series.map((r) => r.mint));
-  /** @type {Map<string, number>} */ const best = new Map();
-  for (const r of readCsv('first30s_best.csv')) {
-    if (r['slots_after_create'] !== '0') continue;
-    const mint = r['mint'] ?? '';
-    if (!wanted.has(mint)) continue;
-    const mult = num(r['fill_mult_vs_devbuy']);
-    if (mult === null || !Number.isFinite(mult)) continue;
-    best.set(mint, Math.max(best.get(mint) ?? -Infinity, mult));
+  const createSlot = createSlotByMint();
+  const devBuyPrice = new Map(
+    readCsv('launches.csv').map((l) => [l['mint'] ?? '', num(l['price_devbuy'])]),
+  );
+  /** @type {number[]} */ const multiples = [];
+  const skipped = { noCreateSlotFill: 0, noDevBuyPrice: 0 };
+  for (const r of series) {
+    const p0 = devBuyPrice.get(r.mint) ?? null;
+    if (p0 === null || !Number.isFinite(p0) || p0 <= 0) { skipped.noDevBuyPrice += 1; continue; }
+    const fill = lastCreateSlotFillPrice(r.mint, createSlot);
+    if (fill === null) { skipped.noCreateSlotFill += 1; continue; }
+    multiples.push(fill / p0);
   }
-  return [...best.values()];
+  return { multiples, launches: series.length, skipped };
 }
 
 // ---------------------------------------------------------------------------------
@@ -724,8 +799,13 @@ export function main() {
     ` the control column's own basis): ${f(subjectMedian, 1)}` +
     `   — outsiders alone: ${f(median(open.map((r) => r.outsiderWallets)), 1)}`);
   console.log(`  control deployers reaching that level: ${wallets.filter((w) => w >= subjectMedian).length} of ${control.length}`);
-  console.log(`  subject's open-window median create-slot price multiple, same basis (see` +
-    ` createSlotPriceMultiples): ${f(median(createSlotPriceMultiples(open)), 2)}`);
+  const mult = createSlotPriceMultiples(open);
+  console.log(`  subject's open-window median create-slot price multiple, same basis — last` +
+    ` create-slot fill over the deployer's own fill price, off the window tape:` +
+    ` ${f(median(mult.multiples), 2)}`);
+  console.log(`  computed over ${mult.multiples.length} of ${mult.launches} open-window launches` +
+    ` (skipped: ${mult.skipped.noCreateSlotFill} with no covered create-slot fill,` +
+    ` ${mult.skipped.noDevBuyPrice} with no dev-buy price)`);
 }
 
 if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) main();

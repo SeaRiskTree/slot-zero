@@ -227,13 +227,40 @@ describe('what the tape cannot answer', () => {
     expect(wallets.filter((w) => w >= 10).length).toBe(6);
     expect(wallets.filter((w) => w >= 6).length).toBe(14); // the outsider-only figure, for contrast
 
-    // The price multiple beside it *is* like for like: the control's `p0` is the creator's own
-    // dev-buy price — on the 24 control launches using the same 14.814814813-SOL preset it is
-    // this deployer's own `price_devbuy` to ten significant figures — so both sides read the top
-    // create-slot fill against the deployer's own buy.
+    // The price multiple beside it is the same construction on both sides: the last create-slot
+    // fill over the deployer's own fill price. The control publishes it as
+    // `last_create_slot_price / p0`, and `p0` is the creator's own dev-buy price — on the 24
+    // control launches using the same 14.814814813-SOL preset it is this deployer's own
+    // `price_devbuy` to ten significant figures. The subject's side comes off the window tape,
+    // not off `first30s_best.csv`, which is a truncated best-N subset and reads 2.25.
     const mults = control.map((c) => Number(c['last_create_slot_price']) / Number(c['p0']));
     expect(median(mults)).toBeCloseTo(1.04, 2);
-    expect(median(createSlotPriceMultiples(open))).toBeCloseTo(2.25, 2);
+    const subject = createSlotPriceMultiples(open);
+    expect(median(subject.multiples)).toBeCloseTo(2.46, 2);
+    // Every open-window launch carries one, so nothing drops silently out of that median.
+    expect(subject.launches).toBe(129);
+    expect(subject.multiples.length).toBe(129);
+    expect(subject.skipped).toEqual({ noCreateSlotFill: 0, noDevBuyPrice: 0 });
+  });
+
+  it('the truncated best-N file is why first30s_best.csv is not the basis', () => {
+    // `first30s_best.csv` holds the ten best early entrants, so its highest create-slot fill sits
+    // below the slot's real last fill on most launches. That is a fact about the file, not about
+    // the curve, and it is what the like-for-like claim used to rest on.
+    const open = series.filter((r) => regimeOf(r.date) === 'open');
+    const openMints = new Set(open.map((r) => r.mint));
+    const slotZeroRows = readCsv('first30s_best.csv').filter(
+      (r) => r['slots_after_create'] === '0' && openMints.has(r['mint'] ?? ''),
+    );
+    const perLaunch = new Map<string, number>();
+    for (const r of slotZeroRows) {
+      const mint = r['mint'] ?? '';
+      perLaunch.set(mint, (perLaunch.get(mint) ?? 0) + 1);
+    }
+    expect(perLaunch.size).toBe(127); // two open-window launches have no row at all
+    expect(median([...perLaunch.values()])).toBeLessThan(
+      median(open.map((r) => r.createSlotWallets)),
+    );
   });
 
   it('every launch in the tape is the same one deployer', () => {

@@ -426,9 +426,13 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 
 | version | what it carries |
 |---|---|
-| 1 (absent) | no `completed`. `truncated` and `truncationReason` only. |
-| 2 | `completed`, plus `coverage` separating candidate-cap truncation from an abort. |
+| 1 (absent) | no `completed`. `truncated`, `truncationReason` — and `coverage`, which was already present here. |
+| 2 | adds `completed`, and only `completed`. |
 | 3 | `spend` (the keyed ceiling, the unspent remainder, the planned worst case, and every endpoint called with its per-call cost) and `unmeasured` (every measurement the run could not take, and why). |
+
+**`coverage` is not a version signal.** The committed schema-1 record
+`runs/2026-07-29-elite.json` already carries it, including `coverage.coverageTruncated` and
+`droppedByCandidateCap: 10`. Read `coverage` on every record and version-detect on `completed`.
 
 Committed records are **evidence and are never retro-edited** to fit a newer schema — a lane whose
 purpose is grading what past runs predicted cannot also be rewriting them. So version skew is real

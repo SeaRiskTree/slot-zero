@@ -749,10 +749,21 @@ only forbade mint-shaped *keys*, so a mint inside a sentence passed it. Two chan
 - `KeylessHttpError` carries its **status as a field**, so `stage2.mjs` → `describeTransportFailure`
   can report `HTTP 400` without repeating anything the vendor sent. Anything that is not one is
   reduced to its constructor name.
-- `record.mjs` → `redactVendorIdentifiers` scrubs every free-text field on the way into a record —
-  the entry half's rationale, caveats and drop notes, the gate half's `rationale`, `gateReasons` and
-  `consistency.note`, and the run-level `truncationReason` — stripping URLs and base58 address runs.
-  The containment does not rest on every future note-writer remembering.
+- `record.mjs` → `redactVendorIdentifiers` scrubs named free-text fields on the way into a record,
+  stripping URLs and base58 address runs, so containment for those fields does not rest on every
+  future note-writer remembering. **Covered today, and only these:** the entry half's `rationale`,
+  `caveats` and `dropNotes` (`stage2.mjs` → `toEntryRecordRow`); the gate half's `rationale`,
+  `gateReasons` and `consistency.note` (`screen.mjs` → `toRecordRow`); and the run-level
+  `truncationReason`.
+
+  **Not covered, and the enumeration above is not full coverage of the record.** Three error-derived
+  paths still reach `--out` verbatim: `creation.listingUnmeasuredNote` (`screen.mjs` →
+  `describeUnmeasured`, whose `summary` is a raw `Error.message`), `creation.stopDetail`
+  (`pumpfun.mjs`, a raw `cause.message`), and the run-level `unmeasured[]` array, whose `detail`
+  field `record.mjs` itself documents as embedding a per-wallet URL — so a keyless listing failure
+  can persist a URL containing the wallet, which is the exact leak class this boundary exists for.
+  That is a known open gap, deliberately left to a separate lane rather than an oversight; do not
+  read the covered list as the whole record.
 
   It is applied **field by field and never as a sweep of the record**, because `wallet` is a 44-char
   base58 string that is deliberately kept — public on-chain data, and the one identifier a record
@@ -834,8 +845,11 @@ gate outcomes silently. 160 covers 100% of observed windows with margin over the
 ~63.5s, so the live window is up to ~3.5s *wider* than the tape's 60s windows, and the extra late
 sells make realised P&L read better than the ground-truth recipe would. Because the field leg is
 veto-only that **loosens rather than tightens** — a too-generous field can only fail to veto, never
-earn a verdict — and the magnitude is small (the margin sits at the thinnest part of the window: p50
-18 / p95 52 fills in the last 5s). 160 was chosen on measurement, so no change is implied.
+earn a verdict — and the magnitude is small. That last claim is **cited, not measured here**: the
+figure that carries it (the margin sits at the thinnest part of the window, p50 18 / p95 52 fills in
+the last 5s) comes from the PR #7 review comment that recorded this tradeoff, which supplied it
+without naming a population, and it is not reproduced anywhere in this repo — unlike the span
+figures above, which name theirs. 160 was chosen on measurement, so no change is implied.
 
 **Stage 0 deliberately does not use the span**, and the two paths must not be reconciled: it measures
 each committed launch over that launch's own stored window, because `wallet_launch_pnl.csv` — the

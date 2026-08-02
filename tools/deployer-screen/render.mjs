@@ -18,7 +18,8 @@
  * second state is the single output this tool exists to make impossible.
  */
 
-import { buildPath } from './client.mjs';
+import { buildPath, ENDPOINT_ROLES } from './client.mjs';
+import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
 
 /**
@@ -389,6 +390,14 @@ export function renderStage0(r, vendorReadings) {
  * @param {string | null} run.truncationReason
  * @param {number} run.prefiltered
  * @param {import('./seed.mjs').SeedCoverage} run.coverage
+ * @param {{ keyedCeiling: number, keyedRemaining: number, plannedWorstCaseKeyed: number,
+ *   candidateCap: number, endpoints: readonly import('./client.mjs').EndpointSpend[] }} [run.spend]
+ *   Where the keyed allowance actually went. Optional only so a caller rendering a schema-2 record
+ *   is not forced to invent one; a live run always passes it.
+ * @param {readonly import('./record.mjs').Unmeasured[]} [run.unmeasured] Measurements the run could
+ *   not take. Rendered as its own block rather than left to the per-candidate note, because a
+ *   ceiling that stopped the tool looking is a fact about the RUN — a reader who scans the header
+ *   and the coverage block must not come away believing everything reported was measured.
  * @param {Record<string, unknown>} run.thresholds
  * @returns {string}
  */
@@ -428,6 +437,20 @@ export function renderStage1(run) {
   }
   L.push('');
 
+  if (run.spend !== undefined) {
+    L.push('SPEND — every keyed request, by endpoint, with what each call costs');
+    L.push(`  ${pad('endpoint', 36)}${padl('calls', 6)}  ${pad('cost per call', 48)}role`);
+    for (const e of run.spend.endpoints) {
+      L.push(`  ${pad(e.endpoint, 36)}${padl(String(e.calls), 6)}  ${pad(e.costModel, 48)}${e.role}`);
+    }
+    if (run.spend.endpoints.length === 0) L.push('  (none — no keyed request was issued)');
+    L.push(
+      `  ${padl(String(run.keyedRequests), 42)} total, against a ceiling of ${run.spend.keyedCeiling} ` +
+        `(${run.spend.keyedRemaining} unspent; planned worst case ${run.spend.plannedWorstCaseKeyed})`,
+    );
+    L.push('');
+  }
+
   const cov = run.coverage;
   L.push('SEED YIELD — per query, because an inert seed is otherwise invisible');
   L.push(`  ${pad('query', 34)}${padl('rows', 6)}  ${padl('wallets', 8)}`);
@@ -459,6 +482,24 @@ export function renderStage1(run) {
     L.push(`!! COVERAGE TRUNCATED — ${run.truncationReason ?? 'the candidate cap dropped seeded wallets'}`);
     L.push('   The run completed and every candidate it gated was evaluated, but it is NOT a screen');
     L.push('   of everything enumeration found.');
+  }
+
+  const unmeasured = run.unmeasured ?? [];
+  if (unmeasured.length > 0) {
+    L.push('');
+    L.push(`!! ${unmeasured.length} MEASUREMENT(S) NOT TAKEN — the tool could not look`);
+    // One block per kind, because each one tells the reader to do something different — and the
+    // grouping key is the wallet-independent summary, so a hundred failed wallets are one line.
+    for (const [kind, entries] of partitionUnmeasured(unmeasured)) {
+      const meta = kindMetaOf(kind);
+      L.push(`   ${meta.heading}`);
+      L.push(`   ${meta.advice}`);
+      for (const [summary, n] of groupUnmeasured(entries)) {
+        L.push(`     · ${n} candidate(s): ${summary}`);
+      }
+    }
+    L.push('   Whichever it was, it is NEVER a measured result: the affected candidates read');
+    L.push('   UNMEASURED below, and their absence of a finding is not a finding.');
   }
   L.push('');
 
@@ -590,8 +631,14 @@ export function renderDryRun(plan) {
     `  worst case ${plan.seedPlan.length} + ${plan.maxCandidates} = ` +
       `${plan.seedPlan.length + plan.maxCandidates} keyed requests, ceiling ${plan.maxKeyedRequests}.`,
   );
-  L.push('  The ceiling is enforced before each request; the run stops and says so rather than');
-  L.push('  continuing past it.');
+  L.push('  The ceiling is enforced before each request, and a plan whose worst case does not fit');
+  L.push('  under it is refused BEFORE the first request rather than allowed to die part-way.');
+  L.push('');
+  L.push('KEYED ENDPOINTS — the whole surface this tool touches, and the cost of each call:');
+  L.push(`  ${pad('endpoint', 36)}${pad('cost', 48)}role`);
+  for (const [endpoint, meta] of Object.entries(ENDPOINT_ROLES)) {
+    L.push(`  ${pad(endpoint, 36)}${pad(meta.costModel, 48)}${meta.role}`);
+  }
   L.push('');
 
   const t = plan.entryThresholds;

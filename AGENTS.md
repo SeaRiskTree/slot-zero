@@ -184,6 +184,12 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
   feed (enum `elite|good|moderate|rising|cold`); there is no separate elite endpoint to hunt for.
 - **Free tier only** — ~200 requests/day, ~10/min, **shared** across whatever holds the key, and keys
   expire every 30 days. `/{wallet}/history` is PRO+. Paid tiers are refused standing policy.
+- **Spend the whole MadeOnSol daily allowance when a run will answer something** (captain, 2026-08-02:
+  there is no free substitute for this data, so hoarding it buys nothing). The screen's pinned bounds
+  are the full ~200/day; the earlier quarter-allowance ceiling is withdrawn, so do not re-derive it.
+  The "if it gets results" conditional binds — no sweeps, no idle retries. **MadeOnSol only**:
+  Helius/SolanaTracker/CoinGecko keys are production-shared and unchanged, as is keyless pump.fun
+  pacing. `tools/deployer-screen/README.md` → "Bounds" owns the numbers and the endpoint list.
 - **ToS §5a(b)/(d) bind us**: internal research only, and no accumulation beyond what is necessary.
   The screen derives and discards — per-token records live in memory for one run; only derived counts
   are ever written, and only with `--out`. Test fixtures are synthetic, never captured payloads.

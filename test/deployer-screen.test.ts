@@ -23,7 +23,16 @@ import {
   describeKey,
   resolveKey,
 } from '../tools/deployer-screen/credential.mjs';
-import { BoundedClient, CeilingReached, VendorRefused, buildPath } from '../tools/deployer-screen/client.mjs';
+import {
+  BoundedClient,
+  CeilingReached,
+  ENDPOINT_ROLES,
+  RequestFailed,
+  UnparseableResponse,
+  VendorRefused,
+  buildPath,
+  endpointOf,
+} from '../tools/deployer-screen/client.mjs';
 import {
   CURVE_INITIAL_PRICE_SOL,
   createSlotGroups,
@@ -71,6 +80,7 @@ import {
 } from '../tools/deployer-screen/pumpfun.mjs';
 import {
   exitForRefusal,
+  main,
   parseArgs,
   loadThresholds,
   partialOutPath,
@@ -78,10 +88,19 @@ import {
 import { LIMITATIONS, renderDryRun, renderEntry, renderStage1 } from '../tools/deployer-screen/render.mjs';
 import {
   RECORD_SCHEMA_VERSION,
+  UNMEASURED_KINDS,
+  UNRECOGNISED_KIND,
+  classifyUnmeasured,
+  kindMetaOf,
   completenessOf,
+  deriveTruncation,
   describeCompleteness,
+  describeUnmeasured,
+  groupUnmeasured,
+  partitionUnmeasured,
   redactVendorIdentifiers,
   schemaVersionOf,
+  unmeasuredBecause,
 } from '../tools/deployer-screen/record.mjs';
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
@@ -1033,6 +1052,43 @@ describe('the CLI contract', () => {
     }
   });
 
+  it('leaves the candidate cap unset by default, so the budget decides it', () => {
+    // The committed elite run seeded 22 wallets and graded 12 because it was invoked with a number
+    // below the ceiling. A default invocation must not pin one at all.
+    const r = parseArgs([]);
+    if (!r.ok) throw new Error('unreachable');
+    expect(r.opts.candidates).toBeNull();
+    expect(r.opts.maxRequests).toBeNull();
+  });
+
+  it('refuses an over-budget plan before spending anything', async () => {
+    const r = parseArgs(['--candidates', '150', '--max-requests', '10']);
+    if (!r.ok) throw new Error('unreachable');
+    const out: string[] = [];
+    const err: string[] = [];
+    // No credential in the environment either — but the refusal must come from the arithmetic,
+    // before the key is ever consulted, and above all before a request is issued.
+    const code = await main(r.opts, {}, (l) => out.push(l), (l) => err.push(l));
+    expect(code).toBe(2);
+    const text = err.join('\n');
+    expect(text).toMatch(/Refusing to start/);
+    expect(text).toMatch(/no quota was spent/);
+    expect(text).not.toMatch(/CREDENTIAL PROBLEM/);
+  }, 60_000);
+
+  it('never refuses its own default plan', async () => {
+    // The default candidate cap is derived from the request ceiling MINUS the enumeration cost, and
+    // the refusal check three lines later re-adds it. If those two ever disagree — a fourth
+    // enumeration query against a hardcoded 3, say — a no-flag invocation refuses itself. Reaching
+    // the credential check (exit 3) rather than the arithmetic refusal (exit 2) is the proof.
+    const r = parseArgs([]);
+    if (!r.ok) throw new Error('unreachable');
+    const err: string[] = [];
+    const code = await main(r.opts, {}, () => {}, (l) => err.push(l));
+    expect(code).toBe(3);
+    expect(err.join('\n')).not.toMatch(/Refusing to start/);
+  }, 60_000);
+
   it('writes nothing by default — persistence is opt-in', () => {
     const r = parseArgs([]);
     if (!r.ok) throw new Error('unreachable');
@@ -1150,10 +1206,19 @@ describe('the CLI contract', () => {
     }
   });
 
-  it('bounds every run in the pinned budget', () => {
+  it('bounds every run in the pinned budget — the FULL free-tier daily allowance, and no more', () => {
     const b = loadThresholds()['budget'];
-    expect(b.maxKeyedRequests).toBeLessThanOrEqual(50); // a quarter of the shared 200/day
-    expect(b.maxCandidates).toBeLessThanOrEqual(20);
+    // Captain's instruction 2026-08-02: spend the whole allowance when spending it gets results.
+    // The bound is the allowance itself (~200/day), not a fraction of it — but it is still a bound.
+    expect(b.maxKeyedRequests).toBeLessThanOrEqual(200);
+    expect(b.maxKeyedRequests).toBeGreaterThan(100);
+    // The enumeration requests plus the candidate cap must fit under the ceiling, or a default run
+    // would be arranged to die at the ceiling rather than to finish. The cost is taken from the
+    // plan rather than written as 3, so a fourth enumeration query fails this instead of quietly
+    // making a no-flag invocation refuse itself.
+    const enumerationCost = buildSeedPlan({ limit: 50 }).length;
+    expect(enumerationCost + b.maxCandidates).toBeLessThanOrEqual(b.maxKeyedRequests);
+    // The burst limit is the vendor's, not our caution, so relaxing the daily bounds never moves it.
     expect(b.keyedMinIntervalMs).toBeGreaterThanOrEqual(6_000); // Free tier bursts at ~10/min
     expect(b.keylessMinIntervalMs).toBeGreaterThanOrEqual(2_000); // conservative carry-over, frontend-api-v3
   });
@@ -1175,6 +1240,138 @@ describe('the CLI contract', () => {
     expect(s2.justification.keylessMinIntervalMs).toMatch(/swap-api/);
     expect(T['budget'].justification.keylessMinIntervalMs).toMatch(/frontend-api-v3/);
     expect(T['budget'].justification.keylessMinIntervalMs).toMatch(/api\.mainnet-beta\.solana\.com/);
+  });
+
+  it('records the captain instruction rather than the withdrawn quarter-allowance caution', () => {
+    // A stale rationale is how a withdrawn caution gets re-derived by a future reader, so the
+    // pinned prose is asserted, not just the numbers.
+    const budget = loadThresholds()['budget'];
+    const prose = [...budget.$comment, ...Object.values(budget.justification as Record<string, string>)]
+      .join(' ')
+      .toLowerCase();
+    expect(prose).toContain('captain');
+    expect(prose).toMatch(/withdrawn/);
+    expect(prose).toMatch(/if it gets results/);
+    // MadeOnSol only: the production-shared keys are not covered by this relaxation.
+    expect(prose).toMatch(/production/);
+    // And nothing may still be claiming the old reasoning.
+    expect(prose).not.toMatch(/quarter of the shared/);
+  });
+});
+
+describe('spend is reported concretely, by endpoint', () => {
+  it('classifies every path onto the endpoint template it belongs to', () => {
+    expect(endpointOf('/deployer-hunter/recent-bonds?limit=50&tier=elite')).toBe(
+      '/deployer-hunter/recent-bonds',
+    );
+    expect(endpointOf('/deployer-hunter/alerts?limit=100')).toBe('/deployer-hunter/alerts');
+    expect(endpointOf('/deployer-hunter/leaderboard?limit=50&sort=total_bonded')).toBe(
+      '/deployer-hunter/leaderboard',
+    );
+    // A wallet must never become a key of its own: a spend table is not a list of who we screened.
+    expect(endpointOf('/deployer-hunter/EgQX9R3QabcDEF')).toBe('/deployer-hunter/{wallet}');
+    expect(endpointOf('/deployer-hunter/2CQgjcdNxyz')).toBe('/deployer-hunter/{wallet}');
+  });
+
+  it('collapses the wallet segment positionally, so a sub-resource cannot leak an address', () => {
+    // The containment must not depend on nobody ever adding a call below the wallet. Neither of
+    // these endpoints is used — /tokens is bonded-only and /history is PRO+ — which is exactly why
+    // an exact-match rule would have gone unnoticed until the day one was.
+    for (const suffix of ['/tokens', '/history', '/tokens?limit=50', '/anything/deeper']) {
+      const classified = endpointOf(`/deployer-hunter/EgQX9R3QabcDEF${suffix}`);
+      expect(classified).not.toMatch(/EgQX9R3QabcDEF/);
+      expect(classified.startsWith('/deployer-hunter/{wallet}/')).toBe(true);
+    }
+    expect(endpointOf('/deployer-hunter/2CQgjcdNxyz/tokens')).toBe('/deployer-hunter/{wallet}/tokens');
+    // The literal enumeration endpoints stay classified as themselves, not as wallets.
+    expect(endpointOf('/deployer-hunter/recent-bonds')).toBe('/deployer-hunter/recent-bonds');
+    // A trailing slash leaves no wallet segment to substitute, so nothing is invented.
+    expect(endpointOf('/deployer-hunter/')).toBe('/deployer-hunter/');
+  });
+
+  it('names the endpoints the tool uses, and the two it deliberately does not', () => {
+    expect(Object.keys(ENDPOINT_ROLES).sort()).toEqual([
+      '/deployer-hunter/alerts',
+      '/deployer-hunter/leaderboard',
+      '/deployer-hunter/recent-bonds',
+      '/deployer-hunter/{wallet}',
+    ]);
+    // Only the gate scales with the candidate count; everything else is one call per run.
+    expect(ENDPOINT_ROLES['/deployer-hunter/{wallet}']?.costModel).toMatch(/per candidate/);
+    for (const e of ['/deployer-hunter/alerts', '/deployer-hunter/leaderboard', '/deployer-hunter/recent-bonds']) {
+      expect(ENDPOINT_ROLES[e]?.costModel).toBe('1 per run');
+    }
+    // tokens/ is bonded-only and history/ is PRO+; neither may appear as a thing we call.
+    expect(Object.keys(ENDPOINT_ROLES).some((e) => e.endsWith('/tokens') || e.endsWith('/history'))).toBe(false);
+  });
+
+  it('attributes each issued request, retries included, to its endpoint', async () => {
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls += 1;
+      return calls === 2
+        ? ({ ok: false, status: 500, text: async () => 'boom' } as Response)
+        : ({ ok: true, status: 200, json: async () => ({}), text: async () => '{}' } as Response);
+    }) as unknown as typeof fetch;
+    const client = new BoundedClient({
+      key: 'msk_test_key_value_padded_to_length_ok_1234',
+      maxRequests: 10,
+      minIntervalMs: 0,
+      sleepImpl: async () => {},
+      fetchImpl,
+    });
+
+    await client.getJson('/deployer-hunter/recent-bonds', { limit: 50 });
+    await client.getJson('/deployer-hunter/WalletAaa'); // 500 then retried
+    await client.getJson('/deployer-hunter/WalletBbb');
+
+    const byEndpoint = client.stats().byEndpoint;
+    expect(byEndpoint).toEqual([
+      expect.objectContaining({ endpoint: '/deployer-hunter/recent-bonds', calls: 1 }),
+      // Two wallets, one of which cost two requests: the retry is spend and it is reported as spend.
+      expect.objectContaining({ endpoint: '/deployer-hunter/{wallet}', calls: 3 }),
+    ]);
+    expect(byEndpoint.reduce((n, e) => n + e.calls, 0)).toBe(client.stats().issued);
+  });
+
+  it('prints the spend table with the ceiling and what was left unspent', () => {
+    const text = renderStage1({
+      candidates: [],
+      keyedRequests: 5,
+      keylessRequests: 0,
+      elapsedMs: 1000,
+      startedAtIso: '2026-08-02T00:00:00.000Z',
+      completed: true,
+      truncationReason: null,
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 2,
+        prefilteredOut: 0,
+        worthARequest: 2,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 0,
+        coverageTruncated: false,
+      },
+      spend: {
+        keyedCeiling: 200,
+        keyedRemaining: 195,
+        plannedWorstCaseKeyed: 198,
+        candidateCap: 195,
+        endpoints: [
+          { endpoint: '/deployer-hunter/alerts', role: 'enumeration', costModel: '1 per run', calls: 1 },
+          { endpoint: '/deployer-hunter/{wallet}', role: 'the gate', costModel: '1 per candidate', calls: 4 },
+        ],
+      },
+      thresholds: {},
+    });
+    expect(text).toMatch(/SPEND/);
+    expect(text).toMatch(/\/deployer-hunter\/\{wallet\}/);
+    expect(text).toMatch(/1 per candidate/);
+    expect(text).toMatch(/ceiling of 200/);
+    expect(text).toMatch(/195 unspent/);
   });
 });
 
@@ -1256,6 +1453,574 @@ describe('an incomplete run can never read as a measured negative', () => {
       expect(partialOutPath(p)).not.toBe(p);
       expect(partialOutPath(p).endsWith('.partial.json')).toBe(true);
     }
+  });
+});
+
+describe('the keyless walk retries, like the keyed one', () => {
+  const keyless = (fetchImpl: unknown, maxRequests = 10) =>
+    new KeylessClient({
+      maxRequests,
+      minIntervalMs: 0,
+      sleepImpl: async () => {},
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+
+  const ok = { ok: true, status: 200, json: async () => ({ page: 1 }) } as Response;
+  const boom = (status: number) => ({ ok: false, status, json: async () => ({}) }) as Response;
+
+  it('re-issues a 5xx once and counts BOTH attempts against the ceiling', () => {
+    // A 5xx means the request was not served, so retrying it is nearer to one successful request
+    // than to two — but the ceiling is what bounds our footprint, so every attempt counts.
+    let calls = 0;
+    const client = keyless(async () => {
+      calls += 1;
+      return calls === 1 ? boom(503) : ok;
+    });
+    return client.getJson('https://frontend-api-v3.pump.fun/coins?creator=A').then((body) => {
+      expect(body).toEqual({ page: 1 });
+      expect(calls).toBe(2);
+      expect(client.issued()).toBe(2);
+    });
+  });
+
+  it('re-issues a transport failure or timeout once', async () => {
+    let calls = 0;
+    const client = keyless(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('The operation was aborted due to timeout');
+      return ok;
+    });
+    await expect(client.getJson('https://frontend-api-v3.pump.fun/coins?creator=A')).resolves.toEqual({
+      page: 1,
+    });
+    expect(calls).toBe(2);
+  });
+
+  it('gives up after its pinned backoffs rather than hammering a shared public endpoint', async () => {
+    // One attempt per entry in DEFAULT_RETRY_BACKOFF_MS, plus the first — three, and no more. The
+    // count is the client's pinned backoff list rather than a number written down twice.
+    let calls = 0;
+    const client = keyless(async () => {
+      calls += 1;
+      return boom(503);
+    });
+    await expect(client.getJson('https://frontend-api-v3.pump.fun/coins?creator=A')).rejects.toThrow(/503/);
+    expect(calls).toBe(3);
+  });
+
+  it('does not retry a 4xx — that is the endpoint\'s considered answer', async () => {
+    let calls = 0;
+    const client = keyless(async () => {
+      calls += 1;
+      return boom(404);
+    });
+    await expect(client.getJson('https://frontend-api-v3.pump.fun/coins?creator=A')).rejects.toThrow(/404/);
+    expect(calls).toBe(1);
+  });
+
+  it('reports what it actually did, so the record does not have to guess', async () => {
+    // The record classifies a missing measurement from this exception. A message alone cannot say
+    // whether a retry happened, and a record that claims one that did not is the defect the
+    // honesty rule exists to prevent — so the client attaches the evidence.
+    let calls = 0;
+    const retried = keyless(async () => {
+      calls += 1;
+      return boom(503);
+    });
+    await retried.getJson('https://frontend-api-v3.pump.fun/coins?creator=A').catch((e: unknown) => {
+      expect(e).toBeInstanceOf(RequestFailed);
+      expect((e as InstanceType<typeof RequestFailed>).retried).toBe(true);
+      expect((e as InstanceType<typeof RequestFailed>).status).toBe(503);
+      expect(classifyUnmeasured(e)).toBe('page-failure');
+    });
+    // One attempt per entry in the client's pinned backoff list, plus the first.
+    expect(calls).toBe(3);
+
+    const refused = keyless(async () => boom(404));
+    await refused.getJson('https://frontend-api-v3.pump.fun/coins?creator=A').catch((e: unknown) => {
+      expect((e as InstanceType<typeof RequestFailed>).retried).toBe(false);
+      expect((e as InstanceType<typeof RequestFailed>).status).toBe(404);
+      expect(classifyUnmeasured(e)).toBe('vendor-refusal');
+    });
+
+    const transport = keyless(async () => {
+      throw new Error('The operation was aborted due to timeout');
+    });
+    await transport.getJson('https://frontend-api-v3.pump.fun/coins?creator=A').catch((e: unknown) => {
+      expect((e as InstanceType<typeof RequestFailed>).retried).toBe(true);
+      // No response ever arrived, so there is no status to report and none is invented.
+      expect((e as InstanceType<typeof RequestFailed>).status).toBeNull();
+      expect(classifyUnmeasured(e)).toBe('page-failure');
+    });
+  });
+
+  it('reports a non-JSON body as served-but-unreadable, blaming neither side', async () => {
+    // The request WAS served, so neither "the endpoint failed" nor "our code failed" is
+    // established. The likeliest cause is an edge interstitial behind a 200 — the vendor's — so
+    // calling it ours would send an operator hunting a bug that does not exist.
+    const client = keyless(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON at position 0');
+      },
+    }));
+    const err = await client.getJson('https://frontend-api-v3.pump.fun/coins?creator=A').catch((e) => e);
+    expect(err).toBeInstanceOf(UnparseableResponse);
+    expect(err).not.toBeInstanceOf(RequestFailed);
+    expect((err as InstanceType<typeof UnparseableResponse>).status).toBe(200);
+    expect(classifyUnmeasured(err)).toBe('unparseable-body');
+  });
+
+  it('classifies a not-retried failure as known-but-not-retried, never as unidentifiable', async () => {
+    // Only reachable with retries disabled, but the option is public. The cause is known there —
+    // reporting it as unclassifiable is inaccurate in the other direction.
+    const client = new KeylessClient({
+      maxRequests: 10,
+      minIntervalMs: 0,
+      retryBackoffMs: [],
+      sleepImpl: async () => {},
+      fetchImpl: (async () => boom(503)) as unknown as typeof fetch,
+    });
+    const err = await client.getJson('https://frontend-api-v3.pump.fun/coins?creator=A').catch((e) => e);
+    expect((err as InstanceType<typeof RequestFailed>).retried).toBe(false);
+    expect((err as InstanceType<typeof RequestFailed>).status).toBe(503);
+    expect(classifyUnmeasured(err)).toBe('not-retried-failure');
+    expect(client.issued()).toBe(1);
+  });
+
+  it('cannot let a retry smuggle a request past the ceiling', async () => {
+    let calls = 0;
+    const client = keyless(async () => {
+      calls += 1;
+      return boom(503);
+    }, 1);
+    // One request of allowance, a 5xx that would earn a retry: the retry has to hit the wall.
+    await expect(client.getJson('https://frontend-api-v3.pump.fun/coins?creator=A')).rejects.toBeInstanceOf(
+      CeilingReached,
+    );
+    expect(calls).toBe(1);
+    expect(client.issued()).toBe(1);
+  });
+});
+
+describe('a ceiling hit is never recordable as a measured result', () => {
+  const COVERAGE_OK = { coverageTruncated: false, candidateCap: 195, droppedByCandidateCap: 0 };
+  const KEYLESS = {
+    budget: 'keyless pump.fun',
+    ceiling: 600,
+    setting: 'thresholds.json budget.maxKeylessRequests',
+  };
+
+  it('sizes the keyless ceiling to cover the candidate cap, so the walk cannot run out mid-run', () => {
+    const b = loadThresholds()['budget'];
+    // 3 pages per gate survivor is what readCreatorHistory is asked for. If this stops holding, a
+    // default --consistency run stops looking part-way through a run already paid for in keyed
+    // quota, and the wallets after that point are unmeasured rather than measured-and-clean.
+    expect(b.maxKeylessRequests).toBeGreaterThanOrEqual(3 * b.maxCandidates);
+    // Covering the cap is a count, not a rate: the measured pump.fun pacing is untouched by it.
+    expect(b.keylessMinIntervalMs).toBe(2_000);
+  });
+
+  const RETRIED = (message: string, status: number | null) =>
+    new RequestFailed(message, { status, retried: true });
+  const NOT_RETRIED = (message: string, status: number | null) =>
+    new RequestFailed(message, { status, retried: false });
+
+  it('names the budget and the setting when a ceiling stopped the measurement', () => {
+    const u = unmeasuredBecause('consistency-over-time', 'WalletAaa', new CeilingReached(600, '/x'), KEYLESS);
+    expect(u.kind).toBe('budget-exhausted');
+    expect(u.measurement).toBe('consistency-over-time');
+    expect(u.subject).toBe('WalletAaa');
+    // A rerun reaches the same wall, so the note has to point at the number rather than the retry.
+    expect(u.summary).toMatch(/ceiling of 600/);
+    expect(u.summary).toMatch(/maxKeylessRequests/);
+    expect(u.summary).toMatch(/never looked up/);
+  });
+
+  it('only says "retried" when the client actually retried', () => {
+    // The whole point of classifying from the client's own evidence: a record that claims a retry
+    // that never happened is the same class of defect as one that claims a measurement it never
+    // took. Asserting an inaccurate cause is worse than asserting none.
+    const u = unmeasuredBecause(
+      'consistency-over-time',
+      'WalletBbb',
+      RETRIED('Transport failure on https://…/coins?creator=WalletBbb: timeout', null),
+      KEYLESS,
+    );
+    expect(u.kind).toBe('page-failure');
+    expect(u.summary).toMatch(/the one retry failed too/);
+    expect(u.summary).toMatch(/transport failure or timeout/);
+    expect(u.summary).toMatch(/rerun may well succeed/);
+    // Must not borrow the wall's advice to go and change a threshold.
+    expect(u.summary).not.toMatch(/maxKeylessRequests/);
+    // The per-wallet URL is detail, never the stable summary.
+    expect(u.detail).toMatch(/WalletBbb/);
+    expect(u.summary).not.toMatch(/WalletBbb/);
+  });
+
+  it('does NOT claim a retry for a 4xx, which is the endpoint\'s considered answer', () => {
+    // The retry policy deliberately excludes 4xx, so the sentence that says "we retried and it
+    // still failed" is simply false here — and it would send an operator to rerun a 40-minute job
+    // that will fail exactly the same way.
+    const u = unmeasuredBecause(
+      'consistency-over-time',
+      'W',
+      NOT_RETRIED('HTTP 404 on https://…/coins?creator=W', 404),
+      KEYLESS,
+    );
+    expect(u.kind).toBe('vendor-refusal');
+    expect(u.summary).toMatch(/HTTP 404/);
+    expect(u.summary).toMatch(/did not retry it/);
+    expect(u.summary).toMatch(/endpoint moved/);
+    expect(u.summary).not.toMatch(/retried and|retry failed|rerun may well succeed/);
+  });
+
+  it('does NOT claim a request was even made for an error in our own code', () => {
+    // A bug inside measureConsistency never reaches the endpoint. Blaming the vendor for our own
+    // defect is how a real bug goes unfixed for a month.
+    const u = unmeasuredBecause('consistency-over-time', 'W', new TypeError('x is not a function'), KEYLESS);
+    expect(u.kind).toBe('local-error');
+    expect(u.summary).toMatch(/inside our own code/);
+    expect(u.summary).toMatch(/our bug/);
+    // It may deny a retry; it may not claim one, nor promise a rerun would help.
+    expect(u.summary).toMatch(/no request was retried/);
+    expect(u.summary).not.toMatch(/the one retry failed|rerun may well succeed/);
+  });
+
+  it('does NOT blame us for a body the endpoint served but we could not parse', () => {
+    // The request WAS served, so "our bug" is a guess, and the likeliest real cause — an edge
+    // interstitial behind a 200 — is the vendor's. Asserting an inaccurate cause is worse than
+    // asserting none, so this one names what happened and attributes it to nobody.
+    const u = unmeasuredBecause(
+      'consistency-over-time',
+      'W',
+      new UnparseableResponse('Response to https://…/coins?creator=W was not JSON: Unexpected token <', {
+        status: 200,
+      }),
+      KEYLESS,
+    );
+    expect(u.kind).toBe('unparseable-body');
+    expect(u.summary).toMatch(/HTTP 200/);
+    expect(u.summary).toMatch(/was not JSON/);
+    expect(u.summary).toMatch(/edge interstitial or error page/);
+    // Neither side is blamed, and no retry is claimed.
+    expect(u.summary).not.toMatch(/our bug|inside our own code/);
+    expect(u.summary).not.toMatch(/the one retry failed|rerun may well succeed/);
+    expect(deriveTruncation({ abortReason: null, coverage: COVERAGE_OK, unmeasured: [u] }).truncated).toBe(
+      false,
+    );
+  });
+
+  it('calls a not-retried failure known-but-not-retried, not unidentifiable', () => {
+    const u = unmeasuredBecause('consistency-over-time', 'W', NOT_RETRIED('HTTP 503 on …', 503), KEYLESS);
+    expect(u.kind).toBe('not-retried-failure');
+    expect(u.summary).toMatch(/HTTP 503/);
+    expect(u.summary).toMatch(/configured not to retry/);
+    expect(u.summary).toMatch(/cause is known/);
+    expect(u.summary).not.toMatch(/could not be classified/);
+  });
+
+  it('says the cause could not be classified rather than inventing one', () => {
+    const u = unmeasuredBecause('consistency-over-time', 'W', 'something thrown that is not an Error', KEYLESS);
+    expect(u.kind).toBe('unclassified');
+    expect(u.summary).toMatch(/could not be classified/);
+    expect(u.summary).not.toMatch(/retried|ceiling|our bug/);
+  });
+
+  it('lets none of the non-wall kinds declare the whole run truncated', () => {
+    // The flag has to stay worth reading. A keyless walk issues up to 585 requests against the
+    // flakiest surface in the tool; if one hiccuped page truncated the run, `truncated: true` would
+    // be on for nearly every run and would carry no information at all.
+    const unmeasured = [
+      unmeasuredBecause('consistency-over-time', 'A', RETRIED('HTTP 503 on …', 503), KEYLESS),
+      unmeasuredBecause('consistency-over-time', 'B', NOT_RETRIED('HTTP 404 on …', 404), KEYLESS),
+      unmeasuredBecause('consistency-over-time', 'C', new TypeError('ours'), KEYLESS),
+      unmeasuredBecause('consistency-over-time', 'D', 'opaque', KEYLESS),
+      unmeasuredBecause('consistency-over-time', 'E', NOT_RETRIED('HTTP 503 on …', 503), KEYLESS),
+      unmeasuredBecause('consistency-over-time', 'F', new UnparseableResponse('html', { status: 200 }), KEYLESS),
+    ];
+    const t = deriveTruncation({ abortReason: null, coverage: COVERAGE_OK, unmeasured });
+    expect(t.truncated).toBe(false);
+    expect(t.truncationReason).toBeNull();
+    // But every one of them is still recorded, and still unmeasured rather than a measured negative.
+    expect([...partitionUnmeasured(unmeasured).keys()]).toEqual([
+      'page-failure',
+      'not-retried-failure',
+      'vendor-refusal',
+      'unparseable-body',
+      'local-error',
+      'unclassified',
+    ]);
+  });
+
+  it('records an unrecognised kind rather than throwing on it or dropping it', () => {
+    // record.mjs is the module that has to survive version skew: completenessOf and schemaVersionOf
+    // already degrade rather than throw. A record written by a newer build must not take the whole
+    // record build down with a TypeError, and must not vanish from the render either — a reader who
+    // cannot see the entry reads the run as more complete than it was.
+    const fromTheFuture = {
+      measurement: 'consistency-over-time',
+      subject: 'W',
+      kind: 'some-kind-invented-later',
+      summary: 'a build that knew more than this one recorded something here',
+      detail: null,
+    };
+    expect(kindMetaOf('some-kind-invented-later')).toBe(UNRECOGNISED_KIND);
+    // It does not truncate: inventing a wall from a label we cannot read asserts a cause we lack.
+    const t = deriveTruncation({
+      abortReason: null,
+      coverage: COVERAGE_OK,
+      unmeasured: [fromTheFuture as never],
+    });
+    expect(t.truncated).toBe(false);
+    expect([...partitionUnmeasured([fromTheFuture as never]).keys()]).toEqual(['some-kind-invented-later']);
+  });
+
+  it('keeps a ceiling truncating even when other kinds are mixed in with it', () => {
+    const unmeasured = [
+      unmeasuredBecause('consistency-over-time', 'A', RETRIED('HTTP 503 on …', 503), KEYLESS),
+      unmeasuredBecause('consistency-over-time', 'B', new CeilingReached(600, '/x'), KEYLESS),
+    ];
+    const t = deriveTruncation({ abortReason: null, coverage: COVERAGE_OK, unmeasured });
+    expect(t.truncated).toBe(true);
+    // Only the wall is named as truncation; the hiccup is not folded into the same sentence.
+    expect(t.truncationReason).toMatch(/1 candidate\(s\) went unmeasured/);
+    expect(t.truncationReason).toMatch(/ceiling of 600/);
+    expect(t.truncationReason).not.toMatch(/503/);
+  });
+
+  it('groups page failures despite each carrying a different per-wallet URL', () => {
+    // The defect this guards: the client's message embeds the request URL, so keying the grouping
+    // on it gives every wallet a group of one — a grouping that groups nothing is a longer list.
+    const many = Array.from({ length: 60 }, (_, i) =>
+      unmeasuredBecause(
+        'consistency-over-time',
+        `W${i}`,
+        RETRIED(`HTTP 503 on https://frontend-api-v3.pump.fun/coins?creator=W${i}&offset=0`, 503),
+        KEYLESS,
+      ),
+    );
+    const grouped = groupUnmeasured(many);
+    expect(grouped.size).toBe(1);
+    expect([...grouped.values()]).toEqual([60]);
+    // The per-wallet detail is not lost, it just is not the key.
+    expect(many[0]?.detail).toMatch(/creator=W0/);
+  });
+
+  it('agrees with UNMEASURED_KINDS about which kind truncates', () => {
+    // One authority, so a future kind cannot be added that quietly truncates (or quietly does not).
+    for (const [kind, meta] of Object.entries(UNMEASURED_KINDS)) {
+      const entry = { measurement: 'm', subject: 'W', kind, summary: `s:${kind}`, detail: null };
+      const t = deriveTruncation({
+        abortReason: null,
+        coverage: COVERAGE_OK,
+        unmeasured: [entry as never],
+      });
+      expect(t.truncated, kind).toBe(meta.truncates);
+    }
+    expect(Object.values(UNMEASURED_KINDS).filter((m) => m.truncates)).toHaveLength(1);
+    expect(UNMEASURED_KINDS['budget-exhausted'].truncates).toBe(true);
+  });
+
+  it('makes an unmeasured candidate truncate the run, with a reason naming what went unmeasured', () => {
+    const unmeasured = ['A', 'B', 'C'].map((w) =>
+      unmeasuredBecause('consistency-over-time', w, new CeilingReached(600, '/x'), KEYLESS),
+    );
+    // The exact prohibited record: the run reached the end, the cap dropped nobody, and three
+    // candidates were never looked at — which used to read as truncated: false, reason: null.
+    const t = deriveTruncation({ abortReason: null, coverage: COVERAGE_OK, unmeasured });
+    expect(t.truncated).toBe(true);
+    expect(t.truncationReason).toMatch(/3 candidate\(s\) went unmeasured/);
+    expect(t.truncationReason).toMatch(/consistency-over-time/);
+  });
+
+  it('leaves a genuinely complete run untruncated and unexplained', () => {
+    expect(deriveTruncation({ abortReason: null, coverage: COVERAGE_OK, unmeasured: [] })).toEqual({
+      truncated: false,
+      truncationReason: null,
+    });
+  });
+
+  it('keeps every source of missingness in one reason without losing any of them', () => {
+    const t = deriveTruncation({
+      abortReason: 'HTTP 429 — rate-limited',
+      coverage: { coverageTruncated: true, candidateCap: 12, droppedByCandidateCap: 8 },
+      unmeasured: [
+        unmeasuredBecause('consistency-over-time', 'A', new CeilingReached(600, '/x'), KEYLESS),
+        // A page failure alongside them: recorded, but it adds no truncation reason of its own.
+        unmeasuredBecause('consistency-over-time', 'B', RETRIED('boom', 503), KEYLESS),
+      ],
+    });
+    expect(t.truncated).toBe(true);
+    expect(t.truncationReason).toMatch(/429/);
+    expect(t.truncationReason).toMatch(/candidate cap of 12 dropped 8/);
+    expect(t.truncationReason).toMatch(/1 candidate\(s\) went unmeasured/);
+    expect(t.truncationReason).not.toMatch(/boom/);
+  });
+
+  it('groups identical reasons rather than repeating one line per wallet', () => {
+    const many = Array.from({ length: 60 }, (_, i) =>
+      unmeasuredBecause('consistency-over-time', `W${i}`, new CeilingReached(600, '/x'), KEYLESS),
+    );
+    const grouped = groupUnmeasured(many);
+    expect(grouped.size).toBe(1);
+    expect([...grouped.values()]).toEqual([60]);
+  });
+
+  it('does NOT collapse the unmeasured state into `completed` — the three states stay apart', () => {
+    // A run can reach the end and still have failed to measure something. `completed` answers only
+    // "did it reach the end", and deriveTruncation is not allowed to be an input to that.
+    const record = {
+      schemaVersion: RECORD_SCHEMA_VERSION,
+      completed: true,
+      ...deriveTruncation({
+        abortReason: null,
+        coverage: COVERAGE_OK,
+        unmeasured: [unmeasuredBecause('consistency-over-time', 'A', new CeilingReached(600, '/x'), KEYLESS)],
+      }),
+    };
+    expect(completenessOf(record)).toBe('complete');
+    expect(record.truncated).toBe(true);
+    // The pairing that matters: it may never be completed-and-untruncated.
+    expect(record.completed && !record.truncated).toBe(false);
+  });
+
+  it('prints the unmeasured block in Stage 1, not just a per-candidate note', () => {
+    const text = renderStage1({
+      candidates: [],
+      keyedRequests: 8,
+      keylessRequests: 600,
+      elapsedMs: 1000,
+      startedAtIso: '2026-08-02T00:00:00.000Z',
+      completed: true,
+      truncationReason: '2 candidate(s) went unmeasured — the keyless pump.fun request ceiling…',
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 2,
+        prefilteredOut: 0,
+        worthARequest: 2,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 2,
+        coverageTruncated: false,
+      },
+      unmeasured: [
+        ...['A', 'B'].map((w) =>
+          unmeasuredBecause('consistency-over-time', w, new CeilingReached(600, '/x'), KEYLESS),
+        ),
+        unmeasuredBecause('consistency-over-time', 'C', RETRIED('HTTP 503 on …', 503), KEYLESS),
+      ],
+      thresholds: {},
+    });
+    expect(text).toMatch(/MEASUREMENT\(S\) NOT TAKEN/);
+    expect(text).toMatch(/NEVER a measured result/);
+    // The two causes are labelled apart, so an operator can tell "we ran out of allowance and
+    // stopped looking" from "one page hiccuped".
+    expect(text).toMatch(/BUDGET EXHAUSTED/);
+    expect(text).toMatch(/PAGE FAILURE/);
+    expect(text).toMatch(/2 candidate\(s\)/);
+    expect(text).toMatch(/1 candidate\(s\)/);
+    expect(text).toMatch(/maxKeylessRequests/);
+    expect(text).toMatch(/A rerun may well succeed/);
+  });
+
+  it('gives a 4xx and a local error their own headings, not the retry one', () => {
+    const text = renderStage1({
+      candidates: [],
+      keyedRequests: 8,
+      keylessRequests: 12,
+      elapsedMs: 1000,
+      startedAtIso: '2026-08-02T00:00:00.000Z',
+      completed: true,
+      truncationReason: null,
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 2,
+        prefilteredOut: 0,
+        worthARequest: 2,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 2,
+        coverageTruncated: false,
+      },
+      unmeasured: [
+        unmeasuredBecause('consistency-over-time', 'A', NOT_RETRIED('HTTP 404 on …', 404), KEYLESS),
+        unmeasuredBecause('consistency-over-time', 'B', new TypeError('ours'), KEYLESS),
+        unmeasuredBecause('consistency-over-time', 'C', new UnparseableResponse('html', { status: 200 }), KEYLESS),
+        // A kind from a build that knew more than this one: shown, not dropped, not fatal.
+        { measurement: 'consistency-over-time', subject: 'D', kind: 'invented-later', summary: 'x', detail: null },
+      ] as never,
+      thresholds: {},
+    });
+    expect(text).toMatch(/VENDOR REFUSAL/);
+    expect(text).toMatch(/LOCAL ERROR/);
+    expect(text).toMatch(/UNPARSEABLE BODY/);
+    expect(text).toMatch(/UNRECOGNISED KIND/);
+    // None may be dressed up as a retried page, and none is a wall.
+    expect(text).not.toMatch(/PAGE FAILURE/);
+    expect(text).not.toMatch(/BUDGET EXHAUSTED/);
+  });
+
+  it('shows only the page-failure half when no ceiling was hit', () => {
+    const text = renderStage1({
+      candidates: [],
+      keyedRequests: 8,
+      keylessRequests: 12,
+      elapsedMs: 1000,
+      startedAtIso: '2026-08-02T00:00:00.000Z',
+      completed: true,
+      truncationReason: null,
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 2,
+        prefilteredOut: 0,
+        worthARequest: 2,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 2,
+        coverageTruncated: false,
+      },
+      unmeasured: [unmeasuredBecause('consistency-over-time', 'A', RETRIED('HTTP 503 on …', 503), KEYLESS)],
+      thresholds: {},
+    });
+    expect(text).toMatch(/MEASUREMENT\(S\) NOT TAKEN/);
+    expect(text).toMatch(/PAGE FAILURE/);
+    // No wall was hit, so nothing may claim one — the run did not stop looking.
+    expect(text).not.toMatch(/BUDGET EXHAUSTED/);
+    expect(text).not.toMatch(/COVERAGE TRUNCATED/);
+  });
+
+  it('says nothing about unmeasured work when there was none', () => {
+    const text = renderStage1({
+      candidates: [],
+      keyedRequests: 4,
+      keylessRequests: 0,
+      elapsedMs: 1000,
+      startedAtIso: '2026-08-02T00:00:00.000Z',
+      completed: true,
+      truncationReason: null,
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 2,
+        prefilteredOut: 0,
+        worthARequest: 2,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 2,
+        coverageTruncated: false,
+      },
+      thresholds: {},
+    });
+    expect(text).not.toMatch(/NOT TAKEN/);
   });
 });
 

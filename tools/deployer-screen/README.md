@@ -32,8 +32,11 @@ node tools/deployer-screen/screen.mjs --stage0
 # Show exactly what a real run would fetch, and fetch nothing.
 node tools/deployer-screen/screen.mjs --dry-run
 
-# A real run. Needs a key (see below). Stage 2 is ON by default.
-node tools/deployer-screen/screen.mjs --tier elite --candidates 12 \
+# A real run. Needs a key (see below). Stage 2 is ON by default. Leave --candidates unset: the
+# default grades everything enumeration surfaces, up to the budget. Passing a number below the
+# ceiling silently truncates coverage, which is exactly how the first elite run graded 12 of the
+# 22 wallets it seeded.
+node tools/deployer-screen/screen.mjs --tier elite \
   --consistency --out tools/deployer-screen/runs/$(date +%F).json
 
 # The competence gate alone, which answers nothing about whether a window is enterable.
@@ -138,8 +141,10 @@ the gate is designed for.
 > deployers launching 70 tokens in under four days at 1–7% completion, all of which the gate
 > rejected. That reading came from `runs/2026-07-29-stage1.json`, whose record was **deleted** — its
 > figures were produced by the inert seeds described below, and re-running untiered to re-evidence a
-> side observation was ruled out under the quota bound. So this paragraph is a recollection, not
-> evidence: nothing committed backs it, and it should not be cited as though something did.
+> side observation is exactly what the *"if it gets results"* conditional in [Bounds](#bounds) does
+> not license — the allowance is now spendable in full, but not on this. So this paragraph is a
+> recollection, not evidence: nothing committed backs it, and it should not be cited as though
+> something did.
 
 **The elite-tier recent-bond feed is `recent-bonds?tier=elite` — a tier filter on the shared feed,
 not a distinct endpoint.** Their OpenAPI v1.17.0 exposes no separate elite path; `tier` is a query
@@ -169,8 +174,9 @@ Run records are the future grading lane's input, so a capped run must not read a
 everything enumeration found.
 
 The superseded untiered run record (`runs/2026-07-29-stage1.json`) was **deleted rather than
-re-run**: its numbers came from the inert seeds, and reproducing that configuration would cost
-another ~15 keyed requests against a shared allowance the captain has declared unaffordable.
+re-run**: its numbers came from the inert seeds, and re-running that configuration would only
+re-evidence a side observation, which the *"if it gets results"* conditional in [Bounds](#bounds)
+does not license however much allowance is left.
 
 ### The committed run, with all three seeds working
 
@@ -189,6 +195,10 @@ elite result:
 Fewer survivors, from a pool nearly twice as large and drawn from three orderings instead of one. The
 seven rejections are six samples under 25 tokens and one 3-day burst. Ten of the 22 seeded wallets
 were dropped by the candidate cap and never measured, which is why the record is flagged `truncated`.
+**That truncation was a bug in the invocation, not a judgement**: the run asked for 12 while the
+pinned ceiling already allowed 20. The candidate cap now defaults to whatever the request ceiling
+leaves, so an unstated `--candidates` grades everything enumeration surfaces and a conservative
+invocation cannot silently discard wallets again.
 Our own subject deployer `7ufmve7Z…` was surfaced by all three seeds and passed at 38/70 over 35
 days — the wallet Stage 0 exists to show this gate passing.
 
@@ -256,6 +266,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 |---|---|
 | 1 (absent) | no `completed`. `truncated` and `truncationReason` only. |
 | 2 | `completed`, plus `coverage` separating candidate-cap truncation from an abort. |
+| 3 | `spend` (the keyed ceiling, the unspent remainder, the planned worst case, and every endpoint called with its per-call cost) and `unmeasured` (every measurement the run could not take, and why). |
 
 Committed records are **evidence and are never retro-edited** to fit a newer schema — a lane whose
 purpose is grading what past runs predicted cannot also be rewriting them. So version skew is real
@@ -278,6 +289,49 @@ Two things are therefore forbidden:
 - **Do not infer completeness from `truncated` or `truncationReason`.** Those describe *what is
   missing*, not *whether the run reached the end*. The committed record is the counterexample: its
   truncation is a benign cap, not a failure.
+
+### A ceiling hit is never a measured result
+
+**If the tool could not look, the record says it could not look.** A request ceiling or a failed walk
+contributes an entry to `unmeasured` — what was not measured, for which wallet, and why — and
+`renderStage1` prints it as its own block, not only as a per-candidate note. The affected candidate
+reads `UNMEASURED` and never as a measured negative.
+
+Entries carry a `kind` classified from **what actually happened** — the client attaches the HTTP
+status and whether it really retried, so the sentence is evidence rather than a guess — and **only
+one kind truncates the run**:
+
+| kind | means | truncates? |
+|---|---|---|
+| `budget-exhausted` | a request ceiling — a wall. The tool stopped looking, and a rerun stops in the same place, so the reason names the setting to change. | **yes** |
+| `page-failure` | the request was retried once and the retry failed too (a 5xx, a transport failure, a timeout). Only this kind says it was retried, and only this kind suggests a rerun may succeed. | no |
+| `not-retried-failure` | the same class of failure, but this client was configured not to retry. The cause is known; only the retry is absent. Reachable only with `maxRetriesPerRequest: 0`. | no |
+| `vendor-refusal` | a 4xx: the endpoint answered on the first attempt and we deliberately did not retry it. Says so, and points at "did the endpoint move" rather than at a rerun. | no |
+| `unparseable-body` | the request **was served** but the body was not JSON. Blame is deliberately not assigned — the likeliest cause is an edge interstitial behind a 200, which is the vendor's, and a bug in our handling is the other, and nothing available distinguishes them. | no |
+| `local-error` | it failed in our own code having never reached the endpoint — a bug thrown inside the measurement. Never claims a request was retried, or even made. Our bug. | no |
+| `unclassified` | the cause could not be identified, so nothing is claimed about it. | no |
+| *(unrecognised)* | an entry written by a newer build. Shown rather than dropped, and it does not truncate: inventing a wall from a label this build cannot read would be asserting a cause we do not have. | no |
+
+**Asserting an inaccurate cause is worse than asserting none.** A record that says "we retried" when
+no retry happened is the same class of defect as a record that says "measured" when nothing was
+looked at, so an unidentifiable cause is reported as unidentified rather than rounded to the
+likeliest story. `record.mjs` → `UNMEASURED_KINDS` is the authority on which kinds truncate, and
+`classifyUnmeasured` reads the client's evidence rather than guessing from the exception type alone.
+
+Each entry carries a wallet-independent `summary` and a per-wallet `detail`. **The summary is the
+grouping key**: keying on the detail would give every wallet its own line, since the client's message
+embeds the request URL, and a grouping that groups nothing is just a longer list.
+
+The split is what keeps the flag worth reading. A keyless walk issues up to 585 requests against the
+flakiest surface in the tool; if one retried-and-failed page set `truncated: true`, the flag would be
+on for nearly every run, and **a flag that is always on carries no information and teaches its reader
+to skip it**. An operator has to be able to tell *"we ran out of allowance and stopped looking"* from
+*"one page hiccuped"*.
+
+`completed` is untouched by any of this: it stays "did the run reach the end", so a run that finishes
+having hit the keyless ceiling is `completed: true, truncated: true`. `record.mjs` →
+`unmeasuredBecause`, `partitionUnmeasured` and `deriveTruncation` are the general form, so a future
+budget with the same failure mode inherits the behaviour rather than needing its own special case.
 
 Use `record.mjs` → `completenessOf(record)`, which returns `'complete' | 'incomplete' | 'unknown'`
 and never a boolean, so `if (completed)` cannot be accidentally right. `schemaVersionOf(record)` and
@@ -366,12 +420,47 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 
 | bound | value | why |
 |---|---|---|
-| keyed request ceiling | 45 | 3 enumeration + 20 candidates = 23; headroom for a retry. Under a quarter of the shared 200/day. |
-| candidate cap | 20 | |
+| keyed request ceiling | 200 | The **whole** MadeOnSol Free-tier daily allowance. Captain's instruction, 2026-08-02: there is no free substitute for this data, so spend the allowance when spending it gets results. The earlier ceiling of 45 was this tool's own quarter-allowance caution and is **withdrawn** — do not re-derive it. |
+| candidate cap | 195 | 200 − 3 enumeration − 2 retry headroom. It is what the allowance leaves, not a judgement about how many deployers are worth grading, and it is above what the three seeds can surface — so a **default run grades everything it surfaces**. |
+| over-budget plan | refused before the first request | `3 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. |
 | keyed pacing | 6.5s between request starts | Free tier bursts at ~10/min, and the allowance is **shared** with whatever else holds this key. |
-| keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here. The fill host is paced separately — see below. |
+| keyless request ceiling, `frontend-api-v3` only | 600 | Sized to **cover** the candidate cap, not to bound it: the `--consistency` walk costs up to 3 pages per gate survivor, so 195 candidates cost 585 worst case and the remaining 15 are retry headroom. A ceiling below that stops the tool looking part-way through a run already paid for in keyed quota. It does not lean harder on pump.fun — the pacing below is unchanged, so what it buys is wall clock. |
+| keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here, and it bounds a shared public resource rather than expressing our own caution, so the MadeOnSol relaxation does not touch it. The fill host is paced separately — see below. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
-| retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does. |
+| retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does — but a 429, a 5xx or a timeout means the request was not served, so re-issuing it is nearer to one successful request than to two. Without it the caller re-runs the whole walk, which is worse for pump.fun too. A 4xx that is not a 429 is never retried: it is the endpoint's considered answer. |
+
+**A full default run takes about 40 minutes**, not 21: ~21 for the 198 keyed requests at 6.5s, plus
+~19.5 for 585 keyless pages at 2.0s when `--consistency` is passed. Both figures are in
+`thresholds.json` → `justification`. A run still going at the 25-minute mark has not hung.
+
+The conditional in the instruction binds: ***"if it gets results"***. It licenses sizing a run by
+what the question needs. It does **not** license sweeping, idle retrying, or re-running to
+re-evidence a side observation — a run that cannot say in advance what it will answer does not get
+the allowance. And the relaxation is **MadeOnSol only**: the Helius / SolanaTracker / CoinGecko keys
+are shared with production and the standing *"do not waste the quota that is production quota too"*
+is unchanged, as is the keyless pump.fun pacing, which bounds a shared public resource for a
+different reason.
+
+Every run reports its spend **concretely**, not as one number: the record's `spend` block (schema 3)
+carries the ceiling, what went unspent, the planned worst case, and every endpoint called with its
+per-call cost; `renderStage1` prints the same table. Per-seed yields live in `coverage.seeds` and are
+deliberately not repeated there — two projections of the same facts drift, and then whichever one a
+reader opens becomes the truth. There is no poller,
+sweep, daemon, cron, or cache-warmer, and adding one would be a policy breach rather than an
+optimisation.
+
+### The keyed endpoint list
+
+| endpoint | cost | role |
+|---|---|---|
+| `/deployer-hunter/recent-bonds` | 1 per run | enumeration; carries the `tier` filter |
+| `/deployer-hunter/alerts` | 1 per run | enumeration |
+| `/deployer-hunter/leaderboard?sort=total_bonded` | 1 per run | enumeration |
+| `/deployer-hunter/{wallet}` | **1 per candidate** | the gate — the only cost that scales |
+
+`client.mjs` → `ENDPOINT_ROLES` is the authority; `--dry-run` prints it. Not used, deliberately:
+`/deployer-hunter/{wallet}/tokens` is bonded-only and rejects `limit` above 50, and
+`/deployer-hunter/{wallet}/history` is PRO+, which standing policy refuses.
 
 ### Stage 2's own bounds — and it spends no vendor quota at all
 
@@ -423,14 +512,15 @@ only between pages would let a walk sitting at 17 spent requests start a page th
 finish at 20, and `3 × 8 × 20 = 480` overruns the 432 ceiling the dry run prints as the entire
 exposure — surfacing as a mid-walk ceiling error and a dropped launch.
 
-Note also that the **500 keyless ceiling in `budget` is a per-client ceiling, not a run total**:
+Note also that the **600 keyless ceiling in `budget` is a per-client ceiling, not a run total**:
 `screen.mjs` builds two independent keyless clients, and Stage 2's 432 sits on its own. The enforced
-combined worst case is 932; the realistic one is 492, because the `--consistency` pass cannot exceed
-60 requests. Keeping the two ceilings separate is what stops Stage 2 eating the consistency pass's
-budget, or the reverse.
+combined worst case is 1,032. The 600 is **derived from the candidate cap**, not chosen: the
+`--consistency` pass walks 3 pages per gate survivor, so a 195-candidate cap puts its worst case at
+585, and the 500 that was sized when the cap was 20 would have ended a full consistency run on a
+ceiling rather than on a measurement. Keeping the two ceilings separate is what stops Stage 2 eating
+the consistency pass's budget, or the reverse.
 
-Every run prints its request count, shed count and elapsed time. There is no poller, sweep, daemon,
-cron, or cache-warmer, and adding one would be a policy breach rather than an optimisation.
+Every run prints its request count, shed count and elapsed time.
 
 ### Nothing vendor-derived survives in a note, either
 

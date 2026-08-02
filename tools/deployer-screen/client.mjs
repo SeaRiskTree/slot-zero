@@ -51,6 +51,53 @@ export class CeilingReached extends Error {
 }
 
 /**
+ * Thrown when a request did not come back with a usable answer.
+ *
+ * Carries **what actually happened** rather than only a message, because the record classifies a
+ * missing measurement from the exception and a sentence is not evidence. `retried` is whether this
+ * client made more than one attempt, and `status` is the HTTP status if one was ever received —
+ * `null` for a transport failure or a timeout, where no status exists to report.
+ *
+ * The pair is what lets a reader tell "we tried twice and it still failed" from "the endpoint
+ * answered once and we chose not to ask again". A record that claims the first when the second
+ * happened is exactly the defect this class exists to prevent.
+ */
+export class RequestFailed extends Error {
+  /**
+   * @param {string} message
+   * @param {{ status: number | null, retried: boolean }} what
+   */
+  constructor(message, what) {
+    super(message);
+    this.name = 'RequestFailed';
+    /** @type {number | null} */ this.status = what.status;
+    /** @type {boolean} */ this.retried = what.retried;
+  }
+}
+
+/**
+ * Thrown when a request was served but its body could not be parsed as JSON.
+ *
+ * Its own type rather than a plain error, because the two plausible causes sit on opposite sides of
+ * the boundary and **asserting an inaccurate cause is worse than asserting none**. The likeliest is
+ * an HTTP 200 carrying an edge interstitial or error page, which is the vendor's; a genuine bug in
+ * our own handling is the other. Nothing available here can tell them apart, so the record says what
+ * happened and declines to assign blame. A plain error would have been read as ours, and would have
+ * sent an operator hunting a bug that does not exist.
+ */
+export class UnparseableResponse extends Error {
+  /**
+   * @param {string} message
+   * @param {{ status: number }} what
+   */
+  constructor(message, what) {
+    super(message);
+    this.name = 'UnparseableResponse';
+    /** @type {number} */ this.status = what.status;
+  }
+}
+
+/**
  * Thrown when the vendor rejects the key or the quota, or rejects our query shape. Terminal:
  * the caller must exit non-zero rather than render an empty ranking.
  */
@@ -82,11 +129,66 @@ export class VendorRefused extends Error {
  */
 
 /**
+ * @typedef {object} EndpointSpend
+ * @property {string} endpoint  Path template, wallet segment collapsed to `{wallet}`.
+ * @property {string} role      What the endpoint is for, from {@link ENDPOINT_ROLES}.
+ * @property {string} costModel Per-call cost in keyed requests, as a phrase.
+ * @property {number} calls     Requests actually issued against it, retries included.
+ */
+
+/**
  * @typedef {object} RequestStats
  * @property {number} issued      Requests actually sent, including retries and failures.
  * @property {number} ceiling     The configured hard limit.
  * @property {number} elapsedMs   Wall clock from construction to the last completed request.
+ * @property {EndpointSpend[]} byEndpoint  Where the spend went, in first-call order.
  */
+
+/**
+ * The keyed surface this tool uses, and what each call costs.
+ *
+ * The captain asked for the endpoint list by name and for spend to be reported concretely rather
+ * than as one aggregate number, so this table is the tool's own answer rather than prose in a
+ * README that can drift from the code. Only `{wallet}` scales: everything else is one call per run.
+ *
+ * Two endpoints are deliberately absent and stay absent — `/deployer-hunter/{wallet}/tokens` is
+ * bonded-only (no denominator, and it rejects `limit` above 50) and `/deployer-hunter/{wallet}/history`
+ * is PRO+, which standing policy refuses.
+ *
+ * @type {Record<string, { role: string, costModel: string }>}
+ */
+export const ENDPOINT_ROLES = {
+  '/deployer-hunter/recent-bonds': { role: 'enumeration; carries the tier filter', costModel: '1 per run' },
+  '/deployer-hunter/alerts': { role: 'enumeration', costModel: '1 per run' },
+  '/deployer-hunter/leaderboard': { role: 'enumeration', costModel: '1 per run' },
+  '/deployer-hunter/{wallet}': { role: 'the gate', costModel: '1 per candidate — the only cost that scales' },
+};
+
+/**
+ * Collapse a requested path onto the endpoint template it belongs to.
+ *
+ * Per-endpoint accounting has to survive both the query string and the wallet address, and a
+ * wallet must never end up as a key of its own — that would turn a spend table into a list of
+ * addresses we screened, which the record's own projection is careful not to persist twice.
+ *
+ * The wallet substitution is **positional, not exact-match**: the segment after `/deployer-hunter/`
+ * is collapsed whatever follows it. An exact-match rule only covered `/deployer-hunter/{wallet}`
+ * itself, so the day someone added a sub-resource call the raw address would have been written into
+ * the record verbatim. The ToS 5a(d) containment must not depend on nobody adding one.
+ *
+ * @param {string} path Path as issued, query string included.
+ * @returns {string}
+ */
+export function endpointOf(path) {
+  const bare = path.split('?')[0] ?? path;
+  if (Object.prototype.hasOwnProperty.call(ENDPOINT_ROLES, bare)) return bare;
+  const segments = bare.split('/');
+  if (segments[1] === 'deployer-hunter' && (segments[2] ?? '') !== '') {
+    segments[2] = '{wallet}';
+    return segments.join('/');
+  }
+  return bare;
+}
 
 const DEFAULT_MIN_INTERVAL_MS = 6_500;
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -141,12 +243,21 @@ export class BoundedClient {
   #queue = Promise.resolve();
   /** @type {number} */ #finishedAt = 0;
 
+  /** Issued requests per endpoint template, in first-call order. @type {Map<string, number>} */
+  #byEndpoint = new Map();
+
   /** @returns {RequestStats} */
   stats() {
     return {
       issued: this.#issued,
       ceiling: this.#ceiling,
       elapsedMs: (this.#finishedAt || Date.now()) - this.#startedAt,
+      byEndpoint: [...this.#byEndpoint].map(([endpoint, calls]) => ({
+        endpoint,
+        role: ENDPOINT_ROLES[endpoint]?.role ?? 'unclassified — this endpoint is not in ENDPOINT_ROLES',
+        costModel: ENDPOINT_ROLES[endpoint]?.costModel ?? '1 per call',
+        calls,
+      })),
     };
   }
 
@@ -197,6 +308,8 @@ export class BoundedClient {
       if (this.#lastStartedAt !== 0 && wait > 0) await this.#sleep(wait);
 
       this.#issued += 1;
+      const endpoint = endpointOf(label);
+      this.#byEndpoint.set(endpoint, (this.#byEndpoint.get(endpoint) ?? 0) + 1);
       this.#lastStartedAt = Date.now();
       this.#onRequest?.(label, attempt);
 

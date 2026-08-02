@@ -18,7 +18,7 @@
  * actively harmful. The default interval encodes that.
  */
 
-import { CeilingReached } from './client.mjs';
+import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs';
 
 /** Creator listing host. */
 export const FRONTEND_API = 'https://frontend-api-v3.pump.fun';
@@ -70,17 +70,20 @@ const realSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * into a persisted run record, which is exactly what MadeOnSol terms §5a(d) and the containment
  * claim in `stage2.mjs` → `toEntryRecordRow` forbid. `record.mjs` → `redactVendorIdentifiers`
  * catches it at the boundary as well; this is the half that means it never has to.
+ *
+ * It extends {@link RequestFailed} so `record.mjs` can classify a missing measurement from ONE
+ * exception type: the status is what a drop note needs, `retried` is what the record needs to tell
+ * a wall apart from a hiccup, and neither should need its own `instanceof` arm.
  */
-export class KeylessHttpError extends Error {
+export class KeylessHttpError extends RequestFailed {
   /**
    * @param {number} status
    * @param {string} url
+   * @param {boolean} [retried]
    */
-  constructor(status, url) {
-    super(`HTTP ${status} on ${url}`);
+  constructor(status, url, retried = false) {
+    super(`HTTP ${status} on ${url}`, { status, retried });
     this.name = 'KeylessHttpError';
-    /** @type {number} */
-    this.status = status;
   }
 }
 
@@ -169,12 +172,31 @@ export class KeylessClient {
   }
 
   /**
+   * One retry, matching the keyed client's allowance.
+   *
+   * A 5xx or a timeout means the request was **not served**, so re-issuing it once is closer to one
+   * successful request than to two — which is why the courtesy this class owes a shared public
+   * endpoint is the pacing, left untouched at the measured interval, and not the retry count. The
+   * alternative is worse for pump.fun as well as for us: without a retry the caller re-runs the
+   * whole walk. Every attempt still counts against the ceiling, and the ceiling is re-checked
+   * before each one, so a retry cannot smuggle a request past it.
+   *
+   * A 4xx is not retried. It is the endpoint's considered answer, and asking again spends a
+   * request to be told the same thing.
+   *
+   * Every failure leaves as a {@link RequestFailed} carrying the status and whether a retry was
+   * actually made, because the run record classifies a missing measurement from this exception. The
+   * one exception is a body that is not JSON, which leaves as an {@link UnparseableResponse}: the
+   * request WAS served, so neither "the endpoint failed" nor "our code failed" is established, and
+   * the record must not pick one.
+   *
    * @param {string} url
    * @returns {Promise<unknown>}
    */
   async #execute(url) {
     /** @type {Error} */
     let last = new Error(`no attempt was made for ${url}`);
+    let attempts = 0;
 
     // Attempt 0 plus one per configured backoff. **Every attempt counts against the ceiling**, the
     // same rule the keyed client uses: a retry consumes a shared public resource exactly as a first
@@ -187,23 +209,50 @@ export class KeylessClient {
       if (this.#lastStartedAt !== 0 && wait > 0) await this.#sleep(wait);
 
       this.#issued += 1;
+      attempts += 1;
       this.#lastStartedAt = Date.now();
       this.#onRequest?.(url);
 
-      const response = await this.#fetch(url, {
-        method: 'GET',
-        headers: { accept: 'application/json' },
-        signal: AbortSignal.timeout(this.#timeoutMs),
-      });
+      // A transport failure — a timeout, a reset, a DNS blip — means the request was never served,
+      // so it is retried on the same budget as a shed one rather than ending the walk. The attempt
+      // has already been counted above, which is the point: the ceiling bounds what we sent, not
+      // what came back.
+      let response;
+      try {
+        response = await this.#fetch(url, {
+          method: 'GET',
+          headers: { accept: 'application/json' },
+          signal: AbortSignal.timeout(this.#timeoutMs),
+        });
+      } catch (cause) {
+        last = new RequestFailed(
+          `Transport failure on ${url}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          { status: null, retried: attempts > 1 },
+        );
+        continue;
+      }
 
-      if (response.ok) return response.json();
+      if (response.ok) {
+        // A body that is not JSON leaves as an `UnparseableResponse`, not a `RequestFailed`: the
+        // request WAS served, so neither "the endpoint failed" nor "our code failed" is
+        // established, and the record must not pick one.
+        try {
+          return await response.json();
+        } catch (cause) {
+          throw new UnparseableResponse(
+            `Response to ${url} was not JSON: ${cause instanceof Error ? cause.message : String(cause)}`,
+            { status: response.status },
+          );
+        }
+      }
 
-      last = new KeylessHttpError(response.status, url);
+      last = new KeylessHttpError(response.status, url, attempts > 1);
       // 429 and 5xx are the endpoint shedding load, which it does constantly. A 4xx that is not a
       // 429 is our query shape, and retrying it just spends the allowance to be told off twice.
       if (response.status !== 429 && response.status < 500) throw last;
       this.#shed += 1;
     }
+    if (last instanceof RequestFailed) last.retried = attempts > 1;
     throw last;
   }
 }

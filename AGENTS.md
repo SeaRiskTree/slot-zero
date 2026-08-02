@@ -184,7 +184,7 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
   feed (enum `elite|good|moderate|rising|cold`); there is no separate elite endpoint to hunt for.
 - **The tiers are not disjoint and membership is not stable.** `7ufmve7Z…` came back from all three
   seeds under `tier=elite` (2026-07-29) and from all three under `tier=good` four days later, its own
-  numbers unchanged; `rising`-shaped wallets (3–4 deploys, perfect rate) reach us through `tier=good`
+  numbers essentially unchanged (70 tokens, span 35.0 → 34.1 days); `rising`-shaped wallets (3–4 deploys, perfect rate) reach us through `tier=good`
   too. So "outside elite" is not a property a screen may rely on — treat `tier` as another trailing
   window, like `bonding_rate`. `tools/deployer-screen/runs/2026-08-02-good-vs-elite.md` owns this,
   and it also holds the measured tempo gap: good-tier gate-passers launch ~5.7x slower at the median.

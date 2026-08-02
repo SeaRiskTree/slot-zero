@@ -71,14 +71,20 @@ overlap: 9 of the 10 good-tier passers are slower than the slowest elite passer 
 premise is evidence now, not inference.
 
 The cleanest cut is the wallets where the vendor page capped at exactly 70 records, because the
-denominator is then identical and only the span differs:
+denominator is then identical and only the span differs. Both rows below are **gate-passers only**,
+the same population as the tempo table above — so elite's `4q4GKB…` (70 records over 3.01 days,
+gate-failed on span) and good's `8KYMfX…` (111.7 days) and `ArfVe1…` (312.5 days), both gate-failed
+on completion rate, are all excluded:
 
 | | spans over the same 70 launches |
 |---|---|
-| elite, capped | 25.8, 28.0, 35.0 days |
-| good, capped | 34.0, 111.7, 121.1, 121.9, 156.8, 312.5 days |
+| elite, capped, gate-passed | 25.8, 28.0, 35.0 days |
+| good, capped, gate-passed | 34.0, 121.1, 121.9, 156.8 days |
 
-Same 70 launches, three to nine times longer to produce them.
+This is a correction: an earlier draw of this table mixed gate-passers and gate-failures across the
+two rows, and the like-for-like cut **narrows the gap** it appeared to show. Stated at the strength
+the corrected cut supports and no higher: over the same 70-launch denominator, elite gate-passers
+take **26–35 days** to produce them and good-tier gate-passers take **34–157 days**.
 
 All 65 graded wallets (64 with a defined tempo; one had 0 usable token records): p25 0.08,
 median 0.21, p75 0.75, max 433 — the tail is short-lived spam that the gate rejects on span.
@@ -115,7 +121,7 @@ it is the slowest deployer in the pool: 39 launches over 790 days, 12 bonded (30
 The three scored wallets order by tempo exactly as the captain's reasoning predicts. **n = 3. That
 is a coincidence-sized sample and must not be reported as a relationship.**
 
-Four things keep that verdict honest:
+Five things keep that verdict honest:
 
 - **It is a marginal pass.** The bar is a median room of 0.55; it read 0.574. The distribution is
   p25 0.393, min 0.000, and only **4 of 8** launches clear the bar. Half its launches leave nothing.
@@ -128,6 +134,13 @@ Four things keep that verdict honest:
   `7ufmve7Z…` reads 86.7% positive and median +0.227 SOL gross on the same measure and is *known*
   to be unprofitable fee-inclusive (+0.54 SOL/launch across 106 wallets, 51 of them negative). A
   field sitting at break-even *before* costs is very likely losing after them.
+- **The pass hangs on a single uncontested launch.** 1 of the 8 sampled launches had **zero
+  outsiders** (`entry.launchesWithNoOutsider: 1`, `outsidersPerLaunch.min: 0`), and it is the top
+  observation at `roomLeft.max` 0.973 — a room "hit" nobody was there to contest. With n = 8 the
+  median 0.574 is the mean of the 4th and 5th sorted values, so dropping that one observation moves
+  the median toward p25 (0.393) and very likely **below the 0.55 bar**. The one positive verdict in
+  this run is that sensitive. `ALJ4P5QN…` has 2 such launches and still reads `entry-room-absent`,
+  so this bears only on the positive verdict.
 - `entry-room-present` means only that **the exit question is worth asking**. Exit is unmeasured,
   every P&L above is gross of fees and an upper bound, and lead time and actor independence are
   unmeasured.

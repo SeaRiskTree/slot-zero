@@ -41,6 +41,13 @@ RPC signature cache) and a superseded `tape/` probe were excluded; everything el
 verbatim. When later evidence contradicts the imported prose, add to `IMPORT.md`
 → "Corrections"; do not edit `report.md` or the dataset `README.md`.
 
+**`report.md` §3.5's timing claims are all four wrong and `IMPORT.md` corrections 4–7 own the
+fixes** — read them before quoting §3.5 on *when* anything happened. The one that will bite a new
+view: **`curve_last_tx_s` is an upper *bound*, never a timing.** The curve keeps taking referencing
+transactions for months after migration, so it overshoots by a median 8.85× and by up to a
+millionfold; never difference it against anything. §3.5's price findings and the 14.70× constant are
+unaffected.
+
 Three traps that each silently corrupted an analysis during the research. The loader makes
 all three compile errors — do not work around them, and read `src/types.ts` before adding a
 view:

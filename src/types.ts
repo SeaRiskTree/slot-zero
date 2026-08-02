@@ -38,7 +38,15 @@ export interface LaunchCore {
   readonly chainTxFailed: number | null;
   readonly chainTxOkFirst30s: number | null;
   readonly chainTxAllFirst30s: number | null;
-  /** Seconds to the last transaction the curve ever sees — an upper-bound graduation proxy. */
+  /**
+   * Seconds to the last transaction the curve ever sees.
+   *
+   * **A bound on graduation, never a timing.** The curve keeps receiving *referencing*
+   * transactions — bot sweeps moving no tokens — for months after the migration, so this
+   * overshoots the real graduation by a median 8.85× and by up to a millionfold (`Bullieve`:
+   * +1 s real, +1,036,042 s here). It is a true upper bound and useless as an estimate; do
+   * not difference it against anything. `IMPORT.md` correction 4.
+   */
   readonly curveLastTxS: number | null;
 }
 

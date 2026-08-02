@@ -4,14 +4,15 @@ A research lab for **pump.fun launch microstructure**: what happens in the first
 a token launch, who profits, and whether any of it is capturable.
 
 This repo is the foundation, and only the foundation. It holds one primary dataset, a typed
-loader over it, a test that reproduces the published numbers, and one screening tool over a
-provider API. **There is no strategy, backtest, signal or trading logic here.** The question
+loader over it, a test that reproduces the published numbers, one offline measurement over the
+tape, and one screening tool over a provider API. **There is no strategy, backtest, signal or trading logic here.** The question
 that used to gate that work — whether the two winning outsiders were the operator's own book —
 has been answered; what is still gated, and what no longer is, is stated at the bottom of this
 file.
 
 **The analysis core under `src/` reaches no network and reads no credential**, and
-`test/loader.test.ts` proves it. Every source behind the dataset is keyless and public, and the
+`test/loader.test.ts` proves it; `analysis/` is held to the same list by
+`test/window-population.test.ts`. Every source behind the dataset is keyless and public, and the
 dataset was built with **zero metered provider requests**. The one network-capable, keyed area
 is `tools/deployer-screen/`, and the boundary is the directory — it is never imported by `src/`
 and never imports from it. See `tools/deployer-screen/README.md`.
@@ -33,6 +34,7 @@ Private. Nothing here is production.
 | `src/` | The loader. Per-launch, per-wallet and per-(wallet, launch) views, plus the raw per-fill tape. No runtime dependencies. |
 | `test/reproduction.test.ts` | The published headline numbers, asserted against the loaded data. |
 | `tools/deployer-screen/` | The only keyed, network-capable area. A rerunnable completion-rate **gate** over MadeOnSol's free Deployer Hunter endpoints — it gates, it does not recommend. Usage, credential handling, quota bounds and scope in its `README.md`. |
+| `analysis/window-population/` | How many profitable windows the tape contains, how long, how fast they close, how many at once. **One window**, 2026-03-12 → 2026-06-04, closing in a single launch. Offline like `src/`. Findings and definitions in its `README.md`. |
 | `test/type-guards.test-d.ts` | Compile-time proof that the three traps below are unreachable — and that `EgQX9R3Q…`'s figures cannot be read as an independent observation. |
 | `AGENTS.md` | Provider facts that cost real time to learn. Read before touching pump.fun or Solana RPC. |
 
@@ -262,6 +264,12 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
 
 ### The rest
 
+- **The tape holds one deployer, and therefore one window.** `analysis/window-population/`
+  finds exactly one interval in which the create slot paid outsiders — 2026-03-12 to
+  2026-06-04 — with 91 days of no window observed before it and 54 days after. How *often* a
+  window arrives, and whether two are ever open at once, needs per-launch series for other
+  deployers over months; the 70-launch control is one launch per creator and carries zero
+  window observations.
 - **Every P&L here is bounded by a 60-second window** (300 s on 21 launches, 120 s on 4).
   48% of pairs close inside it; the other 52% are late, small and still holding, and their
   outcome is unknown. A whole-life tape is the same endpoint with no window bound — roughly
@@ -332,8 +340,9 @@ zero (see 1); `2CHrnc2L…` in **235 of 235** launches; and the fee-inclusive me
 TypeScript on Node with vitest — it matches the rest of the fleet's work, and its structural
 typing is what lets the fee/no-fee and closed/open distinctions be *unrepresentable* rather
 than merely documented, which is the whole point of the loader. No runtime dependencies, so
-"does this reach the network?" is answerable by reading `src/`. `tools/` is plain `.mjs` with
-JSDoc types so it runs on the Node 20 floor with no build step; `tsc --noEmit` checks it too.
+"does this reach the network?" is answerable by reading `src/`. `tools/` and `analysis/` are
+plain `.mjs` with JSDoc types so they run on the Node 20 floor with no build step;
+`tsc --noEmit` checks them too.
 
 ## Provenance
 

@@ -25,8 +25,12 @@ what is established and what is open.
   key-shaped string. Duplicated curve constants between `src/index.ts` and
   `tools/deployer-screen/measure.mjs` are this boundary's deliberate cost — do not "fix" them by
   importing across it.
-- `tools/` is plain `.mjs` with JSDoc types so it runs on the Node 20 floor with no build step;
-  `tsconfig.json` covers it with `allowJs`+`checkJs`, so `tsc --noEmit` type-checks it too.
+- **`analysis/` is a third area and it is offline like `src/`.** One-off measurements over the
+  local tape that are neither library nor tool. `test/window-population.test.ts` scans it for
+  sockets, `process.env` and key-shaped strings, and asserts no imports across `analysis/`↔`tools/`.
+  It parses the CSVs itself rather than importing `src/`, for the same build-step reason `tools/` does.
+- `tools/` and `analysis/` are plain `.mjs` with JSDoc types so they run on the Node 20 floor with
+  no build step; `tsconfig.json` covers them with `allowJs`+`checkJs`, so `tsc --noEmit` checks them too.
 
 ## The dataset
 
@@ -68,6 +72,15 @@ permanent limit of the evidence:
   it was declined (captain decision 114a). `README.md` → "The ceiling of the method: shared
   custodial venues" owns the claim: cite it, do not restate it, and do not let a verdict in a
   new view read broader than it.
+- **The tape is one deployer over three regimes, and cutting it by month hides them.** The
+  create slot paid outsiders only between **2026-03-12 and 2026-06-04** — before that the prize
+  was ~0 per launch, after it ~1/4 of the window's. Both boundaries fall out of a blind
+  changepoint scan on the per-launch prize; `analysis/window-population/` owns the measurement,
+  the definitions and the limits. Two consequences bind any new view: **a monthly or whole-tape
+  aggregate mixes the three regimes** and will understate or overstate depending on the cut; and
+  **"how many windows are there" is n = 1 here** — the 70-launch control is one launch per
+  creator with no dates and no P&L, so it holds zero window observations, and no amount of work
+  on this tape produces a second one.
 
 ## pump.fun / Solana provider facts
 

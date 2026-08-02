@@ -10,6 +10,7 @@ import {
   type ClosedPair,
   type OpenPair,
 } from '../src/index.js';
+import { CREDENTIAL_PATTERNS, NETWORK_PATTERNS } from './offline-guard.js';
 
 let tape: Tape;
 beforeAll(() => {
@@ -270,17 +271,10 @@ describe('this repo does not reach the network and reads no credential', () => {
 
   it('no source file performs a network call', () => {
     // The spend bound is structural, not a promise. Everything the loader needs is on
-    // disk; nothing in src/ may open a socket.
-    const forbidden = [
-      /\bfetch\s*\(/,
-      /\bXMLHttpRequest\b/,
-      /\bWebSocket\b/,
-      /from\s+['"]node:(https?|net|tls|dgram|dns)['"]/,
-      /require\(['"](https?|net|tls|dgram|dns|axios|node-fetch|undici)['"]\)/,
-      /from\s+['"](axios|node-fetch|undici|got)['"]/,
-    ];
+    // disk; nothing in src/ may open a socket. The list is shared with the analysis/ guard so
+    // the two areas cannot be held to different bars.
     for (const [file, text] of readSources()) {
-      for (const re of forbidden) {
+      for (const re of NETWORK_PATTERNS) {
         expect(re.test(text), `${file} matches ${re}`).toBe(false);
       }
     }
@@ -288,10 +282,9 @@ describe('this repo does not reach the network and reads no credential', () => {
 
   it('no source file reads an API key or any environment variable', () => {
     for (const [file, text] of readSources()) {
-      expect(/process\.env/.test(text), `${file} reads process.env`).toBe(false);
-      expect(/API_KEY|SECRET|_TOKEN\b|Bearer /i.test(text), `${file} mentions a credential`).toBe(
-        false,
-      );
+      for (const re of CREDENTIAL_PATTERNS) {
+        expect(re.test(text), `${file} matches ${re}`).toBe(false);
+      }
     }
   });
 

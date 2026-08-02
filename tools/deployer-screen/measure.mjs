@@ -182,6 +182,24 @@ export function measureCreateSlot(fills) {
  * make the recovery complete — one proven launch on our own tape still misses three cohort wallets
  * that bundled separately — so a proven room figure remains an **upper bound**, exactly as before.
  *
+ * **The predicate is CREATE-SLOT-SCOPED, not operation-scoped, and it is not proof that the
+ * operation bundled.** It asks only whether *some* transaction in the create slot carried 2+
+ * distinct wallets. A create slot in which the deployer buys entirely alone while two unrelated
+ * wallets happen to share one transaction — a shared aggregator or copy-trade route — qualifies,
+ * and on such a launch the operation's own stake is still booked outside the numerator. So this is
+ * a **floor on the evidence**, not a guarantee of recovery, which is the other reason a proven room
+ * figure is an upper bound.
+ *
+ * **No tighter predicate is available, and that was measured rather than assumed** (captain
+ * decision 139a). The obvious tightening — require a bundle containing the deployer — matches
+ * **0 of 235** covered launches: this deployer never shares its own create-slot transaction, the
+ * dev buy is a 1-wallet transaction every time, and the operation's cohort bundles among *itself*
+ * (typically two 3-wallet transactions). Adopting it would refuse every launch, leave Stage 2 with
+ * nothing to score for any wallet, and hard-fail Stage 0 twice — the era buckets go to `n = 0` and
+ * trip their own `minN` vacuity guard, and the known-negative control becomes `entry-unmeasured`.
+ * `coordinated.size >= 1` was measured too and is the same predicate in practice (identical
+ * 175/235). So `bundledTx >= 1` stands.
+ *
  * @param {Pick<CreateSlotMeasurement, 'bundledTx'>} m
  * @returns {boolean}
  */

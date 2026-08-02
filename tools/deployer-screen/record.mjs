@@ -67,7 +67,14 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `entry.roomLeft` may be **inflated by the operation's own stake booked as outsider capital**,
  *   and the record carries nothing that could say by how much — which is precisely why the fields
  *   were added. No candidate row is a candidate row of a different shape, so
- *   `PERSISTED_BY_SCHEMA[5]` equals `[4]`; the change is inside `entry`.
+ *   `PERSISTED_BY_SCHEMA[5]` equals `[4]`; the candidate-row change is confined to `entry`.
+ *   **The `stage0` block also changed, and it is not comparable across the boundary.** Stage 0 now
+ *   filters its era buckets on the same rule, so `stage2SeamReproduction[].n` for era 2 moved
+ *   **89 → 86** between schema 4 and schema 5 with no change to the tape — a schema-4 `n` counts
+ *   every launch in the era, a schema-5 `n` counts only the scored ones. Each entry now carries
+ *   `nRoomUnproven` for the refused remainder, and the block gains `rollingRoom`, the replay of the
+ *   live entry recipe at every trailing window against the named cohort. Do not read a schema-4 and
+ *   a schema-5 `stage2SeamReproduction` as answering the same question.
  */
 export const RECORD_SCHEMA_VERSION = 5;
 

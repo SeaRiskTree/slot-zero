@@ -4871,8 +4871,11 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
     expect(result.rollingRoom.present).toBeGreaterThan(0);
     expect(result.rollingRoom.absent).toBeGreaterThan(0);
     expect(result.rollingRoom.unmeasured).toBeGreaterThan(0);
-    // And the coverage cost is real and visible rather than quietly absorbed.
-    expect(result.rollingRoom.falseNegatives).toBeGreaterThan(0);
+    // And the coverage cost is real and visible rather than quietly absorbed — it lands in
+    // `unmeasured`, which is NOT the same state as a false negative and is not counted as one. A
+    // refused window carries no verdict for the cohort to contradict, so on this tape the screen
+    // never once measured a window, said ABSENT, and was wrong about it.
+    expect(result.rollingRoom.falseNegatives).toBe(0);
   });
 
   it('refuses the launches whose opening is unproven, and says how many in each era', () => {

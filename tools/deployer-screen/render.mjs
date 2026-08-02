@@ -339,12 +339,14 @@ export function renderStage0(r, vendorReadings) {
   );
   L.push(
     `  against the NAMED six-wallet cohort: ${r.rollingRoom.falsePositives} false positive(s), ` +
-      `${r.rollingRoom.falseNegatives} false negative(s)   ${r.rollingRoom.ok ? 'OK' : 'FAILED'}`,
+      `${r.rollingRoom.falseNegatives} false negative(s), measured windows only   ` +
+      `${r.rollingRoom.ok ? 'OK' : 'FAILED'}`,
   );
   L.push('  A false positive is a window the screen would call enterable that our own ground truth');
   L.push('  says was not, and every error the co-ordination rule can make runs that way. It fails on');
   L.push('  one. A false negative does NOT fail: refusing to score an unproven opening costs real');
-  L.push('  coverage, and that cost is the ruling (decision 134a), not a defect.');
+  L.push('  coverage, and that cost is the ruling (decision 134a), not a defect. A REFUSED window is');
+  L.push('  counted as unmeasured and never as a false negative — it carries no verdict to be wrong.');
   L.push('');
 
   L.push('FIELD MEASUREMENT — reproduced against the dataset\'s own committed P&L table');

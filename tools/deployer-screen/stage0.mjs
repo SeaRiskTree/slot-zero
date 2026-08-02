@@ -390,9 +390,12 @@ export function verifyFieldReproduction(dataDir, launches) {
  * @property {number} windows          Trailing windows evaluated.
  * @property {number} present
  * @property {number} absent
- * @property {number} unmeasured       Too few scoreable launches to report a distribution.
+ * @property {number} unmeasured       Too few scoreable launches to report a distribution. A window
+ *   refused this way is NOT a false negative — the screen returned no verdict at all, and the two
+ *   states are counted apart on purpose.
  * @property {number} falsePositives   Screen says room, the named cohort says none. **The failure.**
- * @property {number} falseNegatives   Screen says none, the named cohort says room. The cost.
+ * @property {number} falseNegatives   Screen MEASURED the window and said none, the named cohort
+ *   says room. The cost. Requires a finite median: an unmeasured window never lands here.
  * @property {RollingRoomWindow[]} falsePositiveWindows Every one of them, for the failure message.
  * @property {boolean} ok
  */
@@ -415,8 +418,10 @@ export function verifyFieldReproduction(dataDir, launches) {
  * `minLaunchesSampled` scoreable launches is UNMEASURED, exactly as `scoreEntry` would have it.
  *
  * **Only false positives fail.** A false negative is the accepted price of decision 134a — refusing
- * to score an unproven opening costs real coverage, and on this tape it turns 35 windows that truly
- * had room into `unmeasured`. A null result is acceptable; a false positive is not.
+ * to score an unproven opening costs real coverage, and on this tape it turns windows that truly
+ * had room into `unmeasured`. A null result is acceptable; a false positive is not. `unmeasured`
+ * and `falseNegatives` are counted apart: a refused window has no verdict to be wrong, so it is
+ * never booked as the screen having said ABSENT.
  *
  * The window's truth is taken over **all** its launches, refused ones included, because the
  * question is what the deployer's opening actually was — not what it was over the subset the screen
@@ -445,10 +450,11 @@ export function replayRollingRoom(launches, t) {
     const screenRoomMedian =
       scored.length >= t.minLaunchesSampled ? median(scored.map((l) => l.createSlot.roomLeft)) : Number.NaN;
     const truthRoomMedian = median(w.map((l) => l.cohortRoomLeft));
+    const measured = Number.isFinite(screenRoomMedian);
     const screenPresent = screenRoomMedian >= t.minRoomLeft;
     const truthPresent = truthRoomMedian >= t.minRoomLeft;
 
-    if (!Number.isFinite(screenRoomMedian)) unmeasured += 1;
+    if (!measured) unmeasured += 1;
     else if (screenPresent) present += 1;
     else absent += 1;
 
@@ -461,7 +467,7 @@ export function replayRollingRoom(launches, t) {
         screenPresent,
         truthPresent,
       });
-    } else if (!screenPresent && truthPresent) falseNegatives += 1;
+    } else if (measured && !screenPresent && truthPresent) falseNegatives += 1;
   }
 
   return {

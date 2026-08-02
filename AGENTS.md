@@ -293,7 +293,11 @@ dev currently?"*, and the shape of the answer is the point:
   Stage 0's **rolling replay** (`stage0.mjs` → `replayRollingRoom`) is the control and fails loudly
   if it reopens; the two slice checks structurally cannot catch it. `bundledTx` /
   `maxWalletsInOneTx` reach the score, record (**schema 5**) and rendered line so a saved run stays
-  auditable — a schema-≤4 `entry.roomLeft` may be inflated and the record cannot say by how much.
+  auditable — a schema-≤4 `entry.roomLeft` may be inflated and the record cannot say by how much, and
+  a schema-≤4 `stage0` block is not comparable either (era-2 `n` moved 89→86 for the same reason).
+  The predicate is **create-slot-scoped, not operation-scoped** — it is a floor on the evidence, and
+  no tighter one exists: a deployer-in-bundle reading matches 0 of 235 launches because this deployer
+  never shares its own create-slot transaction (decision 139a, `measure.mjs` → `roomIsProven`).
 - **Stage 0's era-2 constant is `0.771`, not the published `0.768`** (decision 135c). `0.768` is the
   rank-43/44 order statistic of an 89-launch series whose median is `0.7708`; three recipes agree,
   including `analysis/window-population/measure.mjs`. **Never widen that tolerance instead** — it was

@@ -1156,13 +1156,28 @@ function summariseStage0(s) {
     },
     stage2SeamReproduction: s.eraSplit.map((e) => ({
       era: e.era,
+      // From schema 5 on, `n` counts only the SCORED launches in the era — those whose create slot
+      // carried a bundled transaction. `nRoomUnproven` is the refused remainder, persisted so a
+      // reader can add them back and see why an era's `n` differs from a schema-4 record's.
       n: e.n,
+      nRoomUnproven: e.nRoomUnproven,
       // Persisted so a reader can see the comparison was not vacuous: an empty bucket yields a NaN
       // median that no inequality catches, so `n >= minN` is what makes a PASSED here mean anything.
       minN: e.minN,
       operationShareMeasured: Number(e.operationShareMedian.toFixed(4)),
       operationSharePublished: e.publishedOperationShare,
     })),
+    // The control that would have caught the unproven-opening defect. Persisted so a saved run
+    // carries evidence that it ran and what it found, rather than only that Stage 0 exited 0.
+    rollingRoom: {
+      windows: s.rollingRoom.windows,
+      present: s.rollingRoom.present,
+      absent: s.rollingRoom.absent,
+      unmeasured: s.rollingRoom.unmeasured,
+      falsePositives: s.rollingRoom.falsePositives,
+      falseNegatives: s.rollingRoom.falseNegatives,
+      ok: s.rollingRoom.ok,
+    },
   };
 }
 

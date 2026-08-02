@@ -442,7 +442,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 2 | adds `completed`, and only `completed`. |
 | 3 | `spend` (the keyed ceiling, the unspent remainder, the planned worst case, and every endpoint called with its per-call cost) and `unmeasured` (every measurement the run could not take, and why). |
 | 4 | the creation-derived launch history beside the ownership one: `creation`, `historySource`, `gateReadingPageCapped`, `vendorTokens`, `vendorCompleted`, `vendorCompletionRate`, `vendorSpanDays`, `vendorVerdict`, `verdictChanged`. |
-| 5 | no new candidate field — the change is **inside `entry`**, which gains `launchesRoomUnproven`, `bundledTx` and `maxWalletsInOneTx`. Two consequences for a reader of an older record, below. |
+| 5 | no new candidate field — the candidate-row change is **inside `entry`**, which gains `launchesRoomUnproven`, `bundledTx` and `maxWalletsInOneTx`. The **`stage0` block also changed**, and it is not comparable across the boundary — below. Consequences for a reader of an older record, below. |
 
 **Reading `entry` across the schema-5 boundary.** `entry.launchesSampled` on schema 3 and 4 counts
 every measured window, including ones whose opening was unproven; on schema 5 it counts only the
@@ -453,6 +453,16 @@ three fields were added. Do not compare a schema-≤4 room figure with a schema-
 answered the same question. The two committed live records both sit in the post-break regime where
 the co-ordination rule recovers 97–100% of our subject's cohort, so the exposure on them is small,
 but it is not measurable from the records themselves.
+
+**Reading `stage0` across the schema-5 boundary — the block changed meaning too.** Stage 0 now
+filters its era buckets on the same `roomIsProven` rule, so `stage0.stage2SeamReproduction[].n` for
+era 2 moved **89 → 86** between schema 4 and schema 5 **with no change to the tape**: a schema-4 `n`
+counts every launch in the era, a schema-5 `n` counts only the scored ones. Each entry now carries
+`nRoomUnproven`, the refused remainder, so the older figure can be reconstructed. The block also
+gains `rollingRoom` — `windows`, `present`, `absent`, `unmeasured`, `falsePositives`,
+`falseNegatives`, `ok` — so a saved run carries evidence that the control ran and what it found,
+rather than only that Stage 0 exited 0. A schema-≤4 record holds neither field. **Do not compare a
+schema-4 and a schema-5 `stage2SeamReproduction` as though they answered the same question.**
 
 **`coverage` is not a version signal.** The committed schema-1 record
 `runs/2026-07-29-elite.json` already carries it, including `coverage.coverageTruncated` and
@@ -594,6 +604,19 @@ observable that exposes the condition, so a saved run can be audited for it afte
 A proven room figure is **still an upper bound**, and one bundled transaction is not evidence of
 complete recovery: on our own tape a launch that bundles can still miss three cohort wallets that
 bought alone. `roomIsProven` is the floor of the evidence, not a threshold on its quality.
+
+**The predicate is create-slot-scoped, not operation-scoped, and no tighter one is available.** It
+asks only whether *some* create-slot transaction carried 2+ distinct wallets — so a create slot in
+which the deployer buys entirely alone while two unrelated wallets share one transaction (a shared
+aggregator or copy-trade route) qualifies, and on that launch the operation's stake is still booked
+outside the numerator. The obvious tightening — require a bundle containing the deployer — was
+measured against the committed tape and matches **0 of 235** launches: this deployer never shares its
+own create-slot transaction, the dev buy is a 1-wallet transaction every time, and the cohort bundles
+among *itself* (typically two 3-wallet transactions). Adopting it would refuse every launch, leave
+Stage 2 scoring nothing for any wallet, and hard-fail Stage 0 twice — the era buckets go to `n = 0`
+and trip their own `minN` vacuity guard, and the known-negative control becomes `entry-unmeasured`.
+`coordinated.size >= 1` is the same predicate in practice (identical 175/235). Captain **decision
+139a**: `bundledTx >= 1` stands, and `measure.mjs` → `roomIsProven` owns the reasoning.
 
 ### 2. The field
 
@@ -1027,7 +1050,7 @@ issued:
 | the create-slot primitive reproduces the published §5.1 era split | operation share 0.451 → 0.769 against a published 0.451 → **0.771** (see below) |
 | the **field** measurement reproduces `wallet_launch_pnl.csv` | **1,502 create-slot outsider pairs, 0 closure mismatches, max realised error 5.0e-7 SOL** |
 | **the known-negative control**, at two points in time | see below |
-| **the rolling replay**, at every point in time | **228 trailing windows, 0 false positives**, 35 false negatives — see below |
+| **the rolling replay**, at every point in time | **228 trailing windows, 0 false positives and 0 false negatives**, 81 refused as unmeasured — see below |
 
 #### The era-2 constant is pinned at 0.771, and the tolerance is not the fix
 
@@ -1101,13 +1124,19 @@ hold only because this is our own subject, which is the whole reason the structu
 |---|---:|---:|
 | windows evaluated | 228 | 228 |
 | **false positives** — screen says room, the named cohort says none | **24** | **0** |
-| false negatives — screen says none, the named cohort says room | 0 | 35 |
-| windows reported unmeasured | 0 | 81 |
+| false negatives — screen MEASURED the window and said none, the named cohort says room | 0 | 0 |
+| windows reported unmeasured — refused, so the screen gave no verdict at all | 0 | 81 |
 
-**Only false positives fail the check.** A false negative is the accepted price of the ruling: a
-null result is acceptable, a false positive is not. The failure message names the worst window and
-points at `roomIsProven`, so a future change that reopens the defect gets told what it did rather
-than a bare number. Offline, free and deterministic like the rest of Stage 0.
+**A refused window is counted as `unmeasured`, never as a false negative.** The two are exactly the
+distinction the ruling exists to keep apart: a window with too few proven launches carries no
+verdict, so there is nothing in it for the cohort to contradict. `falseNegatives` therefore requires
+a *finite* median — the screen looked, and said ABSENT — and on this tape there are none of those.
+The coverage the ruling costs shows up in the `unmeasured` row, which is where it belongs.
+
+**Only false positives fail the check.** A false negative would not fail either, for the same reason
+the refusals do not: a null result is acceptable, a false positive is not. The failure message names
+the worst window and points at `roomIsProven`, so a future change that reopens the defect gets told
+what it did rather than a bare number. Offline, free and deterministic like the rest of Stage 0.
 
 **Not built — the exit trap (stage 3).** Room to enter is not room to leave. When the dev sells
 relative to mint and to outsider inflow, whether the trigger is a **size** (which would cap our

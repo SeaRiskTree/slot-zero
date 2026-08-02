@@ -753,9 +753,25 @@ only forbade mint-shaped *keys*, so a mint inside a sentence passed it. Two chan
 - `KeylessHttpError` carries its **status as a field**, so `stage2.mjs` → `describeTransportFailure`
   can report `HTTP 400` without repeating anything the vendor sent. Anything that is not one is
   reduced to its constructor name.
-- `record.mjs` → `redactVendorIdentifiers` scrubs every free-text field on the way into a record —
-  rationale, caveats, drop notes, `truncationReason` — stripping URLs and base58 address runs. The
-  containment does not rest on every future note-writer remembering.
+- `record.mjs` → `redactVendorIdentifiers` scrubs named free-text fields on the way into a record,
+  stripping URLs and base58 address runs, so containment for those fields does not rest on every
+  future note-writer remembering. **Covered today, and only these:** the entry half's `rationale`,
+  `caveats` and `dropNotes` (`stage2.mjs` → `toEntryRecordRow`); the gate half's `rationale`,
+  `gateReasons` and `consistency.note` (`screen.mjs` → `toRecordRow`); and the run-level
+  `truncationReason`.
+
+  **Not covered, and the enumeration above is not full coverage of the record.** Three error-derived
+  paths still reach `--out` verbatim: `creation.listingUnmeasuredNote` (`screen.mjs` →
+  `describeUnmeasured`, whose `summary` is a raw `Error.message`), `creation.stopDetail`
+  (`pumpfun.mjs`, a raw `cause.message`), and the run-level `unmeasured[]` array, whose `detail`
+  field `record.mjs` itself documents as embedding a per-wallet URL — so a keyless listing failure
+  can persist a URL containing the wallet, which is the exact leak class this boundary exists for.
+  That is a known open gap, deliberately left to a separate lane rather than an oversight; do not
+  read the covered list as the whole record.
+
+  It is applied **field by field and never as a sweep of the record**, because `wallet` is a 44-char
+  base58 string that is deliberately kept — public on-chain data, and the one identifier a record
+  exists to carry — and a blanket pass would strike exactly it.
 
 ## What walking the fill tape actually costs — measured, not estimated
 
@@ -829,6 +845,16 @@ late sells, and dropping one flips a wallet from closed to open — which shrink
 `fieldClosedRoundTrips`, itself a gate at `minFieldRoundTrips: 10`. A too-narrow span therefore moves
 gate outcomes silently. 160 covers 100% of observed windows with margin over the observed max.
 
+**The other direction, on the record rather than as an objection:** at the observed rate 160 slots is
+~63.5s, so the live window is up to ~3.5s *wider* than the tape's 60s windows, and the extra late
+sells make realised P&L read better than the ground-truth recipe would. Because the field leg is
+veto-only that **loosens rather than tightens** — a too-generous field can only fail to veto, never
+earn a verdict — and the magnitude is small. That last claim is **cited, not measured here**: the
+figure that carries it (the margin sits at the thinnest part of the window, p50 18 / p95 52 fills in
+the last 5s) comes from the PR #7 review comment that recorded this tradeoff, which supplied it
+without naming a population, and it is not reproduced anywhere in this repo — unlike the span
+figures above, which name theirs. 160 was chosen on measurement, so no change is implied.
+
 **Stage 0 deliberately does not use the span**, and the two paths must not be reconciled: it measures
 each committed launch over that launch's own stored window, because `wallet_launch_pnl.csv` — the
 1,502-pair reproduction that licenses believing the live recipe at all — is computed that way. The
@@ -852,6 +878,16 @@ That fits inside the 18-request per-launch cap and the `3 × 8 × 18 = 432` arit
 **The margin is a cursor hint and never a proof tolerance.** The pre-mint tripwire still compares
 `ts < createdAtMs` with zero slack, and coverage is still discharged only by an explicit
 `hasMore === false` or a readable empty page. Widening the margin cannot soften either.
+
+**It does bound one other thing, and it has to: which launches are old enough to measure.**
+`stage2.mjs` skips a launch younger than `windowMs + seekMarginMs` — **65s**, not 60s. The gate has
+to cover the newest instant the walk reaches for, and two quantities reach forward from the mint: the
+seek cursor at 65s, and the measured window at `windowSlotSpan` slots (64.0s at the nominal
+400ms/slot, ~63.5s at the tape's observed ~397ms). The cursor dominates, so one bound covers both.
+Gating on `windowMs` alone admitted a launch aged 60–65s whose tail had not happened yet — the same
+truncation this margin exists to prevent, arriving from the future side, and silent in the same way,
+because an absent tail reads as a quiet one. A test pins both the behaviour and the relation
+`windowSlotSpan × 400ms ≤ windowMs + seekMarginMs`, so widening the span past the gate fails loudly.
 
 **Every run reports its drops per cause, per wallet and in total**, in the record (`entry.coverage.dropsByReason`
 and the run-level `entryDrops`) and in the rendered output. A non-zero

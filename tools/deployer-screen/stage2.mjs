@@ -203,9 +203,26 @@ export async function scoreCandidateEntry(client, input) {
   const t = input.thresholds;
   const refs = toLaunchRefs(input.profile);
 
-  // A launch younger than the window has not finished happening. Measuring it would read a
-  // truncated opening as a quiet one.
-  const eligible = refs.filter((r) => input.nowMs - r.deployedAtMs >= t.windowMs);
+  // A launch younger than this has not finished happening. Measuring it would read a truncated
+  // opening as a quiet one.
+  //
+  // THE BOUND IS `windowMs + seekMarginMs`, NOT `windowMs`, and the difference is a real defect
+  // rather than tidiness. The gate has to cover the NEWEST INSTANT THE WALK REACHES FOR, and two
+  // quantities reach forward from the mint: the seek cursor, placed at
+  // `createdAtMs + windowMs + seekMarginMs` (65s at the pinned values), and the measured span, which
+  // `windowSlotSpan` fixes at 160 slots — 64.0s at this repo's nominal 400ms/slot and ~63.5s at the
+  // tape's observed ~397ms. The cursor dominates, so `windowMs + seekMarginMs` covers both. Gating
+  // on `windowMs` alone admitted a launch aged 60–65s whose tail had not happened yet: exactly the
+  // truncation `seekMarginMs` exists to prevent, arriving from the other side, and silent, because
+  // an absent tail reads as a quiet one.
+  //
+  // This does not give `windowMs` a third job or move membership off `windowSlotSpan` — see
+  // `thresholds.json` → `stage2_entry.justification.windowMs`. It makes the two jobs it already had
+  // agree: a launch is old enough exactly when the cursor the same numbers place is in the past.
+  // A test pins `windowSlotSpan × 400ms <= windowMs + seekMarginMs`, so widening the span past this
+  // bound fails loudly instead of quietly reopening the gap.
+  const minAgeMs = t.windowMs + t.seekMarginMs;
+  const eligible = refs.filter((r) => input.nowMs - r.deployedAtMs >= minAgeMs);
   const planned = eligible.slice(0, t.maxLaunchesPerCandidate);
 
   /** @type {import('./entry.mjs').LaunchEntry[]} */

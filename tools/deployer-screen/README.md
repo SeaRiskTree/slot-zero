@@ -141,8 +141,10 @@ the gate is designed for.
 > deployers launching 70 tokens in under four days at 1–7% completion, all of which the gate
 > rejected. That reading came from `runs/2026-07-29-stage1.json`, whose record was **deleted** — its
 > figures were produced by the inert seeds described below, and re-running untiered to re-evidence a
-> side observation was ruled out under the quota bound. So this paragraph is a recollection, not
-> evidence: nothing committed backs it, and it should not be cited as though something did.
+> side observation is exactly what the *"if it gets results"* conditional in [Bounds](#bounds) does
+> not license — the allowance is now spendable in full, but not on this. So this paragraph is a
+> recollection, not evidence: nothing committed backs it, and it should not be cited as though
+> something did.
 
 **The elite-tier recent-bond feed is `recent-bonds?tier=elite` — a tier filter on the shared feed,
 not a distinct endpoint.** Their OpenAPI v1.17.0 exposes no separate elite path; `tier` is a query
@@ -172,8 +174,9 @@ Run records are the future grading lane's input, so a capped run must not read a
 everything enumeration found.
 
 The superseded untiered run record (`runs/2026-07-29-stage1.json`) was **deleted rather than
-re-run**: its numbers came from the inert seeds, and reproducing that configuration would cost
-another ~15 keyed requests against a shared allowance the captain has declared unaffordable.
+re-run**: its numbers came from the inert seeds, and re-running that configuration would only
+re-evidence a side observation, which the *"if it gets results"* conditional in [Bounds](#bounds)
+does not license however much allowance is left.
 
 ### The committed run, with all three seeds working
 

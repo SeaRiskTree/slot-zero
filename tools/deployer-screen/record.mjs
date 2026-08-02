@@ -32,8 +32,12 @@
  *
  * - **absent** — schema 1. Predates `completed`; completeness is unknowable from the record.
  * - **2** — carries `completed`, and `coverage` distinguishing cap truncation from an abort.
+ * - **3** — adds `spend`: the keyed ceiling, what was left unspent, the planned worst case, and the
+ *   endpoints actually called with each one's per-call cost. A schema-2 record carries only the
+ *   `keyedRequests` total, so on those `spend` is genuinely absent and must not be reconstructed —
+ *   the total cannot say which endpoint the requests went to.
  */
-export const RECORD_SCHEMA_VERSION = 2;
+export const RECORD_SCHEMA_VERSION = 3;
 
 /**
  * Completeness of a run, as the record can actually support.

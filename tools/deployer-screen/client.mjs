@@ -82,11 +82,57 @@ export class VendorRefused extends Error {
  */
 
 /**
+ * @typedef {object} EndpointSpend
+ * @property {string} endpoint  Path template, wallet segment collapsed to `{wallet}`.
+ * @property {string} role      What the endpoint is for, from {@link ENDPOINT_ROLES}.
+ * @property {string} costModel Per-call cost in keyed requests, as a phrase.
+ * @property {number} calls     Requests actually issued against it, retries included.
+ */
+
+/**
  * @typedef {object} RequestStats
  * @property {number} issued      Requests actually sent, including retries and failures.
  * @property {number} ceiling     The configured hard limit.
  * @property {number} elapsedMs   Wall clock from construction to the last completed request.
+ * @property {EndpointSpend[]} byEndpoint  Where the spend went, in first-call order.
  */
+
+/**
+ * The keyed surface this tool uses, and what each call costs.
+ *
+ * The captain asked for the endpoint list by name and for spend to be reported concretely rather
+ * than as one aggregate number, so this table is the tool's own answer rather than prose in a
+ * README that can drift from the code. Only `{wallet}` scales: everything else is one call per run.
+ *
+ * Two endpoints are deliberately absent and stay absent — `/deployer-hunter/{wallet}/tokens` is
+ * bonded-only (no denominator, and it rejects `limit` above 50) and `/deployer-hunter/{wallet}/history`
+ * is PRO+, which standing policy refuses.
+ *
+ * @type {Record<string, { role: string, costModel: string }>}
+ */
+export const ENDPOINT_ROLES = {
+  '/deployer-hunter/recent-bonds': { role: 'enumeration; carries the tier filter', costModel: '1 per run' },
+  '/deployer-hunter/alerts': { role: 'enumeration', costModel: '1 per run' },
+  '/deployer-hunter/leaderboard': { role: 'enumeration', costModel: '1 per run' },
+  '/deployer-hunter/{wallet}': { role: 'the gate', costModel: '1 per candidate — the only cost that scales' },
+};
+
+/**
+ * Collapse a requested path onto the endpoint template it belongs to.
+ *
+ * Per-endpoint accounting has to survive both the query string and the wallet address, and a
+ * wallet must never end up as a key of its own — that would turn a spend table into a list of
+ * addresses we screened, which the record's own projection is careful not to persist twice.
+ *
+ * @param {string} path Path as issued, query string included.
+ * @returns {string}
+ */
+export function endpointOf(path) {
+  const bare = path.split('?')[0] ?? path;
+  const literal = Object.prototype.hasOwnProperty.call(ENDPOINT_ROLES, bare);
+  if (literal) return bare;
+  return /^\/deployer-hunter\/[^/]+$/.test(bare) ? '/deployer-hunter/{wallet}' : bare;
+}
 
 const DEFAULT_MIN_INTERVAL_MS = 6_500;
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -141,12 +187,21 @@ export class BoundedClient {
   #queue = Promise.resolve();
   /** @type {number} */ #finishedAt = 0;
 
+  /** Issued requests per endpoint template, in first-call order. @type {Map<string, number>} */
+  #byEndpoint = new Map();
+
   /** @returns {RequestStats} */
   stats() {
     return {
       issued: this.#issued,
       ceiling: this.#ceiling,
       elapsedMs: (this.#finishedAt || Date.now()) - this.#startedAt,
+      byEndpoint: [...this.#byEndpoint].map(([endpoint, calls]) => ({
+        endpoint,
+        role: ENDPOINT_ROLES[endpoint]?.role ?? 'unclassified — this endpoint is not in ENDPOINT_ROLES',
+        costModel: ENDPOINT_ROLES[endpoint]?.costModel ?? '1 per call',
+        calls,
+      })),
     };
   }
 
@@ -197,6 +252,8 @@ export class BoundedClient {
       if (this.#lastStartedAt !== 0 && wait > 0) await this.#sleep(wait);
 
       this.#issued += 1;
+      const endpoint = endpointOf(label);
+      this.#byEndpoint.set(endpoint, (this.#byEndpoint.get(endpoint) ?? 0) + 1);
       this.#lastStartedAt = Date.now();
       this.#onRequest?.(label, attempt);
 

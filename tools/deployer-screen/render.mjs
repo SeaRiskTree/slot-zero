@@ -18,7 +18,7 @@
  * second state is the single output this tool exists to make impossible.
  */
 
-import { buildPath } from './client.mjs';
+import { buildPath, ENDPOINT_ROLES } from './client.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
 
 /**
@@ -389,6 +389,10 @@ export function renderStage0(r, vendorReadings) {
  * @param {string | null} run.truncationReason
  * @param {number} run.prefiltered
  * @param {import('./seed.mjs').SeedCoverage} run.coverage
+ * @param {{ keyedCeiling: number, keyedRemaining: number, plannedWorstCaseKeyed: number,
+ *   candidateCap: number, endpoints: readonly import('./client.mjs').EndpointSpend[] }} [run.spend]
+ *   Where the keyed allowance actually went. Optional only so a caller rendering a schema-2 record
+ *   is not forced to invent one; a live run always passes it.
  * @param {Record<string, unknown>} run.thresholds
  * @returns {string}
  */
@@ -427,6 +431,20 @@ export function renderStage1(run) {
     for (const line of renderDropTally(runDropTotal, runDrops, '  ')) L.push(line);
   }
   L.push('');
+
+  if (run.spend !== undefined) {
+    L.push('SPEND — every keyed request, by endpoint, with what each call costs');
+    L.push(`  ${pad('endpoint', 36)}${padl('calls', 6)}  ${pad('cost per call', 48)}role`);
+    for (const e of run.spend.endpoints) {
+      L.push(`  ${pad(e.endpoint, 36)}${padl(String(e.calls), 6)}  ${pad(e.costModel, 48)}${e.role}`);
+    }
+    if (run.spend.endpoints.length === 0) L.push('  (none — no keyed request was issued)');
+    L.push(
+      `  ${padl(String(run.keyedRequests), 42)} total, against a ceiling of ${run.spend.keyedCeiling} ` +
+        `(${run.spend.keyedRemaining} unspent; planned worst case ${run.spend.plannedWorstCaseKeyed})`,
+    );
+    L.push('');
+  }
 
   const cov = run.coverage;
   L.push('SEED YIELD — per query, because an inert seed is otherwise invisible');
@@ -590,8 +608,14 @@ export function renderDryRun(plan) {
     `  worst case ${plan.seedPlan.length} + ${plan.maxCandidates} = ` +
       `${plan.seedPlan.length + plan.maxCandidates} keyed requests, ceiling ${plan.maxKeyedRequests}.`,
   );
-  L.push('  The ceiling is enforced before each request; the run stops and says so rather than');
-  L.push('  continuing past it.');
+  L.push('  The ceiling is enforced before each request, and a plan whose worst case does not fit');
+  L.push('  under it is refused BEFORE the first request rather than allowed to die part-way.');
+  L.push('');
+  L.push('KEYED ENDPOINTS — the whole surface this tool touches, and the cost of each call:');
+  L.push(`  ${pad('endpoint', 36)}${pad('cost', 48)}role`);
+  for (const [endpoint, meta] of Object.entries(ENDPOINT_ROLES)) {
+    L.push(`  ${pad(endpoint, 36)}${pad(meta.costModel, 48)}${meta.role}`);
+  }
   L.push('');
 
   const t = plan.entryThresholds;

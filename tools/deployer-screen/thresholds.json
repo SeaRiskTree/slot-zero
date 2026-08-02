@@ -57,20 +57,36 @@
 
   "budget": {
     "$comment": [
-      "Hard bounds, enforced in code. There is no flag that disables one. The key is the captain's",
-      "own and its Free-tier allowance (about 200 requests/day, 10/minute) is SHARED with whatever",
-      "else holds it."
+      "Hard bounds, enforced in code. There is no flag that disables one.",
+      "CAPTAIN'S INSTRUCTION, 2026-08-02: 'There is no current free method to save on the madeonsol",
+      "key request limits ... use all free tier daily quota as needed if it gets results.' These",
+      "bounds are therefore the FULL Free-tier daily allowance (~200 requests/day), not a fraction",
+      "of it. An earlier quarter-allowance ceiling of 45 was this tool's own caution, never a",
+      "captain instruction, and it is WITHDRAWN — do not reintroduce it or re-derive it: there is no",
+      "free substitute for this data, so an unspent allowance buys nothing and only leaves questions",
+      "unanswered.",
+      "The conditional binds: 'if it gets results'. This authorises sizing a run by what the",
+      "question needs. It does NOT authorise sweeping, idle retrying, or re-running to re-evidence a",
+      "side observation. A run that cannot say in advance what it will answer does not get the",
+      "allowance.",
+      "SCOPE: this relaxation is MadeOnSol ONLY. The Helius / SolanaTracker / CoinGecko keys are",
+      "shared with production and the standing 'do not waste the quota that is production quota too'",
+      "is unchanged, as is the keyless pump.fun pacing below, which bounds a shared public resource",
+      "for an entirely different reason.",
+      "The burst limit is NOT relaxed either: ~10/minute is a rate the vendor enforces, not a",
+      "self-imposed caution, so keyedMinIntervalMs stays."
     ],
-    "maxKeyedRequests": 45,
-    "maxKeylessRequests": 500,
-    "maxCandidates": 20,
+    "maxKeyedRequests": 200,
+    "maxKeylessRequests": 600,
+    "maxCandidates": 195,
     "keyedMinIntervalMs": 6500,
     "keylessMinIntervalMs": 2000,
     "justification": {
-      "maxKeyedRequests": "Enumeration costs 3 (one leaderboard page per sort key) and the gate costs 1 per candidate, so 20 candidates cost 23. The 45 ceiling leaves headroom for a retry and a second enumeration page while staying under a quarter of the shared daily allowance. STAGE 2 ADDS NOTHING TO THIS: it reuses the profile Stage 1 already fetched and spends no keyed request of its own.",
-      "keyedMinIntervalMs": "Free tier bursts at ~10/minute. 6.5s between request starts keeps a run under that with margin, and margin matters because the allowance is shared.",
+      "maxKeyedRequests": "200 is the whole Free-tier daily allowance as measured (see tools/deployer-screen/README.md). Enumeration costs 3 (recent-bonds, alerts, leaderboard) and the gate costs 1 per candidate, so the 195-candidate cap costs 198 worst case and the remaining 2 are the retry headroom. A run whose PLANNED worst case exceeds this is refused before its first request rather than allowed to die part-way through. STAGE 2 ADDS NOTHING TO THIS: it reuses the profile Stage 1 already fetched and spends no keyed request of its own.",
+      "maxCandidates": "195 = 200 - 3 enumeration - 2 retry headroom, i.e. the cap is whatever the allowance leaves rather than a judgement about how many deployers are worth grading. It is also well above what the three enumeration queries can surface (50 + 100 + 50 rows, heavily overlapping and then pre-filtered), so the DEFAULT run grades everything it surfaces and coverage truncation becomes the exception it is supposed to be.",
+      "keyedMinIntervalMs": "Free tier bursts at ~10/minute. 6.5s between request starts keeps a run under that with margin, and margin matters because the allowance is shared. This is the vendor's rate limit, not our caution, so raising the daily bounds does not touch it. A full 198-request run therefore takes about 21 minutes, which is the intended cost of respecting the burst limit.",
       "keylessMinIntervalMs": "GOVERNS ONE HOST: frontend-api-v3.pump.fun, the --consistency creator walk. It does NOT govern the Stage 2 fill walk, which has its own pinned pacing (`stage2_entry.keylessMinIntervalMs`) because it reaches a different host that behaves differently. THIS VALUE IS A CONSERVATIVE CARRY-OVER, NOT A MEASUREMENT OF THE ENDPOINT IT GOVERNS, and the correction matters: the ~0.5 requests/second figure this was originally justified by was measured against api.mainnet-beta.solana.com, and the June report's own spend table records BOTH swap-api.pump.fun and frontend-api-v3.pump.fun as NOT CONTACTED — so it was never a pump.fun measurement at all. It is kept because it is conservative and because frontend-api-v3 has shed nothing in this tool's use of it; if that host is ever measured, this number should be re-derived from that measurement rather than from a different host's.",
-      "maxKeylessRequests": "A PER-CLIENT CEILING, NOT A RUN TOTAL, and the distinction is what the code enforces: screen.mjs builds TWO independent keyless clients, and this value bounds only the general one (the --consistency creator walk). Stage 2 runs on its own client under its own `stage2_entry.maxKeylessRequests` of 432, which this number neither contains nor constrains. So the enforced combined worst case is 500 + 432 = 932 requests, and the REALISTIC combined worst case is 492, because the --consistency pass cannot cost more than 60 (3 pages x 20 candidates). 500 is kept rather than lowered to 60 so that a future keyless consumer on this client has headroom without a threshold change, and the two ceilings are separate so Stage 2 can never eat the consistency pass's budget or vice versa. At the pinned 2s pacing the realistic worst case is about 17 minutes in one process with one request in flight, and the typical case a third of that; the June report sustained 460 consecutive keyless requests at 1.4s apart with zero shedding. These are pump.fun's free endpoints — no key, no vendor allowance, and no shared quota is touched by any of it."
+      "maxKeylessRequests": "A PER-CLIENT CEILING, NOT A RUN TOTAL, and the distinction is what the code enforces: screen.mjs builds TWO independent keyless clients, and this value bounds only the general one (the --consistency creator walk). Stage 2 runs on its own client under its own `stage2_entry.maxKeylessRequests` of 432, which this number neither contains nor constrains. So the enforced combined worst case is 600 + 432 = 1,032 requests. 600 is DERIVED FROM `maxCandidates`, not chosen: the --consistency pass walks 3 pages per gate survivor, so raising the candidate cap to 195 raised its worst case to 585 and the previous 500 — sized when the cap was 20 — would have aborted a full consistency run on a ceiling rather than on a measurement. It keeps a little headroom above 585 for the same reason it did before, and the two ceilings stay separate so Stage 2 can never eat the consistency pass's budget or vice versa. At the pinned 2s pacing 585 requests is about 20 minutes in one process with one request in flight, and the typical case a small fraction of that because most candidates do not clear the gate; the June report sustained 460 consecutive keyless requests at 1.4s apart with zero shedding. These are pump.fun's free endpoints — no key, no vendor allowance, and no shared quota is touched by any of it."
     }
   },
 

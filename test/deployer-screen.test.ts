@@ -23,7 +23,14 @@ import {
   describeKey,
   resolveKey,
 } from '../tools/deployer-screen/credential.mjs';
-import { BoundedClient, CeilingReached, VendorRefused, buildPath } from '../tools/deployer-screen/client.mjs';
+import {
+  BoundedClient,
+  CeilingReached,
+  ENDPOINT_ROLES,
+  VendorRefused,
+  buildPath,
+  endpointOf,
+} from '../tools/deployer-screen/client.mjs';
 import {
   CURVE_INITIAL_PRICE_SOL,
   createSlotGroups,
@@ -71,6 +78,7 @@ import {
 } from '../tools/deployer-screen/pumpfun.mjs';
 import {
   exitForRefusal,
+  main,
   parseArgs,
   loadThresholds,
   partialOutPath,
@@ -1033,6 +1041,30 @@ describe('the CLI contract', () => {
     }
   });
 
+  it('leaves the candidate cap unset by default, so the budget decides it', () => {
+    // The committed elite run seeded 22 wallets and graded 12 because it was invoked with a number
+    // below the ceiling. A default invocation must not pin one at all.
+    const r = parseArgs([]);
+    if (!r.ok) throw new Error('unreachable');
+    expect(r.opts.candidates).toBeNull();
+    expect(r.opts.maxRequests).toBeNull();
+  });
+
+  it('refuses an over-budget plan before spending anything', async () => {
+    const r = parseArgs(['--candidates', '150', '--max-requests', '10']);
+    if (!r.ok) throw new Error('unreachable');
+    const out: string[] = [];
+    const err: string[] = [];
+    // No credential in the environment either — but the refusal must come from the arithmetic,
+    // before the key is ever consulted, and above all before a request is issued.
+    const code = await main(r.opts, {}, (l) => out.push(l), (l) => err.push(l));
+    expect(code).toBe(2);
+    const text = err.join('\n');
+    expect(text).toMatch(/Refusing to start/);
+    expect(text).toMatch(/no quota was spent/);
+    expect(text).not.toMatch(/CREDENTIAL PROBLEM/);
+  }, 60_000);
+
   it('writes nothing by default — persistence is opt-in', () => {
     const r = parseArgs([]);
     if (!r.ok) throw new Error('unreachable');
@@ -1150,10 +1182,16 @@ describe('the CLI contract', () => {
     }
   });
 
-  it('bounds every run in the pinned budget', () => {
+  it('bounds every run in the pinned budget — the FULL free-tier daily allowance, and no more', () => {
     const b = loadThresholds()['budget'];
-    expect(b.maxKeyedRequests).toBeLessThanOrEqual(50); // a quarter of the shared 200/day
-    expect(b.maxCandidates).toBeLessThanOrEqual(20);
+    // Captain's instruction 2026-08-02: spend the whole allowance when spending it gets results.
+    // The bound is the allowance itself (~200/day), not a fraction of it — but it is still a bound.
+    expect(b.maxKeyedRequests).toBeLessThanOrEqual(200);
+    expect(b.maxKeyedRequests).toBeGreaterThan(100);
+    // 3 enumeration requests plus the candidate cap must fit under the ceiling, or a default run
+    // would be arranged to die at the ceiling rather than to finish.
+    expect(3 + b.maxCandidates).toBeLessThanOrEqual(b.maxKeyedRequests);
+    // The burst limit is the vendor's, not our caution, so relaxing the daily bounds never moves it.
     expect(b.keyedMinIntervalMs).toBeGreaterThanOrEqual(6_000); // Free tier bursts at ~10/min
     expect(b.keylessMinIntervalMs).toBeGreaterThanOrEqual(2_000); // conservative carry-over, frontend-api-v3
   });
@@ -1175,6 +1213,122 @@ describe('the CLI contract', () => {
     expect(s2.justification.keylessMinIntervalMs).toMatch(/swap-api/);
     expect(T['budget'].justification.keylessMinIntervalMs).toMatch(/frontend-api-v3/);
     expect(T['budget'].justification.keylessMinIntervalMs).toMatch(/api\.mainnet-beta\.solana\.com/);
+  });
+
+  it('records the captain instruction rather than the withdrawn quarter-allowance caution', () => {
+    // A stale rationale is how a withdrawn caution gets re-derived by a future reader, so the
+    // pinned prose is asserted, not just the numbers.
+    const budget = loadThresholds()['budget'];
+    const prose = [...budget.$comment, ...Object.values(budget.justification as Record<string, string>)]
+      .join(' ')
+      .toLowerCase();
+    expect(prose).toContain('captain');
+    expect(prose).toMatch(/withdrawn/);
+    expect(prose).toMatch(/if it gets results/);
+    // MadeOnSol only: the production-shared keys are not covered by this relaxation.
+    expect(prose).toMatch(/production/);
+    // And nothing may still be claiming the old reasoning.
+    expect(prose).not.toMatch(/quarter of the shared/);
+  });
+});
+
+describe('spend is reported concretely, by endpoint', () => {
+  it('classifies every path onto the endpoint template it belongs to', () => {
+    expect(endpointOf('/deployer-hunter/recent-bonds?limit=50&tier=elite')).toBe(
+      '/deployer-hunter/recent-bonds',
+    );
+    expect(endpointOf('/deployer-hunter/alerts?limit=100')).toBe('/deployer-hunter/alerts');
+    expect(endpointOf('/deployer-hunter/leaderboard?limit=50&sort=total_bonded')).toBe(
+      '/deployer-hunter/leaderboard',
+    );
+    // A wallet must never become a key of its own: a spend table is not a list of who we screened.
+    expect(endpointOf('/deployer-hunter/EgQX9R3QabcDEF')).toBe('/deployer-hunter/{wallet}');
+    expect(endpointOf('/deployer-hunter/2CQgjcdNxyz')).toBe('/deployer-hunter/{wallet}');
+  });
+
+  it('names the endpoints the tool uses, and the two it deliberately does not', () => {
+    expect(Object.keys(ENDPOINT_ROLES).sort()).toEqual([
+      '/deployer-hunter/alerts',
+      '/deployer-hunter/leaderboard',
+      '/deployer-hunter/recent-bonds',
+      '/deployer-hunter/{wallet}',
+    ]);
+    // Only the gate scales with the candidate count; everything else is one call per run.
+    expect(ENDPOINT_ROLES['/deployer-hunter/{wallet}']?.costModel).toMatch(/per candidate/);
+    for (const e of ['/deployer-hunter/alerts', '/deployer-hunter/leaderboard', '/deployer-hunter/recent-bonds']) {
+      expect(ENDPOINT_ROLES[e]?.costModel).toBe('1 per run');
+    }
+    // tokens/ is bonded-only and history/ is PRO+; neither may appear as a thing we call.
+    expect(Object.keys(ENDPOINT_ROLES).some((e) => e.endsWith('/tokens') || e.endsWith('/history'))).toBe(false);
+  });
+
+  it('attributes each issued request, retries included, to its endpoint', async () => {
+    let calls = 0;
+    const fetchImpl = vi.fn(async () => {
+      calls += 1;
+      return calls === 2
+        ? ({ ok: false, status: 500, text: async () => 'boom' } as Response)
+        : ({ ok: true, status: 200, json: async () => ({}), text: async () => '{}' } as Response);
+    }) as unknown as typeof fetch;
+    const client = new BoundedClient({
+      key: 'msk_test_key_value_padded_to_length_ok_1234',
+      maxRequests: 10,
+      minIntervalMs: 0,
+      sleepImpl: async () => {},
+      fetchImpl,
+    });
+
+    await client.getJson('/deployer-hunter/recent-bonds', { limit: 50 });
+    await client.getJson('/deployer-hunter/WalletAaa'); // 500 then retried
+    await client.getJson('/deployer-hunter/WalletBbb');
+
+    const byEndpoint = client.stats().byEndpoint;
+    expect(byEndpoint).toEqual([
+      expect.objectContaining({ endpoint: '/deployer-hunter/recent-bonds', calls: 1 }),
+      // Two wallets, one of which cost two requests: the retry is spend and it is reported as spend.
+      expect.objectContaining({ endpoint: '/deployer-hunter/{wallet}', calls: 3 }),
+    ]);
+    expect(byEndpoint.reduce((n, e) => n + e.calls, 0)).toBe(client.stats().issued);
+  });
+
+  it('prints the spend table with the ceiling and what was left unspent', () => {
+    const text = renderStage1({
+      candidates: [],
+      keyedRequests: 5,
+      keylessRequests: 0,
+      elapsedMs: 1000,
+      startedAtIso: '2026-08-02T00:00:00.000Z',
+      completed: true,
+      truncationReason: null,
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 2,
+        prefilteredOut: 0,
+        worthARequest: 2,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 0,
+        coverageTruncated: false,
+      },
+      spend: {
+        keyedCeiling: 200,
+        keyedRemaining: 195,
+        plannedWorstCaseKeyed: 198,
+        candidateCap: 195,
+        endpoints: [
+          { endpoint: '/deployer-hunter/alerts', role: 'enumeration', costModel: '1 per run', calls: 1 },
+          { endpoint: '/deployer-hunter/{wallet}', role: 'the gate', costModel: '1 per candidate', calls: 4 },
+        ],
+      },
+      thresholds: {},
+    });
+    expect(text).toMatch(/SPEND/);
+    expect(text).toMatch(/\/deployer-hunter\/\{wallet\}/);
+    expect(text).toMatch(/1 per candidate/);
+    expect(text).toMatch(/ceiling of 200/);
+    expect(text).toMatch(/195 unspent/);
   });
 });
 

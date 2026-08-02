@@ -76,8 +76,12 @@ MODES
                       the field, keyless). Stage 0 must pass first.
 
 OPTIONS
-  --candidates <n>    Max deployers to gate. Default and ceiling from thresholds.json.
-  --max-requests <n>  Hard keyed-request ceiling. Cannot exceed the pinned budget.
+  --candidates <n>    Max deployers to gate. DEFAULT: as many as the request ceiling allows, so a
+                      default run grades everything enumeration surfaces. Ceiling from
+                      thresholds.json; this flag can only lower it.
+  --max-requests <n>  Hard keyed-request ceiling. Cannot exceed the pinned budget, which is the
+                      whole MadeOnSol Free-tier daily allowance. A plan whose worst case does not
+                      fit under the ceiling is refused before the first request (exit 2).
   --tier <t>          Restrict enumeration to one tier: elite|good|moderate|rising|cold.
   --no-stage2         Skip entry scoring. Stage 1 only — the competence gate on its own, which
                       answers nothing about whether a window is enterable.
@@ -314,12 +318,40 @@ export async function main(opts, env, out, err) {
   }
 
   // ---- Plan ------------------------------------------------------------------------------
-  const maxCandidates = Math.min(opts.candidates ?? budget.maxCandidates, budget.maxCandidates);
+  // The pinned bounds are the whole Free-tier daily allowance, and both are hard: `--candidates`
+  // and `--max-requests` can only ever lower them.
   const maxKeyed = Math.min(opts.maxRequests ?? budget.maxKeyedRequests, budget.maxKeyedRequests);
+  const enumerationCost = 3;
+  // **The default grades what enumeration surfaces, up to the budget.** The committed elite run
+  // seeded 22 wallets and graded 12 because it was invoked with a number smaller than the ceiling
+  // already allowed; ten wallets were dropped by a flag rather than by any judgement. So an
+  // unstated candidate cap now follows the request ceiling instead of being a separate small
+  // number a conservative invocation can silently pin.
+  const maxCandidates = Math.min(
+    opts.candidates ?? Math.max(1, maxKeyed - enumerationCost),
+    budget.maxCandidates,
+  );
   const seedPlan = buildSeedPlan({
     limit: Math.min(50, Math.max(maxCandidates, 10)),
     ...(opts.tier === undefined ? {} : { tier: opts.tier }),
   });
+
+  // **Over budget fails BEFORE spending.** A plan whose worst case cannot fit under the ceiling
+  // would otherwise run until the ceiling bit and then report an incomplete screen — paying for
+  // most of a run to learn something arithmetic could have said for free.
+  const worstCaseKeyed = seedPlan.length + maxCandidates;
+  if (worstCaseKeyed > maxKeyed) {
+    err(
+      `Refusing to start: the plan's worst case is ${seedPlan.length} enumeration + ${maxCandidates} ` +
+        `candidate = ${worstCaseKeyed} keyed requests, above the ceiling of ${maxKeyed}.`,
+    );
+    err(
+      `  Lower --candidates to ${Math.max(0, maxKeyed - seedPlan.length)} or fewer, or raise ` +
+        `--max-requests (up to the pinned ${budget.maxKeyedRequests}).`,
+    );
+    err('  Nothing was requested, so no quota was spent.');
+    return EXIT.usage;
+  }
 
   const resolution = resolveKey(env);
 
@@ -608,6 +640,23 @@ export async function main(opts, env, out, err) {
         keylessRequests: keyless.issued() + stage2Keyless.issued(),
         keylessRequestsStage2: stage2Keyless.issued(),
         keylessShed: keyless.shed() + stage2Keyless.shed(),
+        // Spend, reported concretely rather than as one number: what the ceiling was, where every
+        // keyed request went, and what each endpoint costs per call. The captain asked for the
+        // endpoint list specifically, and a record that only carries a total cannot answer
+        // "what did we buy with it".
+        spend: {
+          keyedCeiling: stats.ceiling,
+          keyedRemaining: Math.max(0, stats.ceiling - stats.issued),
+          plannedWorstCaseKeyed: worstCaseKeyed,
+          candidateCap: maxCandidates,
+          endpoints: stats.byEndpoint,
+          seedYields: seedYields.map((s) => ({
+            label: s.label,
+            path: s.path,
+            rowsReturned: s.rowsReturned,
+            walletsReturned: s.walletsReturned,
+          })),
+        },
         elapsedMs: Date.now() - startedAt,
         // `completed` is whether the run reached the end; `truncated` is whether anything is
         // missing for any reason. A completed run whose candidate cap bit is truncated but NOT
@@ -665,6 +714,7 @@ export async function main(opts, env, out, err) {
           truncationReason: record.truncationReason,
           prefiltered: prefiltered.length,
           coverage: record.coverage,
+          spend: record.spend,
           thresholds: T['stage1_gate'],
         }),
       );

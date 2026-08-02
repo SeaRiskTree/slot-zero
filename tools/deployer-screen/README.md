@@ -32,8 +32,11 @@ node tools/deployer-screen/screen.mjs --stage0
 # Show exactly what a real run would fetch, and fetch nothing.
 node tools/deployer-screen/screen.mjs --dry-run
 
-# A real run. Needs a key (see below). Stage 2 is ON by default.
-node tools/deployer-screen/screen.mjs --tier elite --candidates 12 \
+# A real run. Needs a key (see below). Stage 2 is ON by default. Leave --candidates unset: the
+# default grades everything enumeration surfaces, up to the budget. Passing a number below the
+# ceiling silently truncates coverage, which is exactly how the first elite run graded 12 of the
+# 22 wallets it seeded.
+node tools/deployer-screen/screen.mjs --tier elite \
   --consistency --out tools/deployer-screen/runs/$(date +%F).json
 
 # The competence gate alone, which answers nothing about whether a window is enterable.
@@ -189,6 +192,10 @@ elite result:
 Fewer survivors, from a pool nearly twice as large and drawn from three orderings instead of one. The
 seven rejections are six samples under 25 tokens and one 3-day burst. Ten of the 22 seeded wallets
 were dropped by the candidate cap and never measured, which is why the record is flagged `truncated`.
+**That truncation was a bug in the invocation, not a judgement**: the run asked for 12 while the
+pinned ceiling already allowed 20. The candidate cap now defaults to whatever the request ceiling
+leaves, so an unstated `--candidates` grades everything enumeration surfaces and a conservative
+invocation cannot silently discard wallets again.
 Our own subject deployer `7ufmve7Z…` was surfaced by all three seeds and passed at 38/70 over 35
 days — the wallet Stage 0 exists to show this gate passing.
 
@@ -366,12 +373,40 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 
 | bound | value | why |
 |---|---|---|
-| keyed request ceiling | 45 | 3 enumeration + 20 candidates = 23; headroom for a retry. Under a quarter of the shared 200/day. |
-| candidate cap | 20 | |
+| keyed request ceiling | 200 | The **whole** MadeOnSol Free-tier daily allowance. Captain's instruction, 2026-08-02: there is no free substitute for this data, so spend the allowance when spending it gets results. The earlier ceiling of 45 was this tool's own quarter-allowance caution and is **withdrawn** — do not re-derive it. |
+| candidate cap | 195 | 200 − 3 enumeration − 2 retry headroom. It is what the allowance leaves, not a judgement about how many deployers are worth grading, and it is above what the three seeds can surface — so a **default run grades everything it surfaces**. |
+| over-budget plan | refused before the first request | `3 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. |
 | keyed pacing | 6.5s between request starts | Free tier bursts at ~10/min, and the allowance is **shared** with whatever else holds this key. |
 | keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here. The fill host is paced separately — see below. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does. |
+
+The conditional in the instruction binds: ***"if it gets results"***. It licenses sizing a run by
+what the question needs. It does **not** license sweeping, idle retrying, or re-running to
+re-evidence a side observation — a run that cannot say in advance what it will answer does not get
+the allowance. And the relaxation is **MadeOnSol only**: the Helius / SolanaTracker / CoinGecko keys
+are shared with production and the standing *"do not waste the quota that is production quota too"*
+is unchanged, as is the keyless pump.fun pacing, which bounds a shared public resource for a
+different reason.
+
+Every run reports its spend **concretely**, not as one number: the record's `spend` block (schema 3)
+carries the ceiling, what went unspent, the planned worst case, the per-seed yields, and every
+endpoint called with its per-call cost; `renderStage1` prints the same table. There is no poller,
+sweep, daemon, cron, or cache-warmer, and adding one would be a policy breach rather than an
+optimisation.
+
+### The keyed endpoint list
+
+| endpoint | cost | role |
+|---|---|---|
+| `/deployer-hunter/recent-bonds` | 1 per run | enumeration; carries the `tier` filter |
+| `/deployer-hunter/alerts` | 1 per run | enumeration |
+| `/deployer-hunter/leaderboard?sort=total_bonded` | 1 per run | enumeration |
+| `/deployer-hunter/{wallet}` | **1 per candidate** | the gate — the only cost that scales |
+
+`client.mjs` → `ENDPOINT_ROLES` is the authority; `--dry-run` prints it. Not used, deliberately:
+`/deployer-hunter/{wallet}/tokens` is bonded-only and rejects `limit` above 50, and
+`/deployer-hunter/{wallet}/history` is PRO+, which standing policy refuses.
 
 ### Stage 2's own bounds — and it spends no vendor quota at all
 
@@ -423,14 +458,15 @@ only between pages would let a walk sitting at 17 spent requests start a page th
 finish at 20, and `3 × 8 × 20 = 480` overruns the 432 ceiling the dry run prints as the entire
 exposure — surfacing as a mid-walk ceiling error and a dropped launch.
 
-Note also that the **500 keyless ceiling in `budget` is a per-client ceiling, not a run total**:
+Note also that the **600 keyless ceiling in `budget` is a per-client ceiling, not a run total**:
 `screen.mjs` builds two independent keyless clients, and Stage 2's 432 sits on its own. The enforced
-combined worst case is 932; the realistic one is 492, because the `--consistency` pass cannot exceed
-60 requests. Keeping the two ceilings separate is what stops Stage 2 eating the consistency pass's
-budget, or the reverse.
+combined worst case is 1,032. The 600 is **derived from the candidate cap**, not chosen: the
+`--consistency` pass walks 3 pages per gate survivor, so a 195-candidate cap puts its worst case at
+585, and the 500 that was sized when the cap was 20 would have ended a full consistency run on a
+ceiling rather than on a measurement. Keeping the two ceilings separate is what stops Stage 2 eating
+the consistency pass's budget, or the reverse.
 
-Every run prints its request count, shed count and elapsed time. There is no poller, sweep, daemon,
-cron, or cache-warmer, and adding one would be a policy breach rather than an optimisation.
+Every run prints its request count, shed count and elapsed time.
 
 ### Nothing vendor-derived survives in a note, either
 

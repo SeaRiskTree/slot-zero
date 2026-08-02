@@ -68,6 +68,28 @@ function esYear(entry: string): number | null {
   return Number(m![1]);
 }
 
+/**
+ * The `node-version:` values a workflow actually declares, as bare literals.
+ * A whole-line comment is not a declaration: capturing one would fail the guard with a
+ * divergence that does not exist — the exact failure mode this guard exists to prevent.
+ * Trailing comments and surrounding quotes are stripped from the values that remain.
+ */
+function declaredNodeVersions(workflow: string): string[] {
+  return workflow
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .flatMap((line) => {
+      const m = /node-version:\s*(.+)/.exec(line);
+      if (!m) return [];
+      return [
+        (m[1] ?? '')
+          .replace(/#.*$/, '')
+          .trim()
+          .replace(/^['"]|['"]$/g, ''),
+      ];
+    });
+}
+
 describe('the type surface matches the runtime the repo says it supports', () => {
   it('@types/node is pinned to the engines floor major', () => {
     expect(major(pkg.devDependencies['@types/node']!)).toBe(enginesMajor);
@@ -89,22 +111,33 @@ describe('the type surface matches the runtime the repo says it supports', () =>
   });
 
   it('CI type-checks and tests on the engines floor major', () => {
-    const ci = read('.github/workflows/ci.yml');
-    const declared = [...ci.matchAll(/node-version:\s*(.+)/g)].map((m) =>
-      (m[1] ?? '').replace(/#.*$/, '').trim(),
-    );
+    const declared = declaredNodeVersions(read('.github/workflows/ci.yml'));
     expect(declared.length, 'ci.yml declares no node-version').toBeGreaterThan(0);
-    for (const raw of declared) {
+    for (const value of declared) {
       // A matrix reference or a list would let this guard check one entry, or none, while
       // reading as if it checked them all. Neither is a divergence — but neither is a check.
-      const value = raw.replace(/^['"]|['"]$/g, '');
       expect(
         /^\d[\w.-]*$/.test(value),
-        `ci.yml node-version ${JSON.stringify(raw)} is not a literal version; this guard ` +
+        `ci.yml node-version ${JSON.stringify(value)} is not a literal version; this guard ` +
           'cannot resolve matrix references or lists — inline the version, or teach it to',
       ).toBe(true);
       expect(major(value)).toBe(enginesMajor);
     }
+  });
+
+  it('a commented-out node-version is not read as a declaration', () => {
+    // The scan used to be line-unanchored, so a parked line like the first one below was
+    // captured as if it were live and failed the guard against a version nothing runs on.
+    const workflow = [
+      'jobs:',
+      '  test:',
+      '    steps:',
+      '      - uses: actions/setup-node@v4',
+      '        with:',
+      "          # node-version: '22'  # parked until the floor is raised",
+      "          node-version: '20' # package.json engines: node >=20",
+    ].join('\n');
+    expect(declaredNodeVersions(workflow)).toEqual(['20']);
   });
 
   it("tsconfig's lib does not promise more than the floor runtime provides", () => {

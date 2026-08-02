@@ -302,9 +302,12 @@ one kind truncates the run**:
 |---|---|---|
 | `budget-exhausted` | a request ceiling — a wall. The tool stopped looking, and a rerun stops in the same place, so the reason names the setting to change. | **yes** |
 | `page-failure` | the request was retried once and the retry failed too (a 5xx, a transport failure, a timeout). Only this kind says it was retried, and only this kind suggests a rerun may succeed. | no |
+| `not-retried-failure` | the same class of failure, but this client was configured not to retry. The cause is known; only the retry is absent. Reachable only with `maxRetriesPerRequest: 0`. | no |
 | `vendor-refusal` | a 4xx: the endpoint answered on the first attempt and we deliberately did not retry it. Says so, and points at "did the endpoint move" rather than at a rerun. | no |
-| `local-error` | it failed in our own code — a non-JSON body, a bug in the measurement. Never claims a request was retried, or even made. Our bug. | no |
+| `unparseable-body` | the request **was served** but the body was not JSON. Blame is deliberately not assigned — the likeliest cause is an edge interstitial behind a 200, which is the vendor's, and a bug in our handling is the other, and nothing available distinguishes them. | no |
+| `local-error` | it failed in our own code having never reached the endpoint — a bug thrown inside the measurement. Never claims a request was retried, or even made. Our bug. | no |
 | `unclassified` | the cause could not be identified, so nothing is claimed about it. | no |
+| *(unrecognised)* | an entry written by a newer build. Shown rather than dropped, and it does not truncate: inventing a wall from a label this build cannot read would be asserting a cause we do not have. | no |
 
 **Asserting an inaccurate cause is worse than asserting none.** A record that says "we retried" when
 no retry happened is the same class of defect as a record that says "measured" when nothing was

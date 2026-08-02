@@ -28,6 +28,7 @@ import {
   CeilingReached,
   ENDPOINT_ROLES,
   RequestFailed,
+  UnparseableResponse,
   VendorRefused,
   buildPath,
   endpointOf,
@@ -88,7 +89,9 @@ import { LIMITATIONS, renderDryRun, renderEntry, renderStage1 } from '../tools/d
 import {
   RECORD_SCHEMA_VERSION,
   UNMEASURED_KINDS,
+  UNRECOGNISED_KIND,
   classifyUnmeasured,
+  kindMetaOf,
   completenessOf,
   deriveTruncation,
   describeCompleteness,
@@ -1551,9 +1554,10 @@ describe('the keyless walk retries, like the keyed one', () => {
     });
   });
 
-  it('reports a non-JSON body as ours, not as a failed request', async () => {
-    // The request was served. Nothing failed at the endpoint, so blaming it would send an operator
-    // to look in the wrong place entirely.
+  it('reports a non-JSON body as served-but-unreadable, blaming neither side', async () => {
+    // The request WAS served, so neither "the endpoint failed" nor "our code failed" is
+    // established. The likeliest cause is an edge interstitial behind a 200 — the vendor's — so
+    // calling it ours would send an operator hunting a bug that does not exist.
     const client = keyless(async () => ({
       ok: true,
       status: 200,
@@ -1562,8 +1566,27 @@ describe('the keyless walk retries, like the keyed one', () => {
       },
     }));
     const err = await client.getJson('https://frontend-api-v3.pump.fun/coins?creator=A').catch((e) => e);
+    expect(err).toBeInstanceOf(UnparseableResponse);
     expect(err).not.toBeInstanceOf(RequestFailed);
-    expect(classifyUnmeasured(err)).toBe('local-error');
+    expect((err as InstanceType<typeof UnparseableResponse>).status).toBe(200);
+    expect(classifyUnmeasured(err)).toBe('unparseable-body');
+  });
+
+  it('classifies a not-retried failure as known-but-not-retried, never as unidentifiable', async () => {
+    // Only reachable with retries disabled, but the option is public. The cause is known there —
+    // reporting it as unclassifiable is inaccurate in the other direction.
+    const client = new KeylessClient({
+      maxRequests: 10,
+      minIntervalMs: 0,
+      retryBackoffMs: [],
+      sleepImpl: async () => {},
+      fetchImpl: (async () => boom(503)) as unknown as typeof fetch,
+    });
+    const err = await client.getJson('https://frontend-api-v3.pump.fun/coins?creator=A').catch((e) => e);
+    expect((err as InstanceType<typeof RequestFailed>).retried).toBe(false);
+    expect((err as InstanceType<typeof RequestFailed>).status).toBe(503);
+    expect(classifyUnmeasured(err)).toBe('not-retried-failure');
+    expect(client.issued()).toBe(1);
   });
 
   it('cannot let a retry smuggle a request past the ceiling', async () => {
@@ -1654,8 +1677,8 @@ describe('a ceiling hit is never recordable as a measured result', () => {
   });
 
   it('does NOT claim a request was even made for an error in our own code', () => {
-    // A non-JSON body or a bug inside measureConsistency never fails at the endpoint. Blaming the
-    // vendor for our own defect is how a real bug goes unfixed for a month.
+    // A bug inside measureConsistency never reaches the endpoint. Blaming the vendor for our own
+    // defect is how a real bug goes unfixed for a month.
     const u = unmeasuredBecause('consistency-over-time', 'W', new TypeError('x is not a function'), KEYLESS);
     expect(u.kind).toBe('local-error');
     expect(u.summary).toMatch(/inside our own code/);
@@ -1663,6 +1686,39 @@ describe('a ceiling hit is never recordable as a measured result', () => {
     // It may deny a retry; it may not claim one, nor promise a rerun would help.
     expect(u.summary).toMatch(/no request was retried/);
     expect(u.summary).not.toMatch(/the one retry failed|rerun may well succeed/);
+  });
+
+  it('does NOT blame us for a body the endpoint served but we could not parse', () => {
+    // The request WAS served, so "our bug" is a guess, and the likeliest real cause — an edge
+    // interstitial behind a 200 — is the vendor's. Asserting an inaccurate cause is worse than
+    // asserting none, so this one names what happened and attributes it to nobody.
+    const u = unmeasuredBecause(
+      'consistency-over-time',
+      'W',
+      new UnparseableResponse('Response to https://…/coins?creator=W was not JSON: Unexpected token <', {
+        status: 200,
+      }),
+      KEYLESS,
+    );
+    expect(u.kind).toBe('unparseable-body');
+    expect(u.summary).toMatch(/HTTP 200/);
+    expect(u.summary).toMatch(/was not JSON/);
+    expect(u.summary).toMatch(/edge interstitial or error page/);
+    // Neither side is blamed, and no retry is claimed.
+    expect(u.summary).not.toMatch(/our bug|inside our own code/);
+    expect(u.summary).not.toMatch(/the one retry failed|rerun may well succeed/);
+    expect(deriveTruncation({ abortReason: null, coverage: COVERAGE_OK, unmeasured: [u] }).truncated).toBe(
+      false,
+    );
+  });
+
+  it('calls a not-retried failure known-but-not-retried, not unidentifiable', () => {
+    const u = unmeasuredBecause('consistency-over-time', 'W', NOT_RETRIED('HTTP 503 on …', 503), KEYLESS);
+    expect(u.kind).toBe('not-retried-failure');
+    expect(u.summary).toMatch(/HTTP 503/);
+    expect(u.summary).toMatch(/configured not to retry/);
+    expect(u.summary).toMatch(/cause is known/);
+    expect(u.summary).not.toMatch(/could not be classified/);
   });
 
   it('says the cause could not be classified rather than inventing one', () => {
@@ -1681,6 +1737,8 @@ describe('a ceiling hit is never recordable as a measured result', () => {
       unmeasuredBecause('consistency-over-time', 'B', NOT_RETRIED('HTTP 404 on …', 404), KEYLESS),
       unmeasuredBecause('consistency-over-time', 'C', new TypeError('ours'), KEYLESS),
       unmeasuredBecause('consistency-over-time', 'D', 'opaque', KEYLESS),
+      unmeasuredBecause('consistency-over-time', 'E', NOT_RETRIED('HTTP 503 on …', 503), KEYLESS),
+      unmeasuredBecause('consistency-over-time', 'F', new UnparseableResponse('html', { status: 200 }), KEYLESS),
     ];
     const t = deriveTruncation({ abortReason: null, coverage: COVERAGE_OK, unmeasured });
     expect(t.truncated).toBe(false);
@@ -1688,10 +1746,35 @@ describe('a ceiling hit is never recordable as a measured result', () => {
     // But every one of them is still recorded, and still unmeasured rather than a measured negative.
     expect([...partitionUnmeasured(unmeasured).keys()]).toEqual([
       'page-failure',
+      'not-retried-failure',
       'vendor-refusal',
+      'unparseable-body',
       'local-error',
       'unclassified',
     ]);
+  });
+
+  it('records an unrecognised kind rather than throwing on it or dropping it', () => {
+    // record.mjs is the module that has to survive version skew: completenessOf and schemaVersionOf
+    // already degrade rather than throw. A record written by a newer build must not take the whole
+    // record build down with a TypeError, and must not vanish from the render either — a reader who
+    // cannot see the entry reads the run as more complete than it was.
+    const fromTheFuture = {
+      measurement: 'consistency-over-time',
+      subject: 'W',
+      kind: 'some-kind-invented-later',
+      summary: 'a build that knew more than this one recorded something here',
+      detail: null,
+    };
+    expect(kindMetaOf('some-kind-invented-later')).toBe(UNRECOGNISED_KIND);
+    // It does not truncate: inventing a wall from a label we cannot read asserts a cause we lack.
+    const t = deriveTruncation({
+      abortReason: null,
+      coverage: COVERAGE_OK,
+      unmeasured: [fromTheFuture as never],
+    });
+    expect(t.truncated).toBe(false);
+    expect([...partitionUnmeasured([fromTheFuture as never]).keys()]).toEqual(['some-kind-invented-later']);
   });
 
   it('keeps a ceiling truncating even when other kinds are mixed in with it', () => {
@@ -1868,12 +1951,17 @@ describe('a ceiling hit is never recordable as a measured result', () => {
       unmeasured: [
         unmeasuredBecause('consistency-over-time', 'A', NOT_RETRIED('HTTP 404 on …', 404), KEYLESS),
         unmeasuredBecause('consistency-over-time', 'B', new TypeError('ours'), KEYLESS),
-      ],
+        unmeasuredBecause('consistency-over-time', 'C', new UnparseableResponse('html', { status: 200 }), KEYLESS),
+        // A kind from a build that knew more than this one: shown, not dropped, not fatal.
+        { measurement: 'consistency-over-time', subject: 'D', kind: 'invented-later', summary: 'x', detail: null },
+      ] as never,
       thresholds: {},
     });
     expect(text).toMatch(/VENDOR REFUSAL/);
     expect(text).toMatch(/LOCAL ERROR/);
-    // Neither may be dressed up as a retried page, and neither is a wall.
+    expect(text).toMatch(/UNPARSEABLE BODY/);
+    expect(text).toMatch(/UNRECOGNISED KIND/);
+    // None may be dressed up as a retried page, and none is a wall.
     expect(text).not.toMatch(/PAGE FAILURE/);
     expect(text).not.toMatch(/BUDGET EXHAUSTED/);
   });

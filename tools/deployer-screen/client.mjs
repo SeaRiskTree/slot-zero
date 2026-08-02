@@ -76,6 +76,28 @@ export class RequestFailed extends Error {
 }
 
 /**
+ * Thrown when a request was served but its body could not be parsed as JSON.
+ *
+ * Its own type rather than a plain error, because the two plausible causes sit on opposite sides of
+ * the boundary and **asserting an inaccurate cause is worse than asserting none**. The likeliest is
+ * an HTTP 200 carrying an edge interstitial or error page, which is the vendor's; a genuine bug in
+ * our own handling is the other. Nothing available here can tell them apart, so the record says what
+ * happened and declines to assign blame. A plain error would have been read as ours, and would have
+ * sent an operator hunting a bug that does not exist.
+ */
+export class UnparseableResponse extends Error {
+  /**
+   * @param {string} message
+   * @param {{ status: number }} what
+   */
+  constructor(message, what) {
+    super(message);
+    this.name = 'UnparseableResponse';
+    /** @type {number} */ this.status = what.status;
+  }
+}
+
+/**
  * Thrown when the vendor rejects the key or the quota, or rejects our query shape. Terminal:
  * the caller must exit non-zero rather than render an empty ranking.
  */

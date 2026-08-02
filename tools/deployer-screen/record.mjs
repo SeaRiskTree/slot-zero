@@ -35,7 +35,7 @@
  * each new budget needing its own special case that someone remembers to add.
  */
 
-import { CeilingReached, RequestFailed } from './client.mjs';
+import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs';
 
 /**
  * Schema version of records this build writes.
@@ -162,7 +162,8 @@ export function redactAll(lines) {
  * rule above exists to prevent, so a cause that cannot be identified is reported as unidentified
  * rather than rounded to the likeliest story.
  *
- * @typedef {'budget-exhausted' | 'page-failure' | 'vendor-refusal' | 'local-error' | 'unclassified'} UnmeasuredKind
+ * @typedef {'budget-exhausted' | 'page-failure' | 'not-retried-failure' | 'vendor-refusal'
+ *   | 'unparseable-body' | 'local-error' | 'unclassified'} UnmeasuredKind
  */
 
 /**
@@ -185,14 +186,24 @@ export const UNMEASURED_KINDS = {
     heading: 'PAGE FAILURE — the request was retried once and the retry failed too.',
     advice: 'The run continued. A rerun may well succeed.',
   },
+  'not-retried-failure': {
+    truncates: false,
+    heading: 'NOT RETRIED — the request failed and this client was configured not to retry it.',
+    advice: 'The cause is known; only the retry is missing. Reachable only with retries disabled.',
+  },
   'vendor-refusal': {
     truncates: false,
     heading: 'VENDOR REFUSAL — the endpoint answered on the first attempt and we did NOT retry it.',
     advice: 'A plain rerun is not expected to change it; check whether the endpoint moved.',
   },
+  'unparseable-body': {
+    truncates: false,
+    heading: 'UNPARSEABLE BODY — the request was served, but the body was not JSON.',
+    advice: 'Blame is NOT assigned: check first for an edge interstitial or error page behind a 200.',
+  },
   'local-error': {
     truncates: false,
-    heading: 'LOCAL ERROR — this failed in our own code, not at the endpoint.',
+    heading: 'LOCAL ERROR — this failed in our own code, having never reached the endpoint.',
     advice: 'No request was retried and one may never have been made. This is our bug to fix.',
   },
   unclassified: {
@@ -201,6 +212,33 @@ export const UNMEASURED_KINDS = {
     advice: 'Nothing is claimed about it, deliberately: a guessed cause is worse than none.',
   },
 };
+
+/**
+ * What an entry means when its `kind` is not in {@link UNMEASURED_KINDS}.
+ *
+ * This module is the one that has to survive version skew — `completenessOf` and `schemaVersionOf`
+ * already degrade rather than throw on records they do not recognise — and a record written by a
+ * newer build, or a kind added later, must not take the whole record build down with a TypeError.
+ * It does not truncate: inventing a wall from a label this build cannot read would be asserting a
+ * cause we do not have.
+ */
+export const UNRECOGNISED_KIND = {
+  truncates: false,
+  heading: 'UNRECOGNISED KIND — written by a build that knew something this one does not.',
+  advice: 'Shown rather than dropped, and nothing is claimed about it beyond its own summary.',
+};
+
+/**
+ * The meaning of a kind, falling back to {@link UNRECOGNISED_KIND} rather than throwing.
+ *
+ * @param {string} kind
+ * @returns {{ truncates: boolean, heading: string, advice: string }}
+ */
+export function kindMetaOf(kind) {
+  return Object.prototype.hasOwnProperty.call(UNMEASURED_KINDS, kind)
+    ? UNMEASURED_KINDS[/** @type {UnmeasuredKind} */ (kind)]
+    : UNRECOGNISED_KIND;
+}
 
 /**
  * One measurement the run could not take, and why.
@@ -227,15 +265,21 @@ export const UNMEASURED_KINDS = {
  */
 export function classifyUnmeasured(cause) {
   if (cause instanceof CeilingReached) return 'budget-exhausted';
+  // Served, but unreadable. Neither side is established — the likeliest cause is an edge
+  // interstitial behind a 200, which is the vendor's, and a bug in our handling is the other — so
+  // this is its own kind rather than blame pinned on whichever we happened to guess.
+  if (cause instanceof UnparseableResponse) return 'unparseable-body';
   if (cause instanceof RequestFailed) {
     // `retried` is the client's own record of what it did, so this branch can say "retried" and be
     // right. A 4xx that arrived after a retried 5xx is still a request we retried.
     if (cause.retried) return 'page-failure';
     if (cause.status !== null && cause.status >= 400 && cause.status < 500) return 'vendor-refusal';
-    return 'unclassified';
+    // Known cause, no retry. Only reachable with retries disabled, and calling it unidentifiable
+    // would be inaccurate in the other direction — we know exactly what happened.
+    return 'not-retried-failure';
   }
-  // Every client failure leaves as a RequestFailed, so anything else — a non-JSON body, a bug in
-  // the measurement itself — did not fail at the endpoint.
+  // Every client failure leaves as a RequestFailed or an UnparseableResponse, so an Error that is
+  // neither never reached the endpoint: a bug thrown inside the measurement itself.
   if (cause instanceof Error) return 'local-error';
   return 'unclassified';
 }
@@ -256,7 +300,8 @@ export function classifyUnmeasured(cause) {
  */
 export function unmeasuredBecause(measurement, subject, cause, spent) {
   const kind = classifyUnmeasured(cause);
-  const status = cause instanceof RequestFailed ? cause.status : null;
+  const status =
+    cause instanceof RequestFailed || cause instanceof UnparseableResponse ? cause.status : null;
   const detail = cause instanceof Error ? cause.message : String(cause);
 
   let summary;
@@ -273,17 +318,29 @@ export function unmeasuredBecause(measurement, subject, cause, spent) {
         `and the one retry failed too, so ${measurement} is missing. The run continued and later ` +
         `candidates were measured normally; a rerun may well succeed`;
       break;
+    case 'not-retried-failure':
+      summary =
+        `a ${spent.budget} request failed with ${status === null ? 'a transport failure or timeout' : `HTTP ${status}`} ` +
+        `and this client was configured not to retry it, so ${measurement} is missing. The cause is ` +
+        `known; only the retry is absent`;
+      break;
     case 'vendor-refusal':
       summary =
         `the ${spent.budget} endpoint answered HTTP ${status} on the first attempt and we did not ` +
         `retry it, so ${measurement} is missing. That is its considered answer, so a plain rerun ` +
         `is not expected to change it — check whether the endpoint moved`;
       break;
+    case 'unparseable-body':
+      summary =
+        `the ${spent.budget} endpoint answered HTTP ${status} but the body was not JSON, so ` +
+        `${measurement} is missing. The request WAS served, so this is not attributed to either ` +
+        `side: check first for an edge interstitial or error page returned behind a success status`;
+      break;
     case 'local-error':
       summary =
-        `${measurement} failed inside our own code rather than at the ${spent.budget} endpoint, so ` +
-        `no request was retried and one may never have been made. This is our bug, not the ` +
-        `vendor's`;
+        `${measurement} failed inside our own code, having never reached the ${spent.budget} ` +
+        `endpoint, so no request was retried and one may never have been made. This is our bug, ` +
+        `not the vendor's`;
       break;
     default:
       summary =
@@ -325,15 +382,23 @@ export function groupUnmeasured(unmeasured) {
 /**
  * Bucket unmeasured entries by kind, in {@link UNMEASURED_KINDS} order, omitting empty kinds.
  *
+ * A kind this build does not recognise gets its own trailing bucket rather than being filtered out.
+ * Dropping it would be the same defect as mislabelling it: the entry exists because something went
+ * unmeasured, and a reader who cannot see it reads the run as more complete than it was.
+ *
  * @param {readonly Unmeasured[]} unmeasured
- * @returns {Map<UnmeasuredKind, Unmeasured[]>}
+ * @returns {Map<string, Unmeasured[]>}
  */
 export function partitionUnmeasured(unmeasured) {
-  /** @type {Map<UnmeasuredKind, Unmeasured[]>} */
+  /** @type {Map<string, Unmeasured[]>} */
   const byKind = new Map();
-  for (const kind of /** @type {UnmeasuredKind[]} */ (Object.keys(UNMEASURED_KINDS))) {
+  for (const kind of Object.keys(UNMEASURED_KINDS)) {
     const of = unmeasured.filter((u) => u.kind === kind);
     if (of.length > 0) byKind.set(kind, of);
+  }
+  for (const u of unmeasured) {
+    if (Object.prototype.hasOwnProperty.call(UNMEASURED_KINDS, u.kind)) continue;
+    byKind.set(u.kind, [...(byKind.get(u.kind) ?? []), u]);
   }
   return byKind;
 }
@@ -371,7 +436,7 @@ export function deriveTruncation({ abortReason, coverage, unmeasured }) {
         `seeded wallet(s) before they were measured`,
     );
   }
-  const truncating = unmeasured.filter((u) => UNMEASURED_KINDS[u.kind].truncates);
+  const truncating = unmeasured.filter((u) => kindMetaOf(u.kind).truncates === true);
   for (const [summary, n] of groupUnmeasured(truncating)) {
     reasons.push(`${n} candidate(s) went unmeasured — ${summary}`);
   }

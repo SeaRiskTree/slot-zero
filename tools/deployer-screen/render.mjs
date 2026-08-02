@@ -19,7 +19,7 @@
  */
 
 import { buildPath, ENDPOINT_ROLES } from './client.mjs';
-import { UNMEASURED_KINDS, groupUnmeasured, partitionUnmeasured } from './record.mjs';
+import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
 
 /**
@@ -491,7 +491,7 @@ export function renderStage1(run) {
     // One block per kind, because each one tells the reader to do something different — and the
     // grouping key is the wallet-independent summary, so a hundred failed wallets are one line.
     for (const [kind, entries] of partitionUnmeasured(unmeasured)) {
-      const meta = UNMEASURED_KINDS[kind];
+      const meta = kindMetaOf(kind);
       L.push(`   ${meta.heading}`);
       L.push(`   ${meta.advice}`);
       for (const [summary, n] of groupUnmeasured(entries)) {

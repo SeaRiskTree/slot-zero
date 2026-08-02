@@ -18,7 +18,7 @@
  * actively harmful. The default interval encodes that.
  */
 
-import { CeilingReached, RequestFailed } from './client.mjs';
+import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs';
 
 /** Creator listing host. */
 export const FRONTEND_API = 'https://frontend-api-v3.pump.fun';
@@ -186,8 +186,9 @@ export class KeylessClient {
    *
    * Every failure leaves as a {@link RequestFailed} carrying the status and whether a retry was
    * actually made, because the run record classifies a missing measurement from this exception. The
-   * one exception is a body that is not JSON: the request was served, so nothing here failed at the
-   * endpoint, and it leaves as a plain error for the caller to read as ours.
+   * one exception is a body that is not JSON, which leaves as an {@link UnparseableResponse}: the
+   * request WAS served, so neither "the endpoint failed" nor "our code failed" is established, and
+   * the record must not pick one.
    *
    * @param {string} url
    * @returns {Promise<unknown>}
@@ -232,14 +233,15 @@ export class KeylessClient {
       }
 
       if (response.ok) {
-        // A body that is not JSON is OURS to explain, not the endpoint's failure: the request was
-        // served. So it leaves as a plain error rather than a `RequestFailed`, which the record
-        // would otherwise classify as a page the endpoint refused.
+        // A body that is not JSON leaves as an `UnparseableResponse`, not a `RequestFailed`: the
+        // request WAS served, so neither "the endpoint failed" nor "our code failed" is
+        // established, and the record must not pick one.
         try {
           return await response.json();
         } catch (cause) {
-          throw new Error(
+          throw new UnparseableResponse(
             `Response to ${url} was not JSON: ${cause instanceof Error ? cause.message : String(cause)}`,
+            { status: response.status },
           );
         }
       }

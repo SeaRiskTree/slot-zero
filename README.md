@@ -33,6 +33,7 @@ Private. Nothing here is production.
 | `src/` | The loader. Per-launch, per-wallet and per-(wallet, launch) views, plus the raw per-fill tape. No runtime dependencies. |
 | `test/reproduction.test.ts` | The published headline numbers, asserted against the loaded data. |
 | `tools/deployer-screen/` | The only keyed, network-capable area. A rerunnable completion-rate **gate** over MadeOnSol's free Deployer Hunter endpoints — it gates, it does not recommend. Usage, credential handling, quota bounds and scope in its `README.md`. |
+| `analysis/window-population/` | How many profitable windows the tape contains, how long, how fast they close, how many at once. **One window**, 2026-03-12 → 2026-06-04, closing in a single launch. Offline like `src/`. Findings and definitions in its `README.md`. |
 | `test/type-guards.test-d.ts` | Compile-time proof that the three traps below are unreachable — and that `EgQX9R3Q…`'s figures cannot be read as an independent observation. |
 | `AGENTS.md` | Provider facts that cost real time to learn. Read before touching pump.fun or Solana RPC. |
 
@@ -262,6 +263,12 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
 
 ### The rest
 
+- **The tape holds one deployer, and therefore one window.** `analysis/window-population/`
+  finds exactly one interval in which the create slot paid outsiders — 2026-03-12 to
+  2026-06-04 — with 91 days of no window observed before it and 54 days after. How *often* a
+  window arrives, and whether two are ever open at once, needs per-launch series for other
+  deployers over months; the 70-launch control is one launch per creator and carries zero
+  window observations.
 - **Every P&L here is bounded by a 60-second window** (300 s on 21 launches, 120 s on 4).
   48% of pairs close inside it; the other 52% are late, small and still holding, and their
   outcome is unknown. A whole-life tape is the same endpoint with no window bound — roughly

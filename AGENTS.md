@@ -90,9 +90,26 @@ Learned at real cost; the citations are to
 - **The trade endpoint is the affordable route to a per-token tape.** §9.2:
   `swap-api.pump.fun/v2/coins/{mint}/trades?limit=100`, keyless, 100 fills a page, the
   swapping wallet on every row. Its cursor is `<slotIndexId>-<timestampMs>` and **the
-  timestamp component seeks**, so a launch window costs 3–15 requests instead of walking the
-  token's whole history. This turned a ~500,000-request job into ~2,000. `/v1/…/trades` is
-  410; `frontend-api-v3` `/trades/…` is 404.
+  timestamp component seeks** — `cursor=0-<ms>` works, the slot half is ignored — so a launch
+  window costs 3–15 requests instead of walking the token's whole history. This turned a
+  ~500,000-request job into ~2,000. `/v1/…/trades` is 410; `frontend-api-v3` `/trades/…` is 404.
+  `tools/deployer-screen/pumpfun.mjs` → `readLaunchWindow` is the walk; the two traps it exists
+  to refuse are below.
+- **It sheds about a quarter of every request, and a client without retry cannot use it.**
+  Measured from the tape's own build metadata (`window/*.meta.json` → `stats`): **16,960 HTTP
+  429 against 51,715 OK across 235 launches, and 221 of the 235 shed at least once.** The
+  builder's recorded `delay` ranges 0.75s–40s, i.e. it backed off adaptively. A 429 here is the
+  normal case, not an incident.
+- **Rows come back NEWEST FIRST, so a backwards walk reaches the create slot LAST — and a
+  truncated walk is silently wrong, not visibly wrong.** It returns a plausible pile of fills
+  whose earliest slot is merely the earliest it saw, and any create-slot measure will then crown
+  a mid-window sniper as the deployer. Coverage must be *proved*: only a row older than the mint,
+  or the endpoint saying nothing is older, establishes it. Same distinction as the dataset's
+  `meta.reached_mint`. Also **sort by `sid`/`slotIndexId` before reading the queue** — the stored
+  tape is ascending and the live endpoint is descending.
+- **Per-launch request budgets: p50 4 pages, p90 8, p95 13, max 24** (same metadata; fills p50
+  381, max 2,321). Bound a walk by **requests, not pages**, or the shed rate makes the true cost
+  ~3x the plan.
 - **`?creator=` lists by *current* creator, and the creator record can move on-chain.**
   §1.2 and `kol-deployer-entity-cluster/report.md` §6. This silently deleted this operation's
   best launch (`maxxing`, $7.7M ATH, 83% of its lifetime creator-fee income) from its own
@@ -170,6 +187,34 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
 - **ToS §5a(b)/(d) bind us**: internal research only, and no accumulation beyond what is necessary.
   The screen derives and discards — per-token records live in memory for one run; only derived counts
   are ever written, and only with `--out`. Test fixtures are synthetic, never captured payloads.
+
+## The deployer screen's stages, and the two wallets that keep it honest
+
+`tools/deployer-screen/` — full scope, bounds and reproduction in its `README.md`. It answers the
+captain's question *"can I beat the dev and all other wallets sniping the same tokens created by the
+dev currently?"*, and the shape of the answer is the point:
+
+- **Stage 1 GATES on competence** (keyed, MadeOnSol). **Stage 2 SCORES ENTRY** (keyless, pump.fun
+  fills): room in the opening window, plus what every *other* sniping wallet there achieved.
+  **Stage 3 — EXIT — is a separate lane and no exit signal may reach an entry number.** Room to enter
+  is not room to leave, and one blended score cannot be read back apart.
+- **Stage 2 spends no keyed request.** It reuses the mint list from the profile Stage 1 already paid
+  for (`measure.mjs` → `toLaunchRefs`), so the shared vendor allowance is untouched by it.
+- **`7ufmve7Z…` is the known-negative control, and it is load-bearing twice over.** Stage 0 asserts
+  the gate **passes** it (it is competent) *and* that Stage 2 **refuses** it (it is not beatable —
+  measured, `data/slot-zero-june-regime-change/report.md`). Any design that scores it as beatable is
+  wrong; `runStage0` fails loudly, including if a later lane loosens `minRoomLeft` to fit an output.
+- **Everything derived from the fill tape is GROSS OF FEES and is an upper bound.** The trap is
+  concrete, not theoretical: gross, `7ufmve7Z…`'s post-break field reads **362/473 closed round trips
+  positive**; fee-inclusive, that same population made **+0.54 SOL per launch with 51 of 106 wallets
+  negative**. So in the entry score the field leg can only ever **veto** a verdict, never earn one,
+  and every P&L field name ends `GrossOfFees`.
+- **Distributions plus a hit rate, never a mean** — a standing captain bar for this class of claim.
+  Sniper outcomes are heavy-tailed on both sides, so a mean is a wrong answer rather than a rough one.
+  A test asserts `entry.mjs` contains no mean in its executable half.
+- **Only closed round trips have a P&L**, by the dataset's own rule (residual within 0.1% of tokens
+  bought). Reproducing it from raw fills agrees with `wallet_launch_pnl.csv` on **1,502 create-slot
+  outsider pairs, 0 closure mismatches, max error 5e-7 SOL** — checked in Stage 0 every run.
 
 ## Maintaining this file
 

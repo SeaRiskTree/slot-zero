@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 /**
- * deployer-screen — a rerunnable completion-rate GATE over MadeOnSol's free Deployer Hunter
- * endpoints. No agent required: `node tools/deployer-screen/screen.mjs --help`.
+ * deployer-screen — a rerunnable competence GATE plus an ENTRY score, over MadeOnSol's free
+ * Deployer Hunter endpoints and pump.fun's keyless fill tape. No agent required:
+ * `node tools/deployer-screen/screen.mjs --help`.
  *
- * **This tool gates. It does not recommend.** See README.md for the scope statement and
- * `thresholds.json` → `stage2_seam` for what is deliberately not built.
+ * **This tool gates and scores ENTRY. It does not recommend, and it does not score EXIT.** See
+ * README.md for the scope statement and `thresholds.json` → `stage2_entry`.
  *
  * Exit codes are distinct on purpose, because the worst failure mode for a screen is an empty
  * result that looks like a real negative:
@@ -35,10 +36,11 @@ import { fileURLToPath } from 'node:url';
 import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
 import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
-import { RECORD_SCHEMA_VERSION } from './record.mjs';
+import { RECORD_SCHEMA_VERSION, redactVendorIdentifiers } from './record.mjs';
 import { KeylessClient, readCreatorHistory } from './pumpfun.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
+import { addDropReasons, emptyDropReasons, scoreCandidateEntry, toEntryRecordRow, totalDrops } from './stage2.mjs';
 import {
   buildSeedPlan,
   mergeSeeds,
@@ -46,7 +48,7 @@ import {
   readSeedResponse,
   summariseCoverage,
 } from './seed.mjs';
-import { VENDOR_READINGS, runStage0 } from './stage0.mjs';
+import { SUBJECT_DEPLOYER, VENDOR_READINGS, runStage0 } from './stage0.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
@@ -63,19 +65,23 @@ const EXIT = {
   stage0: 8,
 };
 
-const USAGE = `deployer-screen — completion-rate gate over MadeOnSol's free Deployer Hunter endpoints
+const USAGE = `deployer-screen — competence gate + ENTRY score for pump.fun deployers
 
   node tools/deployer-screen/screen.mjs [options]
 
 MODES
   --stage0            Run only the local validation. No network, no key, no quota. Always safe.
   --dry-run           Print exactly what a real run would fetch, and fetch nothing.
-  (default)           Run Stage 0, then Stage 1 (enumerate + gate). Stage 0 must pass first.
+  (default)           Stage 0, then Stage 1 (enumerate + gate), then Stage 2 (score entry room and
+                      the field, keyless). Stage 0 must pass first.
 
 OPTIONS
   --candidates <n>    Max deployers to gate. Default and ceiling from thresholds.json.
   --max-requests <n>  Hard keyed-request ceiling. Cannot exceed the pinned budget.
   --tier <t>          Restrict enumeration to one tier: elite|good|moderate|rising|cold.
+  --no-stage2         Skip entry scoring. Stage 1 only — the competence gate on its own, which
+                      answers nothing about whether a window is enterable.
+  --score <n>         Max gate survivors to score in Stage 2. Cannot exceed the pinned cap.
   --consistency       Also measure long-horizon consistency for gate survivors, via a keyless
                       pump.fun creator walk. Costs no MadeOnSol quota.
   --out <path>        Write the run record as JSON. Default: nothing is written. An INCOMPLETE run
@@ -116,6 +122,11 @@ export function parseArgs(argv) {
     candidates: null,
     maxRequests: null,
     tier: undefined,
+    // Stage 2 is ON by default. The tool exists to answer whether a window can be entered, and a
+    // build that shipped the entry score off by default would make the answerable question the
+    // opt-in and the unanswerable one the headline.
+    stage2: true,
+    scoreCandidates: null,
     consistency: false,
     out: null,
     json: false,
@@ -149,6 +160,16 @@ export function parseArgs(argv) {
       case '--consistency':
         opts.consistency = true;
         break;
+      case '--no-stage2':
+        opts.stage2 = false;
+        break;
+      case '--score': {
+        const v = next();
+        const n = v === null ? Number.NaN : Number(v);
+        if (!Number.isInteger(n) || n < 1) return { ok: false, message: '--score needs a positive integer' };
+        opts.scoreCandidates = n;
+        break;
+      }
       case '--json':
         opts.json = true;
         break;
@@ -201,6 +222,8 @@ export function parseArgs(argv) {
  * @property {number | null} candidates
  * @property {number | null} maxRequests
  * @property {string | undefined} tier
+ * @property {boolean} stage2
+ * @property {number | null} scoreCandidates
  * @property {boolean} consistency
  * @property {string | null} out
  * @property {boolean} json
@@ -259,12 +282,17 @@ export async function main(opts, env, out, err) {
     minSpanDays: T['stage1_gate'].minSpanDays,
   };
   const budget = T['budget'];
+  /** @type {import('./stage2.mjs').Stage2Thresholds} */
+  const entryThresholds = { ...T['stage2_entry'] };
+  // The scoring cap can be lowered from the command line and never raised. Same rule as the
+  // candidate cap: a pinned bound that a flag can widen is not a bound.
+  const maxScored = Math.min(opts.scoreCandidates ?? entryThresholds.maxCandidatesScored, entryThresholds.maxCandidatesScored);
 
   // ---- Stage 0. Always runs. Nothing keyed happens until it has passed. -------------------
   /** @type {import('./stage0.mjs').Stage0Result} */
   let stage0;
   try {
-    stage0 = runStage0(opts.dataDir, gateThresholds);
+    stage0 = runStage0(opts.dataDir, gateThresholds, entryThresholds);
   } catch (cause) {
     err(`Stage 0 could not run: ${cause instanceof Error ? cause.message : String(cause)}`);
     err(`  Is --data-dir correct? Tried: ${opts.dataDir}`);
@@ -304,6 +332,9 @@ export async function main(opts, env, out, err) {
         maxKeyedRequests: maxKeyed,
         consistency: opts.consistency,
         maxKeylessRequests: budget.maxKeylessRequests,
+        stage2: opts.stage2,
+        maxScored,
+        entryThresholds,
         keyDescription: resolution.ok ? resolution.description : null,
       }),
     );
@@ -349,8 +380,31 @@ export async function main(opts, env, out, err) {
     },
   });
 
+  // Stage 2 gets its OWN ceiling on its OWN client, so the fill walk and the consistency walk
+  // cannot eat each other's budget and neither can silently exceed what the dry run printed.
+  const stage2Keyless = new KeylessClient({
+    maxRequests: entryThresholds.maxKeylessRequests,
+    // Its OWN pacing, not `budget.keylessMinIntervalMs`, because it reaches a different host. At the
+    // 2s that host-agnostic value would impose, swap-api shed half this run's launches to 429 and the
+    // verdict degraded to `entry-unmeasured`; 7s walked all of them. The consistency walk on
+    // frontend-api-v3 keeps 2s — it has shed nothing, so it is not slowed for another host's fault.
+    minIntervalMs: entryThresholds.keylessMinIntervalMs,
+    // The fill endpoint sheds about a quarter of what it is asked for — measured on the committed
+    // tape's own build metadata — so a walk without retry cannot finish. Every attempt still counts
+    // against the ceiling, so this widens no bound.
+    retryBackoffMs: entryThresholds.keylessRetryBackoffMs ?? [],
+    onRequest: (url) => {
+      if (!opts.json) out(`  → GET ${url}`);
+    },
+  });
+
   /** @type {import('./rank.mjs').Candidate[]} */
   const candidates = [];
+  // Vendor profiles, held in memory for this run only so Stage 2 can read the mint list Stage 1
+  // already paid for. Never written, never cached — MadeOnSol terms §5a(d); see `toLaunchRefs`.
+  /** @type {Map<string, unknown>} */
+  const profiles = new Map();
+  let scoringTruncatedBy = 0;
 
   try {
     if (!opts.json) {
@@ -405,6 +459,7 @@ export async function main(opts, env, out, err) {
       const gate = applyGate({ completion }, gateThresholds);
       const { verdict, rationale } = verdictFor({ gate, completion, capped });
 
+      profiles.set(seed.wallet, profile);
       candidates.push({
         wallet: seed.wallet,
         seededBy: seed.seededBy,
@@ -414,7 +469,39 @@ export async function main(opts, env, out, err) {
         verdict,
         rationale,
         consistency: null,
+        entry: null,
+        entryCoverage: null,
       });
+    }
+
+    // ---- Stage 2 — ENTRY. Keyless, and it spends no keyed request at all. -----------------
+    if (opts.stage2) {
+      const survivors = candidates.filter((c) => c.verdict === 'gate-passed');
+      const toScore = survivors.slice(0, maxScored);
+      scoringTruncatedBy = survivors.length - toScore.length;
+
+      if (!opts.json) {
+        out('');
+        out(
+          `STAGE 2 — ENTRY: room in the opening window, and what the field achieved. ` +
+            `Scoring ${toScore.length} of ${survivors.length} gate survivor(s), keyless, ` +
+            `ceiling ${entryThresholds.maxKeylessRequests} request(s).`,
+        );
+      }
+
+      for (const c of toScore) {
+        if (!opts.json) out(`  ${c.wallet}`);
+        const { score, coverage } = await scoreCandidateEntry(stage2Keyless, {
+          wallet: c.wallet,
+          profile: profiles.get(c.wallet),
+          nowMs: Date.now(),
+          thresholds: entryThresholds,
+          log: opts.json ? undefined : (line) => out(line),
+        });
+        c.entry = score;
+        c.entryCoverage = coverage;
+        if (!opts.json) out(`    → ${score.verdict.toUpperCase()}: ${score.rationale}`);
+      }
     }
 
     // Optional keyless consistency pass, survivors only.
@@ -500,28 +587,52 @@ export async function main(opts, env, out, err) {
         `the candidate cap of ${maxCandidates} dropped ${coverage.droppedByCandidateCap} seeded wallet(s) before they were measured`,
       );
     }
+    if (scoringTruncatedBy > 0) {
+      reasons.push(
+        `the Stage 2 scoring cap of ${maxScored} left ${scoringTruncatedBy} gate survivor(s) with no entry score`,
+      );
+    }
 
     return {
       ranked,
       record: {
         tool: 'deployer-screen',
         schemaVersion: RECORD_SCHEMA_VERSION,
-        scope: 'STAGE 1 GATE ONLY — this tool does not recommend. Stage 2 scoring is not built.',
+        scope:
+          'STAGE 1 (competence gate) + STAGE 2 (ENTRY room and the field). This tool does not ' +
+          'recommend, and it does NOT score EXIT — no exit signal reaches any number here.',
         thresholdsVersion: T['version'],
         startedAtIso,
         finishedAtIso: new Date().toISOString(),
         keyedRequests: stats.issued,
-        keylessRequests: keyless.issued(),
+        keylessRequests: keyless.issued() + stage2Keyless.issued(),
+        keylessRequestsStage2: stage2Keyless.issued(),
+        keylessShed: keyless.shed() + stage2Keyless.shed(),
         elapsedMs: Date.now() - startedAt,
         // `completed` is whether the run reached the end; `truncated` is whether anything is
         // missing for any reason. A completed run whose candidate cap bit is truncated but NOT
         // incomplete, and only the second may be read as a measured outcome.
         completed,
         truncated: truncated || coverage.coverageTruncated,
-        truncationReason: reasons.length === 0 ? null : reasons.join('; '),
+        // Redacted for the same reason `toEntryRecordRow` redacts its notes: this string can be
+        // built from a thrown error, and an error's message is exactly where a vendor-derived
+        // identifier arrives without anyone deciding to persist one.
+        truncationReason: reasons.length === 0 ? null : redactVendorIdentifiers(reasons.join('; ')),
         coverage,
+        scoringCap: { max: maxScored, survivorsUnscored: scoringTruncatedBy, enabled: opts.stage2 },
+        // Run-level Stage 2 drop tally, broken out by cause. `mintTimeDisagreement` is the one to
+        // read: it says the vendor's mint time and pump.fun's fills contradicted each other, which
+        // on our own tape never happens, so a non-zero value in a committed record is the evidence
+        // that the assumption has broken on strangers.
+        entryDrops: (() => {
+          const by = candidates.reduce(
+            (acc, c) => (c.entryCoverage === null ? acc : addDropReasons(acc, c.entryCoverage.dropsByReason)),
+            emptyDropReasons(),
+          );
+          return { total: totalDrops(by), byReason: by };
+        })(),
         prefilteredOut: prefiltered,
-        thresholds: { stage1_gate: T['stage1_gate'], budget: T['budget'] },
+        thresholds: { stage1_gate: T['stage1_gate'], stage2_entry: T['stage2_entry'], budget: T['budget'] },
         stage0: summariseStage0(stage0),
         limitations: LIMITATIONS,
         candidates: ranked.map(toRecordRow),
@@ -547,6 +658,7 @@ export async function main(opts, env, out, err) {
           candidates: ranked,
           keyedRequests: record.keyedRequests,
           keylessRequests: record.keylessRequests,
+          keylessShed: record.keylessShed,
           elapsedMs: record.elapsedMs,
           startedAtIso,
           completed: record.completed,
@@ -623,11 +735,25 @@ function toRecordRow(c) {
     rationale: c.rationale,
     gateReasons: c.gate.reasons,
     consistency: c.consistency,
+    // Stage 2's own projection, which is subject to the same containment: quantiles, counts and a
+    // hit rate over pump.fun's public fills. No mint — Stage 2 held a list of them in memory to do
+    // the walk and dropped it — and no counterparty wallet address.
+    entry: c.entry === null || c.entryCoverage === null ? null : toEntryRecordRow(c.entry, c.entryCoverage),
   };
 }
 
 /** @param {import('./stage0.mjs').Stage0Result} s */
 function summariseStage0(s) {
+  /** @param {import('./entry.mjs').EntryScore} e */
+  const control = (e) => ({
+    verdict: e.verdict,
+    launchesSampled: e.launchesSampled,
+    roomLeftMedian: Number(e.roomLeft.median.toFixed(4)),
+    fieldClosedRoundTrips: e.fieldClosedRoundTrips,
+    fieldHitRateGrossOfFees: Number(e.fieldHitRateGrossOfFees.rate.toFixed(4)),
+    fieldRealisedMedianSolGrossOfFees: Number(e.fieldRealisedSolGrossOfFees.median.toFixed(4)),
+  });
+
   return {
     passed: s.passed,
     failures: s.failures,
@@ -642,6 +768,23 @@ function summariseStage0(s) {
       'The gate PASSES our subject deployer, whose opening window is known to be unprofitable for ' +
       'outsiders since 2026-06-04. Passing this gate does not mean a deployer is worth the time.',
     curveInversionMaxErrorSol: s.curveCheck.maxAbsErrorSol,
+    fieldReproduction: {
+      pairs: s.fieldCheck.pairs,
+      closureMismatches: s.fieldCheck.closureMismatches,
+      missingFromCsv: s.fieldCheck.missingFromCsv,
+      maxRealisedErrorSol: s.fieldCheck.maxRealisedErrorSol,
+      ok: s.fieldCheck.ok,
+    },
+    knownNegativeControl: {
+      wallet: SUBJECT_DEPLOYER,
+      meaning:
+        'Stage 2 must NOT score this wallet as having entry room. It is competent (the gate passes ' +
+        'it) and it is not beatable — measured in data/slot-zero-june-regime-change/report.md, not ' +
+        'assumed. Note that the field leg, gross of fees, says the opposite: a verdict that follows ' +
+        'it would be wrong, which is why the field can only veto and never pass.',
+      recentLaunches: control(s.subjectEntryRecent),
+      postBreakRegime: control(s.subjectEntryPostBreak),
+    },
     stage2SeamReproduction: s.eraSplit.map((e) => ({
       era: e.era,
       n: e.n,

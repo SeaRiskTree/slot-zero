@@ -26,14 +26,27 @@ import {
 import { BoundedClient, CeilingReached, VendorRefused, buildPath } from '../tools/deployer-screen/client.mjs';
 import {
   CURVE_INITIAL_PRICE_SOL,
+  createSlotGroups,
   measureCompletion,
   measureCreateSlot,
   median,
   parseFill,
   percentile,
   solBetweenPrices,
+  toLaunchRefs,
   toTokenRecords,
 } from '../tools/deployer-screen/measure.mjs';
+import type { Fill } from '../tools/deployer-screen/measure.mjs';
+import {
+  ENTRY_VERDICTS,
+  distribution,
+  hitRate,
+  measureLaunchEntry,
+  scoreEntry,
+} from '../tools/deployer-screen/entry.mjs';
+import type { EntryScore, EntryThresholds } from '../tools/deployer-screen/entry.mjs';
+import { emptyDropReasons, scoreCandidateEntry, toEntryRecordRow } from '../tools/deployer-screen/stage2.mjs';
+import { runStage0 } from '../tools/deployer-screen/stage0.mjs';
 import {
   applyGate,
   measureConsistency,
@@ -49,8 +62,10 @@ import {
   summariseCoverage,
 } from '../tools/deployer-screen/seed.mjs';
 import {
+  KeylessClient,
   extractTradeRows,
   parseFillLoose,
+  readLaunchWindow,
   slotFromSlotIndexId,
   windowFilter,
 } from '../tools/deployer-screen/pumpfun.mjs';
@@ -60,15 +75,48 @@ import {
   loadThresholds,
   partialOutPath,
 } from '../tools/deployer-screen/screen.mjs';
-import { LIMITATIONS, renderStage1 } from '../tools/deployer-screen/render.mjs';
+import { LIMITATIONS, renderDryRun, renderEntry, renderStage1 } from '../tools/deployer-screen/render.mjs';
 import {
   RECORD_SCHEMA_VERSION,
   completenessOf,
   describeCompleteness,
+  redactVendorIdentifiers,
   schemaVersionOf,
 } from '../tools/deployer-screen/record.mjs';
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
+
+/**
+ * Build a synthetic fill.
+ *
+ * `sid` matters as much as `slot` and is defaulted rather than omitted: it is pump.fun's
+ * within-slot ordering key, and it is what the create-slot fill queue — and therefore
+ * `solQueuedAheadSol` — is derived from. It defaults to a monotonically increasing value in
+ * declaration order, so a test's fill list reads as the queue it looks like.
+ */
+let sidCounter = 0;
+const fill = (
+  o: Partial<{
+    slot: number;
+    sid: string;
+    tx: string;
+    wallet: string;
+    sol: number;
+    tokens: number;
+    side: 'buy' | 'sell';
+    venue: 'pump' | 'pump_amm';
+  }>,
+): Fill => ({
+  slot: o.slot ?? 100,
+  sid: o.sid ?? String(++sidCounter).padStart(22, '0'),
+  tx: o.tx ?? 'tx0',
+  wallet: o.wallet ?? 'w',
+  side: o.side ?? ('buy' as const),
+  venue: o.venue ?? ('pump' as const),
+  sol: o.sol ?? 1,
+  tokens: o.tokens ?? (o.sol ?? 1) * 1e7,
+  priceSol: 1e-7,
+});
 
 const DAY = 86_400_000;
 const T0 = Date.parse('2026-06-01T00:00:00Z');
@@ -361,15 +409,6 @@ describe('the curve, and the fills', () => {
 });
 
 describe('the co-ordination rule — the Stage 2 seam', () => {
-  const fill = (o: Partial<{ slot: number; tx: string; wallet: string; sol: number; side: 'buy' | 'sell' }>) => ({
-    slot: o.slot ?? 100,
-    tx: o.tx ?? 'tx0',
-    wallet: o.wallet ?? 'w',
-    side: o.side ?? ('buy' as const),
-    venue: 'pump' as const,
-    sol: o.sol ?? 1,
-    priceSol: 1e-7,
-  });
 
   it('marks every wallet sharing a transaction as co-ordinated', () => {
     // dev buys alone; two wallets share one transaction; one buys by itself.
@@ -419,8 +458,8 @@ describe('the co-ordination rule — the Stage 2 seam', () => {
 
   it('ignores sells and graduated-pool fills when locating the create slot', () => {
     const m = measureCreateSlot([
-      { ...fill({ slot: 50, wallet: 'amm' }), venue: 'pump_amm' },
-      { ...fill({ slot: 60, wallet: 'seller' }), side: 'sell' },
+      fill({ slot: 50, wallet: 'amm', venue: 'pump_amm' }),
+      fill({ slot: 60, wallet: 'seller', side: 'sell' }),
       fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 9 }),
     ]);
     expect(m!.slot).toBe(100);
@@ -429,7 +468,7 @@ describe('the co-ordination rule — the Stage 2 seam', () => {
 
   it('returns null rather than a fabricated measurement when there is no curve buy', () => {
     expect(measureCreateSlot([])).toBeNull();
-    expect(measureCreateSlot([{ ...fill({}), side: 'sell' }])).toBeNull();
+    expect(measureCreateSlot([fill({ side: 'sell' })])).toBeNull();
   });
 
   it('treats an empty create slot as fully occupied rather than wide open', () => {
@@ -440,7 +479,7 @@ describe('the co-ordination rule — the Stage 2 seam', () => {
 
   it('windowFilter keeps the opening slots and drops later trading', () => {
     const fills = [fill({ slot: 1000 }), fill({ slot: 1100 }), fill({ slot: 99_999 })];
-    const kept = windowFilter(fills, 60_000); // 60s ≈ 150 slots
+    const kept = windowFilter(fills, 160); // the pinned live span, stage2_entry.windowSlotSpan
     expect(kept.map((f) => f.slot)).toEqual([1000, 1100]);
   });
 });
@@ -588,7 +627,13 @@ describe('the gate', () => {
 });
 
 describe('ordering is deterministic and not a league table', () => {
-  const candidate = (wallet: string, n: number, done: number, verdict: 'gate-passed' | 'gate-failed') => ({
+  const candidate = (
+    wallet: string,
+    n: number,
+    done: number,
+    verdict: 'gate-passed' | 'gate-failed',
+    roomMedian?: number,
+  ) => ({
     wallet,
     seededBy: ['leaderboard:total_bonded'],
     completion: measureCompletion(
@@ -599,6 +644,24 @@ describe('ordering is deterministic and not a league table', () => {
     verdict,
     rationale: '',
     consistency: null,
+    entry:
+      roomMedian === undefined
+        ? null
+        : ({ roomLeft: { ...distribution([roomMedian]) } } as unknown as EntryScore),
+    entryCoverage: null,
+  });
+
+  it('sorts by MEASURED entry room, and puts unscored candidates after every scored one', () => {
+    // The promise the Stage 1 lane made when it left the seam: once Stage 2 landed, room-left
+    // becomes the sort key. An unscored candidate is not a low-room candidate, so it sorts last
+    // rather than being interleaved at some imputed room.
+    const ranked = rankCandidates([
+      candidate('unscored', 70, 40, 'gate-passed'),
+      candidate('narrow', 70, 40, 'gate-passed', 0.2),
+      candidate('wide', 30, 15, 'gate-passed', 0.8),
+      candidate('rejected', 10, 10, 'gate-failed'),
+    ]);
+    expect(ranked.map((c) => c.wallet)).toEqual(['wide', 'narrow', 'unscored', 'rejected']);
   });
 
   it('puts passers first, then larger samples, then higher rates', () => {
@@ -976,7 +1039,69 @@ describe('the CLI contract', () => {
     expect(r.opts.out).toBeNull();
   });
 
-  it('ships pinned thresholds whose stage-2 block is inert', () => {
+  it('scores ENTRY by default, because that is the question the tool exists for', () => {
+    const r = parseArgs([]);
+    if (!r.ok) throw new Error('unreachable');
+    // Shipping the answerable question off by default would make the unanswerable one the headline.
+    expect(r.opts.stage2).toBe(true);
+    expect(r.opts.scoreCandidates).toBeNull();
+
+    const off = parseArgs(['--no-stage2']);
+    if (!off.ok) throw new Error('unreachable');
+    expect(off.opts.stage2).toBe(false);
+
+    const scored = parseArgs(['--score', '2']);
+    if (!scored.ok) throw new Error('unreachable');
+    expect(scored.opts.scoreCandidates).toBe(2);
+    expect(parseArgs(['--score', '0']).ok).toBe(false);
+    expect(parseArgs(['--score']).ok).toBe(false);
+  });
+
+  it('the dry run prints Stage 2\'s whole exposure before a single request', () => {
+    const T = loadThresholds();
+    const text = renderDryRun({
+      seedPlan: [],
+      maxCandidates: 12,
+      maxKeyedRequests: 45,
+      consistency: false,
+      maxKeylessRequests: T['budget'].maxKeylessRequests,
+      stage2: true,
+      maxScored: T['stage2_entry'].maxCandidatesScored,
+      entryThresholds: T['stage2_entry'],
+      keyDescription: null,
+    });
+    const worstCase =
+      T['stage2_entry'].maxCandidatesScored *
+      T['stage2_entry'].maxLaunchesPerCandidate *
+      T['stage2_entry'].maxRequestsPerLaunch;
+    expect(text).toMatch(/WORST CASE/);
+    expect(text).toContain(String(worstCase));
+    expect(text).toMatch(/WHOLE exposure/i);
+    // And it says out loud that the stage costs no vendor quota, which is the fact a reviewer of a
+    // provider-bound change most needs.
+    expect(text).toMatch(/NO KEYED REQUEST/);
+    // And the WALL CLOCK, derived from the pinned pacing rather than written down once. An estimate
+    // stale in the optimistic direction gets a run killed by an operator who thinks it has hung.
+    expect(text).toMatch(/about 17 min typical/);
+    expect(text).toMatch(/about 50 min worst case/);
+    expect(text).toMatch(/7s between requests, swap-api ONLY/);
+    // With --no-stage2 the plan must say what is NOT being measured, not merely go quiet.
+    const off = renderDryRun({
+      seedPlan: [],
+      maxCandidates: 12,
+      maxKeyedRequests: 45,
+      consistency: false,
+      maxKeylessRequests: T['budget'].maxKeylessRequests,
+      stage2: false,
+      maxScored: 0,
+      entryThresholds: T['stage2_entry'],
+      keyDescription: null,
+    });
+    expect(off).toMatch(/STAGE 2 DISABLED/);
+    expect(off).toMatch(/nothing about whether a window is enterable/);
+  });
+
+  it('ships pinned thresholds, with Stage 2 active and every provider bound tied together', () => {
     const T = loadThresholds();
     expect(T['stage1_gate'].minTokens).toBe(25);
     expect(T['stage1_gate'].minCompletionRate).toBe(0.25);
@@ -984,9 +1109,25 @@ describe('the CLI contract', () => {
     expect(T['stage1_gate'].completionRateSource).toBe('profile.pump_tokens[].complete');
     // The gate must never be able to read a vendor aggregate.
     expect(JSON.stringify(T['stage1_gate'])).not.toMatch(/"bonding_rate"\s*:/);
-    // Stage 2 is reserved, not active. If this flips to true, a scoring lane shipped without
-    // updating the scope statements in render.mjs and the README.
-    expect(T['stage2_seam'].active).toBe(false);
+    // Stage 2 is now built, and its block is the v2.0.0 `stage2_seam` promoted in place. The two
+    // values that block RESERVED were pinned before this lane existed to apply them, and they must
+    // still be the ones in force: a bar derived after seeing the output it judges is not a bar.
+    expect(T['stage2_seam']).toBeUndefined();
+    expect(T['stage2_entry'].active).toBe(true);
+    expect(T['stage2_entry'].minRoomLeft).toBe(0.55);
+    expect(T['stage2_entry'].minLaunchesSampled).toBe(8);
+    // Every provider bound Stage 2 has, and the arithmetic that ties them together. The declared
+    // worst case must not exceed the ceiling, or the dry run's plan is not the whole exposure.
+    const s2 = T['stage2_entry'];
+    expect(s2.maxCandidatesScored * s2.maxLaunchesPerCandidate * s2.maxRequestsPerLaunch).toBeLessThanOrEqual(
+      s2.maxKeylessRequests,
+    );
+    expect(s2.maxKeylessRequests).toBeLessThanOrEqual(loadThresholds()['budget'].maxKeylessRequests);
+    // Every Stage 2 threshold carries its anchor, same rule as the gate's.
+    for (const key of Object.keys(s2)) {
+      if (key.startsWith('$') || key === 'active' || key === 'justification') continue;
+      expect(s2.justification[key], `stage2_entry.${key} has no justification`).toBeTruthy();
+    }
     // Every threshold carries its anchor.
     expect(Object.keys(T['stage1_gate'].justification).sort()).toEqual([
       'minCompletionRate',
@@ -1014,7 +1155,26 @@ describe('the CLI contract', () => {
     expect(b.maxKeyedRequests).toBeLessThanOrEqual(50); // a quarter of the shared 200/day
     expect(b.maxCandidates).toBeLessThanOrEqual(20);
     expect(b.keyedMinIntervalMs).toBeGreaterThanOrEqual(6_000); // Free tier bursts at ~10/min
-    expect(b.keylessMinIntervalMs).toBeGreaterThanOrEqual(2_000); // measured pump.fun pacing
+    expect(b.keylessMinIntervalMs).toBeGreaterThanOrEqual(2_000); // conservative carry-over, frontend-api-v3
+  });
+
+  it('paces the fill host on its own pin, and does not slow the host that never shed', () => {
+    const T = loadThresholds();
+    // Pinned per HOST. At the general 2s, swap-api shed half a live run's launches past all their
+    // retries and the verdict degraded to `entry-unmeasured` where the truth was
+    // `entry-room-absent` — a quiet failure, so the pacing is pinned above it deliberately.
+    expect(T['stage2_entry'].keylessMinIntervalMs).toBe(7_000);
+    // frontend-api-v3 has shed nothing here and must NOT be slowed for another host's fault.
+    expect(T['budget'].keylessMinIntervalMs).toBe(2_000);
+    expect(T['stage2_entry'].keylessMinIntervalMs).toBeGreaterThan(T['budget'].keylessMinIntervalMs);
+    // Pacing moves the wall clock, never the exposure: the stage arithmetic is untouched.
+    const s2 = T['stage2_entry'];
+    expect(s2.maxCandidatesScored * s2.maxLaunchesPerCandidate * s2.maxRequestsPerLaunch).toBe(432);
+    // Each justification must name the host it governs, or the next reader re-inherits the
+    // misattribution this pin exists to correct.
+    expect(s2.justification.keylessMinIntervalMs).toMatch(/swap-api/);
+    expect(T['budget'].justification.keylessMinIntervalMs).toMatch(/frontend-api-v3/);
+    expect(T['budget'].justification.keylessMinIntervalMs).toMatch(/api\.mainnet-beta\.solana\.com/);
   });
 });
 
@@ -1265,10 +1425,15 @@ describe('the keyless boundary holds in both directions', () => {
     // The README makes a ToS-facing claim about exactly which fields survive a run. It is asserted
     // here so the claim cannot drift from the code, and so a future field addition has to come and
     // change this list on purpose.
-    const PERSISTED = [
+    // An ALLOWED SET rather than an exact list, because committed records are evidence and are
+    // never retro-edited: the schema-1 record predates `entry` and legitimately lacks it. The
+    // ToS-facing claim is that nothing OUTSIDE this set is ever persisted, and a subset check is
+    // exactly that claim. The current writer's own row shape is pinned separately, below.
+    const ALLOWED = new Set([
       'completed',
       'completionRate',
       'consistency',
+      'entry',
       'gateReasons',
       'rationale',
       'seededBy',
@@ -1279,7 +1444,7 @@ describe('the keyless boundary holds in both directions', () => {
       'wallet',
       'windowFirstDeploy',
       'windowLastDeploy',
-    ];
+    ]);
     // Anything from the vendor's per-token records. None of these may appear in a candidate row.
     const FORBIDDEN =
       /"(mint|token_mint|token_name|token_symbol|symbol|name|peak_market_cap|mc_at_bond|bonded_at|deployed_at|time_to_bond_minutes|ath_market_cap|pool_address|token_image_url)"/;
@@ -1290,9 +1455,1156 @@ describe('the keyless boundary holds in both directions', () => {
       const parsed = JSON.parse(text) as { candidates: Record<string, unknown>[] };
       expect(parsed.candidates.length, file).toBeGreaterThan(0);
       for (const row of parsed.candidates) {
-        expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(PERSISTED);
+        for (const key of Object.keys(row)) {
+          expect(ALLOWED.has(key), `${file} candidate row persists unexpected field '${key}'`).toBe(true);
+        }
         expect(FORBIDDEN.test(JSON.stringify(row)), `${file} holds per-token vendor data`).toBe(false);
       }
     }
+  });
+});
+
+// =============================================================================================
+// STAGE 2 — ENTRY
+// =============================================================================================
+
+const ENTRY_T: EntryThresholds = {
+  minRoomLeft: 0.55,
+  minLaunchesSampled: 8,
+  minFieldRoundTrips: 10,
+  minFieldHitRateGross: 0.5,
+};
+
+// Read from the pinned file rather than restated, so a test can never quietly disagree with the
+// parameter a real run uses.
+const WINDOW_SLOT_SPAN = loadThresholds()['stage2_entry'].windowSlotSpan as number;
+const SEEK_MARGIN_MS = loadThresholds()['stage2_entry'].seekMarginMs as number;
+
+describe('distributions and a hit rate, never a mean', () => {
+  it('reports quantiles and NO mean — the captain bar, enforced on the shape', () => {
+    const d = distribution([1, 2, 3, 4, 100]);
+    expect(Object.keys(d).sort()).toEqual(['max', 'median', 'min', 'n', 'p10', 'p25', 'p75', 'p90']);
+    expect(d.median).toBe(3);
+    expect(d.min).toBe(1);
+    expect(d.max).toBe(100);
+    // The point of the rule, in one assertion: the arithmetic mean of this sample is 22, which is
+    // larger than 80% of the observations and describes none of them.
+    expect(JSON.stringify(d)).not.toContain('22');
+  });
+
+  it('the entry module computes no mean anywhere, and says so in its own source', () => {
+    // A source-level guard rather than an output-level one. An output-level check only catches a
+    // mean that got a field name; this catches one computed for a threshold comparison, where it
+    // would be invisible and would still be the wrong answer.
+    const src = readFileSync(join(TOOL_DIR, 'entry.mjs'), 'utf8');
+    const code = src
+      .split('\n')
+      .filter((l) => !l.trimStart().startsWith('*') && !l.trimStart().startsWith('//') && !l.includes('/**'))
+      .join('\n');
+    expect(code).not.toMatch(/\b(mean|average|avg)\b/i);
+    expect(code).not.toMatch(/reduce\([^)]*\+/);
+  });
+
+  it('an empty sample yields NaN, never a zero that reads as a measured negative', () => {
+    const d = distribution([]);
+    expect(d.n).toBe(0);
+    expect(Number.isNaN(d.median)).toBe(true);
+    const h = hitRate([], () => true);
+    expect(h.n).toBe(0);
+    // 'no observations' and 'none of the observations hit' are different findings.
+    expect(Number.isNaN(h.rate)).toBe(true);
+    expect(h.rate).not.toBe(0);
+  });
+
+  it('drops non-finite observations rather than propagating them through every quantile', () => {
+    const d = distribution([1, Number.NaN, 3]);
+    expect(d.n).toBe(2);
+    expect(d.median).toBe(2);
+  });
+});
+
+describe('the field — what every OTHER sniping wallet achieved', () => {
+  /** dev 10 SOL, a 2-wallet bundle at 3 each, then two independent wallets. */
+  const openingWindow = () => [
+    fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 10, tokens: 1000 }),
+    fill({ slot: 100, tx: 'bundle', wallet: 'book1', sol: 3, tokens: 200 }),
+    fill({ slot: 100, tx: 'bundle', wallet: 'book2', sol: 3, tokens: 200 }),
+    fill({ slot: 100, tx: 'o1', wallet: 'winner', sol: 2, tokens: 100 }),
+    fill({ slot: 100, tx: 'o2', wallet: 'loser', sol: 2, tokens: 90 }),
+    // Later in the window: one closes at a profit, one closes at a loss.
+    fill({ slot: 140, tx: 's1', wallet: 'winner', sol: 5, tokens: 100, side: 'sell' }),
+    fill({ slot: 145, tx: 's2', wallet: 'loser', sol: 1, tokens: 90, side: 'sell' }),
+  ];
+
+  it('measures fill, queue position and SOL queued ahead for every competing wallet', () => {
+    const e = measureLaunchEntry(openingWindow());
+    expect(e).not.toBeNull();
+    const field = e!.field;
+    expect(field.map((f) => f.wallet)).toEqual(['winner', 'loser']);
+
+    const winner = field[0]!;
+    expect(winner.createSlotFillSol).toBe(2);
+    expect(winner.queuePosition).toBe(4);
+    // dev 10 + book 3 + book 3 = 16 SOL was already committed ahead of it.
+    expect(winner.solQueuedAheadSol).toBe(16);
+    expect(field[1]!.solQueuedAheadSol).toBe(18);
+  });
+
+  it('reports realised P&L as a distribution and a hit rate, gross of fees', () => {
+    const e = measureLaunchEntry(openingWindow())!;
+    expect(e.field[0]!.realisedSolGrossOfFees).toBeCloseTo(3, 10); // 5 out, 2 in
+    expect(e.field[1]!.realisedSolGrossOfFees).toBeCloseTo(-1, 10); // 1 out, 2 in
+    expect(e.field[0]!.returnPerSolGrossOfFees).toBeCloseTo(1.5, 10);
+
+    const score = scoreEntry([e], ENTRY_T);
+    expect(score.fieldHitRateGrossOfFees).toEqual({ n: 2, hits: 1, rate: 0.5 });
+  });
+
+  it('EVERY P&L field is named GrossOfFees, so a caller cannot forget what is missing', () => {
+    const e = measureLaunchEntry(openingWindow())!;
+    const pnlish = Object.keys(e.field[0]!).filter((k) => /realised|return|pnl|profit/i.test(k));
+    expect(pnlish.length).toBeGreaterThan(0);
+    for (const k of pnlish) expect(k, `${k} does not disclose that it is gross of fees`).toMatch(/GrossOfFees$/);
+
+    const score = scoreEntry([e], ENTRY_T);
+    for (const k of Object.keys(score).filter((k) => /realised|return|pnl|profit/i.test(k))) {
+      expect(k).toMatch(/GrossOfFees$/);
+    }
+    // The field's hit rate is a P&L statement too, so it carries the same disclosure. `roomHitRate`
+    // deliberately does not: it is a share of launches leaving room, which fees cannot touch.
+    expect(Object.keys(score)).toContain('fieldHitRateGrossOfFees');
+    expect(Object.keys(score)).toContain('roomHitRate');
+  });
+
+  it('an OPEN position has no complete P&L and is counted, never marked to a price', () => {
+    // The dataset's trap #2, on the live path: only closed pairs have a complete P&L, and an open
+    // one contributes nothing to the distribution rather than a paper number.
+    const fills = [
+      fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 10, tokens: 1000 }),
+      fill({ slot: 100, tx: 'o1', wallet: 'holder', sol: 2, tokens: 100 }),
+      fill({ slot: 140, tx: 's1', wallet: 'holder', sol: 1, tokens: 40, side: 'sell' }),
+    ];
+    const e = measureLaunchEntry(fills)!;
+    expect(e.field[0]!.closedInWindow).toBe(false);
+    expect(Number.isNaN(e.field[0]!.realisedSolGrossOfFees)).toBe(true);
+
+    const score = scoreEntry([e], ENTRY_T);
+    expect(score.fieldOpenPositions).toBe(1);
+    expect(score.fieldClosedRoundTrips).toBe(0);
+    expect(score.fieldRealisedSolGrossOfFees.n).toBe(0);
+    expect(score.caveats.join(' ')).toMatch(/still open .* NO complete P&L/);
+  });
+
+  it("uses the dataset's own 0.1% residual rule for closure, not exact equality", () => {
+    const nearlyFlat = [
+      fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 10, tokens: 1000 }),
+      fill({ slot: 100, tx: 'o1', wallet: 'w', sol: 2, tokens: 100_000 }),
+      fill({ slot: 140, tx: 's1', wallet: 'w', sol: 3, tokens: 99_950, side: 'sell' }),
+    ];
+    expect(measureLaunchEntry(nearlyFlat)!.field[0]!.closedInWindow).toBe(true);
+  });
+
+  it('treats an unreadable token amount as OPEN — undecidable is never rounded to closed', () => {
+    // A closed pair contributes a P&L to the distribution. Guessing closure on a row we could not
+    // read would fabricate one; guessing open only shrinks the sample and says so.
+    const fills = [
+      fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 10 }),
+      fill({ slot: 100, tx: 'o1', wallet: 'w', sol: 2, tokens: Number.NaN }),
+      fill({ slot: 140, tx: 's1', wallet: 'w', sol: 5, tokens: Number.NaN, side: 'sell' }),
+    ];
+    expect(measureLaunchEntry(fills)!.field[0]!.closedInWindow).toBe(false);
+  });
+
+  it('orders the create slot by sid, so live newest-first rows do not invert the queue', () => {
+    // The live endpoint returns rows DESCENDING. Without the sort, the LAST wallet in the queue
+    // would be read as the deployer and every "queued ahead" figure would be backwards.
+    const descending = [
+      fill({ slot: 100, sid: '0000000000000000000003', tx: 'o1', wallet: 'late', sol: 2 }),
+      fill({ slot: 100, sid: '0000000000000000000002', tx: 'o2', wallet: 'mid', sol: 3 }),
+      fill({ slot: 100, sid: '0000000000000000000001', tx: 'devtx', wallet: 'dev', sol: 10 }),
+    ];
+    const e = measureLaunchEntry(descending)!;
+    expect(e.createSlot.deployer).toBe('dev');
+    expect(e.field.map((f) => f.wallet)).toEqual(['mid', 'late']);
+    expect(e.field[0]!.solQueuedAheadSol).toBe(10);
+    expect(e.field[1]!.solQueuedAheadSol).toBe(13);
+  });
+
+  it('shares one definition of "the operation" with the room measurement', () => {
+    // If these could disagree, the room figure would be a statement about a different population
+    // than the field figure printed beside it.
+    const fills = openingWindow();
+    const groups = createSlotGroups(fills)!;
+    const e = measureLaunchEntry(fills)!;
+    expect(e.createSlot.deployer).toBe(groups.deployer);
+    expect(e.createSlot.coordinatedWallets).toBe(groups.coordinated.size);
+    expect(e.field.every((f) => f.wallet !== groups.deployer && !groups.coordinated.has(f.wallet))).toBe(true);
+    expect(measureCreateSlot(fills)).toEqual(e.createSlot);
+  });
+});
+
+describe('the entry verdict, and the leg that must never be able to earn one', () => {
+  /**
+   * A launch with a chosen room figure and a chosen field outcome.
+   *
+   * `roomLeft` is (independent SOL) / (dev + independent), so a dev buy of `10 * (1/room - 1)`
+   * against 10 SOL of outsider capital lands on the room asked for.
+   */
+  const launch = (room: number, outcomes: number[]) => {
+    const devSol = 10 * (1 / room - 1);
+    const fills = [fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: devSol, tokens: 1e6 })];
+    outcomes.forEach((realised, i) => {
+      const stake = 10 / outcomes.length;
+      fills.push(fill({ slot: 100, tx: `o${i}`, wallet: `w${i}`, sol: stake, tokens: 1000 }));
+      fills.push(
+        fill({ slot: 140, tx: `s${i}`, wallet: `w${i}`, sol: stake + realised, tokens: 1000, side: 'sell' }),
+      );
+    });
+    return measureLaunchEntry(fills)!;
+  };
+
+  const many = (n: number, room: number, outcomes: number[]) =>
+    Array.from({ length: n }, () => launch(room, outcomes));
+
+  it('says entry-room-present only when BOTH legs allow it', () => {
+    const s = scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    expect(s.verdict).toBe('entry-room-present');
+    expect(s.roomLeft.median).toBeCloseTo(0.7, 6);
+    expect(s.fieldHitRateGrossOfFees.rate).toBeCloseTo(2 / 3, 6);
+  });
+
+  it('THE KNOWN-NEGATIVE SHAPE: a profitable-looking field cannot rescue a closed window', () => {
+    // This is our own subject deployer's shape, synthesised: the window is taken (room ~0.24) and
+    // yet the field reads overwhelmingly positive GROSS of fees. A design in which the field leg
+    // can carry a verdict scores this wallet as beatable, and it is not.
+    const s = scoreEntry(many(8, 0.24, [1, 1, 1, 1, -0.1]), ENTRY_T);
+    expect(s.fieldHitRateGrossOfFees.rate).toBeCloseTo(0.8, 6);
+    expect(s.fieldRealisedSolGrossOfFees.median).toBeGreaterThan(0);
+    expect(s.verdict).toBe('entry-room-absent');
+    expect(s.rationale).toMatch(/nothing to enter/);
+    // And the room leg's failure is explained in the captain's framing, because that is what makes
+    // the number actionable rather than merely reported.
+    expect(s.rationale).toMatch(/launch bot is well configured/);
+  });
+
+  it('a field that loses money BEFORE costs vetoes a window that has room', () => {
+    const s = scoreEntry(many(8, 0.7, [-1, -1, 0.2]), ENTRY_T);
+    expect(s.verdict).toBe('entry-field-loss-making');
+    expect(s.rationale).toMatch(/BEFORE costs/);
+    // Conclusive in one direction only: fees can only make a gross loss worse.
+    expect(s.rationale).toMatch(/Fees only make that worse/);
+  });
+
+  it('refuses to report anything from too few launches', () => {
+    const s = scoreEntry(many(3, 0.9, [1, 1, 1]), ENTRY_T);
+    expect(s.verdict).toBe('entry-unmeasured');
+    expect(s.rationale).toMatch(/not a distribution/);
+  });
+
+  it('refuses a hit rate built on too few round trips, even with ample room', () => {
+    const s = scoreEntry(many(8, 0.9, [1]), ENTRY_T);
+    expect(s.fieldClosedRoundTrips).toBe(8);
+    expect(s.verdict).toBe('entry-unmeasured');
+    expect(s.rationale).toMatch(/field is UNMEASURED/);
+    // Crucially it must not read as a negative: room was found, the field simply was not measured.
+    expect(s.rationale).toMatch(/leaves room/);
+  });
+
+  it('never emits a verdict outside the declared ENTRY vocabulary', () => {
+    const cases = [many(8, 0.7, [1, 1, -0.2]), many(8, 0.2, [1, 1, 1]), many(8, 0.7, [-1, -1]), many(2, 0.9, [1])];
+    for (const c of cases) expect(ENTRY_VERDICTS).toContain(scoreEntry(c, ENTRY_T).verdict);
+    // Nothing in the vocabulary claims profitability, beatability, or a recommendation.
+    expect(ENTRY_VERDICTS.join(' ')).not.toMatch(/beatable|profitable|buy|recommend|good/i);
+  });
+
+  it('NO EXIT SIGNAL reaches any entry number — the separation is the deliverable', () => {
+    const s = scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    const numericFields = Object.entries(s).filter(([, v]) => typeof v === 'number' || (v && typeof v === 'object'));
+    for (const [k] of numericFields) {
+      expect(k, `${k} sounds like an exit measurement leaking into the entry score`).not.toMatch(
+        /exit|dump|rug|ladder|sellPressure|trap/i,
+      );
+    }
+    // And the caveats must say the omission out loud on every score, not only the negative ones.
+    expect(s.caveats.join(' ')).toMatch(/ENTRY ONLY/);
+    expect(s.caveats.join(' ')).toMatch(/GROSS OF FEES/);
+    expect(s.rationale).toMatch(/exit feasibility is unmeasured/i);
+  });
+
+  it('discloses a deployer mismatch instead of silently measuring someone else', () => {
+    const s = scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T, { candidateWallet: 'somebody-else' });
+    expect(s.deployerMismatches).toBe(8);
+    expect(s.caveats.join(' ')).toMatch(/first create-slot buyer other than the candidate/);
+    // The direction of the error is stated, because it is the reason the launch is kept at all.
+    expect(s.caveats.join(' ')).toMatch(/understates room/);
+  });
+
+  it('counts dropped windows in the caveats rather than quietly shrinking n', () => {
+    const s = scoreEntry(many(4, 0.7, [1, 1]), ENTRY_T, { launchesDropped: 4 });
+    expect(s.caveats.join(' ')).toMatch(/4 launch window\(s\) could not be walked back to the mint/);
+    expect(s.rationale).toMatch(/4 window\(s\) were dropped/);
+  });
+});
+
+describe('readLaunchWindow — coverage is a proof obligation, not an assumption', () => {
+  const MINT = 'MINTaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapump';
+  const CREATED = Date.parse('2026-07-28T12:00:00Z');
+
+  /**
+   * A fake `swap-api` that serves rows newest-first from a synthetic history, honouring the
+   * timestamp half of the cursor exactly as the real endpoint was measured to on 2026-07-29.
+   */
+  const fakeEndpoint = (rows: Record<string, unknown>[], opts: { lieAboutHasMore?: boolean; stall?: boolean } = {}) => {
+    const sorted = [...rows].sort((a, b) => Date.parse(String(b['timestamp'])) - Date.parse(String(a['timestamp'])));
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string | URL) => {
+      const u = new URL(String(url));
+      calls.push(u.pathname + u.search);
+      const cursor = String(u.searchParams.get('cursor') ?? '');
+      const limit = Number(u.searchParams.get('limit') ?? 100);
+      const cursorMs = Number(cursor.split('-')[1] ?? Number.MAX_SAFE_INTEGER);
+      const page = sorted.filter((r) => Date.parse(String(r['timestamp'])) <= cursorMs).slice(0, limit);
+      const last = page[page.length - 1];
+      const nextCursor = opts.stall ? cursor : `0-${last === undefined ? 0 : Date.parse(String(last['timestamp']))}`;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          trades: page,
+          pagination: {
+            hasMore: opts.lieAboutHasMore === true ? true : page.length === limit,
+            nextCursor,
+            limit,
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+    return { fetchImpl, calls };
+  };
+
+  /**
+   * Slots at the chain's own ~400ms cadence, because the measured window is anchored on the SLOT of
+   * the earliest curve buy and not on the vendor's wall clock. `slotIndexId`'s first 12 digits are
+   * the slot; the remainder orders fills inside it.
+   */
+  const SLOT0 = 400_000_000;
+  const sidAt = (ms: number, seq: number) =>
+    String(SLOT0 + Math.floor((ms - CREATED) / 400)).padStart(12, '0') + String(seq).padStart(10, '0');
+
+  const row = (o: { ms: number; wallet: string; sol: number; sid?: string; seq?: number; tx?: string; type?: string }) => {
+    const sid = o.sid ?? sidAt(o.ms, o.seq ?? 1);
+    return {
+      slotIndexId: sid,
+      tx: o.tx ?? `tx-${sid}`,
+      timestamp: new Date(o.ms).toISOString(),
+      userAddress: o.wallet,
+      type: o.type ?? 'buy',
+      program: 'pump',
+      amountSol: String(o.sol),
+      baseAmount: '1000',
+      priceSol: '0.0000001',
+    };
+  };
+
+  /** The pre-mint history a real token does not have, used to prove the walk stops on time. */
+  const history = () => [
+    row({ ms: CREATED, wallet: 'dev', sol: 10, seq: 1 }),
+    row({ ms: CREATED + 1000, wallet: 'outsider', sol: 2, seq: 2 }),
+    row({ ms: CREATED + 30_000, wallet: 'outsider', sol: 5, seq: 3, type: 'sell' }),
+    // Outside the window, and therefore not part of the opening at all.
+    row({ ms: CREATED + 120_000, wallet: 'latecomer', sol: 9, seq: 9 }),
+  ];
+
+  const client = (fetchImpl: typeof fetch, maxRequests = 10) =>
+    new KeylessClient({ maxRequests, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+
+  it('seeks straight to the window end by timestamp and walks back to the mint', async () => {
+    const { fetchImpl, calls } = fakeEndpoint(history());
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED,
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.usable).toBe(true);
+    expect(w.reachedCreateSlot).toBe(true);
+    // The FIRST request already carries the cursor. That seek is what makes this affordable: it
+    // turns walking a token's whole history into a handful of requests.
+    expect(calls[0]).toContain(`cursor=0-${CREATED + 60_000 + SEEK_MARGIN_MS}`);
+    expect(w.fills.map((f) => f.wallet).sort()).toEqual(['dev', 'outsider', 'outsider']);
+    expect(w.dropReason).toBeNull();
+    expect(w.mintTimeDisagreement).toBe(false);
+    const e = measureLaunchEntry(w.fills)!;
+    expect(e.createSlot.deployer).toBe('dev');
+  });
+
+  it('anchors the measured window on the earliest curve buy SLOT, not on the vendor clock', async () => {
+    // A row inside the timestamp window but hundreds of slots past the create slot. Slots are the
+    // chain's own monotonic sequence; the vendor's wall clock is a second opinion we cannot
+    // reconcile, so membership is decided by the first one and never by the second.
+    const wayLater = row({ ms: CREATED + 59_000, wallet: 'latecomer', sol: 9, sid: '000400000900' + '0000000001' });
+    const { fetchImpl } = fakeEndpoint([...history(), wayLater]);
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED,
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.usable).toBe(true);
+    expect(w.fills.map((f) => f.wallet)).not.toContain('latecomer');
+  });
+
+  it('seeks past the nominal window end, so an EARLY vendor mint time cannot truncate the tail', async () => {
+    // Negative skew: the vendor's creation time precedes the truth, so a seek from exactly
+    // createdAtMs + windowMs would start early and never fetch the end of the window. That trips no
+    // tripwire — there are no pre-mint rows — so the margin has to design the failure out rather
+    // than detect it. A detector could not have discriminated anyway: launches routinely stop
+    // trading before the nominal end, so it would have fired on nearly all of them.
+    const skewMs = 4_000; // inside the pinned 5s margin
+    const { fetchImpl, calls } = fakeEndpoint([
+      ...history(),
+      row({ ms: CREATED + 58_000, wallet: 'lateseller', sol: 3, seq: 4, type: 'sell' }),
+    ]);
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED - skewMs,
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(calls[0]).toContain(`cursor=0-${CREATED - skewMs + 60_000 + SEEK_MARGIN_MS}`);
+    expect(w.usable).toBe(true);
+    // The late sell is the fill that matters: dropping one flips a wallet from closed to open and
+    // shrinks fieldClosedRoundTrips, which is itself a gate.
+    expect(w.fills.map((f) => f.wallet)).toContain('lateseller');
+    expect(measureLaunchEntry(w.fills)!.createSlot.deployer).toBe('dev');
+  });
+
+  it('the seek margin is a CURSOR HINT and never a tolerance on the pre-mint tripwire', async () => {
+    // The two mechanisms sit next to each other and must not be mistaken for one. A row one
+    // millisecond older than the recorded mint is still a hard drop, however wide the margin is.
+    const { fetchImpl } = fakeEndpoint(history());
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED + 1,
+      windowMs: 60_000,
+      seekMarginMs: 600_000,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.dropReason).toBe('mint-time-disagreement');
+    expect(w.usable).toBe(false);
+  });
+
+  it('measures a 160-SLOT window, not ceil(windowMs / 400) = 150', async () => {
+    // Measured on the 210 committed 60-second launches: observed slot span p50 151, p90 155, max
+    // 158, with 51% holding a fill beyond createSlot + 150. Those trailing fills are
+    // disproportionately late sells, so a 150-slot span silently moves closure verdicts.
+    const at155 = row({ ms: CREATED + 59_000, wallet: 'tail155', sol: 1, sid: String(SLOT0 + 155).padStart(12, '0') + '0000000001' });
+    const at161 = row({ ms: CREATED + 59_500, wallet: 'tail161', sol: 1, sid: String(SLOT0 + 161).padStart(12, '0') + '0000000001' });
+    const { fetchImpl } = fakeEndpoint([...history(), at155, at161]);
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED,
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.fills.map((f) => f.wallet)).toContain('tail155');
+    expect(w.fills.map((f) => f.wallet)).not.toContain('tail161');
+  });
+
+  it('DROPS a launch whose fills predate the recorded mint — the two clocks disagree', async () => {
+    // On the committed tape the gap between the vendor's creation time and the first fill is exactly
+    // 0 on all 235 covered launches, so this branch is dead code on correct data and fires ONLY when
+    // the clocks come apart. Continuing past the row would delete the create slot — whose rows share
+    // the mint's exact millisecond — and leave the walk anchored on a mid-window sniper.
+    const { fetchImpl } = fakeEndpoint(history());
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED + 1, // one millisecond of positive skew is enough
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.mintTimeDisagreement).toBe(true);
+    expect(w.usable).toBe(false);
+    expect(w.dropReason).toBe('mint-time-disagreement');
+    expect(w.reachedCreateSlot).toBe(false);
+    expect(w.fills).toEqual([]);
+    expect(w.note).toMatch(/REPORTABLE EVENT/);
+  });
+
+  it('refuses to read a MISSING pagination object as proof that nothing older exists', async () => {
+    // The subtlest failure in the module: a bare array and the data/items/results wrappers carry no
+    // pagination at all, and reading the absent `hasMore` as `false` would stop the walk after page
+    // one and mark a partial window usable.
+    for (const body of [
+      [row({ ms: CREATED + 30_000, wallet: 'sniper', sol: 1, seq: 1 })],
+      { data: [row({ ms: CREATED + 30_000, wallet: 'sniper', sol: 1, seq: 1 })] },
+      { trades: [row({ ms: CREATED + 30_000, wallet: 'sniper', sol: 1, seq: 1 })], pagination: { nextCursor: 'x' } },
+    ]) {
+      const fetchImpl = (async () => ({ ok: true, status: 200, json: async () => body })) as unknown as typeof fetch;
+      const w = await readLaunchWindow(client(fetchImpl), {
+        mint: MINT,
+        createdAtMs: CREATED,
+        windowMs: 60_000,
+        seekMarginMs: SEEK_MARGIN_MS,
+        windowSlotSpan: WINDOW_SLOT_SPAN,
+        maxRequests: 10,
+        pageLimit: 100,
+      });
+      expect(w.usable).toBe(false);
+      expect(w.dropReason).toBe('coverage-unproven');
+      expect(w.reachedCreateSlot).toBe(false);
+      expect(w.note).toMatch(/UNPROVEN/);
+      // One page, then a drop: an unprovable walk is not worth more requests.
+      expect(w.pages).toBe(1);
+    }
+  });
+
+  it('refuses to read an UNRECOGNISED body as proof either, on any page', async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            trades: [row({ ms: CREATED + 30_000, wallet: 'sniper', sol: 1, seq: 1 })],
+            pagination: { hasMore: true, nextCursor: `0-${CREATED + 20_000}` },
+          }),
+        };
+      }
+      // Page 2 is a shape we do not understand. `extractTradeRows` would hand back `[]`, and an
+      // empty list used to mean "nothing older exists" — so a partial window would have been marked
+      // usable by a response we could not even read.
+      return { ok: true, status: 200, json: async () => ({ unexpected: 'shape' }) };
+    }) as unknown as typeof fetch;
+
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED,
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.usable).toBe(false);
+    expect(w.dropReason).toBe('unrecognised-body');
+    expect(w.reachedCreateSlot).toBe(false);
+  });
+
+  /**
+   * An endpoint with an inexhaustible supply of in-window fills, so the walk can never get behind
+   * the mint. This is the shape of a launch busier than the page cap allows for.
+   */
+  const neverReachesMint = () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          trades: [row({ ms: CREATED + 30_000, wallet: `w${calls}`, sol: 1, sid: `00040000000000000${String(calls).padStart(5, '0')}` })],
+          pagination: { hasMore: true, nextCursor: `0-${CREATED + 30_000 - calls}`, limit: 1 },
+        }),
+      };
+    }) as unknown as typeof fetch;
+    return { fetchImpl, count: () => calls };
+  };
+
+  it('DROPS a window that hit the page cap — the earliest slot seen is NOT the create slot', async () => {
+    // The failure this exists to make impossible: a truncated walk still returns a plausible pile
+    // of fills, and measuring it would crown a mid-window sniper as the deployer.
+    const { fetchImpl } = neverReachesMint();
+    const w = await readLaunchWindow(client(fetchImpl, 50), {
+      mint: MINT,
+      createdAtMs: CREATED,
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 3,
+      pageLimit: 1,
+    });
+    expect(w.hitRequestCap).toBe(true);
+    expect(w.reachedCreateSlot).toBe(false);
+    expect(w.usable).toBe(false);
+    expect(w.dropReason).toBe('request-cap');
+    expect(w.note).toMatch(/DROPPED/);
+    expect(w.note).toMatch(/NOT the create slot/);
+    // One page, then a stop: the walk reserves the WHOLE cost of a page (one attempt plus two
+    // backoffs) before starting it, so a 3-request cap can only afford one page.
+    expect(w.pages).toBe(1);
+    expect(w.requests).toBeLessThanOrEqual(3);
+  });
+
+  it('DROPS a window whose cursor stops advancing, and says so specifically', async () => {
+    // A stalled cursor would otherwise burn the whole page cap and then be misdiagnosed as a
+    // busy launch, which is the wrong thing to go and look at.
+    const { fetchImpl } = fakeEndpoint(history(), { lieAboutHasMore: true, stall: true });
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED + 500,
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 1,
+    });
+    expect(w.usable).toBe(false);
+    expect(w.note).toMatch(/cursor stopped advancing/);
+    expect(w.pages).toBeLessThan(10);
+  });
+
+  it('treats "no older fills" as having reached the mint, because it has', async () => {
+    const { fetchImpl } = fakeEndpoint(history());
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED,
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 2,
+    });
+    expect(w.reachedCreateSlot).toBe(true);
+    expect(w.usable).toBe(true);
+  });
+
+  it('DROPS a window with an unreadable row rather than measuring the rest of it', async () => {
+    const bad = [...history(), { ...row({ ms: CREATED + 2000, wallet: 'x', sol: 1, sid: '0004000000000000000004' }), program: 'some_new_amm' }];
+    const { fetchImpl } = fakeEndpoint(bad);
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED,
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+    expect(w.unparsedRows).toBe(1);
+    expect(w.usable).toBe(false);
+    expect(w.note).toMatch(/shape may have changed/);
+  });
+
+  it('never issues more requests than its cap, whatever the endpoint says or sheds', async () => {
+    // The bound has to be EXACT, not approximate: the stage arithmetic (3 x 8 x 18 = 432) is printed
+    // by the dry run as the entire exposure, and a walk that overshot by a retry would make the
+    // printed plan a lie and surface as a mid-walk CeilingReached and a dropped launch.
+    for (const cap of [1, 2, 3, 4, 5, 6, 7, 8, 17, 18]) {
+      for (const shedEvery of [0, 2, 3]) {
+        let calls = 0;
+        const fetchImpl = (async () => {
+          calls += 1;
+          if (shedEvery !== 0 && calls % shedEvery !== 0) return { ok: false, status: 429, json: async () => ({}) };
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              trades: [row({ ms: CREATED + 30_000, wallet: `w${calls}`, sol: 1, seq: calls })],
+              pagination: { hasMore: true, nextCursor: `0-${CREATED + 30_000 - calls}`, limit: 1 },
+            }),
+          };
+        }) as unknown as typeof fetch;
+
+        const w = await readLaunchWindow(client(fetchImpl, 1000), {
+          mint: MINT,
+          createdAtMs: CREATED,
+          windowMs: 60_000,
+          seekMarginMs: SEEK_MARGIN_MS,
+          windowSlotSpan: WINDOW_SLOT_SPAN,
+          maxRequests: cap,
+          pageLimit: 1,
+        });
+        expect(calls, `cap ${cap} shedEvery ${shedEvery}`).toBeLessThanOrEqual(cap);
+        expect(w.requests, `cap ${cap} shedEvery ${shedEvery}`).toBeLessThanOrEqual(cap);
+      }
+    }
+  });
+});
+
+describe('Stage 2 spends what the dry run said it would, and no keyed request at all', () => {
+  const T = loadThresholds()['stage2_entry'] as Record<string, number>;
+  const CREATED = Date.parse('2026-07-28T12:00:00Z');
+  const NOW = CREATED + 3_600_000;
+
+  const profile = (n: number) => ({
+    pump_tokens: Array.from({ length: n }, (_, i) => ({
+      mint: `MINT${String(i).padStart(38, '0')}pump`,
+      created_timestamp: CREATED - i * 3_600_000,
+      complete: true,
+    })),
+  });
+
+  /** An endpoint that never reaches the mint, so every launch burns its full page cap. */
+  const insatiable = () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          trades: [
+            {
+              slotIndexId: `000400000000000000${String(calls).padStart(4, '0')}`,
+              tx: `tx${calls}`,
+              timestamp: new Date(CREATED + 1000).toISOString(),
+              userAddress: 'w',
+              type: 'buy',
+              program: 'pump',
+              amountSol: '1',
+              baseAmount: '1000',
+              priceSol: '0.0000001',
+            },
+          ],
+          pagination: { hasMore: true, nextCursor: `0-${CREATED + 1000 - calls}`, limit: 1 },
+        }),
+      };
+    }) as unknown as typeof fetch;
+    return { fetchImpl, count: () => calls };
+  };
+
+  it('cannot exceed its own stage ceiling even when every launch is pathological', async () => {
+    const { fetchImpl, count } = insatiable();
+    const client = new KeylessClient({
+      maxRequests: T.maxKeylessRequests as number,
+      minIntervalMs: 0,
+      fetchImpl,
+      sleepImpl: async () => {},
+    });
+    const { score, coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: profile(40),
+      nowMs: NOW,
+      thresholds: T as never,
+      });
+    // The per-candidate plan binds first: 8 launches x 10 pages, never the 40 the vendor offered.
+    expect(coverage.launchesAttempted).toBe(T.maxLaunchesPerCandidate);
+    expect(count()).toBeLessThanOrEqual((T.maxLaunchesPerCandidate as number) * (T.maxRequestsPerLaunch as number));
+    expect(client.issued()).toBe(count());
+    // Every window was unusable, so nothing was measured from a partial walk.
+    expect(coverage.launchesUsable).toBe(0);
+    expect(coverage.launchesDropped).toBe(T.maxLaunchesPerCandidate);
+    // The drops are attributed, not lumped: this endpoint is simply busier than the cap allows for,
+    // which is a different event from the clocks disagreeing.
+    expect(coverage.dropsByReason.requestCap).toBe(T.maxLaunchesPerCandidate);
+    expect(coverage.dropsByReason.mintTimeDisagreement).toBe(0);
+    expect(score.verdict).toBe('entry-unmeasured');
+  });
+
+  it('counts a mint-time disagreement separately and reports it as an event, per wallet', async () => {
+    // The assumption under test is that the vendor's creation time and pump.fun's fills agree. It
+    // holds to the millisecond on all 235 of our own launches, and has NEVER been checked on a
+    // stranger — this lane has held no vendor key. A visible per-run count is what stops it being
+    // untested forever, and stops the tripwire from silently discarding real launches at scale.
+    const fetchImpl = (async (url: string | URL) => {
+      // The cursor is `0-<windowEnd>`, so this serves a row five seconds before whichever launch's
+      // mint time the walk is currently seeking from.
+      const cursorMs = Number(String(new URL(String(url)).searchParams.get('cursor')).split('-')[1]);
+      return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        trades: [
+          {
+            slotIndexId: '0004000000000000000001',
+            tx: 'tx1',
+            // Older than the mint time the profile records. A real token has no pre-mint trade.
+            timestamp: new Date(cursorMs - 60_000 - 5_000).toISOString(),
+            userAddress: 'w',
+            type: 'buy',
+            program: 'pump',
+            amountSol: '1',
+            baseAmount: '1000',
+            priceSol: '0.0000001',
+          },
+        ],
+        pagination: { hasMore: true, nextCursor: '0-1', limit: 1 },
+      }),
+      };
+    }) as unknown as typeof fetch;
+
+    const client = new KeylessClient({ maxRequests: 400, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const { score, coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: profile(8),
+      nowMs: NOW,
+      thresholds: T as never,
+    });
+    expect(coverage.launchesUsable).toBe(0);
+    expect(coverage.dropsByReason.mintTimeDisagreement).toBe(8);
+    expect(coverage.launchesDropped).toBe(8);
+    expect(score.caveats.join(' ')).toMatch(/REPORTABLE: 8 of those 8/);
+    expect(score.caveats.join(' ')).toMatch(/DISAGREED/);
+    expect(score.verdict).toBe('entry-unmeasured');
+
+    // And the same count reaches the rendered output, where a human sees it.
+    const rendered = renderEntry(score, coverage).join('\n');
+    expect(rendered).toMatch(/8 mint-time disagreement/);
+    expect(rendered).toMatch(/!! REPORTABLE/);
+  });
+
+  it('never starts a launch it cannot finish, and says why it stopped', async () => {
+    const { fetchImpl, count } = insatiable();
+    // Room for exactly two full launches and a remainder too small for a third.
+    const budget = (T.maxRequestsPerLaunch as number) * 2 + 3;
+    const client = new KeylessClient({ maxRequests: budget, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const { coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: profile(20),
+      nowMs: NOW,
+      thresholds: { ...T, maxKeylessRequests: budget } as never,
+    });
+    expect(coverage.launchesAttempted).toBe(2);
+    expect(coverage.stoppedForBudget).toBe(true);
+    // Each launch stops one page short of its own cap, because it reserves the full three-request
+    // cost of a page before starting one. Under the cap is the only side of it that is safe.
+    expect(count()).toBeLessThanOrEqual((T.maxRequestsPerLaunch as number) * 2);
+    // The remainder is left unspent rather than half-walking a third launch for nothing.
+    expect(client.remaining()).toBeGreaterThanOrEqual(3);
+    expect(client.remaining()).toBeLessThan(T.maxRequestsPerLaunch as number);
+    expect(coverage.dropNotes.join(' ')).toMatch(/never started unless it can be finished/);
+  });
+
+  it('skips launches younger than the window, which have not finished happening', async () => {
+    const { fetchImpl } = insatiable();
+    const client = new KeylessClient({ maxRequests: 200, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const { coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: profile(3),
+      nowMs: CREATED + 10_000, // the newest launch is 10s old against a 60s window
+      thresholds: T as never,
+    });
+    expect(coverage.launchRefsAvailable).toBe(3);
+    expect(coverage.launchesAttempted).toBe(2);
+  });
+
+  it('reads the mint list from the profile Stage 1 already paid for — no second vendor call', () => {
+    const refs = toLaunchRefs(profile(5));
+    expect(refs).toHaveLength(5);
+    // Newest first: a run samples recent launches, and recency is all this surface can speak to.
+    expect(refs[0]!.deployedAtMs).toBeGreaterThan(refs[4]!.deployedAtMs);
+    // A record with no usable mint or deploy time is skipped rather than guessed at.
+    expect(toLaunchRefs({ pump_tokens: [{ created_timestamp: CREATED }, { mint: 'M' }] })).toEqual([]);
+    expect(toLaunchRefs({})).toEqual([]);
+    expect(toLaunchRefs(null)).toEqual([]);
+  });
+
+  it('the whole stage touches no keyed surface — asserted on the source, not promised', () => {
+    // Comments are stripped first: both files DESCRIBE the keyed endpoint in prose, and it is the
+    // executable half that must be unable to reach it.
+    const code = (file: string) =>
+      readFileSync(join(TOOL_DIR, file), 'utf8')
+        .split('\n')
+        .filter((l) => {
+          const t = l.trimStart();
+          return !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/**') && !t.startsWith('/*');
+        })
+        .join('\n');
+    for (const file of ['stage2.mjs', 'entry.mjs']) {
+      expect(code(file), file).not.toMatch(/MADEONSOL/);
+      expect(code(file), file).not.toMatch(/BoundedClient/);
+      expect(code(file), file).not.toMatch(/deployer-hunter/);
+      expect(code(file), file).not.toMatch(/fetch\(/);
+    }
+  });
+});
+
+describe('what a Stage 2 run record may persist', () => {
+  const score = (): EntryScore => {
+    const fills = [
+      fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 3, tokens: 1000 }),
+      fill({ slot: 100, tx: 'o1', wallet: 'SoMeCounterpartyWalletAddress1111111111111', sol: 3.5, tokens: 250 }),
+      fill({ slot: 100, tx: 'o2', wallet: 'SoMeCounterpartyWalletAddress2222222222222', sol: 3.5, tokens: 250 }),
+      fill({ slot: 140, tx: 's1', wallet: 'SoMeCounterpartyWalletAddress1111111111111', sol: 4.5, tokens: 250, side: 'sell' }),
+      fill({ slot: 141, tx: 's2', wallet: 'SoMeCounterpartyWalletAddress2222222222222', sol: 4.5, tokens: 250, side: 'sell' }),
+    ];
+    return scoreEntry(Array.from({ length: 8 }, () => measureLaunchEntry(fills)!), ENTRY_T);
+  };
+
+  it('persists quantiles and counts — never a mint, never a counterparty address', () => {
+    const row = toEntryRecordRow(score(), {
+      launchRefsAvailable: 20,
+      launchesAttempted: 8,
+      launchesUsable: 8,
+      launchesDropped: 0,
+      dropsByReason: emptyDropReasons(),
+      requestsIssued: 34,
+      stoppedForBudget: false,
+      dropNotes: [],
+    });
+    const json = JSON.stringify(row);
+    // Stage 2 held a mint list in memory to do the walk at all. None of it survives — MadeOnSol
+    // terms §5a(d), implemented rather than promised.
+    expect(json).not.toMatch(/MINT[0-9a-zA-Z]*pump/);
+    expect(json).not.toContain('SoMeCounterpartyWalletAddress1111111111111');
+    expect(json).not.toContain('SoMeCounterpartyWalletAddress2222222222222');
+    expect(json).not.toMatch(/"(mint|symbol|token_name|ath_market_cap|bonded_at)"/);
+    // And no mean, at the record layer too.
+    expect(json).not.toMatch(/"(mean|average|avg)"/i);
+    expect(row.roomLeft.median).toBeCloseTo(0.7, 6);
+    expect(row.verdict).toBe('entry-room-present');
+  });
+
+  it('renders NaN as null rather than as a number a consumer would believe', () => {
+    const empty = scoreEntry([], ENTRY_T);
+    const row = toEntryRecordRow(empty, {
+      launchRefsAvailable: 0,
+      launchesAttempted: 0,
+      launchesUsable: 0,
+      launchesDropped: 0,
+      dropsByReason: emptyDropReasons(),
+      requestsIssued: 0,
+      stoppedForBudget: false,
+      dropNotes: [],
+    });
+    expect(row.roomLeft.median).toBeNull();
+    expect(row.fieldHitRateGrossOfFees.rate).toBeNull();
+    expect(row.verdict).toBe('entry-unmeasured');
+  });
+
+  it('persists NO mint when a launch walk fails at the transport — the path that used to leak', async () => {
+    // The containment test above only ever exercised the happy path, which is exactly how this got
+    // through: `KeylessClient` throws `HTTP 400 on https://swap-api.pump.fun/v2/coins/<MINT>/trades`,
+    // and a note built from that message carried a vendor-derived token address into the record.
+    const CREATED_AT = Date.parse('2026-07-28T12:00:00Z');
+    const fetchImpl = (async () => ({ ok: false, status: 400, json: async () => ({}) })) as unknown as typeof fetch;
+    const client = new KeylessClient({ maxRequests: 400, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const T = loadThresholds()['stage2_entry'] as Record<string, number>;
+
+    const { score, coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: {
+        pump_tokens: [
+          { mint: 'MINTaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapump', created_timestamp: CREATED_AT, complete: true },
+        ],
+      },
+      nowMs: CREATED_AT + 3_600_000,
+      thresholds: T as never,
+    });
+
+    expect(coverage.dropsByReason.transportError).toBe(1);
+    // The status is what identifies the failure, and it is the only part that cannot carry an
+    // identifier. It comes off the error as a FIELD, not out of its message.
+    expect(coverage.dropNotes.join(' ')).toMatch(/transport error\): HTTP 400/);
+    expect(coverage.dropNotes.join(' ')).not.toMatch(/MINT[0-9a-zA-Z]*pump/);
+
+    const json = JSON.stringify(toEntryRecordRow(score, coverage));
+    expect(json).not.toMatch(/MINT[0-9a-zA-Z]*pump/);
+    expect(json).not.toMatch(/swap-api/);
+  });
+
+  it('redacts a URL or an address that reaches a persisted string by any other route', () => {
+    // The boundary half of the fix. Building notes without identifiers is the first line; this is
+    // what stops the claim resting on every future note-writer remembering to.
+    const leaky = 'HTTP 400 on https://swap-api.pump.fun/v2/coins/MINTaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapump/trades?limit=100';
+    expect(redactVendorIdentifiers(leaky)).not.toMatch(/MINT[0-9a-zA-Z]*pump/);
+    expect(redactVendorIdentifiers(leaky)).not.toMatch(/swap-api/);
+    expect(redactVendorIdentifiers(leaky)).toMatch(/HTTP 400/);
+    expect(redactVendorIdentifiers('7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL bought first')).toBe(
+      '[address redacted] bought first',
+    );
+    // Ordinary prose is left alone — a redactor that mangled the caveats would hide the reporting
+    // this record exists to carry.
+    const caveat = 'Every P&L above is GROSS OF FEES and is therefore an UPPER BOUND.';
+    expect(redactVendorIdentifiers(caveat)).toBe(caveat);
+  });
+});
+
+describe('the keyless client retries a shed request, and a retry is not free', () => {
+  /** @returns a fetch that sheds `shedCount` times before answering. */
+  const shedding = (shedCount: number, status = 429) => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      if (calls <= shedCount) return { ok: false, status, json: async () => ({}) };
+      return { ok: true, status: 200, json: async () => ({ ok: calls }) };
+    }) as unknown as typeof fetch;
+    return { fetchImpl, count: () => calls };
+  };
+
+  const client = (fetchImpl: typeof fetch, maxRequests = 10) =>
+    new KeylessClient({ maxRequests, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+
+  it('retries through a 429, which on this endpoint is the normal case and not an incident', async () => {
+    // Measured on the committed tape's own build: 16,960 of 68,675 requests were shed, and 221 of
+    // 235 launches shed at least once. A client without this cannot walk a launch window at all.
+    const { fetchImpl, count } = shedding(2);
+    const c = client(fetchImpl);
+    await expect(c.getJson('https://swap-api.pump.fun/x')).resolves.toEqual({ ok: 3 });
+    expect(count()).toBe(3);
+    expect(c.shed()).toBe(2);
+    // Every attempt counted. A bound that only counted successes would not be a bound.
+    expect(c.issued()).toBe(3);
+  });
+
+  it('gives up after the configured backoffs rather than retrying forever', async () => {
+    const { fetchImpl, count } = shedding(99);
+    const c = client(fetchImpl);
+    await expect(c.getJson('https://swap-api.pump.fun/x')).rejects.toThrow(/HTTP 429/);
+    expect(count()).toBe(3); // one attempt plus the two default backoffs
+    expect(c.issued()).toBe(3);
+  });
+
+  it('does NOT retry a 4xx that is our own query shape', async () => {
+    // A 400 is our URL, not their load. Retrying it spends a shared public resource to be told off
+    // a second time — the same reasoning that maps a vendor 400 to exit 7 rather than exit 4.
+    const { fetchImpl, count } = shedding(99, 400);
+    const c = client(fetchImpl);
+    await expect(c.getJson('https://swap-api.pump.fun/x')).rejects.toThrow(/HTTP 400/);
+    expect(count()).toBe(1);
+    expect(c.shed()).toBe(0);
+  });
+
+  it('stops at the ceiling even when every attempt is a retry', async () => {
+    const { fetchImpl, count } = shedding(99);
+    const c = client(fetchImpl, 2);
+    await expect(c.getJson('https://swap-api.pump.fun/x')).rejects.toBeInstanceOf(CeilingReached);
+    expect(count()).toBe(2);
+    expect(c.remaining()).toBe(0);
+  });
+
+  it('a per-launch cap counts REQUESTS, so retries cannot widen it', async () => {
+    // If the cap counted successful PAGES instead, this launch would cost 6 pages x 3 attempts = 18
+    // requests, and the dry run's printed plan would understate the real exposure threefold.
+    const CREATED = Date.parse('2026-07-28T12:00:00Z');
+    let calls = 0;
+    // Sheds every other request, and never serves a row older than the mint, so the walk keeps
+    // going until something stops it. Only the request cap can.
+    const fetchImpl = (async () => {
+      calls += 1;
+      if (calls % 2 === 1) return { ok: false, status: 429, json: async () => ({}) };
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          trades: [
+            {
+              slotIndexId: `00040000000000000${String(calls).padStart(5, '0')}`,
+              tx: `tx${calls}`,
+              timestamp: new Date(CREATED + 30_000).toISOString(),
+              userAddress: 'w',
+              type: 'buy',
+              program: 'pump',
+              amountSol: '1',
+              baseAmount: '1000',
+              priceSol: '0.0000001',
+            },
+          ],
+          pagination: { hasMore: true, nextCursor: `0-${CREATED + 30_000 - calls}`, limit: 1 },
+        }),
+      };
+    }) as unknown as typeof fetch;
+
+    const c = client(fetchImpl, 100);
+    const w = await readLaunchWindow(c, {
+      mint: 'MINTaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapump',
+      createdAtMs: CREATED,
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 6,
+      pageLimit: 1,
+    });
+    // A page can cost up to three requests, so the walk reserves three before starting one. From
+    // four spent it stops rather than starting a fifth page that could take it to seven — the
+    // overshoot that would have broken the stage's declared worst case.
+    expect(calls).toBe(4);
+    expect(w.requests).toBe(4);
+    expect(w.pages).toBe(2); // half of them were shed and retried
+    expect(c.shed()).toBe(2);
+    expect(w.hitRequestCap).toBe(true);
+    expect(w.usable).toBe(false);
+  });
+});
+
+describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
+  // Slow by design: it reads all 235 covered window tapes and the 46,553-row P&L table. It is the
+  // one test that proves the whole entry stage on real data rather than on a fixture, and it is the
+  // reason a regression in Stage 2 cannot ship quietly.
+  const DATA_DIR = join(TOOL_DIR, '..', '..', 'data', 'population-tape-2026-07-29');
+  const T = loadThresholds();
+  const result = runStage0(
+    DATA_DIR,
+    {
+      minTokens: T['stage1_gate'].minTokens,
+      minCompletionRate: T['stage1_gate'].minCompletionRate,
+      minSpanDays: T['stage1_gate'].minSpanDays,
+    },
+    T['stage2_entry'],
+  );
+
+  it('passes, so the screen still reproduces every answer we already hold', () => {
+    expect(result.failures).toEqual([]);
+    expect(result.passed).toBe(true);
+  });
+
+  it('the gate PASSES 7ufmve7Z and Stage 2 REFUSES it — both halves, on the same wallet', () => {
+    expect(result.subjectGate.passed).toBe(true);
+    expect(result.subjectEntryRecent.verdict).toBe('entry-room-absent');
+    expect(result.subjectEntryPostBreak.verdict).toBe('entry-room-absent');
+    // Competence and entry room are separate claims with separate vocabularies, and this wallet is
+    // the proof that they come apart.
+    expect(result.subjectVerdict.verdict).toBe('gate-passed');
+  });
+
+  it('and the field leg, followed alone, WOULD have called it beatable', () => {
+    // The whole reason the control is an assertion rather than a threshold comparison. Gross of
+    // fees this wallet's post-break field is overwhelmingly positive; fee-inclusive, the entire
+    // outsider population made +0.54 SOL per launch with 51 of 106 wallets losing money.
+    const field = result.subjectEntryPostBreak;
+    expect(field.fieldHitRateGrossOfFees.rate).toBeGreaterThan(T['stage2_entry'].minFieldHitRateGross);
+    expect(field.fieldRealisedSolGrossOfFees.median).toBeGreaterThan(0);
+    expect(field.fieldClosedRoundTrips).toBeGreaterThanOrEqual(T['stage2_entry'].minFieldRoundTrips);
+    // Every field leg satisfied, and the verdict is still negative. That is the design working.
+    expect(field.verdict).toBe('entry-room-absent');
+  });
+
+  it('reproduces the published §5.1 era split and the dataset\'s own P&L table', () => {
+    for (const era of result.eraSplit) {
+      expect(era.n).toBeGreaterThanOrEqual(era.minN);
+      expect(Math.abs(era.operationShareMedian - era.publishedOperationShare)).toBeLessThan(0.02);
+    }
+    expect(result.fieldCheck.ok).toBe(true);
+    expect(result.fieldCheck.pairs).toBeGreaterThan(1000);
+    expect(result.fieldCheck.closureMismatches).toBe(0);
+    expect(result.fieldCheck.maxRealisedErrorSol).toBeLessThan(1e-6);
+  });
+
+  it('fails LOUDLY if the entry bar is ever loosened enough to admit this wallet', () => {
+    // A future lane that quietly drops minRoomLeft to fit an output gets this, rather than a
+    // green suite and a wrong answer.
+    const loosened = runStage0(
+      DATA_DIR,
+      {
+        minTokens: T['stage1_gate'].minTokens,
+        minCompletionRate: T['stage1_gate'].minCompletionRate,
+        minSpanDays: T['stage1_gate'].minSpanDays,
+      },
+      { ...T['stage2_entry'], minRoomLeft: 0.1 },
+    );
+    expect(loosened.passed).toBe(false);
+    expect(loosened.failures.join(' ')).toMatch(/SCORED OUR SUBJECT DEPLOYER AS HAVING ENTRY ROOM/);
+    // And the failure message points at the leg most likely to be the culprit.
+    expect(loosened.failures.join(' ')).toMatch(/field leg/);
   });
 });

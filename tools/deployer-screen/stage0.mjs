@@ -18,9 +18,23 @@
  *     size of the artefact is visible rather than asserted.
  *  3. **The curve inversion is exact**, checked against the dataset's own 70 recorded `dev_sol`
  *     values.
- *  4. **The create-slot measurement reproduces the published §5.1 era split.** This is the Stage 2
- *     seam. Stage 2 is not built in this lane, but its primitive is, and it is regression-tested
- *     here so the next lane inherits a proven building block rather than a description of one.
+ *  4. **The create-slot measurement reproduces the published §5.1 era split.**
+ *  5. **The field measurement reproduces `wallet_launch_pnl.csv`** — computed from raw tape fills,
+ *     checked against the dataset's own committed columns on every create-slot outsider pair. The
+ *     live measurement runs the same code over the same shape of rows, so agreement here is what
+ *     licenses believing it on a stranger.
+ *  6. **THE KNOWN-NEGATIVE CONTROL: Stage 2 must NOT score `7ufmve7Z…` as beatable.** This is the
+ *     load-bearing assertion of the entry stage, and it is the counterpart of (1). The gate passes
+ *     that wallet because it is competent; Stage 2 must refuse it because its opening window has
+ *     been unprofitable for outsiders since 2026-06-04 — measured, in
+ *     `data/slot-zero-june-regime-change/report.md`, not assumed. Any design that scores it as
+ *     beatable is wrong, so a design that starts to is failed here rather than shipped.
+ *
+ *     The trap this specifically catches: the field leg, read on its own, **says the wallet is
+ *     beatable.** Gross of fees its post-break field is 76.5% of closed round trips positive at a
+ *     median +0.12 SOL, while the fee-inclusive record is +0.54 SOL per launch shared by 106
+ *     wallets with 51 of them negative. So the check is not that some number is below some bar —
+ *     it is that the composite verdict resists a leg that points the wrong way.
  *
  * All of it reads committed files. No network, no key, no quota.
  */
@@ -29,11 +43,11 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
+import { measureLaunchEntry, scoreEntry } from './entry.mjs';
 import {
   CURVE_INITIAL_PRICE_SOL,
   CURVE_K,
   measureCompletion,
-  measureCreateSlot,
   median,
   parseFill,
   percentile,
@@ -151,6 +165,7 @@ export function readGroundTruthCompletion(dataDir) {
  * @property {string} mint
  * @property {string} dateIso
  * @property {import('./measure.mjs').CreateSlotMeasurement} createSlot
+ * @property {import('./entry.mjs').FieldEntrant[]} field
  */
 
 /**
@@ -158,11 +173,23 @@ export function readGroundTruthCompletion(dataDir) {
  *
  * Gated on `reached_mint`, not on file existence. All 239 mints have a `window/*.jsonl.gz` but
  * four never reached the mint, and those four files hold unrelated later trading — a reader that
- * trusted the filename would serve six-days-later PumpSwap fills as a launch window.
+ * trusted the filename would serve six-days-later PumpSwap fills as a launch window. The live
+ * walk in `pumpfun.mjs` → `readLaunchWindow` reproduces that gate as a *proof obligation*, since
+ * on a stranger's launch there is no committed `reached_mint` to consult.
  *
- * **This is the Stage 2 seam.** Nothing in the shipped gate consumes it; it exists so the next
- * lane inherits a validated primitive, and so {@link runStage0} can prove that primitive still
- * reproduces the published numbers.
+ * **This is where Stage 2's method meets ground truth.** The same `measureLaunchEntry` runs here
+ * over committed fills and, in a live run, over `swap-api` rows — one implementation, two callers,
+ * because the tape's rows *are* the endpoint's rows.
+ *
+ * **ONE DELIBERATE ASYMMETRY, AND IT MUST NOT BE TIDIED AWAY.** This function measures each launch
+ * over the launch's OWN STORED WINDOW — every fill in the tape file — while a live run trims to
+ * `thresholds.json` → `stage2_entry.windowSlotSpan` slots from the create slot. That is not an
+ * oversight and the two paths must not be made to agree. `wallet_launch_pnl.csv`, which
+ * {@link verifyFieldReproduction} checks against on 1,502 create-slot outsider pairs with zero
+ * closure mismatches, is itself computed over each launch's stored window. Imposing a slot span here
+ * would move closure verdicts at the tail and break that reproduction — which is the regression guard
+ * that makes the live recipe trustworthy in the first place. A live run has no stored window to use,
+ * which is exactly why it needs a pinned span; this one does, so it uses it.
  *
  * @param {string} dataDir Path to `data/population-tape-2026-07-29`.
  * @returns {TapedLaunch[]} Oldest first.
@@ -189,18 +216,98 @@ export function measureSubjectLaunches(dataDir) {
       fills.push(parseFill(/** @type {Record<string, unknown>} */ (JSON.parse(line))));
     }
 
-    const createSlot = measureCreateSlot(fills);
-    if (createSlot === null) continue;
+    const entry = measureLaunchEntry(fills);
+    if (entry === null) continue;
 
     out.push({
       mint,
       dateIso: new Date(Number(meta['created_timestamp'])).toISOString(),
-      createSlot,
+      createSlot: entry.createSlot,
+      field: entry.field,
     });
   }
 
   out.sort((a, b) => (a.dateIso < b.dateIso ? -1 : a.dateIso > b.dateIso ? 1 : 0));
   return out;
+}
+
+/**
+ * @typedef {object} FieldReproduction
+ * @property {number} pairs                Create-slot outsider (wallet, launch) pairs compared.
+ * @property {number} closureMismatches    Where our closed/open verdict differs from the dataset's.
+ * @property {number} maxRealisedErrorSol  Largest disagreement on a closed pair's realised SOL.
+ * @property {number} missingFromCsv       Pairs we found that the dataset does not carry.
+ * @property {boolean} ok
+ */
+
+/**
+ * Check the field measurement against the dataset's own committed P&L table.
+ *
+ * `wallet_launch_pnl.csv` is a projection of the very tapes {@link measureSubjectLaunches} reads,
+ * so agreement is not circular — it is a check that our recomputation from raw fills lands on the
+ * published columns, over **every** create-slot outsider pair rather than a sample. Two things are
+ * compared, and they are the two the live measurement can get quietly wrong:
+ *
+ * - **`closed_in_window`.** The dataset's rule is that the residual is within 0.1% of tokens
+ *   bought, and only those rows have a complete P&L at all. Getting this wrong does not produce a
+ *   visible error; it produces a distribution silently contaminated with half-finished positions.
+ * - **`realised_sol`.** `sol_out − sol_in` on the closed pairs.
+ *
+ * The dataset also marks a handful of *sell-only* wallets closed — wallets that bought nothing
+ * inside the window, so their residual is trivially zero. Those are not round trips and cannot be
+ * create-slot entrants, so they never enter this comparison; the population here is exactly the one
+ * the field leg measures.
+ *
+ * @param {string} dataDir
+ * @param {readonly TapedLaunch[]} launches
+ * @returns {FieldReproduction}
+ */
+export function verifyFieldReproduction(dataDir, launches) {
+  const rows = parseCsv(readFileSync(join(dataDir, 'wallet_launch_pnl.csv'), 'utf8'));
+  const header = rows[0];
+  if (header === undefined) throw new Error('wallet_launch_pnl.csv is empty');
+  const col = columnIndexer(header, 'wallet_launch_pnl.csv');
+  const iMint = col('mint');
+  const iWallet = col('wallet');
+  const iClosed = col('closed_in_window');
+  const iRealised = col('realised_sol');
+  const iCreateSlot = col('in_create_slot');
+
+  /** @type {Map<string, { closed: boolean, realised: number, inCreateSlot: boolean }>} */
+  const published = new Map();
+  for (const r of rows.slice(1)) {
+    if (r.length <= Math.max(iRealised, iCreateSlot)) continue;
+    published.set(`${String(r[iMint])}|${String(r[iWallet])}`, {
+      closed: r[iClosed] === '1',
+      realised: Number(r[iRealised]),
+      inCreateSlot: r[iCreateSlot] === '1',
+    });
+  }
+
+  let pairs = 0;
+  let closureMismatches = 0;
+  let maxRealisedErrorSol = 0;
+  let missingFromCsv = 0;
+
+  for (const launch of launches) {
+    for (const e of launch.field) {
+      const row = published.get(`${launch.mint}|${e.wallet}`);
+      if (row === undefined) {
+        missingFromCsv += 1;
+        continue;
+      }
+      pairs += 1;
+      if (e.closedInWindow !== row.closed) closureMismatches += 1;
+      if (e.closedInWindow && row.closed) {
+        maxRealisedErrorSol = Math.max(maxRealisedErrorSol, Math.abs(e.realisedSolGrossOfFees - row.realised));
+      }
+    }
+  }
+
+  // 1e-6 SOL is a thousandth of a lamport-scale rounding: the dataset stores SOL to six decimals,
+  // so anything at or below this is representation and anything above it is a different sum.
+  const ok = pairs > 0 && closureMismatches === 0 && missingFromCsv === 0 && maxRealisedErrorSol < 1e-6;
+  return { pairs, closureMismatches, maxRealisedErrorSol, missingFromCsv, ok };
 }
 
 /**
@@ -324,6 +431,11 @@ export function verifyCurveInversion(controls) {
  * @property {import('./measure.mjs').CompletionMeasurement} groundTruth
  * @property {import('./rank.mjs').GateResult} subjectGate
  * @property {{ verdict: import('./rank.mjs').Verdict, rationale: string }} subjectVerdict
+ * @property {FieldReproduction} fieldCheck
+ * @property {import('./entry.mjs').EntryScore} subjectEntryRecent Scored exactly as a live run would
+ *   score a stranger: the most recent `maxLaunchesPerCandidate` launches, no era filter.
+ * @property {import('./entry.mjs').EntryScore} subjectEntryPostBreak Scored over the whole
+ *   post-2026-06-04 regime, which is the population the June report measured.
  * @property {{ n: number, roomP25: number, roomMedian: number, roomP75: number }} controlPopulation
  * @property {{ n: number, groupedPreset15: number }} controlPresets
  * @property {boolean} passed
@@ -335,9 +447,10 @@ export function verifyCurveInversion(controls) {
  *
  * @param {string} dataDir Path to `data/population-tape-2026-07-29`.
  * @param {{ minTokens: number, minCompletionRate: number, minSpanDays: number }} gateThresholds
+ * @param {import('./entry.mjs').EntryThresholds & { maxLaunchesPerCandidate: number }} entryThresholds
  * @returns {Stage0Result}
  */
-export function runStage0(dataDir, gateThresholds) {
+export function runStage0(dataDir, gateThresholds, entryThresholds) {
   const controls = readControlDeployers(dataDir);
   const curveCheck = verifyCurveInversion(controls);
   const groundTruth = readGroundTruthCompletion(dataDir);
@@ -396,6 +509,30 @@ export function runStage0(dataDir, gateThresholds) {
       publishedOperationShare: e.share,
       published: e.published,
     };
+  });
+
+  // --- (5) the field measurement, against the dataset's own committed P&L table ---------------
+  const fieldCheck = verifyFieldReproduction(dataDir, launches);
+
+  // --- (6) THE KNOWN-NEGATIVE CONTROL -------------------------------------------------------
+  // Scored two ways, because both readings have to come out negative and they can fail apart:
+  //
+  //   `subjectEntryRecent`    — the most recent N launches, no era filter. This is EXACTLY what a
+  //                             live run does to a stranger, so it is the reading that would
+  //                             actually be produced today.
+  //   `subjectEntryPostBreak` — the whole 2026-06-04 → regime, which is the population the June
+  //                             report measured and therefore the one whose answer is published.
+  //
+  // If the recent slice ever drifts positive while the era slice stays negative, the sampling
+  // window has become the thing carrying the verdict, which is precisely the artefact this project
+  // caught the vendor committing with its own trailing-window "lifetime" rate.
+  const recentLaunches = launches.slice(-entryThresholds.maxLaunchesPerCandidate);
+  const subjectEntryRecent = scoreEntry(recentLaunches, entryThresholds, {
+    candidateWallet: SUBJECT_DEPLOYER,
+  });
+  const postBreak = launches.filter((l) => l.dateIso.slice(0, 10) >= REGIME_BOUNDARY);
+  const subjectEntryPostBreak = scoreEntry(postBreak, entryThresholds, {
+    candidateWallet: SUBJECT_DEPLOYER,
   });
 
   const room = controls.map((c) => c.roomLeftUpperBound);
@@ -468,12 +605,63 @@ export function runStage0(dataDir, gateThresholds) {
     }
   }
 
+  // The field measurement must land on the dataset's own columns, or the live measurement is
+  // running a recipe that was never checked against anything.
+  if (!fieldCheck.ok) {
+    failures.push(
+      `the field measurement no longer reproduces wallet_launch_pnl.csv: ${fieldCheck.pairs} pair(s) ` +
+        `compared, ${fieldCheck.closureMismatches} closure mismatch(es), ` +
+        `${fieldCheck.missingFromCsv} pair(s) absent from the table, max realised error ` +
+        `${fieldCheck.maxRealisedErrorSol.toExponential(3)} SOL. Every realised figure Stage 2 ` +
+        `reports is computed by that recipe, so a drift here invalidates all of them.`,
+    );
+  }
+
+  // THE KNOWN-NEGATIVE CONTROL, and it is the counterpart of the gate assertion above. The gate
+  // MUST pass this wallet; Stage 2 MUST refuse it. `7ufmve7Z…` is competent and it is not beatable
+  // — measured in data/slot-zero-june-regime-change/report.md §5, §6, not assumed — so a Stage 2
+  // that scores it as having room is a Stage 2 that is wrong, whatever else it gets right.
+  //
+  // Note which leg would produce the wrong answer if it were allowed to: the FIELD leg, read on its
+  // own, is positive here. Gross of fees this wallet's post-break field is ~77% of closed round
+  // trips above zero, because the fill tape carries no priority fee, no landing tip and no venue
+  // fee. The verdict has to survive a leg pointing the wrong way, which is why the field can only
+  // ever veto and never pass.
+  for (const [label, score] of /** @type {[string, import('./entry.mjs').EntryScore][]} */ ([
+    ['the most recent launches (what a live run would score today)', subjectEntryRecent],
+    ['the whole post-2026-06-04 regime', subjectEntryPostBreak],
+  ])) {
+    if (score.verdict === 'entry-room-present') {
+      failures.push(
+        `STAGE 2 SCORED OUR SUBJECT DEPLOYER AS HAVING ENTRY ROOM, over ${label}. That wallet is ` +
+          `the known negative: its opening window has been unprofitable for outsiders since ` +
+          `2026-06-04 because its own group takes 97% of the profit available there ` +
+          `(slot-zero-june-regime-change/report.md §6.1). Measured room here is ` +
+          `${score.roomLeft.median.toFixed(3)} against a ${entryThresholds.minRoomLeft} bar. ` +
+          `Something in the entry score has drifted — check first whether the field leg has been ` +
+          `allowed to carry a positive verdict, because gross of fees it reads ` +
+          `${score.fieldHitRateGrossOfFees.hits}/${score.fieldHitRateGrossOfFees.n} positive and ` +
+          `says the opposite of the truth.`,
+      );
+    }
+    if (score.verdict === 'entry-unmeasured') {
+      failures.push(
+        `Stage 2 could not measure our subject deployer over ${label} (${score.rationale}). The ` +
+          `known-negative control is only a control if it actually runs, and an UNMEASURED result ` +
+          `is not a negative one.`,
+      );
+    }
+  }
+
   return {
     curveCheck,
     eraSplit,
     groundTruth,
     subjectGate,
     subjectVerdict,
+    fieldCheck,
+    subjectEntryRecent,
+    subjectEntryPostBreak,
     controlPopulation,
     controlPresets,
     passed: failures.length === 0,

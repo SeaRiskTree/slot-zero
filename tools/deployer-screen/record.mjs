@@ -95,3 +95,44 @@ export function describeCompleteness(c) {
       );
   }
 }
+
+/** A whole URL. This client's trade URLs embed the mint, so a URL in free text is a leak. */
+const URL_SHAPED = /\bhttps?:\/\/\S+/gi;
+
+/**
+ * A Solana-style base58 run. Mints and wallets are 32–44 characters from this alphabet, which
+ * excludes `0`, `O`, `I` and `l` — so ordinary English prose does not match it.
+ */
+const BASE58_SHAPED = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g;
+
+/**
+ * Strip vendor-derived identifiers out of a free-text string bound for a run record.
+ *
+ * **The retention boundary, enforced in one place rather than at each call site.** MadeOnSol terms
+ * §5a(d) and this tool's own containment claim say a run record carries our derived arithmetic and
+ * no per-token vendor record — but free text is how that leaks, and it leaks by accident: an error
+ * message, a note built from one, a URL in a stack. The concrete case this exists for is a
+ * transport failure on a launch walk, where the thrown message carried
+ * `swap-api.pump.fun/v2/coins/<MINT>/trades` straight into `coverage.dropNotes` and out to `--out`.
+ * The committed-record test only forbade mint-shaped *keys*, so a mint inside a sentence passed it.
+ *
+ * Applied to every free-text field a record persists. Structured fields are not passed through it —
+ * a candidate's own `wallet` is public on-chain data we deliberately keep, and it is stored as a
+ * field precisely so it is never confused with an incidental one.
+ *
+ * @param {unknown} text
+ * @returns {string}
+ */
+export function redactVendorIdentifiers(text) {
+  return String(text).replace(URL_SHAPED, '[url redacted]').replace(BASE58_SHAPED, '[address redacted]');
+}
+
+/**
+ * {@link redactVendorIdentifiers} over a list of free-text lines.
+ *
+ * @param {readonly string[]} lines
+ * @returns {string[]}
+ */
+export function redactAll(lines) {
+  return lines.map((l) => redactVendorIdentifiers(l));
+}

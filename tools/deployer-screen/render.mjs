@@ -86,6 +86,27 @@ const pad = (s, w) => (s.length >= w ? s : s + ' '.repeat(w - s.length));
 const padl = (s, w) => (s.length >= w ? s : ' '.repeat(w - s.length) + s);
 
 /**
+ * Launches in the gate's history that the ownership listing did not supply — the creates the walk
+ * proved itself.
+ *
+ * `merged.records` is creates ∪ listing, so under an EMPTY window (nothing to compare the two
+ * readings over) the listing's contribution is `listedOutsideWindow` and the remainder is what the
+ * walk proved on the page it abandoned. Those are precisely the launches ownership hides, so no
+ * sentence about an uncovered window may quote the listing count as if it were the whole reading:
+ * the number a rejection row prints has to be the number the gate read, never a subset of it.
+ *
+ * Clamped at zero because the two counts come from one record and a hand-edited or older one need
+ * not be self-consistent; a negative here would be printed prose, not a thrown error.
+ *
+ * @param {import('./rank.mjs').Candidate} c
+ * @returns {number}
+ */
+function provenOutsideWindow(c) {
+  if (c.creation === null) return 0;
+  return Math.max(0, c.completion.tokens - c.creation.listedOutsideWindow);
+}
+
+/**
  * One line of a distribution: label, n, and the quantiles.
  *
  * There is no mean column and there is not going to be one. The captain's standing bar for this
@@ -565,12 +586,18 @@ export function renderStage1(run) {
         );
         // A walk that covered nothing gets its own sentence rather than the general one with a
         // hole where the date should be. "Before null" tells a reader nothing, and the state it
-        // stands for — the entire reading is the ownership listing, none of it creation-derived —
-        // is the one they most need to know before reading the rate above as a correction.
+        // stands for — the reading falls back to the ownership listing, with no window to correct
+        // it — is the one they most need to know before reading the rate above as a correction.
+        // An empty window withdraws the right to call a listed token "acquired"; it does NOT
+        // discard the creates the walk proved on the page it abandoned, and those are exactly the
+        // launches ownership hides, so the sentence has to count them in rather than claim the
+        // listing is the whole of it.
         if (c.creation.coveredFromIso === null) {
           L.push(
             `      ^ the walk stopped on ${c.creation.stopReason} before covering ANY window, so ` +
-              `this entire reading is the ownership listing — a LOWER BOUND, biased towards rejection`,
+              `these ${c.completion.tokens} launch(es) are ${c.creation.listedOutsideWindow} from ` +
+              `the ownership listing plus ${provenOutsideWindow(c)} the walk proved — a LOWER ` +
+              `BOUND, biased towards rejection`,
           );
         } else if (!c.creation.wholeHistory) {
           L.push(
@@ -666,12 +693,16 @@ export function renderStage1(run) {
       for (const reason of c.gate.reasons) L.push(`      · ${reason}`);
       if (c.creation !== null && c.creation.coveredFromIso === null) {
         // The heading above promises each row states which history it was rejected over. A walk
-        // that covered no window at all was rejected over the ownership listing alone, and saying
-        // "a 0.0d creation window" without saying that would leave the promise unkept.
+        // that covered no window at all was rejected over the ownership listing plus whatever
+        // creates it proved before stopping, and saying "a 0.0d creation window" without saying
+        // that would leave the promise unkept. The count printed is the one the gate read — naming
+        // the listing alone would put a number here LOWER than the denominator of the rate above,
+        // which is the same rendered-prose-contradicts-the-reading defect this lane exists to close.
         L.push(
           `      · the creation walk covered NO window (stopped on ${c.creation.stopReason}), so ` +
-            `this was computed over ${c.creation.listedOutsideWindow} ownership-listed launch(es) ` +
-            `alone — the biased reading`,
+            `this was computed over ${c.completion.tokens} launch(es) — ` +
+            `${c.creation.listedOutsideWindow} ownership-listed plus ${provenOutsideWindow(c)} the ` +
+            `walk proved — the biased reading`,
         );
       } else if (c.creation !== null && !c.creation.wholeHistory) {
         L.push(

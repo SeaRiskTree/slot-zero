@@ -220,6 +220,24 @@ export function readCurveState(base64Data) {
  */
 
 /**
+ * The one test for "this bound is a real block time" — a covered window's edge, or `null` when the
+ * walk never reached one. `null` is what the current walk stores; `0` is what an older producer, an
+ * already-saved run record and a missing `blockTime` all still carry, and it means the same thing,
+ * because no Solana block time is at or before the epoch.
+ *
+ * Every consumer of {@link CoveredWindow} has to apply the SAME test or they disagree about the
+ * same walk: {@link mergeHistories} treating a `0` floor as an empty window while the run record
+ * writes `1970-01-01T00:00:00.000Z` and a 20,600-day span is a record that contradicts the reading
+ * it was produced from. Hence one exported function rather than a repeated comparison.
+ *
+ * @param {number | null | undefined} ms
+ * @returns {number | null} `ms` when it is a real block time, `null` when it covers nothing.
+ */
+export function coveredBoundMs(ms) {
+  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms : null;
+}
+
+/**
  * @typedef {object} MergedHistory
  * @property {import('./measure.mjs').TokenRecord[]} records The history the gate reads.
  * @property {number} createdInWindow    Launches the create transactions prove, inside the window.
@@ -314,7 +332,7 @@ export function mergeHistories(input) {
   // "acquired", and a 30-launch deployer is rejected on a 2-launch history with an ordinary-looking
   // rationale. That is the invisible false rejection this whole lane exists to remove, arriving
   // from the other end.
-  const fromMs = covered.fromMs !== null && covered.fromMs > 0 ? covered.fromMs : null;
+  const fromMs = coveredBoundMs(covered.fromMs);
   /** @param {number} ms */
   const inWindow = (ms) => fromMs !== null && Number.isFinite(ms) && ms >= fromMs && ms <= covered.toMs;
 

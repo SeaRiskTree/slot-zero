@@ -77,7 +77,7 @@ asserts **both** halves of it every run:
 
 It is competent (103 of 239 launches bonded, 0.4310) and it is **not beatable**: since 2026-06-04
 its own group takes the bottom of its own curve. Stage 2 scores it `entry-room-absent` on both the
-recent-8-launch slice a live run would use and the whole 89-launch post-break regime. That pairing
+recent-launch slice a live run would score and the whole 89-launch post-break regime. That pairing
 is what stops the tool from grading itself favourably, and `stage0.mjs` fails loudly if a later lane
 loosens a bar enough to admit the wallet. It matters most because the **field** leg on that same
 wallet reads 362 of 473 closed round trips positive gross of fees — followed on its own it would
@@ -149,13 +149,13 @@ the report's name and section inline; they are evidence from elsewhere, not repr
   *(`wallet_launch_pnl.csv`, closed rows, grouped by `first_slot` − create slot.)*
 - **Six wallets are inside the launch, not competing for it.** `2CHrnc2L…` is in the create
   slot of **235 of 235** reconstructed launches over eight months, pays 0.0009 SOL of fees to get
-  there, and appears in **zero of 70 other deployers' launches**. The six fill at 1.08–1.41× the
-  deployer's own price where outsiders pay 2–3× — *that* range is `report.md` §5.4's, carried in
-  `src/cohort.ts` and not reproduced here, because the only committed file with a fill multiple
-  (`first30s_best.csv`) holds the ten best entrants per launch rather than all of them.
+  there, and appears in **zero of 70 other deployers' launches**. The six fill at **1.08–1.91×**
+  the deployer's own price — their per-wallet `median_entry_price_mult`, read straight out of
+  `wallet_behaviour_profiles.csv` — against a median of **2.46×** (range 1.30–4.10) across the 59
+  non-cohort wallets in that same file that reach the create slot on most of their launches.
   Fee-inclusive, the cohort's median create-slot round trip is **+0.838 SOL**; the non-cohort
-  median is **+0.035 SOL**. *(`counterparties.csv`; `onchain_create_slot_pnl.csv` for the
-  fee-inclusive figures.)*
+  median is **+0.035 SOL**. *(`wallet_behaviour_profiles.csv`; `counterparties.csv`;
+  `onchain_create_slot_pnl.csv` for the fee-inclusive figures.)*
   That the six are *part of the operation* was an inference when the source report was
   written; the funding graph has since turned it into an artefact. **The discriminator is the
   operator's own tooling, host and handle on the cohort's own launches:** `2CHrnc2L…` is
@@ -175,15 +175,19 @@ the report's name and section inline; they are evidence from elsewhere, not repr
   alone — confirmed here empirically on **18 launches whose raw tape window spans the switch
   to the graduated pool**, across dev buys from 3.46 to 56.30 SOL. At the current
   14.8148-SOL preset that is 6.59× the deployer's entry, and the median launch never gets
-  there (median lifetime ATH 5.08×). The deployer finishes selling at ~35% of graduation.
+  there (median lifetime ATH 5.08×). `report.md` §244 puts the deployer's finishing sale at
+  **~35% of graduation on the dev-buy basis** — the 6.5856× multiple of its own entry price,
+  which holds for the standard preset only.
 - **Somebody is already running the fast-reacting-bot strategy, and it is the largest loser
   in the dataset.** `C989QoG3…` and `4o9ndxqo…`: 51 and 52 launches, entering a median one
   second after the mint at ~3× the deployer's price, holding ~42 seconds, never once in the create
   slot. **−106.8 and −100.0 SOL**, profitable on 2% and 4%.
 - **The deployer takes 4,315 SOL over 228 complete exits** (median +21.66 per launch, gross
   of fees), and is out at a median +13 seconds. **Long before graduation, every time:** on all
-  228 complete exits the price it finishes selling at is below the graduation price, the highest
-  reaching 79% of it.
+  228 complete exits the price it finishes selling at is below the graduation price — checked
+  here on the curve basis, 14.70× each launch's own initial price (`CURVE` in `src/index.ts`),
+  where the highest of the 228 reaches 79% of it. That is a different denominator from the ~35%
+  above, so the two are not a median/max pair on one scale.
 
 ---
 
@@ -313,9 +317,12 @@ funder or a destination with it (§5).
 
 **And then the answer stopped being worth anything on this deployer.** The positive result the
 question was gating is a create-slot result, and the create slot on `7ufmve7Z…` closed to outsiders
-on 2026-06-04 — see "The one window, and what closed it" above. Both of these wallets were still
-trading it at the tape's end, on a collapsed return (0.576 → 0.196 and 0.540 → 0.097 gross ROI);
-neither rotated out. So the settled outsider status is a fact about who those wallets are, and no
+on 2026-06-04 — see "The one window, and what closed it" above. Neither rotated out: at the tape's
+end the wallet `5brv79eF…` was still trading this deployer on a collapsed return (0.576 → 0.196
+gross ROI), and so was the `9BhkaAyb…` book that `EgQX9R3Q…` belongs to, measured as the one unit
+its five wallets are (0.540 → 0.097). *(`analysis/window-population/README.md` §6.3 — the second
+row is a book aggregate, not one wallet's observation.)* So the settled outsider status is a fact
+about who those wallets are, and no
 part of it says the seat they sat in is still there.
 
 **Which side each negative is complete on**, because that is what the test rests on and the two
@@ -343,6 +350,13 @@ intersection test, which needs one complete side, not two.
 One set is genuinely truncated and is not used as evidence anywhere: `2CQgjcdN…`'s, at
 2026-07-22 (§8.2). And **both negatives carry the shared-custodial-venue ceiling** recorded
 above; neither is a claim that the parties are provably unrelated.
+
+`5brv79eF…` in particular is exactly what it appeared to be: an unaffiliated, bridge-funded
+sniper that took money out of this operator's launches for four months and withdraws to a service
+the operator never touches (§3.1, §6.2). It was **still trading as of the 2026-07-29 observation**
+— the date `src/cohort.ts` stores it under, which this offline repo can never refresh, so it is a
+snapshot rather than a present-tense fact. **It carries no further caveat from this evidence**
+beyond the ceiling every on-chain verdict here carries.
 
 **What this does not say.** Nothing above establishes that the strategy works, or that either
 wallet's edge is repeatable by a new entrant. The funding report answers whose money it is
@@ -462,8 +476,8 @@ prose** — each assertion states what the data says.
    re-harvesting them. The loader gates on `reached_mint`.
    **The partial files are not "unrelated later trading", which this README used to say.** Every
    row in all four sits inside that launch's own 300-second window, minutes after its mint
-   (`GLM` 9 s to 5 min after create on the curve; `Marciana` 2:11 to 5:00 after create, on
-   PumpSwap). What they are missing is the *oldest* end — the walk never reached the create slot
+   (`GLM` 9 s to 5 min after create; `Marciana` 2:11 to 5:00 after create). What they are
+   missing is the *oldest* end — the walk never reached the create slot
    — which is exactly why `reached_mint` and not row count is the coverage test.
 6. **§3.5 says "thirteen reconstructed windows span the moment the token graduated."** There
    are **18**. The six current-preset ones it names are exactly the six that reproduce
@@ -500,8 +514,9 @@ this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`. Two late
 custodial venue in "The ceiling of the method" above) and `slot-zero-june-regime-change` (the
 create slot's unprofitability for outsiders since 2026-06-04, and the *operation's share of the
 curve's bottom* method that `tools/deployer-screen/` cites), are likewise not copied here.
-**None of the six reports is committed to this repo**, so any figure attributed to one is
-evidence from elsewhere and is not asserted by any test here. `analysis/window-population/`
+**None of the five companion reports is committed to this repo** — only the population-tape
+report and its brief are — so any figure attributed to one of the five is evidence from elsewhere
+and is not asserted by any test here. `analysis/window-population/`
 re-derives `slot-zero-june-regime-change`'s 2026-06-04 date and its closed-regime prize from the
 local tape by an independent route, which is the one place a companion finding is confirmed
 in-repo.

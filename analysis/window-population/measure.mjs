@@ -584,7 +584,8 @@ const lastFillCache = new Map();
  * tape. `null` when the launch is not covered, has no create slot, or had no such buy.
  *
  * Coverage is `meta.reached_mint`, never file existence: all 239 mints have a tape and four of
- * them never reached the mint, so their files hold unrelated later trading.
+ * them never reached the mint, so their files are truncated at the *oldest* end — every row sits
+ * inside that launch's own window, but the create slot the backwards walk never reached is absent.
  *
  * @param {string} mint
  * @param {ReadonlyMap<string, number>} createSlot

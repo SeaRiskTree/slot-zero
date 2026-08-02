@@ -364,8 +364,12 @@ export function mergeHistories(input) {
       }
       if (windowExact) {
         // The walk saw every transaction inside the window, so a listed token it never saw was not
-        // created by this wallet — it was acquired.
-        notCreatedByWallet += 1;
+        // created by this wallet — it was acquired. Unless the walk holds its create transaction:
+        // a create proven below `covered.fromMs` by an abandoned page is a launch this wallet
+        // demonstrably made, and its listing row's `created_timestamp` can still land inside the
+        // window because the two sides are timestamped by different sources. Calling that one
+        // "acquired by somebody else" would contradict evidence already in hand.
+        if (!byMint.has(row.mint)) notCreatedByWallet += 1;
         continue;
       }
       if (!byMint.has(row.mint)) {
@@ -387,6 +391,8 @@ export function mergeHistories(input) {
   // (a create's `blockTime`, a listing row's `created_timestamp`), so a launch landing on the
   // window boundary can be in-window on one side and out on the other, and the subtraction would
   // then report a NEGATIVE under-count. This measurement exists to size a bias; it cannot have one.
+  // The same clock mismatch is why `notCreatedByWallet` above is gated on the create set rather
+  // than on the window alone — both counts have to survive a launch the two sources date apart.
   const createdInWindow = createdInWindowMints.size;
   return {
     records: [...byMint.values()],

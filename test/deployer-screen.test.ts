@@ -110,6 +110,7 @@ import {
   redactVendorIdentifiers,
   schemaVersionOf,
   unmeasuredBecause,
+  unmeasuredNoSource,
 } from '../tools/deployer-screen/record.mjs';
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
@@ -1902,6 +1903,28 @@ describe('a ceiling hit is never recordable as a measured result', () => {
     expect(UNMEASURED_KINDS['budget-exhausted'].truncates).toBe(true);
   });
 
+  it('records a measurement nothing could answer, without claiming a failure or a wall', () => {
+    // Not every unmeasured thing is a failed request. When every request was served and no surface
+    // carries the fact, the honest kind is its own — rounding it into `local-error` would blame our
+    // code for a limit of the evidence, and into `unclassified` would disclaim a cause we know.
+    const u = unmeasuredNoSource(
+      'the bonded status of a creation-derived launch history',
+      'WalletAaa',
+      'neither the on-chain curve nor the ownership listing could answer',
+      '3 of 40 launch(es) undecidable',
+    );
+    expect(u.kind).toBe('no-source');
+    expect(u.summary).toMatch(/NOT a negative result/);
+    expect(u.summary).not.toMatch(/WalletAaa/);
+    expect(describeUnmeasured(u)).toMatch(/3 of 40/);
+
+    // It is unmeasured, so it must be reported — but it is not a budget wall, so it must not
+    // manufacture truncation on a run that never stopped looking.
+    const t = deriveTruncation({ abortReason: null, coverage: COVERAGE_OK, unmeasured: [u] });
+    expect(t.truncated).toBe(false);
+    expect(kindMetaOf(u.kind).truncates).toBe(false);
+  });
+
   it('makes an unmeasured candidate truncate the run, with a reason naming what went unmeasured', () => {
     const unmeasured = ['A', 'B', 'C'].map((w) =>
       unmeasuredBecause('consistency-over-time', w, new CeilingReached(600, '/x'), KEYLESS),
@@ -2410,6 +2433,45 @@ describe('the keyless boundary holds in both directions', () => {
         expect(FORBIDDEN.test(JSON.stringify(row)), `${file} holds per-token vendor data`).toBe(false);
       }
     }
+  });
+
+  it('a record can never report an unjudged candidate while claiming it measured everything', () => {
+    // The invariant, stated once: if any candidate row carries `gate-unmeasured`, the RUN level has
+    // to say so too. `unmeasured: []` with `truncated: false` is a record telling its reader it
+    // measured everything it reports — which, next to a wallet nobody judged, is the same invisible
+    // false rejection this whole reading exists to remove, one level up.
+    const violates = (r: {
+      candidates?: { verdict?: string }[];
+      unmeasured?: unknown[];
+      truncated?: boolean;
+    }) =>
+      (r.candidates ?? []).some((c) => c.verdict === 'gate-unmeasured') &&
+      (r.unmeasured ?? []).length === 0 &&
+      r.truncated !== true;
+
+    // The checker is not vacuous: a record in the prohibited shape is recognised as one.
+    expect(
+      violates({ candidates: [{ verdict: 'gate-unmeasured' }], unmeasured: [], truncated: false }),
+    ).toBe(true);
+    expect(
+      violates({
+        candidates: [{ verdict: 'gate-unmeasured' }],
+        unmeasured: [
+          unmeasuredNoSource('the bonded status of a launch history', 'W', 'nothing could answer'),
+        ],
+        truncated: false,
+      }),
+    ).toBe(false);
+
+    for (const [file, text] of readAll(join(TOOL_DIR, 'runs'), '', /\.json$/)) {
+      expect(violates(JSON.parse(text)), `${file} reports an unjudged candidate as measured`).toBe(false);
+    }
+
+    // And the one branch that can mint a `gate-unmeasured` without a thrown cause must be the same
+    // branch that files the run-level entry, or the invariant holds only until the next edit.
+    const source = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    const branch = source.slice(source.indexOf('if (merged.bondedUndecidable > 0)'));
+    expect(branch.slice(0, branch.indexOf('\n        }\n'))).toMatch(/unmeasured\.push\(/);
   });
 
   it('the pinned keyless ceiling covers BOTH passes that share the frontend-api-v3 client', () => {
@@ -3075,6 +3137,28 @@ describe('the two gap counts are set differences, never a subtraction', () => {
     expect(merged.hiddenByOwnership).toBeGreaterThanOrEqual(0);
     expect(merged.notCreatedByWallet).toBeGreaterThanOrEqual(0);
     // And the launch is still counted exactly once, from its create transaction.
+    expect(merged.records).toHaveLength(1);
+  });
+
+  it('never reports a launch it holds the create transaction for as acquired', () => {
+    // Same clock mismatch, the other diagnostic. An abandoned page still PROVES the create, so a
+    // mint below `covered.fromMs` whose listing row is dated inside the window is a launch this
+    // wallet demonstrably made — calling it "acquired by somebody else" contradicts evidence in
+    // hand, and it is the ownership surface's own timestamp doing the contradicting.
+    const covered = { fromMs: T0, toMs: T0 + 10 * DAY, exhausted: false };
+    const merged = mergeHistories({
+      creates: [
+        { mint: 'proven', bondingCurve: 'c', creator: W3, createdAtMs: T0 - DAY, signature: 's' },
+      ],
+      wallet: W3,
+      curves: new Map([['proven', { complete: true, creator: W3 }]]),
+      listed: [{ mint: 'proven', deployedAtMs: T0 + DAY, completed: true }],
+      covered,
+    });
+
+    expect(merged.windowExact).toBe(true);
+    expect(merged.notCreatedByWallet).toBe(0);
+    expect(merged.listedInWindow).toBe(1);
     expect(merged.records).toHaveLength(1);
   });
 });

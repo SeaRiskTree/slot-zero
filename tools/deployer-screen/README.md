@@ -39,15 +39,21 @@ node tools/deployer-screen/screen.mjs --dry-run
 # A real run. Needs a key (see below). Stage 2 is ON by default. Leave --candidates unset: the
 # default grades everything enumeration surfaces, up to the budget. Passing a number below the
 # ceiling silently truncates coverage, which is exactly how the first elite run graded 12 of the
-# 22 wallets it seeded. Budget an HOUR, not a minute: the creation-derived history is walked from
-# on-chain create transactions and that is the expensive part.
+# 22 wallets it seeded. Budget HOURS, not minutes — up to about 15 at the candidate cap: the
+# creation-derived history is walked from on-chain create transactions, and at the pinned bounds
+# that walk alone is ~13.5 hours worst case. --dry-run prints the arithmetic for your own flags.
 node tools/deployer-screen/screen.mjs --tier elite \
   --consistency --out tools/deployer-screen/runs/$(date +%F).json
+
+# Bound the run instead. The RPC walk is N x 100 x 2.5s, so this is ~40 minutes, not ~13.5 hours.
+# It truncates coverage, and the record says so.
+node tools/deployer-screen/screen.mjs --tier elite --candidates 12
 
 # The competence gate alone, which answers nothing about whether a window is enterable.
 node tools/deployer-screen/screen.mjs --no-stage2
 
-# The old, fast, BIASED reading. Stamped historySource: "ownership-only" in the record.
+# The old, fast, BIASED reading — it skips the creation walk, so under an hour rather than ~15.
+# Stamped historySource: "ownership-only" in the record, because the bias must travel with it.
 node tools/deployer-screen/screen.mjs --tier elite --ownership-only
 
 node tools/deployer-screen/screen.mjs --help
@@ -589,10 +595,42 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | `getTransaction` batch size | **1** | Measured harmful above 1 — see [Which history the gate counts](#which-history-the-gate-counts). |
 | RPC retries | 3 with exponential backoff, each attempt counted against the ceiling | Unlike the keyed client, a 429 here is load-shedding and not a verdict — but a 429 storm still cannot outlast the ceiling. |
 
-**A full default run takes about 47 minutes**, not 21: ~21 for the 198 keyed requests at 6.5s, plus
-~26 for the gate's own 780 keyless listing pages at 2.0s — and a further ~19.5 for 585 more pages
-when `--consistency` is passed, so **about 67 minutes** for that. Every figure is in
-`thresholds.json` → `justification`. A run still going at the 25-minute mark has not hung.
+### How long a run takes, and how to bound it
+
+**A full default run at the 195-candidate cap is worst-cased in HOURS, not minutes — about 15 —
+and the creation walk is essentially all of it.** The arithmetic is `renderDryRun`'s, so `--dry-run`
+prints these same figures for whatever flags you actually pass:
+
+| leg | worst case | at its pinned pacing |
+|---|---|---|
+| keyed MadeOnSol | 3 + 195 = 198 requests | 6.5s → **~21 min** |
+| **Solana RPC, the creation walk** | 195 × 100 = **19,500** requests | 2.5s → **~13.5 hours** |
+| keyless `frontend-api-v3`, the gate's ownership listing | 195 × 4 = 780 requests | 2.0s → ~26 min |
+| keyless `frontend-api-v3`, `--consistency` | 195 × 3 = 585 requests | 2.0s → ~19.5 min |
+| keyless `swap-api`, Stage 2 | 3 × 8 × 18 = 432 requests | 7.0s → ~50 min |
+
+So: **~15 hours** for a default run, **~15.5** with `--consistency`. The earlier "about 47 minutes"
+predated the creation walk and counted only the keyed and `frontend-api-v3` legs; it is wrong by a
+factor of twenty and is withdrawn. **Do not kill a default run because it is still going after an
+hour** — check the printed request counter, which advances on every request.
+
+Typical is far below worst case and is not predictable from the wallet address: the walk's cost
+scales with the fraction of a wallet's signature index that *succeeded*, measured between 1.7% and
+99.7% (see [What that costs, measured](#what-that-costs-measured)), so one candidate can finish in
+seconds and the next can spend the whole per-candidate ceiling. A run is not hung merely because it
+has been quiet for 2.5 seconds.
+
+Two levers already exist, and this is what they are for:
+
+- **`--candidates N`** bounds the whole run — the RPC leg is `N × 100 × 2.5s`, so `--candidates 12`
+  is ~40 minutes of walking rather than ~13.5 hours. It truncates coverage, and the record says so.
+- **`--ownership-only`** skips the creation walk entirely, which is the ~13.5 hours, leaving a run
+  of well under an hour. Its reading is **biased towards rejection** — that is the defect this whole
+  lane exists to fix — and the record is stamped `historySource: "ownership-only"` so the bias
+  travels with the numbers rather than being forgotten.
+
+Every figure above is in `thresholds.json` → `justification`, and `--dry-run` prints the plan
+without fetching anything.
 
 The conditional in the instruction binds: ***"if it gets results"***. It licenses sizing a run by
 what the question needs. It does **not** license sweeping, idle retrying, or re-running to

@@ -43,6 +43,7 @@ import {
   describeUnmeasured,
   redactVendorIdentifiers,
   unmeasuredBecause,
+  unmeasuredNoSource,
 } from './record.mjs';
 import {
   KeylessClient,
@@ -648,6 +649,19 @@ export async function main(opts, env, out, err) {
             `${merged.bondedUndecidable} of ${merged.records.length} launch(es) have no bonded ` +
               `status from EITHER source — the bonding-curve account could not be read and the ` +
               `ownership listing has no row for them (which is what a hidden launch looks like)`,
+          );
+          // The run level too, not only the candidate row. A record whose `unmeasured` reads empty
+          // and `truncated` reads false has told its reader it measured everything, and a wallet
+          // nobody judged sitting in the candidate list does not contradict that at a glance —
+          // which is the same invisible false rejection this lane exists to remove, one level up.
+          unmeasured.push(
+            unmeasuredNoSource(
+              'the bonded status of a creation-derived launch history',
+              seed.wallet,
+              'neither the on-chain bonding-curve account nor the ownership listing could say ' +
+                'whether some of this wallet\'s launches bonded, so the gate was not applied to it',
+              `${merged.bondedUndecidable} of ${merged.records.length} launch(es) undecidable`,
+            ),
           );
         }
         if (listingUnmeasuredNote !== null) {

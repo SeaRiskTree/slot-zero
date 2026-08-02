@@ -35,7 +35,7 @@
  * each new budget needing its own special case that someone remembers to add.
  */
 
-import { CeilingReached } from './client.mjs';
+import { CeilingReached, RequestFailed } from './client.mjs';
 
 /**
  * Schema version of records this build writes.
@@ -154,34 +154,99 @@ export function redactAll(lines) {
 }
 
 /**
- * Why a measurement could not be taken. The two are not interchangeable and the record keeps them
- * apart:
+ * Why a measurement could not be taken.
  *
- * - **`budget-exhausted`** — a request ceiling. A wall: the tool stopped looking and will stop at
- *   the same place on a rerun, so it is genuine truncation of the run's coverage.
- * - **`page-failure`** — one request was retried and still failed. The run kept going and the next
- *   candidate was measured normally.
+ * These are not interchangeable and the record keeps them apart, because each one tells an operator
+ * to do something different. **Asserting an inaccurate cause is worse than asserting none**: a
+ * record that says "we retried" when no retry was made is exactly the class of defect the honesty
+ * rule above exists to prevent, so a cause that cannot be identified is reported as unidentified
+ * rather than rounded to the likeliest story.
  *
- * @typedef {'budget-exhausted' | 'page-failure'} UnmeasuredKind
+ * @typedef {'budget-exhausted' | 'page-failure' | 'vendor-refusal' | 'local-error' | 'unclassified'} UnmeasuredKind
  */
+
+/**
+ * What each kind means, and whether it truncates the run.
+ *
+ * **Only the budget wall truncates.** The other kinds are still unmeasured, still recorded, and
+ * still forbidden from reading as a measured negative — but the run did not stop looking, and a
+ * flag that fires on every run carries no information and teaches its reader to skip it.
+ *
+ * @type {Record<UnmeasuredKind, { truncates: boolean, heading: string, advice: string }>}
+ */
+export const UNMEASURED_KINDS = {
+  'budget-exhausted': {
+    truncates: true,
+    heading: 'BUDGET EXHAUSTED — a wall. The run stopped looking, and a rerun stops in the same place.',
+    advice: 'This IS truncation and it is named in truncationReason.',
+  },
+  'page-failure': {
+    truncates: false,
+    heading: 'PAGE FAILURE — the request was retried once and the retry failed too.',
+    advice: 'The run continued. A rerun may well succeed.',
+  },
+  'vendor-refusal': {
+    truncates: false,
+    heading: 'VENDOR REFUSAL — the endpoint answered on the first attempt and we did NOT retry it.',
+    advice: 'A plain rerun is not expected to change it; check whether the endpoint moved.',
+  },
+  'local-error': {
+    truncates: false,
+    heading: 'LOCAL ERROR — this failed in our own code, not at the endpoint.',
+    advice: 'No request was retried and one may never have been made. This is our bug to fix.',
+  },
+  unclassified: {
+    truncates: false,
+    heading: 'UNCLASSIFIED — the cause could not be identified.',
+    advice: 'Nothing is claimed about it, deliberately: a guessed cause is worse than none.',
+  },
+};
 
 /**
  * One measurement the run could not take, and why.
  *
+ * `summary` and `detail` are split on purpose. The summary is **wallet-independent** — it names the
+ * kind, the measurement and the status class and nothing else — so it is safe to group on. The
+ * detail is the raw message, which carries the per-wallet URL, and must never become a grouping key:
+ * keying on it gives every wallet its own line and buries the one sentence that matters.
+ *
  * @typedef {object} Unmeasured
- * @property {string} measurement    What was not measured, named as the record names it.
- * @property {string} subject        The wallet it was not measured for.
- * @property {UnmeasuredKind} kind   A wall, or a request that did not come back.
- * @property {string} why            A sentence naming the cause and the budget behind it.
+ * @property {string} measurement       What was not measured, named as the record names it.
+ * @property {string} subject           The wallet it was not measured for.
+ * @property {UnmeasuredKind} kind      What actually happened.
+ * @property {string} summary           Stable across wallets. The grouping key.
+ * @property {string | null} detail     The raw cause. Per-wallet; never a grouping key.
  */
+
+/**
+ * Classify a failed measurement pass by **what actually happened**, from the evidence the client
+ * attached to the exception rather than from a guess about it.
+ *
+ * @param {unknown} cause
+ * @returns {UnmeasuredKind}
+ */
+export function classifyUnmeasured(cause) {
+  if (cause instanceof CeilingReached) return 'budget-exhausted';
+  if (cause instanceof RequestFailed) {
+    // `retried` is the client's own record of what it did, so this branch can say "retried" and be
+    // right. A 4xx that arrived after a retried 5xx is still a request we retried.
+    if (cause.retried) return 'page-failure';
+    if (cause.status !== null && cause.status >= 400 && cause.status < 500) return 'vendor-refusal';
+    return 'unclassified';
+  }
+  // Every client failure leaves as a RequestFailed, so anything else — a non-JSON body, a bug in
+  // the measurement itself — did not fail at the endpoint.
+  if (cause instanceof Error) return 'local-error';
+  return 'unclassified';
+}
 
 /**
  * Record that a measurement pass could not run.
  *
- * A ceiling has to name the budget that ran out and the setting that governs it, because the fix is
- * a number in `thresholds.json` and not a retry — an operator who reads "walk failed" reruns the
- * job and spends the keyed allowance again to reach the same wall. A page failure has the opposite
- * advice, so it must not borrow that sentence.
+ * Each kind gets its own sentence and they are not interchangeable. Only the retried kind may say
+ * it was retried; only the wall may tell an operator to change a threshold; a local error says it
+ * is ours. An operator acts on these sentences, and the wrong one sends them to rotate a key, raise
+ * a bound, or rerun a forty-minute job for no reason.
  *
  * @param {string} measurement
  * @param {string} subject
@@ -190,27 +255,62 @@ export function redactAll(lines) {
  * @returns {Unmeasured}
  */
 export function unmeasuredBecause(measurement, subject, cause, spent) {
-  const exhausted = cause instanceof CeilingReached;
-  const why = exhausted
-    ? `the ${spent.budget} request ceiling of ${spent.ceiling} was reached, so ${measurement} was ` +
-      `never looked up for this wallet. Raise ${spent.setting} or lower the candidate cap; ` +
-      `rerunning alone reaches the same wall`
-    : `a ${spent.budget} request was retried and still failed, so ${measurement} is missing for ` +
-      `this wallet. The run continued and later candidates were measured normally; a rerun may ` +
-      `well succeed: ${cause instanceof Error ? cause.message : String(cause)}`;
-  return {
-    measurement,
-    subject,
-    kind: exhausted ? 'budget-exhausted' : 'page-failure',
-    why,
-  };
+  const kind = classifyUnmeasured(cause);
+  const status = cause instanceof RequestFailed ? cause.status : null;
+  const detail = cause instanceof Error ? cause.message : String(cause);
+
+  let summary;
+  switch (kind) {
+    case 'budget-exhausted':
+      summary =
+        `the ${spent.budget} request ceiling of ${spent.ceiling} was reached, so ${measurement} ` +
+        `was never looked up. Raise ${spent.setting} or lower the candidate cap; rerunning alone ` +
+        `reaches the same wall`;
+      break;
+    case 'page-failure':
+      summary =
+        `a ${spent.budget} request failed with ${status === null ? 'a transport failure or timeout' : `HTTP ${status}`} ` +
+        `and the one retry failed too, so ${measurement} is missing. The run continued and later ` +
+        `candidates were measured normally; a rerun may well succeed`;
+      break;
+    case 'vendor-refusal':
+      summary =
+        `the ${spent.budget} endpoint answered HTTP ${status} on the first attempt and we did not ` +
+        `retry it, so ${measurement} is missing. That is its considered answer, so a plain rerun ` +
+        `is not expected to change it — check whether the endpoint moved`;
+      break;
+    case 'local-error':
+      summary =
+        `${measurement} failed inside our own code rather than at the ${spent.budget} endpoint, so ` +
+        `no request was retried and one may never have been made. This is our bug, not the ` +
+        `vendor's`;
+      break;
+    default:
+      summary =
+        `${measurement} is missing and the cause could not be classified, so nothing is claimed ` +
+        `about why it failed or whether a rerun would help`;
+  }
+
+  return { measurement, subject, kind, summary, detail };
 }
 
 /**
- * Collapse unmeasured entries onto their distinct reasons, preserving first-seen order.
+ * The one-line reading of an unmeasured entry, detail included.
  *
- * Grouped rather than listed per wallet because sixty identical ceiling lines bury the one sentence
- * that matters; the per-wallet detail stays in the record's own `unmeasured` array.
+ * @param {Unmeasured} u
+ * @returns {string}
+ */
+export function describeUnmeasured(u) {
+  return u.detail === null ? u.summary : `${u.summary}: ${u.detail}`;
+}
+
+/**
+ * Collapse unmeasured entries onto their distinct summaries, preserving first-seen order.
+ *
+ * Grouped rather than listed per wallet because sixty identical lines bury the one sentence that
+ * matters. The key is the wallet-independent {@link Unmeasured.summary} and never the detail, which
+ * embeds a per-wallet URL and would give every wallet a group of its own — grouping that groups
+ * nothing is just a longer list.
  *
  * @param {readonly Unmeasured[]} unmeasured
  * @returns {Map<string, number>}
@@ -218,21 +318,24 @@ export function unmeasuredBecause(measurement, subject, cause, spent) {
 export function groupUnmeasured(unmeasured) {
   /** @type {Map<string, number>} */
   const groups = new Map();
-  for (const u of unmeasured) groups.set(u.why, (groups.get(u.why) ?? 0) + 1);
+  for (const u of unmeasured) groups.set(u.summary, (groups.get(u.summary) ?? 0) + 1);
   return groups;
 }
 
 /**
- * Split unmeasured entries by whether they truncate the run.
+ * Bucket unmeasured entries by kind, in {@link UNMEASURED_KINDS} order, omitting empty kinds.
  *
  * @param {readonly Unmeasured[]} unmeasured
- * @returns {{ budgetExhausted: Unmeasured[], pageFailures: Unmeasured[] }}
+ * @returns {Map<UnmeasuredKind, Unmeasured[]>}
  */
 export function partitionUnmeasured(unmeasured) {
-  return {
-    budgetExhausted: unmeasured.filter((u) => u.kind === 'budget-exhausted'),
-    pageFailures: unmeasured.filter((u) => u.kind === 'page-failure'),
-  };
+  /** @type {Map<UnmeasuredKind, Unmeasured[]>} */
+  const byKind = new Map();
+  for (const kind of /** @type {UnmeasuredKind[]} */ (Object.keys(UNMEASURED_KINDS))) {
+    const of = unmeasured.filter((u) => u.kind === kind);
+    if (of.length > 0) byKind.set(kind, of);
+  }
+  return byKind;
 }
 
 /**
@@ -245,12 +348,12 @@ export function partitionUnmeasured(unmeasured) {
  * was visible only in the affected candidate's own note, so the record read `completed: true,
  * truncated: false` — a screen claiming to have measured what it had not.
  *
- * **Only a `budget-exhausted` entry truncates.** A page failure is still unmeasured, still recorded
- * with its own reason, and still forbidden from reading as a measured negative — but it does not
- * declare the run truncated, because the run did not stop looking. The distinction is what keeps
- * the flag worth reading: on the flakiest surface in the tool, one retried-and-failed page out of
- * up to 585 would otherwise set `truncated: true` on nearly every run, and a flag that is always on
- * carries no information and teaches its reader to skip it.
+ * Which kinds truncate is {@link UNMEASURED_KINDS}'s to say, not this function's — only the budget
+ * wall does. Everything else is still unmeasured, still recorded with its own reason, and still
+ * forbidden from reading as a measured negative, but it does not declare the run truncated, because
+ * the run did not stop looking. That distinction is what keeps the flag worth reading: on the
+ * flakiest surface in the tool, one failed page out of up to 585 would otherwise set
+ * `truncated: true` on nearly every run.
  *
  * @param {object} input
  * @param {string | null} input.abortReason  Why the run died, or null if it did not.
@@ -268,8 +371,9 @@ export function deriveTruncation({ abortReason, coverage, unmeasured }) {
         `seeded wallet(s) before they were measured`,
     );
   }
-  for (const [why, n] of groupUnmeasured(partitionUnmeasured(unmeasured).budgetExhausted)) {
-    reasons.push(`${n} candidate(s) went unmeasured — ${why}`);
+  const truncating = unmeasured.filter((u) => UNMEASURED_KINDS[u.kind].truncates);
+  for (const [summary, n] of groupUnmeasured(truncating)) {
+    reasons.push(`${n} candidate(s) went unmeasured — ${summary}`);
   }
   return {
     truncated: reasons.length > 0,

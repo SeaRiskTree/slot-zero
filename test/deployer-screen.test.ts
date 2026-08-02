@@ -27,6 +27,7 @@ import {
   BoundedClient,
   CeilingReached,
   ENDPOINT_ROLES,
+  RequestFailed,
   VendorRefused,
   buildPath,
   endpointOf,
@@ -86,9 +87,12 @@ import {
 import { LIMITATIONS, renderDryRun, renderEntry, renderStage1 } from '../tools/deployer-screen/render.mjs';
 import {
   RECORD_SCHEMA_VERSION,
+  UNMEASURED_KINDS,
+  classifyUnmeasured,
   completenessOf,
   deriveTruncation,
   describeCompleteness,
+  describeUnmeasured,
   groupUnmeasured,
   partitionUnmeasured,
   redactVendorIdentifiers,
@@ -1511,6 +1515,57 @@ describe('the keyless walk retries, like the keyed one', () => {
     expect(calls).toBe(1);
   });
 
+  it('reports what it actually did, so the record does not have to guess', async () => {
+    // The record classifies a missing measurement from this exception. A message alone cannot say
+    // whether a retry happened, and a record that claims one that did not is the defect the
+    // honesty rule exists to prevent — so the client attaches the evidence.
+    let calls = 0;
+    const retried = keyless(async () => {
+      calls += 1;
+      return boom(503);
+    });
+    await retried.getJson('https://frontend-api-v3.pump.fun/coins?creator=A').catch((e: unknown) => {
+      expect(e).toBeInstanceOf(RequestFailed);
+      expect((e as InstanceType<typeof RequestFailed>).retried).toBe(true);
+      expect((e as InstanceType<typeof RequestFailed>).status).toBe(503);
+      expect(classifyUnmeasured(e)).toBe('page-failure');
+    });
+    // One attempt per entry in the client's pinned backoff list, plus the first.
+    expect(calls).toBe(3);
+
+    const refused = keyless(async () => boom(404));
+    await refused.getJson('https://frontend-api-v3.pump.fun/coins?creator=A').catch((e: unknown) => {
+      expect((e as InstanceType<typeof RequestFailed>).retried).toBe(false);
+      expect((e as InstanceType<typeof RequestFailed>).status).toBe(404);
+      expect(classifyUnmeasured(e)).toBe('vendor-refusal');
+    });
+
+    const transport = keyless(async () => {
+      throw new Error('The operation was aborted due to timeout');
+    });
+    await transport.getJson('https://frontend-api-v3.pump.fun/coins?creator=A').catch((e: unknown) => {
+      expect((e as InstanceType<typeof RequestFailed>).retried).toBe(true);
+      // No response ever arrived, so there is no status to report and none is invented.
+      expect((e as InstanceType<typeof RequestFailed>).status).toBeNull();
+      expect(classifyUnmeasured(e)).toBe('page-failure');
+    });
+  });
+
+  it('reports a non-JSON body as ours, not as a failed request', async () => {
+    // The request was served. Nothing failed at the endpoint, so blaming it would send an operator
+    // to look in the wrong place entirely.
+    const client = keyless(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON at position 0');
+      },
+    }));
+    const err = await client.getJson('https://frontend-api-v3.pump.fun/coins?creator=A').catch((e) => e);
+    expect(err).not.toBeInstanceOf(RequestFailed);
+    expect(classifyUnmeasured(err)).toBe('local-error');
+  });
+
   it('cannot let a retry smuggle a request past the ceiling', async () => {
     let calls = 0;
     const client = keyless(async () => {
@@ -1544,44 +1599,104 @@ describe('a ceiling hit is never recordable as a measured result', () => {
     expect(b.keylessMinIntervalMs).toBe(2_000);
   });
 
+  const RETRIED = (message: string, status: number | null) =>
+    new RequestFailed(message, { status, retried: true });
+  const NOT_RETRIED = (message: string, status: number | null) =>
+    new RequestFailed(message, { status, retried: false });
+
   it('names the budget and the setting when a ceiling stopped the measurement', () => {
     const u = unmeasuredBecause('consistency-over-time', 'WalletAaa', new CeilingReached(600, '/x'), KEYLESS);
     expect(u.kind).toBe('budget-exhausted');
     expect(u.measurement).toBe('consistency-over-time');
     expect(u.subject).toBe('WalletAaa');
     // A rerun reaches the same wall, so the note has to point at the number rather than the retry.
-    expect(u.why).toMatch(/ceiling of 600/);
-    expect(u.why).toMatch(/maxKeylessRequests/);
-    expect(u.why).toMatch(/never looked up/);
+    expect(u.summary).toMatch(/ceiling of 600/);
+    expect(u.summary).toMatch(/maxKeylessRequests/);
+    expect(u.summary).toMatch(/never looked up/);
   });
 
-  it('still records a retried-and-failed page as unmeasured, not as a clean absence', () => {
-    const u = unmeasuredBecause('consistency-over-time', 'WalletBbb', new Error('ECONNRESET'), KEYLESS);
+  it('only says "retried" when the client actually retried', () => {
+    // The whole point of classifying from the client's own evidence: a record that claims a retry
+    // that never happened is the same class of defect as one that claims a measurement it never
+    // took. Asserting an inaccurate cause is worse than asserting none.
+    const u = unmeasuredBecause(
+      'consistency-over-time',
+      'WalletBbb',
+      RETRIED('Transport failure on https://…/coins?creator=WalletBbb: timeout', null),
+      KEYLESS,
+    );
     expect(u.kind).toBe('page-failure');
-    expect(u.why).toMatch(/retried and still failed/);
-    expect(u.why).toMatch(/ECONNRESET/);
-    // Opposite advice to a ceiling: this one is worth rerunning, and must not borrow the wall's
-    // sentence telling an operator to go and change a threshold.
-    expect(u.why).toMatch(/rerun may well succeed/);
-    expect(u.why).not.toMatch(/maxKeylessRequests/);
+    expect(u.summary).toMatch(/the one retry failed too/);
+    expect(u.summary).toMatch(/transport failure or timeout/);
+    expect(u.summary).toMatch(/rerun may well succeed/);
+    // Must not borrow the wall's advice to go and change a threshold.
+    expect(u.summary).not.toMatch(/maxKeylessRequests/);
+    // The per-wallet URL is detail, never the stable summary.
+    expect(u.detail).toMatch(/WalletBbb/);
+    expect(u.summary).not.toMatch(/WalletBbb/);
   });
 
-  it('does NOT let a transient page failure declare the whole run truncated', () => {
+  it('does NOT claim a retry for a 4xx, which is the endpoint\'s considered answer', () => {
+    // The retry policy deliberately excludes 4xx, so the sentence that says "we retried and it
+    // still failed" is simply false here — and it would send an operator to rerun a 40-minute job
+    // that will fail exactly the same way.
+    const u = unmeasuredBecause(
+      'consistency-over-time',
+      'W',
+      NOT_RETRIED('HTTP 404 on https://…/coins?creator=W', 404),
+      KEYLESS,
+    );
+    expect(u.kind).toBe('vendor-refusal');
+    expect(u.summary).toMatch(/HTTP 404/);
+    expect(u.summary).toMatch(/did not retry it/);
+    expect(u.summary).toMatch(/endpoint moved/);
+    expect(u.summary).not.toMatch(/retried and|retry failed|rerun may well succeed/);
+  });
+
+  it('does NOT claim a request was even made for an error in our own code', () => {
+    // A non-JSON body or a bug inside measureConsistency never fails at the endpoint. Blaming the
+    // vendor for our own defect is how a real bug goes unfixed for a month.
+    const u = unmeasuredBecause('consistency-over-time', 'W', new TypeError('x is not a function'), KEYLESS);
+    expect(u.kind).toBe('local-error');
+    expect(u.summary).toMatch(/inside our own code/);
+    expect(u.summary).toMatch(/our bug/);
+    // It may deny a retry; it may not claim one, nor promise a rerun would help.
+    expect(u.summary).toMatch(/no request was retried/);
+    expect(u.summary).not.toMatch(/the one retry failed|rerun may well succeed/);
+  });
+
+  it('says the cause could not be classified rather than inventing one', () => {
+    const u = unmeasuredBecause('consistency-over-time', 'W', 'something thrown that is not an Error', KEYLESS);
+    expect(u.kind).toBe('unclassified');
+    expect(u.summary).toMatch(/could not be classified/);
+    expect(u.summary).not.toMatch(/retried|ceiling|our bug/);
+  });
+
+  it('lets none of the non-wall kinds declare the whole run truncated', () => {
     // The flag has to stay worth reading. A keyless walk issues up to 585 requests against the
     // flakiest surface in the tool; if one hiccuped page truncated the run, `truncated: true` would
     // be on for nearly every run and would carry no information at all.
-    const unmeasured = [unmeasuredBecause('consistency-over-time', 'A', new Error('HTTP 503'), KEYLESS)];
+    const unmeasured = [
+      unmeasuredBecause('consistency-over-time', 'A', RETRIED('HTTP 503 on …', 503), KEYLESS),
+      unmeasuredBecause('consistency-over-time', 'B', NOT_RETRIED('HTTP 404 on …', 404), KEYLESS),
+      unmeasuredBecause('consistency-over-time', 'C', new TypeError('ours'), KEYLESS),
+      unmeasuredBecause('consistency-over-time', 'D', 'opaque', KEYLESS),
+    ];
     const t = deriveTruncation({ abortReason: null, coverage: COVERAGE_OK, unmeasured });
     expect(t.truncated).toBe(false);
     expect(t.truncationReason).toBeNull();
-    // But it is still recorded, and still unmeasured rather than a measured negative.
-    expect(partitionUnmeasured(unmeasured).pageFailures).toHaveLength(1);
-    expect(partitionUnmeasured(unmeasured).budgetExhausted).toHaveLength(0);
+    // But every one of them is still recorded, and still unmeasured rather than a measured negative.
+    expect([...partitionUnmeasured(unmeasured).keys()]).toEqual([
+      'page-failure',
+      'vendor-refusal',
+      'local-error',
+      'unclassified',
+    ]);
   });
 
-  it('keeps a ceiling truncating even when page failures are mixed in with it', () => {
+  it('keeps a ceiling truncating even when other kinds are mixed in with it', () => {
     const unmeasured = [
-      unmeasuredBecause('consistency-over-time', 'A', new Error('HTTP 503'), KEYLESS),
+      unmeasuredBecause('consistency-over-time', 'A', RETRIED('HTTP 503 on …', 503), KEYLESS),
       unmeasuredBecause('consistency-over-time', 'B', new CeilingReached(600, '/x'), KEYLESS),
     ];
     const t = deriveTruncation({ abortReason: null, coverage: COVERAGE_OK, unmeasured });
@@ -1590,6 +1705,39 @@ describe('a ceiling hit is never recordable as a measured result', () => {
     expect(t.truncationReason).toMatch(/1 candidate\(s\) went unmeasured/);
     expect(t.truncationReason).toMatch(/ceiling of 600/);
     expect(t.truncationReason).not.toMatch(/503/);
+  });
+
+  it('groups page failures despite each carrying a different per-wallet URL', () => {
+    // The defect this guards: the client's message embeds the request URL, so keying the grouping
+    // on it gives every wallet a group of one — a grouping that groups nothing is a longer list.
+    const many = Array.from({ length: 60 }, (_, i) =>
+      unmeasuredBecause(
+        'consistency-over-time',
+        `W${i}`,
+        RETRIED(`HTTP 503 on https://frontend-api-v3.pump.fun/coins?creator=W${i}&offset=0`, 503),
+        KEYLESS,
+      ),
+    );
+    const grouped = groupUnmeasured(many);
+    expect(grouped.size).toBe(1);
+    expect([...grouped.values()]).toEqual([60]);
+    // The per-wallet detail is not lost, it just is not the key.
+    expect(many[0]?.detail).toMatch(/creator=W0/);
+  });
+
+  it('agrees with UNMEASURED_KINDS about which kind truncates', () => {
+    // One authority, so a future kind cannot be added that quietly truncates (or quietly does not).
+    for (const [kind, meta] of Object.entries(UNMEASURED_KINDS)) {
+      const entry = { measurement: 'm', subject: 'W', kind, summary: `s:${kind}`, detail: null };
+      const t = deriveTruncation({
+        abortReason: null,
+        coverage: COVERAGE_OK,
+        unmeasured: [entry as never],
+      });
+      expect(t.truncated, kind).toBe(meta.truncates);
+    }
+    expect(Object.values(UNMEASURED_KINDS).filter((m) => m.truncates)).toHaveLength(1);
+    expect(UNMEASURED_KINDS['budget-exhausted'].truncates).toBe(true);
   });
 
   it('makes an unmeasured candidate truncate the run, with a reason naming what went unmeasured', () => {
@@ -1618,7 +1766,7 @@ describe('a ceiling hit is never recordable as a measured result', () => {
       unmeasured: [
         unmeasuredBecause('consistency-over-time', 'A', new CeilingReached(600, '/x'), KEYLESS),
         // A page failure alongside them: recorded, but it adds no truncation reason of its own.
-        unmeasuredBecause('consistency-over-time', 'B', new Error('boom'), KEYLESS),
+        unmeasuredBecause('consistency-over-time', 'B', RETRIED('boom', 503), KEYLESS),
       ],
     });
     expect(t.truncated).toBe(true);
@@ -1680,7 +1828,7 @@ describe('a ceiling hit is never recordable as a measured result', () => {
         ...['A', 'B'].map((w) =>
           unmeasuredBecause('consistency-over-time', w, new CeilingReached(600, '/x'), KEYLESS),
         ),
-        unmeasuredBecause('consistency-over-time', 'C', new Error('HTTP 503'), KEYLESS),
+        unmeasuredBecause('consistency-over-time', 'C', RETRIED('HTTP 503 on …', 503), KEYLESS),
       ],
       thresholds: {},
     });
@@ -1693,7 +1841,41 @@ describe('a ceiling hit is never recordable as a measured result', () => {
     expect(text).toMatch(/2 candidate\(s\)/);
     expect(text).toMatch(/1 candidate\(s\)/);
     expect(text).toMatch(/maxKeylessRequests/);
-    expect(text).toMatch(/does not truncate the run/);
+    expect(text).toMatch(/A rerun may well succeed/);
+  });
+
+  it('gives a 4xx and a local error their own headings, not the retry one', () => {
+    const text = renderStage1({
+      candidates: [],
+      keyedRequests: 8,
+      keylessRequests: 12,
+      elapsedMs: 1000,
+      startedAtIso: '2026-08-02T00:00:00.000Z',
+      completed: true,
+      truncationReason: null,
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 2,
+        prefilteredOut: 0,
+        worthARequest: 2,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 2,
+        coverageTruncated: false,
+      },
+      unmeasured: [
+        unmeasuredBecause('consistency-over-time', 'A', NOT_RETRIED('HTTP 404 on …', 404), KEYLESS),
+        unmeasuredBecause('consistency-over-time', 'B', new TypeError('ours'), KEYLESS),
+      ],
+      thresholds: {},
+    });
+    expect(text).toMatch(/VENDOR REFUSAL/);
+    expect(text).toMatch(/LOCAL ERROR/);
+    // Neither may be dressed up as a retried page, and neither is a wall.
+    expect(text).not.toMatch(/PAGE FAILURE/);
+    expect(text).not.toMatch(/BUDGET EXHAUSTED/);
   });
 
   it('shows only the page-failure half when no ceiling was hit', () => {
@@ -1717,7 +1899,7 @@ describe('a ceiling hit is never recordable as a measured result', () => {
         gated: 2,
         coverageTruncated: false,
       },
-      unmeasured: [unmeasuredBecause('consistency-over-time', 'A', new Error('HTTP 503'), KEYLESS)],
+      unmeasured: [unmeasuredBecause('consistency-over-time', 'A', RETRIED('HTTP 503 on …', 503), KEYLESS)],
       thresholds: {},
     });
     expect(text).toMatch(/MEASUREMENT\(S\) NOT TAKEN/);

@@ -36,7 +36,13 @@ import { fileURLToPath } from 'node:url';
 import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
 import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
-import { RECORD_SCHEMA_VERSION, deriveTruncation, redactVendorIdentifiers, unmeasuredBecause } from './record.mjs';
+import {
+  RECORD_SCHEMA_VERSION,
+  deriveTruncation,
+  describeUnmeasured,
+  redactVendorIdentifiers,
+  unmeasuredBecause,
+} from './record.mjs';
 import { KeylessClient, readCreatorHistory } from './pumpfun.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
@@ -577,7 +583,7 @@ export async function main(opts, env, out, err) {
             dispersion: Number.NaN,
             streaky: false,
             historyTruncated: false,
-            note: entry.why,
+            note: describeUnmeasured(entry),
           };
         }
       }

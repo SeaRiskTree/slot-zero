@@ -294,12 +294,27 @@ contributes an entry to `unmeasured` — what was not measured, for which wallet
 `renderStage1` prints it as its own block, not only as a per-candidate note. The affected candidate
 reads `UNMEASURED` and never as a measured negative.
 
-Entries carry a `kind`, and **only one of the two truncates the run**:
+Entries carry a `kind` classified from **what actually happened** — the client attaches the HTTP
+status and whether it really retried, so the sentence is evidence rather than a guess — and **only
+one kind truncates the run**:
 
 | kind | means | truncates? |
 |---|---|---|
 | `budget-exhausted` | a request ceiling — a wall. The tool stopped looking, and a rerun stops in the same place, so the reason names the setting to change. | **yes** |
-| `page-failure` | one request was retried and still failed. The run kept going and later candidates were measured normally, so the reason says a rerun may well succeed. | no |
+| `page-failure` | the request was retried once and the retry failed too (a 5xx, a transport failure, a timeout). Only this kind says it was retried, and only this kind suggests a rerun may succeed. | no |
+| `vendor-refusal` | a 4xx: the endpoint answered on the first attempt and we deliberately did not retry it. Says so, and points at "did the endpoint move" rather than at a rerun. | no |
+| `local-error` | it failed in our own code — a non-JSON body, a bug in the measurement. Never claims a request was retried, or even made. Our bug. | no |
+| `unclassified` | the cause could not be identified, so nothing is claimed about it. | no |
+
+**Asserting an inaccurate cause is worse than asserting none.** A record that says "we retried" when
+no retry happened is the same class of defect as a record that says "measured" when nothing was
+looked at, so an unidentifiable cause is reported as unidentified rather than rounded to the
+likeliest story. `record.mjs` → `UNMEASURED_KINDS` is the authority on which kinds truncate, and
+`classifyUnmeasured` reads the client's evidence rather than guessing from the exception type alone.
+
+Each entry carries a wallet-independent `summary` and a per-wallet `detail`. **The summary is the
+grouping key**: keying on the detail would give every wallet its own line, since the client's message
+embeds the request URL, and a grouping that groups nothing is just a longer list.
 
 The split is what keeps the flag worth reading. A keyless walk issues up to 585 requests against the
 flakiest surface in the tool; if one retried-and-failed page set `truncated: true`, the flag would be

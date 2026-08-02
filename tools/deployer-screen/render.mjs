@@ -19,7 +19,7 @@
  */
 
 import { buildPath, ENDPOINT_ROLES } from './client.mjs';
-import { groupUnmeasured, partitionUnmeasured } from './record.mjs';
+import { UNMEASURED_KINDS, groupUnmeasured, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
 
 /**
@@ -486,25 +486,20 @@ export function renderStage1(run) {
 
   const unmeasured = run.unmeasured ?? [];
   if (unmeasured.length > 0) {
-    const split = partitionUnmeasured(unmeasured);
     L.push('');
     L.push(`!! ${unmeasured.length} MEASUREMENT(S) NOT TAKEN — the tool could not look`);
-    if (split.budgetExhausted.length > 0) {
-      L.push('   BUDGET EXHAUSTED — a wall. The run stopped looking, and a rerun stops in the same');
-      L.push('   place. This IS truncation and it is in truncationReason above.');
-      for (const [why, n] of groupUnmeasured(split.budgetExhausted)) {
-        L.push(`     · ${n} candidate(s): ${why}`);
+    // One block per kind, because each one tells the reader to do something different — and the
+    // grouping key is the wallet-independent summary, so a hundred failed wallets are one line.
+    for (const [kind, entries] of partitionUnmeasured(unmeasured)) {
+      const meta = UNMEASURED_KINDS[kind];
+      L.push(`   ${meta.heading}`);
+      L.push(`   ${meta.advice}`);
+      for (const [summary, n] of groupUnmeasured(entries)) {
+        L.push(`     · ${n} candidate(s): ${summary}`);
       }
     }
-    if (split.pageFailures.length > 0) {
-      L.push('   PAGE FAILURE — a request was retried and still failed. The run did NOT stop, later');
-      L.push('   candidates were measured normally, and this alone does not truncate the run.');
-      for (const [why, n] of groupUnmeasured(split.pageFailures)) {
-        L.push(`     · ${n} candidate(s): ${why}`);
-      }
-    }
-    L.push('   Either way it is NEVER a measured result: the affected candidates read UNMEASURED');
-    L.push('   below, and their absence of a finding is not a finding.');
+    L.push('   Whichever it was, it is NEVER a measured result: the affected candidates read');
+    L.push('   UNMEASURED below, and their absence of a finding is not a finding.');
   }
   L.push('');
 

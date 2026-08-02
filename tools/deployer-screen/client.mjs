@@ -51,6 +51,31 @@ export class CeilingReached extends Error {
 }
 
 /**
+ * Thrown when a request did not come back with a usable answer.
+ *
+ * Carries **what actually happened** rather than only a message, because the record classifies a
+ * missing measurement from the exception and a sentence is not evidence. `retried` is whether this
+ * client made more than one attempt, and `status` is the HTTP status if one was ever received —
+ * `null` for a transport failure or a timeout, where no status exists to report.
+ *
+ * The pair is what lets a reader tell "we tried twice and it still failed" from "the endpoint
+ * answered once and we chose not to ask again". A record that claims the first when the second
+ * happened is exactly the defect this class exists to prevent.
+ */
+export class RequestFailed extends Error {
+  /**
+   * @param {string} message
+   * @param {{ status: number | null, retried: boolean }} what
+   */
+  constructor(message, what) {
+    super(message);
+    this.name = 'RequestFailed';
+    /** @type {number | null} */ this.status = what.status;
+    /** @type {boolean} */ this.retried = what.retried;
+  }
+}
+
+/**
  * Thrown when the vendor rejects the key or the quota, or rejects our query shape. Terminal:
  * the caller must exit non-zero rather than render an empty ranking.
  */

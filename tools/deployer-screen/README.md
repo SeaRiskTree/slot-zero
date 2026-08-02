@@ -263,6 +263,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 |---|---|
 | 1 (absent) | no `completed`. `truncated` and `truncationReason` only. |
 | 2 | `completed`, plus `coverage` separating candidate-cap truncation from an abort. |
+| 3 | `spend` (the keyed ceiling, the unspent remainder, the planned worst case, and every endpoint called with its per-call cost) and `unmeasured` (every measurement the run could not take, and why). |
 
 Committed records are **evidence and are never retro-edited** to fit a newer schema — a lane whose
 purpose is grading what past runs predicted cannot also be rewriting them. So version skew is real
@@ -285,6 +286,19 @@ Two things are therefore forbidden:
 - **Do not infer completeness from `truncated` or `truncationReason`.** Those describe *what is
   missing*, not *whether the run reached the end*. The committed record is the counterexample: its
   truncation is a benign cap, not a failure.
+
+### A ceiling hit is never a measured result
+
+**If the tool could not look, the record says it could not look.** A request ceiling, an exhausted
+budget or a failed walk contributes an entry to `unmeasured` — what was not measured, for which
+wallet, and why, naming the setting that governs the budget so an operator does not just rerun into
+the same wall — and that entry sets `truncated` and lands in `truncationReason`. `renderStage1`
+prints it as its own block, not only as a per-candidate note.
+
+`completed` is untouched by this: it stays "did the run reach the end", and a run that finishes with
+an unmeasured consistency pass is `completed: true, truncated: true`. `record.mjs` →
+`unmeasuredBecause` and `deriveTruncation` are the general form, so a future budget with the same
+failure mode inherits the behaviour rather than needing its own special case.
 
 Use `record.mjs` → `completenessOf(record)`, which returns `'complete' | 'incomplete' | 'unknown'`
 and never a boolean, so `if (completed)` cannot be accidentally right. `schemaVersionOf(record)` and
@@ -377,7 +391,8 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | candidate cap | 195 | 200 − 3 enumeration − 2 retry headroom. It is what the allowance leaves, not a judgement about how many deployers are worth grading, and it is above what the three seeds can surface — so a **default run grades everything it surfaces**. |
 | over-budget plan | refused before the first request | `3 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. |
 | keyed pacing | 6.5s between request starts | Free tier bursts at ~10/min, and the allowance is **shared** with whatever else holds this key. |
-| keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here. The fill host is paced separately — see below. |
+| keyless request ceiling, `frontend-api-v3` only | 600 | Sized to **cover** the candidate cap, not to bound it: the `--consistency` walk costs up to 3 pages per gate survivor, so 195 candidates cost 585 worst case. A ceiling below that stops the tool looking part-way through a run already paid for in keyed quota. It does not lean harder on pump.fun — the pacing below is unchanged, so this only changes how long a full run takes. |
+| keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here, and it is a shared-resource limit rather than our own caution, so the MadeOnSol relaxation does not touch it. The fill host is paced separately — see below. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does. |
 
@@ -390,8 +405,10 @@ is unchanged, as is the keyless pump.fun pacing, which bounds a shared public re
 different reason.
 
 Every run reports its spend **concretely**, not as one number: the record's `spend` block (schema 3)
-carries the ceiling, what went unspent, the planned worst case, the per-seed yields, and every
-endpoint called with its per-call cost; `renderStage1` prints the same table. There is no poller,
+carries the ceiling, what went unspent, the planned worst case, and every endpoint called with its
+per-call cost; `renderStage1` prints the same table. Per-seed yields live in `coverage.seeds` and are
+deliberately not repeated there — two projections of the same facts drift, and then whichever one a
+reader opens becomes the truth. There is no poller,
 sweep, daemon, cron, or cache-warmer, and adding one would be a policy breach rather than an
 optimisation.
 

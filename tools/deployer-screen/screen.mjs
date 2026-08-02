@@ -36,7 +36,7 @@ import { fileURLToPath } from 'node:url';
 import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
 import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
-import { RECORD_SCHEMA_VERSION, redactVendorIdentifiers } from './record.mjs';
+import { RECORD_SCHEMA_VERSION, deriveTruncation, redactVendorIdentifiers, unmeasuredBecause } from './record.mjs';
 import { KeylessClient, readCreatorHistory } from './pumpfun.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
@@ -321,7 +321,16 @@ export async function main(opts, env, out, err) {
   // The pinned bounds are the whole Free-tier daily allowance, and both are hard: `--candidates`
   // and `--max-requests` can only ever lower them.
   const maxKeyed = Math.min(opts.maxRequests ?? budget.maxKeyedRequests, budget.maxKeyedRequests);
-  const enumerationCost = 3;
+  // The plan is built FIRST so the enumeration cost is the plan's own length rather than a literal
+  // that happens to match it. A fourth enumeration query would otherwise leave a no-flag invocation
+  // deriving a candidate cap the refusal check three lines down then rejects. The page `limit` is
+  // bounded by what could possibly be gated — the explicit `--candidates` if there is one, and
+  // otherwise the request ceiling — so it never depends on the cap this plan is about to size.
+  const seedPlan = buildSeedPlan({
+    limit: Math.min(50, Math.max(opts.candidates ?? maxKeyed, 10)),
+    ...(opts.tier === undefined ? {} : { tier: opts.tier }),
+  });
+  const enumerationCost = seedPlan.length;
   // **The default grades what enumeration surfaces, up to the budget.** The committed elite run
   // seeded 22 wallets and graded 12 because it was invoked with a number smaller than the ceiling
   // already allowed; ten wallets were dropped by a flag rather than by any judgement. So an
@@ -331,10 +340,6 @@ export async function main(opts, env, out, err) {
     opts.candidates ?? Math.max(1, maxKeyed - enumerationCost),
     budget.maxCandidates,
   );
-  const seedPlan = buildSeedPlan({
-    limit: Math.min(50, Math.max(maxCandidates, 10)),
-    ...(opts.tier === undefined ? {} : { tier: opts.tier }),
-  });
 
   // **Over budget fails BEFORE spending.** A plan whose worst case cannot fit under the ceiling
   // would otherwise run until the ceiling bit and then report an incomplete screen — paying for
@@ -384,10 +389,11 @@ export async function main(opts, env, out, err) {
   // ---- Stage 1 ---------------------------------------------------------------------------
   const startedAt = Date.now();
   const startedAtIso = new Date(startedAt).toISOString();
-  let truncated = false;
   let completed = true;
   /** @type {string | null} */
-  let truncationReason = null;
+  let abortReason = null;
+  /** @type {import('./record.mjs').Unmeasured[]} */
+  const unmeasured = [];
   /** @type {{ wallet: string, reason: string }[]} */
   let prefiltered = [];
   /** @type {import('./seed.mjs').SeedYield[]} */
@@ -552,6 +558,17 @@ export async function main(opts, env, out, err) {
           const { records, truncated: historyTruncated } = await readCreatorHistory(keyless, c.wallet, 3);
           c.consistency = measureConsistency(records, T['consistency_over_time'], historyTruncated);
         } catch (cause) {
+          // A ceiling hit, an exhausted budget or a failed walk is NOT a measured result, and it
+          // must not be recordable as one. So the failure is logged against the run — where it
+          // makes the record truncated and names what went unlooked-at — rather than living only
+          // in this candidate's note, where `completed: true, truncated: false` would have read as
+          // a screen that had measured everything it reports.
+          const entry = unmeasuredBecause('consistency-over-time', c.wallet, cause, {
+            budget: 'keyless pump.fun',
+            ceiling: budget.maxKeylessRequests,
+            setting: 'thresholds.json budget.maxKeylessRequests',
+          });
+          unmeasured.push(entry);
           c.consistency = {
             state: 'unmeasured',
             epochs: 0,
@@ -560,7 +577,7 @@ export async function main(opts, env, out, err) {
             dispersion: Number.NaN,
             streaky: false,
             historyTruncated: false,
-            note: `keyless walk failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            note: entry.why,
           };
         }
       }
@@ -571,10 +588,9 @@ export async function main(opts, env, out, err) {
     // profiles used to discard fifteen paid-for measurements, which just spends the shared
     // allowance a second time to learn the same thing.
     completed = false;
-    truncated = true;
-    truncationReason = cause instanceof Error ? cause.message : String(cause);
+    abortReason = cause instanceof Error ? cause.message : String(cause);
     err('');
-    err(truncationReason);
+    err(abortReason);
 
     const code =
       cause instanceof VendorRefused
@@ -612,18 +628,18 @@ export async function main(opts, env, out, err) {
       gated: candidates.length,
     });
 
-    const reasons = [];
-    if (truncationReason !== null) reasons.push(truncationReason);
-    if (coverage.coverageTruncated) {
-      reasons.push(
-        `the candidate cap of ${maxCandidates} dropped ${coverage.droppedByCandidateCap} seeded wallet(s) before they were measured`,
-      );
-    }
-    if (scoringTruncatedBy > 0) {
-      reasons.push(
-        `the Stage 2 scoring cap of ${maxScored} left ${scoringTruncatedBy} gate survivor(s) with no entry score`,
-      );
-    }
+    const truncation = deriveTruncation({ abortReason, coverage, unmeasured });
+    // The Stage 2 scoring cap is a fourth source of missingness. It is this run's own bound rather
+    // than a failed or unlooked-at pass, so it is folded in here rather than inside
+    // `deriveTruncation`, which owns the three that every stage shares.
+    const scoringShortfall =
+      scoringTruncatedBy > 0
+        ? `the Stage 2 scoring cap of ${maxScored} left ${scoringTruncatedBy} gate survivor(s) with no entry score`
+        : null;
+    // Redacted for the same reason `toEntryRecordRow` redacts its notes: these strings can be built
+    // from a thrown error, and an error's message is exactly where a vendor-derived identifier
+    // arrives without anyone deciding to persist one.
+    const reasons = [truncation.truncationReason, scoringShortfall].filter((r) => r !== null);
 
     return {
       ranked,
@@ -650,23 +666,20 @@ export async function main(opts, env, out, err) {
           plannedWorstCaseKeyed: worstCaseKeyed,
           candidateCap: maxCandidates,
           endpoints: stats.byEndpoint,
-          seedYields: seedYields.map((s) => ({
-            label: s.label,
-            path: s.path,
-            rowsReturned: s.rowsReturned,
-            walletsReturned: s.walletsReturned,
-          })),
+          // Per-seed yields are NOT repeated here: `coverage.seeds` already carries them, and two
+          // projections of the same facts drift until whichever one a reader opens becomes the
+          // truth. The spend block owes the endpoints and the per-call cost, which nothing else has.
         },
         elapsedMs: Date.now() - startedAt,
         // `completed` is whether the run reached the end; `truncated` is whether anything is
         // missing for any reason. A completed run whose candidate cap bit is truncated but NOT
         // incomplete, and only the second may be read as a measured outcome.
         completed,
-        truncated: truncated || coverage.coverageTruncated,
-        // Redacted for the same reason `toEntryRecordRow` redacts its notes: this string can be
-        // built from a thrown error, and an error's message is exactly where a vendor-derived
-        // identifier arrives without anyone deciding to persist one.
+        truncated: truncation.truncated || scoringShortfall !== null,
         truncationReason: reasons.length === 0 ? null : redactVendorIdentifiers(reasons.join('; ')),
+        // What the tool could not look at, and why. A record that reports an unmeasured candidate
+        // has to say so at the run level too, or the run reads as having measured everything.
+        unmeasured,
         coverage,
         scoringCap: { max: maxScored, survivorsUnscored: scoringTruncatedBy, enabled: opts.stage2 },
         // Run-level Stage 2 drop tally, broken out by cause. `mintTimeDisagreement` is the one to
@@ -715,6 +728,7 @@ export async function main(opts, env, out, err) {
           prefiltered: prefiltered.length,
           coverage: record.coverage,
           spend: record.spend,
+          unmeasured: record.unmeasured,
           thresholds: T['stage1_gate'],
         }),
       );

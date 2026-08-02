@@ -19,6 +19,7 @@
  */
 
 import { buildPath, ENDPOINT_ROLES } from './client.mjs';
+import { groupUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
 
 /**
@@ -393,6 +394,10 @@ export function renderStage0(r, vendorReadings) {
  *   candidateCap: number, endpoints: readonly import('./client.mjs').EndpointSpend[] }} [run.spend]
  *   Where the keyed allowance actually went. Optional only so a caller rendering a schema-2 record
  *   is not forced to invent one; a live run always passes it.
+ * @param {readonly import('./record.mjs').Unmeasured[]} [run.unmeasured] Measurements the run could
+ *   not take. Rendered as its own block rather than left to the per-candidate note, because a
+ *   ceiling that stopped the tool looking is a fact about the RUN — a reader who scans the header
+ *   and the coverage block must not come away believing everything reported was measured.
  * @param {Record<string, unknown>} run.thresholds
  * @returns {string}
  */
@@ -477,6 +482,16 @@ export function renderStage1(run) {
     L.push(`!! COVERAGE TRUNCATED — ${run.truncationReason ?? 'the candidate cap dropped seeded wallets'}`);
     L.push('   The run completed and every candidate it gated was evaluated, but it is NOT a screen');
     L.push('   of everything enumeration found.');
+  }
+
+  const unmeasured = run.unmeasured ?? [];
+  if (unmeasured.length > 0) {
+    L.push('');
+    L.push(`!! ${unmeasured.length} MEASUREMENT(S) NOT TAKEN — the tool could not look`);
+    for (const [why, n] of groupUnmeasured(unmeasured)) L.push(`   · ${n} candidate(s): ${why}`);
+    L.push('   A ceiling hit, an exhausted budget or a failed walk is NEVER a measured result. The');
+    L.push('   affected candidates read UNMEASURED below and the record is flagged truncated. Do');
+    L.push('   not read their absence of a finding as a finding.');
   }
   L.push('');
 

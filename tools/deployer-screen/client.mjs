@@ -124,14 +124,23 @@ export const ENDPOINT_ROLES = {
  * wallet must never end up as a key of its own — that would turn a spend table into a list of
  * addresses we screened, which the record's own projection is careful not to persist twice.
  *
+ * The wallet substitution is **positional, not exact-match**: the segment after `/deployer-hunter/`
+ * is collapsed whatever follows it. An exact-match rule only covered `/deployer-hunter/{wallet}`
+ * itself, so the day someone added a sub-resource call the raw address would have been written into
+ * the record verbatim. The ToS 5a(d) containment must not depend on nobody adding one.
+ *
  * @param {string} path Path as issued, query string included.
  * @returns {string}
  */
 export function endpointOf(path) {
   const bare = path.split('?')[0] ?? path;
-  const literal = Object.prototype.hasOwnProperty.call(ENDPOINT_ROLES, bare);
-  if (literal) return bare;
-  return /^\/deployer-hunter\/[^/]+$/.test(bare) ? '/deployer-hunter/{wallet}' : bare;
+  if (Object.prototype.hasOwnProperty.call(ENDPOINT_ROLES, bare)) return bare;
+  const segments = bare.split('/');
+  if (segments[1] === 'deployer-hunter' && (segments[2] ?? '') !== '') {
+    segments[2] = '{wallet}';
+    return segments.join('/');
+  }
+  return bare;
 }
 
 const DEFAULT_MIN_INTERVAL_MS = 6_500;

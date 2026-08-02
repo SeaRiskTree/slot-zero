@@ -25,7 +25,17 @@
  * in particular not by inferring from `truncated` or `truncationReason`, which describe *what is
  * missing* and not *whether the run reached the end*. The committed record is the proof of why:
  * `truncated: true` there means the cap bit, not that anything failed.
+ *
+ * ## The standing rule this module also enforces
+ *
+ * **A ceiling hit, an exhausted budget or a failed walk must never be recordable as a measured
+ * result.** If the tool could not look, the record has to say it could not look. {@link
+ * unmeasuredBecause} and {@link deriveTruncation} are the general form of that: any measurement pass
+ * that draws on a budget routes its failures through them and inherits the truncation, rather than
+ * each new budget needing its own special case that someone remembers to add.
  */
+
+import { CeilingReached } from './client.mjs';
 
 /**
  * Schema version of records this build writes.
@@ -35,7 +45,9 @@
  * - **3** — adds `spend`: the keyed ceiling, what was left unspent, the planned worst case, and the
  *   endpoints actually called with each one's per-call cost. A schema-2 record carries only the
  *   `keyedRequests` total, so on those `spend` is genuinely absent and must not be reconstructed —
- *   the total cannot say which endpoint the requests went to.
+ *   the total cannot say which endpoint the requests went to. Also adds `unmeasured`: every
+ *   measurement the run could not take and why, which `truncated` and `truncationReason` now
+ *   account for. Its absence on an older record means unknown, not none.
  */
 export const RECORD_SCHEMA_VERSION = 3;
 
@@ -139,4 +151,89 @@ export function redactVendorIdentifiers(text) {
  */
 export function redactAll(lines) {
   return lines.map((l) => redactVendorIdentifiers(l));
+}
+
+/**
+ * One measurement the run could not take, and why.
+ *
+ * @typedef {object} Unmeasured
+ * @property {string} measurement       What was not measured, named as the record names it.
+ * @property {string} subject           The wallet it was not measured for.
+ * @property {string} why               A sentence naming the cause and the budget behind it.
+ * @property {boolean} budgetExhausted  Whether a request ceiling, rather than an error, stopped it.
+ */
+
+/**
+ * Record that a measurement pass could not run.
+ *
+ * A ceiling in particular has to name the budget that ran out and the setting that governs it,
+ * because the fix is a number in `thresholds.json` and not a retry — an operator who reads "walk
+ * failed" reruns the job and spends the keyed allowance again to reach the same wall.
+ *
+ * @param {string} measurement
+ * @param {string} subject
+ * @param {unknown} cause
+ * @param {{ budget: string, ceiling: number, setting: string }} spent The budget the pass drew on.
+ * @returns {Unmeasured}
+ */
+export function unmeasuredBecause(measurement, subject, cause, spent) {
+  const budgetExhausted = cause instanceof CeilingReached;
+  const why = budgetExhausted
+    ? `the ${spent.budget} request ceiling of ${spent.ceiling} was reached, so ${measurement} was ` +
+      `never looked up for this wallet. Raise ${spent.setting} or lower the candidate cap; ` +
+      `rerunning alone reaches the same wall`
+    : `the ${spent.budget} walk failed, so ${measurement} was never measured for this wallet: ` +
+      `${cause instanceof Error ? cause.message : String(cause)}`;
+  return { measurement, subject, why, budgetExhausted };
+}
+
+/**
+ * Collapse unmeasured entries onto their distinct reasons, preserving first-seen order.
+ *
+ * Grouped rather than listed per wallet because sixty identical ceiling lines bury the one sentence
+ * that matters; the per-wallet detail stays in the record's own `unmeasured` array.
+ *
+ * @param {readonly Unmeasured[]} unmeasured
+ * @returns {Map<string, number>}
+ */
+export function groupUnmeasured(unmeasured) {
+  /** @type {Map<string, number>} */
+  const groups = new Map();
+  for (const u of unmeasured) groups.set(u.why, (groups.get(u.why) ?? 0) + 1);
+  return groups;
+}
+
+/**
+ * Fold everything missing from a run into one truncation verdict and one sentence.
+ *
+ * `truncated` is "is anything missing, for any reason". `completed` — "did the run reach the end" —
+ * is deliberately NOT an input and is not derivable from this: the three-state contract above turns
+ * on keeping them apart. What this adds is the third source of missingness. A run can reach the end,
+ * gate every candidate it planned to, and still have failed to measure something; before this, that
+ * was visible only in the affected candidate's own note, so the record read `completed: true,
+ * truncated: false` — a screen claiming to have measured what it had not.
+ *
+ * @param {object} input
+ * @param {string | null} input.abortReason  Why the run died, or null if it did not.
+ * @param {{ coverageTruncated: boolean, candidateCap: number, droppedByCandidateCap: number }} input.coverage
+ * @param {readonly Unmeasured[]} input.unmeasured
+ * @returns {{ truncated: boolean, truncationReason: string | null }}
+ */
+export function deriveTruncation({ abortReason, coverage, unmeasured }) {
+  /** @type {string[]} */
+  const reasons = [];
+  if (abortReason !== null) reasons.push(abortReason);
+  if (coverage.coverageTruncated) {
+    reasons.push(
+      `the candidate cap of ${coverage.candidateCap} dropped ${coverage.droppedByCandidateCap} ` +
+        `seeded wallet(s) before they were measured`,
+    );
+  }
+  for (const [why, n] of groupUnmeasured(unmeasured)) {
+    reasons.push(`${n} candidate(s) went unmeasured — ${why}`);
+  }
+  return {
+    truncated: reasons.length > 0,
+    truncationReason: reasons.length === 0 ? null : reasons.join('; '),
+  };
 }

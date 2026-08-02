@@ -4,14 +4,15 @@ A research lab for **pump.fun launch microstructure**: what happens in the first
 a token launch, who profits, and whether any of it is capturable.
 
 This repo is the foundation, and only the foundation. It holds one primary dataset, a typed
-loader over it, a test that reproduces the published numbers, and one screening tool over a
-provider API. **There is no strategy, backtest, signal or trading logic here.** The question
+loader over it, a test that reproduces the published numbers, one offline measurement over the
+tape, and one screening tool over a provider API. **There is no strategy, backtest, signal or trading logic here.** The question
 that used to gate that work — whether the two winning outsiders were the operator's own book —
 has been answered; what is still gated, and what no longer is, is stated at the bottom of this
 file.
 
 **The analysis core under `src/` reaches no network and reads no credential**, and
-`test/loader.test.ts` proves it. Every source behind the dataset is keyless and public, and the
+`test/loader.test.ts` proves it; `analysis/` is held to the same list by
+`test/window-population.test.ts`. Every source behind the dataset is keyless and public, and the
 dataset was built with **zero metered provider requests**. The one network-capable, keyed area
 is `tools/deployer-screen/`, and the boundary is the directory — it is never imported by `src/`
 and never imports from it. See `tools/deployer-screen/README.md`.
@@ -339,8 +340,9 @@ zero (see 1); `2CHrnc2L…` in **235 of 235** launches; and the fee-inclusive me
 TypeScript on Node with vitest — it matches the rest of the fleet's work, and its structural
 typing is what lets the fee/no-fee and closed/open distinctions be *unrepresentable* rather
 than merely documented, which is the whole point of the loader. No runtime dependencies, so
-"does this reach the network?" is answerable by reading `src/`. `tools/` is plain `.mjs` with
-JSDoc types so it runs on the Node 20 floor with no build step; `tsc --noEmit` checks it too.
+"does this reach the network?" is answerable by reading `src/`. `tools/` and `analysis/` are
+plain `.mjs` with JSDoc types so they run on the Node 20 floor with no build step;
+`tsc --noEmit` checks them too.
 
 ## Provenance
 

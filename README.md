@@ -183,11 +183,19 @@ the report's name and section inline; they are evidence from elsewhere, not repr
   second after the mint at ~3× the deployer's price, holding ~42 seconds, never once in the create
   slot. **−106.8 and −100.0 SOL**, profitable on 2% and 4%.
 - **The deployer takes 4,315 SOL over 228 complete exits** (median +21.66 per launch, gross
-  of fees), and is out at a median +13 seconds. **Long before graduation, every time:** on all
-  228 complete exits the price it finishes selling at is below the graduation price — checked
-  here on the curve basis, 14.70× each launch's own initial price (`CURVE` in `src/index.ts`),
-  where the highest of the 228 reaches 79% of it. That is a different denominator from the ~35%
-  above, so the two are not a median/max pair on one scale.
+  of fees), and is out at a median +13 seconds. **Below the graduation price every time — which
+  is not the same as before graduation.** On all 228 complete exits the price it finishes
+  selling at is below the graduation price, checked here on the curve basis, 14.70× each
+  launch's own initial price (`CURVE` in `src/index.ts`), where the highest of the 228 reaches
+  79% of it. That is a different denominator from the ~35% above, so the two are not a
+  median/max pair on one scale. **The price test does not settle the timing, and this bullet
+  used to read "long before graduation, every time" as though it did.** A graduated pool has no
+  curve floor and falls back below the constant within seconds, so a low exit price is
+  compatible with the token having already bonded — and on **10 of 103 graduations** it had
+  (`TruthGPT` exits at 0.156 of the graduation price, 39 seconds *after* the bond). All ten sit
+  inside a tape window and are reproduced here; that there are no others is
+  `kol-bond-timing-vs-dev-exit/report.md` §4.3, which measured the other 85. See
+  `data/population-tape-2026-07-29/IMPORT.md` correction 6.
 
 ---
 
@@ -485,7 +493,16 @@ prose** — each assertion states what the data says.
    — which is exactly why `reached_mint` and not row count is the coverage test.
 6. **§3.5 says "thirteen reconstructed windows span the moment the token graduated."** There
    are **18**. The six current-preset ones it names are exactly the six that reproduce
-   6.5856×, so the finding is unaffected — the count is just low.
+   6.5856×, so the **price** finding is unaffected — the count is just low.
+   **The count is now settled from both directions and the shortfall does matter.**
+   `kol-bond-timing-vs-dev-exit/report.md` §4.4 reached the same 18 from the other side, while
+   measuring graduation times directly; and **seven of the eighteen are launches that bond before
+   the deployer has sold anything**, so undercounting them is what let §3.5 conclude the deployer
+   is always out first. That, and §3.5's three other timing claims, are recorded as corrections
+   4–7 in `data/population-tape-2026-07-29/IMPORT.md` — **read them before quoting any §3.5
+   timing.** In short: `curve_last_tx_s` is a bound, not a timing (it overshoots by up to a
+   millionfold); §3.5's 32-minute median is not the shipped file's 129; and "out before
+   graduation in every case" is wrong on 10 of 103 graduations.
 
 Everything else reproduced to the published precision, including all four numbers this repo
 was asked to pin: slot-0 median **+0.283 SOL** and **72% profitable**; slots 2–4 at or below
@@ -505,7 +522,7 @@ plain `.mjs` with JSDoc types so they run on the Node 20 floor with no build ste
 
 ## Provenance
 
-The dataset and the findings are the work of six read-only scout investigations — the four
+The dataset and the findings are the work of seven read-only scout investigations — the four
 behind the dataset all carried out with zero metered provider requests. The population-tape report and its brief
 are reproduced in full under `data/population-tape-2026-07-29/`. The three companion reports
 — `kol-deployer-entity-cluster` (the operator behind the launches, and the creator-record
@@ -513,14 +530,17 @@ mutability trap), `kol-dev-wallet-sell-side` (the exit-ladder measurement, and t
 Token-2022 and fee-payer method notes) and `kol-cohort-vs-outsider-funding` (the funding
 graph that settles the outsider question above, and the two corrections in
 `data/population-tape-2026-07-29/IMPORT.md`) — are not copied here; the facts from them that
-this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`. Two later ones,
+this repo depends on are carried in `AGENTS.md` and in `src/cohort.ts`. Three later ones,
 `slot-zero-bankroll-book-pnl` (the bankroll's complete transaction set, and the shared
-custodial venue in "The ceiling of the method" above) and `slot-zero-june-regime-change` (the
+custodial venue in "The ceiling of the method" above), `slot-zero-june-regime-change` (the
 create slot's unprofitability for outsiders since 2026-06-04, and the *operation's share of the
-curve's bottom* method that `tools/deployer-screen/` cites), are likewise not copied here.
-**None of the five companion reports is committed to this repo** — only the population-tape
-report and its brief are — so any figure attributed to one of the five is evidence from elsewhere
-and is not asserted by any test here. `analysis/window-population/`
-re-derives `slot-zero-june-regime-change`'s 2026-06-04 date and its closed-regime prize from the
-local tape by an independent route, which is the one place a companion finding is confirmed
-in-repo.
+curve's bottom* method that `tools/deployer-screen/` cites) and `kol-bond-timing-vs-dev-exit`
+(the directly measured graduation times behind `data/population-tape-2026-07-29/IMPORT.md`
+corrections 4–7), are likewise not copied here.
+**None of the six companion reports is committed to this repo** — only the population-tape
+report and its brief are — so any figure attributed to one of the six is evidence from elsewhere
+and is not asserted by any test here. Two of them are confirmed in-repo by an independent
+route: `analysis/window-population/` re-derives `slot-zero-june-regime-change`'s 2026-06-04
+date and its closed-regime prize from the local tape, and `test/reproduction.test.ts` asserts
+the part of `kol-bond-timing-vs-dev-exit`'s §4 that the committed files can measure —
+`IMPORT.md` corrections 4, 6 and 7. Its population-level figures still cannot be.

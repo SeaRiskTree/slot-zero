@@ -37,12 +37,21 @@ for size other than the two directories named above.
 
 ## Corrections
 
-Later evidence has contradicted the imported prose three times. **The originals stay unmodified** —
+Later evidence has contradicted the imported prose seven times. **The originals stay unmodified** —
 that is what makes this directory a primary record — so the corrections live here, and this
 is the file to add to when it happens again. The first two come from
 `kol-cohort-vs-outsider-funding/report.md` (2026-07-29, read-only, keyless, zero metered
 requests), recommendation 4. **Neither touches a measured figure in this directory; both are
 about what a figure means.**
+
+Items 4–7 come from `kol-bond-timing-vs-dev-exit/report.md` §4 (2026-07-29, keyless, **zero metered
+requests**), which measured the graduation time of all 103 graduated launches directly instead of
+proxying it. **All four land in `report.md` §3.5, and they are one failure repeated:** a proxy that
+is a valid *bound* was read as a *timing*, and every §3.5 sentence that depends on when a launch
+graduated is wrong in the same direction. No column in this directory changes — three of the four are
+about how a column may be read, and the fourth (§3.5's 32-minute median) is a prose figure that the
+shipped file does not produce. Each is re-derived below from the files here rather than carried
+across, and what is re-derivable in this repo is asserted in `test/reproduction.test.ts`.
 
 1. **`EgQX9R3Q…` did not stop in May.** `report.md` §2 ("ran the same way from March to May
    and stopped") and §4.3 ("`EgQX9R3Q…` ran March–May and stopped") describe this dataset's
@@ -74,6 +83,81 @@ about what a figure means.**
    the advice for a *new* walk does. The measurement and the sustainable pacing are owned by
    `AGENTS.md` → "pump.fun / Solana provider facts" and pinned in
    `tools/deployer-screen/thresholds.json` → `creation_walk`; do not re-derive them here.
+
+4. **`curve_last_tx_s` is a valid bound and not a usable timing.** §3.5 calls it "a validated
+   upper-bound proxy" for graduation and §10.6 quotes "a validated error of 0–70 % on six checks".
+   Against the 103 directly measured graduation times the overshoot ratio (proxy ÷ truth, with the
+   truth floored at 1 s because two launches bond at +0 s) runs **p25 1.48 · median 8.85 · p75 126 ·
+   p90 1,934 · p95 11,994**, with **32 of 102 within 2× and 27 over 100×** — 102 and not 103 because
+   `maxxing` carries no `curve_last_tx_s` (correction 5) — re-derived here by
+   joining the bond-timing report's Appendix A to this directory's `launches.csv`, reproducing its
+   §4.1 to rounding. The cause is `report.md` §9.1's own finding seen from the other side:
+   `getSignaturesForAddress` keeps returning *referencing* transactions — bot sweeps that move no
+   tokens — for months after the migration, so "the last transaction the curve ever sees" is not
+   "the last trade". This directory's own `README.md` glosses the column the same way ("an
+   upper-bound proxy for graduation"); the bound is real, the usefulness it implies is not.
+
+   **The bound direction survives**; only its tightness is the fiction. Nothing graduates later than
+   its proxy by more than the measurement's own error bar: the two ratios below 1 (`shrek` 0.995×,
+   `Baby` 0.997×) sit inside their own bisection bracket, as does `Cracked` — which its §4.1 counts
+   as a third undershoot although the ratio is exactly 1.000×.
+
+   **This directory proves it on its own files, with no fetch,** on the 18 launches whose window tape
+   spans the migration and whose graduation time is therefore known to the second — the first
+   `pump_amm` fill, itself a *tight* upper bound rather than the migration instant exactly, and one
+   that errs the conservative way: a bond earlier than that fill only widens the overshoot, so every
+   ratio below is a floor and the figures stand (correction 7). The proxy
+   overshoots on **all 18**, from **1.22×** (`Lala`, +245 s true against +300 s proxy) to
+   **1,036,042×** (`Bullieve`, **+1 s true against +1,036,042 s proxy**); 2 of 18 land within 2× and
+   10 of 18 are over 100×. Two things fall out that the bond-timing report did not state: `Bullieve` is
+   looser than either of its named worst cases (`Beagles` +53 s against +4,307,478 s, `Fox` +10 s
+   against +3,800,581 s), so **"up to five orders of magnitude" is itself an understatement — six**;
+   and on the six launches §3.5 names, the proxy's error runs **22 % to 1,505,160 %** (`Dummy`, +35 s
+   true against +526,841 s), so §10.6's "0–70 % on six checks" does not reproduce on them either.
+   §10.6 does not say which six it means.
+
+5. **§3.5's 32-minute median is not in the shipped file.** It states "Median for graduated launches:
+   **32 minutes** after the mint" for the proxy. `curve_last_tx_s` over the **102** graduated
+   launches carrying it — every one but `maxxing` — has a median of **7,763.5 s = 129 minutes**.
+   The bond-timing report §4.2 reaches the same 129 and likewise cannot reconcile the 32. **No column
+   changes**; the sentence is simply not this file's number, and 129 minutes is what a reader
+   recomputing it will get. The **measured** median graduation time is **1,042 s = 17.4 minutes**
+   (bond-timing report §2.3, all 103 graduations, 871 keyless requests) — evidence from elsewhere and
+   not asserted here. **Both numbers matter and neither is 32:** 129 is what the shipped column says,
+   17.4 is what happened, and §3.5's figure sits between them, which is why it never looked wrong.
+
+6. **"The deployer is out before graduation in every case" is false — it is wrong on 10 of 103
+   graduations.** All ten are inside a tape window, so this directory holds every counterexample;
+   the bond-timing report's measurement of the other 85 is what establishes there are no further
+   ones. Seven are the large-buy mode §3.6 already documents — `Lockin` (+0 s), `Trump` (+0 s),
+   `float` (+1 s), `Bullieve` (+1 s), `Milly` (+2 s), `Bulls` (+4 s), `Float` (+8 s) — which bond
+   before the deployer has sold **anything**: `dev_sells = 0` and `dev_sol_out = 0` across their
+   whole 60-second windows, which is what `dev_exit_complete = 0` is recording. The other three are
+   ordinary stakes where the sniper flood alone completed the curve — `TruthGPT` bonds at +3 s
+   against an exit at +42 s, `Sol` at +5 s against +17 s, `Fox` at +10 s against +47 s. On all three
+   **the deployer's last sell in the window executes on `pump_amm`**, the graduated pool; on every
+   other in-window graduation that carries a deployer sell at all it executes on the curve, and the
+   seven large-buy ones carry no deployer sell at all. §3.6 already made this correction for the
+   large-buy mode ("the predecessor's *it never sells into its graduated pools* holds for the mode it
+   sampled and **not in general**"); §3.5's blanket sentence was never updated to match it.
+
+   **The test §3.5 leans on is sufficient, not necessary.** A graduated pool has no curve floor and
+   trades back below the constant within seconds, so a `price_dev_zero` below the graduation price
+   does not mean the token had not graduated — it reads 0.156, 0.351 and 0.439 of it on those three.
+   **The price fact itself survives intact:** 0 of the 228 complete exits finishes at or above the
+   graduation price, the highest reaching 0.79 (`Dummy`). It is the timing inference drawn from it
+   that does not follow.
+
+7. **Eighteen reconstructed windows span graduation, not thirteen.** §3.5 says "Thirteen
+   reconstructed windows span the moment the token graduated." Scanning all 235 anchored tapes for a
+   `pump_amm` fill gives **18**, on which the venue sequence is monotone `pump` → `pump_amm` with
+   zero violations. Two independent routes agree: this repo's reproduction found it from the tapes
+   (repo `README.md`, "Discrepancies found while reproducing", item 6) and the bond-timing report
+   §4.4 found it while measuring graduation times. §3.5 names only six of its thirteen, so which five
+   it omitted cannot be recovered. **The shortfall is not pedantry:** seven of the eighteen are the
+   instant-bond launches of correction 6, and undercounting exactly those is what let §3.5 conclude
+   the deployer is always out first. **The 14.70× constant is unaffected** — it holds on all 18,
+   across dev buys from 3.46 to 56.30 SOL.
 
 The funding investigation also settles `report.md` §10.3 — **both `5brv79eF…` and `EgQX9R3Q…` are
 genuine outsiders, confidence high** — and strengthens §7's "the six create-slot wallets are

@@ -125,16 +125,32 @@ export function parseFill(raw) {
  * > wallet in it is co-ordinated.
  *
  * Independent traders cannot share a transaction. So this identifies a deployer's own book
- * structurally, from nothing but the fills, with no wallet list and no prior knowledge. On our
- * subject deployer it recovers the known six-wallet cohort and reproduces the report's
- * published operation share — see SCREEN.md, Stage 0.
+ * structurally, from nothing but the fills, with no wallet list and no prior knowledge — which is
+ * what makes the method applicable to a stranger at all.
  *
- * Two deliberate conservatisms, both of which push the measurement *towards* "there is room
- * here" and therefore make a `worth-the-time` verdict harder to earn, not easier:
+ * **What it recovers is a property of the operator's submission habit on the day, not of the rule,
+ * and the range is the whole tape.** Measured against the known six-wallet cohort on our own
+ * subject: **0% of cohort wallets recovered in December 2025 – February 2026, 41.6% in March,
+ * 69.9% in April, 97–100% from May onwards.** The claim this comment used to make — that the rule
+ * recovers the cohort, full stop — is true of the May–July slice it was written against and false
+ * of the tape as a whole (`slot-zero-stage2-correctness-and-fees/report.md` §3.2).
+ *
+ * **The rule's errors run in one direction, and it is the direction that manufactures an edge.**
+ * A co-ordinated wallet the rule misses moves out of the numerator and into `independentSol`, so it
+ * lowers the operation's share and raises `roomLeft` — twice over, once in each term. The opposite
+ * error is structurally impossible: only wallets that *provably* shared a transaction are marked,
+ * and independent traders cannot do that (`nonCohortMarkedCoord = 0` on every era-2 launch).
+ * So **every error this rule makes makes a deployer look more enterable than it is**, and the
+ * earlier note here — that its conservatisms make a positive verdict "harder to earn, not easier" —
+ * had the sign backwards. The two under-recovering cases are:
  *
  * - A co-ordinated wallet that buys **alone** in the create slot, never sharing a transaction,
  *   is counted as independent. Its stake inflates `independentSol`.
  * - Only the create slot is examined. A book that accumulates in the next few slots is missed.
+ *
+ * The degenerate case of the first — a create slot with **no bundled transaction at all** — is not
+ * a conservatism but a blind spot, and {@link roomIsProven} is where the screen refuses it. See
+ * that function; it is the load-bearing half of this rule.
  *
  * @param {readonly Fill[]} fills All fills for one launch, any order.
  * @returns {CreateSlotMeasurement | null} `null` when there is no bonding-curve buy to anchor
@@ -144,6 +160,33 @@ export function measureCreateSlot(fills) {
   const groups = createSlotGroups(fills);
   if (groups === null) return null;
   return tallyCreateSlot(groups).measurement;
+}
+
+/**
+ * Whether a launch's room figure rests on evidence, or on the absence of it.
+ *
+ * **A create slot with no bundled transaction is observationally identical to a create slot with
+ * no co-ordination.** The rule found nothing either way, and nothing in the fill tape separates the
+ * two. Reading the second — which is what the screen used to do implicitly — books the operation's
+ * own stake as independent capital and inflates `roomLeft`; on our own tape that is ~9.6–10.0 SOL
+ * per affected launch, and replaying the live recipe at every point in the tape's history it flips
+ * **24 of 228 rolling windows, all 24 towards `ENTRY-ROOM-PRESENT` where the truth is `ABSENT`,
+ * with zero flips the other way** (`slot-zero-stage2-correctness-and-fees/report.md` §3.3).
+ *
+ * Captain decision 134a: **do not score those launches — call the opening unproven rather than
+ * measured.** A null result is acceptable; a false positive is not. `entry.mjs` → `scoreEntry`
+ * applies this, and Stage 0's rolling replay fails loudly if it stops being applied.
+ *
+ * This is deliberately a statement about the *measurement*, not a threshold: one bundled
+ * transaction is the minimum evidence that the rule was able to see anything at all. It does not
+ * make the recovery complete — one proven launch on our own tape still misses three cohort wallets
+ * that bundled separately — so a proven room figure remains an **upper bound**, exactly as before.
+ *
+ * @param {Pick<CreateSlotMeasurement, 'bundledTx'>} m
+ * @returns {boolean}
+ */
+export function roomIsProven(m) {
+  return m.bundledTx >= 1;
 }
 
 /**

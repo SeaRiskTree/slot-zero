@@ -41,6 +41,7 @@ import {
   median,
   parseFill,
   percentile,
+  roomIsProven,
   solBetweenPrices,
   toLaunchRefs,
   toTokenRecords,
@@ -55,7 +56,7 @@ import {
 } from '../tools/deployer-screen/entry.mjs';
 import type { EntryScore, EntryThresholds } from '../tools/deployer-screen/entry.mjs';
 import { emptyDropReasons, scoreCandidateEntry, toEntryRecordRow } from '../tools/deployer-screen/stage2.mjs';
-import { runStage0 } from '../tools/deployer-screen/stage0.mjs';
+import { measureSubjectLaunches, replayRollingRoom, runStage0 } from '../tools/deployer-screen/stage0.mjs';
 import {
   applyGate,
   measureConsistency,
@@ -2381,6 +2382,43 @@ describe('the keyless boundary holds in both directions', () => {
     'vendorVerdict',
     'verdictChanged',
   ].sort();
+  // Schema 5 adds NO candidate field. The change is inside `entry`, which gains
+  // `launchesRoomUnproven`, `bundledTx` and `maxWalletsInOneTx` — asserted separately below,
+  // because that is where a reader of an older record can go wrong.
+  PERSISTED_BY_SCHEMA[5] = PERSISTED_BY_SCHEMA[4]!;
+
+  // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
+  // may be inflated by the operation's own stake booked as outsider capital and the record carries
+  // nothing that could say by how much — which is exactly why schema 5 exists. Committed records
+  // are never retro-edited, so the older shape has to stay legal rather than be corrected.
+  const ENTRY_KEYS_3_AND_4 = [
+    'caveats',
+    'coordinatedSol',
+    'coverage',
+    'deployerMismatches',
+    'devSol',
+    'fieldClosedRoundTrips',
+    'fieldEntrants',
+    'fieldFillSol',
+    'fieldHitRateGrossOfFees',
+    'fieldOpenPositions',
+    'fieldRealisedSolGrossOfFees',
+    'fieldReturnPerSolGrossOfFees',
+    'fieldSolQueuedAhead',
+    'launchesSampled',
+    'launchesWithNoOutsider',
+    'operationShare',
+    'outsidersPerLaunch',
+    'rationale',
+    'roomHitRate',
+    'roomLeft',
+    'verdict',
+  ];
+  const ENTRY_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    3: ENTRY_KEYS_3_AND_4,
+    4: ENTRY_KEYS_3_AND_4,
+    5: [...ENTRY_KEYS_3_AND_4, 'launchesRoomUnproven', 'bundledTx', 'maxWalletsInOneTx'],
+  };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
     // The boundary is the directory. src/ is provably keyless (test/loader.test.ts) and must stay
@@ -2455,6 +2493,14 @@ describe('the keyless boundary holds in both directions', () => {
       for (const row of parsed.candidates) {
         expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(expected);
         expect(FORBIDDEN.test(JSON.stringify(row)), `${file} holds per-token vendor data`).toBe(false);
+        // And the `entry` block's own key set, for the same reason one level down: schema 5 changed
+        // nothing about a candidate row and everything about what `entry` means.
+        const entry = row['entry'];
+        if (entry !== undefined && entry !== null) {
+          const entryExpected = ENTRY_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+          expect(entryExpected, `${file} entry block at an unknown schemaVersion`).toBeDefined();
+          expect(Object.keys(entry as object).sort(), `${file} entry block`).toEqual([...entryExpected!].sort());
+        }
       }
     }
   });
@@ -2557,6 +2603,21 @@ describe('the keyless boundary holds in both directions', () => {
     for (const field of PERSISTED_BY_SCHEMA[RECORD_SCHEMA_VERSION]!) {
       expect(projection, `toRecordRow must emit ${field}`).toMatch(new RegExp(`\\b${field}:`));
     }
+
+    // The `entry` block too, and here against the real projection rather than its source, because
+    // this is the block schema 5 changed. A field computed but not persisted is the exact failure
+    // `bundledTx` and `maxWalletsInOneTx` already were: present in memory, absent from every record.
+    const row = toEntryRecordRow(scoreEntry([], ENTRY_T), {
+      launchRefsAvailable: 0,
+      launchesAttempted: 0,
+      launchesUsable: 0,
+      launchesDropped: 0,
+      dropsByReason: emptyDropReasons(),
+      requestsIssued: 0,
+      stoppedForBudget: false,
+      dropNotes: [],
+    });
+    expect(Object.keys(row).sort()).toEqual([...ENTRY_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
   });
 });
 
@@ -3543,7 +3604,10 @@ describe('the field — what every OTHER sniping wallet achieved', () => {
     // The dataset's trap #2, on the live path: only closed pairs have a complete P&L, and an open
     // one contributes nothing to the distribution rather than a paper number.
     const fills = [
-      fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 10, tokens: 1000 }),
+      // Bundled, so `scoreEntry` scores the launch at all — the open-position rule is what is
+      // under test here, not the unproven-opening refusal.
+      fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 6, tokens: 600 }),
+      fill({ slot: 100, tx: 'devtx', wallet: 'devbook', sol: 4, tokens: 400 }),
       fill({ slot: 100, tx: 'o1', wallet: 'holder', sol: 2, tokens: 100 }),
       fill({ slot: 140, tx: 's1', wallet: 'holder', sol: 1, tokens: 40, side: 'sell' }),
     ];
@@ -3610,12 +3674,27 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
   /**
    * A launch with a chosen room figure and a chosen field outcome.
    *
-   * `roomLeft` is (independent SOL) / (dev + independent), so a dev buy of `10 * (1/room - 1)`
-   * against 10 SOL of outsider capital lands on the room asked for.
+   * `roomLeft` is (independent SOL) / (operation + independent), so an operation stake of
+   * `10 * (1/room - 1)` against 10 SOL of outsider capital lands on the room asked for.
+   *
+   * **The operation's stake is split across a bundled transaction by default, and that is
+   * load-bearing rather than incidental.** A create slot in which nothing is bundled gives the
+   * co-ordination rule nothing to find, and `scoreEntry` refuses to score such a launch at all
+   * (`measure.mjs` → `roomIsProven`, captain decision 134a). So the default fixture has the dev
+   * share `devtx` with one of its own wallets — one bundled transaction, two wallets, the same
+   * room figure — and `bundled: false` builds the unproven shape on purpose.
    */
-  const launch = (room: number, outcomes: number[]) => {
-    const devSol = 10 * (1 / room - 1);
-    const fills = [fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: devSol, tokens: 1e6 })];
+  const launch = (room: number, outcomes: number[], bundled = true) => {
+    const operationSol = 10 * (1 / room - 1);
+    // Splitting the operation's stake across two wallets IN ONE TRANSACTION leaves every room
+    // number identical: both halves land in the numerator either way, one as `devSol` and one as
+    // `coordinatedSol`. Only `bundledTx` and `maxWalletsInOneTx` move.
+    const fills = bundled
+      ? [
+          fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: operationSol * 0.6, tokens: 6e5 }),
+          fill({ slot: 100, tx: 'devtx', wallet: 'devbook', sol: operationSol * 0.4, tokens: 4e5 }),
+        ]
+      : [fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: operationSol, tokens: 1e6 })];
     outcomes.forEach((realised, i) => {
       const stake = 10 / outcomes.length;
       fills.push(fill({ slot: 100, tx: `o${i}`, wallet: `w${i}`, sol: stake, tokens: 1000 }));
@@ -3628,6 +3707,9 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
 
   const many = (n: number, room: number, outcomes: number[]) =>
     Array.from({ length: n }, () => launch(room, outcomes));
+
+  const manyUnbundled = (n: number, room: number, outcomes: number[]) =>
+    Array.from({ length: n }, () => launch(room, outcomes, false));
 
   it('says entry-room-present only when BOTH legs allow it', () => {
     const s = scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T);
@@ -3706,6 +3788,173 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     const s = scoreEntry(many(4, 0.7, [1, 1]), ENTRY_T, { launchesDropped: 4 });
     expect(s.caveats.join(' ')).toMatch(/4 launch window\(s\) could not be walked back to the mint/);
     expect(s.rationale).toMatch(/4 window\(s\) were dropped/);
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // THE UNPROVEN OPENING. A create slot carrying no bundled transaction is observationally
+  // identical to a create slot with no co-ordination: the rule found nothing either way. Reading
+  // it as the second books the operation's own stake as outsider capital and INFLATES room, which
+  // is the one direction the captain has ruled unacceptable (decision 134a). On the committed tape
+  // that reading flipped 24 of 228 rolling windows, all 24 towards ENTRY-ROOM-PRESENT.
+  //
+  // These fixtures are the smallest possible statement of it: the SAME room figure, the SAME field,
+  // differing only in whether the operation shared a transaction.
+
+  it('THE UNBUNDLED CREATE SLOT: ample room and a healthy field still cannot earn a verdict', () => {
+    // The defect, stated as a test. Every launch here reads roomLeft 0.7 with a field that clears
+    // both bars — and every one of them is a launch on which the co-ordination rule recovered
+    // nothing at all, so the room figure may be the operation's own stake counted as ours to take.
+    const s = scoreEntry(manyUnbundled(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    expect(s.verdict).toBe('entry-unmeasured');
+    expect(s.verdict).not.toBe('entry-room-present');
+    // Not scored, not refused: NOTHING about these launches reaches a distribution.
+    expect(s.launchesSampled).toBe(0);
+    expect(s.launchesRoomUnproven).toBe(8);
+    expect(s.roomLeft.median).toBeNaN();
+    expect(s.fieldClosedRoundTrips).toBe(0);
+    // And it must read as an absence of evidence rather than as a finding about the deployer.
+    expect(s.rationale).toMatch(/UNPROVEN, not closed and not open/);
+    expect(s.rationale).toMatch(/no answer about this wallet/);
+  });
+
+  it('the identical launches, bundled, DO earn one — so the refusal is the bundling and nothing else', () => {
+    // The control for the test above. If this failed, the fixture would be proving something else.
+    const s = scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    expect(s.verdict).toBe('entry-room-present');
+    expect(s.roomLeft.median).toBeCloseTo(0.7, 6);
+    expect(s.launchesRoomUnproven).toBe(0);
+  });
+
+  it('scores the proven half and refuses the rest — never a blend of the two', () => {
+    const s = scoreEntry([...many(8, 0.2, [1, 1, -0.2]), ...manyUnbundled(8, 0.9, [1, 1, -0.2])], ENTRY_T);
+    // The unproven launches are the roomy ones. A score that let them in would read 0.55+ and pass;
+    // the honest reading is the 0.2 the proven half actually shows.
+    expect(s.launchesSampled).toBe(8);
+    expect(s.launchesRoomUnproven).toBe(8);
+    expect(s.roomLeft.median).toBeCloseTo(0.2, 6);
+    expect(s.roomLeft.p90).toBeCloseTo(0.2, 6);
+    expect(s.verdict).toBe('entry-room-absent');
+    // Every count that describes the scored population is over the scored population.
+    expect(s.roomHitRate.n).toBe(8);
+    expect(s.outsidersPerLaunch.n).toBe(8);
+  });
+
+  it('says out loud how many launches it refused, and why, on every score that has one', () => {
+    const s = scoreEntry([...many(8, 0.7, [1, 1, -0.2]), ...manyUnbundled(3, 0.7, [1, 1, -0.2])], ENTRY_T);
+    expect(s.verdict).toBe('entry-room-present');
+    expect(s.launchesRoomUnproven).toBe(3);
+    const caveats = s.caveats.join(' ');
+    expect(caveats).toMatch(/3 of 11 measured launch\(es\) had NO bundled transaction/);
+    expect(caveats).toMatch(/UNPROVEN rather than open/);
+    // The direction of the error it prevents is named, because that is what makes the refusal
+    // legible as a safety property rather than as fussiness.
+    expect(caveats).toMatch(/inflate room/);
+    expect(caveats).toMatch(/134a/);
+  });
+
+  it('bundledTx and maxWalletsInOneTx span EVERY launch handed in, refused ones included', () => {
+    // The audit trail. A distribution taken over the scored half could never contain a zero, and a
+    // zero is exactly what an auditor reading a saved run is looking for. These two were computed
+    // and thrown away before this change, which is why no committed record can be checked for it.
+    const s = scoreEntry([...many(6, 0.7, [1, 1, -0.2]), ...manyUnbundled(6, 0.7, [1, 1, -0.2])], ENTRY_T);
+    expect(s.bundledTx.n).toBe(12);
+    expect(s.maxWalletsInOneTx.n).toBe(12);
+    expect(s.bundledTx.min).toBe(0);
+    expect(s.bundledTx.max).toBe(1);
+    expect(s.maxWalletsInOneTx.min).toBe(1);
+    expect(s.maxWalletsInOneTx.max).toBe(2);
+    // And they are not an exit measurement smuggled in under a new name.
+    expect(Object.keys(s)).toContain('launchesRoomUnproven');
+  });
+
+  it('roomIsProven is the floor of the evidence, not a threshold on its quality', () => {
+    // One bundled transaction is the minimum evidence that the rule could see anything at all. It
+    // does NOT mean recovery was complete — on the committed tape a bundled launch still misses
+    // cohort wallets that bought alone — so a proven room figure stays an upper bound.
+    expect(roomIsProven({ bundledTx: 0 })).toBe(false);
+    expect(roomIsProven({ bundledTx: 1 })).toBe(true);
+    expect(roomIsProven({ bundledTx: 7 })).toBe(true);
+  });
+
+  it('a refused launch is NOT a dropped one — the two say different things and are counted apart', () => {
+    // A drop means the walk never saw the opening. A refusal means the walk saw it perfectly well
+    // and the co-ordination rule found nothing in it. Collapsing them would hide which failed.
+    const s = scoreEntry(manyUnbundled(8, 0.7, [1, 1]), ENTRY_T, { launchesDropped: 2 });
+    expect(s.launchesRoomUnproven).toBe(8);
+    const caveats = s.caveats.join(' ');
+    expect(caveats).toMatch(/2 launch window\(s\) could not be walked back to the mint/);
+    expect(caveats).toMatch(/8 of 8 measured launch\(es\) had NO bundled transaction/);
+    expect(s.rationale).toMatch(/2 window\(s\) were dropped/);
+    expect(s.rationale).toMatch(/8 further window\(s\) were measured but NOT SCORED/);
+  });
+});
+
+describe('the rolling replay — the control that would have caught the unproven opening', () => {
+  const T = { minRoomLeft: 0.55, minLaunchesSampled: 8, maxLaunchesPerCandidate: 8 };
+
+  /**
+   * A taped launch as `replayRollingRoom` reads one: what the STRUCTURAL rule measured, and what
+   * the NAMED cohort says the truth was. On a stranger the second does not exist, which is the
+   * whole reason the first is what a live run computes.
+   */
+  const taped = (i: number, screenRoom: number, truthRoom: number, bundledTx: number) => ({
+    mint: `m${i}`,
+    dateIso: `2026-01-${String((i % 28) + 1).padStart(2, '0')}T00:00:00.000Z`,
+    createSlot: { roomLeft: screenRoom, bundledTx } as never,
+    field: [],
+    cohortRoomLeft: truthRoom,
+  });
+
+  it('fails on a window the screen calls enterable that the named cohort says was not', () => {
+    // The exact shape of the 24 real ones: the rule found nothing (bundledTx 0), so the operation's
+    // own stake landed in the outsider half and room read 0.65 where the truth was 0.24.
+    const launches = Array.from({ length: 8 }, (_, i) => taped(i, 0.65, 0.24, 1));
+    const r = replayRollingRoom(launches, T);
+    expect(r.windows).toBe(1);
+    expect(r.falsePositives).toBe(1);
+    expect(r.ok).toBe(false);
+    expect(r.falsePositiveWindows[0]!.screenRoomMedian).toBeCloseTo(0.65, 6);
+    expect(r.falsePositiveWindows[0]!.truthRoomMedian).toBeCloseTo(0.24, 6);
+  });
+
+  it('does NOT fail on a false negative — refusing to score is the ruling, not a defect', () => {
+    // The screen sees no room, the named cohort says there was. That costs coverage on purpose.
+    const launches = Array.from({ length: 8 }, (_, i) => taped(i, 0.2, 0.8, 1));
+    const r = replayRollingRoom(launches, T);
+    expect(r.falseNegatives).toBe(1);
+    expect(r.falsePositives).toBe(0);
+    expect(r.ok).toBe(true);
+  });
+
+  it('an unmeasured window is never a false positive, however roomy its refused launches looked', () => {
+    // The defect's own fingerprint: every launch unbundled and apparently wide open, against a
+    // truth of nothing. Under decision 134a the window reports UNMEASURED and cannot flip.
+    const launches = Array.from({ length: 8 }, (_, i) => taped(i, 0.9, 0.1, 0));
+    const r = replayRollingRoom(launches, T);
+    expect(r.unmeasured).toBe(1);
+    expect(r.present).toBe(0);
+    expect(r.falsePositives).toBe(0);
+    expect(r.ok).toBe(true);
+  });
+
+  it('takes the window truth over ALL its launches, not over the subset it agreed to score', () => {
+    // Otherwise the answer key would inherit the screen's own blind spot, and the control would
+    // grade the screen against itself.
+    const launches = [
+      ...Array.from({ length: 4 }, (_, i) => taped(i, 0.9, 0.9, 1)),
+      ...Array.from({ length: 4 }, (_, i) => taped(i + 4, 0.9, 0.1, 0)),
+    ];
+    const r = replayRollingRoom(launches, { ...T, minLaunchesSampled: 4 });
+    // Truth over all eight straddles the bar at 0.5 and reads ABSENT; over the four scored ones it
+    // would have read 0.9 and agreed with the screen.
+    expect(r.falsePositives).toBe(1);
+    expect(r.falsePositiveWindows[0]!.truthRoomMedian).toBeCloseTo(0.5, 6);
+    expect(r.falsePositiveWindows[0]!.scored).toBe(4);
+  });
+
+  it('evaluates one window per position and none at all below the trailing count', () => {
+    expect(replayRollingRoom(Array.from({ length: 7 }, (_, i) => taped(i, 0.9, 0.9, 1)), T).windows).toBe(0);
+    expect(replayRollingRoom(Array.from({ length: 20 }, (_, i) => taped(i, 0.9, 0.9, 1)), T).windows).toBe(13);
   });
 });
 
@@ -4339,7 +4588,10 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
 describe('what a Stage 2 run record may persist', () => {
   const score = (): EntryScore => {
     const fills = [
-      fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 3, tokens: 1000 }),
+      // Bundled — dev plus one of its own wallets in one transaction. Without that the create slot
+      // is UNPROVEN and `scoreEntry` refuses it, which is a different test than this one.
+      fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 2, tokens: 700 }),
+      fill({ slot: 100, tx: 'devtx', wallet: 'devbook', sol: 1, tokens: 300 }),
       fill({ slot: 100, tx: 'o1', wallet: 'SoMeCounterpartyWalletAddress1111111111111', sol: 3.5, tokens: 250 }),
       fill({ slot: 100, tx: 'o2', wallet: 'SoMeCounterpartyWalletAddress2222222222222', sol: 3.5, tokens: 250 }),
       fill({ slot: 140, tx: 's1', wallet: 'SoMeCounterpartyWalletAddress1111111111111', sol: 4.5, tokens: 250, side: 'sell' }),
@@ -4603,15 +4855,86 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
     expect(field.verdict).toBe('entry-room-absent');
   });
 
+  it('THE ROLLING REPLAY: the live recipe, at every point in the tape, with no false positive', () => {
+    // The control the two slices above structurally could not be. Both of them sample months where
+    // the co-ordination rule recovers 97-100% of the known cohort; over Dec 2025 - Feb 2026 it
+    // recovered 0%, and the screen read median room 0.62-0.66 against a true 0.20-0.33 in a regime
+    // whose measured per-launch prize to outsiders was about zero. Every error that rule can make
+    // runs towards "enterable", so a false positive here is the failure and a false negative is the
+    // accepted price of decision 134a.
+    expect(result.rollingRoom.windows).toBeGreaterThan(200);
+    expect(result.rollingRoom.falsePositives).toBe(0);
+    expect(result.rollingRoom.falsePositiveWindows).toEqual([]);
+    expect(result.rollingRoom.ok).toBe(true);
+    // The check is not vacuous: it does evaluate real verdicts on both sides of the bar, and it
+    // does refuse windows rather than scoring everything.
+    expect(result.rollingRoom.present).toBeGreaterThan(0);
+    expect(result.rollingRoom.absent).toBeGreaterThan(0);
+    expect(result.rollingRoom.unmeasured).toBeGreaterThan(0);
+    // And the coverage cost is real and visible rather than quietly absorbed.
+    expect(result.rollingRoom.falseNegatives).toBeGreaterThan(0);
+  });
+
+  it('refuses the launches whose opening is unproven, and says how many in each era', () => {
+    // 60 of the 235 covered launches carry no bundled create-slot transaction at all. Three of them
+    // fall inside the published era-2 bucket, which is where the -0.0115 the tolerance used to
+    // absorb came from.
+    const era2 = result.eraSplit.find((e) => e.era.startsWith('2026-06-04'))!;
+    expect(era2.nRoomUnproven).toBe(3);
+    expect(era2.n).toBe(86);
+    // Era 1 bundled throughout, so the re-pinning is the only thing that moves it: 0.451 either way.
+    const era1 = result.eraSplit.find((e) => e.era.startsWith('2026-05-01'))!;
+    expect(era1.nRoomUnproven).toBe(0);
+    expect(era1.n).toBe(45);
+  });
+
   it('reproduces the published §5.1 era split and the dataset\'s own P&L table', () => {
     for (const era of result.eraSplit) {
       expect(era.n).toBeGreaterThanOrEqual(era.minN);
       expect(Math.abs(era.operationShareMedian - era.publishedOperationShare)).toBeLessThan(0.02);
     }
+    // The era-2 constant is PINNED at the median of its own 89-launch population, not at the
+    // published cell's rank-43/44 order statistic (captain decision 135c; the decomposition is in
+    // data/population-tape-2026-07-29/IMPORT.md -> Corrections). Asserted so a future lane cannot
+    // quietly restore 0.768 — or widen the tolerance, which is what would hide the next defect the
+    // way it hid this one.
+    const era2 = result.eraSplit.find((e) => e.era.startsWith('2026-06-04'))!;
+    expect(era2.publishedOperationShare).toBeCloseTo(0.771, 6);
+    expect(era2.published).toMatch(/§5\.1 printed 0\.768 — corrected, see IMPORT\.md/);
+    const importMd = readFileSync(
+      join(TOOL_DIR, '..', '..', 'data', 'population-tape-2026-07-29', 'IMPORT.md'),
+      'utf8',
+    );
+    expect(importMd, 'the correction lives in IMPORT.md, never in the primary record itself')
+      .toMatch(/rank-43\/44/);
+    expect(importMd).toMatch(/0\.7708/);
     expect(result.fieldCheck.ok).toBe(true);
     expect(result.fieldCheck.pairs).toBeGreaterThan(1000);
     expect(result.fieldCheck.closureMismatches).toBe(0);
     expect(result.fieldCheck.maxRealisedErrorSol).toBeLessThan(1e-6);
+  });
+
+  it('and it FAILS if the unproven openings are ever let back in — the control, demonstrated', () => {
+    // A control nobody has seen fail is a control nobody has tested. This reverts decision 134a in
+    // the only way that matters to the replay — every launch declared proven, which is what the
+    // screen did before this change — and the replay must light up rather than stay quiet.
+    //
+    // `bundledTx: 1` is exactly the "no bundled transaction means no co-ordination" reading, so the
+    // 24 below are the real ones off the committed tape, not a synthetic number.
+    const launches = measureSubjectLaunches(DATA_DIR).map((l) => ({
+      ...l,
+      createSlot: { ...l.createSlot, bundledTx: Math.max(l.createSlot.bundledTx, 1) },
+    }));
+    const reverted = replayRollingRoom(launches, T['stage2_entry']);
+    expect(reverted.ok).toBe(false);
+    expect(reverted.falsePositives).toBe(24);
+    // All 24 in the same direction. That one-sidedness is the reason the ruling is "refuse to
+    // score" rather than "carry a bound": there is no compensating error to trade it against.
+    expect(reverted.falseNegatives).toBe(0);
+    expect(reverted.unmeasured).toBe(0);
+    // 60 of the 235 covered launches are the ones being let back in.
+    expect(launches.filter((l) => !roomIsProven(l.createSlot)).length).toBe(0);
+    expect(measureSubjectLaunches(DATA_DIR).filter((l) => !roomIsProven(l.createSlot)).length).toBe(60);
   });
 
   it('fails LOUDLY if the entry bar is ever loosened enough to admit this wallet', () => {

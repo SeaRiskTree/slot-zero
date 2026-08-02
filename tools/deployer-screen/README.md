@@ -389,7 +389,8 @@ are **not** like-for-like. Do not re-derive those figures here.
 - Per-token records are held **in memory only**, for the duration of one run, and dropped when the
   process exits. There is no cache, no database, and no backfill.
 - Nothing is written to disk unless `--out` is passed. Persistence is opt-in.
-- What a run record contains, per wallet — **twenty-three fields at schema 4, all of them ours**:
+- What a run record contains, per wallet — **twenty-three fields at schema 4 and at schema 5, all
+  of them ours** (schema 5 adds no candidate field; its three new fields live inside `entry`):
   the thirteen of schema 1 (`wallet`, `seededBy`, `tokens`, `completed`, `completionRate`,
   `spanDays`, `windowFirstDeploy`, `windowLastDeploy`, `vendorPageCapped`, `verdict`, `rationale`,
   `gateReasons`, `consistency`), plus `entry` from schema 3, plus `historySource`,
@@ -440,6 +441,18 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 1 (absent) | no `completed`. `truncated`, `truncationReason` — and `coverage`, which was already present here. |
 | 2 | adds `completed`, and only `completed`. |
 | 3 | `spend` (the keyed ceiling, the unspent remainder, the planned worst case, and every endpoint called with its per-call cost) and `unmeasured` (every measurement the run could not take, and why). |
+| 4 | the creation-derived launch history beside the ownership one: `creation`, `historySource`, `gateReadingPageCapped`, `vendorTokens`, `vendorCompleted`, `vendorCompletionRate`, `vendorSpanDays`, `vendorVerdict`, `verdictChanged`. |
+| 5 | no new candidate field — the change is **inside `entry`**, which gains `launchesRoomUnproven`, `bundledTx` and `maxWalletsInOneTx`. Two consequences for a reader of an older record, below. |
+
+**Reading `entry` across the schema-5 boundary.** `entry.launchesSampled` on schema 3 and 4 counts
+every measured window, including ones whose opening was unproven; on schema 5 it counts only the
+**scored** ones, and the refused ones are the new field beside it. More importantly, a schema-3 or
+schema-4 `entry.roomLeft` **may be inflated by the operation's own stake booked as outsider
+capital**, and the record carries nothing that could say by how much — which is precisely why the
+three fields were added. Do not compare a schema-≤4 room figure with a schema-5 one as though they
+answered the same question. The two committed live records both sit in the post-break regime where
+the co-ordination rule recovers 97–100% of our subject's cohort, so the exposure on them is small,
+but it is not measurable from the records themselves.
 
 **`coverage` is not a version signal.** The committed schema-1 record
 `runs/2026-07-29-elite.json` already carries it, including `coverage.coverageTruncated` and
@@ -541,8 +554,46 @@ had a chance to run it, and there is nothing to enter.
 
 Who counts as "the operation" is derived **structurally, with no wallet list and no prior
 knowledge**: a create-slot transaction carrying two or more distinct swapping wallets is a bundle,
-and every wallet in it is co-ordinated — independent traders cannot share a transaction. On our own
-subject this recovers the known six-wallet cohort without being told who it is.
+and every wallet in it is co-ordinated — independent traders cannot share a transaction. Needing no
+wallet list is what makes the method applicable to a stranger at all.
+
+**How much of the operation it recovers is the operator's submission habit on the day, not a
+property of the rule.** Measured against the known six-wallet cohort on our own subject, by month:
+**0% in December 2025 – February 2026, 41.6% in March, 69.9% in April, 97–100% from May onwards.**
+The earlier claim here — that the rule recovers the cohort, full stop — is true of the May–July
+slice it was written against and false of the tape as a whole.
+
+#### An unbundled create slot is UNPROVEN, and unproven launches are not scored
+
+**A create slot carrying no bundled transaction is observationally identical to a create slot with
+no co-ordination.** The rule found nothing either way, and nothing in the fill tape separates the
+two. Reading it as the second — which the screen used to do implicitly — books the operation's own
+stake as outsider capital, and on the affected launches of our own tape that is **9.6–10.0 SOL per
+launch** moved out of the numerator and into `independentSol`. It lowers the operation's share and
+raises room twice over, once in each term.
+
+**The rule's errors therefore run in exactly one direction: every one of them makes a deployer look
+more enterable than it is.** The opposite error is structurally impossible — only wallets that
+*provably* shared a transaction are ever marked, and independent traders cannot do that.
+
+Captain **decision 134a**: do not score those launches. Call the opening **unproven** rather than
+measured. A launch whose create slot carried no bundled transaction contributes **no room figure, no
+field entrant and no round trip**; `measure.mjs` → `roomIsProven` is the predicate and
+`entry.mjs` → `scoreEntry` applies it before anything is computed. A candidate left with fewer
+proven launches than `minLaunchesSampled` scores `entry-unmeasured` — never `entry-room-present`,
+and never folded in with a refusal, which are different findings.
+
+**The cost is real and it is accepted.** Replaying the live recipe — median room over the trailing 8
+launches against the 0.55 bar — at all 228 points of our own tape's history: refusing removes **24
+of 24 false-positive windows and creates none in the other direction**, at a price of **81 windows
+that become unmeasured** rather than wrong. On a stranger the same trade applies and cannot be
+priced, because there is no ground truth to price it against. `bundledTx` and `maxWalletsInOneTx`
+reach the score, the record and the rendered line for exactly that reason: they are the only
+observable that exposes the condition, so a saved run can be audited for it after the fact.
+
+A proven room figure is **still an upper bound**, and one bundled transaction is not evidence of
+complete recovery: on our own tape a launch that bundles can still miss three cohort wallets that
+bought alone. `roomIsProven` is the floor of the evidence, not a threshold on its quality.
 
 ### 2. The field
 
@@ -567,7 +618,8 @@ half.
 
 | leg | can it earn `entry-room-present`? | can it deny it? |
 |---|---|---|
-| room | **yes** | yes |
+| room, on a launch whose opening is **proven** | **yes** | yes |
+| room, on a launch whose opening is **unproven** | **never — the launch is not scored at all** | no: it is removed, not counted against |
 | the field | **never** | yes |
 
 Because **everything Stage 2 measures is gross of fees.** The fill tape carries swap-quote SOL and
@@ -579,8 +631,13 @@ The size of that gap is measured rather than feared, on the one wallet where we 
 
 | our subject `7ufmve7Z…`, post-2026-06-04 | reading |
 |---|---|
-| the field, **gross of fees**, as Stage 2 measures it | **362 / 473 closed round trips positive (76.5%)**, median **+0.120 SOL** |
-| the same population, **fee-inclusive**, from `onchain_create_slot_pnl.csv` | **+0.54 SOL per launch across 106 wallets, 51 of them negative** |
+| the field, **gross of fees**, as Stage 2 measures it | **351 / 460 closed round trips positive (76.3%)**, median **+0.116 SOL** |
+| the regime, **fee-inclusive**, from `onchain_create_slot_pnl.csv` | **+0.54 SOL per launch across 106 wallets, 51 of them negative** |
+
+(The gross row is over the 86 post-break launches whose opening is proven — the three that Stage 2
+now refuses take 13 round trips with them. The fee-inclusive row is the regime's published figure
+over all 89 and is quoted unchanged; it moves the argument not at all, since the point is the sign
+of the gap, not its third digit.)
 
 Read naively, the field says this wallet is beatable. It is not. So the field can only ever veto.
 
@@ -590,6 +647,13 @@ Read naively, the field says this wallet is beatable. It is not. So the field ca
 
 Nothing in that vocabulary says beatable, profitable, or worth trading. **`entry-room-present` means
 the opening window is not already closed, so the exit question is worth asking** — and nothing more.
+
+**`entry-unmeasured` and `entry-room-absent` are deliberately not the same verdict**, and unproven
+openings land on the first. "We could not measure this" is not "we measured it and there was
+nothing there": the second is a finding about a deployer, the first is a finding about our evidence,
+and folding them together would let a coverage failure read as a judgement. The score carries
+`launchesRoomUnproven` beside `launchesSampled` so the two populations can always be told apart, and
+a caveat names the count and the reason on every score that has one.
 
 ## Bounds
 
@@ -955,14 +1019,41 @@ exactly that case. The buckets hold 45 and 89 launches as committed; the floor i
 **Built — Stage 1**, the keyed gate: enumerate, compute the rate ourselves, apply pinned thresholds.
 
 **Built — Stage 2**, the ENTRY score. Room in the opening window, and what the field there achieved.
-Keyless, and it spends no vendor quota. Stage 0 validates it three ways before a single request is
+Keyless, and it spends no vendor quota. Stage 0 validates it four ways before a single request is
 issued:
 
 | check | result on the committed tape |
 |---|---|
-| the create-slot primitive reproduces the published §5.1 era split | operation share 0.451 → 0.759 against a published 0.451 → 0.768 |
+| the create-slot primitive reproduces the published §5.1 era split | operation share 0.451 → 0.769 against a published 0.451 → **0.771** (see below) |
 | the **field** measurement reproduces `wallet_launch_pnl.csv` | **1,502 create-slot outsider pairs, 0 closure mismatches, max realised error 5.0e-7 SOL** |
-| **the known-negative control** | see below |
+| **the known-negative control**, at two points in time | see below |
+| **the rolling replay**, at every point in time | **228 trailing windows, 0 false positives**, 35 false negatives — see below |
+
+#### The era-2 constant is pinned at 0.771, and the tolerance is not the fix
+
+The published era-2 share `0.768` is **not the median of its own stated population**: the 89-launch
+series has median `0.7708`, and `0.768` is its rank-43/44 order statistic. Three independent recipes
+read `0.771`, one of them this repo's own committed
+`node analysis/window-population/measure.mjs`. The full decomposition, including what population
+*does* produce `0.768` and why that population is internally inconsistent, is recorded in
+`data/population-tape-2026-07-29/IMPORT.md` → "Corrections" — the primary record's report is not
+edited, per this project's own rule.
+
+Why re-pin rather than widen the ±0.02 tolerance (captain **decision 135c**): the tolerance had been
+absorbing **two errors of opposite sign that partially cancelled** —
+
+```
+published                                              0.768
++ the published cell is 1-2 ranks below its own median   +0.0028  ->  0.7708   the true value
+- the co-ordination rule found nothing on 3 of 89        -0.0115  ->  0.7593   what Stage 0 printed
+                                                        --------
+net                                                     -0.0087  =  the gap that used to be observed
+```
+
+So the check was passing for the wrong reason. Refusing to score an unproven opening removes the
+first term; re-pinning removes the second. Era 2 now reproduces at **0.769 over its 86 proven
+launches** against `0.771` — the residual is three launches leaving an 89-member series and moving
+the order statistic, not a defect. **Widening the tolerance would have hidden both.**
 
 The `readLaunchWindow` that the previous lane deleted rather than ship half-validated is written
 here, against a real caller and against ground truth — see [the live path](#the-live-path-checked-against-ground-truth).
@@ -983,12 +1074,40 @@ It is scored two ways, because both readings have to come out negative and they 
 | slice | verdict | median room |
 |---|---|---|
 | the most recent 8 launches — exactly what a live run would score today | `entry-room-absent` | **0.284** |
-| the whole post-2026-06-04 regime, 89 launches | `entry-room-absent` | **0.241** |
+| the whole post-2026-06-04 regime, 86 proven launches | `entry-room-absent` | **0.231** |
 
 **And this is why it is an assertion rather than a threshold comparison:** on that same wallet the
-field leg reads 362/473 closed round trips positive. Followed on its own it would call the wallet
+field leg reads 351/460 closed round trips positive. Followed on its own it would call the wallet
 beatable. The verdict has to survive a leg pointing the wrong way, and Stage 0 fails loudly if it
 ever stops doing so — including if a future lane quietly loosens `minRoomLeft` to fit an output.
+
+#### The rolling replay — the same question, asked at every point in the tape
+
+**The two slices above could not have caught the unproven-opening defect, and that is a fact about
+where they sample, not about how they are written.** Both sit inside the months where the
+co-ordination rule happens to recover 97–100% of our subject's cohort. Over December 2025 –
+February 2026 it recovered **0%**, and across that stretch the screen reported median room 0.62–0.66
+against a true 0.20–0.33 — in a regime whose measured per-launch prize to outsiders was ≈0
+(`analysis/window-population/`).
+
+So Stage 0 asks the same question at **all 228 trailing windows** instead of two. The recipe is the
+live one, not an approximation of it: median `roomLeft` over the trailing
+`maxLaunchesPerCandidate` launches against `minRoomLeft`, a window with fewer than
+`minLaunchesSampled` proven launches being unmeasured, exactly as `scoreEntry` would have it. Each
+window's verdict is compared with the one the **named** six-wallet cohort gives — ground truth we
+hold only because this is our own subject, which is the whole reason the structural rule exists.
+
+| | before decision 134a | with it |
+|---|---:|---:|
+| windows evaluated | 228 | 228 |
+| **false positives** — screen says room, the named cohort says none | **24** | **0** |
+| false negatives — screen says none, the named cohort says room | 0 | 35 |
+| windows reported unmeasured | 0 | 81 |
+
+**Only false positives fail the check.** A false negative is the accepted price of the ruling: a
+null result is acceptable, a false positive is not. The failure message names the worst window and
+points at `roomIsProven`, so a future change that reopens the defect gets told what it did rather
+than a bare number. Offline, free and deterministic like the rest of Stage 0.
 
 **Not built — the exit trap (stage 3).** Room to enter is not room to leave. When the dev sells
 relative to mint and to outsider inflow, whether the trigger is a **size** (which would cap our
@@ -1036,7 +1155,7 @@ two.**
 
 A high completion rate does not imply a profitable entry, and **a profitable-looking field does not
 imply one either.** We hold the counterexample to both, on the same wallet: our subject deployer
-completes 43% of its launches, gross of fees 76.5% of the closed round trips in its opening window
+completes 43% of its launches, gross of fees 76.3% of the closed round trips in its opening window
 are positive, and fee-inclusive that window has been unprofitable for outsiders since 2026-06-04
 (`slot-zero-june-regime-change/report.md` §5, §6.1). Stage 0 shows the gate passing it and Stage 2
 refusing it.

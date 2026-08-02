@@ -134,10 +134,20 @@ export function renderEntry(e, coverage) {
   L.push(distLine('dev buy (SOL)', e.devSol));
   L.push(distLine('its own cohort (SOL)', e.coordinatedSol));
   L.push(distLine('competing wallets', e.outsidersPerLaunch, 1));
+  // Over EVERY measured launch, refused ones included — a zero here is what says the co-ordination
+  // rule found nothing rather than finding no co-ordination, and it is the only visible sign of it.
+  L.push(distLine('bundled create-slot tx', e.bundledTx, 1));
+  L.push(distLine('max wallets in one tx', e.maxWalletsInOneTx, 1));
   L.push(
     `      hit rate: ${e.roomHitRate.hits}/${e.roomHitRate.n} launches leave room ` +
       `(${pct(e.roomHitRate.rate)}); ${e.launchesWithNoOutsider} launch(es) had no competitor at all`,
   );
+  if (e.launchesRoomUnproven > 0) {
+    L.push(
+      `      ${e.launchesRoomUnproven} further launch(es) are NOT SCORED: no bundled transaction in ` +
+        `the create slot, so the opening is UNPROVEN rather than open`,
+    );
+  }
   L.push('      ^ Read this the captain\'s way: it measures how badly configured the dev\'s own');
   L.push('        launch bot is. A bot that takes the bottom of its own curve leaves us nothing.');
   L.push('');
@@ -309,8 +319,32 @@ export function renderStage0(r, vendorReadings) {
   }
   L.push('');
   L.push('  The co-ordination rule — a create-slot transaction carrying 2+ distinct wallets marks');
-  L.push('  every wallet in it — recovers the known six-wallet cohort WITHOUT being told who it is.');
-  L.push('  That is what makes the method applicable to a stranger.');
+  L.push('  every wallet in it — needs no wallet list, which is what makes the method applicable to');
+  L.push('  a stranger. HOW MUCH OF THE COHORT IT RECOVERS IS THE OPERATOR\'S SUBMISSION HABIT, NOT A');
+  L.push('  PROPERTY OF THE RULE: 97-100% from May 2026 on, 69.9% in April, 41.6% in March, and 0%');
+  L.push('  in Dec 2025 - Feb 2026, when this deployer bundled nothing at all. A create slot with no');
+  L.push('  bundled transaction is indistinguishable from one with no co-ordination, so those');
+  L.push('  launches are NOT SCORED — the era rows above are over the scored ones only.');
+  const unprovenInEras = r.eraSplit.reduce((n, e) => n + e.nRoomUnproven, 0);
+  L.push(
+    `  ${unprovenInEras} launch(es) in these two eras were excluded for that reason` +
+      `${unprovenInEras === 0 ? '.' : ` (${r.eraSplit.map((e) => `${e.era}: ${e.nRoomUnproven}`).join(', ')}).`}`,
+  );
+  L.push('');
+
+  L.push('THE ROLLING REPLAY — the same known-negative question, asked at EVERY point in the tape');
+  L.push(
+    `  ${r.rollingRoom.windows} trailing windows: ${r.rollingRoom.present} room-present, ` +
+      `${r.rollingRoom.absent} room-absent, ${r.rollingRoom.unmeasured} unmeasured`,
+  );
+  L.push(
+    `  against the NAMED six-wallet cohort: ${r.rollingRoom.falsePositives} false positive(s), ` +
+      `${r.rollingRoom.falseNegatives} false negative(s)   ${r.rollingRoom.ok ? 'OK' : 'FAILED'}`,
+  );
+  L.push('  A false positive is a window the screen would call enterable that our own ground truth');
+  L.push('  says was not, and every error the co-ordination rule can make runs that way. It fails on');
+  L.push('  one. A false negative does NOT fail: refusing to score an unproven opening costs real');
+  L.push('  coverage, and that cost is the ruling (decision 134a), not a defect.');
   L.push('');
 
   L.push('FIELD MEASUREMENT — reproduced against the dataset\'s own committed P&L table');

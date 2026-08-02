@@ -58,8 +58,18 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   understating a bonded count more than a launch count. **Do not compare them with a schema-4
  *   `completionRate` as though they answered the same question**; compare against
  *   `vendorCompletionRate`, which is the same measurement the older records hold.
+ * - **5** — Stage 2 stops scoring launches whose create slot carried no bundled transaction, and
+ *   the `entry` block gains the three fields that make that visible: `launchesRoomUnproven`,
+ *   `bundledTx` and `maxWalletsInOneTx`. **Two consequences for a reader of an older record.**
+ *   First, `entry.launchesSampled` on schema 3 and 4 counts every measured window, including ones
+ *   whose opening was unproven; on schema 5 it counts only the SCORED ones, and the refused ones
+ *   are the new field beside it. Second, and this is the one that matters: a schema-3 or schema-4
+ *   `entry.roomLeft` may be **inflated by the operation's own stake booked as outsider capital**,
+ *   and the record carries nothing that could say by how much — which is precisely why the fields
+ *   were added. No candidate row is a candidate row of a different shape, so
+ *   `PERSISTED_BY_SCHEMA[5]` equals `[4]`; the change is inside `entry`.
  */
-export const RECORD_SCHEMA_VERSION = 4;
+export const RECORD_SCHEMA_VERSION = 5;
 
 /**
  * Completeness of a run, as the record can actually support.

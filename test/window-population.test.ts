@@ -227,14 +227,30 @@ describe('what the tape cannot answer', () => {
     expect(wallets.filter((w) => w >= 10).length).toBe(6);
     expect(wallets.filter((w) => w >= 6).length).toBe(14); // the outsider-only figure, for contrast
 
-    // The price multiple beside it is the same construction on both sides: the last create-slot
+    // The price multiple beside it reads the same quantity on both sides: the last create-slot
     // fill over the deployer's own fill price. The control publishes it as
     // `last_create_slot_price / p0`, and `p0` is the creator's own dev-buy price — on the 24
     // control launches using the same 14.814814813-SOL preset it is this deployer's own
-    // `price_devbuy` to ten significant figures. The subject's side comes off the window tape,
-    // not off `first30s_best.csv`, which is a truncated best-N subset and reads 2.25.
+    // `price_devbuy` to ten significant figures. The subject's side comes off the window tape.
     const mults = control.map((c) => Number(c['last_create_slot_price']) / Number(c['p0']));
     expect(median(mults)).toBeCloseTo(1.04, 2);
+
+    // 22 control launches had nobody but the creator in the create slot, so the last fill is the
+    // creator's own and the multiple is exactly 1. The subject's construction skips that case
+    // rather than scoring it 1, so the like-for-like control median is the one over the 48 that
+    // someone else bid into — 1.24, a narrower gap against the subject's 2.46 than 1.04 is.
+    const unbid = control.filter((c) => Number(c['n_create_slot_wallets']) === 0);
+    expect(unbid.length).toBe(22);
+    expect(unbid.every((c) => Number(c['n_create_slot_trades']) === 1)).toBe(true);
+    expect(
+      unbid.every((c) => Number(c['last_create_slot_price']) === Number(c['p0'])),
+    ).toBe(true);
+    const bid = control.filter((c) => Number(c['n_create_slot_wallets']) > 0);
+    expect(bid.length).toBe(48);
+    expect(median(bid.map((c) => Number(c['last_create_slot_price']) / Number(c['p0'])))).toBeCloseTo(
+      1.24,
+      2,
+    );
     const subject = createSlotPriceMultiples(open);
     expect(median(subject.multiples)).toBeCloseTo(2.46, 2);
     // Every open-window launch carries one, so nothing drops silently out of that median.
@@ -258,9 +274,8 @@ describe('what the tape cannot answer', () => {
       perLaunch.set(mint, (perLaunch.get(mint) ?? 0) + 1);
     }
     expect(perLaunch.size).toBe(127); // two open-window launches have no row at all
-    expect(median([...perLaunch.values()])).toBeLessThan(
-      median(open.map((r) => r.createSlotWallets)),
-    );
+    expect(median([...perLaunch.values()])).toBe(5);
+    expect(median(open.map((r) => r.createSlotWallets))).toBe(10);
   });
 
   it('every launch in the tape is the same one deployer', () => {

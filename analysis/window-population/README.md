@@ -351,23 +351,34 @@ one are a minority — **roughly one in twelve** — and that is a statement abo
 about profit. (Against the outsider-only 6 the count would be 14 of 70, one in five; that
 comparison is not like for like and this report does not make it.)
 
-The price multiple beside it is the same construction on both sides — **the last fill in the
-create slot over the deployer's own fill price** — and the control's median is **1.04** against
-this deployer's **2.46**. The control publishes it as `last_create_slot_price / p0`, where `p0`
-is the creator's own dev-buy price: on the 24 control launches using the identical
-14.814814813-SOL preset it is this deployer's own `price_devbuy` to ten significant figures. The
-subject's side is computed from the window tapes — the last non-deployer buy in the create slot,
-over `launches.csv`'s `price_devbuy`, gated on `meta.reached_mint` — and it covers **all 129**
-open-window launches, none dropped.
+The price multiple beside it reads the same quantity on both sides — **the last fill in the
+create slot over the deployer's own fill price** — and this deployer's is **2.46**. The control
+publishes it as `last_create_slot_price / p0`, where `p0` is the creator's own dev-buy price: on
+the 24 control launches using the identical 14.814814813-SOL preset it is this deployer's own
+`price_devbuy` to ten significant figures. The subject's side is computed from the window tapes —
+the last non-deployer buy in the create slot, over `launches.csv`'s `price_devbuy`, gated on
+`meta.reached_mint` — and it covers **all 129** open-window launches, none dropped.
 
-It is deliberately **not** read off `first30s_best.csv`, which gives 2.25. That file is the ten
+The control has **two** medians and the difference matters. **22 of the 70 control launches had
+nobody but the creator in the create slot** — `n_create_slot_wallets = 0` against a single trade
+— and each of those reads exactly 1.0000, because the last fill in the slot *is* the creator's
+own. Across all 70 rows the median is **1.04**; across the **48** whose create slot someone else
+actually bid into, it is **1.24**. The like-for-like partner for the subject's 2.46 is **1.24**,
+because the subject's construction skips exactly the case those 22 rows represent: it takes the
+last *non-deployer* buy, so a launch nobody else bid into yields no multiple at all rather than a
+1.0. That an unbid create slot is itself common — nearly a third of the control — is a fact about
+the population worth reading beside the 6-of-70 bound above.
+
+This narrows the gap: 2.46 against 1.24 rather than against 1.04. It is the correct comparison,
+and it runs the opposite way to the two corrections above it, which both made the subject look
+more unusual. Both control medians and the 22 count are asserted in the test.
+
+The subject's side is deliberately **not** read off `first30s_best.csv`. That file is the ten
 best early entrants per launch, so it carries a median of 5 create-slot rows against the 10
 wallets actually in the slot, and two open-window launches have no row in it at all: its highest
 create-slot fill is below the slot's real last fill on most launches. "Buys only move the curve
-up" is true of the curve and false of a truncated file, and the correction runs against the
-subject — 2.46 is further from the control's 1.04 than 2.25 was. The honest caveat is one of
-coverage, not of construction: the subject's figure is 129 launches of one deployer, the
-control's is one launch each of 70. Both numbers are asserted in the test.
+up" is true of the curve and false of a truncated file. The remaining caveat is one of coverage:
+the subject's figure is 129 launches of one deployer, the control's is one launch each of 70.
 
 ### 7.2 Earners inside one window: **about 2**
 

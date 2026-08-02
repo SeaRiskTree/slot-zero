@@ -790,6 +790,11 @@ export function main() {
   console.log(`  ${control.length} other deployers, one launch each, no dates and no P&L — 0 window observations`);
   console.log(`  create-slot wallets        p10/p25/p50/p75/p90 = ${qline(quantiles(wallets), 1)}`);
   console.log(`  create-slot price multiple p10/p25/p50/p75/p90 = ${qline(quantiles(mults), 2)}`);
+  const bidInto = control.filter((c) => (num(c['n_create_slot_wallets']) ?? 0) > 0);
+  console.log(`  of the 70, ${control.length - bidInto.length} had nobody but the creator in the` +
+    ` create slot and read exactly 1.00; over the other ${bidInto.length} the median multiple is` +
+    ` ${f(median(bidInto.map((c) => (num(c['last_create_slot_price']) ?? 0) / (num(c['p0']) ?? 1))), 2)}` +
+    ` — the like-for-like partner for the subject's figure below`);
   // Like for like: the control column counts every create-slot wallet bar the creator, so it
   // carries a control deployer's own helpers as well as its outsiders and nothing in that file
   // separates the two. The subject's comparable figure is therefore its total — cohort included

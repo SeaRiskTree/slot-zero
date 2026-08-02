@@ -32,18 +32,33 @@ import { classifyAuthFailure } from './credential.mjs';
 /** Production base URL, from `servers[0].url` of their OpenAPI document. */
 export const BASE_URL = 'https://madeonsol.com/api/v1';
 
-/** Thrown when a request would exceed the run's ceiling. Carries no credential. */
+/**
+ * The consequence and the lever for the ceiling this class was written for: the keyed run-wide
+ * allowance, which `--max-requests` sets. It is the default because that is the only ceiling this
+ * module owns — every other client that throws this must say what its OWN ceiling bounds.
+ */
+const KEYED_RUN_CEILING_REMEDY =
+  'The run stopped early and the ranking below is INCOMPLETE. Raise --max-requests only ' +
+  'if the shared daily allowance can afford it.';
+
+/**
+ * Thrown when a request would exceed the run's ceiling. Carries no credential.
+ *
+ * `remedy` is a parameter rather than a constant because this message is **persisted**: the
+ * creation walk stores it verbatim in a run record's `creation.stopDetail`, and the grading lane
+ * reads run records. A per-candidate RPC ceiling reusing the keyed run ceiling's wording put "the
+ * run stopped early" and "raise --max-requests" into a record whose top level said
+ * `completed: true`, over a lever that does not apply to it — two false statements in the declared
+ * input of another lane. A caller with its own ceiling passes its own consequence and its own lever.
+ */
 export class CeilingReached extends Error {
   /**
    * @param {number} ceiling
    * @param {string} attemptedPath
+   * @param {string} [remedy] What this particular ceiling stopped, and which lever raises it.
    */
-  constructor(ceiling, attemptedPath) {
-    super(
-      `Request ceiling of ${ceiling} reached; refusing to issue ${attemptedPath}. ` +
-        `The run stopped early and the ranking below is INCOMPLETE. Raise --max-requests only ` +
-        `if the shared daily allowance can afford it.`,
-    );
+  constructor(ceiling, attemptedPath, remedy = KEYED_RUN_CEILING_REMEDY) {
+    super(`Request ceiling of ${ceiling} reached; refusing to issue ${attemptedPath}. ${remedy}`);
     this.name = 'CeilingReached';
     /** @type {number} */ this.ceiling = ceiling;
     /** @type {string} */ this.attemptedPath = attemptedPath;

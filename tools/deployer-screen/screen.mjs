@@ -34,7 +34,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
-import { mergeHistories } from './creation.mjs';
+import { coveredBoundMs, mergeHistories } from './creation.mjs';
 import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
 import {
@@ -665,7 +665,7 @@ export async function main(opts, env, out, err) {
 
         completion = measureCompletion(merged.records);
         gateReadingCapped = listing.truncated;
-        gate = applyGate({ completion }, gateThresholds);
+        gate = applyGate({ completion, historySource }, gateThresholds);
         // What makes this reading unjudgeable, if anything. Both entries describe a history the
         // thresholds were applied to but could not actually decide over, and either one is enough:
         // a rejection computed on it would be exactly the invisible false rejection this lane
@@ -699,10 +699,19 @@ export async function main(opts, env, out, err) {
           );
         }
         ({ verdict, rationale } = verdictFor({ gate, completion, capped: gateReadingCapped, notMeasured }));
+        // Both bounds go through the merge's own test, so the record cannot claim a window the
+        // reading it was produced from treated as empty. `coveredFromIso: null` means the walk
+        // never finished a signature page, so it covered NOTHING and `coveredDays` is 0 — not a
+        // 56-year window, which is what the epoch floor this replaced used to report. Under it the
+        // whole ownership listing is carried over as `listedOutsideWindow`, and that is what the
+        // gate reads.
+        const covFrom = coveredBoundMs(walk.covered.fromMs);
+        const covTo = coveredBoundMs(walk.covered.toMs);
         creation = {
-          coveredFromIso: walk.covered.fromMs === 0 ? null : new Date(walk.covered.fromMs).toISOString(),
-          coveredToIso: walk.covered.toMs === 0 ? null : new Date(walk.covered.toMs).toISOString(),
-          coveredDays: Number(((walk.covered.toMs - walk.covered.fromMs) / 86_400_000).toFixed(2)),
+          coveredFromIso: covFrom === null ? null : new Date(covFrom).toISOString(),
+          coveredToIso: covTo === null ? null : new Date(covTo).toISOString(),
+          coveredDays:
+            covFrom === null || covTo === null ? 0 : Number(((covTo - covFrom) / 86_400_000).toFixed(2)),
           wholeHistory: walk.covered.exhausted,
           stopReason: walk.stopReason,
           stopDetail: walk.stopDetail,

@@ -126,6 +126,12 @@ Learned at real cost; the citations are to
   `coins/list?dev=` silently ignores the filter rather than applying it. The only route is the
   create transaction — `tools/deployer-screen/creation.mjs` and its README section "Which history
   the gate counts" own this, including what the walk costs and how to read the record.
+  **The walk normally covers NO window at all** — 100 requests per candidate against 1,000-entry
+  signature pages means it usually stops inside page 1, and the floor only advances after a page is
+  inspected whole. So `covered.fromMs` is `number | null` and **`null` means covered nothing, never
+  "since the epoch"**: a `0` sentinel there read as a 56-year window and made the merge delete 29 of
+  one live wallet's 30 launches as "acquired". Under an empty window the whole reading falls back to
+  the ownership listing. README → "Four rules keep that window from claiming more than it covers".
   **Measured size of the bias: nil so far.** Five wallets have both readings; four gaps of exactly
   zero, one of 1 launch in 239, no verdict changed
   (`tools/deployer-screen/CREATION-DERIVED.md`). The reason is worth knowing before re-deriving it:

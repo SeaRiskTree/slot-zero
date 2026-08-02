@@ -217,7 +217,9 @@ rather than its count, because that is precisely the launch the ownership readin
   `hiddenByOwnership` measures the bias.
 - **A creation window is not a history.** Only `stopReason: "index-exhausted"` means the walk saw
   the wallet's whole index. Under any other value the launches before `coveredFromIso` come from
-  the ownership listing and are a lower bound, as they always were. A page the endpoint never
+  the ownership listing and are a lower bound, as they always were — and `coveredFromIso: null`
+  with `coveredDays: 0` is the limit case of that, a walk that finished no page and so covered
+  nothing, where the *whole* reading is the ownership listing. A page the endpoint never
   resolved cannot produce that value: a `null` from `getSignaturesForAddress` is load-shedding, it
   is retried once, and a page that still does not resolve stops the walk on `upstream-error`.
 - **`gate-unmeasured` is not a rejection, and none of the numbers above came from one.** Three

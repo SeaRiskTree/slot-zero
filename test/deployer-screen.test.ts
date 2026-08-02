@@ -624,6 +624,29 @@ describe('the gate', () => {
     expect(g.reasons.join(' ')).toMatch(/undefined/);
   });
 
+  it('does not blame the vendor for a zero the creation merge produced', () => {
+    // Observed live: a wallet whose vendor profile carried 11 tokens and whose ownership listing
+    // served 11 rows was rejected with "the vendor listed no tokens with a usable deploy time".
+    // The zero came from our own merge. A reason that names the wrong party sends an operator to
+    // the wrong place, and on this gate a rejection is the output nobody re-examines.
+    const derived = applyGate(
+      { completion: measureCompletion([]), historySource: 'creation-derived' },
+      GATE,
+    );
+    expect(derived.reasons.join(' ')).not.toMatch(/vendor/);
+    expect(derived.reasons.join(' ')).toMatch(/creation-derived history came out empty/);
+    // The ownership reading keeps the sentence it was written for, and so does an unlabelled
+    // caller — the vendor listing really is the only source there.
+    const owned = applyGate(
+      { completion: measureCompletion([]), historySource: 'ownership-only' },
+      GATE,
+    );
+    expect(owned.reasons.join(' ')).toMatch(/the vendor listed no tokens/);
+    expect(applyGate({ completion: measureCompletion([]) }, GATE).reasons.join(' ')).toMatch(
+      /the vendor listed no tokens/,
+    );
+  });
+
   it('emits only gate verdicts — the vocabulary contains no recommendation', () => {
     const pass = verdictFor({
       gate: { passed: true, reasons: [] },
@@ -2162,10 +2185,11 @@ describe('a ceiling hit is never recordable as a measured result', () => {
         bondedUndecidable: 3,
         curvesUnread: 5,
         listingUnmeasuredNote: null,
-        wholeHistory: true,
-        stopReason: 'index-exhausted',
-        coveredDays: 30,
+        wholeHistory: false,
+        stopReason: 'request-ceiling',
+        coveredDays: 0,
         coveredFromIso: null,
+        coveredToIso: null,
         listedOutsideWindow: 0,
         windowExact: true,
         listedInWindowCarried: 0,
@@ -2877,6 +2901,30 @@ describe('the Solana RPC client is bounded the same way the keyed one is', () =>
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it('says what ITS ceiling stopped, not what the keyed run ceiling would have', async () => {
+    // This message is persisted verbatim as `creation.stopDetail`, and run records are the grading
+    // lane's declared input. Reusing the keyed client's wording put "the run stopped early" and
+    // "raise --max-requests" into a record whose top level said `completed: true` — a per-candidate
+    // RPC bound is not a run bound, and --max-requests is a keyed lever that cannot move it.
+    const fetchImpl = vi.fn(async () => okBody('x')) as unknown as typeof fetch;
+    const rpc = new SolanaRpcClient({ maxRequests: 1, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    await rpc.call('getSlot', []);
+    const cause = await rpc.call('getSlot', []).catch((e: unknown) => e);
+
+    expect(cause).toBeInstanceOf(CeilingReached);
+    const message = (cause as Error).message;
+    expect(message).not.toMatch(/Raise --max-requests/);
+    expect(message).not.toMatch(/run stopped early/);
+    expect(message).not.toMatch(/INCOMPLETE/);
+    expect(message).toMatch(/PER-CANDIDATE/);
+    expect(message).toMatch(/creation_walk\.maxRpcRequestsPerCandidate/);
+    // It names the wrong lever only to rule it out, which is the instinct an operator reading a
+    // ceiling message actually has.
+    expect(message).toMatch(/--max-requests is the keyed vendor ceiling and cannot move it/);
+    // The keyed client's own ceiling keeps the wording that is true of it.
+    expect(new CeilingReached(600, '/x').message).toMatch(/--max-requests/);
+  });
+
   it('retries a 429 with backoff, and every attempt counts against the ceiling', async () => {
     // The opposite of the keyed client, where 429 means a metered allowance is spent and retrying
     // just spends it again. On a free public endpoint it means slow down.
@@ -3042,8 +3090,11 @@ describe('the creation walk is bounded, and says which bound bit', () => {
     expect(walk.stopReason).toBe('transaction-cap');
     expect(walk.covered.exhausted).toBe(false);
     // The floor only advances once a page is fully inspected, so an abandoned page must not widen
-    // the window it did not cover.
-    expect(walk.covered.fromMs).toBe(0);
+    // the window it did not cover. It is NULL rather than 0: `0` is a real instant that a consumer
+    // reads as "covered since 1970", which is the widest possible window rather than the empty one
+    // this walk actually has. The merge's half of this contract is asserted below, in "a walk that
+    // covered nothing".
+    expect(walk.covered.fromMs).toBeNull();
   });
 
   it('keeps what it paid for when the request ceiling bites', async () => {
@@ -3178,6 +3229,100 @@ describe('the merge compares only over the range it may compare over', () => {
     expect(merged.hiddenByOwnership).toBe(0);
     // Both are still real launches, proven by their create transactions.
     expect(merged.records).toHaveLength(2);
+  });
+});
+
+describe('a walk that covered nothing is an EMPTY window, never an infinite one', () => {
+  // The consumer half of the walk's `covered.fromMs` contract, and the one that was missing: the
+  // producer was pinned to leave the floor un-advanced, and nothing asked what the merge then did
+  // with it. Under the old encoding (`0`) it read as the epoch, so EVERY listed row was in-window,
+  // `windowExact` relabelled every launch the walk had not personally seen as "acquired", and the
+  // gate lost it from both sides of its fraction. Measured live 2026-08-02: a wallet reading
+  // 30 launches / 20 bonded / 66.7% / gate-passed became 2 / 0 / 0.0% / gate-failed, with an
+  // ordinary rationale and `gate-unmeasured` never firing. It hit 3 of 8 candidates, because a
+  // 100-request per-candidate ceiling against 1,000-entry signature pages means stopping inside
+  // page 1 is the NORMAL case for a busy deployer.
+  const W4 = 'Wallet4Wallet4Wallet4Wallet4Wallet4Wallet41';
+  const NOW = T0 + 120 * DAY;
+  /** Thirty launches over ninety days; the walk proved exactly one before its ceiling bit. */
+  const listed = Array.from({ length: 30 }, (_, i) => ({
+    mint: `mint-${i}`,
+    deployedAtMs: NOW - (i + 1) * 3 * DAY,
+    completed: i % 3 === 0,
+  }));
+  const creates = [
+    {
+      mint: listed[0]!.mint,
+      bondingCurve: 'curve-0',
+      creator: W4,
+      createdAtMs: listed[0]!.deployedAtMs,
+      signature: 'sig-0',
+    },
+  ];
+
+  it('carries the whole ownership listing over rather than deleting it as acquired', () => {
+    const merged = mergeHistories({
+      creates,
+      wallet: W4,
+      curves: new Map(),
+      listed,
+      // Exactly what `readCreatedHistory` returns when the request ceiling bites part-way through
+      // its first signature page: a top, and no floor at all.
+      covered: { fromMs: null, toMs: NOW, exhausted: false },
+      unresolvedTransactions: 0,
+    });
+
+    // Nothing is inside an empty window, so nothing may be reclassified against it. This is the
+    // assertion that fails on the pre-fix code, where all 30 rows counted as in-window and 29 of
+    // them were dropped.
+    expect(merged.listedInWindow).toBe(0);
+    expect(merged.notCreatedByWallet).toBe(0);
+    expect(merged.listedOutsideWindow).toBe(30);
+    expect(merged.records).toHaveLength(30);
+    // The reading falls back to the ownership listing — biased towards rejection and honest, which
+    // is the README's stated behaviour for history the walk never reached.
+    expect(measureCompletion(merged.records).tokens).toBe(30);
+    expect(measureCompletion(merged.records).completed).toBe(10);
+    // And the one create the walk did pay for is not counted twice, nor claimed as comparable
+    // against a listing over a range the walk never covered.
+    expect(merged.createdInWindow).toBe(0);
+    expect(merged.hiddenByOwnership).toBe(0);
+  });
+
+  it('reads a floor at or before the epoch as "covered nothing" too', () => {
+    // `0` is the encoding the walk used to return, and it is what a record or a caller written
+    // against the old shape still carries. No Solana block time is at or before the epoch, so the
+    // only thing `fromMs <= 0` can mean is "never advanced" — and reading it literally is the
+    // defect, not a stricter version of it.
+    const merged = mergeHistories({
+      creates,
+      wallet: W4,
+      curves: new Map(),
+      listed,
+      covered: { fromMs: 0, toMs: NOW, exhausted: false },
+      unresolvedTransactions: 0,
+    });
+
+    expect(merged.listedInWindow).toBe(0);
+    expect(merged.notCreatedByWallet).toBe(0);
+    expect(merged.records).toHaveLength(30);
+  });
+
+  it('still refuses to reclassify when the walk covered nothing AND left work unresolved', () => {
+    // The unsafe branch was only ever reachable with `windowExact` true, which is why this defect
+    // needed a load-shed-free run to fire. Both paths have to land in the same place.
+    const merged = mergeHistories({
+      creates,
+      wallet: W4,
+      curves: new Map(),
+      listed,
+      covered: { fromMs: null, toMs: NOW, exhausted: false },
+      unresolvedTransactions: 4,
+    });
+
+    expect(merged.windowExact).toBe(false);
+    expect(merged.listedInWindowCarried).toBe(0);
+    expect(merged.records).toHaveLength(30);
   });
 });
 

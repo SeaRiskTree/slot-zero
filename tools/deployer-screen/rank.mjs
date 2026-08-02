@@ -40,6 +40,9 @@
 /**
  * @typedef {object} GateInput
  * @property {import('./measure.mjs').CompletionMeasurement} completion
+ * @property {'creation-derived' | 'ownership-only'} [historySource] Which reading `completion` was
+ *   computed over. It cannot move a verdict — see below — and exists only so a zero-token rejection
+ *   names the right party. Defaults to the ownership reading, which is what an unlabelled caller is.
  *
  * Page truncation is deliberately **not** an input. The gate decides on the three pinned
  * thresholds and nothing else; that the vendor's page was full is disclosed by
@@ -66,9 +69,19 @@ export function applyGate(input, t) {
   const reasons = [];
 
   if (completion.tokens < t.minTokens) {
+    // A zero has to name the party it actually came from. Under the creation-derived reading the
+    // vendor can have listed plenty — the merge is what produced the zero — and blaming the vendor
+    // sends an operator to the wrong place to look. Observed live: a wallet whose vendor profile
+    // carried 11 tokens and whose listing served 11 rows was rejected for "the vendor listed no
+    // tokens".
+    const zeroBlame =
+      input.historySource === 'creation-derived'
+        ? ' (the creation-derived history came out empty — see this candidate\'s `creation` block ' +
+          'for what the walk covered and what the merge did with the ownership listing)'
+        : ' (the vendor listed no tokens with a usable deploy time)';
     reasons.push(
       `sample too small: ${completion.tokens} tokens < ${t.minTokens} required` +
-        (completion.tokens > 0 ? '' : ' (the vendor listed no tokens with a usable deploy time)'),
+        (completion.tokens > 0 ? '' : zeroBlame),
     );
   }
   if (!Number.isFinite(completion.rate)) {

@@ -207,11 +207,38 @@ export function readCurveState(base64Data) {
 
 /**
  * @typedef {object} CoveredWindow
- * @property {number} fromMs Oldest block time the signature scan actually reached.
- * @property {number} toMs   Newest block time the signature scan started from.
+ * @property {number | null} fromMs Oldest block time the signature scan actually reached, or
+ *   **`null` when it reached none** — a walk stopped part-way through its first signature page
+ *   covered nothing, and that is the normal outcome under a per-candidate request ceiling. The
+ *   nullability is the point: `0` was the old encoding of this state and it reads as 1970, i.e. as
+ *   a 56-year window that contains every timestamp, which made the merge below delete real
+ *   launches. Anything comparing against this must handle `null` — {@link mergeHistories} treats an
+ *   absent floor as an EMPTY window, never an infinite one.
+ * @property {number} toMs   Newest block time the signature scan started from, and `0` when it
+ *   never reached one — a walk that resolved no page has no ceiling either. It is a `number` only
+ *   because the walk seeds it that way; put it through {@link coveredBoundMs} like the floor rather
+ *   than formatting it, or an empty window reports 1970 at both ends.
  * @property {boolean} exhausted True when the walk reached the end of the wallet's index, so
  *   `fromMs` is the wallet's genesis rather than a ceiling.
  */
+
+/**
+ * The one test for "this bound is a real block time" — a covered window's edge, or `null` when the
+ * walk never reached one. `null` is what the current walk stores; `0` is what an older producer, an
+ * already-saved run record and a missing `blockTime` all still carry, and it means the same thing,
+ * because no Solana block time is at or before the epoch.
+ *
+ * Every consumer of {@link CoveredWindow} has to apply the SAME test or they disagree about the
+ * same walk: {@link mergeHistories} treating a `0` floor as an empty window while the run record
+ * writes `1970-01-01T00:00:00.000Z` and a 20,600-day span is a record that contradicts the reading
+ * it was produced from. Hence one exported function rather than a repeated comparison.
+ *
+ * @param {number | null | undefined} ms
+ * @returns {number | null} `ms` when it is a real block time, `null` when it covers nothing.
+ */
+export function coveredBoundMs(ms) {
+  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? ms : null;
+}
 
 /**
  * @typedef {object} MergedHistory
@@ -260,6 +287,12 @@ export function readCurveState(base64Data) {
  * - **Outside** it, there is nothing but the ownership listing, so its rows are carried over
  *   unchanged and {@link MergedHistory.listedOutsideWindow} says how many. That part of the history
  *   is still a lower bound and the record has to keep saying so.
+ * - **An EMPTY window** — `covered.fromMs === null`, a walk that stopped before finishing one
+ *   signature page — is the degenerate case of "outside", not a special case: every listed row is
+ *   outside it, so the reading falls all the way back to the ownership listing. Biased towards
+ *   rejection, by a measured ~0 launches (`CREATION-DERIVED.md`), and honest. The creates the walk
+ *   *did* prove are still in `records`; what an empty window withdraws is only the right to call a
+ *   listed token the walk never saw "acquired".
  *
  * Merging rather than replacing is what keeps this honest under a truncated walk: a walk that
  * covered two days would otherwise turn a 200-launch history into a 4-launch one and fail the
@@ -294,8 +327,17 @@ export function mergeHistories(input) {
   const unresolvedTransactions = input.unresolvedTransactions ?? 0;
   const windowExact = unresolvedTransactions === 0;
 
+  // A walk that never finished a page covered NOTHING, and the window has to be empty rather than
+  // unbounded. `null` is how the walk says so; `<= 0` is the same claim from an older or
+  // hand-built caller, and it is safe to fold in because no Solana block time is at or before the
+  // epoch. Getting this wrong is not cosmetic: under an epoch floor every listed row counts as
+  // in-window, `windowExact` then relabels every launch the walk did not personally see as
+  // "acquired", and a 30-launch deployer is rejected on a 2-launch history with an ordinary-looking
+  // rationale. That is the invisible false rejection this whole lane exists to remove, arriving
+  // from the other end.
+  const fromMs = coveredBoundMs(covered.fromMs);
   /** @param {number} ms */
-  const inWindow = (ms) => Number.isFinite(ms) && ms >= covered.fromMs && ms <= covered.toMs;
+  const inWindow = (ms) => fromMs !== null && Number.isFinite(ms) && ms >= fromMs && ms <= covered.toMs;
 
   // The listing is deduplicated by mint FIRST. `overlap` below counts listing rows against a set of
   // distinct created mints, so a mint the endpoint served twice — the same row reached from two

@@ -147,8 +147,19 @@ is found; outside it the ownership listing is carried over unchanged and the rec
 rows that is. `stopReason: "index-exhausted"` is the only value under which the window is the
 wallet's whole history.
 
-Three rules keep that window from claiming more than it covers.
+Four rules keep that window from claiming more than it covers.
 
+- **A walk that finished no page covered NOTHING, and an empty window is not a wide one.** The floor
+  only advances once a signature page has been inspected whole, so a walk stopped by the
+  per-candidate request ceiling part-way through page 1 — the normal outcome for a busy deployer,
+  100 requests against 1,000-entry pages — has no floor at all. The record says so with
+  `coveredFromIso: null` and `coveredDays: 0`, and the merge then treats **every** listed row as
+  outside the window and carries it over unchanged. The whole reading falls back to the ownership
+  listing, which is biased towards rejection by a measured ~0 launches (`CREATION-DERIVED.md`) and
+  honest. The creates the walk did prove are still counted; what an empty window withdraws is only
+  the right to call a listed token the walk never saw *acquired*. This encoding replaces a `0` floor
+  that read as 1970: a 56-year window containing every timestamp, under which one live wallet's
+  30 launches / 20 bonded / `gate-passed` became 2 / 0 / `gate-failed` with an ordinary rationale.
 - **A null page is a retry, never an end of index.** `getSignaturesForAddress` returns `null` both
   when the public RPC sheds load and when the JSON-RPC envelope carries an `error` — neither means
   the wallet's index ran out. The page is retried once, and a page that still does not resolve ends
@@ -763,7 +774,8 @@ only forbade mint-shaped *keys*, so a mint inside a sentence passed it. Two chan
   **Not covered, and the enumeration above is not full coverage of the record.** Three error-derived
   paths still reach `--out` verbatim: `creation.listingUnmeasuredNote` (`screen.mjs` →
   `describeUnmeasured`, whose `summary` is a raw `Error.message`), `creation.stopDetail`
-  (`pumpfun.mjs`, a raw `cause.message`), and the run-level `unmeasured[]` array, whose `detail`
+  (`pumpfun.mjs`, a raw `cause.message` under `upstream-error`; under `request-ceiling` it is that
+  client's own fixed ceiling wording, which names no vendor data), and the run-level `unmeasured[]` array, whose `detail`
   field `record.mjs` itself documents as embedding a per-wallet URL — so a keyless listing failure
   can persist a URL containing the wallet, which is the exact leak class this boundary exists for.
   That is a known open gap, deliberately left to a separate lane rather than an oversight; do not

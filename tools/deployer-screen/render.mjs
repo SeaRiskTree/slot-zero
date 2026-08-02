@@ -563,10 +563,28 @@ export function renderStage1(run) {
             `${c.creation.notCreatedByWallet} acquired, ${c.creation.movedCreator} creator moved); ` +
             `+${c.creation.listedOutsideWindow} carried over from the listing`,
         );
-        if (!c.creation.wholeHistory) {
+        // A walk that covered nothing gets its own sentence rather than the general one with a
+        // hole where the date should be. "Before null" tells a reader nothing, and the state it
+        // stands for — the reading falls back to the ownership listing, with no window to correct
+        // it — is the one they most need to know before reading the rate above as a correction.
+        // An empty window withdraws the right to call a listed token "acquired"; it does NOT
+        // discard the creates the walk proved on the page it abandoned, and those are exactly the
+        // launches ownership hides, so the sentence has to count them in rather than claim the
+        // listing is the whole of it. The two parts are NAMED and only the listing's row count is
+        // quoted: the walk-proven remainder is not a number this record can derive, because a
+        // listing row with no timestamp or no mint counts once here and not at all in the gate's
+        // history, and printing a derived difference would be printing a number we do not have.
+        if (c.creation.coveredFromIso === null) {
+          L.push(
+            `      ^ the walk stopped on ${c.creation.stopReason} before covering ANY window, so ` +
+              `these ${c.completion.tokens} launch(es) are the ownership listing ` +
+              `(${c.creation.listedOutsideWindow} row(s)) plus whatever creates the walk proved ` +
+              `before stopping — a LOWER BOUND, biased towards rejection`,
+          );
+        } else if (!c.creation.wholeHistory) {
           L.push(
             `      ^ the walk stopped on ${c.creation.stopReason}, so anything created before ` +
-              `${c.creation.coveredFromIso ?? 'the window'} is a LOWER BOUND from the ownership listing`,
+              `${c.creation.coveredFromIso} is a LOWER BOUND from the ownership listing`,
           );
         }
         if (c.creation.curvesUnread > 0) {
@@ -655,7 +673,20 @@ export function renderStage1(run) {
     for (const c of failed) {
       L.push(`  ${c.wallet}`);
       for (const reason of c.gate.reasons) L.push(`      · ${reason}`);
-      if (c.creation !== null && !c.creation.wholeHistory) {
+      if (c.creation !== null && c.creation.coveredFromIso === null) {
+        // The heading above promises each row states which history it was rejected over. A walk
+        // that covered no window at all was rejected over the ownership listing plus whatever
+        // creates it proved before stopping, and saying "a 0.0d creation window" without saying
+        // that would leave the promise unkept. The count printed is the one the gate read — naming
+        // the listing alone would put a number here LOWER than the denominator of the rate above,
+        // which is the same rendered-prose-contradicts-the-reading defect this lane exists to close.
+        L.push(
+          `      · the creation walk covered NO window (stopped on ${c.creation.stopReason}), so ` +
+            `this was computed over ${c.completion.tokens} launch(es) — the ownership listing ` +
+            `(${c.creation.listedOutsideWindow} row(s)) plus whatever creates the walk proved ` +
+            `before stopping — the biased reading`,
+        );
+      } else if (c.creation !== null && !c.creation.wholeHistory) {
         L.push(
           `      · computed over a ${num(c.creation.coveredDays, 1)}d creation window ` +
             `(stopped on ${c.creation.stopReason}) plus ${c.creation.listedOutsideWindow} ` +

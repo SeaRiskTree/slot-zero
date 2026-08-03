@@ -4038,6 +4038,15 @@ describe('the keyless boundary holds in both directions', () => {
   const DUNE_COVERAGE_KEYS_BY_SCHEMA: Record<number, string[]> = {
     9: DUNE_COVERAGE_KEYS_9,
   };
+  // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
+  // only the eight keys above would have left this key set free to grow, which is the same gap this
+  // whole round exists to close — and it is the one place in the block where the vendor's own
+  // monthly counts are next to what survives, so `months` is a COUNT and a raw row field appearing
+  // here is a `derive and discard` breach, not just a schema drift.
+  const DUNE_COVERAGE_TABLE_KEYS_9 = ['table', 'read', 'firstRowIso', 'lastRowIso', 'rowsTotal', 'months'];
+  const DUNE_COVERAGE_TABLE_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    9: DUNE_COVERAGE_TABLE_KEYS_9,
+  };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
   // `stage0` block. The three key sets above cannot see these, which is how schema 7 could have
@@ -4500,10 +4509,20 @@ describe('the keyless boundary holds in both directions', () => {
         const duneCoverageExpected = DUNE_COVERAGE_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
         expect(duneCoverageExpected, `${file} dune.coverage at an unknown schemaVersion`).toBeDefined();
         const duneCoverage = parsed.dune!['coverage'];
+        const duneCoverageTableExpected = DUNE_COVERAGE_TABLE_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+        expect(duneCoverageTableExpected, `${file} dune.coverage.tables at an unknown schemaVersion`)
+          .toBeDefined();
         if (duneCoverage !== null) {
           expect(Object.keys(duneCoverage as object).sort(), `${file} dune.coverage`).toEqual(
             [...duneCoverageExpected!].sort(),
           );
+          // Every row of `tables` too: an empty array would satisfy the key set above while saying
+          // nothing about what a row of it holds.
+          for (const t of (duneCoverage as { tables: unknown[] }).tables) {
+            expect(Object.keys(t as object).sort(), `${file} dune.coverage.tables row`).toEqual(
+              [...duneCoverageTableExpected!].sort(),
+            );
+          }
         }
       }
       for (const row of parsed.candidates) {
@@ -4781,13 +4800,24 @@ describe('the keyless boundary holds in both directions', () => {
 
     // And `dune.coverage` against the real projection, the way `entry.coverage` is pinned above:
     // `coverageRecordRow` is what decides which of the probe's fields survive a run, so a field
-    // added or dropped there has to come and change the pinned list on purpose.
+    // added or dropped there — at either level — has to come and change the pinned list on purpose.
+    // ONE synthetic table goes in on purpose: `tables` is a projection of its own, and with an empty
+    // array the row projection is never constructed, so the eight top-level keys would be pinned
+    // while a field added inside a table row passed silently — the same gap one level down.
     const duneCoverageRow = coverageRecordRow(
-      { probedAtMs: 0, fromCache: false, tables: [] } as never,
+      {
+        probedAtMs: 0,
+        fromCache: false,
+        tables: [{ table: 'pump_evt_createevent', firstRowMs: 0, lastRowMs: 0, rowsTotal: 0, months: [] }],
+      } as never,
       { ok: true, fromMs: 0, toMs: 0, holes: [], reasons: [] } as never,
-    ) as Record<string, unknown>;
+    ) as { tables: unknown[] } & Record<string, unknown>;
     expect(Object.keys(duneCoverageRow).sort()).toEqual(
       [...DUNE_COVERAGE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
+    expect(duneCoverageRow.tables).toHaveLength(1);
+    expect(Object.keys(duneCoverageRow.tables[0] as object).sort()).toEqual(
+      [...DUNE_COVERAGE_TABLE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
     );
   });
 });

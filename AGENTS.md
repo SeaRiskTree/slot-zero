@@ -332,7 +332,8 @@ supersedes the re-open monitor (captain, 2026-08-02: *a competent dev will not r
   (15 × 6 = 90 of ~200) is deliberately a minority share; raising the cadence without lowering the
   per-run ceiling makes this lane the allowance's largest consumer.
 - **Exit 9 means the feed is dry or broken, not quiet** — a seed serving rows we read no wallet from,
-  every seed inert, every gated profile unreadable, or 3 consecutive live runs with no new wallet.
+  every seed inert, every gated profile unreadable (needs ≥2 gated, so `--gate 1` disarms it), or 3
+  consecutive live, completed runs with no new wallet.
 - **The queue is not yet wired into the screen**: `screen.mjs` enumerates its own candidates and has
   no wallet-list flag, so handing the queue over is an operator step today.
 

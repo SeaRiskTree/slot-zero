@@ -1,0 +1,75 @@
+{
+  "$comment": [
+    "PINNED BOUNDS for tools/arrival-rate-walk/. Every value is anchored to a measurement that",
+    "already exists in this repository or in a committed scout report, and the anchor is named in",
+    "`justification`. Do not move a value to fit an output.",
+    "SCOPE: this lane MEASURES how often a profitable opening window arrives and how long it lasts,",
+    "over a cohort seeded from HISTORY rather than from success. It gates nothing, recommends",
+    "nothing, and scores no exit.",
+    "SPEND: the collector is keyless throughout and its credential allow-list is empty, enforced by",
+    "test/arrival-rate-walk.test.ts. The only metered spend in the whole lane is TWO Dune",
+    "executions the operator issues by hand, and cohort.mjs commits both statements."
+  ],
+  "version": "1.0.0",
+  "pinnedAt": "2026-08-03",
+
+  "seed": {
+    "months": ["2026-01"],
+    "minLaunchesInMonthFloor": 20,
+    "maxCohort": 20,
+    "minCohort": 10,
+    "maxCohortRows": 2000
+  },
+
+  "walk": {
+    "windowMs": 60000,
+    "mintFloorSlackMs": 5000,
+    "minIntervalMs": 4000,
+    "maxRequestsPerLaunch": 40,
+    "maxWalkAttemptsPerLaunch": 3,
+    "maxRequestsPerRun": 20000,
+    "maxLaunchesPerDeployer": 600
+  },
+
+  "preflight": {
+    "sampleLaunches": 12,
+    "attemptsPerLaunch": 3,
+    "maxRequests": 60,
+    "minIntervalMs": 2500
+  },
+
+  "series": {
+    "minZ": 4,
+    "minSegment": 8
+  },
+
+  "dune": {
+    "cohortQueryId": null,
+    "launchListQueryId": 8204672,
+    "expectedExecutions": 2
+  },
+
+  "justification": {
+    "seed.months": "January 2026, and the choice is about OBSERVATION TIME rather than about the month. Captain decision 165b seeds from history so a deployer whose window opened, paid, closed and who then quit is in the sample; January leaves seven months of forward observation against a collection run in August 2026. IF IT YIELDS TOO FEW DEPLOYERS THE WIDENING IS BACKWARDS, into 2025-12 and earlier, never forwards: forward observation time is the scarcer resource and a shorter follow-up truncates exactly the durations this lane exists to measure. The list is an array so a widened seed is recorded in the bounds rather than passed on a command line and lost.",
+    "seed.minLaunchesInMonthFloor": "NO MEASUREMENT BACKS THIS NUMBER, and here is what would: the distribution of per-deployer creation counts in the seed month, which is one column of the cohort query's own output and does not exist until it is executed once. 20 launches in a month is roughly the rate at which the committed tape's own deployer operated inside its window (129 launches over 83 days, one every 0.69 days at the median), so it is anchored to the only operating tempo this repo has measured on a deployer that had a window at all. It is a FLOOR on the ladder chooseThreshold walks, not the threshold itself — the threshold is whatever the ladder's own rule picks, and the run reports it.",
+    "seed.maxCohort": "20, from section 8's own ask: 'the same per-launch series for 10-20 other prolific deployers over 6+ months each'. It bounds the SAMPLE SIZE and therefore the walk's wall clock, and it is the only free parameter chooseThreshold has — the cohort at the chosen threshold is then taken WHOLE, with no filter on whether a deployer is still active. Tuning a sample size is legitimate and is disclosed on every run through the published ladder; tuning a finding is not, and segmentation has no knob that could.",
+    "seed.minCohort": "10, the other end of section 8's range. It is a REPORTING bar, not a filter: a cohort below it is still taken whole and still measured, and the run says the sample is thin. Dropping deployers to reach a number would be the survivorship conditioning this lane exists to remove, arriving through the back door.",
+    "seed.maxCohortRows": "2,000 deployer rows, and the unit that matters is BYTES because Dune bills results at ~20 credits/MB and retrieving them is ~71% of the bill. At the ~97-121 bytes/row measured for the screen's enumeration that is under 0.25 MB, about 5 credits. The cohort query carries the qualifying count BEFORE this cap as its own row, so a capped result is detected exactly and REFUSED — the surviving rows are the most prolific, which is a selection rather than a shortfall. The response to a capped cohort is to raise the threshold and re-execute, not to read it.",
+    "walk.windowMs": "60,000 ms, and it is chosen for COMPARABILITY rather than for coverage. The published n = 1 series this lane extends is measured on the committed population tape, whose window is 60 s on 210 of its 239 launches, and the whole value of a multi-deployer series is that it is the SAME measurement. The cost is stated rather than hidden: over 626 create-slot outsider pairs the closure curve reads 0.776 at 60 s against 0.858 at 300 s and 0.947 at one hour, so roughly a fifth of create-slot round trips are still open when this window ends and contribute no P&L. That is a property the published series already has. Widening it would improve closure and break the comparison, and would multiply the request budget by the extra pages a 300 s window costs.",
+    "walk.mintFloorSlackMs": "5,000 ms of backdating on the membership floor, so a create slot is never filtered out of its own window by a clock difference. The declared mint instant is Dune's `created_at`, the CHAIN's block time; every fill's `ts` is the vendor's own clock at second resolution. readLaunchWindow compares the two with ZERO slack and its own comment warns that a positive skew of one millisecond deletes the entire create slot. MEASURED BY THE PRE-FLIGHT, 2026-08-03, over 12 launches spread across the committed tape's whole range (2025-12-01 to 2026-07-28): the chain's block time equals the vendor's creation instant on 12 of 12, median 0 ms, max positive skew 0 ms, nothing unmeasured. Both clocks are second-resolution, so the worst case is 1,000 ms of granularity against this 5,000 ms slack. tools/arrival-rate-walk/preflight-2026-08-03.md holds the sample, the spend and what the measurement does NOT establish — chiefly that leg A infers Dune's column from its schema, and leg B, which reads that column directly and costs nothing, has not run because the launch-list export does not exist yet. THE SLACK IS CHEAP IN THE OTHER DIRECTION because a token has no fills before its own create transaction, so backdating the floor admits nothing that is not this launch's; what it costs is that the coverage proof must then come from the endpoint saying it holds nothing older, which is the stronger proof anyway. preMintFills is recorded per launch so a residual skew is visible rather than merely survived.",
+    "walk.minIntervalMs": "4,000 ms between request starts against swap-api.pump.fun. MEASURED: 2 s is refused outright, 8 s is clean, and the graduated-life collection issued 6,539 requests at a 4 s floor with adaptive backoff and recorded ZERO HTTP 429 and three transport failures. The command line may raise this floor and may not undercut it — a run that sheds heavily is a run going too fast.",
+    "walk.maxRequestsPerLaunch": "40 attempts, retries included, and it is REQUESTS rather than pages on purpose: the endpoint sheds about a quarter of every request when pushed, so a page budget understates the true cost by roughly threefold. The measured per-launch page budget on the committed tape's opening windows is p50 4 / p90 8 / p95 13 / max 24, so 40 attempts covers the observed maximum with retry headroom. IT IS DELIBERATELY ABOVE THE SCREEN'S 18, which pumpfun.mjs itself notes drops 'exactly the interesting ones': a launch the ceiling cuts short is DISCARDED WHOLE here rather than measured short, and the busiest launches are the high-prize ones, so a tighter ceiling would bias the per-launch prize down exactly inside a window and make windows harder to detect. Drops are counted in the run's own record.",
+    "walk.maxWalkAttemptsPerLaunch": "3 sittings per launch before the collector gives up on it. NO MEASUREMENT BACKS THIS NUMBER, and here is what would: the rate at which a launch is PERMANENTLY unwalkable rather than transiently shed — a mint the endpoint 404s, or one whose pages never yield `hasMore: false` — which nothing in this repository has ever measured, and which the first real collection's own `requests.csv` and per-launch `stop_reason` would give directly. What it bounds is checkpointState's resume filter: an unproved sidecar is re-offered only while its recorded `attempts` are below this, and at it the launch is DONE with `given_up_reason` saying so, so a reader can tell 'we stopped trying' from 'we never tried'. Without a cap a permanently-unwalkable launch re-spends up to walk.maxRequestsPerLaunch (40) on every sitting of a days-long collection, ahead of launches never attempted. 3 is chosen to be small: shed is the common failure and the client already retries within one attempt, so a launch that has failed three whole sittings is far more likely to be unwalkable than unlucky, and giving up changes only when we stop SPENDING — the launch is still UNMEASURED at series time and never a zero. Capped launches are counted in arrival.json. This entry is not optional: the test 'gives every pinned parameter a stated reason' fails if a bounds value has none.",
+    "walk.maxRequestsPerRun": "20,000 attempts. Section 8 costs this shape at roughly 6,000-12,000 keyless requests for 10 deployers, and the graduated-life collection's actual cost came in at 2.5x its own plan, so this is about the top of the plausible range for a cohort of 10-20 at a 60 s window. At the 4 s floor it is ~22 hours of wall clock, which is why the collector CHECKPOINTS every launch and resumes: this ceiling stops a run, it does not lose one. Nothing here tracks a day or a month; the collection is the operator's to pace.",
+    "walk.maxLaunchesPerDeployer": "600 launches. A cohort deployer has at least 20 creations in the seed month, and seven months at that rate is ~140; 600 is roughly four times that, so no ordinary cohort member is affected. A deployer above it is REFUSED FROM THE PLAN rather than truncated, because truncating a launch history selects on time — dropping either the oldest launches (the window's open) or the newest (its close) — and a series missing one end silently answers a different question. A refusal is visible in the plan before a single request is spent.",
+    "preflight.sampleLaunches": "12 launches, SPREAD across the committed tape's whole date range rather than sampled at random or taken from one end, because the quantity under test is a SYSTEMATIC difference between two clocks and both have been running for the whole tape. The prior evidence that the clocks agree is n = 5 and was never checked against Dune's column specifically; 12 is not a distribution either, and the pre-flight's verdict is stated as a bound rather than an estimate. It costs at most 60 requests against a keyless host and it gates a collection measured in days.",
+    "preflight.attemptsPerLaunch": "3 attempts per block time. The public RPC sheds load with NULL RESULTS INSIDE a response rather than erroring, and a null must be read as 'retry', never as 'absent' — reading it as absent is how a shed request becomes a measured zero. A JSON-RPC error envelope is the endpoint's considered answer and is NOT retried.",
+    "preflight.maxRequests": "60, which is 12 launches x 3 attempts with double the headroom. It is the whole keyless cost of the pre-flight.",
+    "preflight.minIntervalMs": "2,500 ms against api.mainnet-beta.solana.com. MEASURED 2026-08-02: that host rate-limits GLOBALLY across methods, one process with one call per request at ~2.5 s is sustainable, and batching is actively harmful — the same transactions took 58 s at batch=1 with zero shed events and 110 s at batch=8 with eleven.",
+    "series.minZ": "|z| >= 4 on the standardised Mann-Whitney rank-sum statistic, taken unchanged from analysis/window-population/README.md section 2.2 so a stranger's series is the SAME measurement as the published n = 1. On the committed tape the two real breaks clear it at 4.3-6.5 while the strongest split INSIDE the window reaches only 2.99-3.25. Rank-based rather than mean-shift because the per-launch prize is heavy-tailed: one launch in that window paid +27 SOL.",
+    "series.minSegment": "8 launches either side of a split, unchanged from section 2.2 for the same comparability reason. NOTE WHAT IT COSTS: a series needs 2 x 8 + 4 = 20 measured launches before any split is attempted, so a deployer that quit early is reported as UNSEGMENTABLE rather than as having had no window — and that exclusion drops the shortest-lived deployers, which the historical seed exists to include. summariseArrival reports the count rather than absorbing it.",
+    "dune.cohortQueryId": "NOT DEPLOYED, and this is the lane's one blocking dependency. cohort.mjs -> COHORT_SQL needs a saved Dune query of its own and the free tier allows TEN private queries while the account holds ten. Until a slot is freed the cohort stage cannot execute. `null` rather than a guessed id so nothing can execute the wrong statement under this name.",
+    "dune.launchListQueryId": "8204672 — the screen's existing, already-deployed CREATION_SQL, used UNCHANGED with {{deployers}} set to the chosen cohort. No new query and no edit: the committed text and the saved query must keep matching or the screen's own runs refuse the whole Dune leg. At 20 deployers its per-deployer cap is max(500, floor(19999/20)) = 999 rows, comfortably above the largest history this repo has measured (247).",
+    "dune.expectedExecutions": "2 for the whole collection: one cohort, one launch list. AN EXECUTION IS BILLED WHETHER OR NOT IT SUCCEEDS AND IS NEVER RETRIED. Expected bill, from the screen's own measurements (5 wallets / 482 rows = 1.919 billed credits; results are ~71% of the bill at ~20 credits/MB): the cohort at <=2,000 rows is ~5 credits and the launch list at ~3,000 rows is ~7, so under 15 of a 2,500-credit monthly free tier. The binding cost of this lane is keyless WALL CLOCK, not credits, and that inversion is the thing to remember when planning it."
+  }
+}

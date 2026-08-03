@@ -27,7 +27,7 @@ what is established and what is open.
   scans `src/` **recursively** for sockets, `process.env` and key-shaped strings. Keep it that
   way; the entire dataset was built keyless and its value depends on staying reproducible offline.
 - **The one network-capable area is `tools/`, and the boundary is the directory.** Each tool there is
-  governed by its own test, and there are two. `tools/deployer-screen/` holds the keyed MadeOnSol and
+  governed by its own test, and there are three. `tools/deployer-screen/` holds the keyed MadeOnSol and
   Dune clients; `test/deployer-screen.test.ts` asserts no imports across `src/`↔`tools/`, only
   `client.mjs`/`pumpfun.mjs` may call `fetch` (**a third vendor goes into `client.mjs`, not a new
   file — keeping that allow-list at two is what makes the ceilings auditable by reading two files**),
@@ -35,9 +35,14 @@ what is established and what is open.
   and no file there may contain a key-shaped string or assign a value to a credential variable. `tools/graduated-life-tape/`
   is **keyless throughout** — `test/graduated-life-tape.test.ts` holds it to the same shape with the
   credential allow-list **empty**, which is what makes captain decision 112a's "EUR 0" a property of
-  the tree. Duplicated curve constants between `src/index.ts` and `tools/deployer-screen/measure.mjs`,
-  and the duplicated keyless client between the two tools, are this boundary's deliberate cost — do
-  not "fix" either by importing across it.
+  the tree. `tools/arrival-rate-walk/` is keyless too and `test/arrival-rate-walk.test.ts` holds it
+  the same way, plus a **host allow-list**: exactly `swap-api.pump.fun` and `api.mainnet-beta.solana.com`
+  appear in its code, asserted as a set rather than as a ban-list. Duplicated curve constants between
+  `src/index.ts` and `tools/deployer-screen/measure.mjs`, the duplicated keyless client across the
+  tools, and the duplicated segmentation between `analysis/window-population/measure.mjs` and
+  `tools/arrival-rate-walk/arrival.mjs`, are this boundary's deliberate cost — do not "fix" any of
+  them by importing across it. The segmentation copy is held together by a **reproduction test**, not
+  by discipline: the tool's own code must return the published break dates over the committed tape.
 - **`analysis/` is a third area and it is offline like `src/`.** One-off measurements over the
   local tape that are neither library nor tool. `test/window-population.test.ts` scans it for
   sockets, `process.env` and key-shaped strings, and asserts no imports across `analysis/`↔`tools/`.
@@ -132,6 +137,53 @@ Five facts that bind any lane touching it:
   at 1,000–4,000 requests; it cost **6,539** (857 pinning graduations + 5,682 walking). Pages per
   launch for this window run **median 46, p90 89, max 179**, not the 10–40 planned. Size any future
   walk from those.
+
+## The arrival-rate walk, and the two-bound cursor it exists not to repeat
+
+`tools/arrival-rate-walk/` answers `analysis/window-population/README.md` §8's first question — *how
+often does a profitable opening window arrive, and how long does it last* — by building that report's
+per-launch series for a cohort of deployers instead of one. Scope, bounds and limits in its
+`README.md`; the investigation behind its shape is `data/slot-zero-cursor-gap-walk-blast/report.md`.
+Five things bind anything that touches it or copies from it:
+
+- **A WINDOW WALK GETS ONE BOUND, IN ONE UNIT — copy `walk.mjs`, never `readLaunchWindow`.**
+  `tools/deployer-screen/pumpfun.mjs` seeks in **milliseconds** (`createdAtMs + windowMs +
+  seekMarginMs` = 65,000) and decides membership in **slots** (`createSlot + windowSlotSpan` = 160),
+  reconciled only by a nominal 400 ms/slot with ~1 s of headroom. The chain drifted past it: p50
+  389.0 ms/slot in 2025-12 against **418.0 in 2026-07, max 441.3**, so 160 slots is up to 70.6 s
+  against a 65 s reach and the walk never fetches the tail — while reporting `usable: true`,
+  `reachedCreateSlot: true` and a note true in every clause. Measured cost: **354 in-window fills,
+  161 of them sells, across 102 launches**. It moves §2.1's create-slot series by *nothing* (identical
+  to seven significant figures) because create-slot outsiders close early; it moves an all-entrant
+  reading by 69 pairs / 17.1 SOL. `tools/graduated-life-tape/walk.mjs` and
+  `tools/arrival-rate-walk/walk.mjs` both use `seekCursor(endMs)` + `tsMs <= endMs` and cannot have it.
+- **The two clocks agree, and this was measured rather than assumed.** Dune's `created_at` is the
+  chain's block time; every fill's `ts` is the vendor's. `getBlockTime(createSlot)` equals the window
+  sidecar's `created_timestamp` on **12 of 12** launches spread over 2025-12 → 2026-07 — skew 0 ms,
+  12 keyless requests (`tools/arrival-rate-walk/preflight-2026-08-03.md`). Both clocks are
+  second-resolution, so 0 ms means *within one second*: `walk.mjs` still backdates its membership
+  floor by 5 s and counts `preMintFills`, because `readLaunchWindow`'s pre-mint tripwire has **zero
+  slack** and a positive skew of one millisecond deletes an entire create slot, silently. Leg B — the
+  same comparison against Dune's column directly, which costs no request and no execution — has NOT
+  run; it needs a launch-list export.
+- **Seed a population question from HISTORY, not from success** (captain decision 165b). Every seed
+  this repo has — MadeOnSol `recent-bonds`/`alerts`, both leaderboards, a Dune `total_bonded` ranking
+  — conditions on current or lifetime success, so a deployer whose window opened, paid, closed and who
+  then quit is invisible: arrival rate biased **up**, duration **up**, close rate **down**, on the
+  exact estimand, with nothing in the output revealing it. The cohort is every deployer creating in
+  one past month above a stated threshold, taken **whole**, followed forward with **no active filter**;
+  widening the month goes **backwards**, never forwards.
+- **An all-entrant P&L figure is a FLOOR and the label travels with the number** (decision 164c). The
+  walk persists every fill in the window so both series come from one pass, but closure is measured
+  inside a bounded window and the loss falls on late entrants. `ALL_ENTRANT_FLOOR_CAVEAT` reaches the
+  row, the CSV column name and the record. Persisting fills preserves the option; it does not repair
+  the data.
+- **The lane is keyless and its cohort SQL is NOT DEPLOYED.** `cohort.mjs` → `COHORT_SQL` needs a
+  saved Dune query of its own and the free tier's ten private slots are full, so
+  `bounds.json` → `dune.cohortQueryId` is `null` and the cohort stage cannot execute. The launch-list
+  leg reuses the screen's existing `8204672` **unchanged**. Everything else is proven on a bounded
+  sample: 5/5 create slots and exact fill counts against the committed tape (25 requests, 0 shed), and
+  `arrival.mjs` reproduces §4.1's break dates, §4.3's three regimes and §5's 82.7-day window offline.
 
 ## pump.fun / Solana provider facts
 
@@ -288,8 +340,10 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   `mergeHistories` reclassify that wallet's whole in-window ownership listing as acquired and gate it
   on nothing — the invisible false rejection this lane exists to remove. **A candidate whose address
   is not base58-shaped is never sent**: wallets are vendor-supplied and land inside a single-quoted
-  SQL literal, and this is the only path in the repo where such a string reaches a query language
-  (`dune.mjs` → `WALLET_SHAPE`; the record's `dune.walletsRefusedByShape` counts the drops).
+  SQL literal (`dune.mjs` → `WALLET_SHAPE`; the record's `dune.walletsRefusedByShape` counts the
+  drops). The rule binds wherever a vendor-derived wallet reaches a query language —
+  `tools/arrival-rate-walk/cohort.mjs` carries its own copy of the guard for the cohort it hands to
+  `CREATION_SQL`'s `{{deployers}}`.
 - **THE ROW CEILING REFUSES A RESULT, AND ENUMERATION IS ONE EXECUTION FOR THE WHOLE BATCH — so the
   cap that keeps one spam wallet from pricing the batch is PER DEPLOYER, inside the SQL.**
   `CREATION_SQL` returns at most `greatest(500, floor(19999 / <deployers in the batch>))` rows per

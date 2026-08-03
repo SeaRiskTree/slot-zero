@@ -1,0 +1,267 @@
+# The arrival-rate walk
+
+**How often does a profitable opening window arrive, and how long does it last?**
+
+`analysis/window-population/README.md` §8 asks the question and says why the committed tape cannot
+answer it: **every one of its 239 launches is the same deployer**, and the 70-deployer control holds
+one launch per creator with no dates and no P&L — **zero window observations**. The tape contains
+one window, lasting 83 days. *n = 1*, and no further work on that tape produces a second one.
+
+This tool builds the missing series: **the same per-launch measurement, for a cohort of prolific
+deployers, over seven months each.** Captain decision 154d authorised it; decisions 164c and 165b fix
+its shape.
+
+**It is keyless throughout.** Its credential allow-list is empty and `test/arrival-rate-walk.test.ts`
+enforces that, so the collector — which runs for days — structurally cannot spend money. The lane's
+only metered spend is **two Dune executions the operator issues by hand**, both statements committed.
+
+---
+
+## The two decisions that shape it
+
+### Persist the raw fills — decision 164c
+
+The walk saves **every fill inside each window, every wallet**, not only the create slot's. Both the
+create-slot-only series and the all-window-entrant series then come out of **one pass**, so the
+definitional choice is settled against real numbers rather than in advance.
+
+**Persisting the fills preserves the option; it does not repair the data.** The all-entrant reading
+is a **floor** and is labelled one at the point of use: `series.mjs` → `ALL_ENTRANT_FLOOR_CAVEAT`
+reaches the row, the CSV header (`all_entrant_prize_floor_sol_gross_of_fees`), `arrival.json` and the
+plan. Closure is measured inside a bounded window, so an entrant arriving at second 55 of 60 has five
+seconds to close; the loss falls disproportionately on **late** entrants, which is the population an
+all-entrant reading is about. Over 626 create-slot outsider pairs the closure curve reads 0.588 at
+10 s, 0.754 at 40 s, 0.776 at 60 s, 0.858 at 300 s and 0.947 at one hour.
+
+One figure that does **not** apply here, and must not be quoted as though it did: the blast report's
+69 pairs / 17.1 SOL all-entrant shortfall is caused by `readLaunchWindow` seeking a shorter distance
+than its own membership filter. This walk has one bound (below), so that shortfall is structurally
+absent from this tape. The floor label rests on window-boundedness alone.
+
+### Seed from history, not from success — decision 165b
+
+The cohort is **every deployer who created a launch in January 2026, above a stated threshold, taken
+whole**, followed forward to today **with no filter on whether they are still active**.
+
+Every seed this repository already has — MadeOnSol `recent-bonds`, `alerts`, the `bonding_rate` and
+`total_bonded` leaderboards, a Dune `total_bonded` ranking — selects on current or lifetime
+**success**. A deployer whose window opened, paid, closed and who then quit is in none of them. §8
+asks *how often does a window arrive*; a sample drawn from wallets still going answers *how often
+does a window arrive, given the operator is still going*. **Arrival rate biased up, duration biased
+up, close rate biased down** — on the exact estimand, with nothing in the output revealing it. The
+repo has already measured the neighbouring fact: `FEED.md` records that a wallet had been deploying
+for a median of **≥132.7 days (max ≥857, n = 74)** before this project first saw it.
+
+`COHORT_SQL` reads one month and nothing after it. That is asserted structurally over its executable
+half — no join to the completion surface, no bonding term, no recency term — rather than promised.
+
+**The threshold is chosen by a rule stated in advance**: the *lowest* threshold at or above the
+pinned floor of 20 January launches whose cohort fits 20 deployers, and the set at that threshold is
+taken whole. The ladder of every threshold considered is published with the result. That tunes the
+**sample size**, which is legitimate and disclosed; it does not tune the finding, and segmentation
+has no knob that could. **If January yields too few deployers the widening is backwards, into
+December 2025 — never forwards.** Forward observation time is the scarcer resource.
+
+---
+
+## The cursor has ONE bound, in ONE unit
+
+`tools/deployer-screen/pumpfun.mjs` → `readLaunchWindow` reaches forward from the mint with **two**
+bounds in **two units**: a seek cursor at `createdAtMs + windowMs + seekMarginMs` (milliseconds) and
+a membership filter at `createSlot + windowSlotSpan` (slots). Nothing reconciles them but a hardcoded
+nominal 400 ms/slot with about a second of headroom — and the chain has been slowing all year, p50
+389.0 ms/slot in 2025-12 against 418.0 in 2026-07, max observed 441.3. At that maximum the declared
+160-slot window is 70.6 s wide against a 65 s reach. The walk reports `usable: true`,
+`reachedCreateSlot: true` and a note true in every clause, and never fetched the last 5.6 s.
+
+`walk.mjs` copies `tools/graduated-life-tape/walk.mjs` instead: **`seekCursor(endMs)` is the seek and
+`tsMs <= endMs` is the membership test.** One number, one unit, nothing for a drifting slot rate to
+invalidate. This was free — the walk is new code in a new directory either way.
+
+The other end carries **5,000 ms of floor slack**, because the declared mint instant is a different
+clock from the fills' timestamps. See the pre-flight.
+
+---
+
+## The clock pre-flight — run it before anything long
+
+Dune's `created_at` is the **chain's block time**; every fill's `ts` is the **vendor's**, at second
+resolution. `readLaunchWindow`'s pre-mint tripwire compares the two with **zero slack** and its own
+comment warns that a positive skew of one millisecond deletes the entire create slot — silently, and
+on a non-random subset.
+
+```bash
+node tools/arrival-rate-walk/collect.mjs --phase preflight --out <dir>                      # leg A
+node tools/arrival-rate-walk/collect.mjs --phase preflight --out <dir> --launch-list <file> # + leg B
+```
+
+**Result, 2026-08-03: the two clocks agree exactly on 12 of 12 launches spread across the committed
+tape's whole range.** Twelve keyless requests, all answered 200. `preflight-2026-08-03.md` holds the
+sample, the spend and the limits — chiefly that leg A infers Dune's column from its schema, while
+**leg B reads that column directly, costs no request and no execution, and has not run** because the
+launch-list export does not exist yet. Run leg B before the collection.
+
+The CLI exits **2** on a failing pre-flight. A collection is days long and this failure is silent.
+
+---
+
+## Running it
+
+```bash
+# 1. Two Dune executions, by hand. cohort.mjs commits both statements.
+#    COHORT_SQL              -> the January cohort            (NOT DEPLOYED — see below)
+#    deployer-screen's CREATION_SQL, saved query 8204672, unchanged, with {{deployers}} = the cohort
+
+# 2. Cost the run. Issues NOTHING.
+node tools/arrival-rate-walk/collect.mjs --phase plan --cohort <file> --launch-list <file>
+
+# 3. Collect. Checkpoints every launch; re-running resumes.
+node tools/arrival-rate-walk/collect.mjs --phase walk --launch-list <file> --out <dir> [--dry-run]
+
+# 4. Derive both series and the windows. Offline.
+node tools/arrival-rate-walk/collect.mjs --phase series --out <dir>
+```
+
+Both Dune results may be handed over as the API's JSON envelope, a bare row array, or the browser's
+CSV export — whichever the operator produced.
+
+### Bounds
+
+Pinned in `bounds.json`, every value with a stated reason (a test enforces that, and *"no measurement
+backs this, and here is what would"* is an acceptable reason — inventing an anchor is not).
+
+| | |
+|---|---|
+| window | **60 s** from the mint, chosen for **comparability** with the published n = 1, not for coverage |
+| pacing | **4 s** floor against `swap-api.pump.fun`, raisable and never undercuttable; **2.5 s** against `api.mainnet-beta.solana.com` |
+| per launch | **40 attempts**, retries included — requests, not pages, because the endpoint sheds ~25% when pushed |
+| per run | **20,000 attempts**, ~22 h of wall clock; the collector checkpoints, so this stops a run rather than losing one |
+| per deployer | **600 launches**, above which the deployer is **refused from the plan rather than truncated** |
+| pre-flight | **12 launches, 3 attempts each, 60 requests** |
+| Dune | **2 executions, ~15 credits** of a 2,500/month free tier |
+
+**Credits are not the binding constraint here; wall clock is.** A 15-deployer cohort at ~140 launches
+each is ~2,100 launches, which at the measured p50 of 4 pages is ~8,400 requests and **days** of paced
+fetching. §8 costed the same shape at 6,000–12,000 requests for ten deployers.
+
+**A collection larger than one sitting is the shape, not a failure.** A p95 estimate above the run
+ceiling is an **advisory** in the plan — it names how many sittings to expect and clears nothing;
+refusing it would make this lane's own target cohort unwalkable. Only `plan.refusals` stops a run,
+and the run's real bound is the client's per-run ceiling, which stops a sitting exactly and leaves it
+resumable. **Resume re-attempts an unproved walk**: a sidecar is skipped only when `reached_mint` is
+`true`, so a truncation or a transport failure costs that launch one more sitting rather than
+permanently marking it unmeasured — and the loss would not have been random, since a busy launch
+issues more requests and busy launches are the high-prize tail. The failed attempt's own evidence
+(`stop_reason`, `requests`, `pages`) is carried forward in the sidecar's `previous_attempts`.
+
+### The one thing that is not deployed
+
+**`COHORT_SQL` needs a saved Dune query of its own, and the free tier's ten private query slots are
+full — the account holds ten.** `bounds.json` → `dune.cohortQueryId` is therefore `null`, so nothing
+can execute the wrong statement under its name, and the cohort stage cannot run until a slot is freed
+or the account changes. That is a captain decision, recorded rather than worked around.
+
+Everything else in the lane is deployed and exercised: the launch-list leg reuses the screen's
+existing saved query `8204672` **unchanged**, and the walk, the series and the arrival measurement are
+proven on a bounded sample (below).
+
+**Deploying the committed SQL is half a change.** If `COHORT_SQL` is edited here, the saved query must
+be updated in place in the same commit, and whatever executes it must compare the two first — exactly
+as `dune.mjs` → `assertSavedQueryMatches` does for the screen's two. A saved query is editable from a
+browser and this one decides which deployers the whole measurement is about.
+
+---
+
+## Proven on a bounded sample, 2026-08-03
+
+Not a full run — the collection is a separate step. What was proven, and with what spend:
+
+| check | result | spend |
+|---|---|---|
+| Clock pre-flight, leg A | **12 / 12 launches, skew 0 ms**, 2025-12 to 2026-07 | 12 keyless requests |
+| Walk against the primary record | **5 / 5 create slots agree** with the committed window tape, and the fill count inside the same bounds matches **exactly** on all five (263, 539, 600, 471, 447) | 25 keyless requests, **0 shed**, 0 truncated |
+| P&L arithmetic | **1,057 (wallet, launch) pairs**, max realised difference **5e-7 SOL**, **2** closure differences | offline |
+| Segmentation | reproduces §4.1's **both** break dates on **both** metrics, §4.3's three regimes and §5's **82.7-day** window and 24.7-hour close | offline |
+
+**Total network spend across the whole proof: 37 keyless requests. Zero keyed requests, zero Dune
+executions.**
+
+The two closure differences are a **deliberate** divergence from the committed dataset and they run
+one way: both are wallets that **sold inside the window having bought nothing in it**. The dataset
+reads residual 0 as closed, giving them `realised = sol_out − 0` — a positive P&L on a position never
+opened. This tool requires `tokensBought > 0`, exactly as `tools/deployer-screen/entry.mjs` does, and
+reports them **open**. They cannot reach the create-slot series at all (that population is drawn from
+create-slot *buys*), so the difference lands only on the all-entrant reading, in the direction that
+refuses to book free money.
+
+---
+
+## What this tool cannot answer
+
+The honest list, in the order that matters.
+
+- **It cannot see a deployer Dune's decoded surfaces do not hold.** Discovery is 100% Dune-derived, so
+  a creation neither `pump_evt_createevent` nor `pump_call_create` decoded is **invisible, not
+  absent**. The cohort ships with its own coverage evidence and a reading that cannot vouch for
+  itself is refused rather than published — but a surface that is silently *incomplete* within its
+  own declared span is not something any probe here would catch.
+- **Dune attributes on the SIGNER, so an operation that rotates signers becomes several deployers.**
+  That is the right call against `creator`, a settable `CreateV2` argument that six bot-signed mints
+  use to name our own subject. It cuts the other way here: a fragmented operation appears as several
+  rows with a fraction of the launches each, and at a minimum segment of 8 a sufficiently fragmented
+  one **can never show a window at all**.
+- **Everything is GROSS OF FEES and is therefore an upper bound.** No leg of this lane prices a
+  transaction. On the committed tape the same population read +0.396 per SOL gross inside the window
+  and **0.540 of that** once priced. A window that is marginal gross is not a window net.
+- **`roomIsProven` has a steep time gradient, so the OLD end of every series is less measurable.** A
+  launch whose create slot carries no 2+ wallet transaction is **unmeasured, never zero** (decision
+  134a). On the graduated 102 the proven rate runs 0.000 in 2025-12, 0.375 in 2026-03 and 1.000 from
+  2026-05. If that gradient is venue-wide rather than one operator's submission habit, **a window that
+  opened early is systematically less visible than one that opened late** — which is a bias on
+  exactly the quantity this lane measures, and this lane does not measure the gradient.
+- **A measured launch with no closed create-slot round trip is EXCLUDED from the rank test, not read
+  as a zero.** Its stake is zero, so §2.1's return per SOL does not exist for it. The exclusion is
+  exactly the published measurement's (`analysis/window-population/measure.mjs` segments over
+  launches with at least one closed create-slot round trip). `series.mjs` → `toSeriesPoints` is the
+  one place it happens, `arrival.json` carries the count as
+  `launchesExcludedNoClosedCreateSlotPair`, and the reproduction test drives the published series
+  through **that** function. The sentence that travels with the count is one string —
+  `series.mjs` → `ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT` — quoted here verbatim, and a test pins the two
+  copies together so they cannot drift:
+
+  > A measured launch with NO closed create-slot outsider round trip is EXCLUDED from the rank test rather than entered as a 0, which is the exclusion the published measurement makes; 0 is a real level in this series. THE PUBLISHED MAGNITUDE FOR THAT CHOICE WAS MEASURED OVER A NARROWER POPULATION: section 11 reads it over the 25 launches with no outsider in the create slot AT ALL, where imputing zeros lowers the window's median prize by roughly a fifth and moves neither break. What is excluded here is wider — every launch with no CLOSED create-slot round trip, which on the committed tape is 42: those 25 plus 17 that had outsiders and closed none. Over that wider set the imputation is not harmless, and this lane's own reproduction test measures it: the imputed zeros flatten the level enough that no break is detected and the published window disappears entirely. Both readings are true of their own population, and neither figure may be quoted as the other. The excluded launches stay rows in series.csv, because attendance is evidence even when P&L is not.
+
+- **A launch the collector cannot prove is retried, but only so many times.** An unproved sidecar is
+  re-offered on the next sitting; at `walk.maxWalkAttemptsPerLaunch` recorded attempts the launch is
+  done and its sidecar's `given_up_reason` says *we stopped trying*, not *we never tried*. Without
+  that cap a permanently-unwalkable launch — a mint the endpoint 404s, or one whose pages never say
+  nothing is older — re-spends a whole per-launch budget on every sitting, ahead of launches never
+  attempted. Capped launches are counted in `arrival.json` as `launchesGivenUpAtAttemptCap`. **The
+  cap changes when we stop spending, not what the launch means**: still unproved at series time is
+  UNMEASURED, and never a zero.
+- **A deployer with too few measured launches is UNSEGMENTABLE, and that is not "no window
+  arrived".** A split needs 20 measured launches at the pinned minimum segment of 8. Those deployers
+  are excluded from the arrival-rate denominator and counted in the output — and the exclusion drops
+  the **shortest-lived** deployers, which the historical seed exists to include. The seed removes the
+  survivorship conditioning at discovery; this reintroduces a weaker form of it at measurement, and
+  no amount of care in the seed fixes it.
+- **Censoring is flagged, not corrected.** A window that is the first segment may have opened before
+  observation began; one that is the last may still be open. Their durations are **lower bounds** and
+  are reported apart from the measurements rather than pooled with them.
+- **The window's closure is bounded at 60 s, so roughly a fifth of create-slot round trips are still
+  open when it ends.** The published series has the same property, which is why it was chosen — but it
+  means "profitable" is measured on the pairs that closed fast.
+- **Neither the cohort nor the series says anything about *unaffiliated*.** "No on-chain relationship
+  on complete sets" is not "provably unrelated": shared custodial venues are invisible to on-chain
+  evidence. `README.md` → "The ceiling of the method: shared custodial venues" owns that claim and
+  this tool does not widen it.
+- **The one-bound cursor removes a defect class; it does not make the tape complete.** Coverage at the
+  oldest end is *proved* per launch (`reached_mint`) and a launch the request ceiling cuts short is
+  discarded whole — because a truncated walk holds the earliest entrants by slot, which is a biased
+  sample rather than a short one.
+
+### And one with a shelf life
+
+The 2026-07 slot rate is the newest thing the blast report measured and the trend is upward. Nothing
+in *this* tool depends on a nominal slot rate — that is the point of the single bound — but anything
+that reads its output alongside the deployer screen's is comparing against a walk that does.

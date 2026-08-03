@@ -216,6 +216,19 @@ Learned at real cost; the citations are to
   or the endpoint saying nothing is older, establishes it. Same distinction as the dataset's
   `meta.reached_mint`. Also **sort by `sid`/`slotIndexId` before reading the queue** — the stored
   tape is ascending and the live endpoint is descending.
+- **THE TWO PUMP.FUN SURFACES DO NOT AGREE ON A MINT INSTANT, and the disagreement runs in exactly
+  the direction that deletes a create slot.** `frontend-api-v3`'s `coins?creator=` rows carry
+  **millisecond-precision** `created_timestamp` on older launches while `swap-api`'s fill `ts` is
+  **whole seconds, floored** — so the declared mint lands *after* the launch's own first fill.
+  Measured 2026-08-03 over 6 launches of one cohort wallet: **0 ms on the 3 whose
+  `created_timestamp` ends in `000`, and +1,313 / +1,813 / +2,014 ms on the 3 that carry
+  milliseconds.** `readLaunchWindow`'s pre-mint tripwire compares with **zero slack**, so those
+  launches are dropped whole and silently — measured live at **5 of 8 launches on the first
+  candidate walked**. Anything driving `readLaunchWindow` from a `frontend-api-v3` creation time
+  must backdate it; `tools/deployer-screen/bundling.mjs` and `tools/arrival-rate-walk/` both pin
+  **5,000 ms** and both count what still trips. The tape's own `created_timestamp` does not have
+  this problem (0 disagreements on 235 launches), so it is a property of the vendor pair, not of
+  the walk.
 - **Per-launch request budgets: p50 4 pages, p90 8, p95 13, max 24** (same metadata; fills p50
   381, max 2,321). Bound a walk by **requests, not pages**, or the shed rate makes the true cost
   ~3x the plan.

@@ -46,7 +46,7 @@ import {
 } from '../tools/window-decay-tripwire/backtest.mjs';
 import { SUBJECT_COHORT, SUBJECT_DEPLOYER, readWindowFills } from '../tools/window-decay-tripwire/tape.mjs';
 import {
-  THRESHOLDS, emptyState, loadState, parseArgs, planCost, resume, run,
+  THRESHOLDS, chainsOf, emptyState, loadState, orderReadings, parseArgs, planCost, resume, run,
 } from '../tools/window-decay-tripwire/watch.mjs';
 import { CREDENTIAL_PATTERNS, KEY_SHAPED } from './offline-guard.js';
 
@@ -860,7 +860,11 @@ describe('every provider call is bounded, and a dry run spends nothing', () => {
       }));
       const lines: string[] = [];
       const responses: unknown[] = [
-        { coins: [{ mint: MINT_2, created_timestamp: 1_780_000_000_000 }] },
+        // The listing carries both, which is how the second launch knows the first is its neighbour.
+        { coins: [
+          { mint: MINT, created_timestamp: 1_779_000_000_000 },
+          { mint: MINT_2, created_timestamp: 1_780_000_000_000 },
+        ] },
         page([
           rawRow({ slotIndexId: sid(101, 2), userAddress: 'out-2', amountSol: '1' }),
           rawRow({ slotIndexId: sid(101, 1), userAddress: 'cohort-a', tx: 'bundle', amountSol: '9' }),
@@ -879,6 +883,103 @@ describe('every provider call is bounded, and a dry run spends nothing', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it('reserves slots for the NEWEST launches, so a tail it cannot settle never stops it watching', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tripwire-'));
+    try {
+      const path = join(dir, 's.json');
+      // Twelve unread launches, and the oldest ten are permanently unsettleable. Oldest-first alone
+      // would spend the whole slice on them and never look at where the window actually is.
+      const mints = Array.from({ length: 12 }, (_, i) => `${'M'.repeat(43 - String(i).length)}${i}`);
+      const newest = mints[11] as string;
+      const decided = page([
+        rawRow({ slotIndexId: sid(400, 2), userAddress: 'out-1', amountSol: '1' }),
+        rawRow({ slotIndexId: sid(400, 1), userAddress: 'cohort-a', tx: 'bundle', amountSol: '9' }),
+        rawRow({ slotIndexId: sid(400, 0), userAddress: 'W', amountSol: '10' }),
+      ], false, null);
+      const stuck = { trades: [rawRow({ slotIndexId: sid(300, 0), userAddress: 'sniper' })] };
+      const lines: string[] = [];
+      const result = await run(parseArgs(['--wallet', 'W', '--cohort', 'cohort-a', '--state', path, '--live']), {
+        log: (l) => lines.push(l), sleepImpl: async () => undefined, nowImpl: () => 0,
+        fetchImpl: (async (url: string) => ({
+          ok: true, status: 200,
+          json: async () => (url.includes('/coins?')
+            ? { coins: mints.map((mint, i) => ({ mint, created_timestamp: 1_780_000_000 + i })) }
+            : url.includes(`/coins/${newest}/`) ? decided : stuck),
+        } as unknown as Response)) as unknown as typeof fetch,
+      });
+      // The newest launch was reached despite ten unsettleable launches ahead of it in the queue.
+      expect(result.state.readMints).toEqual([newest]);
+      expect(result.read).toBe(1);
+      expect(result.state.quarantine).toHaveLength(Number(THRESHOLDS.bounds['maxLaunchesPerRun']) - 1);
+      // And the quarantine is legible rather than a count to infer from.
+      const printed = lines.join('\n');
+      expect(printed).toContain('QUARANTINE');
+      expect(printed).toContain('no-cursor');
+      expect(JSON.parse(readFileSync(path, 'utf8')).quarantine[0].reason).toBe('no-cursor');
+      // The split never spends more than the pinned per-run bound.
+      expect(result.read + result.undecided).toBeLessThanOrEqual(Number(THRESHOLDS.bounds['maxLaunchesPerRun']));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('never confirms a stop out of two readings that were not adjacent launches', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tripwire-'));
+    try {
+      const path = join(dir, 's.json');
+      const mints = [MINT, MINT_2, 'HxwVtPmMBqbCPbjmVCkfSbFGpEbQoLZTKPnJLGXYpump'];
+      const gap = mints[1] as string;
+      const high = (slot: number) => page([
+        rawRow({ slotIndexId: sid(slot, 2), userAddress: 'out-1', amountSol: '1' }),
+        rawRow({ slotIndexId: sid(slot, 1), userAddress: 'cohort-a', tx: 'bundle', amountSol: '9' }),
+        rawRow({ slotIndexId: sid(slot, 0), userAddress: 'W', amountSol: '10' }),
+      ], false, null);
+      const stuck = { trades: [rawRow({ slotIndexId: sid(300, 0), userAddress: 'sniper' })] };
+      const listing = { coins: mints.map((mint, i) => ({ mint, created_timestamp: 1_780_000_000 + i })) };
+      const args = ['--wallet', 'W', '--cohort', 'cohort-a', '--state', path, '--live'];
+      const seams = (middle: unknown) => ({
+        log: () => undefined, sleepImpl: async () => undefined, nowImpl: () => 0,
+        fetchImpl: (async (url: string) => ({
+          ok: true, status: 200,
+          json: async () => (url.includes('/coins?') ? listing
+            : url.includes(`/coins/${gap}/`) ? middle : high(500)),
+        } as unknown as Response)) as unknown as typeof fetch,
+      });
+
+      // The first and third launches both read far above the bar, but the launch BETWEEN them could
+      // not be settled — so they were never neighbours and must not confirm each other.
+      const first = await run(parseArgs(args), seams(stuck));
+      expect(first.read).toBe(2);
+      expect(first.state.verdict).not.toBe('stop-and-rotate');
+      expect(first.state.streak).toBe(1);
+
+      // Closing the gap with a launch that is also above the bar makes them adjacent, and the stop
+      // that was always there is raised — the rule suppresses nothing, it only refuses to invent.
+      const second = await run(parseArgs(args), seams(high(501)));
+      expect(second.state.verdict).toBe('stop-and-rotate');
+      expect(second.state.stoppedAt).not.toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a gap-closing reading that is BELOW the bar from being ignored', async () => {
+    // The mirror of the test above: once the gap is closed by a low reading the two high readings
+    // are still not consecutive, so the streak must reset rather than confirm.
+    const readings = [
+      { mint: 'a', at: '2026-06-01T00:00:00.000Z', share: 0.9, unread: null, prevMint: null },
+      { mint: 'b', at: '2026-06-02T00:00:00.000Z', share: 0.1, unread: null, prevMint: 'a' },
+      { mint: 'c', at: '2026-06-03T00:00:00.000Z', share: 0.9, unread: null, prevMint: 'b' },
+    ];
+    const settings = { bar: SHARE_BAR, confirmLaunches: CONFIRM_LAUNCHES };
+    expect(chainsOf(orderReadings(readings))).toHaveLength(1);
+    expect(resume({ ...emptyState('W'), readings }, settings).verdict).toBe('armed');
+    // Drop the middle launch and the two highs are in different chains — still no stop.
+    const split = [readings[0]!, readings[2]!];
+    expect(chainsOf(orderReadings(split))).toHaveLength(2);
+    expect(resume({ ...emptyState('W'), readings: split }, settings).verdict).toBe('armed');
   });
 
   it('drops a mint that is not base58-shaped and says so, rather than building a URL out of it', async () => {

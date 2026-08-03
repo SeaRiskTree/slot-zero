@@ -65,19 +65,41 @@ export const ASYMMETRY_CAVEAT =
   'tool is tuned to be late rather than wrong: "watching" is weaker evidence than "stop-and-rotate".';
 
 /**
+ * @typedef {object} StoredReading One settled launch, as the state file keeps it.
+ * @property {string} mint
+ * @property {string} at
+ * @property {number | null} share
+ * @property {import('./detector.mjs').Unread | null} unread
+ * @property {string | null} [prevMint] The launch immediately BEFORE this one in the deployer's
+ *   listing when it was read, or `null` when this run could not see one — the oldest launch the
+ *   listing carries has no visible predecessor, and inventing adjacency there is the one error this
+ *   field exists to refuse. `undefined` marks a reading written before the field existed, when the
+ *   queue was strictly oldest-first and every reading was adjacent by construction.
+ */
+
+/**
+ * @typedef {object} QuarantinedLaunch A launch this tool could not settle. Kept, never retired.
+ * @property {string} mint
+ * @property {string} at
+ * @property {string} reason The walk's own `undecidedReason`, or the endpoint's refusal.
+ */
+
+/**
  * @typedef {object} WatchState What survives between runs. The only thing this tool writes.
  * @property {string} wallet
  * @property {'watching' | 'armed' | 'stop-and-rotate'} verdict
- * @property {number} streak Consecutive readings at or above the bar.
+ * @property {number} streak Consecutive readings at or above the bar, over ADJACENT launches.
  * @property {string[]} readMints Mints already read, so a run never pays for one twice.
- * @property {Array<{ mint: string, at: string, share: number | null,
- *   unread: import('./detector.mjs').Unread | null }>} readings
+ * @property {StoredReading[]} readings
+ * @property {QuarantinedLaunch[]} quarantine Launches read attempts could not settle. They are not
+ *   in `readMints`, so every run retries them; they are listed here and printed so a growing tail
+ *   is legible rather than something a reader has to infer from a count.
  * @property {string | null} stoppedAt ISO timestamp of the launch that raised the stop.
  */
 
 /** @param {string} wallet @returns {WatchState} */
 export const emptyState = (wallet) => ({
-  wallet, verdict: 'watching', streak: 0, readMints: [], readings: [], stoppedAt: null,
+  wallet, verdict: 'watching', streak: 0, readMints: [], readings: [], quarantine: [], stoppedAt: null,
 });
 
 /**
@@ -98,37 +120,105 @@ export function loadState(path, wallet) {
 }
 
 /**
- * Rebuild a {@link Tripwire} at the streak a previous run left it at, **including the readings that
- * streak was built out of**.
+ * The saved readings in the deployer's launch order.
  *
- * The streak alone is not enough. A stop needs two consecutive readings and a run sees one launch,
- * so the normal confirmed stop is assembled across two runs — and a tripwire that resumed with an
- * empty history would print one reading under a line that says it is showing the readings the stop
- * rests on. The saved readings carry share and timestamp, which is exactly what that line needs.
+ * Runs no longer record strictly oldest-first — a run reserves slots for the newest unread launches
+ * so a tail of launches it cannot settle can never crowd the current end of the series out — so the
+ * order readings were APPENDED in is not the order the launches happened in. Everything downstream
+ * of here reasons about adjacency, and adjacency is a fact about launch order.
+ *
+ * Stable, and readings with no timestamp (the `--mints` path) therefore keep the order they were
+ * recorded in rather than being sorted against a value they do not have.
+ *
+ * @param {readonly StoredReading[]} readings
+ * @returns {StoredReading[]}
+ */
+export function orderReadings(readings) {
+  return [...readings].sort((a, b) =>
+    (a.at === '' || b.at === '' ? 0 : a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+}
+
+/**
+ * Split ordered readings into runs of launches that are **adjacent in the deployer's launch order**.
+ *
+ * A chain breaks wherever a reading's recorded predecessor is not the reading before it — i.e.
+ * wherever a launch between the two has not been settled. It is self-healing: when that launch is
+ * finally read, its own `prevMint` links the two halves and they become one chain.
+ *
+ * @param {readonly StoredReading[]} ordered
+ * @returns {StoredReading[][]}
+ */
+export function chainsOf(ordered) {
+  /** @type {StoredReading[][]} */ const chains = [];
+  /** @type {StoredReading[]} */ let current = [];
+  for (const reading of ordered) {
+    const previous = current[current.length - 1];
+    // `undefined` is a reading written before gaps were possible; it cannot break a chain.
+    if (previous !== undefined && reading.prevMint !== undefined && reading.prevMint !== previous.mint) {
+      chains.push(current);
+      current = [];
+    }
+    current.push(reading);
+  }
+  if (current.length > 0) chains.push(current);
+  return chains;
+}
+
+/** A latched stop outranks any streak; otherwise the longer run of adjacent breaches wins. */
+const rank = (/** @type {Tripwire} */ tripwire) =>
+  (tripwire.verdict === 'stop-and-rotate' ? Number.POSITIVE_INFINITY : tripwire.streak);
+
+/**
+ * Rebuild a {@link Tripwire} from the saved readings, **deriving** the streak rather than trusting
+ * the scalar a previous run left behind.
+ *
+ * ## The design tension this resolves, and the choice made
+ *
+ * The instrument's correctness rests on TWO CONSECUTIVE readings, and "consecutive" means adjacent
+ * in the deployer's launch order. Reserving part of each run's slice for the newest unread launches
+ * — which is what stops a tail of unsettleable launches from crowding the current end of the series
+ * out — means a run can read launch N+5 while N+1..N+4 are still unread. Readings therefore arrive
+ * out of launch order, and an incremental streak counted in ARRIVAL order would be a statement
+ * about nothing: it could confirm a stop out of two launches that were never neighbours.
+ *
+ * The choice: **the streak is derived, every run, from the record.** Readings are put back in launch
+ * order, split into chains of adjacent launches ({@link chainsOf}), each chain replayed through the
+ * production {@link Tripwire}, and the strongest result taken. That gives both halves of the
+ * requirement at once:
+ *
+ * - It cannot MANUFACTURE a stop. Two breaches on non-adjacent launches sit in different chains and
+ *   are never observed in sequence, so they cannot confirm each other.
+ * - It cannot SUPPRESS one. The strongest chain wins rather than the newest, so a reading taken out
+ *   of order never discards an armed chain elsewhere in the record; and when the gap between two
+ *   chains is finally read, they merge and the streak that was always there is counted.
+ *
+ * A state file with no readings at all — one written before readings were recorded, or built by
+ * hand — has nothing to derive from, so the saved scalar is used as-is. A latched stop is never
+ * un-latched by a replay.
  *
  * @param {WatchState} state
  * @param {{ bar: number, confirmLaunches: number }} settings
  */
 export function resume(state, settings) {
-  const tripwire = new Tripwire(settings);
-  for (const r of state.readings) {
-    const counted = r.unread === null && r.share !== null;
-    tripwire.steps.push({
-      reading: {
+  /** @type {Tripwire | null} */ let strongest = null;
+  for (const chain of chainsOf(orderReadings(state.readings))) {
+    const tripwire = new Tripwire(settings);
+    for (const r of chain) {
+      tripwire.observe({
         mint: r.mint, at: r.at, share: r.share, unread: r.unread, slot: 0,
         deployerStake: 0, operationStake: 0, outsiderStake: 0, outsiderWallets: 0,
         operationWallets: [], cohortDerived: false,
-      },
-      counted,
-      breach: counted && (r.share ?? 0) >= settings.bar,
-      streak: state.streak,
-      verdict: state.verdict,
-      seeded: true,
-    });
+      });
+    }
+    if (strongest === null || rank(tripwire) > rank(strongest)) strongest = tripwire;
   }
-  tripwire.streak = state.streak;
-  tripwire.verdict = state.verdict;
-  return tripwire;
+  if (strongest === null) {
+    strongest = new Tripwire(settings);
+    strongest.streak = state.streak;
+    strongest.verdict = state.verdict;
+  }
+  if (state.verdict === 'stop-and-rotate') strongest.verdict = 'stop-and-rotate';
+  return strongest;
 }
 
 /**
@@ -308,19 +398,50 @@ export async function run(args, seams = {}) {
   }
   queue = shaped;
 
+  const ordered = [...queue].sort((a, b) => (a.createdAtMs ?? 0) - (b.createdAtMs ?? 0));
+  // Every launch's immediate predecessor in the deployer's own series, read or unread. This is what
+  // a reading records so that adjacency can be re-derived later; the oldest launch the listing
+  // carries has no visible predecessor and gets `null` rather than an invented one.
+  /** @type {Map<string, string | null>} */ const predecessor = new Map();
+  ordered.forEach((l, i) => predecessor.set(l.mint, i === 0 ? null : /** @type {{mint: string}} */ (ordered[i - 1]).mint));
+
   const already = new Set(state.readMints);
-  const fresh = queue.filter((l) => !already.has(l.mint)).sort((a, b) => (a.createdAtMs ?? 0) - (b.createdAtMs ?? 0));
-  if (fresh.length > args.maxLaunches) {
-    // Silently reading the newest few and calling the series covered is how a watcher reports
-    // "watching" over a gap it never looked at.
+  const fresh = ordered.filter((l) => !already.has(l.mint));
+
+  // The slice is split. The OLDEST unread launches come first, because the streak is a statement
+  // about adjacent launches and closing the gap behind us is what makes readings adjacent. But a
+  // launch this tool cannot settle is never recorded as read, so it comes back at the head of that
+  // queue on every future run — and enough of them would fill the whole slice and leave the watcher
+  // re-reading dead mints while the current end of the series went unwatched. Reserving slots for
+  // the NEWEST unread launches makes that impossible: whatever the tail does, every run still looks
+  // at where the window actually is. Head + reserved never exceeds the bound, so the pinned worst
+  // case is unchanged.
+  const reserved = Math.min(Number(THRESHOLDS.bounds['reservedNewestPerRun']), Math.max(0, args.maxLaunches - 1));
+  const headSlots = args.maxLaunches - reserved;
+  const selected = fresh.slice(0, headSlots);
+  const chosen = new Set(selected.map((l) => l.mint));
+  /** @type {typeof selected} */ const newest = [];
+  for (let i = fresh.length - 1; i >= 0 && newest.length < reserved; i--) {
+    const l = /** @type {{ mint: string, createdAtMs: number | null, symbol: string }} */ (fresh[i]);
+    if (chosen.has(l.mint)) continue;
+    newest.unshift(l);
+    chosen.add(l.mint);
+  }
+  selected.push(...newest);
+  if (fresh.length > selected.length) {
+    // Silently reading a few and calling the series covered is how a watcher reports "watching"
+    // over a gap it never looked at.
     log(`  ${fresh.length} unread launches against a per-run bound of ${args.maxLaunches}: reading the OLDEST ` +
-      `${args.maxLaunches} so the series stays contiguous. Run again to catch up.`);
+      `${headSlots} so the series closes up, plus the NEWEST ${newest.length} so the current end of the ` +
+      'series is watched whatever the backlog does. Run again to catch up.');
   }
 
-  const tripwire = resume(state, settings);
   let read = 0, undecided = 0;
   /** @type {string | null} */ let abandoned = null;
-  for (const l of fresh.slice(0, args.maxLaunches)) {
+  /** @type {Map<string, QuarantinedLaunch>} */ const quarantinedNow = new Map();
+  /** @type {Set<string>} */ const settledNow = new Set();
+  let tripwire = resume(state, settings);
+  for (const l of selected) {
     const at = l.createdAtMs === null ? '' : new Date(l.createdAtMs).toISOString();
     const label = `  ${at.slice(0, 16) || l.mint.slice(0, 12)} ${(l.symbol || '').padEnd(12)} `;
     /** @type {import('./createslot.mjs').CreateSlotWalk} */ let walk;
@@ -336,12 +457,14 @@ export async function run(args, seams = {}) {
       // and neither is recording a launch nobody managed to read as read.
       if (cause instanceof CeilingReached) {
         undecided += 1;
+        quarantinedNow.set(l.mint, { mint: l.mint, at, reason: 'ceiling' });
         abandoned = cause.message;
         log(`${label}undecided (ceiling) — ${cause.message}, stopping this run early. Not recorded as read.`);
         break;
       }
       if (cause instanceof HttpRefused) {
         undecided += 1;
+        quarantinedNow.set(l.mint, { mint: l.mint, at, reason: `refused: ${cause.message}` });
         log(`${label}undecided (${cause.message}) — not recorded as read; the next run retries it.`);
         continue;
       }
@@ -353,6 +476,7 @@ export async function run(args, seams = {}) {
     // the streak, so the close could pass with nothing in the state file saying it was missed.
     if (!walk.decided) {
       undecided += 1;
+      quarantinedNow.set(l.mint, { mint: l.mint, at, reason: String(walk.undecidedReason) });
       log(`${label}undecided (${walk.undecidedReason}) — not recorded as read; the next run retries it.`);
       if (walk.undecidedReason === 'ceiling') { abandoned = 'the per-run request ceiling was reached'; break; }
       continue;
@@ -362,20 +486,34 @@ export async function run(args, seams = {}) {
     const reading = classifyCreateSlot(l.mint, at, walk.proven ? walk.fills : [], {
       deployer: args.wallet, cohort: args.cohort,
     });
-    const step = tripwire.observe(reading);
     read += 1;
+    settledNow.add(l.mint);
+    already.add(l.mint);
     state.readMints.push(l.mint);
-    state.readings.push({ mint: l.mint, at, share: reading.share, unread: reading.unread });
+    const prevMint = predecessor.get(l.mint) ?? null;
+    state.readings.push({ mint: l.mint, at, share: reading.share, unread: reading.unread, prevMint });
+    // Derived from the whole record rather than from arrival order, so a launch read out of order
+    // cannot confirm a stop with a launch it was never adjacent to.
+    tripwire = resume(state, settings);
+    const adjacent = prevMint === null ? state.readings.length === 1 : already.has(prevMint);
     log(label +
       (reading.unread === null
         ? `share ${(reading.share ?? 0).toFixed(3)}  outsiders ${reading.outsiderStake.toFixed(2)} SOL` +
-          ` in ${reading.outsiderWallets} wallets   streak ${step.streak}   ${step.verdict}`
-        : `no reading (${reading.unread}) — skipped, neither advances nor resets the streak`));
-    if (step.verdict === 'stop-and-rotate') { state.stoppedAt = at; break; }
+          ` in ${reading.outsiderWallets} wallets   streak ${tripwire.streak}   ${tripwire.verdict}`
+        : `no reading (${reading.unread}) — skipped, neither advances nor resets the streak`) +
+      (adjacent ? '' : '   [out of series order — recorded, and it joins the streak when the gap is read]'));
+    if (tripwire.verdict === 'stop-and-rotate') break;
   }
 
   state.verdict = tripwire.verdict;
   state.streak = tripwire.streak;
+  state.quarantine = [
+    ...state.quarantine.filter((q) => !settledNow.has(q.mint) && !quarantinedNow.has(q.mint)),
+    ...quarantinedNow.values(),
+  ];
+  if (state.verdict === 'stop-and-rotate' && state.stoppedAt === null) {
+    state.stoppedAt = tripwire.evidence[tripwire.evidence.length - 1]?.at ?? null;
+  }
 
   log('');
   log(`VERDICT: ${state.verdict.toUpperCase()}`);
@@ -389,6 +527,12 @@ export async function run(args, seams = {}) {
   if (undecided > 0) {
     log(`  ${undecided} launch(es) left UNDECIDED and NOT recorded as read — this verdict does not cover them,`);
     log('  and the next run retries them. Run again before treating "watching" as a reading of the series.');
+  }
+  if (state.quarantine.length > 0) {
+    log(`  QUARANTINE — ${state.quarantine.length} launch(es) this tool has not been able to settle. They are`);
+    log('  retried every run and never recorded as read, and every run reserves slots for the newest');
+    log('  launches so this list cannot crowd the current end of the series out:');
+    for (const q of state.quarantine) log(`    ${q.at.slice(0, 16) || '(no timestamp)'}  ${q.mint}  ${q.reason}`);
   }
   if (abandoned !== null) log(`  run abandoned early: ${abandoned}. Everything read before that point is saved.`);
   log(`  requests issued ${client.issued()}, shed ${client.shed()}, transport failures ${client.transportFailures()}`);

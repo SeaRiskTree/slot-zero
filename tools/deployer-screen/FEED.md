@@ -173,10 +173,20 @@ So every run reports, in this order — alarm first, then the new count, then th
 3. **Every gated wallet unreadable.** The profile shape moved. Requires **at least 2 gated wallets**
    (`ALL_UNMEASURED_MIN_GATED`): this condition *asserts* a move at the vendor, and its own message
    says one empty deployer is not evidence of that, so it must not be assertable from a sample of
-   one. **The accepted cost:** at `--gate 2` a genuine profile-shape move takes one extra run to
-   surface, because the first run's single unreadable profile is indistinguishable from an empty
-   deployer. That latency is a **deliberate bound**, not an oversight — it buys the alarm the right
-   to be believed. Do not lower the floor back to 1 to make it fire sooner.
+   one. **What that floor actually costs, exactly:**
+   - At `--gate 2` **and above there is no latency at all.** `gated >= 2 && unmeasured === gated` is
+     satisfied on the **first** run in which every gated profile comes back unreadable.
+   - At `--gate 1`, `gated` can never exceed 1, so the condition is **never satisfiable** and this
+     alarm is **structurally unreachable** for the entire lifetime of that configuration. **Nothing
+     else covers the gap:** a profile-shape move leaves enumeration healthy, so `newlySurfaced > 0`
+     and the dry-streak alarm never fires either — which is precisely the *"the feed dies quietly"*
+     failure the `unmeasured` state was introduced to prevent.
+
+   That hole is an **accepted, deliberate bound**, not an oversight. The remedy is not to lower the
+   floor — a floor of 1 reinstates the sample-of-one assertion this decision exists to prevent — so
+   `feed.mjs` instead prints a standing warning, on the **dry** path as well as the live one,
+   whenever the resolved gate batch is below the floor, saying this alarm cannot fire at that
+   setting. Run `--gate 2` or higher if you want it armed.
 4. **A dry streak** — `feed.dryStreakAlarm` (3) consecutive *live, completed* runs with no new
    wallet. One dry run is ordinary; the vendor's pages overlap heavily between runs. Three is
    saturation, and the remedy is a wider source, not a longer wait. An **aborted** run is skipped

@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  ALL_UNMEASURED_MIN_GATED,
   appendRun,
   backlogDepth,
   discoveryLagDays,
@@ -45,7 +46,15 @@ import {
   summariseLedger,
 } from '../tools/deployer-screen/ledger.mjs';
 import type { Ledger } from '../tools/deployer-screen/ledger.mjs';
-import { FEED_LIMITATIONS, main, parseFeedArgs, planFeedRun, triage, wrap } from '../tools/deployer-screen/feed.mjs';
+import {
+  FEED_LIMITATIONS,
+  main,
+  parseFeedArgs,
+  planFeedRun,
+  triage,
+  unmeasuredAlarmDisabledWarning,
+  wrap,
+} from '../tools/deployer-screen/feed.mjs';
 import { KEY_ENV_VAR } from '../tools/deployer-screen/credential.mjs';
 
 const TOOL_DIR = fileURLToPath(new URL('../tools/deployer-screen/', import.meta.url));
@@ -459,6 +468,16 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
     expect(alarm.alarmed).toBe(false);
   });
 
+  it('says out loud that the unreadable-profile alarm cannot fire below the floor', () => {
+    // At a batch of 1 the condition is not merely slow, it is unsatisfiable — and nothing else
+    // covers it, because a shape move leaves enumeration healthy and the dry streak never
+    // accumulates. The floor stays at 2; the configuration is what has to be audible.
+    expect(unmeasuredAlarmDisabledWarning(1)).toMatch(/ALARM DISABLED AT THIS SETTING/);
+    expect(unmeasuredAlarmDisabledWarning(1)).toMatch(/CANNOT fire/);
+    expect(unmeasuredAlarmDisabledWarning(ALL_UNMEASURED_MIN_GATED)).toBeNull();
+    expect(unmeasuredAlarmDisabledWarning(6)).toBeNull();
+  });
+
   it('alarms once TWO gated wallets in a row come back unreadable', () => {
     const alarm = feedAlarm({
       seeds: healthySeeds,
@@ -757,6 +776,35 @@ describe('the feed end to end', () => {
     const text = lines.join('\n');
     expect(text).toMatch(/NEW wallets this run\s+0\s+<< none\. This run discovered nothing\./);
     expect(text).toMatch(/already known \(duplicates\) 3 of 3 surfaced/);
+  });
+
+  it('warns on BOTH the dry and the live path when the batch is too small to arm the alarm', async () => {
+    // The dry run is the default and is where an operator reads what a setting will do, so a
+    // warning only on the live path would be seen last rather than first.
+    const dry = vendor({ 'recent-bonds': ['Wa'] }, { Wa: profile(40, 20, 200) });
+    const dryLines: string[] = [];
+    await main(opts({ live: false, gate: 1 }), env, (l) => dryLines.push(l), () => {}, {
+      fetchImpl: dry.fetchImpl,
+      sleepImpl,
+    });
+    expect(dryLines.join('\n')).toMatch(/ALARM DISABLED AT THIS SETTING/);
+
+    const live = vendor({ 'recent-bonds': ['Wa'] }, { Wa: profile(40, 20, 200) });
+    const liveLines: string[] = [];
+    await main(opts({ gate: 1 }), env, (l) => liveLines.push(l), () => {}, {
+      fetchImpl: live.fetchImpl,
+      sleepImpl,
+    });
+    expect(liveLines.join('\n')).toMatch(/ALARM DISABLED AT THIS SETTING/);
+
+    // Armed at the floor, so the warning must be gone rather than merely quieter.
+    const armed = vendor({ 'recent-bonds': ['Wb', 'Wc'] }, { Wb: profile(40, 20, 200), Wc: profile(40, 20, 200) });
+    const armedLines: string[] = [];
+    await main(opts({ gate: 2 }), env, (l) => armedLines.push(l), () => {}, {
+      fetchImpl: armed.fetchImpl,
+      sleepImpl,
+    });
+    expect(armedLines.join('\n')).not.toMatch(/ALARM DISABLED/);
   });
 
   it("the cadence filter's reported cost counts only wallets the gate could still have spent on", async () => {

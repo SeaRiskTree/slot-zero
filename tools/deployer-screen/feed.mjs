@@ -60,6 +60,7 @@ import { fileURLToPath } from 'node:url';
 import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
 import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import {
+  ALL_UNMEASURED_MIN_GATED,
   appendRun,
   backlogDepth,
   dryStreak,
@@ -325,6 +326,38 @@ export function planFeedRun(feedT, budgetT, requestedGate, enumerationCost) {
 }
 
 /**
+ * The standing warning for a gate batch too small to arm the "every gated profile unreadable" alarm.
+ *
+ * `feedAlarm` refuses to assert a vendor-shape move from a sample of one, so a batch below
+ * {@link ALL_UNMEASURED_MIN_GATED} cannot ever satisfy that condition. Nothing else covers the gap —
+ * a shape move leaves enumeration healthy, so the run still surfaces wallets and the dry streak
+ * never accumulates — which is exactly the silent death the `unmeasured` state exists to prevent.
+ * The floor is not lowered to close it; the configuration says so out loud instead, on the dry path
+ * as well as the live one, because the dry run is the default and is where an operator reads what a
+ * setting will do.
+ *
+ * Derived from the shared constant rather than a literal, so the warning and the alarm cannot
+ * disagree if the floor is ever re-pinned.
+ *
+ * @param {number} gateBatch The batch this run resolved to, after the pinned cap and `--gate`.
+ * @returns {string | null} `null` when the alarm is armed.
+ */
+export function unmeasuredAlarmDisabledWarning(gateBatch) {
+  if (gateBatch >= ALL_UNMEASURED_MIN_GATED) return null;
+  return (
+    `  !! ALARM DISABLED AT THIS SETTING — a gate batch of ${gateBatch} can never reach the ` +
+    `${ALL_UNMEASURED_MIN_GATED} gated wallets\n` +
+    `     the "every gated profile came back unreadable" condition requires, so that alarm CANNOT ` +
+    `fire here.\n` +
+    `     The day the vendor's profile shape moves, this lane grades every wallet unmeasured and ` +
+    `still\n` +
+    `     exits 0: enumeration stays healthy, so the dry streak does not catch it either. Run ` +
+    `--gate ${ALL_UNMEASURED_MIN_GATED}\n` +
+    `     or higher to arm it.`
+  );
+}
+
+/**
  * Triage one wallet's vendor profile onto a feed state.
  *
  * Pure, so the mapping from a gate verdict to a feed state is one testable place rather than a
@@ -479,6 +512,11 @@ export async function main(opts, env, out, err, deps = {}) {
         `${worstCaseKeyed * feedT.runsPerDayAssumed} of the ~${budgetT.maxKeyedRequests}/day allowance`,
     );
     out('  keyless plan          NONE. This lane spends no keyless request and touches no Solana RPC.');
+    const disabled = unmeasuredAlarmDisabledWarning(gateBatch);
+    if (disabled !== null) {
+      out('');
+      out(disabled);
+    }
     out('');
     for (const entry of seedPlan) out(`  would GET ${entry.path} (${entry.label})`);
     out('');
@@ -884,6 +922,14 @@ export function renderFeedRun(record) {
     lines.push('');
     lines.push('!! THE FEED IS NOT HEALTHY. This run exits non-zero. Do not read it as a quiet day.');
     for (const reason of record['alarm'].reasons) lines.push(`   - ${reason}`);
+  }
+
+  // Beside the alarm block, because it says which alarm this configuration cannot raise: an exit 0
+  // from a batch below the floor is weaker evidence of health than one above it.
+  const disabled = unmeasuredAlarmDisabledWarning(record['spend'].gateBatch);
+  if (disabled !== null) {
+    lines.push('');
+    lines.push(disabled);
   }
 
   const y = record['yield'];

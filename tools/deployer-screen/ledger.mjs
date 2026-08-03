@@ -599,9 +599,18 @@ export function dryStreak(ledger) {
  *
  * A fixed floor, deliberately not scaled with the batch: the alarm makes an assertion about the
  * vendor, and one empty deployer is an ordinary observation rather than evidence of a shape move —
- * the alarm's own text says so. The cost is one run of latency at `--gate 2`, and that is a bound
- * this lane accepts rather than an oversight; see `FEED.md` → "Yield, and why a dead feed cannot
- * read as a healthy one".
+ * the alarm's own text says so.
+ *
+ * **What the floor actually costs, stated exactly, because a wrong version of this was committed
+ * once already.** At a gate batch of 2 or more there is **no latency**: the condition is satisfied
+ * on the FIRST run in which every gated profile comes back unreadable. At a batch of 1, `gated` can
+ * never exceed 1, so `gated >= ALL_UNMEASURED_MIN_GATED` is never satisfiable and this alarm is
+ * **structurally unreachable** for the whole lifetime of that configuration — and nothing else
+ * covers it, because a profile-shape move leaves enumeration healthy, so `newlySurfaced > 0` and the
+ * dry streak never accumulates either. That is precisely the "feed dies quietly" failure the
+ * `unmeasured` state exists to prevent, and at `--gate 1` it is an **accepted, deliberate** bound
+ * rather than an oversight: `feed.mjs` warns on every run below this floor instead of the floor
+ * being lowered. See `FEED.md` → "Yield, and why a dead feed cannot read as a healthy one".
  */
 export const ALL_UNMEASURED_MIN_GATED = 2;
 

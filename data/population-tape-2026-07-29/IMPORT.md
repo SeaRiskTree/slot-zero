@@ -244,8 +244,9 @@ repo `README.md`.
    present and correct; the defect only appears in the *denominator* of a month-level
    aggregate the caller builds itself. `src/` exposes no month-level aggregation to gate, and
    no per-row type can refuse a sum a caller writes over rows that are each individually
-   valid. `Tape.onchainRows()` and `Tape.onchainRoundTrips()` carry the warning in their
-   JSDoc, which is as close to the call site as the loader can put it.
+   valid. `Tape.onchainRows()` and the readers folded from it — `onchainPositions()` and
+   `onchainRoundTrips()` — carry the warning in their JSDoc, which is as close to the call
+   site as the loader can put it.
 
 Four launches (`Marciana`, `Leo`, `Fridge`, `GLM`) have `tape = none` and no trade-derived
 columns at all. 235 of 239 launches carry a tape.

@@ -406,8 +406,9 @@ export class Tape {
   /**
    * The earlier 6-launch pass. Overlaps {@link onchainRows}; do not sum the two.
    *
-   * Inherits {@link onchainRows}'s month coverage caveat: May is priced 30 of 41, so a May
-   * total from this pricing pass understates by roughly 27%.
+   * Its six launches are all 2026-07, so it supports no monthly comparison at all; the month
+   * coverage caveat on {@link onchainRows} is the one to read before cutting priced P&L by
+   * month.
    */
   onchainFeeSample(): readonly OnchainRow[] {
     this._onchainFeeSample ??= readCsv(this.path('onchain_fee_sample.csv')).map(readOnchainRow);

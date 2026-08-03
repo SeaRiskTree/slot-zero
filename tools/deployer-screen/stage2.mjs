@@ -190,6 +190,12 @@ export function describeTransportFailure(cause) {
  * deployer, and produce a confident room figure for a launch whose opening was never seen. A
  * dropped launch merely shrinks `n` — visibly, and towards `entry-unmeasured`.
  *
+ * A launch whose create slot carried no bundled transaction is a **different** case and is not a
+ * drop: the window was walked and measured perfectly well, and it is the co-ordination rule that
+ * found nothing. `entry.mjs` → `scoreEntry` refuses to score those, counts them in
+ * `launchesRoomUnproven`, and says so in a caveat. They are still counted here as usable windows,
+ * because the walk did what it was asked to.
+ *
  * @param {import('./pumpfun.mjs').KeylessClient} client
  * @param {object} input
  * @param {string} input.wallet
@@ -357,6 +363,12 @@ export function toEntryRecordRow(s, coverage) {
     verdict: s.verdict,
     rationale: redactVendorIdentifiers(s.rationale),
     launchesSampled: s.launchesSampled,
+    // Schema 5. Without these three a saved run cannot be audited for the unproven-opening
+    // condition after the fact — `bundledTx` and `maxWalletsInOneTx` were computed and thrown away
+    // until now, and they are the only observable that exposes it. `record.mjs` owns the version.
+    launchesRoomUnproven: s.launchesRoomUnproven,
+    bundledTx: dist(s.bundledTx),
+    maxWalletsInOneTx: dist(s.maxWalletsInOneTx),
     launchesWithNoOutsider: s.launchesWithNoOutsider,
     roomLeft: dist(s.roomLeft),
     roomHitRate: hit(s.roomHitRate),

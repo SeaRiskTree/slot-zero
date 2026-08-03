@@ -37,7 +37,7 @@ for size other than the two directories named above.
 
 ## Corrections
 
-Later evidence has contradicted the imported prose seven times. **The originals stay unmodified** —
+Later evidence has contradicted the imported prose eight times. **The originals stay unmodified** —
 that is what makes this directory a primary record — so the corrections live here, and this
 is the file to add to when it happens again. The first two come from
 `kol-cohort-vs-outsider-funding/report.md` (2026-07-29, read-only, keyless, zero metered
@@ -158,6 +158,38 @@ across, and what is re-derivable in this repo is asserted in `test/reproduction.
    instant-bond launches of correction 6, and undercounting exactly those is what let §3.5 conclude
    the deployer is always out first. **The 14.70× constant is unaffected** — it holds on all 18,
    across dev buys from 3.46 to 56.30 SOL.
+
+8. **The era-2 operation share published as `0.768` is not the median of its own stated
+   population; it is `0.771`.** `slot-zero-june-regime-change/report.md` §5.1 prints the
+   post-2026-06-04 cell as dev 14.814814813 · co-ordinated 19.75 SOL · 6 wallets ·
+   independent 10.84 · **share 0.768**, over the 89 launches of this directory that carry a
+   window tape and reached the mint. Every other cell in that row reproduces exactly. The share
+   does not: the 89-launch series has median **0.7708**, and `0.768` is its **rank-43/44 order
+   statistic** — one to two ranks below the middle of the series it is a median of.
+
+   Three independent recipes over this directory agree on `0.7708 → 0.771`, and one of them is
+   committed here: summing create-slot buy fills from `window/*.jsonl.gz`; summing
+   `wallet_launch_pnl.csv` `sol_in` where `in_create_slot = 1`; and
+   `node analysis/window-population/measure.mjs`, whose independent T1 reading for the same
+   regime prints **0.771** (`analysis/window-population/README.md` §9).
+
+   **What produces `0.768` is dropping the `meta.reached_mint` gate.** That admits the two
+   truncated era-2 launches (`8iXLMfcY…`, `H23di4NX…`, both 2026-07-18) whose "create slot" is a
+   mid-window slot containing no deployer at all, giving n = 91 and a median of `0.76751`. But
+   that same 91-launch population drives the independent-capital cell to **10.47**, and the
+   published row says **10.84**, which is the n = 89 value. So the published row is internally
+   inconsistent by one cell, and this directory is not ambiguous about which population it
+   describes. The `reached_mint` gate is the one this directory's own coverage rule requires
+   (see "Coverage caveats" below, and the repo `README.md`).
+
+   **No figure in this directory changes** — this directory *is* the evidence. What changes is the
+   constant a reader may check a reproduction against: `tools/deployer-screen/stage0.mjs` now pins
+   era 2 at `0.771` and says so in its output (captain decision 135c). Re-pinning was chosen over
+   widening that check's tolerance because the tolerance was absorbing two errors of opposite sign
+   that partially cancelled — a real **−0.0115** defect in the screen's co-ordination rule and this
+   **+0.0028** documentation error — so the check had been passing for the wrong reason. Both are
+   now removed rather than accommodated; `tools/deployer-screen/README.md` → "Stage 0" owns the
+   decomposition.
 
 The funding investigation also settles `report.md` §10.3 — **both `5brv79eF…` and `EgQX9R3Q…` are
 genuine outsiders, confidence high** — and strengthens §7's "the six create-slot wallets are

@@ -31,10 +31,16 @@
  *     beatable is wrong, so a design that starts to is failed here rather than shipped.
  *
  *     The trap this specifically catches: the field leg, read on its own, **says the wallet is
- *     beatable.** Gross of fees its post-break field is 76.5% of closed round trips positive at a
+ *     beatable.** Gross of fees its post-break field is 76.3% of closed round trips positive at a
  *     median +0.12 SOL, while the fee-inclusive record is +0.54 SOL per launch shared by 106
  *     wallets with 51 of them negative. So the check is not that some number is below some bar —
  *     it is that the composite verdict resists a leg that points the wrong way.
+ *  7. **THE ROLLING REPLAY — the same question, asked at every point in the tape's history.** (6)
+ *     samples two slices, and both of them sit inside the months where the co-ordination rule
+ *     recovers 97–100% of the known cohort, so **neither could ever have caught the rule finding
+ *     nothing at all**. This replays the live recipe at all 228 trailing windows and fails on a
+ *     single window where the screen says there was room and the named cohort says there was not.
+ *     See {@link replayRollingRoom}; it is offline, free and deterministic like the rest.
  *
  * All of it reads committed files. No network, no key, no quota.
  */
@@ -47,16 +53,43 @@ import { measureLaunchEntry, scoreEntry } from './entry.mjs';
 import {
   CURVE_INITIAL_PRICE_SOL,
   CURVE_K,
+  createSlotGroups,
   measureCompletion,
   median,
   parseFill,
   percentile,
+  roomIsProven,
   solBetweenPrices,
 } from './measure.mjs';
 import { applyGate, verdictFor } from './rank.mjs';
 
 /** The deployer the whole dataset is about. `src/cohort.ts` carries the same constant. */
 export const SUBJECT_DEPLOYER = '7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL';
+
+/**
+ * The six wallets established as the subject operation's own, by name.
+ *
+ * `src/cohort.ts` → `CREATE_SLOT_COHORT` carries the same list; it is repeated here rather than
+ * imported for the reason `measure.mjs`'s curve constants are — this directory sits outside the
+ * keyless boundary `test/deployer-screen.test.ts` keeps sharp, and a dependency across it would
+ * blur the line. The list was established from presence, fill price, fee bill and later the funding
+ * graph (June report §5.1, `kol-cohort-vs-outsider-funding/report.md`).
+ *
+ * **This is GROUND TRUTH and nothing else may use it.** It is the answer key for
+ * {@link replayRollingRoom}, which asks whether the screen's *structural* rule — the only one
+ * available on a stranger — ever calls a window enterable that the named cohort says was not. No
+ * scoring path may consult it, or Stage 0 would stop being a test of the method a live run runs.
+ */
+export const CREATE_SLOT_COHORT = [
+  '2CHrnc2LyagAbMaMFgthiDWh7ZZ9zT9TF8WEJf7MNE71',
+  'Atgx1JXsp8pTQ9Qsi74wF5pLMVwHwyQc6jJCu84evN7c',
+  '8kzFH4rgFzy4ccz97AhgqRT7Qbt7HnD5oJCDK1Sxdarb',
+  'GfJA84gwT9LpeyzeckeXkCsf8vdQuA64ZYQ91xoBawvt',
+  '5P8A9bGUhroskpuA4hhRbybgt37TcTz7ft5zLAh8orpn',
+  '43x1zWzjVWJbQErWM78m3Acx83FFuGSQEhmgyxUrPdQs',
+];
+
+const COHORT_SET = new Set(CREATE_SLOT_COHORT);
 
 /** The published era boundary. June report §5.1: everything moved on this date. */
 export const REGIME_BOUNDARY = '2026-06-04';
@@ -166,7 +199,34 @@ export function readGroundTruthCompletion(dataDir) {
  * @property {string} dateIso
  * @property {import('./measure.mjs').CreateSlotMeasurement} createSlot
  * @property {import('./entry.mjs').FieldEntrant[]} field
+ * @property {number} cohortRoomLeft GROUND TRUTH room, from the NAMED six-wallet cohort rather than
+ *   the structural bundle rule. Available only because this is our own subject; a stranger has no
+ *   such answer, which is the whole reason the structural rule exists. Used by
+ *   {@link replayRollingRoom} and by nothing else.
  */
+
+/**
+ * The room a launch left, with the operation identified BY NAME.
+ *
+ * The same arithmetic as `tallyCreateSlot`, over the same create slot, differing only in who counts
+ * as the operation: `SUBJECT_DEPLOYER` plus {@link CREATE_SLOT_COHORT} instead of whoever shared a
+ * transaction. It is duplicated rather than parameterised so that the scoring path cannot acquire a
+ * "pass me the cohort" seam — on a stranger there is nothing to pass.
+ *
+ * @param {import('./measure.mjs').CreateSlotGroups} groups
+ * @returns {number}
+ */
+export function cohortRoomLeft(groups) {
+  let operation = 0;
+  let outsiders = 0;
+  for (const f of groups.inSlot) {
+    if (f.wallet === SUBJECT_DEPLOYER || COHORT_SET.has(f.wallet)) operation += f.sol;
+    else outsiders += f.sol;
+  }
+  const denominator = operation + outsiders;
+  // Same convention as `tallyCreateSlot`: an empty create slot is fully occupied, not wide open.
+  return denominator > 0 ? outsiders / denominator : 0;
+}
 
 /**
  * Measure every taped launch of the subject deployer from the committed window tapes.
@@ -219,12 +279,15 @@ export function measureSubjectLaunches(dataDir) {
 
     const entry = measureLaunchEntry(fills);
     if (entry === null) continue;
+    const groups = createSlotGroups(fills);
+    if (groups === null) continue;
 
     out.push({
       mint,
       dateIso: new Date(Number(meta['created_timestamp'])).toISOString(),
       createSlot: entry.createSlot,
       field: entry.field,
+      cohortRoomLeft: cohortRoomLeft(groups),
     });
   }
 
@@ -309,6 +372,114 @@ export function verifyFieldReproduction(dataDir, launches) {
   // so anything at or below this is representation and anything above it is a different sum.
   const ok = pairs > 0 && closureMismatches === 0 && missingFromCsv === 0 && maxRealisedErrorSol < 1e-6;
   return { pairs, closureMismatches, maxRealisedErrorSol, missingFromCsv, ok };
+}
+
+/**
+ * @typedef {object} RollingRoomWindow
+ * One trailing window of the replay.
+ * @property {string} atIso            Creation time of the newest launch in the window.
+ * @property {number} scored           Launches in it the screen would actually score.
+ * @property {number} screenRoomMedian Median room over those, or `NaN` when too few to score.
+ * @property {number} truthRoomMedian  Median room over ALL launches in the window, by name.
+ * @property {boolean} screenPresent   What the screen's structural rule concludes.
+ * @property {boolean} truthPresent    What the named cohort concludes.
+ */
+
+/**
+ * @typedef {object} RollingRoomReplay
+ * @property {number} windows          Trailing windows evaluated.
+ * @property {number} present
+ * @property {number} absent
+ * @property {number} unmeasured       Too few scoreable launches to report a distribution. A window
+ *   refused this way is NOT a false negative — the screen returned no verdict at all, and the two
+ *   states are counted apart on purpose.
+ * @property {number} falsePositives   Screen says room, the named cohort says none. **The failure.**
+ * @property {number} falseNegatives   Screen MEASURED the window and said none, the named cohort
+ *   says room. The cost. Requires a finite median: an unmeasured window never lands here.
+ * @property {RollingRoomWindow[]} falsePositiveWindows Every one of them, for the failure message.
+ * @property {boolean} ok
+ */
+
+/**
+ * **THE CONTROL THAT WOULD HAVE CAUGHT THE UNPROVEN-OPENING DEFECT.** Replay the exact live entry
+ * recipe at every point in the subject's history and compare its verdict with the one the named
+ * cohort gives.
+ *
+ * Stage 0's other known-negative check samples two slices — the most recent 8 launches (July) and
+ * the whole post-break regime (June–July). Both sit inside the period where the co-ordination rule
+ * happens to recover 97–100% of the cohort, so **neither could ever see the defect**: the rule
+ * recovered **0%** of the cohort in December 2025 – February 2026 and 41.6% in March, and over that
+ * stretch the screen reported median room 0.62–0.66 against a true 0.20–0.33 in a regime whose
+ * measured per-launch prize to outsiders was ≈0. This asks the same question at all 228 windows
+ * instead of 2, and it is offline, free and deterministic.
+ *
+ * The recipe is the live one, not an approximation of it: median `roomLeft` over the trailing
+ * `maxLaunchesPerCandidate` launches against `minRoomLeft`, and a window with fewer than
+ * `minLaunchesSampled` scoreable launches is UNMEASURED, exactly as `scoreEntry` would have it.
+ *
+ * **Only false positives fail.** A false negative is the accepted price of decision 134a — refusing
+ * to score an unproven opening costs real coverage, and on this tape it turns windows that truly
+ * had room into `unmeasured`. A null result is acceptable; a false positive is not. `unmeasured`
+ * and `falseNegatives` are counted apart: a refused window has no verdict to be wrong, so it is
+ * never booked as the screen having said ABSENT.
+ *
+ * The window's truth is taken over **all** its launches, refused ones included, because the
+ * question is what the deployer's opening actually was — not what it was over the subset the screen
+ * was willing to look at.
+ *
+ * @param {readonly TapedLaunch[]} launches Oldest first.
+ * @param {{ minRoomLeft: number, minLaunchesSampled: number, maxLaunchesPerCandidate: number }} t
+ * @returns {RollingRoomReplay}
+ */
+export function replayRollingRoom(launches, t) {
+  /** @type {RollingRoomWindow[]} */
+  const falsePositiveWindows = [];
+  let present = 0;
+  let absent = 0;
+  let unmeasured = 0;
+  let falseNegatives = 0;
+  let windows = 0;
+
+  for (let end = t.maxLaunchesPerCandidate; end <= launches.length; end++) {
+    const w = launches.slice(end - t.maxLaunchesPerCandidate, end);
+    const newest = w[w.length - 1];
+    if (newest === undefined) continue;
+    windows += 1;
+
+    const scored = w.filter((l) => roomIsProven(l.createSlot));
+    const screenRoomMedian =
+      scored.length >= t.minLaunchesSampled ? median(scored.map((l) => l.createSlot.roomLeft)) : Number.NaN;
+    const truthRoomMedian = median(w.map((l) => l.cohortRoomLeft));
+    const measured = Number.isFinite(screenRoomMedian);
+    const screenPresent = screenRoomMedian >= t.minRoomLeft;
+    const truthPresent = truthRoomMedian >= t.minRoomLeft;
+
+    if (!measured) unmeasured += 1;
+    else if (screenPresent) present += 1;
+    else absent += 1;
+
+    if (screenPresent && !truthPresent) {
+      falsePositiveWindows.push({
+        atIso: newest.dateIso,
+        scored: scored.length,
+        screenRoomMedian,
+        truthRoomMedian,
+        screenPresent,
+        truthPresent,
+      });
+    } else if (measured && !screenPresent && truthPresent) falseNegatives += 1;
+  }
+
+  return {
+    windows,
+    present,
+    absent,
+    unmeasured,
+    falsePositives: falsePositiveWindows.length,
+    falseNegatives,
+    falsePositiveWindows,
+    ok: falsePositiveWindows.length === 0,
+  };
 }
 
 /**
@@ -414,7 +585,9 @@ export function verifyCurveInversion(controls) {
 /**
  * @typedef {object} EraReproduction
  * @property {string} era
- * @property {number} n
+ * @property {number} n     Launches in the era whose opening is PROVEN, and therefore scored.
+ * @property {number} nRoomUnproven Launches in the era excluded for carrying no bundled
+ *   transaction. Reported so the era's population can be reconciled with the published one.
  * @property {number} minN Launches this bucket must hold for the comparison to mean anything.
  * @property {number} devSolMedian
  * @property {number} coordinatedSolMedian
@@ -437,6 +610,8 @@ export function verifyCurveInversion(controls) {
  *   score a stranger: the most recent `maxLaunchesPerCandidate` launches, no era filter.
  * @property {import('./entry.mjs').EntryScore} subjectEntryPostBreak Scored over the whole
  *   post-2026-06-04 regime, which is the population the June report measured.
+ * @property {RollingRoomReplay} rollingRoom The same known-negative question asked at EVERY point
+ *   in the tape's history, against the named cohort. See {@link replayRollingRoom}.
  * @property {{ n: number, roomP25: number, roomMedian: number, roomP75: number }} controlPopulation
  * @property {{ n: number, groupedPreset15: number }} controlPresets
  * @property {boolean} passed
@@ -470,8 +645,28 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
   // `Math.abs(NaN - published) > 0.02` is FALSE, so an era bucket that matched no launches used to
   // report PASSED and then authorise keyed spending. Anything that empties the filter — renamed
   // window files, every `reached_mint` false, a `--data-dir` pointing at a differently dated tape, a
-  // shifted date range — is exactly that case. The buckets hold 45 and 89 launches as committed, so
-  // a floor of 20 leaves room for ordinary variation while refusing a hollowed-out bucket.
+  // shifted date range — is exactly that case. The buckets hold 45 and 86 launches as committed —
+  // 86 and not 89 because this split is filtered on `roomIsProven` and three era-2 launches carry
+  // no bundled create-slot transaction — so a floor of 20 leaves room for ordinary variation while
+  // refusing a hollowed-out bucket.
+  //
+  // THE ERA-2 CONSTANT IS RE-PINNED, AND THE TOLERANCE IS NOT THE FIX (captain decision 135c).
+  // The June report's §5.1 table prints `0.768` for era 2, and that cell is **not the median of its
+  // own stated population**: the 89-launch series has median `0.7708`, and `0.768` is its rank-43/44
+  // order statistic. The repo's own committed, offline
+  // `analysis/window-population/measure.mjs` reads the same regime independently at **0.771**, as
+  // does a recomputation from raw fills and one from `wallet_launch_pnl.csv` — three recipes, one
+  // answer. So the constant compared against here is `0.771`, and the correction is recorded in
+  // `data/population-tape-2026-07-29/IMPORT.md` → "Corrections", which is where a contradiction of
+  // the imported prose goes; the report and the dataset README are a primary record and are not
+  // edited.
+  //
+  // Why this matters more than 0.003 of a share: until now the 0.02 tolerance was absorbing a real
+  // **−0.0115** defect (the co-ordination rule finding nothing on 3 of the 89 launches, so ~9.6–10.0
+  // SOL of the operation's own stake was booked as outsider capital) and a **+0.0028** documentation
+  // error, which partially cancelled. The check passed for the wrong reason. Refusing to score an
+  // unproven opening removes the first; re-pinning removes the second.
+  //
   /** @type {{ era: string, lo: string, hi: string, share: number, minN: number, published: string }[]} */
   const eras = [
     {
@@ -486,21 +681,31 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
       era: '2026-06-04 … 07-29',
       lo: REGIME_BOUNDARY,
       hi: '2026-07-30',
-      share: 0.768,
+      share: 0.771,
       minN: 20,
-      published: 'dev 14.814814813 · co-ord 19.75 SOL · 6 wallets · independent 10.84 · share 0.768',
+      published:
+        'dev 14.814814813 · co-ord 19.75 SOL · 6 wallets · independent 10.84 · share 0.771 ' +
+        '(§5.1 printed 0.768 — corrected, see IMPORT.md)',
     },
   ];
 
+  // Measured over the launches the screen would actually SCORE, which is the point of the check:
+  // this reproduces the room primitive as a live run computes it, and a live run no longer computes
+  // it on a launch whose create slot carried no bundled transaction. Era 1 is unaffected (all 45 of
+  // its launches bundled); era 2 loses the 3 that did not, leaving 86 and a median share of 0.769
+  // — the remaining 0.002 from 0.771 is the order statistic moving when three launches leave an
+  // 89-launch series, not a residual defect.
   const eraSplit = eras.map((e) => {
-    const inEra = launches.filter((l) => {
+    const all = launches.filter((l) => {
       const d = l.dateIso.slice(0, 10);
       return d >= e.lo && d <= e.hi;
     });
+    const inEra = all.filter((l) => roomIsProven(l.createSlot));
     const cs = inEra.map((l) => l.createSlot);
     return {
       era: e.era,
       n: inEra.length,
+      nRoomUnproven: all.length - inEra.length,
       minN: e.minN,
       devSolMedian: median(cs.map((m) => m.devSol)),
       coordinatedSolMedian: median(cs.map((m) => m.coordinatedSol)),
@@ -535,6 +740,11 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
   const subjectEntryPostBreak = scoreEntry(postBreak, entryThresholds, {
     candidateWallet: SUBJECT_DEPLOYER,
   });
+
+  // --- (7) THE ROLLING REPLAY -----------------------------------------------------------------
+  // The same question as (6), asked at every point in the tape's history rather than at two. See
+  // `replayRollingRoom`: (6) samples only the months where the co-ordination rule works.
+  const rollingRoom = replayRollingRoom(launches, entryThresholds);
 
   const room = controls.map((c) => c.roomLeftUpperBound);
   const controlPopulation = {
@@ -654,6 +864,30 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
     }
   }
 
+  // THE ROLLING REPLAY. A false positive here is a window in which the screen would have called our
+  // own known-negative wallet enterable when the named cohort says it was not — the exact defect
+  // this control was added for, and the direction the captain has ruled unacceptable. False
+  // negatives are NOT failed: refusing to score an unproven opening costs coverage on purpose.
+  if (!rollingRoom.ok) {
+    const worst = [...rollingRoom.falsePositiveWindows].sort(
+      (a, b) => b.screenRoomMedian - b.truthRoomMedian - (a.screenRoomMedian - a.truthRoomMedian),
+    )[0];
+    failures.push(
+      `THE ROLLING REPLAY FOUND ${rollingRoom.falsePositives} FALSE POSITIVE(S) of ` +
+        `${rollingRoom.windows} trailing windows: the screen scores ENTRY ROOM where the named ` +
+        `six-wallet cohort says there was none. Every error the co-ordination rule can make runs in ` +
+        `this direction — a co-ordinated wallet it misses moves into the outsider half and INFLATES ` +
+        `room — so this is the failure mode the whole control exists for.` +
+        (worst === undefined
+          ? ''
+          : ` Worst window ends ${worst.atIso.slice(0, 10)}: screen ` +
+            `${worst.screenRoomMedian.toFixed(3)} against a true ${worst.truthRoomMedian.toFixed(3)} ` +
+            `over ${worst.scored} scored launch(es).`) +
+        ` Check first whether launches with NO bundled create-slot transaction have been allowed ` +
+        `back into the score (measure.mjs -> roomIsProven, captain decision 134a).`,
+    );
+  }
+
   return {
     curveCheck,
     eraSplit,
@@ -663,6 +897,7 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
     fieldCheck,
     subjectEntryRecent,
     subjectEntryPostBreak,
+    rollingRoom,
     controlPopulation,
     controlPresets,
     passed: failures.length === 0,

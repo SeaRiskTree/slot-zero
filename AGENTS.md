@@ -277,10 +277,33 @@ dev currently?"*, and the shape of the answer is the point:
   measured, `data/slot-zero-june-regime-change/report.md`). Any design that scores it as beatable is
   wrong; `runStage0` fails loudly, including if a later lane loosens `minRoomLeft` to fit an output.
 - **Everything derived from the fill tape is GROSS OF FEES and is an upper bound.** The trap is
-  concrete, not theoretical: gross, `7ufmve7Z…`'s post-break field reads **362/473 closed round trips
-  positive**; fee-inclusive, that same population made **+0.54 SOL per launch with 51 of 106 wallets
+  concrete, not theoretical: gross, `7ufmve7Z…`'s post-break field reads **351/460 closed round trips
+  positive**; fee-inclusive, that same regime made **+0.54 SOL per launch with 51 of 106 wallets
   negative**. So in the entry score the field leg can only ever **veto** a verdict, never earn one,
   and every P&L field name ends `GrossOfFees`.
+- **A create slot with NO bundled transaction is UNPROVEN, and unproven launches are not scored.**
+  The co-ordination rule marks every wallet in a create-slot transaction carrying 2+ distinct
+  wallets, which is what makes the method work on a stranger — but how much of the operation it
+  recovers is the *operator's submission habit on the day*, not a property of the rule: 0% of our
+  subject's known cohort in Dec 2025–Feb 2026, 41.6% in March, 97–100% from May. Finding nothing is
+  indistinguishable from there being nothing, and reading it as the second books ~9.6–10.0 SOL of the
+  operation's own stake as outsider capital, which **inflates room — the only direction the rule can
+  err**. Captain decision 134a: refuse to score them (`measure.mjs` → `roomIsProven`), which on our
+  tape removes 24 of 24 false-positive rolling windows for 0 true positives and 81 unmeasured ones.
+  Stage 0's **rolling replay** (`stage0.mjs` → `replayRollingRoom`) is the control and fails loudly
+  if it reopens; the two slice checks structurally cannot catch it. `bundledTx` /
+  `maxWalletsInOneTx` reach the score, record (**schema 5**) and rendered line so a saved run stays
+  auditable — a schema-≤4 `entry.roomLeft` may be inflated and the record cannot say by how much, and
+  a schema-≤4 `stage0` block is not comparable either (era-2 `n` moved 89→86 for the same reason).
+  The predicate is **create-slot-scoped, not operation-scoped** — it is a floor on the evidence, and
+  no tighter one exists: a deployer-in-bundle reading matches 0 of 235 launches because this deployer
+  never shares its own create-slot transaction (decision 139a, `measure.mjs` → `roomIsProven`).
+- **Stage 0's era-2 constant is `0.771`, not the published `0.768`** (decision 135c). `0.768` is the
+  rank-43/44 order statistic of an 89-launch series whose median is `0.7708`; three recipes agree,
+  including `analysis/window-population/measure.mjs`. **Never widen that tolerance instead** — it was
+  absorbing a real −0.0115 defect and a +0.0028 documentation error that partially cancelled, so the
+  check passed for the wrong reason. Correction recorded in the tape's `IMPORT.md` → "Corrections",
+  never in the primary record itself.
 - **Distributions plus a hit rate, never a mean** — a standing captain bar for this class of claim.
   Sniper outcomes are heavy-tailed on both sides, so a mean is a wrong answer rather than a rough one.
   A test asserts `entry.mjs` contains no mean in its executable half.

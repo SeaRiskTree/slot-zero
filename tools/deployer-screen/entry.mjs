@@ -43,7 +43,7 @@
  * venue fee or rent, and only `onchain_*.csv` in the committed dataset is fee-inclusive. So every
  * P&L this module produces is an **upper bound** on what a wallet actually took, and every such
  * field is named `…GrossOfFees` so a caller cannot forget. The size of the gap is measured, not
- * feared: on our subject's post-2026-06-04 launches the field reads **76.5% of closed round trips
+ * feared: on our subject's post-2026-06-04 launches the field reads **76.3% of closed round trips
  * positive with a median +0.12 SOL gross**, while the fee-inclusive truth over the same launches is
  * **+0.54 SOL per launch shared across 106 wallets, 51 of them negative**
  * (`slot-zero-june-regime-change/report.md` §6.5). Read naively, gross says the field is winnable.
@@ -55,7 +55,7 @@
  * the consequence on the one wallet where we hold the answer.
  */
 
-import { createSlotGroups, median, percentile, tallyCreateSlot } from './measure.mjs';
+import { createSlotGroups, median, percentile, roomIsProven, tallyCreateSlot } from './measure.mjs';
 
 /**
  * A position counts as closed when the residual is within 0.1% of the tokens bought.
@@ -151,7 +151,9 @@ export function hitRate(values, predicate) {
  * @typedef {object} LaunchEntry
  * @property {import('./measure.mjs').CreateSlotMeasurement} createSlot
  * @property {FieldEntrant[]} field  Every competing wallet in the create slot. May be empty, which
- *   is itself a finding: nine of our subject's 89 post-break launches had no outsider at all.
+ *   is itself a finding: eight of our subject's 86 proven post-break launches had no outsider at
+ *   all. Refusing the unproven openings did not move that count — it is eight over all 89 too,
+ *   because none of the three refused launches was outsider-free.
  */
 
 /**
@@ -263,9 +265,23 @@ export const ENTRY_VERDICTS = [
  * @typedef {object} EntryScore
  * @property {EntryVerdict} verdict
  * @property {string} rationale
- * @property {number} launchesSampled
+ * @property {number} launchesSampled        Launches actually SCORED. Every distribution and count
+ *   below except {@link EntryScore.bundledTx} and {@link EntryScore.maxWalletsInOneTx} is over
+ *   exactly this population. Launches handed in but refused are {@link
+ *   EntryScore.launchesRoomUnproven}, so `launchesSampled + launchesRoomUnproven` is what the walk
+ *   delivered.
+ * @property {number} launchesRoomUnproven   Launches whose create slot carried NO bundled
+ *   transaction and which are therefore **not scored at all** — see `measure.mjs` →
+ *   `roomIsProven`. Not a drop and not a refusal: the opening is unproven, which is a different
+ *   finding from an opening that was measured and found closed.
+ * @property {Distribution} bundledTx        Create-slot transactions carrying 2+ wallets, over
+ *   **every launch handed in**, refused ones included. The zeros are the whole point: this and
+ *   `maxWalletsInOneTx` are the only observable that exposes the unproven condition, so a saved run
+ *   can be audited for it after the fact.
+ * @property {Distribution} maxWalletsInOneTx Largest wallet count in one create-slot transaction,
+ *   over every launch handed in.
  * @property {number} launchesWithNoOutsider Launches whose create slot the operation took entirely.
- * @property {Distribution} roomLeft         Across launches.
+ * @property {Distribution} roomLeft         Across scored launches.
  * @property {HitRate} roomHitRate           Launches whose room clears `minRoomLeft`.
  * @property {Distribution} operationShare
  * @property {Distribution} devSol
@@ -291,15 +307,40 @@ export const ENTRY_VERDICTS = [
  *
  * Two legs, and they are **not** symmetric:
  *
- * - **Room is the gate.** It is measured from capital that provably entered the curve, it does not
- *   depend on fees, and it is the quantity the 2026-06-04 finding turned on. A median below
- *   `minRoomLeft` ends the enquiry.
+ * - **Room is the gate.** It is measured from capital that provably entered the curve, and it is
+ *   the quantity the 2026-06-04 finding turned on. A median below `minRoomLeft` ends the enquiry.
+ *
+ *   **On fees, be exact about which claim is being made.** No fee term appears anywhere in the room
+ *   arithmetic — every input is `Fill.sol`, and given a fixed set of fills no fee can perturb the
+ *   ratio. That is *arithmetic* independence, and it is why room is reproducible offline for free.
+ *   It is **not** causal independence, and reading it as such is the trap: room is a ratio of who
+ *   got FILLED, and the fee auction is what decides that. Post-break our subject's launches saw a
+ *   median of **9,169 first-30-second attempts against 220 that landed — 41.6 attempts per landed
+ *   transaction** (`slot-zero-stage2-correctness-and-fees/report.md` §4). The fill tape sees only
+ *   the ~2% that won, so `independentSol` is outsider capital that *cleared the auction*, never
+ *   outsider capital that wanted in. Room is measured strictly downstream of the price of the seat
+ *   and says nothing about it: on the launches clearing the 0.55 bar the worst single entrant paid
+ *   **2.86 SOL** in fees to get there. Pricing that seat is the next lane's, not this one's.
  * - **The field is a veto, never a pass.** It is gross of fees and therefore an upper bound, so a
  *   loss-making field is conclusive and a profitable-looking one establishes nothing at all. It can
  *   only ever take a verdict away.
  *
+ * ## Launches whose opening is UNPROVEN are not scored at all
+ *
+ * `measure.mjs` → `roomIsProven` owns the reasoning. A create slot carrying no bundled transaction
+ * gives the co-ordination rule nothing to find, which is indistinguishable from there being nothing
+ * to find — and the difference is worth ~9.6–10.0 SOL of the operation's own stake booked as
+ * outsider capital. Those launches are removed from **both** legs before anything is computed:
+ * they contribute no room figure, no field entrant and no round trip. Captain decision 134a.
+ *
+ * The consequence is deliberate and it is the safe one. A candidate whose proven launches fall
+ * below `minLaunchesSampled` scores `entry-unmeasured` — never `entry-room-present`, and never
+ * folded in with a refusal. On our own tape, replaying the live recipe at every index, that removes
+ * **24 of 24 false-positive windows and leaves none at any bar from 0.1 to 0.8**; it costs 81 of
+ * 228 windows, which become unmeasured rather than wrong. Stage 0's rolling replay asserts it.
+ *
  * The asymmetry is not caution for its own sake. Our own subject deployer's post-break field reads
- * **76.5% of closed round trips positive** on this exact measurement, while the fee-inclusive record
+ * **76.3% of closed round trips positive** on this exact measurement, while the fee-inclusive record
  * puts the entire outsider population at +0.54 SOL per launch with 51 of 106 wallets negative. A
  * design that let the field leg carry a positive verdict would call that wallet beatable, and it is
  * not. Stage 0 asserts the composite verdict on it for exactly this reason.
@@ -313,7 +354,8 @@ export const ENTRY_VERDICTS = [
  * overstated and the room understated, which makes `entry-room-present` harder to earn rather than
  * easier. A count that is not small is a caveat on the whole sample.
  *
- * @param {readonly LaunchEntry[]} launches
+ * @param {readonly LaunchEntry[]} launches Every launch the walk delivered. Ones whose room is
+ *   unproven are removed here rather than by the caller, so no caller can forget to.
  * @param {EntryThresholds} t
  * @param {object} [context]
  * @param {string} [context.candidateWallet] Wallet the launches were sampled for, when known.
@@ -324,14 +366,20 @@ export const ENTRY_VERDICTS = [
  * @returns {EntryScore}
  */
 export function scoreEntry(launches, t, context = {}) {
-  const room = launches.map((l) => l.createSlot.roomLeft);
-  const field = launches.flatMap((l) => l.field);
+  // THE PARTITION, and it comes first because nothing below may see the refused half. A launch
+  // whose create slot carried no bundled transaction contributes no room figure, no field entrant
+  // and no round trip — see the module header and `measure.mjs` → `roomIsProven`.
+  const scored = launches.filter((l) => roomIsProven(l.createSlot));
+  const roomUnproven = launches.length - scored.length;
+
+  const room = scored.map((l) => l.createSlot.roomLeft);
+  const field = scored.flatMap((l) => l.field);
   const closed = field.filter((e) => e.closedInWindow);
 
   const deployerMismatches =
     context.candidateWallet === undefined
       ? 0
-      : launches.filter((l) => l.createSlot.deployer !== context.candidateWallet).length;
+      : scored.filter((l) => l.createSlot.deployer !== context.candidateWallet).length;
 
   const roomLeft = distribution(room);
   const fieldHitRateGrossOfFees = hitRate(closed, (e) => e.realisedSolGrossOfFees > 0);
@@ -340,14 +388,19 @@ export function scoreEntry(launches, t, context = {}) {
   const score = {
     verdict: 'entry-unmeasured',
     rationale: '',
-    launchesSampled: launches.length,
-    launchesWithNoOutsider: launches.filter((l) => l.field.length === 0).length,
+    launchesSampled: scored.length,
+    launchesRoomUnproven: roomUnproven,
+    // Over EVERY launch handed in, refused ones included. A distribution taken over the scored half
+    // could never contain a zero, and the zeros are exactly what an auditor is looking for.
+    bundledTx: distribution(launches.map((l) => l.createSlot.bundledTx)),
+    maxWalletsInOneTx: distribution(launches.map((l) => l.createSlot.maxWalletsInOneTx)),
+    launchesWithNoOutsider: scored.filter((l) => l.field.length === 0).length,
     roomLeft,
     roomHitRate: hitRate(room, (v) => v >= t.minRoomLeft),
-    operationShare: distribution(launches.map((l) => l.createSlot.operationShare)),
-    devSol: distribution(launches.map((l) => l.createSlot.devSol)),
-    coordinatedSol: distribution(launches.map((l) => l.createSlot.coordinatedSol)),
-    outsidersPerLaunch: distribution(launches.map((l) => l.field.length)),
+    operationShare: distribution(scored.map((l) => l.createSlot.operationShare)),
+    devSol: distribution(scored.map((l) => l.createSlot.devSol)),
+    coordinatedSol: distribution(scored.map((l) => l.createSlot.coordinatedSol)),
+    outsidersPerLaunch: distribution(scored.map((l) => l.field.length)),
     fieldFillSol: distribution(field.map((e) => e.createSlotFillSol)),
     fieldSolQueuedAhead: distribution(field.map((e) => e.solQueuedAheadSol)),
     fieldRealisedSolGrossOfFees: distribution(closed.map((e) => e.realisedSolGrossOfFees)),
@@ -362,6 +415,15 @@ export function scoreEntry(launches, t, context = {}) {
 
   const dropped = context.launchesDropped ?? 0;
   const clockDrops = context.mintTimeDisagreements ?? 0;
+  if (roomUnproven > 0) {
+    score.caveats.push(
+      `${roomUnproven} of ${launches.length} measured launch(es) had NO bundled transaction in the ` +
+        `create slot, so the co-ordination rule recovered nothing there and the opening is UNPROVEN ` +
+        `rather than open. Those launches are NOT SCORED — not their room, not their field. Scoring ` +
+        `them would book the operation's own stake as outsider capital and inflate room, which is ` +
+        `the one direction that manufactures an edge (captain decision 134a).`,
+    );
+  }
   if (dropped > 0) {
     score.caveats.push(
       `${dropped} launch window(s) could not be walked back to the mint and were DROPPED rather ` +
@@ -381,7 +443,7 @@ export function scoreEntry(launches, t, context = {}) {
   }
   if (deployerMismatches > 0) {
     score.caveats.push(
-      `${deployerMismatches} of ${launches.length} launch(es) had a first create-slot buyer other ` +
+      `${deployerMismatches} of ${scored.length} scored launch(es) had a first create-slot buyer other ` +
         `than the candidate wallet; those are credited to the operation, which understates room`,
     );
   }
@@ -400,10 +462,16 @@ export function scoreEntry(launches, t, context = {}) {
       'would count towards, and whether an outsider could have left first — is NOT scored here.',
   );
 
-  if (launches.length < t.minLaunchesSampled) {
+  if (scored.length < t.minLaunchesSampled) {
     score.rationale =
-      `only ${launches.length} usable launch window(s), below the ${t.minLaunchesSampled} this ` +
+      `only ${scored.length} scoreable launch window(s), below the ${t.minLaunchesSampled} this ` +
       `measurement needs. A distribution over fewer is not a distribution.` +
+      (roomUnproven > 0
+        ? ` ${roomUnproven} further window(s) were measured but NOT SCORED: their create slot ` +
+          `carried no bundled transaction, so the co-ordination rule found nothing and cannot tell ` +
+          `an operation that did not bundle from a create slot full of genuine outsiders. That is ` +
+          `UNPROVEN, not closed and not open — read it as no answer about this wallet.`
+        : '') +
       (dropped > 0 ? ` ${dropped} window(s) were dropped for incomplete coverage.` : '');
     return score;
   }
@@ -411,7 +479,7 @@ export function scoreEntry(launches, t, context = {}) {
   if (!(roomLeft.median >= t.minRoomLeft)) {
     score.verdict = 'entry-room-absent';
     score.rationale =
-      `median room left ${fmt(roomLeft.median)} over ${launches.length} launches is below the ` +
+      `median room left ${fmt(roomLeft.median)} over ${scored.length} scored launches is below the ` +
       `${t.minRoomLeft} bar (p25 ${fmt(roomLeft.p25)}, p75 ${fmt(roomLeft.p75)}; ` +
       `${score.roomHitRate.hits}/${score.roomHitRate.n} launches clear it). The deployer and its own ` +
       `wallets take the bottom of their own curve, so there is nothing to enter. Read the captain's ` +
@@ -422,7 +490,7 @@ export function scoreEntry(launches, t, context = {}) {
   if (closed.length < t.minFieldRoundTrips) {
     score.rationale =
       `the opening window leaves room (median ${fmt(roomLeft.median)}), but only ${closed.length} ` +
-      `closed round trip(s) across ${launches.length} launches — below the ${t.minFieldRoundTrips} a ` +
+      `closed round trip(s) across ${scored.length} scored launches — below the ${t.minFieldRoundTrips} a ` +
       `hit rate needs. The field is UNMEASURED, so whether anyone actually takes that room is ` +
       `unknown and must not be assumed from the room figure alone.`;
     return score;
@@ -441,7 +509,7 @@ export function scoreEntry(launches, t, context = {}) {
 
   score.verdict = 'entry-room-present';
   score.rationale =
-    `median room left ${fmt(roomLeft.median)} over ${launches.length} launches ` +
+    `median room left ${fmt(roomLeft.median)} over ${scored.length} scored launches ` +
     `(${score.roomHitRate.hits}/${score.roomHitRate.n} clear the ${t.minRoomLeft} bar), and the field ` +
     `is not already loss-making before costs: ${fieldHitRateGrossOfFees.hits}/` +
     `${fieldHitRateGrossOfFees.n} closed round trips positive, median ` +

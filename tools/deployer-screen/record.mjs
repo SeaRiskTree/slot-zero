@@ -58,8 +58,25 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   understating a bonded count more than a launch count. **Do not compare them with a schema-4
  *   `completionRate` as though they answered the same question**; compare against
  *   `vendorCompletionRate`, which is the same measurement the older records hold.
+ * - **5** — Stage 2 stops scoring launches whose create slot carried no bundled transaction, and
+ *   the `entry` block gains the three fields that make that visible: `launchesRoomUnproven`,
+ *   `bundledTx` and `maxWalletsInOneTx`. **Two consequences for a reader of an older record.**
+ *   First, `entry.launchesSampled` on schema 3 and 4 counts every measured window, including ones
+ *   whose opening was unproven; on schema 5 it counts only the SCORED ones, and the refused ones
+ *   are the new field beside it. Second, and this is the one that matters: a schema-3 or schema-4
+ *   `entry.roomLeft` may be **inflated by the operation's own stake booked as outsider capital**,
+ *   and the record carries nothing that could say by how much — which is precisely why the fields
+ *   were added. No candidate row is a candidate row of a different shape, so
+ *   `PERSISTED_BY_SCHEMA[5]` equals `[4]`; the candidate-row change is confined to `entry`.
+ *   **The `stage0` block also changed, and it is not comparable across the boundary.** Stage 0 now
+ *   filters its era buckets on the same rule, so `stage2SeamReproduction[].n` for era 2 moved
+ *   **89 → 86** between schema 4 and schema 5 with no change to the tape — a schema-4 `n` counts
+ *   every launch in the era, a schema-5 `n` counts only the scored ones. Each entry now carries
+ *   `nRoomUnproven` for the refused remainder, and the block gains `rollingRoom`, the replay of the
+ *   live entry recipe at every trailing window against the named cohort. Do not read a schema-4 and
+ *   a schema-5 `stage2SeamReproduction` as answering the same question.
  */
-export const RECORD_SCHEMA_VERSION = 4;
+export const RECORD_SCHEMA_VERSION = 5;
 
 /**
  * Completeness of a run, as the record can actually support.

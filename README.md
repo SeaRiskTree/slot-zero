@@ -77,10 +77,11 @@ asserts **both** halves of it every run:
 
 It is competent (103 of 239 launches bonded, 0.4310) and it is **not beatable**: since 2026-06-04
 its own group takes the bottom of its own curve. Stage 2 scores it `entry-room-absent` on both the
-recent-launch slice a live run would score and the whole 89-launch post-break regime. That pairing
+recent-launch slice a live run would score and the whole post-break regime, over its 86 **proven**
+launches. That pairing
 is what stops the tool from grading itself favourably, and `stage0.mjs` fails loudly if a later lane
 loosens a bar enough to admit the wallet. It matters most because the **field** leg on that same
-wallet reads 362 of 473 closed round trips positive gross of fees — followed on its own it would
+wallet reads 351 of 460 closed round trips positive gross of fees — followed on its own it would
 call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md`.
 
 ---
@@ -432,8 +433,8 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
   cannot leave.
 - **Everything Stage 2 measures about profit is gross of fees and therefore an upper bound**, so
   its field leg can only ever *veto* a verdict, never earn one. The counterexample is on our own
-  subject: 76.5% of post-break closed round trips are positive gross, and the same population is
-  not worth trading fee-inclusive.
+  subject: 76.3% of post-break closed round trips are positive gross (351 / 460), and the same
+  population is not worth trading fee-inclusive.
 - **Every P&L here is bounded by a 60-second window** (300 s on 21 launches, 120 s on 4).
   48% of pairs close inside it; the other 52% are late, small and still holding, and their
   outcome is unknown. A whole-life tape is the same endpoint with no window bound — roughly

@@ -15,7 +15,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -590,5 +591,58 @@ describe('the era question, answered where it can be and refused where it cannot
     const plain = parseArgs([]);
     expect(plain.ok).toBe(true);
     if (plain.ok) expect(plain.opts.subjectEra).toBe(false);
+  });
+});
+
+describe('the census record is not a screen run record, and must not be filed as one', () => {
+  it('lives under census/, never under runs/', () => {
+    // Found the hard way: `runs/` is the SCREEN's versioned contract and
+    // `test/deployer-screen.test.ts` asserts every .json under it against `RECORD_SCHEMA_VERSION`'s
+    // key set, recursively — so a census record there fails two assertions that are about a
+    // different document. Worse, `buildCohort` reads `runs/*.json` back as a cohort source, so a
+    // census record filed there would make the next run's population depend on the last run's.
+    const runs = fileURLToPath(new URL('../tools/deployer-screen/runs/', import.meta.url));
+    for (const entry of readdirSync(runs)) {
+      expect(entry, 'a census record must not be filed under runs/').not.toMatch(/bundling-census/);
+    }
+    const census = fileURLToPath(new URL('../tools/deployer-screen/census/', import.meta.url));
+    const records = readdirSync(census).filter((f) => f.endsWith('.json'));
+    expect(records.length).toBeGreaterThan(0);
+    for (const file of records) {
+      const parsed = JSON.parse(readFileSync(join(census, file), 'utf8'));
+      // It names itself, so a reader that finds one cannot mistake it for the screen's.
+      expect(parsed.tool, file).toBe('deployer-screen/bundling-census');
+      expect(parsed.scope, file).toMatch(/WINDOWS ONLY/);
+      // The declared keyed spend is a zero and it is IN the record, not only in the prose.
+      expect(parsed.spend.keyedRequests, file).toBe(0);
+      expect(parsed.spend.keyedCeilingDeclared, file).toBe(0);
+      expect(parsed.spend.heliusCredits, file).toBe(0);
+      expect(parsed.spend.duneExecutions, file).toBe(0);
+      expect(parsed.spend.solanaRpcRequests, file).toBe(0);
+      // Both ceilings held.
+      expect(parsed.spend.listingRequests, file).toBeLessThanOrEqual(parsed.spend.listingCeiling);
+      expect(parsed.spend.fillRequests, file).toBeLessThanOrEqual(parsed.spend.fillCeiling);
+      // Every caveat travels with the numbers.
+      expect(parsed.caveats, file).toContain(OWNERSHIP_LIST_CAVEAT);
+      expect(parsed.caveats, file).toContain(DROPPED_WINDOW_CAVEAT);
+      expect(parsed.caveats, file).toContain(MINT_TIME_BACKDATE_CAVEAT);
+      // And no verdict of any kind was produced — this pass does not score.
+      expect(JSON.stringify(parsed), file).not.toMatch(/entry-room|entry-open|entry-cost|roomLeft/);
+    }
+  });
+
+  it('the committed record\'s own arithmetic closes', () => {
+    // A summary that disagrees with the rows it was computed from is how a headline outlives its
+    // evidence. Recomputing it from `candidates` is cheap and it is the whole audit.
+    const census = fileURLToPath(new URL('../tools/deployer-screen/census/', import.meta.url));
+    for (const file of readdirSync(census).filter((f) => f.endsWith('.json'))) {
+      const parsed = JSON.parse(readFileSync(join(census, file), 'utf8'));
+      const recomputed = summariseCensus(parsed.candidates);
+      expect(recomputed, file).toEqual(parsed.summary);
+      // And the cohort accounting adds up: everything gated either passed or is named as not surveyed.
+      expect(parsed.cohort.gatePassed + parsed.cohort.notSurveyed.length, file).toBe(parsed.cohort.gated);
+      expect(parsed.cohort.surveyed + parsed.cohort.leftUnsurveyedByCap, file).toBe(parsed.cohort.gatePassed);
+      expect(parsed.candidates.length, file).toBe(parsed.cohort.surveyed);
+    }
   });
 });

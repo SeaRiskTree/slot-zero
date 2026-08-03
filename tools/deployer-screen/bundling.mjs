@@ -35,6 +35,11 @@
  * - **Which wallets** — the cohort is read from this repository's own committed records
  *   ({@link buildCohort}): the feed ledger and every saved screen run. Those wallets were surfaced
  *   and graded by runs whose keyed allowance is already spent, so re-reading them costs nothing.
+ *   **This pass's own record therefore lives in `census/`, never in `runs/`**, for two reasons that
+ *   both matter: `runs/` is the SCREEN's versioned contract and `test/deployer-screen.test.ts`
+ *   asserts every file there against `RECORD_SCHEMA_VERSION`'s key set, which this record is not;
+ *   and a census record dropped into `runs/` would be read back by {@link buildCohort} as a cohort
+ *   source, making the next run's population depend on the last one's.
  * - **Which launches** — `pumpfun.mjs` → `readCreatorHistory` on `frontend-api-v3.pump.fun`, the
  *   keyless ownership listing the gate already merges against and the `--consistency` pass already
  *   walks. It carries `created_timestamp` and `complete` per row, which is exactly what
@@ -674,7 +679,8 @@ OPTIONS
                       the most recent 8 launches per candidate, which cannot carry a trend.
   --candidates <n>    Max gate survivors to survey. Cannot exceed the pinned cap.
   --cohort <n>        Max cohort wallets to gate. Cannot exceed the pinned cap.
-  --out <path>        Write the census record as JSON. Default: nothing is written.
+  --out <path>        Write the census record as JSON. Default: nothing is written. Write it under
+                      census/, NOT runs/ — see the module header.
   --json              Print the record as JSON instead of text.
   --help              This text.
 

@@ -1596,7 +1596,10 @@ and the live-vs-tape check above remain the keyless evidence that the walk is th
 
 `node tools/deployer-screen/bundling.mjs` (captain decision 173a, 2026-08-03). Full method in that
 file's header; the pinned bounds are `thresholds.json` → `bundling_census`; the committed run is
-`runs/2026-08-03-bundling-census.json` and its report is `runs/2026-08-03-bundling-census.md`.
+`census/2026-08-03-bundling-census.json` and its report is
+`census/2026-08-03-bundling-census.md`. **The census writes to `census/`, never to `runs/`**: that
+directory is the screen's own versioned contract, asserted per schema version, and `buildCohort`
+reads it back as a cohort source.
 
 **The problem it measures, which is arithmetic before it is observation.** `stage2_entry` pins
 `maxLaunchesPerCandidate: 8` and `minLaunchesSampled: 8`, deliberately equal, and since #17 a launch
@@ -1653,6 +1656,37 @@ a population one is the "n = 2, a signal not a rate" failure one level up.
 **The `readLaunchWindow` two-bound cursor cannot reach this number.** That walk can fail to fetch
 the **tail** of a window (`CLAUDE.md`); the census reads the **create slot**, which is the oldest
 end, reached last and proved by the coverage obligation.
+
+**The mint instant is BACKDATED by `mintTimeBackdateMs`, and that is a measurement rather than a
+habit.** `frontend-api-v3`'s `created_timestamp` is millisecond-precision on older listing rows
+while `swap-api`'s fill `ts` is whole seconds, floored, so the declared mint lands up to ~2 s
+*after* the launch's own first fill and the zero-slack pre-mint tripwire deletes it — measured live
+at 5 of 8 launches on the first candidate walked. `MINT_TIME_BACKDATE_CAVEAT` states what the fix
+costs. See the run report §5 and `thresholds.json` for the six-launch skew sample.
+
+### What the first run measured, 2026-08-03
+
+Full report: `census/2026-08-03-bundling-census.md`. **14 gate survivors, 112 windows, 0 dropped,
+0 keyed requests, 585 keyless, 0 shed, 59.7 minutes.**
+
+- **Per-launch bundling rate: 18 of 112 = 0.1607** (n = 112 windows over 14 candidates).
+- **Headline — candidates bundling on all 8 of their most recent eligible launches: 1 of 14 =
+  0.0714**, and **the one is our own control**. Among the 13 strangers it is **0 of 13**.
+- **11 of 14 never bundle at all** (`maxWalletsInOneTx <= 1` on every window) — permanently
+  unscoreable, counted apart from the **2** near-misses.
+- **The create slots are not empty**: median 5.5 distinct wallets, p75 10.25, max 35, and 96 of the
+  112 held 2+. Only 18 of those 96 carried a two-wallet transaction.
+
+**14 is the whole gate-survivor population this repository can reach, not a truncated 20–30** —
+the census cap is 30 and nothing was left unsurveyed. Reaching more needs fresh keyed discovery.
+
+**Three cross-checks make the zeros believable**: our own subject reads 8 of 8 with `bundledTx 2` /
+`maxWalletsInOneTx 3` on every window, matching its tape; and `yHCxHBEa…` (4 of 8) and `GeBJSHK4…`
+(0 of 8) reproduce `data/slot-zero-stage2-reverify/report.md` §2a exactly, from a *different*
+launch-list surface.
+
+**No threshold moved on the strength of any of it.** The pinning decision is the captain's; §7 of
+the report states what the number implies and stops there.
 
 ## The keyless boundary
 

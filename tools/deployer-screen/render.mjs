@@ -444,12 +444,22 @@ export function renderStage0(r, vendorReadings) {
   );
   L.push(
     `  entry cost: median ${num(r.costCheck.entryCostMedianSol, 4)} SOL, ` +
-      `${pct(r.costCheck.entryCostPositiveShare)} of entries above zero`,
+      `${pct(r.costCheck.entryCostPositiveShare)} of entries above zero ` +
+      `(needs ${pct(r.costCheck.minEntryCostPositiveShare)})`,
   );
   L.push(
     `  per SOL staked: ${num(r.costCheck.entryCostPerSolStakedMedianByLaunch, 4)} median PER LAUNCH ` +
       `(the unit the entry-cost bar is compared against), ` +
       `${num(r.costCheck.entryCostPerSolStakedMedianByEntry, 4)} pooled per ENTRY`,
+  );
+  // BOTH POPULATIONS, so the record shows the difference rather than asserting there is none. The
+  // figures above are over the launches whose opening is PROVEN — the population the live bar reads.
+  L.push(
+    `  the population above is PROVEN openings only, matching what the gate scores; leaving the ` +
+      `unproven ones in reads ` +
+      `${r.costCheck.includingUnprovenLaunchesPriced} launch(es), ` +
+      `${r.costCheck.includingUnprovenPairsPriced} pair(s) and ` +
+      `${num(r.costCheck.includingUnprovenEntryCostPerSolStakedMedianByLaunch, 4)} per SOL staked`,
   );
   L.push(
     `  the field: hit rate ${num(r.costCheck.grossHitRate, 4)} GROSS against ` +
@@ -998,8 +1008,9 @@ export function renderDryRun(plan) {
     );
     L.push('  IT RUNS ONLY ON A CANDIDATE THE FREE LEGS HAVE NOT ALREADY REFUSED. Room and the gross');
     L.push('  field are arithmetic over fills in hand, so a deployer failing either costs 0 requests');
-    L.push('  here. Measured per launch on our own tape: ~7 create-slot transactions at the median');
-    L.push('  and ~19 more for a closed round trip\'s whole window, unioned so none is paid for twice.');
+    L.push('  here. Measured per launch on our own tape: ~19 DISTINCT transactions at the median once');
+    L.push('  the create-slot scope (p50 7) and the closed-round-trip window scope (p50 18) are');
+    L.push('  unioned — 19 IS the union, not 7 + 19, because none is paid for twice.');
     L.push(
       `  Whole-block route ${c.preferBlockRoute ? 'PROBED FIRST' : 'DISABLED'} behind a fallback to per-signature reads; ` +
         `the record says which ran.`,

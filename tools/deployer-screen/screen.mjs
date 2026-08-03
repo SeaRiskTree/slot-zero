@@ -71,6 +71,17 @@ import { SUBJECT_DEPLOYER, VENDOR_READINGS, runStage0 } from './stage0.mjs';
  * and it bounds the keyless spend at 4 requests per candidate rather than the ~1,050-result server
  * ceiling. `readCreatorHistory` reports when the cap bit and the record carries it as
  * `listingPageCapped`.
+ *
+ * **THE 4 ITSELF IS AN UNMEASURED OPERATIONAL BOUND**, and it is stated rather than dressed up: the
+ * ratio above says 280 is generous next to the vendor profile it is merged with, not that a deployer
+ * needs 280 rows. Nothing committed here measures how deep the listing must be read before the merge
+ * stops changing — **neither committed run can answer it**, because both graded on the ownership
+ * reading and so record `vendorPageCapped` (the vendor's own 70-record profile cap, which bit for 6
+ * of 65 and 4 of 12) and never `listingPageCapped`. What would justify a value: one creation-derived
+ * run recording, per candidate, the page at which the merged launch count stops moving. Until that
+ * exists this is a spend ceiling chosen for the keyless plan it has to fit — 195 x 4 = 780 of
+ * `budget.maxKeylessRequests`, which a test pins — and the failure it can cause is disclosed rather
+ * than silent, since a truncated listing is reported on the candidate.
  */
 const LISTING_PAGES_FOR_MERGE = 4;
 
@@ -1227,6 +1238,14 @@ function summariseStage0(s) {
         s.costCheck.entryCostPerSolStakedMedianByLaunch.toFixed(6),
       ),
       entryCostPositiveShare: Number(s.costCheck.entryCostPositiveShare.toFixed(4)),
+      minEntryCostPositiveShare: s.costCheck.minEntryCostPositiveShare,
+      // Schema 7: the same three figures over the UNFILTERED population, so the record says which
+      // population its identically named keys above mean rather than leaving it to context.
+      includingUnprovenLaunchesPriced: s.costCheck.includingUnprovenLaunchesPriced,
+      includingUnprovenPairsPriced: s.costCheck.includingUnprovenPairsPriced,
+      includingUnprovenEntryCostPerSolStakedMedianByLaunch: Number(
+        s.costCheck.includingUnprovenEntryCostPerSolStakedMedianByLaunch.toFixed(6),
+      ),
       grossHitRate: Number(s.costCheck.grossHitRate.toFixed(4)),
       netHitRate: Number(s.costCheck.netHitRate.toFixed(4)),
       grossMedianSol: Number(s.costCheck.grossMedianSol.toFixed(6)),

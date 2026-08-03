@@ -68,9 +68,14 @@ export const LIMITATIONS = [
   '  · Lead time, or the independence of the actors involved.',
   '',
   'The standing bar for acting on a signal of this class is real lead time, independence of the',
-  'actors, and realised profit reported as a distribution plus a hit rate. Stage 2 now clears the',
-  'last of those three net of MEASURED fees — an upper bound, not the truth — and clears neither of',
-  'the first two.',
+  'actors, and realised profit reported as a distribution plus a hit rate. Stage 2 clears the last',
+  'of those three net of MEASURED fees — an upper bound, not the truth — and clears neither of the',
+  'first two. THAT NET READING IS PER CANDIDATE AND IS OFTEN ABSENT: the cost leg does not run under',
+  '--no-stage2, does not run in a --stage0 run, and does not run for any candidate the free legs',
+  '(room, or the field GROSS of fees) already refused. Where it did not run the figures are gross of',
+  'fees only, the candidate\'s own block says NOT MEASURED, and its verdict is entry-cost-unmeasured',
+  '— which is never a pass. Read the per-candidate block, not this footer, for whether the seat was',
+  'priced.',
   '',
   'A HIGH COMPLETION RATE DOES NOT IMPLY A PROFITABLE ENTRY, and A PROFITABLE-LOOKING FIELD DOES',
   'NOT IMPLY A PROFITABLE ENTRY EITHER. We hold the counterexample to both. Our own subject',
@@ -186,7 +191,10 @@ export function renderEntry(e, coverage) {
   } else {
     L.push(distHeader());
     L.push(distLine('entry cost (SOL)', e.entryCostSol, 4));
-    L.push(distLine('cost per SOL staked', e.entryCostPerSolStaked, 4));
+    L.push(distLine('per SOL staked, entries', e.entryCostPerSolStaked, 4));
+    // The unit the bar is compared against, printed beside the pooled one so a reader can see both
+    // and can see which is which. Decision 140a.
+    L.push(distLine('per SOL staked, *LAUNCH*', e.entryCostPerSolStakedByLaunch, 4));
     L.push(distLine('tx fee, base+priority', e.entryTxFeeSol, 5));
     L.push(distLine('realised SOL *NET*', e.fieldRealisedSolNetOfMeasuredFees));
     L.push(distLine('return per SOL *NET*', e.fieldReturnPerSolNetOfMeasuredFees));

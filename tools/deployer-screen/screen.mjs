@@ -1209,6 +1209,30 @@ function summariseStage0(s) {
       falseNegatives: s.rollingRoom.falseNegatives,
       ok: s.rollingRoom.ok,
     },
+    // The cost leg's own regression, persisted for the same reason: it is the ONE control that
+    // establishes the direction of the whole fee correction — netting measured fees must move the
+    // field DOWN — and `passed: true` alone cannot say by how much, or over what.
+    onChainCostReproduction: {
+      launchesPriced: s.costCheck.launchesPriced,
+      minLaunches: s.costCheck.minLaunches,
+      entriesPriced: s.costCheck.entriesPriced,
+      entries: s.costCheck.entries,
+      pairsPriced: s.costCheck.pairsPriced,
+      minPairs: s.costCheck.minPairs,
+      entryCostMedianSol: Number(s.costCheck.entryCostMedianSol.toFixed(6)),
+      entryCostPerSolStakedMedian: Number(s.costCheck.entryCostPerSolStakedMedian.toFixed(6)),
+      entryCostPositiveShare: Number(s.costCheck.entryCostPositiveShare.toFixed(4)),
+      grossHitRate: Number(s.costCheck.grossHitRate.toFixed(4)),
+      netHitRate: Number(s.costCheck.netHitRate.toFixed(4)),
+      grossMedianSol: Number(s.costCheck.grossMedianSol.toFixed(6)),
+      netMedianSol: Number(s.costCheck.netMedianSol.toFixed(6)),
+      flipsPositiveToNegative: s.costCheck.flipsPositiveToNegative,
+      // The known-negative control run through the whole new ladder WITH its costs attached. It is
+      // refused by ROOM and only room — the net field leg does not veto it, and asserting that it
+      // did would pin a property the evidence does not support.
+      postBreakVerdict: s.costCheck.postBreakScore.verdict,
+      ok: s.costCheck.ok,
+    },
   };
 }
 

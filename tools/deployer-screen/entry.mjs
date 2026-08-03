@@ -196,7 +196,8 @@ export function hitRate(values, predicate) {
  *   tip paid INSIDE its own transaction. **`NaN` until the create slot is priced on-chain** — the
  *   fill tape cannot see any of it. See {@link LANDING_TIP_CAVEAT} for what it still misses.
  * @property {number} entryCostPerSolStaked `entryCostSol / createSlotFillSol` — the price of the
- *   seat per SOL of seat. `NaN` unless priced.
+ *   seat per SOL of seat, for THIS ONE ENTRY. `NaN` unless priced. The verdict does not read this
+ *   figure directly: see {@link EntryScore.entryCostPerSolStakedByLaunch}.
  * @property {number} entryTxFeeSol  The transaction fee, base plus priority, on the create-slot
  *   transactions this wallet PAID FOR. Exact where it applies, and zero where another account was
  *   the fee payer — the counter-trap CLAUDE.md names. Carried apart from `entryCostSol` because it
@@ -454,8 +455,11 @@ export const ENTRY_VERDICTS = [
  * @property {number} minFieldHitRateGross   Necessary-condition floor on the gross hit rate.
  * @property {number} minFieldHitRateNet     The same floor, net of measured fees. The same veto,
  *   now over a real measurement rather than an upper bound.
- * @property {number} maxEntryCostPerSolStaked Median price of the seat, per SOL of seat, at or above
- *   which the cost consumes the opening.
+ * @property {number} maxEntryCostPerSolStaked Price of the seat, per SOL of seat, at or above which
+ *   the cost consumes the opening. Compared against the **per-launch** median — the median over
+ *   launches of each launch's own median entry — never the pooled per-entry one. Captain decision
+ *   140a: every launch counts once, so a launch with many priced entrants cannot outvote a launch
+ *   with one.
  * @property {number} minPricedFraction      Share of the field the cost leg must have priced before
  *   any after-cost reading is allowed to stand.
  */
@@ -494,7 +498,14 @@ export const ENTRY_VERDICTS = [
  * @property {Distribution} entryCostSol           What landing cost, per create-slot entry, over
  *   the entries the cost leg could price. Empty (`n: 0`, all `NaN`) when nothing was priced, which
  *   is the honest reading for a leg that did not run.
- * @property {Distribution} entryCostPerSolStaked  The same, per SOL of seat.
+ * @property {Distribution} entryCostPerSolStaked  The same, per SOL of seat. **Over ENTRIES** — one
+ *   observation per priced create-slot entry, pooled across every scored launch. The finer-grained
+ *   evidence, and not what the verdict reads.
+ * @property {Distribution} entryCostPerSolStakedByLaunch  The same quantity **over LAUNCHES** — one
+ *   observation per scored launch that priced at least one entry, each being that launch's own
+ *   median entry. **This is the distribution `entry-cost-prohibitive` gates on** (captain decision
+ *   140a): pooled over entries, a single launch with dozens of priced entrants outvotes a dozen
+ *   launches with one apiece, and the bar is anchored on a per-launch figure.
  * @property {Distribution} entryTxFeeSol          The transaction fee half of it — base plus
  *   priority — where the entrant paid it. The observable price of the slot auction.
  * @property {HitRate} entryCostPriced             How much of the field the cost leg priced. `hits`
@@ -545,6 +556,13 @@ export const ENTRY_VERDICTS = [
  *   they run first**, so a deployer that fails either is refused before one RPC request is spent on
  *   pricing it. Only a candidate still alive after both is worth the walk — which is the same
  *   recommendation `slot-zero-stage2-correctness-and-fees/report.md` §5.3 reaches from the cost side.
+ *
+ *   **The bar is compared PER LAUNCH** (captain decision 140a). Each scored launch contributes its
+ *   own median entry and nothing more, and the median of those is what `entry-cost-prohibitive`
+ *   reads — {@link EntryScore.entryCostPerSolStakedByLaunch}. The pooled per-entry distribution is
+ *   reported beside it, and pooling is exactly what must not be gated on: create-slot entrant
+ *   counts vary by an order of magnitude between launches, so a pooled median is a statement about
+ *   whichever launch was busiest rather than about the deployer.
  *
  * ## Launches whose opening is UNPROVEN are not scored at all
  *
@@ -613,6 +631,18 @@ export function scoreEntry(launches, t, context = {}) {
   const closedPriced = closed.filter((e) => Number.isFinite(e.realisedSolNetOfMeasuredFees));
   const entryCostPriced = hitRate(field, (e) => Number.isFinite(e.entryCostSol));
   const entryCostPerSolStaked = distribution(priced.map((e) => e.entryCostPerSolStaked));
+  // The same quantity one unit up, and it is the unit the bar is anchored on. A launch contributes
+  // its own median and nothing else, so thirty priced entrants on one launch weigh exactly as much
+  // as one priced entrant on another. Launches that priced nothing contribute nothing rather than a
+  // zero — an unpriced launch is not a free one.
+  const entryCostPerSolStakedByLaunch = distribution(
+    scored.flatMap((l) => {
+      const perEntry = l.field
+        .map((e) => e.entryCostPerSolStaked)
+        .filter((v) => Number.isFinite(v));
+      return perEntry.length === 0 ? [] : [median(perEntry)];
+    }),
+  );
   const fieldHitRateNetOfMeasuredFees = hitRate(closedPriced, (e) => e.realisedSolNetOfMeasuredFees > 0);
   const fieldRealisedSolNetOfMeasuredFees = distribution(
     closedPriced.map((e) => e.realisedSolNetOfMeasuredFees),
@@ -642,6 +672,7 @@ export function scoreEntry(launches, t, context = {}) {
     fieldHitRateGrossOfFees,
     entryCostSol: distribution(priced.map((e) => e.entryCostSol)),
     entryCostPerSolStaked,
+    entryCostPerSolStakedByLaunch,
     entryTxFeeSol: distribution(priced.map((e) => e.entryTxFeeSol)),
     entryCostPriced,
     fieldRealisedSolNetOfMeasuredFees,
@@ -786,14 +817,19 @@ export function scoreEntry(launches, t, context = {}) {
     return score;
   }
 
-  if (entryCostPerSolStaked.median >= t.maxEntryCostPerSolStaked) {
+  // ONE FIGURE PER LAUNCH, every launch counting once — captain decision 140a. The pooled per-entry
+  // distribution is reported beside it as the finer-grained evidence, but it is not what is gated:
+  // a single launch with dozens of priced entrants would otherwise decide the bar for the sample.
+  if (entryCostPerSolStakedByLaunch.median >= t.maxEntryCostPerSolStaked) {
     score.verdict = 'entry-cost-prohibitive';
     score.rationale =
       `the opening window leaves room (median ${fmt(roomLeft.median)}), but landing in it costs a ` +
-      `median ${fmt(entryCostPerSolStaked.median)} SOL per SOL staked (p75 ` +
-      `${fmt(entryCostPerSolStaked.p75)}, p90 ${fmt(entryCostPerSolStaked.p90)}), at or above the ` +
-      `${t.maxEntryCostPerSolStaked} bar — the price of the seat consumes the opening. ` +
-      `${LANDING_TIP_CAVEAT}`;
+      `median ${fmt(entryCostPerSolStakedByLaunch.median)} SOL per SOL staked PER LAUNCH over ` +
+      `${entryCostPerSolStakedByLaunch.n} priced launch(es) (p75 ` +
+      `${fmt(entryCostPerSolStakedByLaunch.p75)}, p90 ${fmt(entryCostPerSolStakedByLaunch.p90)}; ` +
+      `pooled over the ${entryCostPerSolStaked.n} individual entries it is ` +
+      `${fmt(entryCostPerSolStaked.median)}), at or above the ${t.maxEntryCostPerSolStaked} bar — ` +
+      `the price of the seat consumes the opening. ${LANDING_TIP_CAVEAT}`;
     return score;
   }
 
@@ -801,7 +837,7 @@ export function scoreEntry(launches, t, context = {}) {
     score.verdict = 'entry-cost-unmeasured';
     score.rationale =
       `the opening window leaves room (median ${fmt(roomLeft.median)}) and entry costs a median ` +
-      `${fmt(entryCostPerSolStaked.median)} SOL per SOL staked, but only ${closedPriced.length} ` +
+      `${fmt(entryCostPerSolStakedByLaunch.median)} SOL per SOL staked per launch, but only ${closedPriced.length} ` +
       `closed round trip(s) could be priced across their whole window — below the ` +
       `${t.minFieldRoundTrips} an after-cost hit rate needs. What the field actually CLEARED after ` +
       `costs is therefore unmeasured, and an unmeasured after-cost result is not a pass.`;
@@ -828,8 +864,9 @@ export function scoreEntry(launches, t, context = {}) {
   score.rationale =
     `median room left ${fmt(roomLeft.median)} over ${scored.length} scored launches ` +
     `(${score.roomHitRate.hits}/${score.roomHitRate.n} clear the ${t.minRoomLeft} bar); landing ` +
-    `costs a median ${fmt(entryCostPerSolStaked.median)} SOL per SOL staked ` +
-    `(${fmt(score.entryCostSol.median)} SOL at the median entry, p90 ${fmt(score.entryCostSol.p90)}); ` +
+    `costs a median ${fmt(entryCostPerSolStakedByLaunch.median)} SOL per SOL staked per launch ` +
+    `(${fmt(entryCostPerSolStaked.median)} pooled over entries, ` +
+    `${fmt(score.entryCostSol.median)} SOL at the median entry, p90 ${fmt(score.entryCostSol.p90)}); ` +
     `and after that cost the field still clears — ${fieldHitRateNetOfMeasuredFees.hits}/` +
     `${fieldHitRateNetOfMeasuredFees.n} priced round trips positive, median ` +
     `${fmt(fieldRealisedSolNetOfMeasuredFees.median)} SOL NET OF MEASURED FEES against ` +

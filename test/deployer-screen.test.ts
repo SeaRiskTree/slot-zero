@@ -2474,7 +2474,12 @@ describe('the keyless boundary holds in both directions', () => {
   const ENTRY_KEYS_6 = [
     ...ENTRY_KEYS_5,
     'entryCostSol',
+    // Two units of the same quantity, and both are persisted on purpose: the per-entry one is the
+    // finer-grained evidence, the per-launch one is what `entry-cost-prohibitive` is compared
+    // against (decision 140a). A record carrying only the pooled figure could not be audited for
+    // the gate that was actually applied.
     'entryCostPerSolStaked',
+    'entryCostPerSolStakedByLaunch',
     'entryTxFeeSol',
     'entryCostPriced',
     'fieldRealisedSolNetOfMeasuredFees',
@@ -3929,6 +3934,31 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     expect(s.rationale).toMatch(/LANDING TIP PAID IN A SEPARATE TRANSACTION/);
   });
 
+  it('the cost bar is compared PER LAUNCH, so a busy launch cannot outvote the rest', () => {
+    // Captain decision 140a. Five launches with ONE priced entrant apiece at 0.20 per SOL staked,
+    // against three launches with TEN cheap entrants apiece at 0.02. Pooled over entries that is
+    // 5 expensive against 30 cheap and the median reads 0.02 — comfortably under the bar. Taken one
+    // figure per launch, which is the unit the bar is anchored on, the median is 0.20 and the seat
+    // is prohibitive. Pooling is exactly the failure: entrant counts vary by an order of magnitude
+    // between launches, so a pooled median describes whichever launch was busiest.
+    const expensive = Array.from({ length: 5 }, () => pricedLaunch(0.7, [1], 2));
+    const cheap = Array.from({ length: 3 }, () =>
+      pricedLaunch(0.7, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0.02),
+    );
+    const s = scoreEntry([...expensive, ...cheap], ENTRY_T);
+
+    expect(s.entryCostPerSolStaked.n).toBe(35);
+    expect(s.entryCostPerSolStaked.median).toBeLessThan(ENTRY_T.maxEntryCostPerSolStaked);
+    expect(s.entryCostPerSolStakedByLaunch.n).toBe(8);
+    expect(s.entryCostPerSolStakedByLaunch.median).toBeGreaterThanOrEqual(
+      ENTRY_T.maxEntryCostPerSolStaked,
+    );
+    expect(s.verdict).toBe('entry-cost-prohibitive');
+    // And the sentence must name the unit, so a reader of a saved rationale cannot mistake which
+    // figure was gated.
+    expect(s.rationale).toMatch(/PER LAUNCH/);
+  });
+
   it('a field that only loses money AFTER costs is vetoed — the leg gross could not see', () => {
     // Gross this field is 3/3 positive at a median +0.05 SOL, which the gross bar waves through.
     // Each entrant makes two transactions and pays 0.04 SOL over the quote in each, so net of
@@ -4820,6 +4850,43 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     expect(row.entryCostSol.median).toBeCloseTo(0.02, 6);
     expect(row.fieldHitRateNetOfMeasuredFees.n).toBe(score.fieldClosedRoundTripsPriced);
     expect(renderEntry(score, coverage).join('\n')).toMatch(/LANDING TIP PAID IN A SEPARATE TRANSACTION/);
+  });
+
+  it('a dead RPC leaves the candidate UNMEASURED and never aborts the run', async () => {
+    // The public endpoint sheds about a quarter of what it is asked for, so a walk that exhausts
+    // its retries is the ordinary case rather than an incident. Before this guard the error
+    // propagated out of scoreCandidateEntry and killed a run whose keyed MadeOnSol allowance was
+    // already spent — one wallet's bad luck throwing away every measurement paid for before it.
+    // The degradation must land on `entry-cost-unmeasured`, which is terminal and never a pass.
+    const client = new KeylessClient({
+      maxRequests: 400,
+      minIntervalMs: 0,
+      fetchImpl: walkableWindow(10 * (1 / 0.6 - 1), 1),
+      sleepImpl: async () => {},
+    });
+    const rpc = new SolanaRpcClient({
+      maxRequests: 200,
+      minIntervalMs: 0,
+      fetchImpl: (async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+
+    const { score, coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: profile(8),
+      nowMs: NOW,
+      thresholds: T as never,
+      rpc,
+    });
+
+    expect(coverage.cost.ran).toBe(true);
+    expect(coverage.cost.notes.join(' ')).toMatch(/ABANDONED for this candidate after a transport failure/);
+    // Nothing partial was attached, so the verdict is the absence of a cost reading rather than a
+    // priced one of unknown coverage.
+    expect(score.verdict).toBe('entry-cost-unmeasured');
+    expect(score.entryCostPriced.hits).toBe(0);
+    expect(score.entryCostSol.n).toBe(0);
+    expect(score.entryCostPerSolStakedByLaunch.n).toBe(0);
   });
 
   it('counts a mint-time disagreement separately and reports it as an event, per wallet', async () => {

@@ -117,8 +117,10 @@ import { redactAll, redactVendorIdentifiers } from './record.mjs';
  * @property {number} rpcRequests          Solana RPC requests, retries included.
  * @property {number} launchesPriced       Launches EVERY target transaction of which came back.
  *   A launch missing one is not counted here even though its complete entrants still are.
- * @property {number} launchesSkippedForBudget Launches never started because the per-candidate
- *   ceiling could not cover them whole. Never half-walked.
+ * @property {number} launchesSkippedForBudget Launches the per-candidate ceiling cost: never
+ *   started because it could not cover them whole, or started and cut short and then DISCARDED
+ *   whole. Either way no launch contributes a half-priced cost figure, because a truncated walk
+ *   holds the earliest entrants and that is a biased sample rather than a short one.
  * @property {number} transactionsTargeted Distinct signatures the two scopes asked for.
  * @property {number} transactionsPriced
  * @property {number} transactionsUnresolved The endpoint never resolved them, or their shape could
@@ -408,13 +410,21 @@ export async function scoreCandidateEntry(client, input) {
     // endpoint, so the first launch pays one request to find out and the rest of the candidate
     // inherits the answer. Bounded waste, and the answer reaches the record.
     let preferBlock = input.preferBlockRoute ?? true;
+    // A transport failure abandons the cost leg for THIS CANDIDATE and nothing else. It must never
+    // reach the outer catch: a run that has already spent its keyed MadeOnSol allowance cannot be
+    // thrown away over one wallet's bad luck on a public endpoint that sheds a quarter of what it
+    // is asked for. The same degradation the creation walk and the consistency pass already apply.
+    let transportFailed = false;
 
     for (const { entry, fills } of measured) {
       const targets = entryCostTargets(fills, entry);
       cost.transactionsTargeted += targets.length;
       // Never start what cannot be finished, the same rule the fill walk applies. A launch priced
       // half-way yields a cost figure for whichever entrants happened to come first, which is a
-      // biased sample rather than a short one.
+      // biased sample rather than a short one. This reservation is a FLOOR, not the worst case —
+      // every request may be retried and a null `getTransaction` is asked again — so the invariant
+      // is also enforced on the way out, where a walk truncated by the ceiling has its partial
+      // pricing DISCARDED rather than attached.
       if (targets.length > 0 && rpc.remaining() < targets.length) {
         cost.launchesSkippedForBudget += 1;
         cost.stoppedForBudget = true;
@@ -426,11 +436,24 @@ export async function scoreCandidateEntry(client, input) {
         continue;
       }
 
-      const walk = await readCreateSlotCosts(rpc, {
-        transactions: targets,
-        createSlot: entry.createSlot.slot,
-        preferBlock,
-      });
+      /** @type {Awaited<ReturnType<typeof readCreateSlotCosts>>} */
+      let walk;
+      try {
+        walk = await readCreateSlotCosts(rpc, {
+          transactions: targets,
+          createSlot: entry.createSlot.slot,
+          preferBlock,
+        });
+      } catch (cause) {
+        transportFailed = true;
+        cost.notes.push(
+          `the cost walk was ABANDONED for this candidate after a transport failure: ` +
+            `${describeTransportFailure(cause)}. Nothing it had priced is attached, so the entry ` +
+            `cost is UNMEASURED rather than partial — which is terminal for this candidate in this ` +
+            `run and is never a pass. The rest of the run is unaffected.`,
+        );
+        break;
+      }
       cost.transactionsPriced += walk.priced.size;
       cost.transactionsUnresolved += walk.unresolved;
       cost.viaBlock += walk.viaBlock;
@@ -442,6 +465,23 @@ export async function scoreCandidateEntry(client, input) {
       // One probe decides the route for the candidate. `blockRouteTried` with nothing to show for
       // it is the failure; a route that was never applicable leaves the probe available.
       if (walk.blockRouteTried && walk.viaBlock === 0) preferBlock = false;
+      // A LAUNCH THE CEILING CUT SHORT IS DISCARDED WHOLE. The reservation above cannot see
+      // retries, so the ceiling can still bite mid-launch; keeping what it managed would attach a
+      // cost figure for whichever entrants `walletTransactions` sorted first — the earliest slots —
+      // which is the biased sample `minPricedFraction` exists to refuse, and a biased fifth can
+      // still clear an 0.8 coverage bar. Short is acceptable; skewed is not.
+      if (walk.stoppedForBudget && walk.priced.size < targets.length) {
+        cost.launchesSkippedForBudget += 1;
+        cost.stoppedForBudget = true;
+        cost.notes.push(
+          `a launch was priced ${walk.priced.size} of ${targets.length} transaction(s) before the ` +
+            `per-candidate RPC ceiling bit, and the partial reading was DISCARDED: what a truncated ` +
+            `walk holds is the earliest entrants, which is a biased sample of the cost rather than ` +
+            `a short one`,
+        );
+        pricedLaunches.push(entry);
+        continue;
+      }
       // Priced means EVERY target came back. A launch missing one transaction still contributes
       // whatever entrants it could complete — `priceLaunchEntry` is all-or-nothing per wallet — but
       // it is not a priced launch, and counting it as one would overstate coverage.
@@ -450,11 +490,15 @@ export async function scoreCandidateEntry(client, input) {
     }
 
     cost.rpcRequests = rpc.issued() - rpcBefore;
-    score = scoreEntry(pricedLaunches, t, context);
+    // A candidate whose walk died mid-flight keeps the pre-cost score, which is already
+    // `entry-cost-unmeasured`. Rescoring on a partial attachment is the one thing that must not
+    // happen: it would turn a failed measurement into a priced reading of unknown coverage.
+    if (!transportFailed) score = scoreEntry(pricedLaunches, t, context);
     input.log?.(
       `    entry cost: ${cost.transactionsPriced} of ${cost.transactionsTargeted} transaction(s) ` +
         `priced in ${cost.rpcRequests} RPC request(s)` +
-        (cost.viaBlock > 0 ? `, ${cost.viaBlock} from a whole-block read` : ''),
+        (cost.viaBlock > 0 ? `, ${cost.viaBlock} from a whole-block read` : '') +
+        (transportFailed ? ' — ABANDONED on a transport failure, cost left unmeasured' : ''),
     );
   }
 
@@ -560,6 +604,9 @@ export function toEntryRecordRow(s, coverage) {
     // limit travels with the number, not only with the documentation.
     entryCostSol: dist(s.entryCostSol),
     entryCostPerSolStaked: dist(s.entryCostPerSolStaked),
+    // Beside the pooled per-entry figure above, never instead of it, and it is THIS one the
+    // `entry-cost-prohibitive` bar is compared against — one observation per launch (decision 140a).
+    entryCostPerSolStakedByLaunch: dist(s.entryCostPerSolStakedByLaunch),
     entryTxFeeSol: dist(s.entryTxFeeSol),
     entryCostPriced: hit(s.entryCostPriced),
     fieldRealisedSolNetOfMeasuredFees: dist(s.fieldRealisedSolNetOfMeasuredFees),

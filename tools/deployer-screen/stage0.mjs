@@ -482,7 +482,7 @@ export function readOnChainCosts(dataDir) {
  * evidence does not support.
  *
  * The coverage this runs over is a property of the committed table rather than of the method: it
- * priced 123 of the 235 covered launches, so `minLaunches`/`minPairs` exist for the same reason the
+ * priced 113 of the 235 covered launches, so `minLaunches`/`minPairs` exist for the same reason the
  * era buckets have a `minN` — an empty comparison passes vacuously, and a passing Stage 0 is what
  * authorises spending quota on strangers.
  *

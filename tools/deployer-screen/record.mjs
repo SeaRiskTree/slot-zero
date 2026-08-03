@@ -88,7 +88,8 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `entry-cost-prohibitive`. `entry-field-loss-making` survives but is now reachable from two
  *   places: gross, as before, and net of measured fees, which the older records could not compute.
  *   The `entry` block gains the cost distributions (`entryCostSol`, `entryCostPerSolStaked`,
- *   `entryTxFeeSol`, `entryCostPriced`), the after-cost field figures
+ *   `entryCostPerSolStakedByLaunch`, `entryTxFeeSol`, `entryCostPriced`), the after-cost field
+ *   figures
  *   (`fieldRealisedSolNetOfMeasuredFees`, `fieldReturnPerSolNetOfMeasuredFees`,
  *   `fieldHitRateNetOfMeasuredFees`, `fieldClosedRoundTripsPriced`) and, in `entry.coverage`, the
  *   eligibility counts (`minAgeMs`, `launchesTooYoung`, `launchesEligible`, `launchesPlanned`,

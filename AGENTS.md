@@ -286,7 +286,15 @@ dev currently?"*, and the shape of the answer is the point:
   gross field — run FIRST**, so a deployer failing either costs zero RPC requests; that ordering is
   the cost model. Measured per launch on our tape: ~7 create-slot transactions and ~19 more for a
   closed round trip's whole window, unioned. Pacing is `creation_walk`'s and the two legs are
-  serialised — `api.mainnet-beta` rate-limits globally across methods.
+  serialised — `api.mainnet-beta` rate-limits globally across methods. **`entry-cost-prohibitive`
+  gates on the PER-LAUNCH median** (`entryCostPerSolStakedByLaunch`, decision 140a) — every launch
+  counts once, so a busy launch cannot outvote the rest; the pooled per-entry distribution ships
+  beside it as the finer-grained evidence and is not what the verdict reads. Re-derived from the
+  committed tape: per-launch median 0.0388 against a per-entry 0.0367, worst launch 0.3311, bar 0.12.
+  **A launch the RPC ceiling cuts short is discarded whole**, because a truncated walk holds the
+  earliest entrants by slot, which is a biased sample rather than a short one; and **a transport
+  failure abandons the cost leg for that candidate only**, leaving `entry-cost-unmeasured` rather
+  than aborting a run whose keyed allowance is already spent.
 - **A landing tip paid in a SEPARATE transaction of the same bundle is in NO figure, and its absence
   is OPTIMISTIC.** It is not recoverable from the entrant's own transaction and is not in this repo's
   ground truth either, so every cost is a lower bound and every after-cost result an upper bound.

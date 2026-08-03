@@ -451,7 +451,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 3 | `spend` (the keyed ceiling, the unspent remainder, the planned worst case, and every endpoint called with its per-call cost) and `unmeasured` (every measurement the run could not take, and why). |
 | 4 | the creation-derived launch history beside the ownership one: `creation`, `historySource`, `gateReadingPageCapped`, `vendorTokens`, `vendorCompleted`, `vendorCompletionRate`, `vendorSpanDays`, `vendorVerdict`, `verdictChanged`. |
 | 5 | no new candidate field — the candidate-row change is **inside `entry`**, which gains `launchesRoomUnproven`, `bundledTx` and `maxWalletsInOneTx`. The **`stage0` block also changed**, and it is not comparable across the boundary — below. Consequences for a reader of an older record, below. |
-| 6 | no new candidate field either. **The fee moved inside the entry window** and the eligibility filter became observable, both inside `entry`. **The verdict vocabulary changed and `entry-room-present` no longer exists** — below. `entry` gains `entryCostSol`, `entryCostPerSolStaked`, `entryTxFeeSol`, `entryCostPriced`, `fieldRealisedSolNetOfMeasuredFees`, `fieldReturnPerSolNetOfMeasuredFees`, `fieldHitRateNetOfMeasuredFees` and `fieldClosedRoundTripsPriced`; `entry.coverage` gains `minAgeMs`, `launchesTooYoung`, `launchesEligible`, `launchesPlanned`, `launchesDroppedByCap`, `youngestRefAgeMs`, `youngestEligibleAgeMs` and a `cost` block. |
+| 6 | no new candidate field either. **The fee moved inside the entry window** and the eligibility filter became observable, both inside `entry`. **The verdict vocabulary changed and `entry-room-present` no longer exists** — below. `entry` gains `entryCostSol`, `entryCostPerSolStaked` (pooled over ENTRIES), `entryCostPerSolStakedByLaunch` (one figure per LAUNCH, and the one `entry-cost-prohibitive` is compared against), `entryTxFeeSol`, `entryCostPriced`, `fieldRealisedSolNetOfMeasuredFees`, `fieldReturnPerSolNetOfMeasuredFees`, `fieldHitRateNetOfMeasuredFees` and `fieldClosedRoundTripsPriced`; `entry.coverage` gains `minAgeMs`, `launchesTooYoung`, `launchesEligible`, `launchesPlanned`, `launchesDroppedByCap`, `youngestRefAgeMs`, `youngestEligibleAgeMs` and a `cost` block. |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -718,7 +718,8 @@ end to end):
 | | reading |
 |---|---|
 | entry cost, per create-slot entry | median **0.0308 SOL**, and **99.4%** of entries pay something |
-| entry cost, per SOL staked | median **0.0367** (post-break 0.0292; the worst launch on the tape is 0.136) |
+| entry cost, per SOL staked, pooled over **entries** | median **0.0367** (p75 0.0815, p90 0.1963; post-break 0.0292) |
+| entry cost, per SOL staked, one figure per **launch** — *the figure the bar is compared against* | median **0.0388** (p90 0.0983; post-break 0.0353) and the **worst launch on the tape is 0.3311** (post-break 0.1361) |
 | the field, hit rate | **0.7401 gross** against **0.6070 net of measured fees** |
 | the field, median round trip | **+0.109 SOL gross** against **+0.038 SOL net** |
 | round trips that flip sign | **87** positive-gross → negative-net |

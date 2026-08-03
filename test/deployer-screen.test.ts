@@ -18,19 +18,25 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  DUNE_API_BASE,
+  DUNE_KEY_ENV_VAR,
   HELIUS_KEY_ENV_VAR,
   HELIUS_RPC_HOST,
   KEY_ENV_VAR,
   PUBLIC_SOLANA_RPC,
   classifyAuthFailure,
+  describeDuneKey,
   describeHeliusKey,
   describeKey,
+  resolveDuneCredential,
   resolveKey,
   resolveSolanaRpcEndpoint,
 } from '../tools/deployer-screen/credential.mjs';
 import {
   BoundedClient,
   CeilingReached,
+  DuneClient,
+  DuneRefused,
   ENDPOINT_ROLES,
   RequestFailed,
   UnparseableResponse,
@@ -38,6 +44,20 @@ import {
   buildPath,
   endpointOf,
 } from '../tools/deployer-screen/client.mjs';
+import {
+  CREATION_SQL,
+  COVERAGE_SQL,
+  DEPLOYERS_PARAM,
+  ENUMERATION_TABLES,
+  assessCoverage,
+  coverageRecordRow,
+  enumerateCreations,
+  normaliseSql,
+  parseCoverageProbe,
+  parseCreationRows,
+  parseDuneTimestamp,
+  toWalletEnumeration,
+} from '../tools/deployer-screen/dune.mjs';
 import {
   CURVE_INITIAL_PRICE_SOL,
   createSlotGroups,
@@ -1253,6 +1273,35 @@ describe('the CLI contract', () => {
     expect(parseArgs(['--score']).ok).toBe(false);
   });
 
+  it('selects the enumeration surface from the key and the flags, and the fallback stays wired', () => {
+    // Captain decision 156a makes Dune PRIMARY and the walk its FALLBACK — so the fallback has to
+    // stay reachable and has to be reachable for a stated reason, not by accident. Three ways in:
+    // no key, --no-dune, or --ownership-only (which skips every creation-derived reading).
+    const on = parseArgs([]);
+    if (!on.ok) throw new Error('unreachable');
+    expect(on.opts.noDune).toBe(false);
+    expect(on.opts.duneRefreshProbe).toBe(false);
+    const off = parseArgs(['--no-dune', '--dune-refresh-probe']);
+    if (!off.ok) throw new Error('unreachable');
+    expect(off.opts.noDune).toBe(true);
+    expect(off.opts.duneRefreshProbe).toBe(true);
+
+    // The selection expression itself, pinned against the source. It is one line in `main` and
+    // there is no seam to call it through, so it is asserted where it lives — a silent change to
+    // it would swap the primary surface with nothing failing.
+    const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    expect(screen).toContain(
+      'const usingDune = duneCredential.available && !opts.ownershipOnly && !opts.noDune;',
+    );
+    // And the per-candidate branch: the walk runs when, and only when, the Dune reading is not
+    // usable — which is per WALLET, because the coverage probe refuses one at a time.
+    expect(screen).toContain('const useDune = fromDune !== null && fromDune.usable;');
+    expect(screen).toContain('const rpc = useDune');
+    // The Helius credit reservation is NOT reduced by Dune being primary: every candidate can fall
+    // back, so the plan has to cover every candidate falling back.
+    expect(screen).toContain('const worstCaseCredits = usingIndexedWalk ? maxCandidates * indexedWalk.maxCreditsPerCandidate : 0;');
+  });
+
   it('the dry run prints Stage 2\'s whole exposure before a single request', () => {
     const T = loadThresholds();
     const text = renderDryRun({
@@ -1271,6 +1320,10 @@ describe('the CLI contract', () => {
       rpcEndpoint: resolveSolanaRpcEndpoint({}),
       indexedWalk: T['creation_walk_helius'],
       worstCaseCredits: 0,
+      dune: T['dune'],
+      duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
+      usingDune: true,
+      duneRefreshProbe: false,
     });
     const worstCase =
       T['stage2_entry'].maxCandidatesScored *
@@ -1297,6 +1350,27 @@ describe('the CLI contract', () => {
     expect(text).toMatch(/ONLY ON A CANDIDATE THE FREE LEGS HAVE NOT ALREADY REFUSED/);
     // And the limit that must travel with every cost figure travels onto the PLAN too.
     expect(text).toMatch(/LANDING TIP PAID IN A SEPARATE TRANSACTION/);
+    // THE DUNE BUDGET, printed BESIDE the MadeOnSol and Helius ones rather than folded into either.
+    // Three vendors, three units, no exchange rate — a plan that showed only two of them would
+    // under-read the run by whichever one it left out.
+    const T2 = loadThresholds();
+    expect(text).toMatch(/KEYED — Dune, CREATION ENUMERATION/);
+    expect(text).toMatch(/KEYED — MadeOnSol/);
+    expect(text).toContain(String(T2['dune'].maxExecutionsPerRun));
+    expect(text).toContain(String(T2['dune'].maxRequestsPerRun));
+    expect(text).toContain(String(T2['dune'].creationQueryId));
+    expect(text).toContain(String(T2['dune'].coverageQueryId));
+    // The two facts that make the spend model legible: what is billed and what is not.
+    expect(text).toMatch(/CACHED — no execution/);
+    expect(text).toMatch(/A FAILED EXECUTION IS STILL BILLED AND IS NEVER RETRIED/);
+    // The monthly denominator and the limit that the tool cannot see the month — the same sentence
+    // the Helius block owes, because the same failure is available on both.
+    expect(text).toMatch(/2,500 credits\/month/);
+    expect(text).toMatch(/NOTHING HERE TRACKS THE MONTH/);
+    // And the binding condition of the decision, on the plan rather than only in a doc.
+    expect(text).toMatch(/EVERY COUNT SHIPS WITH ITS OWN COVERAGE PROBE/);
+    // The key is described, never printed.
+    expect(text).not.toContain('a'.repeat(32));
     // With --no-stage2 the plan must say what is NOT being measured, not merely go quiet.
     const off = renderDryRun({
       seedPlan: [],
@@ -1314,6 +1388,10 @@ describe('the CLI contract', () => {
       rpcEndpoint: resolveSolanaRpcEndpoint({}),
       indexedWalk: T['creation_walk_helius'],
       worstCaseCredits: 0,
+      dune: T['dune'],
+      duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
+      usingDune: true,
+      duneRefreshProbe: false,
     });
     expect(off).toMatch(/STAGE 2 DISABLED/);
     expect(off).toMatch(/nothing about whether a window is enterable/);
@@ -2411,6 +2489,998 @@ describe('percentiles match the convention the tape report used', () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------------------------
+// Creation enumeration on Dune. Captain decision 156a made this the PRIMARY surface for "which
+// mints did this wallet create"; the Solana RPC walk is the fallback. Every test below is about one
+// of the three ways this source returns a confident wrong answer: the wrong table, the wrong
+// attribution column, and a count that reaches outside the coverage nobody probed.
+
+const DUNE_FAKE_KEY = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
+
+/**
+ * A base58-shaped wallet, because `enumerateCreations` refuses anything else BEFORE it can reach the
+ * query parameter — the wallets are vendor-supplied and land inside a single-quoted SQL literal.
+ */
+const DUNE_WALLET = '7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL';
+
+/** A coverage probe payload shaped like the real one, at whatever bounds a test needs. */
+function probeRows(
+  spec: { table: string; first: string; last: string; total: number; months: string[] }[],
+): unknown[] {
+  const rows: unknown[] = [];
+  for (const t of spec) {
+    rows.push({ tbl: t.table, metric: 'first_row', at: t.first, n: t.total });
+    rows.push({ tbl: t.table, metric: 'last_row', at: t.last, n: t.total });
+    for (const m of t.months) rows.push({ tbl: t.table, metric: 'month', at: m, n: 1000 });
+  }
+  return rows;
+}
+
+/** Every month between two ISO months, inclusive, as the probe spells them. */
+function monthsBetween(fromIso: string, toIso: string): string[] {
+  const out: string[] = [];
+  const [fy, fm] = fromIso.split('-').map(Number) as [number, number];
+  const [ty, tm] = toIso.split('-').map(Number) as [number, number];
+  for (let y = fy, m = fm; y < ty || (y === ty && m <= tm); m === 12 ? ((y += 1), (m = 1)) : (m += 1)) {
+    out.push(`${y}-${String(m).padStart(2, '0')}-01 00:00:00.000 UTC`);
+  }
+  return out;
+}
+
+const HEALTHY_PROBE = () =>
+  probeRows([
+    {
+      table: 'evt_createevent',
+      first: '2024-04-26 09:55:52.000 UTC',
+      last: '2026-08-03 09:09:26.000 UTC',
+      total: 20_571_130,
+      months: monthsBetween('2024-04', '2026-08'),
+    },
+    {
+      table: 'call_create',
+      first: '2024-01-14 12:57:12.000 UTC',
+      last: '2026-08-03 07:23:27.000 UTC',
+      total: 14_145_301,
+      months: monthsBetween('2024-01', '2026-08'),
+    },
+  ]);
+
+const NOW_MS = Date.parse('2026-08-03T10:00:00Z');
+const DUNE_BOUNDS = { pollIntervalMs: 0, maxPollAttempts: 5, maxResultRows: 20_000, maxCoverageLagMs: 21_600_000 };
+
+describe('the Dune credential, and why its absence is a configuration', () => {
+  it('treats an unset or blank key as "not configured", never as a fault', () => {
+    // The walk is still there. A missing Dune key must not stop a run, or the decision that made
+    // Dune primary would have made every keyless operator's screen refuse to start.
+    for (const env of [{}, { [DUNE_KEY_ENV_VAR]: '' }, { [DUNE_KEY_ENV_VAR]: '   ' }]) {
+      const c = resolveDuneCredential(env);
+      expect(c.available).toBe(false);
+      expect(c.key).toBeNull();
+      expect(c.rejected).toBeNull();
+    }
+  });
+
+  it('accepts a plausible key and describes it by length and shape only', () => {
+    const c = resolveDuneCredential({ [DUNE_KEY_ENV_VAR]: DUNE_FAKE_KEY });
+    expect(c.available).toBe(true);
+    expect(c.key).toBe(DUNE_FAKE_KEY);
+    expect(c.label).toBe(DUNE_API_BASE);
+    expect(c.keyDescription).toEqual({ length: 32, hasDocumentedShape: true });
+    // The description is the ONLY thing said out loud about a key, so it must carry nothing else.
+    expect(Object.keys(describeDuneKey(DUNE_FAKE_KEY)).sort()).toEqual(['hasDocumentedShape', 'length']);
+  });
+
+  it('refuses a pasted URL and a truncated key, falls back, and quotes neither', () => {
+    // The same fail-fast the Helius key has, for the same reason: a URL sits comfortably inside any
+    // plausible length band, so length alone cannot catch it.
+    for (const bad of [`${DUNE_API_BASE}?key=${DUNE_FAKE_KEY}`, 'https://api.dune.com/api/v1', 'short']) {
+      const c = resolveDuneCredential({ [DUNE_KEY_ENV_VAR]: bad });
+      expect(c.available, `${bad} must not be accepted`).toBe(false);
+      expect(c.rejected).not.toBeNull();
+      // A rejection message that quotes the offending value has published a credential.
+      expect(c.rejected).not.toContain(bad);
+      expect(c.rejected).toMatch(/not shown/i);
+      // And it must say the run did not stop — a silent fallback reads as a deliberate choice.
+      expect(c.rejected).toMatch(/fell back/i);
+    }
+  });
+});
+
+describe('the Dune client, and the one call this repo never retries', () => {
+  const client = (fetchImpl: unknown, over: Record<string, unknown> = {}) =>
+    new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as typeof fetch,
+      sleepImpl: async () => {},
+      ...over,
+    });
+
+  it('NEVER re-issues a failed execution — it is billed either way', async () => {
+    // This is the single most expensive mistake available on this vendor and it is asserted rather
+    // than commented: a retried execution buys a second bill for the same answer, and there is no
+    // failure mode where that is right. Reads may retry; an execute may not.
+    const fetchImpl = vi.fn(async () => new Response('boom', { status: 503 }));
+    const c = client(fetchImpl);
+    await expect(c.execute(1, {})).rejects.toBeInstanceOf(DuneRefused);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    // And it counted, because an execution that failed on our side may well have started on theirs.
+    expect(c.executions()).toBe(1);
+  });
+
+  it('retries a read, because a failed read returns no bytes and so costs nothing', async () => {
+    let n = 0;
+    const fetchImpl = vi.fn(async () => {
+      n += 1;
+      return n === 1 ? new Response('boom', { status: 503 }) : new Response('{"ok":true}', { status: 200 });
+    });
+    const c = client(fetchImpl);
+    await expect(c.getJson('/execution/x/status')).resolves.toEqual({ ok: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(c.executions()).toBe(0);
+  });
+
+  it('sends the key as a header and never in a URL', async () => {
+    let seenUrl = '';
+    let seenHeaders: Record<string, string> = {};
+    const fetchImpl = vi.fn(async (url: unknown, init: RequestInit) => {
+      seenUrl = String(url);
+      seenHeaders = init.headers as Record<string, string>;
+      return new Response('{}', { status: 200 });
+    });
+    await client(fetchImpl).getJson('/query/1');
+    expect(seenUrl).toBe(`${DUNE_API_BASE}/query/1`);
+    expect(seenUrl).not.toContain(DUNE_FAKE_KEY);
+    expect(seenHeaders['x-dune-api-key']).toBe(DUNE_FAKE_KEY);
+    // Not `Bearer`: Dune rejects it, and a client that sent one would 401 with a message pointing
+    // an operator at a key that is fine.
+    expect(JSON.stringify(seenHeaders)).not.toMatch(/Bearer/i);
+  });
+
+  it('stops at the execution ceiling rather than issuing the one that crosses it', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{"execution_id":"e"}', { status: 200 }));
+    const c = client(fetchImpl, { maxExecutions: 1 });
+    await c.execute(1, {});
+    await expect(c.execute(1, {})).rejects.toBeInstanceOf(CeilingReached);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts polls against the request ceiling, so a slow execution cannot loop forever', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}', { status: 200 }));
+    const c = client(fetchImpl, { maxRequests: 2 });
+    await c.getJson('/a');
+    await c.getJson('/b');
+    await expect(c.getJson('/c')).rejects.toBeInstanceOf(CeilingReached);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('tells a rejected key, a spent allowance and a rate limit apart', async () => {
+    for (const [status, pattern] of [
+      [401, /rejected the key/i],
+      [402, /allowance is spent/i],
+      [429, /rate-limited/i],
+    ] as const) {
+      const c = client(async () => new Response('nope', { status }));
+      const err = await c.getJson('/query/1').catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(DuneRefused);
+      expect((err as DuneRefused).message).toMatch(pattern);
+      // All three stop the Dune leg, and all three say the walk takes over — the run continues.
+      expect((err as DuneRefused).terminal).toBe(true);
+      expect((err as DuneRefused).message).toMatch(/fell back|falls back|RPC walk/i);
+    }
+  });
+});
+
+describe('the SQL is the surface, and the two traps are pinned in it', () => {
+  it('unions the two tables that span both boundaries, and reads NEITHER create_v2 nor `creator`', () => {
+    // THE TABLE TRAP, asserted rather than documented. `pump_call_create` alone returns zero rows
+    // for our subject (it decodes only the original Create); `pump_call_create_v2` alone is not
+    // backfilled before ~2026-04-28 and silently misses 101 of our 239 launches, `maxxing` included.
+    const executable = CREATION_SQL.split('\n').filter((l) => !l.trimStart().startsWith('--')).join('\n');
+    expect(executable).toContain('pumpdotfun_solana.pump_evt_createevent');
+    expect(executable).toContain('pumpdotfun_solana.pump_call_create ');
+    // Asserted against the EXECUTABLE half: the comments name the excluded table on purpose, and a
+    // whole-text search would force the trap to go undocumented in order to stay untested.
+    expect(executable).not.toMatch(/pump_call_create_v2/);
+    // THE ATTRIBUTION TRAP. `creator` is a settable CreateV2 ARGUMENT, not proof of authorship: six
+    // mints declare our subject as `creator` while being signed by six different wallets, inflating
+    // the count 247 -> 253. The join keys on the SIGNER, in both branches.
+    expect(executable).toContain('d.wallet = e."user"');
+    expect(executable).toContain('d.wallet = c.account_user');
+    expect(executable).not.toMatch(/\bcreator\b/);
+    // The parameter the module fills, named once so a rename cannot half-happen.
+    expect(CREATION_SQL).toContain(`{{${DEPLOYERS_PARAM}}}`);
+  });
+
+  it('probes EVERY table it reads, and one it deliberately does not', () => {
+    // The probe being WIDER than the read is the point: its own output demonstrates the boundary
+    // that disqualifies create_v2, rather than the repo asserting it in prose.
+    for (const t of ENUMERATION_TABLES) expect(COVERAGE_SQL).toContain(`'${t}'`);
+    expect(COVERAGE_SQL).toContain("'call_create_v2'");
+    expect(ENUMERATION_TABLES).not.toContain('call_create_v2');
+    // And the read list must match what the SQL actually joins, or the probe bounds a surface the
+    // query no longer uses — which is the silent failure this whole module exists to make loud.
+    expect(ENUMERATION_TABLES.every((t) => CREATION_SQL.includes(`pump_${t.replace('evt_', 'evt_')}`))).toBe(true);
+  });
+
+  it('refuses a saved query that drifted, WITHOUT spending an execution', async () => {
+    // A saved Dune query is editable from a browser and its answer is a gate input. The check runs
+    // before the execution, which is the whole point: an execution is billed and unrecoverable.
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ query_sql: 'SELECT 1' }), { status: 200 }));
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    await expect(
+      enumerateCreations(c, {
+        wallets: ['W'],
+        creationQueryId: 1,
+        coverageQueryId: 2,
+        refreshProbe: false,
+        nowMs: NOW_MS,
+        bounds: DUNE_BOUNDS,
+      }),
+    ).rejects.toThrow(/no longer matches the SQL committed/);
+    expect(c.executions()).toBe(0);
+  });
+
+  it('normalises only line endings and trailing space, so an edited COMMENT still fails', () => {
+    // The comments are where the traps are written down. Two texts differing by one are two
+    // different statements of intent, and this check is not a semantic comparison.
+    expect(normaliseSql('a  \r\nb\n')).toBe('a\nb');
+    expect(normaliseSql(CREATION_SQL)).not.toBe(normaliseSql(CREATION_SQL.replace('-- slot-zero', '-- edited')));
+  });
+});
+
+describe('the coverage probe, and what it refuses', () => {
+  it('parses the vendor timestamp strictly, and returns null rather than NaN', () => {
+    // A silently-NaN creation time flows straight into a covered-window comparison that then admits
+    // or refuses the wrong launches, so the parser refuses rather than guesses.
+    expect(parseDuneTimestamp('2025-12-01 19:37:59.000 UTC')).toBe(Date.parse('2025-12-01T19:37:59.000Z'));
+    expect(parseDuneTimestamp('2026-08-03T09:09:26Z')).toBe(Date.parse('2026-08-03T09:09:26Z'));
+    // TWO SPELLINGS, both live: result rows use a space, three digits and a zone WORD; the execution
+    // envelope uses a `T`, SIX digits and a `Z`. A parser taking only the first returned null for a
+    // probe that plainly had a timestamp. Sub-millisecond digits TRUNCATE — this value is compared
+    // against a coverage bound, and rounding up would claim an instant the table does not hold.
+    expect(parseDuneTimestamp('2026-08-03T09:12:21.429632Z')).toBe(Date.parse('2026-08-03T09:12:21.429Z'));
+    expect(parseDuneTimestamp('2026-08-03T09:12:21.999999Z')).toBe(Date.parse('2026-08-03T09:12:21.999Z'));
+    for (const bad of ['', 'yesterday', '2026-13-40 00:00:00 UTC'.replace('13', 'xx'), 42, null, undefined]) {
+      expect(parseDuneTimestamp(bad), `${String(bad)} must not parse`).toBeNull();
+    }
+  });
+
+  it('passes a healthy probe and reports the union of the read tables', () => {
+    const probe = parseCoverageProbe(HEALTHY_PROBE());
+    const c = assessCoverage({ probe, nowMs: NOW_MS, bounds: DUNE_BOUNDS });
+    expect(c.ok).toBe(true);
+    expect(c.reasons).toEqual([]);
+    expect(c.holes).toEqual([]);
+    // The union's floor is the OLDER of the two tables, because either one covering a month is
+    // enough for the union to cover it.
+    expect(c.fromMs).toBe(Date.parse('2024-01-14T12:57:12.000Z'));
+    expect(c.toMs).toBe(Date.parse('2026-08-03T09:09:26.000Z'));
+  });
+
+  it('REFUSES a month inside its own span where every read table is empty', () => {
+    // This is the pump_call_create_v2 defect stated mechanically, and it is why the probe is not a
+    // start-date check wearing a longer name: a decoded table with a gap returns a complete-looking
+    // answer that is simply missing those launches.
+    const rows = probeRows([
+      {
+        table: 'evt_createevent',
+        first: '2026-01-01 00:00:00.000 UTC',
+        last: '2026-08-03 00:00:00.000 UTC',
+        total: 10,
+        months: ['2026-01-01 00:00:00.000 UTC', '2026-08-01 00:00:00.000 UTC'],
+      },
+      {
+        table: 'call_create',
+        first: '2026-01-01 00:00:00.000 UTC',
+        last: '2026-08-03 00:00:00.000 UTC',
+        total: 10,
+        months: ['2026-01-01 00:00:00.000 UTC', '2026-08-01 00:00:00.000 UTC'],
+      },
+    ]);
+    const c = assessCoverage({ probe: parseCoverageProbe(rows), nowMs: NOW_MS, bounds: DUNE_BOUNDS });
+    expect(c.ok).toBe(false);
+    expect(c.holes.map((h) => h.monthIso)).toEqual(['2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07']);
+    expect(c.reasons.join(' ')).toMatch(/NO row at all/);
+    // A hole is NOT repairable by asking again, so it must not trigger the probe refresh.
+    expect(c.staleOnly).toBe(false);
+  });
+
+  it('REFUSES a table the enumeration reads but the probe never returned', () => {
+    const rows = probeRows([
+      {
+        table: 'evt_createevent',
+        first: '2024-04-26 09:55:52.000 UTC',
+        last: '2026-08-03 09:09:26.000 UTC',
+        total: 1,
+        months: monthsBetween('2024-04', '2026-08'),
+      },
+    ]);
+    const c = assessCoverage({ probe: parseCoverageProbe(rows), nowMs: NOW_MS, bounds: DUNE_BOUNDS });
+    expect(c.ok).toBe(false);
+    expect(c.reasons.join(' ')).toMatch(/call_create/);
+    expect(c.staleOnly).toBe(false);
+  });
+
+  it('REFUSES a stale probe, and marks it as the one refusal asking again can fix', () => {
+    const probe = parseCoverageProbe(HEALTHY_PROBE());
+    const c = assessCoverage({
+      probe,
+      nowMs: NOW_MS + 48 * 3_600_000,
+      bounds: DUNE_BOUNDS,
+    });
+    expect(c.ok).toBe(false);
+    expect(c.staleOnly).toBe(true);
+    expect(c.reasons.join(' ')).toMatch(/newest row is/);
+  });
+
+  it('keeps the BOUND in the record and discards the vendor data behind it', () => {
+    const probe = parseCoverageProbe(HEALTHY_PROBE(), { probedAtMs: NOW_MS, fromCache: true });
+    const row = coverageRecordRow(probe, assessCoverage({ probe, nowMs: NOW_MS, bounds: DUNE_BOUNDS })) as {
+      tables: { table: string; read: boolean; months: number }[];
+    };
+    // `derive and discard`, exactly as for MadeOnSol: a COUNT of months, never the monthly counts.
+    for (const t of row.tables) expect(typeof t.months).toBe('number');
+    expect(JSON.stringify(row)).not.toMatch(/"rows"/);
+    // And which tables the enumeration actually reads, so a reader can see why one is refused.
+    expect(row.tables.find((t) => t.table === 'call_create')?.read).toBe(true);
+  });
+});
+
+describe('a per-wallet reading is refused at the launch level too', () => {
+  const coverage = () => assessCoverage({ probe: parseCoverageProbe(HEALTHY_PROBE()), nowMs: NOW_MS, bounds: DUNE_BOUNDS });
+
+  it('turns rows into the shape mergeHistories already consumes', () => {
+    const e = toWalletEnumeration({
+      wallet: 'W',
+      launches: [
+        { mint: 'M1', createdAtMs: Date.parse('2025-12-01T00:00:00Z'), bonded: true },
+        { mint: 'M2', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: false },
+      ],
+      coverage: coverage(),
+    });
+    expect(e.usable).toBe(true);
+    expect(e.launches).toBe(2);
+    expect(e.bonded).toBe(1);
+    expect(e.creates.map((c) => c.mint)).toEqual(['M1', 'M2']);
+    expect(e.creates.every((c) => c.creator === 'W')).toBe(true);
+    // Inside probed coverage the enumeration is EXHAUSTIVE — an index of creation events, not a
+    // window walked backwards until a budget bit. That is what lets the merge call a
+    // listed-but-not-created token "acquired" rather than carrying it over.
+    expect(e.covered.exhausted).toBe(true);
+    // And the curve creator is NULL, not the wallet: Dune says who created a mint and whether it
+    // completed, and nothing about who owns the curve today.
+    expect([...e.curves.values()].every((c) => c.creator === null)).toBe(true);
+  });
+
+  it('REFUSES a wallet whose earliest launch reaches the probed floor', () => {
+    // The refusal a run-level probe cannot make. A wallet launching at or before the tables' own
+    // first row may have launched before them, and nothing in the answer would say so.
+    const e = toWalletEnumeration({
+      wallet: 'W',
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2024-01-14T12:57:12.000Z'), bonded: false }],
+      coverage: coverage(),
+    });
+    expect(e.usable).toBe(false);
+    expect(e.reasons.join(' ')).toMatch(/at or before/);
+    // The count is still carried, so a record shows what the refused answer WOULD have said.
+    expect(e.launches).toBe(1);
+  });
+
+  it('REFUSES a launch newer than the probed ceiling, which a cached probe makes reachable', () => {
+    const e = toWalletEnumeration({
+      wallet: 'W',
+      launches: [{ mint: 'M', createdAtMs: NOW_MS + 3_600_000, bonded: false }],
+      coverage: coverage(),
+    });
+    expect(e.usable).toBe(false);
+    expect(e.reasons.join(' ')).toMatch(/newer than/);
+  });
+
+  it('REFUSES a wallet it returned no row for — absence of evidence is not evidence of absence', () => {
+    // The worst failure available here, and it is manufactured out of nothing: read as a launch
+    // history of zero, `covered.exhausted` would let mergeHistories reclassify this wallet's whole
+    // in-window ownership listing as acquired and gate it on nothing. That is exactly the invisible
+    // false rejection the creation-derived lane exists to remove.
+    const e = toWalletEnumeration({ wallet: 'W', launches: [], coverage: coverage() });
+    expect(e.usable).toBe(false);
+    expect(e.reasons.join(' ')).toMatch(/absence of evidence rather than evidence of absence/);
+    // And it must not carry a claim of exhaustive coverage into the merge either.
+    expect(e.covered.exhausted).toBe(false);
+
+    // Proof that the reading it refuses would have been destructive: with `exhausted` true over the
+    // probe's whole multi-year span, every listed token is reclassified as acquired and dropped.
+    const listedInWindow = [
+      { mint: 'L1', deployedAtMs: Date.parse('2026-01-01T00:00:00Z'), completed: true },
+      { mint: 'L2', deployedAtMs: Date.parse('2026-02-01T00:00:00Z'), completed: false },
+    ];
+    const asIfExhaustive = mergeHistories({
+      creates: [],
+      wallet: 'W',
+      curves: new Map(),
+      listed: listedInWindow,
+      covered: { fromMs: coverage().fromMs, toMs: coverage().toMs ?? 0, exhausted: true },
+      unresolvedTransactions: 0,
+    });
+    expect(asIfExhaustive.notCreatedByWallet).toBe(2);
+    expect(asIfExhaustive.records.length).toBe(0);
+  });
+
+  it('carries a batch-level refusal through as a whole sentence, and still reports the count', () => {
+    // Every refusal travels the same way: a sentence in `reasons`, `usable` false, and the count
+    // still carried so a record shows the SIZE of what was refused.
+    const e = toWalletEnumeration({
+      wallet: 'W',
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
+      coverage: coverage(),
+      priorReasons: ['3 row(s) of the Dune answer could not be read, so the whole batch is refused.'],
+    });
+    expect(e.usable).toBe(false);
+    expect(e.covered.exhausted).toBe(false);
+    expect(e.reasons[0]).toMatch(/whole batch is refused/);
+    expect(e.launches).toBe(1);
+  });
+
+  it('dedupes by mint and counts what it could not read rather than dropping it silently', () => {
+    const { byWallet, unreadableRows } = parseCreationRows([
+      { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
+      { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
+      { deployer: 'W', mint: 'N', created_at: 'not a timestamp', bonded: false },
+      null,
+    ]);
+    // A duplicated mint would double-count a launch on BOTH sides of the gate's fraction.
+    expect(byWallet.get('W')?.length).toBe(1);
+    // A partly-unreadable answer is not a shorter answer.
+    expect(unreadableRows).toBe(2);
+  });
+
+  it('tells an ABSENT `bonded` apart from a legitimately false one', () => {
+    // The whole point of type-checking this column rather than reading `=== true`: `false` is a
+    // legitimate value, so a truthiness test collapses "the column is gone" into "this launch did
+    // not bond". `bonded` becomes CurveState.complete -> mergeHistories -> measureCompletion -> the
+    // rate applyGate compares against, so that collapse is a mass gate-FAILURE on a run that
+    // reports itself fully measured.
+    const legitimatelyFalse = parseCreationRows([
+      { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: false },
+    ]);
+    expect(legitimatelyFalse.unreadableRows).toBe(0);
+    expect(legitimatelyFalse.byWallet.get('W')).toEqual([
+      { mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: false },
+    ]);
+
+    // Absent, renamed, or any non-boolean spelling of it: unreadable, by the same route a bad
+    // timestamp already takes, rather than a second and weaker path of its own.
+    for (const bad of [undefined, null, 0, 1, 'false', 'true', '']) {
+      const row: Record<string, unknown> = { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC' };
+      if (bad !== undefined) row['bonded'] = bad;
+      const parsed = parseCreationRows([row]);
+      expect(parsed.unreadableRows, `bonded: ${String(bad)} must not read as "did not bond"`).toBe(1);
+      expect(parsed.byWallet.get('W')).toBeUndefined();
+    }
+  });
+
+  it('a Dune-sourced merge reports movedCreator as UNMEASURED, never as zero', () => {
+    // The one that will bite a reader of an older record: a schema-<=8 `movedCreator: 0` means the
+    // walk read every curve and none had moved. Here it means nothing was looked at.
+    const e = toWalletEnumeration({
+      wallet: 'W',
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
+      coverage: coverage(),
+    });
+    const merged = mergeHistories({
+      creates: e.creates,
+      wallet: 'W',
+      curves: e.curves,
+      listed: [],
+      covered: e.covered,
+      unresolvedTransactions: 0,
+    });
+    expect(merged.movedCreator).toBe(0);
+    expect(merged.creatorMovementUnmeasured).toBe(1);
+    // Bonded status still comes from the chain's own statement, so the reading is decidable.
+    expect(merged.bondedFromCurve).toBe(1);
+    expect(merged.bondedUndecidable).toBe(0);
+  });
+});
+
+describe('the enumeration spends nothing it does not have to', () => {
+  const stub = (handlers: Record<string, () => Response>) =>
+    vi.fn(async (url: unknown) => {
+      const path = String(url).replace(DUNE_API_BASE, '');
+      for (const [prefix, make] of Object.entries(handlers)) if (path.startsWith(prefix)) return make();
+      throw new Error(`unstubbed ${path}`);
+    });
+
+  const okJson = (body: unknown) => () => new Response(JSON.stringify(body), { status: 200 });
+  const resultOf = (rows: unknown[]) =>
+    okJson({ result: { rows, metadata: { total_row_count: rows.length, total_result_set_bytes: 100 } } });
+
+  it('reads the probe from CACHE and never executes it, then executes the enumeration once', async () => {
+    const fetchImpl = stub({
+      '/query/2/results': resultOf(HEALTHY_PROBE()),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/query/1/execute': okJson({ execution_id: 'e1' }),
+      '/query/1': okJson({ query_sql: CREATION_SQL }),
+      '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      '/execution/e1/results': resultOf([
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
+      ]),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    expect(e.coverage.ok).toBe(true);
+    expect(e.byWallet.get(DUNE_WALLET)?.launches).toBe(1);
+    expect(e.probe.fromCache).toBe(true);
+    // Exactly ONE execution for the whole batch, and none for the probe.
+    expect(c.executions()).toBe(1);
+  });
+
+  it('does NOT execute the enumeration at all when the probe refuses', async () => {
+    // The refusal is worth its own assertion: paying for a count over surfaces nobody bounded is
+    // the exact thing the binding condition of decision 156a forbids.
+    const holed = probeRows([
+      { table: 'evt_createevent', first: '2026-01-01 00:00:00.000 UTC', last: '2026-08-03 00:00:00.000 UTC', total: 1, months: ['2026-01-01 00:00:00.000 UTC'] },
+      { table: 'call_create', first: '2026-01-01 00:00:00.000 UTC', last: '2026-08-03 00:00:00.000 UTC', total: 1, months: ['2026-01-01 00:00:00.000 UTC'] },
+    ]);
+    const fetchImpl = stub({
+      '/query/2/results': resultOf(holed),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    expect(c.executions()).toBe(0);
+    expect(e.coverage.ok).toBe(false);
+    // Every wallet asked about gets an answer, and the answer is "fall back" — never "no launches".
+    expect(e.byWallet.get(DUNE_WALLET)?.usable).toBe(false);
+    expect(e.byWallet.get(DUNE_WALLET)?.reasons.join(' ')).toMatch(/refused/);
+  });
+
+  it('re-executes a stale CACHED probe once rather than degrading the whole run to the walk', async () => {
+    let probeReads = 0;
+    // The CACHED probe is two days cold; the freshly EXECUTED one is current. That is the real
+    // shape of this failure, and it is the only one asking again can fix.
+    const freshProbe = probeRows([
+      {
+        table: 'evt_createevent',
+        first: '2024-04-26 09:55:52.000 UTC',
+        last: '2026-08-05 09:00:00.000 UTC',
+        total: 20_571_130,
+        months: monthsBetween('2024-04', '2026-08'),
+      },
+      {
+        table: 'call_create',
+        first: '2024-01-14 12:57:12.000 UTC',
+        last: '2026-08-05 09:00:00.000 UTC',
+        total: 14_145_301,
+        months: monthsBetween('2024-01', '2026-08'),
+      },
+    ]);
+    const fetchImpl = stub({
+      '/query/2/results': () => {
+        probeReads += 1;
+        return new Response(
+          JSON.stringify({
+            result: {
+              rows: HEALTHY_PROBE(),
+              metadata: { total_row_count: HEALTHY_PROBE().length, total_result_set_bytes: 1 },
+            },
+          }),
+          { status: 200 },
+        );
+      },
+      '/query/2/execute': okJson({ execution_id: 'p1' }),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/execution/p1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      '/execution/p1/results': resultOf(freshProbe),
+      '/query/1/execute': okJson({ execution_id: 'e1' }),
+      '/query/1': okJson({ query_sql: CREATION_SQL }),
+      '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      '/execution/e1/results': resultOf([]),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 40,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    // Two days after the probe's newest row: stale, and stale ONLY.
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS + 48 * 3_600_000,
+      bounds: DUNE_BOUNDS,
+    });
+    expect(e.coverage.ok).toBe(true);
+    expect(e.probe.fromCache).toBe(false);
+    // Cached read, then ONE probe execution, then the enumeration. Both budgeted executions used,
+    // and no more: the ceiling is what stops a stale probe from looping.
+    expect(probeReads).toBe(1);
+    expect(c.executions()).toBe(2);
+  });
+
+  it('refuses a result set above the row ceiling rather than paging into an unbounded bill', async () => {
+    const fetchImpl = stub({
+      '/query/2/results': okJson({
+        result: { rows: HEALTHY_PROBE(), metadata: { total_row_count: 999_999, total_result_set_bytes: 1 } },
+      }),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    await expect(
+      enumerateCreations(c, {
+        wallets: [DUNE_WALLET],
+        creationQueryId: 1,
+        coverageQueryId: 2,
+        refreshProbe: false,
+        nowMs: NOW_MS,
+        bounds: DUNE_BOUNDS,
+      }),
+    ).rejects.toThrow(/above the pinned ceiling/);
+  });
+
+  it('refuses a read that cannot prove it is whole, rather than substituting the rows it got', async () => {
+    // The request carries `?limit=maxResultRows`, so `rows.length` is not a substitute for the
+    // declared total: a result cut at exactly the limit reads as a complete result of that size and
+    // sails through the ceiling check. Same complete-looking-but-short failure this module refuses
+    // everywhere else, and it is refused here too.
+    const noTotal = stub({
+      '/query/2/results': okJson({
+        result: { rows: HEALTHY_PROBE(), metadata: { total_result_set_bytes: 1 } },
+      }),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+    });
+    const client = (fetchImpl: ReturnType<typeof stub>) =>
+      new DuneClient({
+        key: DUNE_FAKE_KEY,
+        maxExecutions: 2,
+        maxRequests: 20,
+        minIntervalMs: 0,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        sleepImpl: async () => {},
+      });
+    const call = (c: DuneClient) =>
+      enumerateCreations(c, {
+        wallets: [DUNE_WALLET],
+        creationQueryId: 1,
+        coverageQueryId: 2,
+        refreshProbe: false,
+        nowMs: NOW_MS,
+        bounds: { ...DUNE_BOUNDS, maxResultRows: HEALTHY_PROBE().length },
+      });
+    await expect(call(client(noTotal))).rejects.toThrow(/no `total_row_count`/);
+
+    // And a read sitting exactly ON its own limit, with a total that agrees. It is indistinguishable
+    // from a truncated one, so it is refused rather than published.
+    const atLimit = stub({
+      '/query/2/results': okJson({
+        result: {
+          rows: HEALTHY_PROBE(),
+          metadata: { total_row_count: HEALTHY_PROBE().length, total_result_set_bytes: 1 },
+        },
+      }),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+    });
+    await expect(call(client(atLimit))).rejects.toThrow(/sits on its own limit/);
+  });
+
+  it('REFUSES A PAGE that is shorter than the total it declares, rather than reading it whole', async () => {
+    // Our `?limit=` is not the only cut Dune makes: /results also pages on RESPONSE SIZE. A response
+    // declaring 5,000 rows and handing back a page clears the ceiling check and every limit check,
+    // and would be read as a complete launch history thousands of rows short.
+    const fetchImpl = stub({
+      '/query/2/results': okJson({
+        result: { rows: HEALTHY_PROBE(), metadata: { total_row_count: 5_000, total_result_set_bytes: 1 } },
+      }),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    await expect(
+      enumerateCreations(c, {
+        wallets: [DUNE_WALLET],
+        creationQueryId: 1,
+        coverageQueryId: 2,
+        refreshProbe: false,
+        nowMs: NOW_MS,
+        bounds: DUNE_BOUNDS,
+      }),
+    ).rejects.toThrow(/is a PAGE rather than the whole result/);
+    // And nothing was executed on the strength of it.
+    expect(c.executions()).toBe(0);
+  });
+
+  it('REFUSES THE WHOLE BATCH when the `bonded` column stops being a boolean', async () => {
+    // The failure this closes is a mass gate-FAILURE reported as fully measured: a shifted LEFT JOIN
+    // column would make every candidate read 0% bonded with `unreadableRows: 0` and a clean probe.
+    // The walk reads bonded status from the chain's own `complete` byte, so falling back to it
+    // genuinely answers the question rather than deferring it.
+    const other = '32CdQdBUxbCsLy5AUHWmyidfwhgGUr9N573NBUrDpump';
+    const fetchImpl = stub({
+      '/query/2/results': resultOf(HEALTHY_PROBE()),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/query/1/execute': okJson({ execution_id: 'e1' }),
+      '/query/1': okJson({ query_sql: CREATION_SQL }),
+      '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      // The column is simply gone — which is what a renamed `LEFT JOIN pump_evt_completeevent`
+      // looks like, on every row at once.
+      '/execution/e1/results': resultOf([
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC' },
+        { deployer: other, mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC' },
+      ]),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET, other],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    expect(e.coverage.ok).toBe(true);
+    expect(e.unreadableRows).toBe(2);
+    for (const w of [DUNE_WALLET, other]) {
+      const r = e.byWallet.get(w);
+      expect(r?.usable, `${w} must fall back to the walk rather than read 0% bonded`).toBe(false);
+      expect(r?.reasons.join(' ')).toMatch(/whole batch is refused/);
+      expect(r?.covered.exhausted).toBe(false);
+    }
+
+    // The control: the SAME batch with `bonded: false` spelled out is a real answer, not a refusal.
+    const spelledOut = stub({
+      '/query/2/results': resultOf(HEALTHY_PROBE()),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/query/1/execute': okJson({ execution_id: 'e1' }),
+      '/query/1': okJson({ query_sql: CREATION_SQL }),
+      '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      '/execution/e1/results': resultOf([
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: false },
+        { deployer: other, mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC', bonded: false },
+      ]),
+    });
+    const c2 = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: spelledOut as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const ok = await enumerateCreations(c2, {
+      wallets: [DUNE_WALLET, other],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    expect(ok.unreadableRows).toBe(0);
+    expect(ok.byWallet.get(DUNE_WALLET)?.usable).toBe(true);
+    expect(ok.byWallet.get(DUNE_WALLET)?.bonded).toBe(0);
+    expect(ok.byWallet.get(DUNE_WALLET)?.launches).toBe(1);
+  });
+
+  it('REFUSES THE WHOLE BATCH when any row went unread, and every candidate falls back', async () => {
+    // Not the wallet the bad row belonged to: a row that fails to parse commonly has no readable
+    // `deployer`, so the wallet whose history came back short is exactly the one that cannot be
+    // named. Partial attribution would leave it gated on what survived the parser.
+    const other = '32CdQdBUxbCsLy5AUHWmyidfwhgGUr9N573NBUrDpump';
+    const fetchImpl = stub({
+      '/query/2/results': resultOf(HEALTHY_PROBE()),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/query/1/execute': okJson({ execution_id: 'e1' }),
+      '/query/1': okJson({ query_sql: CREATION_SQL }),
+      '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      '/execution/e1/results': resultOf([
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
+        { deployer: other, mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC', bonded: false },
+        // No readable deployer, which is the whole point: this row's wallet cannot be named.
+        { mint: 'X', created_at: 'not a timestamp', bonded: false },
+      ]),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET, other],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    expect(e.unreadableRows).toBe(1);
+    expect(e.coverage.ok).toBe(true);
+    for (const w of [DUNE_WALLET, other]) {
+      const r = e.byWallet.get(w);
+      expect(r?.usable, `${w} must fall back to the walk`).toBe(false);
+      expect(r?.reasons.join(' ')).toMatch(/whole batch is refused/);
+      expect(r?.covered.exhausted).toBe(false);
+      // What the refused answer WOULD have said is still carried, so a record shows its size.
+      expect(r?.launches).toBe(1);
+    }
+  });
+
+  it('REFUSES a wallet it got no row for instead of gating it on a zero-launch history', async () => {
+    const answered = '32CdQdBUxbCsLy5AUHWmyidfwhgGUr9N573NBUrDpump';
+    const fetchImpl = stub({
+      '/query/2/results': resultOf(HEALTHY_PROBE()),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/query/1/execute': okJson({ execution_id: 'e1' }),
+      '/query/1': okJson({ query_sql: CREATION_SQL }),
+      '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      '/execution/e1/results': resultOf([
+        { deployer: answered, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
+      ]),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET, answered],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    // The refusal is PER WALLET, so one batch legitimately carries both sources.
+    expect(e.byWallet.get(answered)?.usable).toBe(true);
+    const silent = e.byWallet.get(DUNE_WALLET);
+    expect(silent?.usable).toBe(false);
+    expect(silent?.reasons.join(' ')).toMatch(/absence of evidence rather than evidence of absence/);
+    expect(silent?.covered.exhausted).toBe(false);
+  });
+
+  it('never puts a wallet that is not base58-shaped in the query parameter', async () => {
+    // The first path in this repository where a vendor-supplied string reaches a query language:
+    // `{{deployers}}` lands inside the single-quoted literal `split('{{deployers}}', ',')`, and
+    // nothing upstream validates the shape — seed.mjs takes any non-empty string the vendor sends.
+    const injection = "x', 'y') -- ";
+    let executeBody: string | null = null;
+    const fetchImpl = vi.fn(async (url: unknown, init?: unknown) => {
+      const path = String(url).replace(DUNE_API_BASE, '');
+      if (path.startsWith('/query/2/results')) return resultOf(HEALTHY_PROBE())();
+      if (path.startsWith('/query/2')) return okJson({ query_sql: COVERAGE_SQL })();
+      if (path.startsWith('/query/1/execute')) {
+        executeBody = String((init as { body?: unknown } | undefined)?.body ?? '');
+        return okJson({ execution_id: 'e1' })();
+      }
+      if (path.startsWith('/query/1')) return okJson({ query_sql: CREATION_SQL })();
+      if (path.startsWith('/execution/e1/status')) return okJson({ state: 'QUERY_STATE_COMPLETED' })();
+      if (path.startsWith('/execution/e1/results')) {
+        return resultOf([{ deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true }])();
+      }
+      throw new Error(`unstubbed ${path}`);
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET, injection, 'too-short'],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    // The parameter carries the well-shaped wallet and NOTHING else.
+    expect(executeBody).not.toBeNull();
+    expect(JSON.parse(executeBody as unknown as string).query_parameters.deployers).toBe(DUNE_WALLET);
+    // The dropped ones do not vanish from the run — they fall back to the walk like any other
+    // unusable reading, and the count is on the record so a narrowed batch is visible.
+    expect(e.walletsRefusedByShape).toBe(2);
+    for (const w of [injection, 'too-short']) {
+      expect(e.byWallet.get(w)?.usable).toBe(false);
+      expect(e.byWallet.get(w)?.reasons.join(' ')).toMatch(/not the base58 shape/);
+    }
+    expect(e.byWallet.get(DUNE_WALLET)?.usable).toBe(true);
+  });
+
+  it('spends no execution at all when every candidate fails the wallet shape', async () => {
+    const fetchImpl = stub({
+      '/query/2/results': resultOf(HEALTHY_PROBE()),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: ['W', 'nope'],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    expect(c.executions()).toBe(0);
+    expect(e.walletsRefusedByShape).toBe(2);
+    expect(e.byWallet.get('W')?.usable).toBe(false);
+  });
+});
+
 // ---------------------------------------------------------------------------------------------
 
 const TOOL_DIR = fileURLToPath(new URL('../tools/deployer-screen/', import.meta.url));
@@ -2487,6 +3557,12 @@ describe('the keyless boundary holds in both directions', () => {
   // Schema 8 adds no candidate field either. It changes the run-level `spend` block, which reports
   // three budgets in three units — asserted by SPEND_KEYS_BY_SCHEMA below.
   PERSISTED_BY_SCHEMA[8] = PERSISTED_BY_SCHEMA[7]!;
+  // Schema 9 adds no candidate ROW field either. Creation enumeration moved to Dune, and everything
+  // it changed is inside `creation` (CREATION_KEYS_BY_SCHEMA below) plus a NEW run-level `dune`
+  // block — metered in its own units rather than folded into `spend`, because a fourth budget in
+  // that block would imply an exchange rate between requests, Helius credits and Dune executions
+  // that does not exist.
+  PERSISTED_BY_SCHEMA[9] = PERSISTED_BY_SCHEMA[8]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -2545,6 +3621,63 @@ describe('the keyless boundary holds in both directions', () => {
     7: ENTRY_KEYS_6,
     // Schema 8 changes the run-level `spend` block, not what `entry` carries.
     8: ENTRY_KEYS_6,
+    // Schema 9 changes `creation` and adds a run-level `dune` block. `entry` is untouched, which is
+    // the boundary the decision draws: NO Dune value may reach a Stage 2 entry number.
+    9: ENTRY_KEYS_6,
+  };
+
+  // The `creation` block's own key set, per version — a block four assertions could see the NAME of
+  // and none could see INSIDE. That is the hole schema 9 would have fallen through: the whole
+  // change lives in there, and `PERSISTED_BY_SCHEMA` would have stayed green while the block grew
+  // four keys. Added here rather than after the fact, and it TIGHTENS the contract rather than
+  // widening it: schema 4 through 8 are pinned too, so a field added to an older shape now fails.
+  const CREATION_KEYS_4_TO_8 = [
+    'bondedFromCurve',
+    'bondedFromListing',
+    'bondedUndecidable',
+    'coveredDays',
+    'coveredFromIso',
+    'coveredToIso',
+    'createdInWindow',
+    'curvesUnread',
+    'hiddenByOwnership',
+    'listedInWindow',
+    'listedInWindowCarried',
+    'listedOutsideWindow',
+    'listingPageCapped',
+    'listingRows',
+    'listingUnmeasuredNote',
+    'loadShedEvents',
+    'movedCreator',
+    'notCreatedByWallet',
+    'rpcRequests',
+    'signaturesScanned',
+    'signaturesSucceeded',
+    'stopDetail',
+    'stopReason',
+    'transactionsInspected',
+    'unresolvedTransactions',
+    'wholeHistory',
+    'windowExact',
+  ];
+  // Schema 9: which surface answered, what the Dune reading said, why it was refused if it was, and
+  // the size of what the Dune route does not measure. `creatorMovementUnmeasured` is the one that
+  // matters to a reader of an older record: a schema-≤8 `movedCreator: 0` means the walk read every
+  // curve and none had moved; a schema-9 Dune-sourced 0 means nothing was looked at.
+  const CREATION_KEYS_9 = [
+    ...CREATION_KEYS_4_TO_8,
+    'creatorMovementUnmeasured',
+    'duneFallbackReasons',
+    'duneLaunches',
+    'enumerationSource',
+  ];
+  const CREATION_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    4: CREATION_KEYS_4_TO_8,
+    5: CREATION_KEYS_4_TO_8,
+    6: CREATION_KEYS_4_TO_8,
+    7: CREATION_KEYS_4_TO_8,
+    8: CREATION_KEYS_4_TO_8,
+    9: CREATION_KEYS_9,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -2578,6 +3711,7 @@ describe('the keyless boundary holds in both directions', () => {
     6: ENTRY_COVERAGE_KEYS_6,
     7: ENTRY_COVERAGE_KEYS_6,
     8: ENTRY_COVERAGE_KEYS_6,
+    9: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -2613,6 +3747,37 @@ describe('the keyless boundary holds in both directions', () => {
     6: SPEND_KEYS_3_TO_7,
     7: SPEND_KEYS_3_TO_7,
     8: SPEND_KEYS_8,
+    // Schema 9 deliberately leaves `spend` alone. Dune is a fourth vendor in a fourth unit, and it
+    // gets its own run-level block rather than five more keys here — see the `dune` block.
+    9: SPEND_KEYS_8,
+  };
+
+  // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
+  // unpinned for two rounds and grew in both of them with nothing failing and the README's schema
+  // table needing a hand edit to keep up — the same hole CREATION_KEYS_BY_SCHEMA closes one level
+  // down. Dune is metered in its own units (executions and bytes against a SHARED monthly
+  // allowance, where a FAILED execution is billed exactly like a successful one), which is why it is
+  // a block of its own rather than five more `spend` keys.
+  const DUNE_KEYS_9 = [
+    'used',
+    'reason',
+    'rejected',
+    'unusableNote',
+    'endpoint',
+    'creationQueryId',
+    'coverageQueryId',
+    'executions',
+    'executionCeiling',
+    'requests',
+    'resultBytes',
+    'estimatedCredits',
+    'rowsReturned',
+    'unreadableRows',
+    'walletsRefusedByShape',
+    'coverage',
+  ];
+  const DUNE_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    9: DUNE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -2632,6 +3797,7 @@ describe('the keyless boundary holds in both directions', () => {
   // against the source AFTER `toRecordRow`, which is where `buildRecord` is not.
   const RUN_LEVEL_KEYS_ADDED_BY_SCHEMA: Record<number, string[]> = {
     8: SPEND_KEYS_8.filter((k) => !SPEND_KEYS_3_TO_7.includes(k)),
+    9: ['dune'],
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -2680,10 +3846,57 @@ describe('the keyless boundary holds in both directions', () => {
       }
     }
     // And the allow-list is only meaningful if the module it points at actually holds the handling.
+    // TIGHTENED 2026-08-03: `DUNE_API_KEY` joins the OWNERSHIP list too, not only the exclusion one.
+    // It was pre-listed above while the answer was vacuously true; now that a Dune client exists,
+    // the assertion that credential.mjs is where it lives is a real one.
     const credential = readFileSync(join(TOOL_DIR, 'credential.mjs'), 'utf8');
-    for (const variable of ['MADEONSOL_API_KEY', 'HELIUS_API_KEY']) {
+    for (const variable of KEY_VARIABLES) {
       expect(credential.includes(variable), `credential.mjs must own ${variable}`).toBe(true);
     }
+  });
+
+  it('no committed file assigns a value to a credential variable or header', () => {
+    // The Dune key is 32 alphanumeric characters, which is EXACTLY the shape of a Solana address —
+    // so the structural scan that catches `msk_` and a UUID cannot catch this one without firing on
+    // every mint in the tree. What CAN be asserted is the shape of an accidental paste: an env line
+    // carried into a file, or a header written with a literal instead of the held key. Both are the
+    // realistic accidents, and neither collides with a base58 address.
+    const all = readAll(TOOL_DIR, 'tools/deployer-screen/', /./);
+    for (const [file, text] of all) {
+      expect(
+        /(?:MADEONSOL_API_KEY|HELIUS_API_KEY|DUNE_API_KEY)\s*=\s*['"`]?[A-Za-z0-9_-]{12,}/.test(text),
+        `${file} may assign a real key to a credential variable`,
+      ).toBe(false);
+      // A header written with anything other than the key held in the client's own closure.
+      const literalHeader = /['"`]?x-dune-api-key['"`]?\s*:\s*['"`][A-Za-z0-9]{8,}/i;
+      expect(literalHeader.test(text), `${file} may hard-code a Dune credential header`).toBe(false);
+    }
+  });
+
+  it('NO Dune value can reach a Stage 2 entry number or Stage 3', () => {
+    // The hard boundary of captain decision 156a, asserted structurally rather than reviewed for.
+    // Room to enter is not room to leave, and an ENUMERATION source is neither. Dune answers which
+    // mints a wallet created; every entry number stays on our own fills and our own RPC, where the
+    // fee-inclusive rules and the GrossOfFees/NetOfMeasuredFees discipline live.
+    const all = readAll(TOOL_DIR, 'tools/deployer-screen/');
+    for (const module of ['entry.mjs', 'stage2.mjs', 'stage0.mjs', 'measure.mjs', 'rank.mjs']) {
+      const text = all.get(`tools/deployer-screen/${module}`) ?? '';
+      expect(text, `${module} must not import the Dune enumeration`).not.toMatch(/from\s+['"]\.\/dune\.mjs['"]/);
+    }
+    // And the other direction, so the enumeration cannot grow a dependency on a scoring module and
+    // start carrying one of its numbers back.
+    const dune = all.get('tools/deployer-screen/dune.mjs') ?? '';
+    expect(dune.length).toBeGreaterThan(0);
+    for (const module of ['entry.mjs', 'stage2.mjs', 'stage0.mjs']) {
+      expect(dune, `dune.mjs must not import ${module}`).not.toMatch(
+        new RegExp(`from\\s+['"]\\./${module.replace('.', '\\.')}['"]`),
+      );
+    }
+    // screen.mjs is the ONE place both sides meet, and what crosses is the launch history the gate
+    // reads — never an entry figure. `scoreCandidateEntry` takes fills and a profile, not a reading.
+    const screen = all.get('tools/deployer-screen/screen.mjs') ?? '';
+    const stage2Call = screen.slice(screen.indexOf('await scoreCandidateEntry('));
+    expect(stage2Call.slice(0, 600)).not.toMatch(/dune|Dune/);
   });
 
   it('the composed Helius URL is built in one place and stored nowhere', () => {
@@ -3206,6 +4419,21 @@ describe('the keyless boundary holds in both directions', () => {
       expect(projection, `toRecordRow must emit ${field}`).toMatch(new RegExp(`\\b${field}:`));
     }
 
+    // The `creation` block, read out of the object literal `screen.mjs` builds it from. Nothing
+    // could see inside this block before schema 9, so its four new keys could have shipped under an
+    // unchanged version with every other assertion green — the same hole schema 8 fell through one
+    // level up. `creation:` in `toRecordRow` is a pass-through, so the literal is the only place the
+    // shape exists.
+    const creationStart = source.indexOf('        creation = {');
+    expect(creationStart, 'screen.mjs no longer assembles a `creation` literal').toBeGreaterThan(-1);
+    const creationBody = source.slice(creationStart + '        creation = {'.length);
+    const creationEnd = creationBody.indexOf('\n        };');
+    expect(creationEnd, 'the `creation` literal is no longer where this assertion can read it').toBeGreaterThan(-1);
+    const creationKeys = [
+      ...creationBody.slice(0, creationEnd).matchAll(/^ {10}([A-Za-z][A-Za-z0-9]*)(?::|,$)/gm),
+    ].map((m) => m[1]!);
+    expect(creationKeys.sort()).toEqual([...CREATION_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
+
     // The `entry` block too, and here against the real projection rather than its source, because
     // this is the block schema 5 changed. A field computed but not persisted is the exact failure
     // `bundledTx` and `maxWalletsInOneTx` already were: present in memory, absent from every record.
@@ -3227,6 +4455,18 @@ describe('the keyless boundary holds in both directions', () => {
       (m) => m[1]!,
     );
     expect(spendKeys.sort()).toEqual([...SPEND_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
+
+    // And the run-level `dune` block, read the same way out of `buildRecord`'s own literal. It is
+    // the block that grew twice with nothing failing, which is exactly what this pins.
+    const duneStart = source.indexOf('        dune: (() => {');
+    expect(duneStart, 'buildRecord no longer assembles a `dune` block').toBeGreaterThan(-1);
+    const duneBody = source.slice(source.indexOf('return {', duneStart) + 'return {'.length);
+    const duneEnd = duneBody.indexOf('\n          };');
+    expect(duneEnd, 'the `dune` literal is no longer where this assertion can read it').toBeGreaterThan(-1);
+    const duneKeys = [...duneBody.slice(0, duneEnd).matchAll(/^ {12}([A-Za-z][A-Za-z0-9]*)(?::|,$)/gm)].map(
+      (m) => m[1]!,
+    );
+    expect(duneKeys.sort()).toEqual([...DUNE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
   });
 });
 

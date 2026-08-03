@@ -47,10 +47,11 @@ node tools/deployer-screen/screen.mjs --dry-run
 # A real run. Needs a key (see below). Stage 2 is ON by default. Leave --candidates unset: the
 # default grades everything enumeration surfaces, up to the budget. Passing a number below the
 # ceiling silently truncates coverage, which is exactly how the first elite run graded 12 of the
-# 22 wallets it seeded. Budget HOURS, not minutes — up to about 15 at the candidate cap: the
-# creation-derived history is walked from on-chain create transactions, and at the pinned bounds
-# that KEYLESS walk alone is ~13.5 hours worst case. With HELIUS_API_KEY set the same leg is the
-# indexed walk, ~46 minutes, bounded in credits instead of hours (see Bounds).
+# 22 wallets it seeded. With DUNE_API_KEY set the creation-derived history is ENUMERATED on Dune,
+# one execution for the whole batch, seconds rather than hours. Budget for the FALLBACK anyway,
+# because every candidate may take it: HOURS, not minutes — up to about 15 at the candidate cap,
+# since at the pinned bounds the KEYLESS walk alone is ~13.5 hours worst case. With HELIUS_API_KEY
+# set that fallback leg is the indexed walk, ~46 minutes, bounded in credits (see Bounds).
 # --dry-run prints the arithmetic for your own flags, on whichever route your key selects.
 node tools/deployer-screen/screen.mjs --tier elite \
   --consistency --out tools/deployer-screen/runs/$(date +%F).json
@@ -62,7 +63,8 @@ node tools/deployer-screen/screen.mjs --tier elite --candidates 12
 # The competence gate alone, which answers nothing about whether a window is enterable.
 node tools/deployer-screen/screen.mjs --no-stage2
 
-# The old, fast, BIASED reading — it skips the creation walk, so under an hour rather than ~15.
+# The old, fast, BIASED reading — it skips every creation-derived reading, Dune enumeration and
+# walk alike, so under an hour rather than ~15.
 # Stamped historySource: "ownership-only" in the record, because the bias must travel with it.
 node tools/deployer-screen/screen.mjs --tier elite --ownership-only
 
@@ -133,14 +135,77 @@ Probed 2026-08-02, all of these answer *current* owner or do not exist:
 | `advanced-api-v2/coins/list?dev=` / `?devAddress=` | filter silently **ignored**, not applied |
 | `frontend-api-v3/coins/user-created-coins/{w}`, `/coins/created-by/{w}`, `swap-api/v2/creators/{w}/coins` | 404 |
 
-So creation is only recoverable from the create transaction, and the only keyless index that
-reaches one is the wallet's own signature index. `pumpfun.mjs` → `readCreatedHistory` walks it;
-`creation.mjs` parses it.
+So creation is only recoverable **from pump.fun's own surfaces** from the create transaction, and
+the only keyless index that reaches one is the wallet's own signature index. `pumpfun.mjs` →
+`readCreatedHistory` walks it; `creation.mjs` parses it. A THIRD-PARTY index of the same creation
+events exists, and since 2026-08-03 it is what runs first — below.
 
-### Two routes to the same reading, and which one runs
+### The PRIMARY surface: Dune's decoded creation events
 
-The gate asks one question — *which tokens did this wallet CREATE* — and there are two ways to
-answer it. **Which one runs is decided by whether a Helius key is present, and nothing else.**
+Captain decision 156a, 2026-08-03. Creation enumeration reads
+`pumpdotfun_solana.pump_evt_createevent` **UNION** `pump_call_create`, deduped by mint, one
+execution for a whole candidate batch. `dune.mjs` owns it, `thresholds.json` → `dune` bounds it, and
+[CREATION-DERIVED.md §8](./CREATION-DERIVED.md) records what it reproduces and what it costs.
+
+**The walk below is the FALLBACK**, taken when there is no `DUNE_API_KEY`, when Dune fails, or when
+the coverage probe refuses a reading — per WALLET, so one run can carry both sources and every
+candidate row's `enumerationSource` says which answered it. **Helius is not demoted for
+transaction-level work**: Stage 2's entry-cost leg reads `meta.fee` and pre/post balances per
+transaction, which no decoded table serves.
+
+Three things about this source that a reader has to hold, because each is a way it returns a
+confident wrong answer:
+
+1. **The union is not negotiable.** `pump_call_create` alone returns **zero rows** for our subject,
+   which launches with `CreateV2`. `pump_call_create_v2` alone is **not backfilled before
+   2026-04-30** and silently misses **101 of our 239 launches, `maxxing` included**. Only the union
+   spans both boundaries.
+2. **Attribution is `"user"` / `account_user`, the signer — never `creator`**, which is a settable
+   `CreateV2` argument: six mints declare our subject as `creator` while being signed by six
+   different bot-shaped wallets, inflating the count 247 → 253.
+3. **Every count ships with its own coverage probe, and a count reaching outside it is refused
+   rather than published.** Decoded tables have silent start dates. The probe reads `min(block_time)`,
+   `max(block_time)` and monthly row counts for the exact tables read — and deliberately for one
+   table the enumeration does *not* read, so its own output demonstrates why. It refuses a missing
+   or empty table, **a month inside the covered span where every read table is empty**, staleness
+   past 6 h (re-executed once, since that is the one refusal asking again can fix), and per wallet a
+   history reaching the probed floor or past the probed ceiling.
+
+**And the same rule past coverage: a reading that cannot vouch for itself falls back to the walk
+rather than being gated on.** A result read that cannot prove it is whole (no `total_row_count`, a
+total above the ceiling, exactly the `?limit=` many rows, or rows disagreeing with the declared
+total — `/results` pages on response size independently of our limit) is refused. **Any unreadable
+row refuses the whole batch** — a row that fails to parse commonly has no readable `deployer`, so the
+wallet whose history came back short is exactly the one that cannot be named. **`bonded` is
+type-checked, not truth-checked**: `false` is legitimate there, so `=== true` would collapse "the
+column is gone" into "this launch did not bond" and gate-fail every candidate in the batch at 0%
+bonded on a run reporting itself fully measured. **A wallet the enumeration
+returned no row for is refused too**: that is an absence of evidence, not evidence of absence, and
+reading it as a launch history of zero would let the merge reclassify that wallet's whole ownership
+listing as acquired and gate it on nothing. **A candidate whose address is not base58-shaped is never
+sent** — wallets are vendor-supplied and land inside a single-quoted SQL literal — and the count of
+dropped candidates is on the record so a narrowed batch is visible.
+[CREATION-DERIVED.md §8.2](./CREATION-DERIVED.md) lists all eight.
+
+**Spend.** Free tier, 2,500 credits/month, **shared**, and only 10 private queries. **A failed
+execution is still billed and is terminal — `DuneClient.execute` is the one call in this repository
+that is never retried.** Budget from *billed* credits, not `execution_cost_credits`, which
+understates by ~3.5× because retrieving results is ~71% of the bill at ~20 credits/MB. Measured
+2026-08-03: five deployers' whole histories cost **8 requests, 1 execution, 1.75 credits**; at the
+195-candidate cap ~20 credits, i.e. roughly 125 full-cap runs a month. **Nothing tracks the month** —
+the tool is stateless between runs, so the monthly arithmetic is the operator's. `--no-dune` takes
+the walk instead; `--dune-refresh-probe` re-executes the probe rather than reading its free cache.
+
+**What Dune does NOT measure:** who owns a curve *now*. So on a Dune-sourced candidate
+`creation.movedCreator` is **not zero, it is unmeasured**, and `creatorMovementUnmeasured` carries
+the size of it. A schema-≤8 record's `movedCreator: 0` means the walk read every curve and none had
+moved; do not read the two as one series.
+
+### Two FALLBACK routes to the same reading, and which one runs
+
+When the Dune route is absent or refuses, the gate asks the same question — *which tokens did this
+wallet CREATE* — of the chain, and there are two ways to answer it. **Which one runs is decided by
+whether a Helius key is present, and nothing else.**
 
 | | keyless (`api.mainnet-beta`) | indexed (Helius, `HELIUS_API_KEY` set) |
 |---|---|---|
@@ -160,7 +225,12 @@ the walk means in either case.
 
 The keyless route is not deprecated and is not a degraded mode. With no key the tool runs exactly
 as it did before Helius existed — same endpoint, same pacing, same ceilings, same numbers — and it
-says so in the dry run and on the gating line.
+says so in the dry run and on the gating line. The same is true one level up: with no Dune key the
+tool runs exactly as it did before decision 156a, and says that too.
+
+**The Helius worst case is not reduced by Dune being primary, and that is deliberate.** Every
+candidate can fall back, so the credit reservation `screen.mjs` refuses a plan against still covers
+every candidate falling back. What Dune changes is the *expected* spend, not the admissible plan.
 
 ### What the keyless route costs, measured
 
@@ -270,15 +340,20 @@ it is measured directly rather than inferred from `movedCreator`.
 
 ## The credentials
 
-Two, and they are unrelated to each other. Both are read from the environment. **Nothing in this
-repository holds a key and nothing here ever will**; neither value is printed, logged or written to
+Three, and they are unrelated to each other. All are read from the environment. **Nothing in this
+repository holds a key and nothing here ever will**; no value is printed, logged or written to
 disk, presence is verified by length and shape only, and `credential.mjs` is the only module
-permitted to name either variable — a test enforces that, the allow-list is exhaustive, and a
-committed file carrying either key's shape fails the build.
+permitted to name any of the three variables — a test enforces that, the allow-list is exhaustive
+and is asserted for ownership as well as exclusion, a committed file carrying a MadeOnSol or Helius
+key's shape fails the build, and a committed file that assigns a value to a credential variable or
+hard-codes the auth header fails it too. That second scan is what covers the Dune key, whose 32
+alphanumeric characters are structurally a Solana address and so cannot be shape-scanned without
+firing on every mint in the tree.
 
 ```bash
 export MADEONSOL_API_KEY="$(your-secret-manager read madeonsol)"
 export HELIUS_API_KEY="$(your-secret-manager read helius)"
+export DUNE_API_KEY="$(your-secret-manager read dune)"
 # or, from a dotenv file kept OUTSIDE this repo:
 set -a; . /path/to/your/.env; set +a
 ```
@@ -323,6 +398,18 @@ starved by a heavy run. Credits, not wall clock, are therefore what bounds this 
 **Nothing here tracks the month.** The tool holds no state between runs, so it can bound one run
 and no more. `--dry-run` prints that run's worst case and its share of a month; the monthly
 arithmetic is the operator's.
+
+### `DUNE_API_KEY` — optional, and it selects the PRIMARY creation-enumeration surface
+
+With it set, "which mints did this wallet create" is answered by Dune; with it unset the tool runs
+exactly as it did before decision 156a and every number is what it was. A key that is present but
+**malformed** — a pasted URL, or a length outside 16–128 — is refused on shape, falls back to the
+walk and says why, naming the shape and never the value. There is no exit code for its absence.
+
+The key is stored bare and sent as the `X-Dune-API-Key` **header**, never `Bearer` and never a query
+parameter, so no URL this client builds can carry a credential. Free tier, and the allowance is
+**shared**: what a run may spend, and what it refuses rather than publish, is
+[The PRIMARY surface](#the-primary-surface-dunes-decoded-creation-events) and [Bounds](#bounds).
 
 ## Why we never inherit their aggregate
 
@@ -510,6 +597,11 @@ are **not** like-for-like. Do not re-derive those figures here.
   computation from records we did not keep. Nothing persisted can reconstruct any part of their
   database.
 
+**The same posture covers Dune**, whose own terms were read before the first committed run and
+neither address caching nor derived data — its per-launch rows live in memory for one run, and the
+record keeps the coverage *bound* rather than the vendor's monthly counts.
+[CREATION-DERIVED.md §8.7](./CREATION-DERIVED.md) owns that reading.
+
 **§5a(b)** — internal research only. No publishing, no outbound feed, no shared surface, no
 third-party display. The output is a text report and an optional local JSON file in a private
 research repo.
@@ -535,6 +627,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 6 | no new candidate field either. **The fee moved inside the entry window** and the eligibility filter became observable, both inside `entry`. **The verdict vocabulary changed and `entry-room-present` no longer exists** — below. `entry` gains `entryCostSol`, `entryCostPerSolStaked` (pooled over ENTRIES), `entryCostPerSolStakedByLaunch` (one figure per LAUNCH, and the one `entry-cost-prohibitive` is compared against), `entryTxFeeSol`, `entryCostPriced`, `fieldRealisedSolNetOfMeasuredFees`, `fieldReturnPerSolNetOfMeasuredFees`, `fieldHitRateNetOfMeasuredFees` and `fieldClosedRoundTripsPriced`; `entry.coverage` gains `minAgeMs`, `launchesTooYoung`, `launchesEligible`, `launchesPlanned`, `launchesDroppedByCap`, `youngestRefAgeMs`, `youngestEligibleAgeMs` and a `cost` block whose `launchesPriced`/`transactionsPriced` count only pricing that BACKS the score, with `launchesDiscarded`/`transactionsDiscarded` beside them for work paid for and then dropped whole and `rpcRequests` spanning both. The **`stage0` block gains `onChainCostReproduction`** — Stage 0's offline cost regression, carried in full (`launchesPriced`, `entriesPriced`, `pairsPriced`, the gross and net medians and hit rates, `flipsPositiveToNegative`, the known-negative wallet's `postBreakVerdict`, `ok`) so a saved run says by how much and over what the fee correction moved the field, not only that it passed — and `thresholds` gains `stage2_cost`, the bounds the cost leg ran under. Those figures are over the **unfiltered** population — every taped launch the committed table can price — which schema 7 changes without renaming a single key. |
 | 7 | no new candidate field, no new `entry` field and no new `entry.coverage` field: `PERSISTED_BY_SCHEMA[7]`, `ENTRY_KEYS_BY_SCHEMA[7]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[7]` all equal `[6]`. **What changed is a POPULATION, under unchanged key names.** `stage0.onChainCostReproduction`'s `launchesPriced`, `entriesPriced`, `entries`, `pairsPriced`, the entry-cost medians, `entryCostPositiveShare`, the gross/net hit rates and medians and `flipsPositiveToNegative` are now measured over the **GATED** population — launches whose create-slot opening is proven (`measure.mjs` → `roomIsProven`), which is the population `entry-cost-prohibitive` is itself computed from — where a schema-6 record's identically named keys meant the unfiltered one. So a schema-6 `launchesPriced: 113 / pairsPriced: 631` and a schema-7 `110 / 618` are not one series; version-detect before comparing them. Three new keys carry the unfiltered reading so the record is self-describing rather than needing external context: `includingUnprovenLaunchesPriced`, `includingUnprovenPairsPriced` and `includingUnprovenEntryCostPerSolStakedMedianByLaunch` (on the committed tape 113, 631 and 0.0388 against the gated 110, 618 and 0.0389 — the unfiltered reading is the CHEAPER one, i.e. the optimistic direction, which is why it is not what the bar reads). The block also gains `minEntryCostPositiveShare`, the floor `entryCostPositiveShare` is compared against, beside the `minLaunches`/`minPairs` bars already there. |
 | 8 | no new candidate field, no new `entry` field and no new `entry.coverage` field: `PERSISTED_BY_SCHEMA[8]`, `ENTRY_KEYS_BY_SCHEMA[8]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[8]` all equal `[7]`. **What changed is the `spend` block: it now reports THREE budgets separately**, because the creation walk can take a keyed indexed route. It gains `rpcProvider` (`helius` or `public`), `rpcEndpoint`, `heliusCredits`, `heliusCreditCeilingPerCandidate` and `plannedWorstCaseHeliusCredits`. They are five new keys rather than additions to the existing totals because the three budgets have three units and no exchange rate between them: MadeOnSol is metered in **requests** against a shared daily allowance, Helius in **credits** against an unshared monthly one, and the keyless hosts in neither — a single "requests" total would hide which allowance a heavy run actually spent. `rpcEndpoint` holds the endpoint's **label** and never the composed URL, which on the keyed route carries the credential in a query parameter. On a schema-≤7 record all five are genuinely absent and must not be reconstructed: those runs predate the indexed route, so the walk was the keyless one and the record cannot say which host answered it. `heliusCredits: 0` beside `rpcProvider: "public"` is a keyless run that spent no credit; `heliusCreditCeilingPerCandidate: null` means the indexed walk did not run at all. |
+| 9 | no new candidate ROW field, no new `entry` field, no new `entry.coverage` field and no new `spend` field: `PERSISTED_BY_SCHEMA[9]`, `ENTRY_KEYS_BY_SCHEMA[9]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[9]` and `SPEND_KEYS_BY_SCHEMA[9]` all equal `[8]`. **What changed is where the launch history comes from: creation ENUMERATION is primary on Dune** (captain decision 156a). A new run-level `dune` block carries the coverage probe's own bounds and the Dune spend in its own units — `used`, `reason`, `rejected`, `unusableNote`, `endpoint`, `creationQueryId`, `coverageQueryId`, `executions`, `executionCeiling`, `requests`, `resultBytes`, `estimatedCredits`, `rowsReturned`, `unreadableRows`, `walletsRefusedByShape` and `coverage` (which tables were probed, from when to when, which are READ by the enumeration, months with no row, and why a probe refused). It is a block of its own rather than five more `spend` keys because Dune is a fourth vendor in a fourth unit — executions plus bytes against a SHARED monthly allowance, where a FAILED execution is billed exactly like a successful one — and `estimatedCredits` is an **estimate**, the published 20 credits/MB applied to the bytes the vendor's own metadata declared, with compute billed on top. Each candidate's `creation` block gains `enumerationSource` (`dune` | `helius` | `keyless-rpc`), `duneLaunches`, `duneFallbackReasons` and `creatorMovementUnmeasured`. **The one that will bite: on a schema-≤8 record `creation.movedCreator: 0` means the walk read every curve and none had moved. On a schema-9 record whose `enumerationSource` is `dune` it means nothing was looked at** — Dune says who created a mint and whether it completed, and nothing about who owns the curve today — and `creatorMovementUnmeasured` is the size of what went unmeasured. Do not add the two, and do not read a Dune-sourced 0 as the walk's 0. On a Dune-sourced candidate `rpcRequests`, `loadShedEvents`, `signaturesScanned`, `signaturesSucceeded`, `transactionsInspected` and `curvesUnread` all read 0 because no walk happened, and `stopReason` is `dune-enumerated`, which is not a stop at all; `coveredFromIso`/`coveredToIso` are the PROBE's bound rather than a walk's window and `wholeHistory` is true inside it. **A single run may carry both sources**: the coverage probe refuses a wallet at a time, so a wallet whose earliest launch sits at or before the probed surfaces' own first row falls back to the walk while the rest of the batch does not. `duneFallbackReasons` is why a candidate fell back, and it is not only coverage — an unreadable row anywhere in the answer refuses the whole batch, a wallet the enumeration returned no row for is refused as an absence of evidence rather than read as zero launches, and a candidate whose address is not base58-shaped is never sent at all (`walletsRefusedByShape` counts those). |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -899,6 +992,10 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here, and it bounds a shared public resource rather than expressing our own caution, so the MadeOnSol relaxation does not touch it. The fill host is paced separately — see below. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does — but a 429, a 5xx or a timeout means the request was not served, so re-issuing it is nearer to one successful request than to two. Without it the caller re-runs the whole walk, which is worse for pump.fun too. A 4xx that is not a 429 is never retried: it is the endpoint's considered answer. |
+| Dune executions, creation enumeration | **2 per run** (1 enumeration + at most 1 probe refresh) | `thresholds.json` → `dune`, and the unit is the point: **an execution is billed whether or not it succeeds and is never retried**, so this is the bound on the only unrecoverable Dune spend. ONE execution serves the whole candidate batch — the table scan costs nearly the same for 5 wallets as for 20, so what scales is bytes returned, not wallets. |
+| Dune requests, creation enumeration | 100 per run | Separate from the execution ceiling because it bounds a different thing: polling and result reads bound the wall clock and the polite use of a shared free-tier host, not the money. 2 × (1 SQL verification + 1 execute + 40 status polls + 1 results read) = 86, plus 14 retry headroom. A real run spends about **8**. |
+| Dune result rows | 20,000 | Results are billed at ~20 credits/MB and that is ~71% of the bill. At the measured **~97 bytes/row** this ceiling is ~1.94 MB (~39 credits); a 195-candidate run at a median ~50-launch history is ~0.95 MB (~20 credits), i.e. roughly 125 full-cap runs against the free 2,500/month. It **refuses rather than pages**: an unbounded read is an unbounded bill. The allowance is **shared** and **nothing here tracks the month**. |
+| Dune coverage staleness | 6 h | The probe cannot vouch for a period it does not reach, and the recent end is where a live screen looks. Dune's own freshness is ~3–4 minutes, so this bounds OUR cache, not the vendor: the probe defaults to a free cached read. Staleness is the one refusal asking again can fix, so it re-executes the probe **once**; a structural refusal (a missing table, a month with no rows) is not retried. |
 | Solana RPC ceiling, keyless creation walk | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. Governs the creation-derived walk **when no Helius key is present**. Whichever bound bites is recorded per candidate. |
 | Helius credit ceiling, indexed creation walk | **5,200 credits per candidate**, 1,100,000 per run | `thresholds.json` → `creation_walk_helius`, and the unit is the point — this provider bills by transactions **returned**, so a request ceiling cannot bound it. 5,200 clears the largest complete history measured (49,367 succeeded transactions = 4,940 credits) **plus the per-page guard**, which demands 100 credits for the page and 11 more reserved for the curve-classification pass — at 5,000 that guard stopped the walk after 49 pages, truncating the very wallet the ceiling was sized against. The per-candidate median is 320. The run ceiling makes the default plan admissible at 195 × 5,200 = 1,014,000 and is 11% of the monthly allowance, so **nine worst-case full-cap runs fit in a month** and the expected cost of one is ~0.62%. **The two move together**: the run ceiling is checked before the first request, so raising the per-candidate one alone would refuse every default plan. A plan that does not fit is **refused before the first request**, exactly like the keyed and keyless plans. A page is only started when a whole page's worst case still fits, so the ceiling is exact and never overshot. |
 | Helius pacing | 200ms | Measured 2026-08-03 on this endpoint and plan: a ladder at 1000/500/250/100/0 ms (full mode) and 500/200/100/50/0 ms (signatures mode) shed **nothing at any rung, including 0 ms**, and 150 concurrent requests were all answered 200 at an observed 161 req/s. The walk is latency-bound rather than limit-bound — throughput was 3.98 req/s at 100 ms against 3.89 at 0 ms — so 200 ms is a courtesy floor with an order of magnitude of headroom under the documented 50 req/s, not a shed-avoidance figure. |
@@ -910,7 +1007,9 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 ### How long a run takes, and how to bound it
 
 **A full default run at the 195-candidate cap is worst-cased in HOURS, not minutes — about 15 —
-and the creation walk is essentially all of it.** The arithmetic is `renderDryRun`'s, so `--dry-run`
+and the creation walk is essentially all of it.** With `DUNE_API_KEY` set the walk is the fallback
+and a typical run does not take it at all, finishing far inside this figure; the worst case does not
+move, because every candidate may still fall back. The arithmetic is `renderDryRun`'s, so `--dry-run`
 prints these same figures for whatever flags you actually pass:
 
 **With a Helius key that leg is ~46 minutes instead of ~13.5 hours**, and the run's worst case falls
@@ -964,7 +1063,8 @@ Two levers already exist, and this is what they are for:
 
 - **`--candidates N`** bounds the whole run — the RPC leg is `N × 100 × 2.5s`, so `--candidates 12`
   is ~40 minutes of walking rather than ~13.5 hours. It truncates coverage, and the record says so.
-- **`--ownership-only`** skips the creation walk entirely, which is the ~13.5 hours, leaving a run
+- **`--ownership-only`** skips every creation-derived reading — Dune enumeration and walk alike, and
+  the walk is the ~13.5 hours — leaving a run
   of well under an hour. Its reading is **biased towards rejection** — that is the defect this whole
   lane exists to fix — and the record is stamped `historySource: "ownership-only"` so the bias
   travels with the numbers rather than being forgotten.
@@ -1002,6 +1102,23 @@ optimisation.
 `client.mjs` → `ENDPOINT_ROLES` is the authority; `--dry-run` prints it. Not used, deliberately:
 `/deployer-hunter/{wallet}/tokens` is bonded-only and rejects `limit` above 50, and
 `/deployer-hunter/{wallet}/history` is PRO+, which standing policy refuses.
+
+**Dune is a second keyed vendor and is metered separately**, because there is no exchange rate
+between the two: MadeOnSol is requests against a shared daily allowance, Dune is executions plus
+result bytes against a shared monthly one.
+
+| endpoint | cost | role |
+|---|---|---|
+| `GET /query/{id}` | 1 request, **no execution** | verify the saved SQL against the text committed in `dune.mjs`, before anything is spent |
+| `GET /query/{coverageQueryId}/results` | 1 request, **no execution** | the coverage probe, from Dune's cache — the default |
+| `POST /query/{creationQueryId}/execute` | 1 request, **1 EXECUTION** | the enumeration, once for the whole candidate batch |
+| `GET /execution/{id}/status` | 1 request each | polling; retried, unlike the execution |
+| `GET /execution/{id}/results` | 1 request, **billed by bytes** | ~20 credits/MB, ~71% of the bill |
+
+Authentication is the `X-Dune-API-Key` **header**, never `Bearer` and never a query parameter, so no
+URL this client builds can carry a credential. `POST /api/v1/usage` is free and reports
+`credits_used` / `credits_included`, but it lags minutes and lands in whole-credit jumps — it is a
+post-hoc ledger, not a pre-flight guard, and **nothing in this tool reads it**.
 
 ### Stage 2's own bounds — and it spends no vendor quota at all
 
@@ -1438,10 +1555,16 @@ The boundary is the directory, and `test/deployer-screen.test.ts` asserts the ot
 - `src/` may not import from `tools/`, and `tools/` may not import from `src/`. The duplicated curve
   constants in `measure.mjs` are this boundary's cost, paid deliberately.
 - Only `client.mjs` and `pumpfun.mjs` may call `fetch`.
-- Only `credential.mjs` and `screen.mjs` may name `MADEONSOL_API_KEY`.
+- Only `credential.mjs` and `screen.mjs` may name `MADEONSOL_API_KEY`, `HELIUS_API_KEY` or
+  `DUNE_API_KEY`, and the allow-list is asserted for **ownership** too: those files must name them,
+  so the guard cannot pass by the variables quietly disappearing.
 - **No committed file under the tool may contain a key-shaped string** — every file, not only the
   sources. `runs/*.json`, `thresholds.json` and this README are where an accidental paste would most
   plausibly land, and a source-only filter never read any of them.
+- **No committed file may assign a value to a credential variable or hard-code the auth header.**
+  This is what covers the Dune key: 32 alphanumeric characters is structurally a Solana address, so
+  adding it to the shape scan would fire on every mint in the tree, while this scan catches the
+  realistic paste with no false positives.
 
 ## What the output does not claim
 

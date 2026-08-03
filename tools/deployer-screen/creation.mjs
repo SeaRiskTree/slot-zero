@@ -181,7 +181,13 @@ export function parseCreateTransaction(tx) {
 /**
  * @typedef {object} CurveState
  * @property {boolean} complete Whether the curve bonded. Survives migration to PumpSwap.
- * @property {string} creator   The curve's creator **now**, which is the field that moves.
+ * @property {string | null} creator The curve's creator **now**, which is the field that moves —
+ *   and `null` when the enumeration route that produced this state does not measure it. The Dune
+ *   enumeration (`dune.mjs`) is the case that exists: it says who created a mint and whether it
+ *   completed, and says nothing about who owns the curve today. **The nullability is the point.**
+ *   Folding "not measured" into "did not move" would make {@link MergedHistory.movedCreator} report
+ *   a confident 0 for a quantity nothing looked at, which is the silent-wrong-answer shape this
+ *   whole lane exists to refuse.
  */
 
 /**
@@ -262,9 +268,17 @@ export function coveredBoundMs(ms) {
  *   rather than missed. False means the walk may have missed a real create, and the listing's
  *   in-window rows are carried rather than reclassified.
  * @property {number} movedCreator       Launches inside the window whose on-chain creator is no
- *   longer the wallet that created them.
- * @property {number} bondedFromCurve    Launches whose bonded status was decided by the on-chain
- *   bonding-curve `complete` byte — the authoritative source.
+ *   longer the wallet that created them. **Counted only where the route MEASURED it** — see
+ *   {@link MergedHistory.creatorMovementUnmeasured}.
+ * @property {number} creatorMovementUnmeasured Launches whose curve state came from a route that
+ *   does not report a current creator (the Dune enumeration). `movedCreator` says nothing about
+ *   these, and a reader must not add the two: the first is a measured count, the second is the size
+ *   of what was not looked at.
+ * @property {number} bondedFromCurve    Launches whose bonded status was decided by **the chain's
+ *   own statement** — the bonding-curve `complete` byte read directly by the signature walk, or the
+ *   `CompleteEvent` that same transition emits, which is what the Dune enumeration reads. One
+ *   counter rather than two because they are one fact from one source; the record's
+ *   `enumerationSource` says which route read it.
  * @property {number} bondedFromListing  Launches whose bonded status was decided by the ownership
  *   listing's own `complete` flag, because the curve account could not be read. A weaker source but
  *   a well-founded one: it is the same field a vendor mirror of agreed with our own tape 67/67.
@@ -365,6 +379,7 @@ export function mergeHistories(input) {
   /** Mints this wallet created **inside** the window — the only set comparable to the listing. */
   const createdInWindowMints = new Set();
   let movedCreator = 0;
+  let creatorMovementUnmeasured = 0;
   let bondedFromCurve = 0;
   let bondedFromListing = 0;
   let bondedUndecidable = 0;
@@ -384,7 +399,9 @@ export function mergeHistories(input) {
       bondedUndecidable += 1;
     }
     byMint.set(c.mint, { deployedAtMs: c.createdAtMs, completed });
-    if (curve !== undefined && curve.creator !== wallet) movedCreator += 1;
+    // `null` is "nobody looked", not "it did not move". See CurveState.creator.
+    if (curve !== undefined && curve.creator === null) creatorMovementUnmeasured += 1;
+    else if (curve !== undefined && curve.creator !== wallet) movedCreator += 1;
     // Every create found is a proven launch and belongs in `records` — but only those inside the
     // covered window may be COMPARED against the listing. The walk abandons a page part-way when a
     // bound bites, so the last few creates can sit below `covered.fromMs`; counting one of those as
@@ -446,6 +463,7 @@ export function mergeHistories(input) {
     listedInWindowCarried,
     windowExact,
     movedCreator,
+    creatorMovementUnmeasured,
     bondedFromCurve,
     bondedFromListing,
     bondedUndecidable,

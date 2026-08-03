@@ -33,9 +33,17 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
+import { BoundedClient, CeilingReached, DuneClient, VendorRefused } from './client.mjs';
 import { coveredBoundMs, mergeHistories } from './creation.mjs';
-import { HELIUS_KEY_ENV_VAR, KEY_ENV_VAR, resolveKey, resolveSolanaRpcEndpoint } from './credential.mjs';
+import {
+  DUNE_KEY_ENV_VAR,
+  HELIUS_KEY_ENV_VAR,
+  KEY_ENV_VAR,
+  resolveDuneCredential,
+  resolveKey,
+  resolveSolanaRpcEndpoint,
+} from './credential.mjs';
+import { coverageRecordRow, enumerateCreations } from './dune.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
 import {
   RECORD_SCHEMA_VERSION,
@@ -141,6 +149,11 @@ OPTIONS
                       Fast and free of Solana RPC, and BIASED TOWARDS REJECTION — see below.
                       The record is stamped historySource: "ownership-only" so a run made this
                       way can never be mistaken for a creation-derived one.
+  --no-dune           Skip the Dune creation enumeration and take the Solana RPC walk instead.
+                      Same measurement, slower, and the record records which surface answered.
+  --dune-refresh-probe
+                      Re-EXECUTE Dune's coverage probe rather than reading its cached result.
+                      Costs one billed execution; the default cached read costs none.
   --out <path>        Write the run record as JSON. Default: nothing is written. An INCOMPLETE run
                       writes <path>.partial.json instead, leaving <path> untouched.
   --json              Print the run record as JSON instead of text.
@@ -148,9 +161,19 @@ OPTIONS
   --help              This text.
 
 WHICH HISTORY THE GATE READS
-  By default the gate reads a CREATION-DERIVED history: which tokens this wallet CREATED, recovered
-  from pump.fun create transactions over the public Solana RPC. Keyless, and bounded by
-  thresholds.json -> creation_walk.
+  By default the gate reads a CREATION-DERIVED history: which tokens this wallet CREATED. Since
+  captain decision 156a the PRIMARY surface for that is Dune's decoded pump.fun creation events
+  (thresholds.json -> dune), which answers a whole candidate batch in one query. The Solana RPC
+  walk over create transactions is the FALLBACK, taken when there is no ${DUNE_KEY_ENV_VAR}, when
+  Dune fails, or when its coverage probe refuses a reading; it is bounded by thresholds.json ->
+  creation_walk (keyless) or creation_walk_helius (with ${HELIUS_KEY_ENV_VAR} set).
+
+  EVERY DUNE-DERIVED COUNT SHIPS WITH ITS OWN COVERAGE PROBE, and a count that reaches outside the
+  probed coverage is refused rather than published. Decoded tables have silent start dates: they
+  return a confident, complete-looking answer that is simply wrong before their first row.
+
+  Helius is NOT demoted for transaction-level work. Stage 2's entry-cost leg reads meta.fee and
+  pre/post balances per transaction, which no decoded table serves.
 
   The alternative, which every vendor surface answers, is which tokens the wallet OWNS NOW. On
   pump.fun the owner collects the token's creator fees, so ownership is a live position that can be
@@ -202,6 +225,8 @@ export function parseArgs(argv) {
     scoreCandidates: null,
     consistency: false,
     ownershipOnly: false,
+    noDune: false,
+    duneRefreshProbe: false,
     out: null,
     json: false,
     dataDir: DEFAULT_DATA_DIR,
@@ -246,6 +271,12 @@ export function parseArgs(argv) {
       }
       case '--ownership-only':
         opts.ownershipOnly = true;
+        break;
+      case '--no-dune':
+        opts.noDune = true;
+        break;
+      case '--dune-refresh-probe':
+        opts.duneRefreshProbe = true;
         break;
       case '--json':
         opts.json = true;
@@ -303,6 +334,10 @@ export function parseArgs(argv) {
  * @property {number | null} scoreCandidates
  * @property {boolean} consistency
  * @property {boolean} ownershipOnly
+ * @property {boolean} noDune Skip the Dune creation enumeration and take the Solana RPC walk, which
+ *   is what every run before captain decision 156a did. The record still says which surface answered.
+ * @property {boolean} duneRefreshProbe Re-EXECUTE the coverage probe instead of reading Dune's
+ *   cached result for it. An execution is billed; the cached read is not.
  * @property {string | null} out
  * @property {boolean} json
  * @property {string} dataDir
@@ -488,6 +523,19 @@ export async function main(opts, env, out, err) {
     return EXIT.usage;
   }
 
+  // **Which surface answers "which mints did this wallet create", decided once, here.** Captain
+  // decision 156a makes Dune primary; the walk above is the fallback and stays fully wired, because
+  // the fallback is taken often enough to matter — no key, a Dune failure, or a wallet the coverage
+  // probe refuses. A key that is PRESENT but malformed falls back and SAYS WHY, for the same reason
+  // the Helius one does: a silent fallback reads as a deliberate choice in the record.
+  const duneBounds = T['dune'];
+  const duneCredential = resolveDuneCredential(env);
+  const usingDune = duneCredential.available && !opts.ownershipOnly && !opts.noDune;
+
+  // **The Helius worst case is NOT reduced by Dune being primary, and that is deliberate.** Every
+  // candidate can fall back, so the reservation has to cover every candidate falling back. What Dune
+  // changes is the EXPECTED spend, not the admissible plan: a run where Dune answers spends nothing
+  // on the walk, and a run where it does not is exactly the run this ceiling was sized for.
   const resolution = resolveKey(env);
 
   if (opts.dryRun) {
@@ -509,6 +557,10 @@ export async function main(opts, env, out, err) {
         rpcEndpoint,
         indexedWalk,
         worstCaseCredits,
+        dune: duneBounds,
+        duneCredential,
+        usingDune,
+        duneRefreshProbe: opts.duneRefreshProbe,
       }),
     );
     return EXIT.ok;
@@ -572,6 +624,26 @@ export async function main(opts, env, out, err) {
     },
   });
 
+  // The Dune client, built even when unused so the record's spend block always reports the same
+  // shape. Its TWO ceilings are separate on purpose: requests bound the wall clock and the polite
+  // use of a shared free-tier host, executions bound the money — an execution is billed whether or
+  // not it succeeds and is NEVER retried.
+  const duneClient = usingDune
+    ? new DuneClient({
+        key: duneCredential.key ?? '',
+        maxExecutions: duneBounds.maxExecutionsPerRun,
+        maxRequests: duneBounds.maxRequestsPerRun,
+        minIntervalMs: duneBounds.minIntervalMs,
+        onRequest: (path) => {
+          if (!opts.json) out(`  → dune ${path}`);
+        },
+      })
+    : null;
+  /** @type {import('./dune.mjs').DuneEnumeration | null} */
+  let duneEnumeration = null;
+  /** @type {string | null} */
+  let duneUnusableNote = null;
+
   const walkBounds = T['creation_walk'];
   let rpcRequests = 0;
   let rpcLoadShedEvents = 0;
@@ -634,13 +706,75 @@ export async function main(opts, env, out, err) {
       out('');
     }
 
+    const gating = worthARequest.slice(0, maxCandidates);
+
+    // ---- Creation enumeration, PRIMARY on Dune, ONE execution for the whole batch. ------------
+    // Batching is the cost model rather than a convenience: the table scan costs nearly the same
+    // for 5 wallets as for 20, so the per-deployer price falls as the batch grows. It runs BEFORE
+    // the gate loop because the loop is where the fallback walk would otherwise be spent.
+    if (usingDune && duneClient !== null && gating.length > 0) {
+      if (!opts.json) {
+        out('');
+        out(
+          `GATING — creation-derived history, ENUMERATED ON DUNE (${duneCredential.label}), ` +
+            `one execution for all ${gating.length} candidate(s)`,
+        );
+      }
+      try {
+        duneEnumeration = await enumerateCreations(duneClient, {
+          wallets: gating.map((s) => s.wallet),
+          creationQueryId: duneBounds.creationQueryId,
+          coverageQueryId: duneBounds.coverageQueryId,
+          refreshProbe: opts.duneRefreshProbe,
+          nowMs: Date.now(),
+          bounds: duneBounds,
+        });
+        if (!opts.json) {
+          const cov = duneEnumeration.coverage;
+          out(
+            `  coverage probe: ${duneEnumeration.probe.tables.length} table(s) probed, ` +
+              `${cov.ok ? 'PASSED' : 'REFUSED'}` +
+              (cov.fromMs === null || cov.toMs === null
+                ? ''
+                : ` — covered ${new Date(cov.fromMs).toISOString().slice(0, 10)} → ` +
+                  `${new Date(cov.toMs).toISOString().slice(0, 10)}, ${cov.holes.length} month(s) with no row`),
+          );
+          for (const r of cov.reasons) out(`  !! coverage REFUSED: ${r}`);
+          out(`  ${duneEnumeration.rowsReturned} launch row(s) returned, ${duneEnumeration.unreadableRows} unreadable`);
+          // A row that would not parse commonly has no readable deployer, so the wallet whose
+          // history came back short cannot be named — the WHOLE batch falls back rather than being
+          // gated on what survived the parser.
+          if (duneEnumeration.unreadableRows > 0) {
+            out('  !! unreadable rows: the whole batch is REFUSED and every candidate takes the walk');
+          }
+          if (duneEnumeration.walletsRefusedByShape > 0) {
+            out(
+              `  !! ${duneEnumeration.walletsRefusedByShape} candidate(s) were never sent to Dune — ` +
+                `their address is not base58-shaped — and take the walk`,
+            );
+          }
+        }
+      } catch (cause) {
+        // A Dune failure degrades this leg to the walk and NEVER aborts a run whose keyed MadeOnSol
+        // allowance is already spent. The same rule the ownership listing already follows, and for
+        // the same reason: one vendor's bad afternoon must not throw away paid-for measurements.
+        duneUnusableNote = redactVendorIdentifiers(cause instanceof Error ? cause.message : String(cause));
+        // Deliberately NOT pushed onto `unmeasured`. That list is what makes a run report itself
+        // TRUNCATED, and a Dune failure does not leave a measurement untaken — the walk takes it.
+        // Recording it there would claim missing evidence the run in fact holds, which is the same
+        // class of false statement the list exists to prevent, pointing the other way. The failure
+        // is on the record either way: `dune.unusableNote` carries it, and every candidate's
+        // `enumerationSource` says the walk answered.
+        if (!opts.json) out(`  !! Dune enumeration unusable, falling back to the RPC walk: ${duneUnusableNote}`);
+      }
+    }
+
     if (!opts.json && !opts.ownershipOnly) {
       out('');
       out(
         usingIndexedWalk
-          ? `GATING — creation-derived history, from pump.fun create transactions ` +
-              `(indexed RPC, ${rpcEndpoint.label})`
-          : 'GATING — creation-derived history, from pump.fun create transactions (keyless RPC)',
+          ? `FALLBACK CREATION WALK, from pump.fun create transactions (indexed RPC, ${rpcEndpoint.label})`
+          : 'FALLBACK CREATION WALK, from pump.fun create transactions (keyless RPC)',
       );
       // A key that was present but unusable must not read as a deliberate keyless run.
       if (rpcEndpoint.rejected !== null) out(`  !! ${rpcEndpoint.rejected}`);
@@ -650,9 +784,16 @@ export async function main(opts, env, out, err) {
             `is SLOWER, not different.`,
         );
       }
+      if (duneCredential.rejected !== null) out(`  !! ${duneCredential.rejected}`);
+      else if (!usingDune && !opts.noDune) {
+        out(
+          `  ${DUNE_KEY_ENV_VAR} is not set, so creation enumeration runs on this walk rather than ` +
+            `on Dune. Same measurement, and slower by roughly an order of magnitude.`,
+        );
+      }
     }
 
-    for (const seed of worthARequest.slice(0, maxCandidates)) {
+    for (const seed of gating) {
       const profile = await client.getJson(`/deployer-hunter/${encodeURIComponent(seed.wallet)}`);
       const { records, capped } = toTokenRecords(profile);
 
@@ -671,6 +812,16 @@ export async function main(opts, env, out, err) {
       let { verdict, rationale } = vendorVerdict;
 
       if (!opts.ownershipOnly) {
+        // **Dune first, the walk only if Dune's reading is refused.** The refusal is per WALLET and
+        // not per run: the coverage probe turns down a wallet whose earliest launch sits at or
+        // before the probed surfaces' own first row, while the rest of the batch is fine. So a
+        // single run can carry both sources, and every candidate row says which one answered it.
+        const fromDune = duneEnumeration?.byWallet.get(seed.wallet) ?? null;
+        const useDune = fromDune !== null && fromDune.usable;
+        /** @type {string[]} */
+        const duneFallbackReasons = useDune ? [] : (fromDune?.reasons ?? []);
+        const duneLaunches = fromDune === null ? null : fromDune.launches;
+
         let rpcTicks = 0;
         // ONE per-candidate ceiling either way, in whichever unit the endpoint bills in. The
         // indexed route reads up to `maxPagesPerCandidate` pages and is bounded by CREDITS; the
@@ -679,41 +830,66 @@ export async function main(opts, env, out, err) {
         const ceilingForCandidate = usingIndexedWalk
           ? indexedWalk.maxPagesPerCandidate + Math.ceil(indexedWalk.maxTransactionsPerCandidate / 100) + 1
           : walkBounds.maxRpcRequestsPerCandidate;
-        const rpc = new SolanaRpcClient({
-          maxRequests: ceilingForCandidate,
-          endpoint: rpcEndpoint,
-          minIntervalMs: usingIndexedWalk ? indexedWalk.rpcMinIntervalMs : walkBounds.rpcMinIntervalMs,
-          ...(usingIndexedWalk ? { maxCredits: indexedWalk.maxCreditsPerCandidate } : {}),
-          // Same `!opts.json` guard as the other three clients, so --json stays machine-readable.
-          ...(opts.json
-            ? {}
-            : {
-                /** @param {string} label */
-                onRequest: (label) => {
-                  rpcTicks += 1;
-                  if (rpcTicks !== 1 && rpcTicks % RPC_HEARTBEAT_EVERY !== 0) return;
-                  out(
-                    `    · ${seed.wallet}: ${rpcTicks}/${ceilingForCandidate} ` +
-                      `RPC request(s) — ${label}`,
-                  );
-                },
-              }),
-        });
-        const walk = usingIndexedWalk
-          ? await readCreatedHistoryIndexed(rpc, seed.wallet, {
-              maxPages: indexedWalk.maxPagesPerCandidate,
-              pageLimit: indexedWalk.pageLimit,
-              maxTransactions: indexedWalk.maxTransactionsPerCandidate,
-              maxCredits: indexedWalk.maxCreditsPerCandidate,
-            })
-          : await readCreatedHistory(rpc, seed.wallet, {
-              maxSignaturePages: walkBounds.maxSignaturePages,
-              maxTransactions: walkBounds.maxTransactionsPerCandidate,
-              txBatchSize: walkBounds.txBatchSize,
+        const rpc = useDune
+          ? null
+          : new SolanaRpcClient({
+              maxRequests: ceilingForCandidate,
+              endpoint: rpcEndpoint,
+              minIntervalMs: usingIndexedWalk ? indexedWalk.rpcMinIntervalMs : walkBounds.rpcMinIntervalMs,
+              ...(usingIndexedWalk ? { maxCredits: indexedWalk.maxCreditsPerCandidate } : {}),
+              // Same `!opts.json` guard as the other three clients, so --json stays machine-readable.
+              ...(opts.json
+                ? {}
+                : {
+                    /** @param {string} label */
+                    onRequest: (label) => {
+                      rpcTicks += 1;
+                      if (rpcTicks !== 1 && rpcTicks % RPC_HEARTBEAT_EVERY !== 0) return;
+                      out(
+                        `    · ${seed.wallet}: ${rpcTicks}/${ceilingForCandidate} ` +
+                          `RPC request(s) — ${label}`,
+                      );
+                    },
+                  }),
             });
-        rpcRequests += rpc.issued();
-        rpcLoadShedEvents += rpc.loadShedEvents();
-        heliusCredits += usingIndexedWalk ? rpc.creditsSpent() : 0;
+        // One shape either way, so everything downstream — the merge, the verdict, the record — is
+        // written once and cannot drift between the two sources. The walk-only diagnostics read 0
+        // on the Dune path because no walk happened, and `enumerationSource` is what tells them apart.
+        const walk =
+          useDune && fromDune !== null
+            ? {
+                creates: fromDune.creates,
+                curves: fromDune.curves,
+                covered: fromDune.covered,
+                unresolvedTransactions: 0,
+                /** @type {'dune-enumerated'} */
+                stopReason: /** @type {const} */ ('dune-enumerated'),
+                stopDetail: null,
+                signaturesScanned: 0,
+                signaturesSucceeded: 0,
+                transactionsInspected: 0,
+                curvesUnread: 0,
+              }
+            : rpc === null
+              ? null
+              : usingIndexedWalk
+                ? await readCreatedHistoryIndexed(rpc, seed.wallet, {
+                    maxPages: indexedWalk.maxPagesPerCandidate,
+                    pageLimit: indexedWalk.pageLimit,
+                    maxTransactions: indexedWalk.maxTransactionsPerCandidate,
+                    maxCredits: indexedWalk.maxCreditsPerCandidate,
+                  })
+                : await readCreatedHistory(rpc, seed.wallet, {
+                    maxSignaturePages: walkBounds.maxSignaturePages,
+                    maxTransactions: walkBounds.maxTransactionsPerCandidate,
+                    txBatchSize: walkBounds.txBatchSize,
+                  });
+        if (walk === null) throw new Error('unreachable: neither a Dune reading nor a walk was produced');
+        const walkRequests = rpc === null ? 0 : rpc.issued();
+        const walkShed = rpc === null ? 0 : rpc.loadShedEvents();
+        rpcRequests += walkRequests;
+        rpcLoadShedEvents += walkShed;
+        heliusCredits += usingIndexedWalk && rpc !== null ? rpc.creditsSpent() : 0;
 
         // Guarded per candidate, exactly as the consistency pass is. A CeilingReached or a
         // transport failure on one wallet's listing used to reach the outer catch and abort a run
@@ -797,8 +973,8 @@ export async function main(opts, env, out, err) {
           wholeHistory: walk.covered.exhausted,
           stopReason: walk.stopReason,
           stopDetail: walk.stopDetail,
-          rpcRequests: rpc.issued(),
-          loadShedEvents: rpc.loadShedEvents(),
+          rpcRequests: walkRequests,
+          loadShedEvents: walkShed,
           signaturesScanned: walk.signaturesScanned,
           signaturesSucceeded: walk.signaturesSucceeded,
           transactionsInspected: walk.transactionsInspected,
@@ -818,15 +994,25 @@ export async function main(opts, env, out, err) {
           bondedFromCurve: merged.bondedFromCurve,
           bondedFromListing: merged.bondedFromListing,
           bondedUndecidable: merged.bondedUndecidable,
+          // WHICH SURFACE ANSWERED THIS CANDIDATE, per candidate rather than per run, because the
+          // coverage probe refuses a wallet at a time. `duneFallbackReasons` is empty both when Dune
+          // answered and when Dune was never consulted; the run-level `dune` block separates those.
+          enumerationSource: useDune ? 'dune' : usingIndexedWalk ? 'helius' : 'keyless-rpc',
+          duneLaunches,
+          duneFallbackReasons,
+          creatorMovementUnmeasured: merged.creatorMovementUnmeasured,
         };
 
         if (!opts.json) {
           out(
             `  ${seed.wallet}: created ${merged.createdInWindow} in the ${creation.coveredDays}d window ` +
               `(ownership showed ${merged.listedInWindow}; ${merged.hiddenByOwnership} hidden, ` +
-              `${merged.notCreatedByWallet} acquired, ${merged.movedCreator} creator moved), ` +
-              `+${merged.listedOutsideWindow} carried over — stopped on ${walk.stopReason}`,
+              `${merged.notCreatedByWallet} acquired, ${merged.movedCreator} creator moved` +
+              `${merged.creatorMovementUnmeasured > 0 ? ` / ${merged.creatorMovementUnmeasured} unmeasured` : ''}), ` +
+              `+${merged.listedOutsideWindow} carried over — via ${creation.enumerationSource}, ` +
+              `stopped on ${walk.stopReason}`,
           );
+          for (const r of duneFallbackReasons) out(`      ^ DUNE READING REFUSED, walked instead: ${r}`);
           if (notMeasured.length > 0) {
             out(`      ^ READING NOT MEASURED — verdict ${verdict}, not a rejection: ${notMeasured.join('; ')}`);
           }
@@ -1069,6 +1255,47 @@ export async function main(opts, env, out, err) {
         rpcRequests,
         rpcLoadShedEvents,
         historySource,
+        // **The Dune leg, metered in its own units in its own block.** Folding it into `spend`
+        // would imply a fourth budget commensurable with the other three, and it is not: MadeOnSol
+        // is requests against a shared daily allowance, Helius credits against an unshared monthly
+        // one, and Dune executions-plus-bytes against a shared monthly one where a FAILED execution
+        // is billed exactly like a successful one. `estimatedCredits` is an ESTIMATE and is named
+        // one: it applies the published 20 credits/MB to the bytes the vendor's own metadata
+        // declared, and compute is billed on top. The only authoritative figure is POST /usage,
+        // which lags minutes and lands in whole-credit jumps, so nothing here reads it.
+        dune: (() => {
+          const stats = duneClient?.stats() ?? null;
+          return {
+            used: usingDune,
+            reason: !duneCredential.available
+              ? duneCredential.rejected === null
+                ? `${DUNE_KEY_ENV_VAR} is not set`
+                : 'the key was present but malformed'
+              : opts.ownershipOnly
+                ? '--ownership-only skips every creation-derived reading'
+                : opts.noDune
+                  ? '--no-dune'
+                  : null,
+            rejected: duneCredential.rejected,
+            unusableNote: duneUnusableNote,
+            endpoint: duneCredential.label,
+            creationQueryId: duneBounds.creationQueryId,
+            coverageQueryId: duneBounds.coverageQueryId,
+            executions: stats?.executions ?? 0,
+            executionCeiling: duneBounds.maxExecutionsPerRun,
+            requests: stats?.requests ?? 0,
+            resultBytes: stats?.resultBytes ?? 0,
+            estimatedCredits: stats?.estimatedExportCredits ?? 0,
+            rowsReturned: duneEnumeration?.rowsReturned ?? 0,
+            unreadableRows: duneEnumeration?.unreadableRows ?? 0,
+            walletsRefusedByShape: duneEnumeration?.walletsRefusedByShape ?? 0,
+            // The BOUND, not the vendor's data. `derive and discard`: the probe holds table-wide
+            // monthly counts, and what survives a run is which tables, from when, to when, and
+            // whether the span had holes — which is what says what the count was allowed to claim.
+            coverage:
+              duneEnumeration === null ? null : coverageRecordRow(duneEnumeration.probe, duneEnumeration.coverage),
+          };
+        })(),
         elapsedMs: Date.now() - startedAt,
         // `completed` is whether the run reached the end; `truncated` is whether anything is
         // missing for any reason. A completed run whose candidate cap bit is truncated but NOT
@@ -1099,6 +1326,7 @@ export async function main(opts, env, out, err) {
           stage2_cost: T['stage2_cost'],
           budget: T['budget'],
           creation_walk: T['creation_walk'],
+          dune: T['dune'],
         },
         stage0: summariseStage0(stage0),
         limitations: LIMITATIONS,

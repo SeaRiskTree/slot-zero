@@ -3,11 +3,17 @@
  * environment variable** — `screen.mjs` is on the allow-list too, for its help text, and
  * `test/deployer-screen.test.ts` pins both lists.
  *
- * Two credentials live here and they are unrelated to each other:
+ * Three credentials live here and they are unrelated to each other:
  *
  * - `MADEONSOL_API_KEY` — the Free-tier vendor key the competence gate runs on. Metered at ~200
  *   requests/day, shared with whatever else holds it, and expiring every 30 days.
- * - `HELIUS_API_KEY` — the paid Solana RPC key the creation walk runs on when it is present.
+ * - `DUNE_API_KEY` — the Free-tier key the **creation enumeration** runs on, which since captain
+ *   decision 156a is the PRIMARY answer to "which mints did this wallet create". **Optional**: with
+ *   it absent the enumeration falls back to the Solana RPC creation walk below and every number is
+ *   what it was before. See {@link resolveDuneCredential}.
+ * - `HELIUS_API_KEY` — the paid Solana RPC key. It is the FALLBACK for creation enumeration and
+ *   PRIMARY for everything transaction-level, including Stage 2's entry-cost leg, which reads
+ *   `meta.fee` and pre/post balances per transaction — Dune's decoded tables do not serve that.
  *   **Optional**: with it absent the walk falls back to the keyless public endpoint and behaves
  *   exactly as it did before this key existed. See {@link resolveSolanaRpcEndpoint}.
  *
@@ -306,6 +312,137 @@ export function resolveSolanaRpcEndpoint(env) {
       `slower rather than wrong.`,
     keyDescription: description,
     keyEnvVar: HELIUS_KEY_ENV_VAR,
+    rejected: null,
+  };
+}
+
+// --- the Dune credential, and why its absence is not a fault ----------------------------------
+
+/**
+ * Environment variable the Dune key is read from. The only one.
+ *
+ * **Optional, like {@link HELIUS_KEY_ENV_VAR} and unlike {@link KEY_ENV_VAR}.** Creation
+ * enumeration is PRIMARY on Dune since captain decision 156a, but a missing key is a supported
+ * configuration rather than a failure: the enumeration falls back to the Solana RPC creation walk,
+ * which is the route every committed run before that decision used. So nothing here produces a
+ * "credential missing" exit — see {@link resolveDuneCredential}.
+ */
+export const DUNE_KEY_ENV_VAR = 'DUNE_API_KEY';
+
+/**
+ * Dune's API host, **without the key**.
+ *
+ * Unlike Helius, Dune authenticates on a HEADER (`X-Dune-API-Key`, never `Bearer`), so no
+ * credential is ever composed into a URL here and there is nothing for a log line to leak. That is
+ * the easy shape; the rule that the key is stored bare and composed nowhere still holds, and this
+ * constant is what makes it structural rather than a habit.
+ */
+export const DUNE_API_BASE = 'https://api.dune.com/api/v1';
+
+/**
+ * Plausible length band for a Dune key. The one we hold is 32 alphanumeric characters. The band is
+ * wide for the same reason the other two are: it exists to catch a truncated paste or a
+ * shell-quoting accident, not to assert a format the vendor never promised.
+ */
+export const DUNE_KEY_MIN_LENGTH = 16;
+/** Upper end of the plausible length band. See {@link DUNE_KEY_MIN_LENGTH}. */
+export const DUNE_KEY_MAX_LENGTH = 128;
+
+/** The alphanumeric shape Dune issues. A **shape** test, and the only thing said out loud. */
+const DUNE_KEY_SHAPE = /^[A-Za-z0-9]+$/;
+
+/**
+ * @typedef {object} DuneKeyDescription
+ * @property {number} length              Character count. Safe to print.
+ * @property {boolean} hasDocumentedShape Whether it is alphanumeric, which is what Dune issues.
+ */
+
+/**
+ * Describe a Dune key without disclosing it. Length and shape only.
+ *
+ * @param {string} key
+ * @returns {DuneKeyDescription}
+ */
+export function describeDuneKey(key) {
+  return { length: key.length, hasDocumentedShape: DUNE_KEY_SHAPE.test(key) };
+}
+
+/**
+ * @typedef {object} DuneCredential
+ * @property {boolean} available   Whether the creation enumeration may take the Dune route.
+ * @property {string | null} key   The bare key, `null` when unavailable. Passed to the client and
+ *   used for exactly one thing — a request header. No code may format it into a message.
+ * @property {string} label        The host, with no credential in it. Every human-facing string and
+ *   every persisted field uses THIS.
+ * @property {DuneKeyDescription | null} keyDescription `null` when no key was present.
+ * @property {string | null} keyEnvVar The variable this credential is read from, `null` when
+ *   absent. It travels with the credential because `render.mjs` has to name the variable in the dry
+ *   run and is not allowed to spell it.
+ * @property {string | null} rejected When a key was PRESENT but malformed: why, in a sentence. The
+ *   enumeration then falls back to the RPC walk, because a malformed key must not silently become a
+ *   walk-derived run that reads as a Dune-derived one — the caller prints this.
+ */
+
+/**
+ * Resolve the Dune credential from an environment-like object.
+ *
+ * **The absence of a key is a configuration, not a failure**, and the fallback it selects is the
+ * route the repo already had. A key that is present but malformed falls back **and says so**:
+ * refusing to run would be worse (the walk works), and running silently would be worse still, since
+ * a reader seeing a slow run and an `enumerationSource: "creation-walk"` record with no reason
+ * would have to guess.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {DuneCredential}
+ */
+export function resolveDuneCredential(env) {
+  /** @type {DuneCredential} */
+  const absent = {
+    available: false,
+    key: null,
+    label: DUNE_API_BASE,
+    keyDescription: null,
+    keyEnvVar: null,
+    rejected: null,
+  };
+
+  const raw = env[DUNE_KEY_ENV_VAR];
+  if (raw === undefined || raw.trim().length === 0) return absent;
+
+  // Same fail-fast as the Helius key, for the same reason: a pasted URL sits comfortably inside any
+  // plausible length band, so length alone cannot catch it. Dune takes its credential in a header,
+  // so a URL here could never work at all — it is refused rather than sent.
+  if (raw.includes('://') || raw.includes('api.dune.com')) {
+    return {
+      ...absent,
+      keyEnvVar: DUNE_KEY_ENV_VAR,
+      rejected:
+        `${DUNE_KEY_ENV_VAR} looks like a URL rather than a bare key, so it was NOT used and the ` +
+        `creation enumeration fell back to the Solana RPC walk. Store the KEY ALONE — Dune ` +
+        `authenticates on a header, so a URL here cannot work, and a URL in an environment ` +
+        `variable is a credential that leaks the moment anything formats it into a message. The ` +
+        `value is not shown, here or anywhere.`,
+    };
+  }
+  if (raw.length < DUNE_KEY_MIN_LENGTH || raw.length > DUNE_KEY_MAX_LENGTH) {
+    return {
+      ...absent,
+      keyEnvVar: DUNE_KEY_ENV_VAR,
+      rejected:
+        `${DUNE_KEY_ENV_VAR} is ${raw.length} characters, outside the ` +
+        `${DUNE_KEY_MIN_LENGTH}-${DUNE_KEY_MAX_LENGTH} band for a plausible Dune key, so it was ` +
+        `NOT used and the creation enumeration fell back to the Solana RPC walk. That usually ` +
+        `means a truncated paste, a shell-quoting slip, or a whole dotenv line captured instead of ` +
+        `the value. The value is not shown, here or anywhere.`,
+    };
+  }
+
+  return {
+    available: true,
+    key: raw,
+    label: DUNE_API_BASE,
+    keyDescription: describeDuneKey(raw),
+    keyEnvVar: DUNE_KEY_ENV_VAR,
     rejected: null,
   };
 }

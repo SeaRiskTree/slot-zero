@@ -1254,3 +1254,254 @@ export async function readCreatedHistory(rpc, wallet, bounds) {
     stopDetail,
   };
 }
+
+/** Lamports in one SOL. Named so the conversion is never a bare literal in an arithmetic line. */
+export const LAMPORTS_PER_SOL = 1_000_000_000;
+
+/**
+ * @typedef {object} TransactionCosts
+ * What one transaction cost, recovered exactly from the chain.
+ *
+ * @property {string} signature
+ * @property {number} feeSol      `meta.fee` — **base plus priority**, in SOL. Exact, and charged to
+ *   {@link TransactionCosts.feePayer}.
+ * @property {string | null} feePayer `accountKeys[0]`. For a bundled transaction this is NOT the
+ *   trader — CLAUDE.md's fee-payer counter-trap — which is why it is carried rather than assumed.
+ * @property {Map<string, number>} solOutByWallet `(preBalance − postBalance) / 1e9` per account, so
+ *   a positive number is SOL that LEFT that account. This is the wallet's real lamport change and it
+ *   already nets the swap, the venue fee, rent, its own fee if it is the payer, and **any tip paid
+ *   inside this transaction**.
+ */
+
+/**
+ * Read one transaction's exact costs out of an RPC result.
+ *
+ * Serves both routes — a `getTransaction` result and one element of a `getBlock`'s `transactions`
+ * array have the same `{ transaction, meta }` shape — so there is one parser and the two routes
+ * cannot disagree.
+ *
+ * **The index check is load-bearing, not defensive tidiness.** `preBalances`/`postBalances` are
+ * indexed over the transaction's WHOLE account list, and for a versioned transaction that list is
+ * the static keys plus the ones loaded from an address table. `jsonParsed` encoding returns the
+ * complete list; a plainer encoding returns only the static half. Reading a balance at an index the
+ * key list does not cover would attribute a stranger's lamport change to our entrant — a wrong
+ * number rather than a missing one — so a length disagreement refuses the transaction instead.
+ *
+ * A transaction carrying an error is refused too. Every transaction this walk is pointed at came
+ * from a FILL, so it succeeded; an `err` means the row is not what we think it is.
+ *
+ * @param {unknown} tx
+ * @returns {TransactionCosts | null} `null` when the shape is not one this can price exactly.
+ */
+export function parseTransactionCosts(tx) {
+  if (typeof tx !== 'object' || tx === null) return null;
+  const root = /** @type {Record<string, unknown>} */ (tx);
+
+  const meta = /** @type {Record<string, unknown> | null | undefined} */ (root['meta']);
+  if (meta === undefined || meta === null) return null;
+  if (meta['err'] !== null && meta['err'] !== undefined) return null;
+
+  const fee = meta['fee'];
+  const pre = meta['preBalances'];
+  const post = meta['postBalances'];
+  if (typeof fee !== 'number' || !Array.isArray(pre) || !Array.isArray(post)) return null;
+  if (pre.length !== post.length) return null;
+
+  const transaction = /** @type {Record<string, unknown> | null | undefined} */ (root['transaction']);
+  if (transaction === undefined || transaction === null) return null;
+  const message = /** @type {Record<string, unknown> | null | undefined} */ (transaction['message']);
+  if (message === undefined || message === null) return null;
+  const accountKeys = message['accountKeys'];
+  if (!Array.isArray(accountKeys)) return null;
+  if (accountKeys.length !== pre.length) return null;
+
+  /** @type {Map<string, number>} */
+  const solOutByWallet = new Map();
+  /** @type {string | null} */
+  let feePayer = null;
+  for (let i = 0; i < accountKeys.length; i++) {
+    const entry = accountKeys[i];
+    const pubkey =
+      typeof entry === 'string'
+        ? entry
+        : typeof entry === 'object' && entry !== null
+          ? /** @type {Record<string, unknown>} */ (entry)['pubkey']
+          : undefined;
+    if (typeof pubkey !== 'string') return null;
+    const before = pre[i];
+    const after = post[i];
+    if (typeof before !== 'number' || typeof after !== 'number') return null;
+    if (i === 0) feePayer = pubkey;
+    // An account can appear once only; a duplicate key would make the delta ambiguous.
+    if (solOutByWallet.has(pubkey)) return null;
+    solOutByWallet.set(pubkey, (before - after) / LAMPORTS_PER_SOL);
+  }
+
+  const signatures = transaction['signatures'];
+  const signature = Array.isArray(signatures) && typeof signatures[0] === 'string' ? signatures[0] : '';
+  if (signature === '') return null;
+
+  return { signature, feeSol: fee / LAMPORTS_PER_SOL, feePayer, solOutByWallet };
+}
+
+/**
+ * @typedef {object} CostWalkResult
+ * @property {Map<string, TransactionCosts>} priced  By signature.
+ * @property {number} requests            RPC requests this walk issued, retries included.
+ * @property {number} unresolved          Transactions the endpoint never resolved, or whose shape
+ *   {@link parseTransactionCosts} refused. Neither is "cost zero" — see the caller.
+ * @property {number} viaBlock            Priced from a whole-block read.
+ * @property {number} viaTransaction      Priced one `getTransaction` at a time.
+ * @property {boolean} blockRouteTried
+ * @property {string | null} blockRouteNote Why the block route was not used, when it was not.
+ * @property {boolean} stoppedForBudget   The per-candidate RPC ceiling ended the walk early.
+ */
+
+/**
+ * Price a launch's create slot — and, optionally, the rest of its window — from the chain.
+ *
+ * ## What this recovers, and what it cannot
+ *
+ * Two exact quantities per transaction, both from one response: the fee (**base plus priority**,
+ * `meta.fee`) and every account's real lamport change. Together with the fill tape's swap-quote SOL
+ * that gives what an entrant paid over and above the position it took — the venue fee, the rent, the
+ * execution difference, and **any tip paid inside its own transaction**.
+ *
+ * **A landing tip paid in a SEPARATE transaction of the same bundle is not recoverable from this,
+ * and it is not measured anywhere in this repo's ground truth either. Its absence biases every
+ * figure built on this walk OPTIMISTICALLY — entry looks cheaper than it was.** That caveat travels
+ * with the numbers rather than living in a document: `entry.mjs` puts it on the score, `render.mjs`
+ * prints it beside the distribution, and the run record persists it in `entry.caveats`.
+ *
+ * ## Two routes, and why the cheap one is tried behind a fallback
+ *
+ * `getBlock(slot, { transactionDetails: 'full' })` returns **every transaction in the create slot in
+ * one request**, collapsing the create-slot leg from a handful of `getTransaction` calls to one. It
+ * has never been exercised against this endpoint from this repo — what is known is that `getBlock`
+ * works here for signature listing; what is unknown is whether the public endpoint serves *full*
+ * blocks to this client and what a busy mainnet slot's payload costs. So it is **probed, once per
+ * launch, behind a fallback**: anything other than a usable block latches the walk onto the
+ * per-signature route and records why. The route that ran reaches the run record, so a saved run
+ * says which one paid for its numbers.
+ *
+ * Note the block route buys request count and nothing else. It does **not** reach out-of-transaction
+ * tips: attributing a sibling transaction in the same slot to the same bundle is an inference the
+ * chain does not support, and this walk makes no inference it cannot prove.
+ *
+ * ## Pacing is the creation walk's, and it is not negotiable
+ *
+ * The same client class, the same 2.5s, the same one-request-in-flight queue — `api.mainnet-beta`
+ * rate-limits **globally across methods**, so this leg is serialised after the creation walk rather
+ * than run beside it, and batching is measured actively harmful (CLAUDE.md, 2026-08-02).
+ *
+ * @param {SolanaRpcClient} rpc
+ * @param {object} opts
+ * @param {readonly import('./measure.mjs').WalletTransaction[]} opts.transactions What to price.
+ * @param {number} opts.createSlot The launch's create slot — the only slot the block route applies to.
+ * @param {boolean} [opts.preferBlock] Try the whole-block read first. Default `true`.
+ * @returns {Promise<CostWalkResult>}
+ */
+export async function readCreateSlotCosts(rpc, opts) {
+  const preferBlock = opts.preferBlock ?? true;
+  const issuedBefore = rpc.issued();
+  /** @type {Map<string, TransactionCosts>} */
+  const priced = new Map();
+  let unresolved = 0;
+  let viaBlock = 0;
+  let viaTransaction = 0;
+  let blockRouteTried = false;
+  /** @type {string | null} */
+  let blockRouteNote = null;
+  let stoppedForBudget = false;
+
+  const inCreateSlot = opts.transactions.filter((t) => t.slot === opts.createSlot);
+
+  try {
+    // The block route is only worth a request when it can replace more than one, and it can only
+    // ever serve the create slot — the rest of a window is spread over ~150 slots, where one block
+    // per slot would cost far more than one transaction per transaction.
+    if (preferBlock && inCreateSlot.length >= 2) {
+      blockRouteTried = true;
+      const block = await rpc.call('getBlock', [
+        opts.createSlot,
+        {
+          encoding: 'jsonParsed',
+          transactionDetails: 'full',
+          rewards: false,
+          maxSupportedTransactionVersion: 0,
+        },
+      ]);
+      const rows =
+        typeof block === 'object' && block !== null
+          ? /** @type {Record<string, unknown>} */ (block)['transactions']
+          : null;
+      if (!Array.isArray(rows)) {
+        blockRouteNote =
+          'getBlock did not serve a full block for the create slot, so every transaction was ' +
+          'priced individually instead. A null here is load-shedding or an unsupported request, ' +
+          'never evidence that the slot was empty.';
+      } else {
+        const wanted = new Set(inCreateSlot.map((t) => t.tx));
+        for (const row of rows) {
+          const costs = parseTransactionCosts(row);
+          if (costs === null || !wanted.has(costs.signature)) continue;
+          priced.set(costs.signature, costs);
+          viaBlock += 1;
+        }
+        if (viaBlock === 0) {
+          blockRouteNote =
+            'getBlock served a block carrying none of the create slot\'s own transactions in a ' +
+            'shape this build can price, so they were priced individually instead.';
+        }
+      }
+    } else if (preferBlock) {
+      blockRouteNote =
+        'the block route was not attempted: it replaces one request per create-slot transaction ' +
+        'and there were fewer than two to replace.';
+    }
+
+    for (const target of opts.transactions) {
+      if (priced.has(target.tx)) continue;
+      if (rpc.remaining() < 1) {
+        stoppedForBudget = true;
+        break;
+      }
+      // A NULL IS RETRY, NEVER ABSENT — the same rule the creation walk applies. The public RPC
+      // sheds load with a null result rather than an error, and reading one as "this transaction
+      // cost nothing" would book a free entry into a distribution about what entry costs.
+      let result = await rpc.call('getTransaction', [
+        target.tx,
+        { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
+      ]);
+      if (result === null && rpc.remaining() > 0) {
+        result = await rpc.call('getTransaction', [
+          target.tx,
+          { encoding: 'jsonParsed', maxSupportedTransactionVersion: 0 },
+        ]);
+      }
+      const costs = parseTransactionCosts(result);
+      if (costs === null) {
+        unresolved += 1;
+        continue;
+      }
+      priced.set(target.tx, costs);
+      viaTransaction += 1;
+    }
+  } catch (cause) {
+    // A ceiling hit is a stop, not a failure: what was already paid for is kept and the caller is
+    // told the walk is short, exactly as the creation walk does it.
+    if (cause instanceof CeilingReached) stoppedForBudget = true;
+    else throw cause;
+  }
+
+  return {
+    priced,
+    requests: rpc.issued() - issuedBefore,
+    unresolved,
+    viaBlock,
+    viaTransaction,
+    blockRouteTried,
+    blockRouteNote,
+    stoppedForBudget,
+  };
+}

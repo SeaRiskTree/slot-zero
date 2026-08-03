@@ -45,17 +45,27 @@ import {
   solBetweenPrices,
   toLaunchRefs,
   toTokenRecords,
+  walletTransactions,
 } from '../tools/deployer-screen/measure.mjs';
 import type { Fill } from '../tools/deployer-screen/measure.mjs';
 import {
   ENTRY_VERDICTS,
+  LANDING_TIP_CAVEAT,
   distribution,
+  entryCostTargets,
   hitRate,
   measureLaunchEntry,
+  priceLaunchEntry,
   scoreEntry,
 } from '../tools/deployer-screen/entry.mjs';
 import type { EntryScore, EntryThresholds } from '../tools/deployer-screen/entry.mjs';
-import { emptyDropReasons, scoreCandidateEntry, toEntryRecordRow } from '../tools/deployer-screen/stage2.mjs';
+import {
+  emptyCostCoverage,
+  emptyDropReasons,
+  scoreCandidateEntry,
+  toEntryRecordRow,
+} from '../tools/deployer-screen/stage2.mjs';
+import type { Stage2Coverage } from '../tools/deployer-screen/stage2.mjs';
 import { measureSubjectLaunches, replayRollingRoom, runStage0 } from '../tools/deployer-screen/stage0.mjs';
 import {
   applyGate,
@@ -73,9 +83,12 @@ import {
 } from '../tools/deployer-screen/seed.mjs';
 import {
   KeylessClient,
+  LAMPORTS_PER_SOL,
   SolanaRpcClient,
   extractTradeRows,
   parseFillLoose,
+  parseTransactionCosts,
+  readCreateSlotCosts,
   readCreatedHistory,
   readLaunchWindow,
   slotFromSlotIndexId,
@@ -115,6 +128,30 @@ import {
 } from '../tools/deployer-screen/record.mjs';
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
+
+/**
+ * A Stage 2 coverage block with nothing in it, for tests about the record's SHAPE rather than its
+ * numbers. Spread and overridden rather than restated, so a schema that grows a field breaks the
+ * assertions that care and not the ones that do not.
+ */
+const emptyEntryCoverage = (): Stage2Coverage => ({
+  launchRefsAvailable: 0,
+  minAgeMs: 65_000,
+  launchesTooYoung: 0,
+  launchesEligible: 0,
+  launchesPlanned: 0,
+  launchesDroppedByCap: 0,
+  youngestRefAgeMs: null,
+  youngestEligibleAgeMs: null,
+  launchesAttempted: 0,
+  launchesUsable: 0,
+  launchesDropped: 0,
+  dropsByReason: emptyDropReasons(),
+  requestsIssued: 0,
+  stoppedForBudget: false,
+  dropNotes: [],
+  cost: emptyCostCoverage(),
+});
 
 /**
  * Build a synthetic fill.
@@ -1217,6 +1254,7 @@ describe('the CLI contract', () => {
       maxKeylessRequests: T['budget'].maxKeylessRequests,
       historySource: 'creation-derived' as const,
       creationWalk: T['creation_walk'],
+      costBounds: T['stage2_cost'],
       stage2: true,
       maxScored: T['stage2_entry'].maxCandidatesScored,
       entryThresholds: T['stage2_entry'],
@@ -1237,6 +1275,16 @@ describe('the CLI contract', () => {
     expect(text).toMatch(/about 17 min typical/);
     expect(text).toMatch(/about 50 min worst case/);
     expect(text).toMatch(/7s between requests, swap-api ONLY/);
+    // The cost leg's own exposure, on the same surface and in the same units. It is a SEPARATE
+    // budget on a different host, so a reader who only saw the swap-api arithmetic would under-read
+    // the run by the whole of it.
+    expect(text).toMatch(/THE PRICE OF THE SEAT/);
+    expect(text).toContain(
+      String(T['stage2_entry'].maxCandidatesScored * T['stage2_cost'].maxRpcRequestsPerCandidate),
+    );
+    expect(text).toMatch(/ONLY ON A CANDIDATE THE FREE LEGS HAVE NOT ALREADY REFUSED/);
+    // And the limit that must travel with every cost figure travels onto the PLAN too.
+    expect(text).toMatch(/LANDING TIP PAID IN A SEPARATE TRANSACTION/);
     // With --no-stage2 the plan must say what is NOT being measured, not merely go quiet.
     const off = renderDryRun({
       seedPlan: [],
@@ -1246,6 +1294,7 @@ describe('the CLI contract', () => {
       maxKeylessRequests: T['budget'].maxKeylessRequests,
       historySource: 'creation-derived' as const,
       creationWalk: T['creation_walk'],
+      costBounds: T['stage2_cost'],
       stage2: false,
       maxScored: 0,
       entryThresholds: T['stage2_entry'],
@@ -2386,6 +2435,9 @@ describe('the keyless boundary holds in both directions', () => {
   // `launchesRoomUnproven`, `bundledTx` and `maxWalletsInOneTx` — asserted separately below,
   // because that is where a reader of an older record can go wrong.
   PERSISTED_BY_SCHEMA[5] = PERSISTED_BY_SCHEMA[4]!;
+  // Schema 6 adds no candidate field either. The fee moved inside the entry window, so everything
+  // it changed is inside `entry` and `entry.coverage`.
+  PERSISTED_BY_SCHEMA[6] = PERSISTED_BY_SCHEMA[5]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -2414,10 +2466,62 @@ describe('the keyless boundary holds in both directions', () => {
     'roomLeft',
     'verdict',
   ];
+  const ENTRY_KEYS_5 = [...ENTRY_KEYS_3_AND_4, 'launchesRoomUnproven', 'bundledTx', 'maxWalletsInOneTx'];
+  // Schema 6: the price of the seat, and what the field cleared after paying it. The `…NetOfMeasuredFees`
+  // fields sit BESIDE the `…GrossOfFees` ones and replace none of them, which is why both are in
+  // this list — a reader comparing a schema-5 gross figure with a schema-6 one is comparing like
+  // with like, and it is only the VERDICT that has no schema-5 equivalent.
+  const ENTRY_KEYS_6 = [
+    ...ENTRY_KEYS_5,
+    'entryCostSol',
+    // Two units of the same quantity, and both are persisted on purpose: the per-entry one is the
+    // finer-grained evidence, the per-launch one is what `entry-cost-prohibitive` is compared
+    // against (decision 140a). A record carrying only the pooled figure could not be audited for
+    // the gate that was actually applied.
+    'entryCostPerSolStaked',
+    'entryCostPerSolStakedByLaunch',
+    'entryTxFeeSol',
+    'entryCostPriced',
+    'fieldRealisedSolNetOfMeasuredFees',
+    'fieldReturnPerSolNetOfMeasuredFees',
+    'fieldHitRateNetOfMeasuredFees',
+    'fieldClosedRoundTripsPriced',
+  ];
   const ENTRY_KEYS_BY_SCHEMA: Record<number, string[]> = {
     3: ENTRY_KEYS_3_AND_4,
     4: ENTRY_KEYS_3_AND_4,
-    5: [...ENTRY_KEYS_3_AND_4, 'launchesRoomUnproven', 'bundledTx', 'maxWalletsInOneTx'],
+    5: ENTRY_KEYS_5,
+    6: ENTRY_KEYS_6,
+  };
+
+  // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
+  // eligibility counts are the whole point of schema 6's second half, and a nested block was never
+  // asserted before — so a field could be added or dropped there without any test noticing.
+  const ENTRY_COVERAGE_KEYS_3_TO_5 = [
+    'dropNotes',
+    'dropsByReason',
+    'launchRefsAvailable',
+    'launchesAttempted',
+    'launchesDropped',
+    'launchesUsable',
+    'requestsIssued',
+    'stoppedForBudget',
+  ];
+  const ENTRY_COVERAGE_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    3: ENTRY_COVERAGE_KEYS_3_TO_5,
+    4: ENTRY_COVERAGE_KEYS_3_TO_5,
+    5: ENTRY_COVERAGE_KEYS_3_TO_5,
+    6: [
+      ...ENTRY_COVERAGE_KEYS_3_TO_5,
+      'cost',
+      'launchesDroppedByCap',
+      'launchesEligible',
+      'launchesPlanned',
+      'launchesTooYoung',
+      'minAgeMs',
+      'youngestEligibleAgeMs',
+      'youngestRefAgeMs',
+    ],
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -2500,6 +2604,12 @@ describe('the keyless boundary holds in both directions', () => {
           const entryExpected = ENTRY_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
           expect(entryExpected, `${file} entry block at an unknown schemaVersion`).toBeDefined();
           expect(Object.keys(entry as object).sort(), `${file} entry block`).toEqual([...entryExpected!].sort());
+          const coverage = (entry as Record<string, unknown>)['coverage'];
+          const coverageExpected = ENTRY_COVERAGE_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+          expect(coverageExpected, `${file} entry.coverage at an unknown schemaVersion`).toBeDefined();
+          expect(Object.keys(coverage as object).sort(), `${file} entry.coverage`).toEqual(
+            [...coverageExpected!].sort(),
+          );
         }
       }
     }
@@ -2595,6 +2705,37 @@ describe('the keyless boundary holds in both directions', () => {
     expect(source).toMatch(/worstCaseKeyless/);
   });
 
+  it('the README\'s schema table is in step with record.mjs — these two have drifted twice', () => {
+    // The version boundary is documented in TWO prose copies: `record.mjs`\'s module comment, which
+    // a reader of the code finds, and the README table, which a consumer of a record finds. They
+    // have drifted apart twice. A consumer reading the stale one version-detects wrongly, which on
+    // this record is not a cosmetic error: it decides whether an `entry` block\'s verdict means
+    // "room was present and the seat was never priced" or "the seat was priced and the field still
+    // cleared".
+    const readme = readFileSync(join(TOOL_DIR, 'README.md'), 'utf8');
+    const table = readme.slice(readme.indexOf('| version | what it carries |'));
+    for (let v = 2; v <= RECORD_SCHEMA_VERSION; v++) {
+      expect(table, `the README schema table has no row for version ${v}`).toMatch(
+        new RegExp(`^\\| ${v} \\|`, 'm'),
+      );
+    }
+    expect(table, 'the README documents a version this build cannot write').not.toMatch(
+      new RegExp(`^\\| ${RECORD_SCHEMA_VERSION + 1} \\|`, 'm'),
+    );
+
+    // And every key this build adds to `entry` at the current version must be named in the table
+    // row for it, or the table describes a record shape that does not exist.
+    const currentRow = /^\| \d+ \| .*$/gm;
+    const rows = table.match(currentRow) ?? [];
+    const row = rows.find((r) => r.startsWith(`| ${RECORD_SCHEMA_VERSION} |`));
+    expect(row, 'no README row for the current schema version').toBeDefined();
+    const added = ENTRY_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!.filter(
+      (k) => !ENTRY_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION - 1]!.includes(k),
+    );
+    expect(added.length).toBeGreaterThan(0);
+    for (const key of added) expect(row, `the README row omits entry.${key}`).toContain(key);
+  });
+
   it('the row this build writes matches the schema it declares', () => {
     // The assertion above only sees COMMITTED records, so a shape change would go unnoticed until
     // the next run was committed — by which time the record it would have caught already exists.
@@ -2607,17 +2748,11 @@ describe('the keyless boundary holds in both directions', () => {
     // The `entry` block too, and here against the real projection rather than its source, because
     // this is the block schema 5 changed. A field computed but not persisted is the exact failure
     // `bundledTx` and `maxWalletsInOneTx` already were: present in memory, absent from every record.
-    const row = toEntryRecordRow(scoreEntry([], ENTRY_T), {
-      launchRefsAvailable: 0,
-      launchesAttempted: 0,
-      launchesUsable: 0,
-      launchesDropped: 0,
-      dropsByReason: emptyDropReasons(),
-      requestsIssued: 0,
-      stoppedForBudget: false,
-      dropNotes: [],
-    });
+    const row = toEntryRecordRow(scoreEntry([], ENTRY_T), emptyEntryCoverage());
     expect(Object.keys(row).sort()).toEqual([...ENTRY_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
+    expect(Object.keys(row.coverage).sort()).toEqual(
+      [...ENTRY_COVERAGE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
   });
 });
 
@@ -3497,6 +3632,9 @@ const ENTRY_T: EntryThresholds = {
   minLaunchesSampled: 8,
   minFieldRoundTrips: 10,
   minFieldHitRateGross: 0.5,
+  minFieldHitRateNet: 0.5,
+  maxEntryCostPerSolStaked: 0.12,
+  minPricedFraction: 0.8,
 };
 
 // Read from the pinned file rather than restated, so a test can never quietly disagree with the
@@ -3584,20 +3722,33 @@ describe('the field — what every OTHER sniping wallet achieved', () => {
     expect(score.fieldHitRateGrossOfFees).toEqual({ n: 2, hits: 1, rate: 0.5 });
   });
 
-  it('EVERY P&L field is named GrossOfFees, so a caller cannot forget what is missing', () => {
+  it('EVERY P&L field names which side of fees it is on, so a caller cannot forget', () => {
+    // Two suffixes and no third: `GrossOfFees` for anything computed from the fill tape alone, and
+    // `NetOfMeasuredFees` for anything the on-chain cost leg corrected. An unsuffixed P&L field
+    // would be a number whose fee treatment a reader has to guess, which is the whole failure this
+    // naming rule exists to prevent.
     const e = measureLaunchEntry(openingWindow())!;
     const pnlish = Object.keys(e.field[0]!).filter((k) => /realised|return|pnl|profit/i.test(k));
     expect(pnlish.length).toBeGreaterThan(0);
-    for (const k of pnlish) expect(k, `${k} does not disclose that it is gross of fees`).toMatch(/GrossOfFees$/);
+    for (const k of pnlish) {
+      expect(k, `${k} does not disclose which side of fees it is on`).toMatch(
+        /(GrossOfFees|NetOfMeasuredFees)$/,
+      );
+    }
 
     const score = scoreEntry([e], ENTRY_T);
     for (const k of Object.keys(score).filter((k) => /realised|return|pnl|profit/i.test(k))) {
-      expect(k).toMatch(/GrossOfFees$/);
+      expect(k).toMatch(/(GrossOfFees|NetOfMeasuredFees)$/);
     }
-    // The field's hit rate is a P&L statement too, so it carries the same disclosure. `roomHitRate`
-    // deliberately does not: it is a share of launches leaving room, which fees cannot touch.
+    // The field's hit rate is a P&L statement too, so it carries the same disclosure, on both
+    // sides. `roomHitRate` deliberately does not: it is a share of launches leaving room, which
+    // fees cannot touch.
     expect(Object.keys(score)).toContain('fieldHitRateGrossOfFees');
+    expect(Object.keys(score)).toContain('fieldHitRateNetOfMeasuredFees');
     expect(Object.keys(score)).toContain('roomHitRate');
+    // And the net figures are BESIDE the gross ones, never instead of them.
+    expect(Object.keys(score)).toContain('fieldRealisedSolGrossOfFees');
+    expect(Object.keys(score)).toContain('fieldRealisedSolNetOfMeasuredFees');
   });
 
   it('an OPEN position has no complete P&L and is counted, never marked to a price', () => {
@@ -3684,7 +3835,7 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
    * share `devtx` with one of its own wallets — one bundled transaction, two wallets, the same
    * room figure — and `bundled: false` builds the unproven shape on purpose.
    */
-  const launch = (room: number, outcomes: number[], bundled = true) => {
+  const windowFills = (room: number, outcomes: number[], bundled = true) => {
     const operationSol = 10 * (1 / room - 1);
     // Splitting the operation's stake across two wallets IN ONE TRANSACTION leaves every room
     // number identical: both halves land in the numerator either way, one as `devSol` and one as
@@ -3702,20 +3853,135 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
         fill({ slot: 140, tx: `s${i}`, wallet: `w${i}`, sol: stake + realised, tokens: 1000, side: 'sell' }),
       );
     });
-    return measureLaunchEntry(fills)!;
+    return fills;
+  };
+
+  const launch = (room: number, outcomes: number[], bundled = true) =>
+    measureLaunchEntry(windowFills(room, outcomes, bundled))!;
+
+  /**
+   * The same launch with its on-chain costs attached, synthesised so `costPerTx` SOL left every
+   * entrant's wallet over and above the swap quote in every transaction it made.
+   *
+   * Built through the REAL pair — `entryCostTargets` names the transactions and `priceLaunchEntry`
+   * attaches what came back — so a fixture cannot drift from the production path. Only the RPC
+   * response is synthetic, and it is synthetic in exactly the shape `parseTransactionCosts` returns.
+   */
+  const pricedLaunch = (room: number, outcomes: number[], costPerTx: number, bundled = true) => {
+    const fills = windowFills(room, outcomes, bundled);
+    const entry = measureLaunchEntry(fills)!;
+    const targets = entryCostTargets(fills, entry);
+    const priced = new Map(
+      targets.map((t) => [
+        t.tx,
+        {
+          signature: t.tx,
+          feeSol: costPerTx / 2,
+          feePayer: t.wallets[0]!.wallet,
+          solOutByWallet: new Map(t.wallets.map((w) => [w.wallet, w.quotedSol + costPerTx])),
+        },
+      ]),
+    );
+    return priceLaunchEntry(entry, targets, priced);
   };
 
   const many = (n: number, room: number, outcomes: number[]) =>
     Array.from({ length: n }, () => launch(room, outcomes));
 
+  const manyPriced = (n: number, room: number, outcomes: number[], costPerTx = 0.01) =>
+    Array.from({ length: n }, () => pricedLaunch(room, outcomes, costPerTx));
+
   const manyUnbundled = (n: number, room: number, outcomes: number[]) =>
     Array.from({ length: n }, () => launch(room, outcomes, false));
 
-  it('says entry-room-present only when BOTH legs allow it', () => {
-    const s = scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T);
-    expect(s.verdict).toBe('entry-room-present');
+  it('says entry-open-after-costs only when ALL THREE legs allow it', () => {
+    const s = scoreEntry(manyPriced(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    expect(s.verdict).toBe('entry-open-after-costs');
     expect(s.roomLeft.median).toBeCloseTo(0.7, 6);
     expect(s.fieldHitRateGrossOfFees.rate).toBeCloseTo(2 / 3, 6);
+    // The seat was priced and the field still clears after paying for it. Both are asserted,
+    // because the verdict now rests on both.
+    expect(s.entryCostPriced.rate).toBe(1);
+    expect(s.fieldHitRateNetOfMeasuredFees.rate).toBeCloseTo(2 / 3, 6);
+    expect(s.fieldRealisedSolNetOfMeasuredFees.median).toBeLessThan(s.fieldRealisedSolGrossOfFees.median);
+  });
+
+  it('THE RULING, AS ONE ASSERTION: the identical launches UNPRICED cannot earn that verdict', () => {
+    // Captain's standing ruling, 2026-08-02: fees are part of the entry window, and "enterable"
+    // means enterable AFTER what it costs to enter. So room plus a gross-positive field — which is
+    // exactly what earned `entry-room-present` before this change — is now the ABSENCE of a
+    // finding, not a weaker one. This is the same fixture as the test above with the cost leg
+    // removed, so nothing but the pricing differs.
+    const s = scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    expect(s.verdict).toBe('entry-cost-unmeasured');
+    expect(s.entryCostPriced.hits).toBe(0);
+    expect(s.entryCostSol.n).toBe(0);
+    expect(s.rationale).toMatch(/ruling of 2026-08-02/);
+    expect(s.rationale).toMatch(/NOT a finding that the window is enterable/);
+    // And it must not read as free. A caveat says so on the score itself.
+    expect(s.caveats.join(' ')).toMatch(/NO ENTRY COST WAS MEASURED/);
+    expect(s.caveats.join(' ')).toMatch(/not a finding that entry was cheap/);
+  });
+
+  it('a seat priced above the bar is prohibitive, however healthy the field looks gross', () => {
+    // Cost per SOL staked is the price of the seat against the seat. Each outsider stakes 10/3 SOL
+    // in the create slot, so a 0.5 SOL create-slot cost is 0.15 per SOL staked, above the 0.12 bar.
+    const s = scoreEntry(manyPriced(8, 0.7, [1, 1, -0.2], 0.5), ENTRY_T);
+    expect(s.entryCostPerSolStaked.median).toBeGreaterThan(ENTRY_T.maxEntryCostPerSolStaked);
+    expect(s.verdict).toBe('entry-cost-prohibitive');
+    expect(s.rationale).toMatch(/consumes the opening/);
+    // The limit travels with the figure, on the verdict's own sentence.
+    expect(s.rationale).toMatch(/LANDING TIP PAID IN A SEPARATE TRANSACTION/);
+  });
+
+  it('the cost bar is compared PER LAUNCH, so a busy launch cannot outvote the rest', () => {
+    // Captain decision 140a. Five launches with ONE priced entrant apiece at 0.20 per SOL staked,
+    // against three launches with TEN cheap entrants apiece at 0.02. Pooled over entries that is
+    // 5 expensive against 30 cheap and the median reads 0.02 — comfortably under the bar. Taken one
+    // figure per launch, which is the unit the bar is anchored on, the median is 0.20 and the seat
+    // is prohibitive. Pooling is exactly the failure: entrant counts vary by an order of magnitude
+    // between launches, so a pooled median describes whichever launch was busiest.
+    const expensive = Array.from({ length: 5 }, () => pricedLaunch(0.7, [1], 2));
+    const cheap = Array.from({ length: 3 }, () =>
+      pricedLaunch(0.7, [1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 0.02),
+    );
+    const s = scoreEntry([...expensive, ...cheap], ENTRY_T);
+
+    expect(s.entryCostPerSolStaked.n).toBe(35);
+    expect(s.entryCostPerSolStaked.median).toBeLessThan(ENTRY_T.maxEntryCostPerSolStaked);
+    expect(s.entryCostPerSolStakedByLaunch.n).toBe(8);
+    expect(s.entryCostPerSolStakedByLaunch.median).toBeGreaterThanOrEqual(
+      ENTRY_T.maxEntryCostPerSolStaked,
+    );
+    expect(s.verdict).toBe('entry-cost-prohibitive');
+    // And the sentence must name the unit, so a reader of a saved rationale cannot mistake which
+    // figure was gated.
+    expect(s.rationale).toMatch(/PER LAUNCH/);
+  });
+
+  it('a field that only loses money AFTER costs is vetoed — the leg gross could not see', () => {
+    // Gross this field is 3/3 positive at a median +0.05 SOL, which the gross bar waves through.
+    // Each entrant makes two transactions and pays 0.04 SOL over the quote in each, so net of
+    // measured fees every round trip is −0.03 and the veto fires. This is the whole of decision
+    // 136b in one fixture: without it the run would report the gross reading and stop.
+    const s = scoreEntry(manyPriced(8, 0.7, [0.05, 0.05, 0.05], 0.04), ENTRY_T);
+    expect(s.fieldHitRateGrossOfFees.rate).toBe(1);
+    expect(s.fieldRealisedSolGrossOfFees.median).toBeCloseTo(0.05, 6);
+    expect(s.fieldHitRateNetOfMeasuredFees.rate).toBe(0);
+    expect(s.fieldRealisedSolNetOfMeasuredFees.median).toBeCloseTo(-0.03, 6);
+    expect(s.verdict).toBe('entry-field-loss-making');
+    expect(s.rationale).toMatch(/NET OF MEASURED FEES/);
+    expect(s.rationale).toMatch(/the leg the gross reading cannot see/i);
+  });
+
+  it('partial pricing is never a pass — the coverage floor is a gate, not a discount', () => {
+    // Six launches priced, two not. 18 of 24 entries have a cost, which is 0.75 against the pinned
+    // 0.8 floor. A run that scored the priced six and called the window enterable would be
+    // reporting a distribution over the launches it happened to reach first.
+    const s = scoreEntry([...manyPriced(6, 0.7, [1, 1, -0.2]), ...many(2, 0.7, [1, 1, -0.2])], ENTRY_T);
+    expect(s.entryCostPriced.hits).toBe(18);
+    expect(s.entryCostPriced.n).toBe(24);
+    expect(s.verdict).toBe('entry-cost-unmeasured');
   });
 
   it('THE KNOWN-NEGATIVE SHAPE: a profitable-looking field cannot rescue a closed window', () => {
@@ -3763,7 +4029,7 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
   });
 
   it('NO EXIT SIGNAL reaches any entry number — the separation is the deliverable', () => {
-    const s = scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    const s = scoreEntry(manyPriced(8, 0.7, [1, 1, -0.2]), ENTRY_T);
     const numericFields = Object.entries(s).filter(([, v]) => typeof v === 'number' || (v && typeof v === 'object'));
     for (const [k] of numericFields) {
       expect(k, `${k} sounds like an exit measurement leaking into the entry score`).not.toMatch(
@@ -3772,8 +4038,8 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     }
     // And the caveats must say the omission out loud on every score, not only the negative ones.
     expect(s.caveats.join(' ')).toMatch(/ENTRY ONLY/);
-    expect(s.caveats.join(' ')).toMatch(/GROSS OF FEES/);
-    expect(s.rationale).toMatch(/exit feasibility is unmeasured/i);
+    expect(s.caveats.join(' ')).toMatch(/UPPER BOUND/);
+    expect(s.rationale).toMatch(/Exit feasibility is unmeasured/i);
   });
 
   it('discloses a deployer mismatch instead of silently measuring someone else', () => {
@@ -3806,7 +4072,7 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     // nothing at all, so the room figure may be the operation's own stake counted as ours to take.
     const s = scoreEntry(manyUnbundled(8, 0.7, [1, 1, -0.2]), ENTRY_T);
     expect(s.verdict).toBe('entry-unmeasured');
-    expect(s.verdict).not.toBe('entry-room-present');
+    expect(s.verdict).not.toBe('entry-open-after-costs');
     // Not scored, not refused: NOTHING about these launches reaches a distribution.
     expect(s.launchesSampled).toBe(0);
     expect(s.launchesRoomUnproven).toBe(8);
@@ -3817,10 +4083,10 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     expect(s.rationale).toMatch(/no answer about this wallet/);
   });
 
-  it('the identical launches, bundled, DO earn one — so the refusal is the bundling and nothing else', () => {
+  it('the identical launches, bundled and priced, DO earn one — so the refusal is the bundling', () => {
     // The control for the test above. If this failed, the fixture would be proving something else.
-    const s = scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T);
-    expect(s.verdict).toBe('entry-room-present');
+    const s = scoreEntry(manyPriced(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    expect(s.verdict).toBe('entry-open-after-costs');
     expect(s.roomLeft.median).toBeCloseTo(0.7, 6);
     expect(s.launchesRoomUnproven).toBe(0);
   });
@@ -3840,8 +4106,8 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
   });
 
   it('says out loud how many launches it refused, and why, on every score that has one', () => {
-    const s = scoreEntry([...many(8, 0.7, [1, 1, -0.2]), ...manyUnbundled(3, 0.7, [1, 1, -0.2])], ENTRY_T);
-    expect(s.verdict).toBe('entry-room-present');
+    const s = scoreEntry([...manyPriced(8, 0.7, [1, 1, -0.2]), ...manyUnbundled(3, 0.7, [1, 1, -0.2])], ENTRY_T);
+    expect(s.verdict).toBe('entry-open-after-costs');
     expect(s.launchesRoomUnproven).toBe(3);
     const caveats = s.caveats.join(' ');
     expect(caveats).toMatch(/3 of 11 measured launch\(es\) had NO bundled transaction/);
@@ -3902,6 +4168,8 @@ describe('the rolling replay — the control that would have caught the unproven
     dateIso: `2026-01-${String((i % 28) + 1).padStart(2, '0')}T00:00:00.000Z`,
     createSlot: { roomLeft: screenRoom, bundledTx } as never,
     field: [],
+    // The replay reads room and nothing else, so a window tape it never opens is empty here.
+    fills: [],
     cohortRoomLeft: truthRoom,
   });
 
@@ -4423,6 +4691,481 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     expect(score.verdict).toBe('entry-unmeasured');
   });
 
+  /**
+   * A fill endpoint that serves ONE complete window per launch and then says nothing is older, so
+   * coverage is discharged and every launch is usable. `roomLeft` is chosen by how much the
+   * operation takes; the outsiders round-trip for `gain` SOL each.
+   */
+  const walkableWindow = (operationSol: number, gain: number) => {
+    const rows = (createdMs: number) => {
+      const at = (ms: number) => new Date(ms).toISOString();
+      const row = (sid: string, tx: string, u: string, ms: number, type: string, sol: number, base: number) => ({
+        slotIndexId: sid,
+        tx,
+        timestamp: at(ms),
+        userAddress: u,
+        type,
+        program: 'pump',
+        amountSol: String(sol),
+        baseAmount: String(base),
+        priceSol: '0.0000001',
+      });
+      // Newest first, as the live endpoint serves them.
+      return [
+        row('000000000140000000009', 'sellB', 'B', createdMs + 40_000, 'sell', 5 + gain, 500),
+        row('000000000140000000008', 'sellA', 'A', createdMs + 40_000, 'sell', 5 + gain, 500),
+        row('000000000100000000003', 'buyB', 'B', createdMs, 'buy', 5, 500),
+        row('000000000100000000002', 'buyA', 'A', createdMs, 'buy', 5, 500),
+        // Bundled: two operation wallets in one transaction, so the opening is PROVEN.
+        row('000000000100000000001', 'devtx', 'devbook', createdMs, 'buy', operationSol / 2, 100),
+        row('000000000100000000000', 'devtx', 'dev', createdMs, 'buy', operationSol / 2, 100),
+      ];
+    };
+    return (async (url: string | URL) => {
+      const cursorMs = Number(String(new URL(String(url)).searchParams.get('cursor')).split('-')[1]);
+      const createdMs = cursorMs - 65_000;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ trades: rows(createdMs), pagination: { hasMore: false } }),
+      };
+    }) as unknown as typeof fetch;
+  };
+
+  /** An RPC client that fails loudly if anything asks it for a request. */
+  const forbiddenRpc = () =>
+    new SolanaRpcClient({
+      maxRequests: 100,
+      minIntervalMs: 0,
+      sleepImpl: async () => {},
+      fetchImpl: (async () => {
+        throw new Error('the cost leg must not spend a request here');
+      }) as unknown as typeof fetch,
+    });
+
+  /** The run envelope the Stage 1 legend is read out of; only `candidates` varies below. */
+  const LEGEND_RUN = {
+    keyedRequests: 1,
+    keylessRequests: 10,
+    rpcRequests: 4,
+    rpcLoadShedEvents: 0,
+    historySource: 'creation-derived' as const,
+    elapsedMs: 1000,
+    startedAtIso: '2026-08-02T00:00:00.000Z',
+    completed: true,
+    truncationReason: null,
+    prefiltered: 0,
+    coverage: {
+      seeds: [],
+      inertSeeds: [],
+      distinctWalletsSeeded: 1,
+      prefilteredOut: 0,
+      worthARequest: 1,
+      candidateCap: 195,
+      droppedByCandidateCap: 0,
+      gated: 1,
+      coverageTruncated: false,
+    },
+    thresholds: {},
+  };
+
+  /** A gate-passing candidate carrying a real Stage 2 score, so the legend block renders. */
+  const passedCandidateWith = (score: EntryScore, coverage: unknown) => {
+    const completion = measureCompletion(
+      Array.from({ length: 40 }, (_, i) => ({ deployedAtMs: T0 + i * DAY, completed: i < 20 })),
+    );
+    return {
+      wallet: 'dev',
+      seededBy: ['leaderboard:total_bonded'],
+      completion,
+      completionCapped: false,
+      gate: { passed: true, reasons: [] as string[] },
+      verdict: 'gate-passed' as const,
+      rationale: '',
+      consistency: null,
+      historySource: 'creation-derived' as const,
+      vendorCompletion: completion,
+      vendorVerdict: 'gate-passed' as const,
+      vendorPageCapped: false,
+      creation: null,
+      entry: score,
+      entryCoverage: coverage,
+    };
+  };
+
+  it('THE FREE LEGS RUN FIRST: a closed window costs ZERO Solana RPC requests', async () => {
+    // The whole cost model of decision 136b. Room and the gross field are arithmetic over fills
+    // already in hand, so a deployer that fails either is refused before the expensive leg starts —
+    // which is what makes ~19 requests per launch for the after-cost result affordable at all.
+    // The operation takes 90 SOL against 10 of outsider capital, so room is 0.1 against a 0.55 bar.
+    const client = new KeylessClient({
+      maxRequests: 400,
+      minIntervalMs: 0,
+      fetchImpl: walkableWindow(90, 1),
+      sleepImpl: async () => {},
+    });
+    const rpc = forbiddenRpc();
+    const { score, coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: profile(8),
+      nowMs: NOW,
+      thresholds: T as never,
+      rpc,
+    });
+    expect(coverage.launchesUsable).toBe(8);
+    expect(score.verdict).toBe('entry-room-absent');
+    expect(coverage.cost.ran).toBe(false);
+    expect(rpc.issued()).toBe(0);
+    // And the rendered line says the leg did not run, rather than going quiet and reading as
+    // "priced, and it was free".
+    expect(renderEntry(score, coverage).join('\n')).toMatch(/cost walk: NOT RUN/);
+  });
+
+  it('a window that survives them IS priced, and the record carries what it cost', async () => {
+    // Room 0.55 exactly at the bar with a gross-positive field, so the free legs pass it through
+    // and the cost leg runs. Each entrant paid 0.02 SOL over its quote in each of its two
+    // transactions: 0.02 to get in, and 0.04 across the round trip.
+    const client = new KeylessClient({
+      maxRequests: 400,
+      minIntervalMs: 0,
+      fetchImpl: walkableWindow(10 * (1 / 0.6 - 1), 1),
+      sleepImpl: async () => {},
+    });
+    const rpcFetch = (async (_url: string, init: { body: string }) => {
+      const req = JSON.parse(init.body) as { id: number; method: string; params: unknown[] };
+      if (req.method === 'getBlock') {
+        return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, result: null }) };
+      }
+      const sig = String((req.params as string[])[0]);
+      const wallet = sig.endsWith('A') ? 'A' : 'B';
+      // Buys move SOL out, sells move it in; either way 0.02 SOL more left the wallet than the
+      // quote says, which is the fee, the venue fee and the rent.
+      const quoted = sig.startsWith('buy') ? 5 : -6;
+      const out = quoted + 0.02;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          jsonrpc: '2.0',
+          id: req.id,
+          result: {
+            transaction: { signatures: [sig], message: { accountKeys: [{ pubkey: wallet }, { pubkey: 'C' }] } },
+            meta: {
+              err: null,
+              fee: 5_000,
+              preBalances: [100 * LAMPORTS_PER_SOL, 0],
+              postBalances: [(100 - out) * LAMPORTS_PER_SOL, 0],
+            },
+          },
+        }),
+      };
+    }) as unknown as typeof fetch;
+    const rpc = new SolanaRpcClient({
+      maxRequests: 200,
+      minIntervalMs: 0,
+      fetchImpl: rpcFetch,
+      sleepImpl: async () => {},
+    });
+
+    const { score, coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: profile(8),
+      nowMs: NOW,
+      thresholds: T as never,
+      rpc,
+    });
+
+    expect(coverage.cost.ran).toBe(true);
+    expect(coverage.cost.transactionsPriced).toBe(coverage.cost.transactionsTargeted);
+    expect(coverage.cost.rpcRequests).toBeGreaterThan(0);
+    // The block route was probed and refused, and the record says which route paid.
+    expect(coverage.cost.viaBlock).toBe(0);
+    expect(coverage.cost.viaTransaction).toBe(coverage.cost.transactionsPriced);
+    expect(coverage.cost.notes.join(' ')).toMatch(/did not serve a full block/);
+
+    expect(score.entryCostPriced.rate).toBe(1);
+    expect(score.entryCostSol.median).toBeCloseTo(0.02, 6);
+    expect(score.fieldRealisedSolNetOfMeasuredFees.median).toBeCloseTo(
+      score.fieldRealisedSolGrossOfFees.median - 0.04,
+      6,
+    );
+    expect(score.verdict).toBe('entry-open-after-costs');
+
+    // THE LIMIT TRAVELS WITH THE NUMBER. Not only in a document: on the score's caveats, in the
+    // persisted record, on the verdict's own sentence, and in the rendered block.
+    expect(score.caveats.join(' ')).toContain(LANDING_TIP_CAVEAT);
+    expect(score.rationale).toContain(LANDING_TIP_CAVEAT);
+    const row = toEntryRecordRow(score, coverage);
+    expect(JSON.stringify(row)).toContain('LANDING TIP PAID IN A SEPARATE TRANSACTION');
+    expect(row.entryCostSol.median).toBeCloseTo(0.02, 6);
+    expect(row.fieldHitRateNetOfMeasuredFees.n).toBe(score.fieldClosedRoundTripsPriced);
+    expect(renderEntry(score, coverage).join('\n')).toMatch(/LANDING TIP PAID IN A SEPARATE TRANSACTION/);
+
+    // THE STAGE 1 LEGEND SPEAKS THE VOCABULARY THE RUN EMITTED, AND STATES THE GROSS-ONLY LIMIT
+    // ONLY WHERE IT IS TRUE. It printed `ENTRY-ROOM-PRESENT` — a verdict this tool can no longer
+    // emit — beside candidates scored `entry-open-after-costs`, and asserted unconditionally that
+    // every realised figure above was gross of fees, next to a NET reading that had in fact run.
+    // Nothing covered the string, so nothing caught it.
+    const legend = renderStage1({
+      ...LEGEND_RUN,
+      candidates: [passedCandidateWith(score, coverage)],
+    } as never);
+    for (const removed of ['entry-room-present', 'ENTRY-ROOM-PRESENT']) {
+      expect(legend).not.toContain(removed);
+    }
+    // Every verdict it does name is one the vocabulary still holds.
+    for (const named of legend.match(/\bENTRY-[A-Z-]+\b/g) ?? []) {
+      expect(ENTRY_VERDICTS).toContain(named.toLowerCase());
+    }
+    expect(legend).toMatch(/ENTRY-OPEN-AFTER-COSTS is the strongest/);
+    expect(legend).toMatch(/ENTRY-COST-PROHIBITIVE and ENTRY-COST-UNMEASURED are both REFUSALS/);
+    expect(legend).toMatch(/absence of a finding rather than a finding of absence/);
+    expect(legend).toMatch(/NO VERDICT HERE MEANS "BEATABLE"/);
+    // The blanket claim is GONE on a rendering that carries a priced reading, and what replaces it
+    // says the net figures are themselves an upper bound.
+    expect(legend).not.toMatch(/every\s+realised figure above is gross/);
+    expect(legend).toMatch(/\*NET\* figures above are the on-chain correction/);
+    expect(legend).toMatch(/UPPER bound themselves/);
+
+    // And it IS still stated, unchanged in force, where the cost leg never ran.
+    const unpricedScore = { ...score, entryCostPriced: { ...score.entryCostPriced, hits: 0 } };
+    const unpriced = renderStage1({
+      ...LEGEND_RUN,
+      candidates: [passedCandidateWith(unpricedScore as never, coverage)],
+    } as never);
+    expect(unpriced).toMatch(/every realised figure above is gross\s+of fees and therefore an upper bound/);
+    expect(unpriced).not.toContain('ENTRY-ROOM-PRESENT');
+  });
+
+  it('a dead RPC leaves the candidate UNMEASURED and never aborts the run', async () => {
+    // The public endpoint sheds about a quarter of what it is asked for, so a walk that exhausts
+    // its retries is the ordinary case rather than an incident. Before this guard the error
+    // propagated out of scoreCandidateEntry and killed a run whose keyed MadeOnSol allowance was
+    // already spent — one wallet's bad luck throwing away every measurement paid for before it.
+    // The degradation must land on `entry-cost-unmeasured`, which is terminal and never a pass.
+    const client = new KeylessClient({
+      maxRequests: 400,
+      minIntervalMs: 0,
+      fetchImpl: walkableWindow(10 * (1 / 0.6 - 1), 1),
+      sleepImpl: async () => {},
+    });
+    // The first launch prices cleanly and the endpoint dies on the second, so this also covers the
+    // rollback: pricing that was PAID FOR but no longer backs the score must not stay in
+    // `transactionsPriced`, or a record reads `launchesPriced: 1` beside `entryCostPriced.hits: 0`.
+    let served = 0;
+    const rpc = new SolanaRpcClient({
+      maxRequests: 200,
+      minIntervalMs: 0,
+      fetchImpl: (async (_url: string, init: { body: string }) => {
+        const req = JSON.parse(init.body) as { id: number; method: string; params: unknown[] };
+        if (req.method === 'getBlock') {
+          return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, result: null }) };
+        }
+        served += 1;
+        if (served > 4) return { ok: false, status: 503, json: async () => ({}) };
+        const sig = String((req.params as string[])[0]);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            jsonrpc: '2.0',
+            id: req.id,
+            result: {
+              transaction: {
+                signatures: [sig],
+                message: { accountKeys: [{ pubkey: sig.endsWith('A') ? 'A' : 'B' }, { pubkey: 'C' }] },
+              },
+              meta: {
+                err: null,
+                fee: 5_000,
+                preBalances: [100 * LAMPORTS_PER_SOL, 0],
+                postBalances: [(100 - ((sig.startsWith('buy') ? 5 : -6) + 0.02)) * LAMPORTS_PER_SOL, 0],
+              },
+            },
+          }),
+        };
+      }) as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+
+    const { score, coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: profile(8),
+      nowMs: NOW,
+      thresholds: T as never,
+      rpc,
+    });
+
+    expect(coverage.cost.ran).toBe(true);
+    expect(coverage.cost.notes.join(' ')).toMatch(/ABANDONED for this candidate after a transport failure/);
+    // Nothing partial was attached, so the verdict is the absence of a cost reading rather than a
+    // priced one of unknown coverage.
+    expect(score.verdict).toBe('entry-cost-unmeasured');
+    expect(score.entryCostPriced.hits).toBe(0);
+    expect(score.entryCostSol.n).toBe(0);
+    expect(score.entryCostPerSolStakedByLaunch.n).toBe(0);
+
+    // And the coverage block agrees with it rather than contradicting it. The four transactions the
+    // first launch priced are real spend and are still reported — as DISCARDED, which is what they
+    // are once the score no longer rests on them.
+    expect(coverage.cost.launchesPriced).toBe(0);
+    expect(coverage.cost.transactionsPriced).toBe(0);
+    expect(coverage.cost.launchesDiscarded).toBe(2);
+    expect(coverage.cost.transactionsDiscarded).toBe(4);
+    expect(coverage.cost.rpcRequests).toBeGreaterThan(0);
+
+    // AND THE SAME ROLLBACK WITH AN ATTACHED-BUT-PARTIAL LAUNCH IN FRONT OF IT. A launch that came
+    // back SHORT for a non-budget reason — one signature the endpoint never resolved — is still
+    // attached, still contributed its transactions, and is still dropped when the score is not
+    // recomputed; but it is not a `launchesPriced` launch. Reconstructing the rollback total from
+    // `launchesPriced` therefore lost it from launch-level accounting entirely, contradicting the
+    // JSDoc on `launchesDiscarded`. Every launch whose walk was paid for lands in exactly one of the
+    // two, so a reader can reconcile this block arithmetically without reading the prose.
+    const client2 = new KeylessClient({
+      maxRequests: 400,
+      minIntervalMs: 0,
+      fetchImpl: walkableWindow(10 * (1 / 0.6 - 1), 1),
+      sleepImpl: async () => {},
+    });
+    let served2 = 0;
+    let unresolvable: string | null = null;
+    const rpc2 = new SolanaRpcClient({
+      maxRequests: 200,
+      minIntervalMs: 0,
+      fetchImpl: (async (_url: string, init: { body: string }) => {
+        const req = JSON.parse(init.body) as { id: number; method: string; params: unknown[] };
+        if (req.method === 'getBlock') {
+          return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, result: null }) };
+        }
+        const sig = String((req.params as string[])[0]);
+        // The first transaction of the first launch never resolves, however often it is asked.
+        if (unresolvable === null) unresolvable = sig;
+        if (sig === unresolvable) {
+          return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, result: null }) };
+        }
+        served2 += 1;
+        // The other three of that launch price; the endpoint then dies on the second launch.
+        if (served2 > 3) return { ok: false, status: 503, json: async () => ({}) };
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            jsonrpc: '2.0',
+            id: req.id,
+            result: {
+              transaction: {
+                signatures: [sig],
+                message: { accountKeys: [{ pubkey: sig.endsWith('A') ? 'A' : 'B' }, { pubkey: 'C' }] },
+              },
+              meta: {
+                err: null,
+                fee: 5_000,
+                preBalances: [100 * LAMPORTS_PER_SOL, 0],
+                postBalances: [(100 - ((sig.startsWith('buy') ? 5 : -6) + 0.02)) * LAMPORTS_PER_SOL, 0],
+              },
+            },
+          }),
+        };
+      }) as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+
+    const partial = await scoreCandidateEntry(client2, {
+      wallet: 'dev',
+      profile: profile(8),
+      nowMs: NOW,
+      thresholds: T as never,
+      rpc: rpc2,
+    });
+
+    expect(partial.coverage.cost.ran).toBe(true);
+    expect(partial.coverage.cost.notes.join(' ')).toMatch(/ABANDONED for this candidate/);
+    expect(partial.coverage.cost.transactionsUnresolved).toBeGreaterThan(0);
+    expect(partial.score.verdict).toBe('entry-cost-unmeasured');
+    // The partial launch was NEVER a `launchesPriced` launch, so the old reconstruction booked one
+    // discarded launch here and the short launch vanished. It is two: the short one and the one the
+    // transport failure killed.
+    expect(partial.coverage.cost.launchesPriced).toBe(0);
+    expect(partial.coverage.cost.transactionsPriced).toBe(0);
+    expect(partial.coverage.cost.launchesDiscarded).toBe(2);
+    expect(partial.coverage.cost.transactionsDiscarded).toBe(3);
+  });
+
+  it('a ceiling that bites MID-WALK discards that launch whole and does not count it', async () => {
+    // The invariant thresholds.json -> minPricedFraction states as enforced at both ends. The
+    // reservation before a launch is a floor, not the worst case: every request may be retried and a
+    // null getTransaction is asked again, so the ceiling can still run out part-way through a
+    // launch. Here the ceiling is exactly one launch's four transactions and every signature is
+    // load-shed once, so the walk pays two requests per transaction and gets through two of four.
+    // A truncated walk holds the EARLIEST entrants by slot, which is a biased sample rather than a
+    // short one, so what it managed must be thrown away rather than attached.
+    const client = new KeylessClient({
+      maxRequests: 400,
+      minIntervalMs: 0,
+      fetchImpl: walkableWindow(10 * (1 / 0.6 - 1), 1),
+      sleepImpl: async () => {},
+    });
+    const shed = new Set<string>();
+    const rpc = new SolanaRpcClient({
+      maxRequests: 4,
+      minIntervalMs: 0,
+      fetchImpl: (async (_url: string, init: { body: string }) => {
+        const req = JSON.parse(init.body) as { id: number; method: string; params: unknown[] };
+        const sig = String((req.params as string[])[0]);
+        // A null result is load-shedding, so the walk asks again — which is exactly the retry the
+        // per-launch reservation cannot see.
+        if (!shed.has(sig)) {
+          shed.add(sig);
+          return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, result: null }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            jsonrpc: '2.0',
+            id: req.id,
+            result: {
+              transaction: {
+                signatures: [sig],
+                message: { accountKeys: [{ pubkey: sig.endsWith('A') ? 'A' : 'B' }, { pubkey: 'C' }] },
+              },
+              meta: {
+                err: null,
+                fee: 5_000,
+                preBalances: [100 * LAMPORTS_PER_SOL, 0],
+                postBalances: [(100 - ((sig.startsWith('buy') ? 5 : -6) + 0.02)) * LAMPORTS_PER_SOL, 0],
+              },
+            },
+          }),
+        };
+      }) as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+
+    const { score, coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: profile(8),
+      nowMs: NOW,
+      thresholds: T as never,
+      rpc,
+      preferBlockRoute: false,
+    });
+
+    expect(coverage.cost.ran).toBe(true);
+    expect(coverage.cost.stoppedForBudget).toBe(true);
+    expect(coverage.cost.notes.join(' ')).toMatch(/partial reading was DISCARDED/);
+    // Discarded, not priced — and the launches the exhausted ceiling never started are counted
+    // apart from it, because those cost nothing at all.
+    expect(coverage.cost.launchesDiscarded).toBe(1);
+    expect(coverage.cost.transactionsDiscarded).toBeGreaterThan(0);
+    expect(coverage.cost.launchesPriced).toBe(0);
+    expect(coverage.cost.transactionsPriced).toBe(0);
+    expect(coverage.cost.launchesSkippedForBudget).toBe(7);
+    // Nothing was attached, so the candidate is unmeasured — which is terminal and never a pass.
+    expect(score.verdict).toBe('entry-cost-unmeasured');
+    expect(score.entryCostPriced.hits).toBe(0);
+  });
+
   it('counts a mint-time disagreement separately and reports it as an event, per wallet', async () => {
     // The assumption under test is that the vendor's creation time and pump.fun's fills agree. It
     // holds to the millisecond on all 235 of our own launches, and has NEVER been checked on a
@@ -4510,6 +5253,48 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     expect(coverage.launchesAttempted).toBe(2);
   });
 
+  it('THE ELIGIBILITY FILTER IS READABLE FROM THE RECORD, not only from a log', async () => {
+    // Before schema 6 a record carried `launchRefsAvailable` and `launchesAttempted` and nothing
+    // between them, so three different reasons a launch went unmeasured — too young, dropped by our
+    // own per-candidate cap, or never reached — were indistinguishable, and the 65s gate was
+    // observable ONLY by reading seek cursors out of a live run's log. Here the profile offers 12
+    // launches, one of which is too young; 11 are eligible and the cap of 8 takes the rest.
+    const { fetchImpl } = insatiable();
+    const client = new KeylessClient({ maxRequests: 400, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const { coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: profile(12),
+      nowMs: CREATED + (T.windowMs as number) + (T.seekMarginMs as number) - 1,
+      thresholds: T as never,
+    });
+
+    expect(coverage.minAgeMs).toBe((T.windowMs as number) + (T.seekMarginMs as number));
+    expect(coverage.launchRefsAvailable).toBe(12);
+    expect(coverage.launchesTooYoung).toBe(1);
+    expect(coverage.launchesEligible).toBe(11);
+    expect(coverage.launchesPlanned).toBe(T.maxLaunchesPerCandidate as number);
+    expect(coverage.launchesDroppedByCap).toBe(11 - (T.maxLaunchesPerCandidate as number));
+    // The whole filter reconciles, which is the property the record now proves.
+    expect(coverage.launchesTooYoung + coverage.launchesEligible).toBe(coverage.launchRefsAvailable);
+    expect(coverage.launchesPlanned + coverage.launchesDroppedByCap).toBe(coverage.launchesEligible);
+    expect(coverage.launchesAttempted).toBe(coverage.launchesPlanned);
+
+    // And the two ages say whether the run EXERCISED the boundary or sat far above it. The
+    // committed live run sat about five hours above it and so could not discriminate the gate from
+    // its absence; a reader of that record could not have known.
+    expect(coverage.youngestRefAgeMs).toBe(coverage.minAgeMs - 1);
+    // The launches are an hour apart, so the youngest one that PASSED is an hour older than the
+    // one that did not — a run nowhere near the boundary, and the record now says so.
+    expect(coverage.youngestEligibleAgeMs).toBe(coverage.minAgeMs - 1 + 3_600_000);
+
+    // All of it survives the projection, or it is not readable from a record at all.
+    const row = toEntryRecordRow(scoreEntry([], ENTRY_T), coverage);
+    expect(row.coverage.minAgeMs).toBe(coverage.minAgeMs);
+    expect(row.coverage.launchesTooYoung).toBe(1);
+    expect(row.coverage.launchesDroppedByCap).toBe(3);
+    expect(row.coverage.youngestEligibleAgeMs).toBe(coverage.youngestEligibleAgeMs);
+  });
+
   it('and younger than the CURSOR it seeks from, which is the bound that actually binds', async () => {
     // The gap this closes. The walk seeks from `createdAtMs + windowMs + seekMarginMs` and measures
     // `windowSlotSpan` slots from the create slot, but eligibility asked only for `windowMs`. So a
@@ -4585,6 +5370,274 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
   });
 });
 
+// =============================================================================================
+// THE PRICE OF THE SEAT — the on-chain cost leg.
+//
+// Captain's standing ruling, 2026-08-02: fees are part of the entry window, and "enterable" means
+// enterable AFTER what it costs to enter. Captain decision 136b adds the field's after-cost result.
+//
+// The two failure modes these cover are both silent and both optimistic: a transaction priced at
+// the wrong account index attributes a stranger's lamport change to our entrant, and an unpriced
+// entrant read as a free one books a seat that cost something as a seat that cost nothing.
+
+describe('the transactions a launch must be priced from', () => {
+  const window = () => [
+    fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 6, tokens: 600 }),
+    fill({ slot: 100, tx: 'devtx', wallet: 'devbook', sol: 4, tokens: 400 }),
+    fill({ slot: 100, tx: 'buyA', wallet: 'A', sol: 3, tokens: 200 }),
+    fill({ slot: 100, tx: 'buyB', wallet: 'B', sol: 2, tokens: 150 }),
+    fill({ slot: 130, tx: 'topupA', wallet: 'A', sol: 1, tokens: 40 }),
+    fill({ slot: 140, tx: 'sellA', wallet: 'A', sol: 5, tokens: 240, side: 'sell' }),
+  ];
+
+  it('groups fills by transaction and nets each wallet\'s quoted flow inside it', () => {
+    const t = walletTransactions(window(), new Set(['dev', 'devbook']), 100);
+    expect(t).toHaveLength(1);
+    expect(t[0]!.tx).toBe('devtx');
+    // Two wallets, one transaction — the bundle case. One RPC request prices both, which is why
+    // the walk's cost is distinct transactions and not entrants.
+    expect(t[0]!.wallets.map((w) => w.wallet).sort()).toEqual(['dev', 'devbook']);
+    expect(t[0]!.wallets.find((w) => w.wallet === 'dev')!.quotedSol).toBe(6);
+  });
+
+  it('nets a sell against a buy in the SAME transaction, so the baseline is what moved', () => {
+    const fills = [
+      fill({ slot: 100, tx: 'both', wallet: 'A', sol: 3, tokens: 200 }),
+      fill({ slot: 100, tx: 'both', wallet: 'A', sol: 1, tokens: 50, side: 'sell' }),
+    ];
+    expect(walletTransactions(fills, new Set(['A']), 100)[0]!.wallets[0]!.quotedSol).toBe(2);
+  });
+
+  it('UNIONS the two scopes, so a closed entrant\'s create-slot transaction is paid for ONCE', () => {
+    // A is closed and has three transactions across the window; B is open and has only its
+    // create-slot buy. Scope A alone is 2 signatures and scope B alone is 3, and the union is 4 —
+    // not 5, which is what pricing the two scopes separately would cost.
+    const fills = window();
+    const entry = measureLaunchEntry(fills)!;
+    const targets = entryCostTargets(fills, entry);
+    expect(targets.map((t) => t.tx).sort()).toEqual(['buyA', 'buyB', 'sellA', 'topupA']);
+    // The deployer's own transaction is NOT in it. We are pricing what it costs an outsider to
+    // enter, and the operation's own cost is not that.
+    expect(targets.map((t) => t.tx)).not.toContain('devtx');
+  });
+
+  it('leaves an OPEN entrant\'s later transactions out — only a closed round trip has a P&L', () => {
+    const fills = [
+      fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 6, tokens: 600 }),
+      fill({ slot: 100, tx: 'devtx', wallet: 'devbook', sol: 4, tokens: 400 }),
+      fill({ slot: 100, tx: 'buyB', wallet: 'B', sol: 2, tokens: 150 }),
+      fill({ slot: 140, tx: 'partB', wallet: 'B', sol: 1, tokens: 40, side: 'sell' }),
+    ];
+    const entry = measureLaunchEntry(fills)!;
+    expect(entry.field[0]!.closedInWindow).toBe(false);
+    expect(entryCostTargets(fills, entry).map((t) => t.tx)).toEqual(['buyB']);
+  });
+});
+
+describe('reading a transaction\'s exact cost off the chain', () => {
+  const tx = (o: Partial<{ fee: number; pre: number[]; post: number[]; keys: unknown[]; err: unknown }> = {}) => ({
+    blockTime: 1,
+    transaction: {
+      signatures: ['SIG'],
+      message: {
+        accountKeys: o.keys ?? [
+          { pubkey: 'PAYER', signer: true, writable: true },
+          { pubkey: 'CURVE', signer: false, writable: true },
+        ],
+      },
+    },
+    meta: {
+      err: o.err ?? null,
+      fee: o.fee ?? 5_000,
+      preBalances: o.pre ?? [10 * LAMPORTS_PER_SOL, 0],
+      postBalances: o.post ?? [7 * LAMPORTS_PER_SOL, 3 * LAMPORTS_PER_SOL],
+    },
+  });
+
+  it('pulls the fee and every account\'s real lamport change out of ONE response', () => {
+    const c = parseTransactionCosts(tx())!;
+    expect(c.signature).toBe('SIG');
+    // base + priority, exact, and charged to accountKeys[0].
+    expect(c.feeSol).toBeCloseTo(0.000005, 12);
+    expect(c.feePayer).toBe('PAYER');
+    // Positive means SOL LEFT the account.
+    expect(c.solOutByWallet.get('PAYER')).toBeCloseTo(3, 12);
+    expect(c.solOutByWallet.get('CURVE')).toBeCloseTo(-3, 12);
+  });
+
+  it('REFUSES a response whose key list does not cover its balances — the mis-indexing trap', () => {
+    // preBalances/postBalances are indexed over the transaction\'s WHOLE account list, which for a
+    // versioned transaction includes the addresses loaded from a lookup table. A shorter key list
+    // means a plainer encoding served only the static half, and reading a balance at an index the
+    // keys do not cover would attribute a STRANGER\'S lamport change to our entrant — a wrong
+    // number, not a missing one, and wrong in whichever direction the stranger happened to move.
+    expect(parseTransactionCosts(tx({ pre: [1, 2, 3], post: [1, 2, 3] }))).toBeNull();
+    expect(parseTransactionCosts(tx({ post: [1] }))).toBeNull();
+  });
+
+  it('accepts a plain string key list as well as a parsed one', () => {
+    const c = parseTransactionCosts(tx({ keys: ['PAYER', 'CURVE'] }))!;
+    expect(c.feePayer).toBe('PAYER');
+    expect(c.solOutByWallet.get('PAYER')).toBeCloseTo(3, 12);
+  });
+
+  it('refuses a FAILED transaction rather than pricing it', () => {
+    // Every transaction this walk is pointed at came from a fill, so it succeeded. An `err` means
+    // the row is not what we think it is.
+    expect(parseTransactionCosts(tx({ err: { InstructionError: [0, 'X'] } }))).toBeNull();
+  });
+
+  it('refuses a duplicate account key, whose delta would be ambiguous', () => {
+    expect(parseTransactionCosts(tx({ keys: ['PAYER', 'PAYER'] }))).toBeNull();
+  });
+});
+
+describe('the cost walk, and the route it took', () => {
+  const targets = [
+    { tx: 'T1', slot: 100, wallets: [{ wallet: 'A', quotedSol: 3 }] },
+    { tx: 'T2', slot: 100, wallets: [{ wallet: 'B', quotedSol: 2 }] },
+    { tx: 'T3', slot: 140, wallets: [{ wallet: 'A', quotedSol: -5 }] },
+  ];
+
+  const txBody = (sig: string, wallet: string, outSol: number) => ({
+    transaction: {
+      signatures: [sig],
+      message: { accountKeys: [{ pubkey: wallet }, { pubkey: 'CURVE' }] },
+    },
+    meta: {
+      err: null,
+      fee: 5_000,
+      preBalances: [100 * LAMPORTS_PER_SOL, 0],
+      postBalances: [(100 - outSol) * LAMPORTS_PER_SOL, 0],
+    },
+  });
+
+  const rpcOver = (handler: (method: string, params: unknown[]) => unknown) => {
+    const calls: string[] = [];
+    const fetchImpl = (async (_url: string, init: { body: string }) => {
+      const req = JSON.parse(init.body) as { id: number; method: string; params: unknown[] };
+      calls.push(req.method);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ jsonrpc: '2.0', id: req.id, result: handler(req.method, req.params) }),
+      };
+    }) as unknown as typeof fetch;
+    return { calls, fetchImpl };
+  };
+
+  it('collapses the create slot to ONE request when the block route serves it', async () => {
+    const { calls, fetchImpl } = rpcOver((method) =>
+      method === 'getBlock'
+        ? { transactions: [txBody('T1', 'A', 3.1), txBody('T2', 'B', 2.2), txBody('OTHER', 'Z', 9)] }
+        : txBody('T3', 'A', -4.9),
+    );
+    const rpc = new SolanaRpcClient({ maxRequests: 20, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreateSlotCosts(rpc, { transactions: targets, createSlot: 100 });
+
+    expect(walk.viaBlock).toBe(2);
+    expect(walk.viaTransaction).toBe(1);
+    // One getBlock for the whole create slot plus one getTransaction for the launch\'s later
+    // window, against three getTransaction calls without it.
+    expect(calls).toEqual(['getBlock', 'getTransaction']);
+    expect(walk.priced.size).toBe(3);
+    expect(walk.unresolved).toBe(0);
+  });
+
+  it('falls back to per-signature reads when the block route serves nothing, and RECORDS it', async () => {
+    // The route is UNTESTED against this endpoint, so it is probed behind a fallback and the run
+    // record says which one paid for its numbers.
+    const { calls, fetchImpl } = rpcOver((method, params) =>
+      method === 'getBlock' ? null : txBody(String((params as string[])[0]), 'A', 1),
+    );
+    const rpc = new SolanaRpcClient({ maxRequests: 20, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreateSlotCosts(rpc, { transactions: targets, createSlot: 100 });
+
+    expect(walk.blockRouteTried).toBe(true);
+    expect(walk.viaBlock).toBe(0);
+    expect(walk.viaTransaction).toBe(3);
+    expect(walk.blockRouteNote).toMatch(/did not serve a full block/);
+    expect(walk.blockRouteNote).toMatch(/never evidence that the slot was empty/);
+    expect(calls.filter((c) => c === 'getTransaction')).toHaveLength(3);
+  });
+
+  it('an unresolved transaction is UNRESOLVED, never a transaction that cost nothing', async () => {
+    // The public RPC sheds load with a null result rather than an error. Reading one as "free"
+    // would book a zero into a distribution about what entry costs.
+    const { fetchImpl } = rpcOver(() => null);
+    const rpc = new SolanaRpcClient({ maxRequests: 20, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreateSlotCosts(rpc, { transactions: targets, createSlot: 100, preferBlock: false });
+    expect(walk.priced.size).toBe(0);
+    expect(walk.unresolved).toBe(3);
+  });
+
+  it('stops at the ceiling and says so, rather than throwing away what it paid for', async () => {
+    const { fetchImpl } = rpcOver((_m, params) => txBody(String((params as string[])[0]), 'A', 1));
+    const rpc = new SolanaRpcClient({ maxRequests: 1, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreateSlotCosts(rpc, { transactions: targets, createSlot: 100, preferBlock: false });
+    expect(walk.priced.size).toBe(1);
+    expect(walk.stoppedForBudget).toBe(true);
+  });
+});
+
+describe('attaching a measured cost to a launch\'s field', () => {
+  const fills = [
+    fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 6, tokens: 600 }),
+    fill({ slot: 100, tx: 'devtx', wallet: 'devbook', sol: 4, tokens: 400 }),
+    fill({ slot: 100, tx: 'buyA', wallet: 'A', sol: 3, tokens: 200 }),
+    fill({ slot: 140, tx: 'sellA', wallet: 'A', sol: 4, tokens: 200, side: 'sell' }),
+  ];
+  const costs = (sig: string, wallet: string, solOut: number, feeSol = 0) => [
+    sig,
+    { signature: sig, feeSol, feePayer: wallet, solOutByWallet: new Map([[wallet, solOut]]) },
+  ] as const;
+
+  it('measures the seat as what LEFT the wallet beyond what the quote says it committed', () => {
+    const entry = measureLaunchEntry(fills)!;
+    const targets = entryCostTargets(fills, entry);
+    // 3.25 SOL actually left the wallet against a 3.00 quoted buy: 0.25 of fee, venue fee, rent and
+    // any tip paid inside the same transaction. The sell returned 3.95 against a 4.00 quote.
+    const priced = priceLaunchEntry(
+      entry,
+      targets,
+      new Map([costs('buyA', 'A', 0.25 + 3, 0.05), costs('sellA', 'A', -3.95)]),
+    );
+    const e = priced.field[0]!;
+    expect(e.entryCostSol).toBeCloseTo(0.25, 9);
+    expect(e.entryCostPerSolStaked).toBeCloseTo(0.25 / 3, 9);
+    expect(e.entryTxFeeSol).toBeCloseTo(0.05, 9);
+    // Gross says +1.00. Net of what actually moved it is 3.95 - 3.25 = +0.70.
+    expect(e.realisedSolGrossOfFees).toBeCloseTo(1, 9);
+    expect(e.realisedSolNetOfMeasuredFees).toBeCloseTo(0.7, 9);
+    expect(e.returnPerSolNetOfMeasuredFees).toBeCloseTo(0.7 / 3, 9);
+  });
+
+  it('ALL OR NOTHING per scope: a half-priced wallet has no figure, not a cheap one', () => {
+    // The create slot priced, the sell did not. There is still an entry cost — that scope is
+    // complete — and there is no after-cost result, because the round trip is missing a leg.
+    const entry = measureLaunchEntry(fills)!;
+    const targets = entryCostTargets(fills, entry);
+    const priced = priceLaunchEntry(entry, targets, new Map([costs('buyA', 'A', 3.25)]));
+    expect(priced.field[0]!.entryCostSol).toBeCloseTo(0.25, 9);
+    expect(priced.field[0]!.realisedSolNetOfMeasuredFees).toBeNaN();
+  });
+
+  it('refuses an entrant the priced transaction does not carry', () => {
+    const entry = measureLaunchEntry(fills)!;
+    const targets = entryCostTargets(fills, entry);
+    const wrongWallet = new Map([costs('buyA', 'SOMEONE_ELSE', 3.25), costs('sellA', 'SOMEONE_ELSE', -3.95)]);
+    const priced = priceLaunchEntry(entry, targets, wrongWallet);
+    expect(priced.field[0]!.entryCostSol).toBeNaN();
+    expect(priced.field[0]!.realisedSolNetOfMeasuredFees).toBeNaN();
+  });
+
+  it('does not mutate the launch it was given', () => {
+    const entry = measureLaunchEntry(fills)!;
+    priceLaunchEntry(entry, entryCostTargets(fills, entry), new Map([costs('buyA', 'A', 3.25)]));
+    expect(entry.field[0]!.entryCostSol).toBeNaN();
+  });
+});
+
 describe('what a Stage 2 run record may persist', () => {
   const score = (): EntryScore => {
     const fills = [
@@ -4602,14 +5655,14 @@ describe('what a Stage 2 run record may persist', () => {
 
   it('persists quantiles and counts — never a mint, never a counterparty address', () => {
     const row = toEntryRecordRow(score(), {
+      ...emptyEntryCoverage(),
       launchRefsAvailable: 20,
+      launchesTooYoung: 12,
+      launchesEligible: 8,
+      launchesPlanned: 8,
       launchesAttempted: 8,
       launchesUsable: 8,
-      launchesDropped: 0,
-      dropsByReason: emptyDropReasons(),
       requestsIssued: 34,
-      stoppedForBudget: false,
-      dropNotes: [],
     });
     const json = JSON.stringify(row);
     // Stage 2 held a mint list in memory to do the walk at all. None of it survives — MadeOnSol
@@ -4621,20 +5674,18 @@ describe('what a Stage 2 run record may persist', () => {
     // And no mean, at the record layer too.
     expect(json).not.toMatch(/"(mean|average|avg)"/i);
     expect(row.roomLeft.median).toBeCloseTo(0.7, 6);
-    expect(row.verdict).toBe('entry-room-present');
+    // Unpriced, so the strongest thing the record may carry is the absence of a cost reading —
+    // and the record says that on its own face rather than leaving a reader to infer it from an
+    // empty distribution.
+    expect(row.verdict).toBe('entry-cost-unmeasured');
+    expect(row.caveats.join(' ')).toMatch(/NO ENTRY COST WAS MEASURED/);
+    expect(row.entryCostSol.median).toBeNull();
   });
 
   it('renders NaN as null rather than as a number a consumer would believe', () => {
     const empty = scoreEntry([], ENTRY_T);
     const row = toEntryRecordRow(empty, {
-      launchRefsAvailable: 0,
-      launchesAttempted: 0,
-      launchesUsable: 0,
-      launchesDropped: 0,
-      dropsByReason: emptyDropReasons(),
-      requestsIssued: 0,
-      stoppedForBudget: false,
-      dropNotes: [],
+      ...emptyEntryCoverage(),
     });
     expect(row.roomLeft.median).toBeNull();
     expect(row.fieldHitRateGrossOfFees.rate).toBeNull();
@@ -4953,8 +6004,20 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
       { ...T['stage2_entry'], minRoomLeft: 0.1 },
     );
     expect(loosened.passed).toBe(false);
-    expect(loosened.failures.join(' ')).toMatch(/SCORED OUR SUBJECT DEPLOYER AS HAVING ENTRY ROOM/);
+    expect(loosened.failures.join(' ')).toMatch(/SCORED OUR SUBJECT DEPLOYER AS ENTERABLE AFTER COSTS/);
     // And the failure message points at the leg most likely to be the culprit.
     expect(loosened.failures.join(' ')).toMatch(/field leg/);
+    // AND IT IS THE COST-ATTACHED READING THAT FIRES, which is the point of adding it. With the bar
+    // loosened, the two UNPRICED readings of the control degrade to `entry-cost-unmeasured` — a
+    // refusal, correctly, because unmeasured cost is never a pass — and go quiet. Only the reading
+    // carrying real on-chain costs can reach `entry-open-after-costs`, so without Stage 0's cost
+    // check a loosened room bar would no longer be caught by this control at all.
+    expect(loosened.failures.join(' ')).toMatch(/WITH its on-chain costs attached/);
+    expect(loosened.subjectEntryRecent.verdict).toBe('entry-cost-unmeasured');
+    expect(loosened.subjectEntryPostBreak.verdict).toBe('entry-cost-unmeasured');
+    expect(loosened.costCheck.postBreakScore.verdict).toBe('entry-open-after-costs');
+    // On this wallet the after-cost field is still 0.64 positive at a median +0.05 SOL net, so the
+    // net leg does NOT veto it. The refusal at the pinned bar is ROOM's, and only room's.
+    expect(loosened.costCheck.netHitRate).toBeGreaterThan(0.5);
   });
 });

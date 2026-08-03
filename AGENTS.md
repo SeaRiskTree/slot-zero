@@ -266,21 +266,60 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
 captain's question *"can I beat the dev and all other wallets sniping the same tokens created by the
 dev currently?"*, and the shape of the answer is the point:
 
-- **Stage 1 GATES on competence** (keyed, MadeOnSol). **Stage 2 SCORES ENTRY** (keyless, pump.fun
-  fills): room in the opening window, plus what every *other* sniping wallet there achieved.
-  **Stage 3 — EXIT — is a separate lane and no exit signal may reach an entry number.** Room to enter
-  is not room to leave, and one blended score cannot be read back apart.
+- **Stage 1 GATES on competence** (keyed, MadeOnSol). **Stage 2 SCORES ENTRY** (keyless): room in
+  the opening window, what every *other* sniping wallet there achieved, and — since the captain's
+  ruling of 2026-08-02 — **what it cost them to land**. **Stage 3 — EXIT — is a separate lane and no
+  exit signal may reach an entry number.** Room to enter is not room to leave, and one blended score
+  cannot be read back apart.
 - **Stage 2 spends no keyed request.** It reuses the mint list from the profile Stage 1 already paid
   for (`measure.mjs` → `toLaunchRefs`), so the shared vendor allowance is untouched by it.
+- **"Enterable" means enterable AFTER what it costs to enter, and `entry-room-present` no longer
+  exists.** Fees are inside the entry window (captain, 2026-08-02) and the field's after-cost result
+  ships with them (decision 136b). The strongest verdict is now `entry-open-after-costs`; two new
+  ones — `entry-cost-unmeasured` and `entry-cost-prohibitive` — have no older equivalent, and
+  **unmeasured cost is never a pass**. A schema-≤5 `entry-room-present` is NOT the same finding;
+  `tools/deployer-screen/README.md` → "The run-record schema" owns the boundary.
+- **Entry cost is recovered from the chain, and the signatures are free.** Every `Fill` carries its
+  transaction, so `measure.mjs` → `walletTransactions` and `entry.mjs` → `entryCostTargets` name the
+  transactions to price with no discovery step; `pumpfun.mjs` → `parseTransactionCosts` reads
+  `meta.fee` (base + priority, exact) and the pre/post balance delta. **The free legs — room and the
+  gross field — run FIRST**, so a deployer failing either costs zero RPC requests; that ordering is
+  the cost model. Measured per launch on our tape: ~7 create-slot transactions and ~19 more for a
+  closed round trip's whole window, unioned. Pacing is `creation_walk`'s and the two legs are
+  serialised — `api.mainnet-beta` rate-limits globally across methods. **`entry-cost-prohibitive`
+  gates on the PER-LAUNCH median** (`entryCostPerSolStakedByLaunch`, decision 140a) — every launch
+  counts once, so a busy launch cannot outvote the rest; the pooled per-entry distribution ships
+  beside it as the finer-grained evidence and is not what the verdict reads. Re-derived from the
+  committed tape: per-launch median 0.0388 against a per-entry 0.0367, worst launch 0.3311, bar 0.12.
+  **A launch the RPC ceiling cuts short is discarded whole**, because a truncated walk holds the
+  earliest entrants by slot, which is a biased sample rather than a short one; and **a transport
+  failure abandons the cost leg for that candidate only**, leaving `entry-cost-unmeasured` rather
+  than aborting a run whose keyed allowance is already spent.
+- **A landing tip paid in a SEPARATE transaction of the same bundle is in NO figure, and its absence
+  is OPTIMISTIC.** It is not recoverable from the entrant's own transaction and is not in this repo's
+  ground truth either, so every cost is a lower bound and every after-cost result an upper bound.
+  `entry.mjs` → `LANDING_TIP_CAVEAT` is the one string; it must reach the score's caveats, the
+  verdict's own sentence, the rendered block, the run record and the dry-run plan — **not just a
+  doc**. Same for `WINNERS_ONLY_CAVEAT`: the tape only holds wallets that won the auction.
+- **Stage 0 check 8 regression-tests the cost leg offline** (`stage0.mjs` →
+  `verifyOnChainCostReproduction`), running the production `priceLaunchEntry` over
+  `onchain_create_slot_pnl.csv`. On the current tape: 113 launches, 631 round trips priced end to
+  end, median entry cost 0.0308 SOL, field hit rate **0.7401 gross → 0.6070 net**, 87 sign flips. It
+  asserts the *direction* — netting fees must move the field DOWN — because a sign error there would
+  manufacture an edge silently. It deliberately does **not** assert that the net leg vetoes
+  `7ufmve7Z…`: post-break its priced round trips are still 0.64 positive at +0.05 SOL net, so that
+  wallet is refused by ROOM and only room.
 - **`7ufmve7Z…` is the known-negative control, and it is load-bearing twice over.** Stage 0 asserts
   the gate **passes** it (it is competent) *and* that Stage 2 **refuses** it (it is not beatable —
   measured, `data/slot-zero-june-regime-change/report.md`). Any design that scores it as beatable is
   wrong; `runStage0` fails loudly, including if a later lane loosens `minRoomLeft` to fit an output.
-- **Everything derived from the fill tape is GROSS OF FEES and is an upper bound.** The trap is
+- **Everything derived from the fill tape ALONE is GROSS OF FEES and is an upper bound.** The trap is
   concrete, not theoretical: gross, `7ufmve7Z…`'s post-break field reads **351/460 closed round trips
   positive**; fee-inclusive, that same regime made **+0.54 SOL per launch with 51 of 106 wallets
-  negative**. So in the entry score the field leg can only ever **veto** a verdict, never earn one,
-  and every P&L field name ends `GrossOfFees`.
+  negative**. So the field leg can only ever **veto** a verdict, never earn one — netting the
+  measured cost sharpens the veto without changing its direction, because measured cost is itself a
+  lower bound. Every P&L field name ends `GrossOfFees` or `NetOfMeasuredFees`, never neither, and a
+  test enforces it.
 - **A create slot with NO bundled transaction is UNPROVEN, and unproven launches are not scored.**
   The co-ordination rule marks every wallet in a create-slot transaction carrying 2+ distinct
   wallets, which is what makes the method work on a stranger — but how much of the operation it
@@ -292,8 +331,8 @@ dev currently?"*, and the shape of the answer is the point:
   tape removes 24 of 24 false-positive rolling windows for 0 true positives and 81 unmeasured ones.
   Stage 0's **rolling replay** (`stage0.mjs` → `replayRollingRoom`) is the control and fails loudly
   if it reopens; the two slice checks structurally cannot catch it. `bundledTx` /
-  `maxWalletsInOneTx` reach the score, record (**schema 5**) and rendered line so a saved run stays
-  auditable — a schema-≤4 `entry.roomLeft` may be inflated and the record cannot say by how much, and
+  `maxWalletsInOneTx` reach the score, record (added at **schema 5**) and rendered line so a saved run
+  stays auditable — a schema-≤4 `entry.roomLeft` may be inflated and the record cannot say by how much, and
   a schema-≤4 `stage0` block is not comparable either (era-2 `n` moved 89→86 for the same reason).
   The predicate is **create-slot-scoped, not operation-scoped** — it is a floor on the evidence, and
   no tighter one exists: a deployer-in-bundle reading matches 0 of 235 launches because this deployer
@@ -310,6 +349,13 @@ dev currently?"*, and the shape of the answer is the point:
 - **Only closed round trips have a P&L**, by the dataset's own rule (residual within 0.1% of tokens
   bought). Reproducing it from raw fills agrees with `wallet_launch_pnl.csv` on **1,502 create-slot
   outsider pairs, 0 closure mismatches, max error 5e-7 SOL** — checked in Stage 0 every run.
+- **The run record is a VERSIONED CONTRACT: bump, never retro-edit.** Committed records are the
+  grading lane's input; readers version-detect, and `test/deployer-screen.test.ts` asserts the exact
+  key set PER version — for the candidate row, the `entry` block and (from schema 6) `entry.coverage`
+  — against the committed records themselves. Adding a field means a bump plus its assertions.
+  **`record.mjs` and the README's schema table are two prose copies of the same contract and have
+  drifted twice**; a test now pins them together, so move both in one commit. Current version:
+  `RECORD_SCHEMA_VERSION` in `record.mjs`.
 
 ## Where candidate wallets come from, and the ceiling on that
 

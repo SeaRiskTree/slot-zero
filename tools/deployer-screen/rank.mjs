@@ -16,7 +16,7 @@
  *   of demonstrating it.
  * - So the strongest verdict this module emits is {@link Verdict} `gate-passed`, meaning *worth
  *   scoring*, and the language that ships with it says so. The scoring itself is Stage 2, and it
- *   lives in `entry.mjs` with **its own verdict vocabulary** — `entry-room-present` and friends —
+ *   lives in `entry.mjs` with **its own verdict vocabulary** — `entry-open-after-costs` and friends —
  *   deliberately not folded into this one. Competence and entry room are different claims about a
  *   wallet, and a single merged verdict could not be read back apart into which leg carried it.
  */

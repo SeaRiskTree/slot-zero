@@ -41,6 +41,13 @@
  *     nothing at all**. This replays the live recipe at all 228 trailing windows and fails on a
  *     single window where the screen says there was room and the named cohort says there was not.
  *     See {@link replayRollingRoom}; it is offline, free and deterministic like the rest.
+ *  8. **THE COST LEG, against the committed on-chain table.** The captain's ruling of 2026-08-02
+ *     put fees inside the entry window, so a live run now spends Solana RPC requests pricing what it
+ *     costs to land. That leg is regression-tested offline first, on the launches
+ *     `onchain_create_slot_pnl.csv` prices, using the same `priceLaunchEntry` a live run uses. It
+ *     asserts the two things a wiring error breaks silently — that netting measured fees moves the
+ *     field DOWN, and that the seat is not free — and re-runs the known-negative control with costs
+ *     attached. See {@link verifyOnChainCostReproduction}.
  *
  * All of it reads committed files. No network, no key, no quota.
  */
@@ -49,7 +56,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
-import { measureLaunchEntry, scoreEntry } from './entry.mjs';
+import { entryCostTargets, measureLaunchEntry, priceLaunchEntry, scoreEntry } from './entry.mjs';
 import {
   CURVE_INITIAL_PRICE_SOL,
   CURVE_K,
@@ -61,6 +68,7 @@ import {
   roomIsProven,
   solBetweenPrices,
 } from './measure.mjs';
+import { LAMPORTS_PER_SOL } from './pumpfun.mjs';
 import { applyGate, verdictFor } from './rank.mjs';
 
 /** The deployer the whole dataset is about. `src/cohort.ts` carries the same constant. */
@@ -199,6 +207,9 @@ export function readGroundTruthCompletion(dataDir) {
  * @property {string} dateIso
  * @property {import('./measure.mjs').CreateSlotMeasurement} createSlot
  * @property {import('./entry.mjs').FieldEntrant[]} field
+ * @property {import('./measure.mjs').Fill[]} fills The launch's whole stored window. Kept because
+ *   the cost leg's targets are transactions, and a transaction is only recoverable from the fills —
+ *   see {@link verifyOnChainCostReproduction}.
  * @property {number} cohortRoomLeft GROUND TRUTH room, from the NAMED six-wallet cohort rather than
  *   the structural bundle rule. Available only because this is our own subject; a stranger has no
  *   such answer, which is the whole reason the structural rule exists. Used by
@@ -287,6 +298,7 @@ export function measureSubjectLaunches(dataDir) {
       dateIso: new Date(Number(meta['created_timestamp'])).toISOString(),
       createSlot: entry.createSlot,
       field: entry.field,
+      fills,
       cohortRoomLeft: cohortRoomLeft(groups),
     });
   }
@@ -372,6 +384,201 @@ export function verifyFieldReproduction(dataDir, launches) {
   // so anything at or below this is representation and anything above it is a different sum.
   const ok = pairs > 0 && closureMismatches === 0 && missingFromCsv === 0 && maxRealisedErrorSol < 1e-6;
   return { pairs, closureMismatches, maxRealisedErrorSol, missingFromCsv, ok };
+}
+
+/**
+ * Read the committed on-chain cost table into the exact shape a LIVE cost walk produces.
+ *
+ * `onchain_create_slot_pnl.csv` is `api.mainnet-beta`'s answer, recorded: per (mint, transaction,
+ * wallet) it carries the transaction's whole fee attributed to its payer and the named wallet's real
+ * lamport change. That is the same pair of quantities `pumpfun.mjs` → `parseTransactionCosts` pulls
+ * out of a `getTransaction` response, so projecting the table onto {@link
+ * import('./pumpfun.mjs').TransactionCosts} lets **the live attach function run over committed
+ * ground truth** rather than over a re-implementation of it. One code path, two sources — the same
+ * arrangement that makes the room and field legs testable offline.
+ *
+ * Note the one shape difference, and it is harmless: the table lists only the create-slot entrants'
+ * accounts, not every account in the transaction, so `solOutByWallet` is a subset. `priceLaunchEntry`
+ * looks up exactly the wallet it is pricing and refuses the entrant when it is absent, so a subset
+ * costs coverage and can never fabricate a figure.
+ *
+ * @param {string} dataDir
+ * @returns {Map<string, import('./pumpfun.mjs').TransactionCosts>} By transaction signature.
+ */
+export function readOnChainCosts(dataDir) {
+  const rows = parseCsv(readFileSync(join(dataDir, 'onchain_create_slot_pnl.csv'), 'utf8'));
+  const header = rows[0];
+  if (header === undefined) throw new Error('onchain_create_slot_pnl.csv is empty');
+  const col = columnIndexer(header, 'onchain_create_slot_pnl.csv');
+  const iTx = col('tx');
+  const iWallet = col('wallet');
+  const iFeePayer = col('is_fee_payer');
+  const iFee = col('fee_lamports');
+  const iDelta = col('sol_delta_lamports');
+
+  /** @type {Map<string, import('./pumpfun.mjs').TransactionCosts>} */
+  const byTx = new Map();
+  for (const r of rows.slice(1)) {
+    if (r.length <= Math.max(iFee, iDelta)) continue;
+    const signature = String(r[iTx]);
+    const wallet = String(r[iWallet]);
+    let costs = byTx.get(signature);
+    if (costs === undefined) {
+      costs = { signature, feeSol: Number(r[iFee]) / LAMPORTS_PER_SOL, feePayer: null, solOutByWallet: new Map() };
+      byTx.set(signature, costs);
+    }
+    // The fee is a property of the transaction and appears on every one of its rows; the payer is
+    // named only where one of the listed wallets happens to be it. A bundled transaction's payer
+    // may be an account the table does not carry, which is why this is nullable rather than
+    // defaulted to the first wallet seen — CLAUDE.md's fee-payer counter-trap.
+    if (r[iFeePayer] === '1') costs.feePayer = wallet;
+    costs.solOutByWallet.set(wallet, -Number(r[iDelta]) / LAMPORTS_PER_SOL);
+  }
+  return byTx;
+}
+
+/**
+ * @typedef {object} CostReproduction
+ * @property {number} launchesPriced       Launches the committed table can price at all.
+ * @property {number} minLaunches          Launches this check needs to mean anything.
+ * @property {number} entriesPriced        Create-slot entries with a measured entry cost.
+ * @property {number} entries              Create-slot entries in the priced launches.
+ * @property {number} pairsPriced          Closed round trips priced across their whole window.
+ * @property {number} minPairs             Pairs this check needs to mean anything.
+ * @property {number} entryCostMedianSol
+ * @property {number} entryCostPerSolStakedMedianByEntry  Pooled over every priced create-slot
+ *   ENTRY, matching `EntryScore.entryCostPerSolStaked`. The finer-grained evidence.
+ * @property {number} entryCostPerSolStakedMedianByLaunch One figure per priced LAUNCH — each
+ *   launch's own median entry, then the median of those — matching
+ *   `EntryScore.entryCostPerSolStakedByLaunch`. **This is the unit `entry-cost-prohibitive`
+ *   compares against** (captain decision 140a), so it is the one Stage 0 must report if Stage 0 is
+ *   to regression-test the gate rather than a neighbouring quantity.
+ * @property {number} entryCostPositiveShare Share of priced entries whose cost is above zero.
+ * @property {number} grossHitRate
+ * @property {number} netHitRate
+ * @property {number} grossMedianSol
+ * @property {number} netMedianSol
+ * @property {number} flipsPositiveToNegative Round trips positive gross and negative net.
+ * @property {import('./entry.mjs').EntryScore} postBreakScore The post-break regime scored WITH its
+ *   measured costs attached — the known-negative control, run through the whole new ladder.
+ * @property {boolean} ok
+ */
+
+/**
+ * **STAGE 0's FIFTH REPRODUCTION, AND IT COSTS NOTHING.** Price the subject's own create slots from
+ * the committed on-chain table and check the cost leg end to end, offline, before it is ever pointed
+ * at a stranger.
+ *
+ * What it establishes, in the order the failures below assert it:
+ *
+ * 1. **The leg is wired the right way round.** Netting measured fees onto the field must LOWER its
+ *    hit rate and its median. A sign error in the lamport delta, or a `priceLaunchEntry` that
+ *    subtracted the quote from the wrong side, would raise them — silently, and in the one
+ *    direction the captain's tiebreaker forbids.
+ * 2. **The cost is real and positive.** A median at or below zero would mean the seat is free,
+ *    which it is not: on this tape the median create-slot entry pays about 0.03 SOL, and the
+ *    transaction fee alone spans 0.00001 to 3.15 SOL on the same deployer.
+ * 3. **The known-negative control survives the new ladder.** `7ufmve7Z…` scored WITH its costs
+ *    attached must still not read `entry-open-after-costs`.
+ *
+ * **What it deliberately does NOT assert, because it is not true:** that the net field leg vetoes
+ * our subject. Post-break its priced round trips are still 0.64 positive at a median +0.05 SOL net,
+ * so the after-cost field would pass — the wallet is refused by ROOM, which is exactly why room is
+ * the gate and the field is only ever a veto. Asserting otherwise here would pin a property the
+ * evidence does not support.
+ *
+ * The coverage this runs over is a property of the committed table rather than of the method: it
+ * priced 113 of the 235 covered launches, so `minLaunches`/`minPairs` exist for the same reason the
+ * era buckets have a `minN` — an empty comparison passes vacuously, and a passing Stage 0 is what
+ * authorises spending quota on strangers.
+ *
+ * @param {string} dataDir
+ * @param {readonly TapedLaunch[]} launches
+ * @param {import('./entry.mjs').EntryThresholds & { maxLaunchesPerCandidate: number }} t
+ * @returns {CostReproduction}
+ */
+export function verifyOnChainCostReproduction(dataDir, launches, t) {
+  const onChain = readOnChainCosts(dataDir);
+
+  /** @type {import('./entry.mjs').LaunchEntry[]} */
+  const pricedPostBreak = [];
+  /** @type {import('./entry.mjs').FieldEntrant[]} */
+  const allEntries = [];
+  /** @type {number[]} */
+  const perLaunchCostPerSolStaked = [];
+  let launchesPriced = 0;
+
+  for (const l of launches) {
+    /** @type {import('./entry.mjs').LaunchEntry} */
+    const entry = { createSlot: l.createSlot, field: l.field };
+    const targets = entryCostTargets(l.fills, entry);
+    if (targets.length === 0) continue;
+    // The same all-or-nothing rule a live walk applies, one level up: only the transactions the
+    // table actually carries are handed over, and `priceLaunchEntry` refuses any wallet whose set
+    // is incomplete.
+    /** @type {Map<string, import('./pumpfun.mjs').TransactionCosts>} */
+    const available = new Map();
+    for (const target of targets) {
+      const costs = onChain.get(target.tx);
+      if (costs !== undefined) available.set(target.tx, costs);
+    }
+    if (available.size === 0) continue;
+    launchesPriced += 1;
+    const priced = priceLaunchEntry(entry, targets, available);
+    allEntries.push(...priced.field);
+    const perEntryHere = priced.field
+      .map((e) => e.entryCostPerSolStaked)
+      .filter((v) => Number.isFinite(v));
+    if (perEntryHere.length > 0) perLaunchCostPerSolStaked.push(median(perEntryHere));
+    if (l.dateIso.slice(0, 10) >= REGIME_BOUNDARY) pricedPostBreak.push(priced);
+  }
+
+  const costed = allEntries.filter((e) => Number.isFinite(e.entryCostSol));
+  const closed = allEntries.filter((e) => e.closedInWindow);
+  const pairs = closed.filter((e) => Number.isFinite(e.realisedSolNetOfMeasuredFees));
+  const positive = (/** @type {readonly number[]} */ v) =>
+    v.length === 0 ? Number.NaN : v.filter((x) => x > 0).length / v.length;
+
+  const grossOfPairs = pairs.map((e) => e.realisedSolGrossOfFees);
+  const netOfPairs = pairs.map((e) => e.realisedSolNetOfMeasuredFees);
+  const postBreakScore = scoreEntry(pricedPostBreak, t, { candidateWallet: SUBJECT_DEPLOYER });
+
+  const minLaunches = 40;
+  const minPairs = 200;
+  const grossHitRate = positive(grossOfPairs);
+  const netHitRate = positive(netOfPairs);
+  const grossMedianSol = median(grossOfPairs);
+  const netMedianSol = median(netOfPairs);
+  const entryCostMedianSol = median(costed.map((e) => e.entryCostSol));
+
+  return {
+    launchesPriced,
+    minLaunches,
+    entriesPriced: costed.length,
+    entries: allEntries.length,
+    pairsPriced: pairs.length,
+    minPairs,
+    entryCostMedianSol,
+    entryCostPerSolStakedMedianByEntry: median(costed.map((e) => e.entryCostPerSolStaked)),
+    entryCostPerSolStakedMedianByLaunch: median(perLaunchCostPerSolStaked),
+    entryCostPositiveShare: positive(costed.map((e) => e.entryCostSol)),
+    grossHitRate,
+    netHitRate,
+    grossMedianSol,
+    netMedianSol,
+    flipsPositiveToNegative: pairs.filter(
+      (e) => e.realisedSolGrossOfFees > 0 && e.realisedSolNetOfMeasuredFees <= 0,
+    ).length,
+    postBreakScore,
+    ok:
+      launchesPriced >= minLaunches &&
+      pairs.length >= minPairs &&
+      entryCostMedianSol > 0 &&
+      positive(costed.map((e) => e.entryCostSol)) >= 0.9 &&
+      netHitRate < grossHitRate &&
+      netMedianSol < grossMedianSol &&
+      postBreakScore.verdict !== 'entry-open-after-costs',
+  };
 }
 
 /**
@@ -612,6 +819,8 @@ export function verifyCurveInversion(controls) {
  *   post-2026-06-04 regime, which is the population the June report measured.
  * @property {RollingRoomReplay} rollingRoom The same known-negative question asked at EVERY point
  *   in the tape's history, against the named cohort. See {@link replayRollingRoom}.
+ * @property {CostReproduction} costCheck The entry-cost and after-cost legs, run over the committed
+ *   on-chain table. See {@link verifyOnChainCostReproduction}.
  * @property {{ n: number, roomP25: number, roomMedian: number, roomP75: number }} controlPopulation
  * @property {{ n: number, groupedPreset15: number }} controlPresets
  * @property {boolean} passed
@@ -746,6 +955,11 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
   // `replayRollingRoom`: (6) samples only the months where the co-ordination rule works.
   const rollingRoom = replayRollingRoom(launches, entryThresholds);
 
+  // --- (8) THE COST LEG, against the committed on-chain table ---------------------------------
+  // Free, offline and deterministic like the rest, and it is the only check that exercises what a
+  // live run now spends Solana RPC requests on. See `verifyOnChainCostReproduction`.
+  const costCheck = verifyOnChainCostReproduction(dataDir, launches, entryThresholds);
+
   const room = controls.map((c) => c.roomLeftUpperBound);
   const controlPopulation = {
     n: controls.length,
@@ -841,10 +1055,11 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
   for (const [label, score] of /** @type {[string, import('./entry.mjs').EntryScore][]} */ ([
     ['the most recent launches (what a live run would score today)', subjectEntryRecent],
     ['the whole post-2026-06-04 regime', subjectEntryPostBreak],
+    ['the post-2026-06-04 regime WITH its on-chain costs attached', costCheck.postBreakScore],
   ])) {
-    if (score.verdict === 'entry-room-present') {
+    if (score.verdict === 'entry-open-after-costs') {
       failures.push(
-        `STAGE 2 SCORED OUR SUBJECT DEPLOYER AS HAVING ENTRY ROOM, over ${label}. That wallet is ` +
+        `STAGE 2 SCORED OUR SUBJECT DEPLOYER AS ENTERABLE AFTER COSTS, over ${label}. That wallet is ` +
           `the known negative: its opening window has been unprofitable for outsiders since ` +
           `2026-06-04 because its own group takes 97% of the profit available there ` +
           `(slot-zero-june-regime-change/report.md §6.1). Measured room here is ` +
@@ -862,6 +1077,25 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
           `is not a negative one.`,
       );
     }
+  }
+
+  // THE COST LEG. It is checked for the two things a wiring error would break silently: that
+  // netting measured fees moves the field DOWN, and that the seat is not free. The direction is the
+  // point — an error that raised the net figure above the gross one would manufacture exactly the
+  // after-cost edge the captain's ruling exists to test for.
+  if (!costCheck.ok) {
+    failures.push(
+      `THE ON-CHAIN COST REPRODUCTION FAILED. ${costCheck.launchesPriced} launch(es) priced ` +
+        `(needs ${costCheck.minLaunches}), ${costCheck.entriesPriced}/${costCheck.entries} ` +
+        `create-slot entries costed, ${costCheck.pairsPriced} closed round trips priced end to end ` +
+        `(needs ${costCheck.minPairs}); median entry cost ${costCheck.entryCostMedianSol.toFixed(4)} SOL ` +
+        `and ${(costCheck.entryCostPositiveShare * 100).toFixed(1)}% of entries above zero; field hit ` +
+        `rate ${costCheck.grossHitRate.toFixed(4)} gross against ${costCheck.netHitRate.toFixed(4)} NET, ` +
+        `median ${costCheck.grossMedianSol.toFixed(4)} against ${costCheck.netMedianSol.toFixed(4)} SOL. ` +
+        `Netting measured fees must move the field DOWN and the seat must cost something; a reading ` +
+        `that says otherwise is a sign error in the cost leg, not a discovery. Post-break verdict with ` +
+        `costs attached: ${costCheck.postBreakScore.verdict.toUpperCase()}.`,
+    );
   }
 
   // THE ROLLING REPLAY. A false positive here is a window in which the screen would have called our
@@ -898,6 +1132,7 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
     subjectEntryRecent,
     subjectEntryPostBreak,
     rollingRoom,
+    costCheck,
     controlPopulation,
     controlPresets,
     passed: failures.length === 0,

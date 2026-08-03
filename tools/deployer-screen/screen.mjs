@@ -349,6 +349,8 @@ export async function main(opts, env, out, err) {
   const budget = T['budget'];
   /** @type {import('./stage2.mjs').Stage2Thresholds} */
   const entryThresholds = { ...T['stage2_entry'] };
+  /** @type {{ maxRpcRequestsPerCandidate: number, rpcMinIntervalMs: number, preferBlockRoute: boolean }} */
+  const costBounds = T['stage2_cost'];
   // The scoring cap can be lowered from the command line and never raised. Same rule as the
   // candidate cap: a pinned bound that a flag can widen is not a bound.
   const maxScored = Math.min(opts.scoreCandidates ?? entryThresholds.maxCandidatesScored, entryThresholds.maxCandidatesScored);
@@ -460,6 +462,7 @@ export async function main(opts, env, out, err) {
         entryThresholds,
         historySource,
         creationWalk: T['creation_walk'],
+        costBounds,
         keyDescription: resolution.ok ? resolution.description : null,
       }),
     );
@@ -788,13 +791,40 @@ export async function main(opts, env, out, err) {
 
       for (const c of toScore) {
         if (!opts.json) out(`  ${c.wallet}`);
+        // The cost leg's own client, with its own PER-CANDIDATE ceiling — the same shape the
+        // creation walk uses, and for the same reason: one wallet's busy window must not eat the
+        // next wallet's budget. It is built here rather than shared because `SolanaRpcClient`
+        // carries its ceiling for life. Pacing is the creation walk's, and the two legs never run
+        // at the same time: api.mainnet-beta rate-limits globally across methods.
+        let costTicks = 0;
+        const costRpc = new SolanaRpcClient({
+          maxRequests: costBounds.maxRpcRequestsPerCandidate,
+          minIntervalMs: costBounds.rpcMinIntervalMs,
+          ...(opts.json
+            ? {}
+            : {
+                /** @param {string} label */
+                onRequest: (label) => {
+                  costTicks += 1;
+                  if (costTicks !== 1 && costTicks % RPC_HEARTBEAT_EVERY !== 0) return;
+                  out(
+                    `    · ${c.wallet}: ${costTicks}/${costBounds.maxRpcRequestsPerCandidate} ` +
+                      `cost RPC request(s) — ${label}`,
+                  );
+                },
+              }),
+        });
         const { score, coverage } = await scoreCandidateEntry(stage2Keyless, {
           wallet: c.wallet,
           profile: profiles.get(c.wallet),
           nowMs: Date.now(),
           thresholds: entryThresholds,
+          rpc: costRpc,
+          preferBlockRoute: costBounds.preferBlockRoute,
           log: opts.json ? undefined : (line) => out(line),
         });
+        rpcRequests += costRpc.issued();
+        rpcLoadShedEvents += costRpc.loadShedEvents();
         c.entry = score;
         c.entryCoverage = coverage;
         if (!opts.json) out(`    → ${score.verdict.toUpperCase()}: ${score.rationale}`);
@@ -959,6 +989,7 @@ export async function main(opts, env, out, err) {
         thresholds: {
           stage1_gate: T['stage1_gate'],
           stage2_entry: T['stage2_entry'],
+          stage2_cost: T['stage2_cost'],
           budget: T['budget'],
           creation_walk: T['creation_walk'],
         },
@@ -1177,6 +1208,35 @@ function summariseStage0(s) {
       falsePositives: s.rollingRoom.falsePositives,
       falseNegatives: s.rollingRoom.falseNegatives,
       ok: s.rollingRoom.ok,
+    },
+    // The cost leg's own regression, persisted for the same reason: it is the ONE control that
+    // establishes the direction of the whole fee correction — netting measured fees must move the
+    // field DOWN — and `passed: true` alone cannot say by how much, or over what.
+    onChainCostReproduction: {
+      launchesPriced: s.costCheck.launchesPriced,
+      minLaunches: s.costCheck.minLaunches,
+      entriesPriced: s.costCheck.entriesPriced,
+      entries: s.costCheck.entries,
+      pairsPriced: s.costCheck.pairsPriced,
+      minPairs: s.costCheck.minPairs,
+      entryCostMedianSol: Number(s.costCheck.entryCostMedianSol.toFixed(6)),
+      entryCostPerSolStakedMedianByEntry: Number(
+        s.costCheck.entryCostPerSolStakedMedianByEntry.toFixed(6),
+      ),
+      entryCostPerSolStakedMedianByLaunch: Number(
+        s.costCheck.entryCostPerSolStakedMedianByLaunch.toFixed(6),
+      ),
+      entryCostPositiveShare: Number(s.costCheck.entryCostPositiveShare.toFixed(4)),
+      grossHitRate: Number(s.costCheck.grossHitRate.toFixed(4)),
+      netHitRate: Number(s.costCheck.netHitRate.toFixed(4)),
+      grossMedianSol: Number(s.costCheck.grossMedianSol.toFixed(6)),
+      netMedianSol: Number(s.costCheck.netMedianSol.toFixed(6)),
+      flipsPositiveToNegative: s.costCheck.flipsPositiveToNegative,
+      // The known-negative control run through the whole new ladder WITH its costs attached. It is
+      // refused by ROOM and only room — the net field leg does not veto it, and asserting that it
+      // did would pin a property the evidence does not support.
+      postBreakVerdict: s.costCheck.postBreakScore.verdict,
+      ok: s.costCheck.ok,
     },
   };
 }

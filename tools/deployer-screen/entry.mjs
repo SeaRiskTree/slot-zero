@@ -37,11 +37,11 @@
  * not a rough one.** Nothing in this module computes one, and a test asserts the word does not
  * appear in it.
  *
- * ## Everything here is GROSS OF FEES, and that is load-bearing
+ * ## What the fill tape can say about fees is NOTHING, and that is load-bearing
  *
  * The fill tape carries swap-quote SOL. It does not carry the priority fee, the landing tip, the
  * venue fee or rent, and only `onchain_*.csv` in the committed dataset is fee-inclusive. So every
- * P&L this module produces is an **upper bound** on what a wallet actually took, and every such
+ * P&L computed from fills alone is an **upper bound** on what a wallet actually took, and every such
  * field is named `…GrossOfFees` so a caller cannot forget. The size of the gap is measured, not
  * feared: on our subject's post-2026-06-04 launches the field reads **76.3% of closed round trips
  * positive with a median +0.12 SOL gross**, while the fee-inclusive truth over the same launches is
@@ -53,9 +53,54 @@
  * that loses money before costs certainly loses money after them, but a field that makes money
  * before costs has established nothing. {@link scoreEntry} is wired that way, and Stage 0 asserts
  * the consequence on the one wallet where we hold the answer.
+ *
+ * ## The fee is inside the entry window, so the cost of the seat is measured too
+ *
+ * Captain's standing ruling, 2026-08-02: fees are part of the entry window, and "enterable" means
+ * enterable **after what it costs to enter**. What the fill tape cannot say, the chain can — every
+ * fill carries its transaction signature, so the transactions that bought a stranger's create slot
+ * are a by-product of a walk that has already happened. {@link entryCostTargets} names them,
+ * `pumpfun.mjs` → `readCreateSlotCosts` prices them, and {@link priceLaunchEntry} attaches the
+ * result. The `…NetOfMeasuredFees` fields sit **beside** the gross ones and replace none of them.
+ *
+ * Two limits travel with every one of those numbers rather than living in a document —
+ * {@link LANDING_TIP_CAVEAT} and {@link WINNERS_ONLY_CAVEAT} — and both run in the same direction:
+ * entry looks cheaper, and the field more profitable, than either was.
  */
 
-import { createSlotGroups, median, percentile, roomIsProven, tallyCreateSlot } from './measure.mjs';
+import { createSlotGroups, median, percentile, roomIsProven, tallyCreateSlot, walletTransactions } from './measure.mjs';
+
+/**
+ * The one limit that must travel with every cost and every after-cost figure this module produces.
+ *
+ * It is a constant rather than a sentence retyped at each call site because the requirement is that
+ * it reaches **the number**, not the documentation: the score's caveats, the rendered block and the
+ * persisted run record all carry this exact string, so a figure cannot be lifted out of one surface
+ * and quoted without it.
+ *
+ * The direction is what makes it non-optional. A tip we cannot see makes entry look CHEAPER and the
+ * field look MORE profitable than either was, which is the direction the captain's standing
+ * tiebreaker — a null beats a false positive — exists to refuse.
+ */
+export const LANDING_TIP_CAVEAT =
+  'A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It ' +
+  'is not recoverable from the entrant\'s own transaction and it is not measured anywhere in this ' +
+  'repo\'s ground truth either, so every cost here is a LOWER bound and every after-cost result an ' +
+  'UPPER bound: entry looks cheaper, and the field more profitable, than either was.';
+
+/**
+ * The second limit on the same numbers, and it runs the same way.
+ *
+ * Every fill in the tape belongs to a wallet that WON the auction. Post-break our subject's launches
+ * saw a median 41.6 attempts per landed transaction, and a landed-but-failed attempt still pays its
+ * fee — so the measured cost of entering is the cost paid by winners and it understates the cost of
+ * trying (`slot-zero-stage2-correctness-and-fees/report.md` §5.8).
+ */
+export const WINNERS_ONLY_CAVEAT =
+  'THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won ' +
+  'the auction; the wallets that paid and did not land are invisible to it. Post-break our own ' +
+  'subject saw a median 41.6 attempts per landed transaction, so this understates the cost of ' +
+  'TRYING to enter — again in the optimistic direction.';
 
 /**
  * A position counts as closed when the residual is within 0.1% of the tokens bought.
@@ -145,6 +190,22 @@ export function hitRate(values, predicate) {
  *   position has no complete P&L, and the committed dataset makes the same field absent rather than
  *   zero for exactly this reason.
  * @property {number} returnPerSolGrossOfFees  `realised / stake`. `NaN` unless closed.
+ * @property {number} entryCostSol   What landing in the create slot cost this wallet OVER AND ABOVE
+ *   the position it took: its real lamport outflow minus the swap-quote SOL it committed there. So
+ *   it is the fee (base and priority), the venue fee, the rent, the execution difference, and any
+ *   tip paid INSIDE its own transaction. **`NaN` until the create slot is priced on-chain** — the
+ *   fill tape cannot see any of it. See {@link LANDING_TIP_CAVEAT} for what it still misses.
+ * @property {number} entryCostPerSolStaked `entryCostSol / createSlotFillSol` — the price of the
+ *   seat per SOL of seat, for THIS ONE ENTRY. `NaN` unless priced. The verdict does not read this
+ *   figure directly: see {@link EntryScore.entryCostPerSolStakedByLaunch}.
+ * @property {number} entryTxFeeSol  The transaction fee, base plus priority, on the create-slot
+ *   transactions this wallet PAID FOR. Exact where it applies, and zero where another account was
+ *   the fee payer — the counter-trap CLAUDE.md names. Carried apart from `entryCostSol` because it
+ *   is the observable price of the slot auction specifically. `NaN` unless priced.
+ * @property {number} realisedSolNetOfMeasuredFees  `realisedSolGrossOfFees` less every measured
+ *   cost across the whole window, computed from real lamport changes rather than from quotes.
+ *   **`NaN` unless the position closed AND every one of its window transactions was priced.**
+ * @property {number} returnPerSolNetOfMeasuredFees `net realised / stake`. `NaN` on the same terms.
  */
 
 /**
@@ -226,6 +287,13 @@ export function measureLaunchEntry(fills) {
       closedInWindow,
       realisedSolGrossOfFees: realised,
       returnPerSolGrossOfFees: closedInWindow && t.solIn > 0 ? realised / t.solIn : Number.NaN,
+      // Absent until the chain is asked. NaN and not 0: "we have not priced this" and "this cost
+      // nothing" are different findings, and the second one is a free seat.
+      entryCostSol: Number.NaN,
+      entryCostPerSolStaked: Number.NaN,
+      entryTxFeeSol: Number.NaN,
+      realisedSolNetOfMeasuredFees: Number.NaN,
+      returnPerSolNetOfMeasuredFees: Number.NaN,
     });
   }
   field.sort((a, b) => a.queuePosition - b.queuePosition);
@@ -234,21 +302,147 @@ export function measureLaunchEntry(fills) {
 }
 
 /**
+ * The transactions a launch's entry cost and after-cost result must be priced from.
+ *
+ * Two scopes, unioned so a signature is never paid for twice:
+ *
+ * - **Entry cost** — every create-slot transaction of every field entrant. This is the captain's
+ *   question as posed, "what does it cost me to get in", and it is the cheap half.
+ * - **The after-cost result** — every window transaction of the entrants whose position CLOSED.
+ *   Only a closed round trip has a P&L at all, so pricing an open one buys nothing; this is the
+ *   expensive half and it is what stops the field leg being veto-only (captain decision 136b).
+ *
+ * The union matters: a closed entrant's create-slot transaction belongs to both scopes, and paying
+ * an RPC request for it twice would be the difference between a run that fits its ceiling and one
+ * that does not.
+ *
+ * Pure. The walk that spends requests on the result is `pumpfun.mjs` → `readCreateSlotCosts`.
+ *
+ * @param {readonly import('./measure.mjs').Fill[]} fills The same fills {@link measureLaunchEntry}
+ *   was given.
+ * @param {LaunchEntry} entry
+ * @returns {import('./measure.mjs').WalletTransaction[]}
+ */
+export function entryCostTargets(fills, entry) {
+  const entrants = new Set(entry.field.map((e) => e.wallet));
+  const closed = new Set(entry.field.filter((e) => e.closedInWindow).map((e) => e.wallet));
+  const all = walletTransactions(fills, entrants, null);
+  return all.filter(
+    (t) => t.slot === entry.createSlot.slot || t.wallets.some((w) => closed.has(w.wallet)),
+  );
+}
+
+/**
+ * Attach measured on-chain costs to a launch's field.
+ *
+ * **All or nothing, per wallet and per scope.** An entrant is priced only when EVERY transaction in
+ * the scope came back — a partially priced wallet would report a cost that is missing one of its
+ * transactions, which is a wrong number rather than a missing one, and it would be wrong in the
+ * cheap direction. The two scopes are decided separately: a wallet whose create slot priced but
+ * whose later window did not still has an entry cost, and still has no after-cost result.
+ *
+ * `NaN` is the answer for anything unpriced, and {@link scoreEntry} counts what fraction of the
+ * field it could price so that "we did not look" can never read as "it was free".
+ *
+ * @param {LaunchEntry} entry
+ * @param {readonly import('./measure.mjs').WalletTransaction[]} targets What was asked for.
+ * @param {ReadonlyMap<string, import('./pumpfun.mjs').TransactionCosts>} priced What came back.
+ * @returns {LaunchEntry} A new entry; the input is not mutated.
+ */
+export function priceLaunchEntry(entry, targets, priced) {
+  /** @type {Map<string, import('./measure.mjs').WalletTransaction[]>} */
+  const byWallet = new Map();
+  for (const t of targets) {
+    for (const w of t.wallets) {
+      const list = byWallet.get(w.wallet);
+      if (list === undefined) byWallet.set(w.wallet, [t]);
+      else list.push(t);
+    }
+  }
+
+  /**
+   * Sum a wallet's real outflow against what the fill tape says it committed, over a set of
+   * transactions. `null` when any one of them is unpriced or does not carry the wallet at all.
+   *
+   * @param {string} wallet
+   * @param {readonly import('./measure.mjs').WalletTransaction[]} over
+   * @returns {{ solOut: number, quotedSol: number, feeAsPayerSol: number } | null}
+   */
+  const sum = (wallet, over) => {
+    if (over.length === 0) return null;
+    let solOut = 0;
+    let quotedSol = 0;
+    let feeAsPayerSol = 0;
+    for (const t of over) {
+      const costs = priced.get(t.tx);
+      if (costs === undefined) return null;
+      const delta = costs.solOutByWallet.get(wallet);
+      // The wallet traded in this transaction, so it is one of its accounts. If the priced result
+      // does not carry it, the two are not describing the same transaction and nothing is claimed.
+      if (delta === undefined || !Number.isFinite(delta)) return null;
+      solOut += delta;
+      quotedSol += t.wallets.find((w) => w.wallet === wallet)?.quotedSol ?? 0;
+      if (costs.feePayer === wallet) feeAsPayerSol += costs.feeSol;
+    }
+    return { solOut, quotedSol, feeAsPayerSol };
+  };
+
+  const field = entry.field.map((e) => {
+    const mine = byWallet.get(e.wallet) ?? [];
+    const inCreateSlot = mine.filter((t) => t.slot === entry.createSlot.slot);
+    const entryScope = sum(e.wallet, inCreateSlot);
+    const windowScope = e.closedInWindow ? sum(e.wallet, mine) : null;
+
+    const entryCostSol = entryScope === null ? Number.NaN : entryScope.solOut - entryScope.quotedSol;
+    const netRealised = windowScope === null ? Number.NaN : -windowScope.solOut;
+    return {
+      ...e,
+      entryCostSol,
+      entryCostPerSolStaked:
+        entryScope !== null && e.createSlotFillSol > 0 ? entryCostSol / e.createSlotFillSol : Number.NaN,
+      entryTxFeeSol: entryScope === null ? Number.NaN : entryScope.feeAsPayerSol,
+      realisedSolNetOfMeasuredFees: netRealised,
+      returnPerSolNetOfMeasuredFees:
+        windowScope !== null && e.stakeSol > 0 ? netRealised / e.stakeSol : Number.NaN,
+    };
+  });
+
+  return { createSlot: entry.createSlot, field };
+}
+
+/**
  * The complete Stage 2 verdict vocabulary. **Every value is about ENTRY only.**
  *
  * Note what is absent: nothing here says a deployer is beatable, profitable, or worth trading.
- * `entry-room-present` is the strongest thing this stage can say and it means one thing — the
- * opening window is not already closed, so the exit question is worth asking. Whether it is
- * *escapable* is Stage 3's, and whether it is *profitable* is nobody's until both have landed and
- * a fee-inclusive pass has been run.
+ * `entry-open-after-costs` is the strongest thing this stage can say and it means one thing — the
+ * opening window is not already closed AND what it costs to land there does not consume it, so the
+ * exit question is worth asking. Whether it is *escapable* is Stage 3's.
  *
- * @typedef {'entry-room-present' | 'entry-room-absent' | 'entry-field-loss-making' | 'entry-unmeasured'} EntryVerdict
+ * **`entry-room-present` is gone, and its removal is the point of this vocabulary.** Under the
+ * captain's ruling of 2026-08-02, fees are part of the entry window and "enterable" means enterable
+ * AFTER what it costs to enter, so a verdict that spoke only of room could no longer be the
+ * strongest thing said. Three rules follow from the same ruling and its standing tiebreaker, and
+ * none of them is negotiable:
+ *
+ * 1. **Unmeasured cost is never a pass.** `entry-cost-unmeasured` is terminal for that candidate in
+ *    that run. Before this, a gross-positive field could carry a positive verdict with fees
+ *    entirely unmeasured; it cannot now.
+ * 2. **The net field leg is still only a veto.** Measured cost is a LOWER bound — see {@link
+ *    LANDING_TIP_CAVEAT} — so a net P&L built on it is still an upper bound and still cannot EARN a
+ *    verdict. Netting fees makes the veto much sharper without changing which direction it points.
+ * 3. **Distributions and a hit rate, never a mean**, for cost as much as for P&L. On our own tape
+ *    the fee alone spans 0.00001 to 3.15 SOL on the same deployer.
+ *
+ * @typedef {'entry-open-after-costs' | 'entry-room-absent' | 'entry-cost-prohibitive'
+ *   | 'entry-cost-unmeasured' | 'entry-field-loss-making' | 'entry-unmeasured'} EntryVerdict
  */
 
 /** @type {readonly EntryVerdict[]} */
 export const ENTRY_VERDICTS = [
-  'entry-room-present',
+  'entry-open-after-costs',
   'entry-room-absent',
+  'entry-cost-prohibitive',
+  'entry-cost-unmeasured',
   'entry-field-loss-making',
   'entry-unmeasured',
 ];
@@ -259,6 +453,15 @@ export const ENTRY_VERDICTS = [
  * @property {number} minLaunchesSampled     Launches below which no distribution is reported.
  * @property {number} minFieldRoundTrips     Closed round trips below which the hit rate is noise.
  * @property {number} minFieldHitRateGross   Necessary-condition floor on the gross hit rate.
+ * @property {number} minFieldHitRateNet     The same floor, net of measured fees. The same veto,
+ *   now over a real measurement rather than an upper bound.
+ * @property {number} maxEntryCostPerSolStaked Price of the seat, per SOL of seat, at or above which
+ *   the cost consumes the opening. Compared against the **per-launch** median — the median over
+ *   launches of each launch's own median entry — never the pooled per-entry one. Captain decision
+ *   140a: every launch counts once, so a launch with many priced entrants cannot outvote a launch
+ *   with one.
+ * @property {number} minPricedFraction      Share of the field the cost leg must have priced before
+ *   any after-cost reading is allowed to stand.
  */
 
 /**
@@ -292,6 +495,26 @@ export const ENTRY_VERDICTS = [
  * @property {Distribution} fieldRealisedSolGrossOfFees   Closed round trips only.
  * @property {Distribution} fieldReturnPerSolGrossOfFees  Closed round trips only.
  * @property {HitRate} fieldHitRateGrossOfFees     Share of closed round trips above zero.
+ * @property {Distribution} entryCostSol           What landing cost, per create-slot entry, over
+ *   the entries the cost leg could price. Empty (`n: 0`, all `NaN`) when nothing was priced, which
+ *   is the honest reading for a leg that did not run.
+ * @property {Distribution} entryCostPerSolStaked  The same, per SOL of seat. **Over ENTRIES** — one
+ *   observation per priced create-slot entry, pooled across every scored launch. The finer-grained
+ *   evidence, and not what the verdict reads.
+ * @property {Distribution} entryCostPerSolStakedByLaunch  The same quantity **over LAUNCHES** — one
+ *   observation per scored launch that priced at least one entry, each being that launch's own
+ *   median entry. **This is the distribution `entry-cost-prohibitive` gates on** (captain decision
+ *   140a): pooled over entries, a single launch with dozens of priced entrants outvotes a dozen
+ *   launches with one apiece, and the bar is anchored on a per-launch figure.
+ * @property {Distribution} entryTxFeeSol          The transaction fee half of it — base plus
+ *   priority — where the entrant paid it. The observable price of the slot auction.
+ * @property {HitRate} entryCostPriced             How much of the field the cost leg priced. `hits`
+ *   is entries with a cost, `n` every create-slot entry. This is the coverage the verdict gates on.
+ * @property {Distribution} fieldRealisedSolNetOfMeasuredFees  Closed round trips that were priced
+ *   across their WHOLE window. Beside the gross figures and never replacing them.
+ * @property {Distribution} fieldReturnPerSolNetOfMeasuredFees
+ * @property {HitRate} fieldHitRateNetOfMeasuredFees  Share of priced closed round trips above zero.
+ * @property {number} fieldClosedRoundTripsPriced  Closed round trips with a complete net figure.
  * @property {number} fieldEntrants          Distinct (wallet, launch) create-slot entries.
  * @property {number} fieldClosedRoundTrips
  * @property {number} fieldOpenPositions     Entries with no complete P&L. Reported, never imputed.
@@ -305,7 +528,7 @@ export const ENTRY_VERDICTS = [
  *
  * ## How the verdict is composed, and why it is composed this way
  *
- * Two legs, and they are **not** symmetric:
+ * Three legs now, and they are **not** symmetric:
  *
  * - **Room is the gate.** It is measured from capital that provably entered the curve, and it is
  *   the quantity the 2026-06-04 finding turned on. A median below `minRoomLeft` ends the enquiry.
@@ -323,7 +546,23 @@ export const ENTRY_VERDICTS = [
  *   **2.86 SOL** in fees to get there. Pricing that seat is the next lane's, not this one's.
  * - **The field is a veto, never a pass.** It is gross of fees and therefore an upper bound, so a
  *   loss-making field is conclusive and a profitable-looking one establishes nothing at all. It can
- *   only ever take a verdict away.
+ *   only ever take a verdict away. Netting the measured cost onto it — captain decision 136b —
+ *   sharpens the veto without changing its direction: measured cost is itself a lower bound
+ *   ({@link LANDING_TIP_CAVEAT}), so the net figure is still an upper bound on what anyone took.
+ * - **Cost is a gate, and an unmeasured one is never a pass.** Under the captain's ruling of
+ *   2026-08-02 the fee is part of the entry window, so a room figure with the price of the seat
+ *   unmeasured beside it is not an answer to "is this enterable". The order the checks run in is
+ *   deliberate and it is also what makes the run affordable: **room and the gross field are free and
+ *   they run first**, so a deployer that fails either is refused before one RPC request is spent on
+ *   pricing it. Only a candidate still alive after both is worth the walk — which is the same
+ *   recommendation `slot-zero-stage2-correctness-and-fees/report.md` §5.3 reaches from the cost side.
+ *
+ *   **The bar is compared PER LAUNCH** (captain decision 140a). Each scored launch contributes its
+ *   own median entry and nothing more, and the median of those is what `entry-cost-prohibitive`
+ *   reads — {@link EntryScore.entryCostPerSolStakedByLaunch}. The pooled per-entry distribution is
+ *   reported beside it, and pooling is exactly what must not be gated on: create-slot entrant
+ *   counts vary by an order of magnitude between launches, so a pooled median is a statement about
+ *   whichever launch was busiest rather than about the deployer.
  *
  * ## Launches whose opening is UNPROVEN are not scored at all
  *
@@ -334,7 +573,7 @@ export const ENTRY_VERDICTS = [
  * they contribute no room figure, no field entrant and no round trip. Captain decision 134a.
  *
  * The consequence is deliberate and it is the safe one. A candidate whose proven launches fall
- * below `minLaunchesSampled` scores `entry-unmeasured` — never `entry-room-present`, and never
+ * below `minLaunchesSampled` scores `entry-unmeasured` — never `entry-open-after-costs`, and never
  * folded in with a refusal. On our own tape, replaying the live recipe at every index, that removes
  * **24 of 24 false-positive windows and leaves none at any bar from 0.1 to 0.8**; it costs 81 of
  * 228 windows, which become unmeasured rather than wrong. Stage 0's rolling replay asserts it.
@@ -351,7 +590,7 @@ export const ENTRY_VERDICTS = [
  * `creator` field that can move on-chain. When that wallet is not the candidate the launch was
  * sampled for, the launch is **kept, counted, and reported**. Keeping it is the conservative
  * direction: whoever bought first is credited to the operation, so the operation's share can only be
- * overstated and the room understated, which makes `entry-room-present` harder to earn rather than
+ * overstated and the room understated, which makes `entry-open-after-costs` harder to earn rather than
  * easier. A count that is not small is a caveat on the whole sample.
  *
  * @param {readonly LaunchEntry[]} launches Every launch the walk delivered. Ones whose room is
@@ -384,6 +623,31 @@ export function scoreEntry(launches, t, context = {}) {
   const roomLeft = distribution(room);
   const fieldHitRateGrossOfFees = hitRate(closed, (e) => e.realisedSolGrossOfFees > 0);
 
+  // The cost leg's own populations. `priced` is every create-slot entry the chain could price;
+  // `closedPriced` is the subset whose WHOLE window priced, which is the only population that can
+  // carry a net P&L. They are counted apart because they fail apart: a run can price every create
+  // slot and still be unable to price a single round trip end to end.
+  const priced = field.filter((e) => Number.isFinite(e.entryCostSol));
+  const closedPriced = closed.filter((e) => Number.isFinite(e.realisedSolNetOfMeasuredFees));
+  const entryCostPriced = hitRate(field, (e) => Number.isFinite(e.entryCostSol));
+  const entryCostPerSolStaked = distribution(priced.map((e) => e.entryCostPerSolStaked));
+  // The same quantity one unit up, and it is the unit the bar is anchored on. A launch contributes
+  // its own median and nothing else, so thirty priced entrants on one launch weigh exactly as much
+  // as one priced entrant on another. Launches that priced nothing contribute nothing rather than a
+  // zero — an unpriced launch is not a free one.
+  const entryCostPerSolStakedByLaunch = distribution(
+    scored.flatMap((l) => {
+      const perEntry = l.field
+        .map((e) => e.entryCostPerSolStaked)
+        .filter((v) => Number.isFinite(v));
+      return perEntry.length === 0 ? [] : [median(perEntry)];
+    }),
+  );
+  const fieldHitRateNetOfMeasuredFees = hitRate(closedPriced, (e) => e.realisedSolNetOfMeasuredFees > 0);
+  const fieldRealisedSolNetOfMeasuredFees = distribution(
+    closedPriced.map((e) => e.realisedSolNetOfMeasuredFees),
+  );
+
   /** @type {EntryScore} */
   const score = {
     verdict: 'entry-unmeasured',
@@ -406,6 +670,17 @@ export function scoreEntry(launches, t, context = {}) {
     fieldRealisedSolGrossOfFees: distribution(closed.map((e) => e.realisedSolGrossOfFees)),
     fieldReturnPerSolGrossOfFees: distribution(closed.map((e) => e.returnPerSolGrossOfFees)),
     fieldHitRateGrossOfFees,
+    entryCostSol: distribution(priced.map((e) => e.entryCostSol)),
+    entryCostPerSolStaked,
+    entryCostPerSolStakedByLaunch,
+    entryTxFeeSol: distribution(priced.map((e) => e.entryTxFeeSol)),
+    entryCostPriced,
+    fieldRealisedSolNetOfMeasuredFees,
+    fieldReturnPerSolNetOfMeasuredFees: distribution(
+      closedPriced.map((e) => e.returnPerSolNetOfMeasuredFees),
+    ),
+    fieldHitRateNetOfMeasuredFees,
+    fieldClosedRoundTripsPriced: closedPriced.length,
     fieldEntrants: field.length,
     fieldClosedRoundTrips: closed.length,
     fieldOpenPositions: field.length - closed.length,
@@ -454,9 +729,27 @@ export function scoreEntry(launches, t, context = {}) {
     );
   }
   score.caveats.push(
-    'Every P&L above is GROSS OF FEES and is therefore an UPPER BOUND. Priority fees, landing tips, ' +
-      'the venue fee and rent are all absent from the fill tape.',
+    'Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority ' +
+      'fees, landing tips, the venue fee and rent are all absent from the fill tape; the ' +
+      '*NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none ' +
+      'of the gross ones.',
   );
+  if (entryCostPriced.hits > 0) {
+    score.caveats.push(
+      `${entryCostPriced.hits} of ${entryCostPriced.n} create-slot entries were priced on-chain ` +
+        `(${fmt(entryCostPriced.rate)}), and ${score.fieldClosedRoundTripsPriced} of ` +
+        `${closed.length} closed round trips were priced across their whole window. The rest carry ` +
+        `NO cost figure — not a zero.`,
+    );
+    score.caveats.push(LANDING_TIP_CAVEAT);
+    score.caveats.push(WINNERS_ONLY_CAVEAT);
+  } else {
+    score.caveats.push(
+      'NO ENTRY COST WAS MEASURED for this candidate, so every figure above is gross of fees and ' +
+        'the price of the seat is unknown. That is a limit of this reading, not a finding that ' +
+        'entry was cheap.',
+    );
+  }
   score.caveats.push(
     'ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy ' +
       'would count towards, and whether an outsider could have left first — is NOT scored here.',
@@ -503,20 +796,83 @@ export function scoreEntry(launches, t, context = {}) {
       `BEFORE costs: ${score.fieldHitRateGrossOfFees.hits}/${score.fieldHitRateGrossOfFees.n} closed ` +
       `round trips positive (${fmt(fieldHitRateGrossOfFees.rate)}), median ` +
       `${fmt(score.fieldRealisedSolGrossOfFees.median)} SOL gross. Fees only make that worse, so this ` +
-      `is conclusive: room exists and nobody is converting it.`;
+      `is conclusive: room exists and nobody is converting it. No RPC request was spent pricing it.`;
     return score;
   }
 
-  score.verdict = 'entry-room-present';
+  // ---- THE COST LEG. Everything above was free; nothing below is. ---------------------------
+  //
+  // Rule 1 of the ruling: unmeasured cost is never a pass. A run that could not price the field has
+  // not established that the window is enterable, it has established that it does not know — and
+  // the two must not share a verdict. This is terminal for the candidate in this run.
+  if (!(entryCostPriced.rate >= t.minPricedFraction)) {
+    score.verdict = 'entry-cost-unmeasured';
+    score.rationale =
+      `the opening window leaves room (median ${fmt(roomLeft.median)}) and the field is not ` +
+      `loss-making before costs, but only ${entryCostPriced.hits} of ${entryCostPriced.n} ` +
+      `create-slot entries could be priced on-chain (${fmt(entryCostPriced.rate)}, below the ` +
+      `${t.minPricedFraction} this reading needs). Under the captain's ruling of 2026-08-02 the fee ` +
+      `is part of the entry window, so a room figure with the price of the seat unmeasured beside ` +
+      `it is NOT a finding that the window is enterable — it is the absence of one.`;
+    return score;
+  }
+
+  // ONE FIGURE PER LAUNCH, every launch counting once — captain decision 140a. The pooled per-entry
+  // distribution is reported beside it as the finer-grained evidence, but it is not what is gated:
+  // a single launch with dozens of priced entrants would otherwise decide the bar for the sample.
+  if (entryCostPerSolStakedByLaunch.median >= t.maxEntryCostPerSolStaked) {
+    score.verdict = 'entry-cost-prohibitive';
+    score.rationale =
+      `the opening window leaves room (median ${fmt(roomLeft.median)}), but landing in it costs a ` +
+      `median ${fmt(entryCostPerSolStakedByLaunch.median)} SOL per SOL staked PER LAUNCH over ` +
+      `${entryCostPerSolStakedByLaunch.n} priced launch(es) (p75 ` +
+      `${fmt(entryCostPerSolStakedByLaunch.p75)}, p90 ${fmt(entryCostPerSolStakedByLaunch.p90)}; ` +
+      `pooled over the ${entryCostPerSolStaked.n} individual entries it is ` +
+      `${fmt(entryCostPerSolStaked.median)}), at or above the ${t.maxEntryCostPerSolStaked} bar — ` +
+      `the price of the seat consumes the opening. ${LANDING_TIP_CAVEAT}`;
+    return score;
+  }
+
+  if (closedPriced.length < t.minFieldRoundTrips) {
+    score.verdict = 'entry-cost-unmeasured';
+    score.rationale =
+      `the opening window leaves room (median ${fmt(roomLeft.median)}) and entry costs a median ` +
+      `${fmt(entryCostPerSolStakedByLaunch.median)} SOL per SOL staked per launch, but only ${closedPriced.length} ` +
+      `closed round trip(s) could be priced across their whole window — below the ` +
+      `${t.minFieldRoundTrips} an after-cost hit rate needs. What the field actually CLEARED after ` +
+      `costs is therefore unmeasured, and an unmeasured after-cost result is not a pass.`;
+    return score;
+  }
+
+  if (
+    !(fieldHitRateNetOfMeasuredFees.rate >= t.minFieldHitRateNet) ||
+    !(fieldRealisedSolNetOfMeasuredFees.median > 0)
+  ) {
+    score.verdict = 'entry-field-loss-making';
+    score.rationale =
+      `the opening window leaves room (median ${fmt(roomLeft.median)}) and the field looked ` +
+      `positive gross — ${fieldHitRateGrossOfFees.hits}/${fieldHitRateGrossOfFees.n} closed round ` +
+      `trips above zero — but NET OF MEASURED FEES it does not: ` +
+      `${fieldHitRateNetOfMeasuredFees.hits}/${fieldHitRateNetOfMeasuredFees.n} priced round trips ` +
+      `positive (${fmt(fieldHitRateNetOfMeasuredFees.rate)}), median ` +
+      `${fmt(fieldRealisedSolNetOfMeasuredFees.median)} SOL. This is the leg the gross reading ` +
+      `cannot see. ${LANDING_TIP_CAVEAT}`;
+    return score;
+  }
+
+  score.verdict = 'entry-open-after-costs';
   score.rationale =
     `median room left ${fmt(roomLeft.median)} over ${scored.length} scored launches ` +
-    `(${score.roomHitRate.hits}/${score.roomHitRate.n} clear the ${t.minRoomLeft} bar), and the field ` +
-    `is not already loss-making before costs: ${fieldHitRateGrossOfFees.hits}/` +
-    `${fieldHitRateGrossOfFees.n} closed round trips positive, median ` +
-    `${fmt(score.fieldRealisedSolGrossOfFees.median)} SOL GROSS. ` +
-    `NOT a recommendation and NOT a profit claim: gross is an upper bound, the fee-inclusive figure ` +
-    `is unmeasured here, and exit feasibility is unmeasured entirely. This means the exit question ` +
-    `is worth asking, and nothing more.`;
+    `(${score.roomHitRate.hits}/${score.roomHitRate.n} clear the ${t.minRoomLeft} bar); landing ` +
+    `costs a median ${fmt(entryCostPerSolStakedByLaunch.median)} SOL per SOL staked per launch ` +
+    `(${fmt(entryCostPerSolStaked.median)} pooled over entries, ` +
+    `${fmt(score.entryCostSol.median)} SOL at the median entry, p90 ${fmt(score.entryCostSol.p90)}); ` +
+    `and after that cost the field still clears — ${fieldHitRateNetOfMeasuredFees.hits}/` +
+    `${fieldHitRateNetOfMeasuredFees.n} priced round trips positive, median ` +
+    `${fmt(fieldRealisedSolNetOfMeasuredFees.median)} SOL NET OF MEASURED FEES against ` +
+    `${fmt(score.fieldRealisedSolGrossOfFees.median)} gross. ` +
+    `NOT a recommendation and NOT a profit claim: ${LANDING_TIP_CAVEAT} Exit feasibility is ` +
+    `unmeasured entirely. This means the exit question is worth asking, and nothing more.`;
   return score;
 }
 

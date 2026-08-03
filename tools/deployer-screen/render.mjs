@@ -19,6 +19,7 @@
  */
 
 import { buildPath, ENDPOINT_ROLES } from './client.mjs';
+import { LANDING_TIP_CAVEAT } from './entry.mjs';
 import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
 
@@ -39,6 +40,9 @@ export const LIMITATIONS = [
   '  · STAGE 2, ENTRY — how much of its own opening window the deployer and its own wallets take',
   '    before anyone else is filled, and what the OTHER sniping wallets on those same launches',
   '    achieved: fill, queue position, and realised P&L. Distributions and a hit rate, never a mean.',
+  '  · STAGE 2, THE PRICE OF THE SEAT — what landing in that window cost those wallets, recovered',
+  '    from the chain: the transaction fee (base and priority) exactly, and everything else their',
+  '    own transaction moved. The field\'s result is then reported both gross and NET of it.',
   '',
   'WHICH HISTORY IT COUNTS: the tokens the wallet CREATED, read from pump.fun create transactions.',
   'NOT the tokens it owns now, which is what every vendor surface answers. Ownership on pump.fun',
@@ -53,13 +57,25 @@ export const LIMITATIONS = [
   '    that our own buy would count towards and would therefore cap our position, and whether an',
   '    outsider could have got out first, are ALL UNMEASURED here. No exit signal reaches any entry',
   '    number in this output, deliberately: a blended score cannot be read back apart.',
-  '  · FEES. Every P&L above is gross of fees — no priority fee, no landing tip, no venue fee, no',
-  '    rent — and is therefore an UPPER BOUND on what any wallet actually took.',
+  '  · A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE. It is not recoverable from',
+  '    the entrant\'s own transaction and it is not measured anywhere in this repo\'s ground truth',
+  '    either, so every cost figure is a LOWER bound and every after-cost figure an UPPER bound:',
+  '    entry looks cheaper, and the field more profitable, than either was.',
+  '  · WHETHER WE WOULD HAVE BEEN FILLED AT ALL. Every fill in the tape belongs to a wallet that',
+  '    WON the auction — post-break our own subject saw a median 41.6 attempts per landed',
+  '    transaction — and a wallet that paid and did not land is invisible to it. So the measured',
+  '    cost of entering is the cost paid by winners and it understates the cost of TRYING.',
   '  · Lead time, or the independence of the actors involved.',
   '',
   'The standing bar for acting on a signal of this class is real lead time, independence of the',
   'actors, and realised profit reported as a distribution plus a hit rate. Stage 2 clears the last',
-  'of those three GROSS OF FEES only, and clears neither of the first two.',
+  'of those three net of MEASURED fees — an upper bound, not the truth — and clears neither of the',
+  'first two. THAT NET READING IS PER CANDIDATE AND IS OFTEN ABSENT: the cost leg does not run under',
+  '--no-stage2, does not run in a --stage0 run, and does not run for any candidate the free legs',
+  '(room, or the field GROSS of fees) already refused. Where it did not run the figures are gross of',
+  'fees only, the candidate\'s own block says NOT MEASURED, and its verdict is entry-cost-unmeasured',
+  '— which is never a pass. Read the per-candidate block, not this footer, for whether the seat was',
+  'priced.',
   '',
   'A HIGH COMPLETION RATE DOES NOT IMPLY A PROFITABLE ENTRY, and A PROFITABLE-LOOKING FIELD DOES',
   'NOT IMPLY A PROFITABLE ENTRY EITHER. We hold the counterexample to both. Our own subject',
@@ -168,12 +184,71 @@ export function renderEntry(e, coverage) {
   );
   L.push('');
 
+  L.push('      WHAT IT COSTS TO GET IN — recovered on-chain, and what the field cleared after it');
+  if (e.entryCostPriced.hits === 0) {
+    L.push('      NOT MEASURED. No create-slot transaction was priced, so the price of the seat is');
+    L.push('      unknown — which is NOT a finding that entry was cheap.');
+  } else {
+    L.push(distHeader());
+    L.push(distLine('entry cost (SOL)', e.entryCostSol, 4));
+    L.push(distLine('per SOL staked, entries', e.entryCostPerSolStaked, 4));
+    // The unit the bar is compared against, printed beside the pooled one so a reader can see both
+    // and can see which is which. Decision 140a.
+    L.push(distLine('per SOL staked, *LAUNCH*', e.entryCostPerSolStakedByLaunch, 4));
+    L.push(distLine('tx fee, base+priority', e.entryTxFeeSol, 5));
+    L.push(distLine('realised SOL *NET*', e.fieldRealisedSolNetOfMeasuredFees));
+    L.push(distLine('return per SOL *NET*', e.fieldReturnPerSolNetOfMeasuredFees));
+    L.push(
+      `      hit rate: ${e.fieldHitRateNetOfMeasuredFees.hits}/${e.fieldHitRateNetOfMeasuredFees.n} ` +
+        `priced round trips positive (${pct(e.fieldHitRateNetOfMeasuredFees.rate)}) NET OF MEASURED ` +
+        `FEES, against ${pct(e.fieldHitRateGrossOfFees.rate)} gross`,
+    );
+    L.push(
+      `      priced: ${e.entryCostPriced.hits}/${e.entryCostPriced.n} create-slot entries ` +
+        `(${pct(e.entryCostPriced.rate)}), ${e.fieldClosedRoundTripsPriced}/${e.fieldClosedRoundTrips} ` +
+        `round trips priced across their whole window`,
+    );
+    // The limit travels with the number, not only with the documentation. Same string the score's
+    // caveats and the run record carry, so a figure cannot be lifted out of one surface without it.
+    for (const line of wrap(LANDING_TIP_CAVEAT, 84)) L.push(`      ! ${line}`);
+  }
+  L.push('');
+
   if (coverage !== null) {
     L.push(
       `      coverage: ${coverage.launchesUsable} usable of ${coverage.launchesAttempted} attempted ` +
         `(${coverage.launchRefsAvailable} available), ${coverage.requestsIssued} keyless request(s)` +
         (coverage.stoppedForBudget ? ', STOPPED EARLY on the stage request ceiling' : ''),
     );
+    // The eligibility filter's own arithmetic. Three quite different reasons a launch went
+    // unmeasured used to look identical from the outside; they are now separate numbers.
+    L.push(
+      `      eligibility: ${coverage.launchesTooYoung} of ${coverage.launchRefsAvailable} launch(es) ` +
+        `younger than ${coverage.minAgeMs}ms and not yet finished happening, ` +
+        `${coverage.launchesDroppedByCap} dropped by the per-candidate cap` +
+        (coverage.youngestEligibleAgeMs === null
+          ? ''
+          : `; youngest measured ${Math.round(coverage.youngestEligibleAgeMs / 1000)}s old`),
+    );
+    if (coverage.cost.ran) {
+      L.push(
+        `      cost walk: ${coverage.cost.transactionsPriced}/${coverage.cost.transactionsTargeted} ` +
+          `transaction(s) priced in ${coverage.cost.rpcRequests} RPC request(s) over ` +
+          `${coverage.cost.launchesPriced} launch(es)` +
+          (coverage.cost.transactionsDiscarded > 0 || coverage.cost.launchesDiscarded > 0
+            ? `, plus ${coverage.cost.transactionsDiscarded} transaction(s) over ` +
+              `${coverage.cost.launchesDiscarded} launch(es) PAID FOR AND DISCARDED (backing nothing)`
+            : '') +
+          (coverage.cost.viaBlock > 0 ? `, ${coverage.cost.viaBlock} from a whole-block read` : '') +
+          (coverage.cost.transactionsUnresolved > 0
+            ? `, ${coverage.cost.transactionsUnresolved} UNRESOLVED (not "free")`
+            : '') +
+          (coverage.cost.stoppedForBudget ? ', STOPPED EARLY on the per-candidate RPC ceiling' : ''),
+      );
+      for (const note of coverage.cost.notes) L.push(`        · ${note}`);
+    } else {
+      L.push('      cost walk: NOT RUN — the free legs settled this candidate, so no RPC was spent.');
+    }
     for (const line of renderDropTally(coverage.launchesDropped, coverage.dropsByReason, '      ')) L.push(line);
     for (const note of coverage.dropNotes) L.push(`        · ${note}`);
   }
@@ -360,10 +435,39 @@ export function renderStage0(r, vendorReadings) {
   L.push('  reproducing it is what lets a live measurement be compared with the published one.');
   L.push('');
 
+  L.push('THE COST LEG — what landing cost, and what the field cleared after it, from the chain');
+  L.push(
+    `  ${r.costCheck.launchesPriced} launch(es) priced (needs ${r.costCheck.minLaunches}), ` +
+      `${r.costCheck.entriesPriced}/${r.costCheck.entries} create-slot entries costed, ` +
+      `${r.costCheck.pairsPriced} round trip(s) priced end to end (needs ${r.costCheck.minPairs})   ` +
+      `${r.costCheck.ok ? 'OK' : 'FAILED'}`,
+  );
+  L.push(
+    `  entry cost: median ${num(r.costCheck.entryCostMedianSol, 4)} SOL, ` +
+      `${pct(r.costCheck.entryCostPositiveShare)} of entries above zero`,
+  );
+  L.push(
+    `  per SOL staked: ${num(r.costCheck.entryCostPerSolStakedMedianByLaunch, 4)} median PER LAUNCH ` +
+      `(the unit the entry-cost bar is compared against), ` +
+      `${num(r.costCheck.entryCostPerSolStakedMedianByEntry, 4)} pooled per ENTRY`,
+  );
+  L.push(
+    `  the field: hit rate ${num(r.costCheck.grossHitRate, 4)} GROSS against ` +
+      `${num(r.costCheck.netHitRate, 4)} NET, median ${num(r.costCheck.grossMedianSol, 4)} against ` +
+      `${num(r.costCheck.netMedianSol, 4)} SOL — ${r.costCheck.flipsPositiveToNegative} round trip(s) ` +
+      `flip from positive to negative`,
+  );
+  L.push('  Netting measured fees must move the field DOWN and the seat must cost something. A');
+  L.push('  reading that says otherwise is a sign error in the cost leg, not a discovery — which is');
+  L.push('  the failure this check exists to catch before a stranger is ever priced.');
+  for (const line of wrap(LANDING_TIP_CAVEAT, 84)) L.push(`  ! ${line}`);
+  L.push('');
+
   L.push('THE KNOWN-NEGATIVE CONTROL — Stage 2 must REFUSE our subject deployer');
   for (const [label, e] of /** @type {[string, import('./entry.mjs').EntryScore][]} */ ([
     ['most recent launches (what a live run would score today)', r.subjectEntryRecent],
     ['the whole post-2026-06-04 regime', r.subjectEntryPostBreak],
+    ['the post-break regime WITH its on-chain costs attached', r.costCheck.postBreakScore],
   ])) {
     L.push(
       `  ${pad(label, 52)} ${pad(e.verdict.toUpperCase(), 24)} ` +
@@ -670,9 +774,29 @@ export function renderStage1(run) {
   L.push('         which supplies everything before the creation window.');
     L.push('  seeds= how many of the 3 enumeration queries surfaced this wallet');
     L.push('');
-    L.push('  ENTRY-ROOM-PRESENT IS NOT "BEATABLE". It means the opening window is not already');
-    L.push('  closed, so the EXIT question is worth asking. Exit is unmeasured here, and every');
-    L.push('  realised figure above is gross of fees and therefore an upper bound.');
+    // The legend has to speak the vocabulary the run actually emitted, and it has to state the
+    // gross-only limit exactly where it is true. Naming a verdict this tool can no longer emit, or
+    // calling a NET figure gross, misreads the run for whoever reads it — and the candidates are
+    // already in hand here, so the condition is a fact about THIS run rather than a hedge.
+    const anyPriced = passed.some((c) => c.entry !== null && c.entry.entryCostPriced.hits > 0);
+    L.push('  NO VERDICT HERE MEANS "BEATABLE". ENTRY-OPEN-AFTER-COSTS is the strongest thing this');
+    L.push('  stage says: room was present, the seat was priced from the chain, and the field still');
+    L.push('  cleared after paying for it — so the EXIT question is worth asking. Exit is unmeasured.');
+    L.push('  ENTRY-COST-PROHIBITIVE and ENTRY-COST-UNMEASURED are both REFUSALS, and the second is');
+    L.push('  the absence of a finding rather than a finding of absence: the seat went unpriced, which');
+    L.push('  is never evidence that it was cheap.');
+    if (anyPriced) {
+      L.push('  The *NET* figures above are the on-chain correction and they sit BESIDE the *GROSS*');
+      L.push('  ones rather than replacing them. They are an UPPER bound themselves: a landing tip');
+      L.push('  paid in a separate transaction of the same bundle is in neither figure.');
+      L.push('  Where a candidate\'s own block says NOT MEASURED, only the gross figures exist for it,');
+      L.push('  and those are an upper bound.');
+    } else {
+      L.push('  No candidate in this run carries a priced seat — the cost leg does not run under');
+      L.push('  --no-stage2 or a --stage0 run, and does not run for a candidate the free legs (room,');
+      L.push('  or the field GROSS of fees) already refused. So every realised figure above is gross');
+      L.push('  of fees and therefore an upper bound.');
+    }
   }
 
   // Its own section, never folded into either list. A candidate that appeared in neither would
@@ -761,6 +885,7 @@ export function renderStage1(run) {
  * @param {import('./stage2.mjs').Stage2Thresholds} plan.entryThresholds
  * @param {'creation-derived' | 'ownership-only'} plan.historySource
  * @param {{ maxRpcRequestsPerCandidate: number, rpcMinIntervalMs: number }} plan.creationWalk
+ * @param {{ maxRpcRequestsPerCandidate: number, rpcMinIntervalMs: number, preferBlockRoute: boolean }} plan.costBounds
  * @param {{ length: number, hasDocumentedPrefix: boolean } | null} plan.keyDescription
  * @returns {string}
  */
@@ -850,6 +975,36 @@ export function renderDryRun(plan) {
     L.push(`  the nominal ${t.windowMs / 1000}s end so an early vendor mint time cannot truncate the tail; that`);
     L.push('  margin is a cursor hint and never a tolerance on the pre-mint drop. Pinned keyless');
     L.push('  pacing, one request in flight.');
+    L.push('');
+
+    const c = plan.costBounds;
+    const costWorstCase = plan.maxScored * c.maxRpcRequestsPerCandidate;
+    L.push('KEYLESS — STAGE 2, THE PRICE OF THE SEAT. Solana RPC, on survivors of the free legs:');
+    L.push('  POST https://api.mainnet-beta.solana.com  getBlock + getTransaction');
+    L.push('');
+    L.push('  Fees are part of the entry window (captain, 2026-08-02), so a room figure without the');
+    L.push('  price of the seat beside it is not an answer to "is this enterable". The signatures');
+    L.push('  come free with fills Stage 2 already parsed — no vendor request, no extra swap-api page.');
+    L.push('');
+    L.push(`  requests per candidate        up to ${c.maxRpcRequestsPerCandidate}`);
+    L.push(
+      `  WORST CASE                    ${plan.maxScored} x ${c.maxRpcRequestsPerCandidate} = ` +
+        `${costWorstCase} request(s), about ` +
+        `${Math.round((costWorstCase * c.rpcMinIntervalMs) / 60_000)} min`,
+    );
+    L.push(
+      `  pacing                        ${c.rpcMinIntervalMs / 1000}s, INHERITED from the creation ` +
+        `walk — one global limiter`,
+    );
+    L.push('  IT RUNS ONLY ON A CANDIDATE THE FREE LEGS HAVE NOT ALREADY REFUSED. Room and the gross');
+    L.push('  field are arithmetic over fills in hand, so a deployer failing either costs 0 requests');
+    L.push('  here. Measured per launch on our own tape: ~7 create-slot transactions at the median');
+    L.push('  and ~19 more for a closed round trip\'s whole window, unioned so none is paid for twice.');
+    L.push(
+      `  Whole-block route ${c.preferBlockRoute ? 'PROBED FIRST' : 'DISABLED'} behind a fallback to per-signature reads; ` +
+        `the record says which ran.`,
+    );
+    for (const line of wrap(LANDING_TIP_CAVEAT, 78)) L.push(`  ! ${line}`);
   } else {
     L.push('KEYLESS — STAGE 2 DISABLED (--no-stage2). No entry measurement would be taken, so the');
     L.push('  run would report competence only and nothing about whether a window is enterable.');

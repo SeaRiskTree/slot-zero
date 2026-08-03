@@ -470,7 +470,7 @@ export async function main(opts, env, out, err) {
 
   // **The same refusal again, in the unit this provider actually bills in.** Helius charges by
   // transactions RETURNED, not by request, so a request ceiling cannot bound the spend — 195
-  // candidates at the worst measured per-candidate cost is 975,000 credits, near a tenth of the
+  // candidates at the worst measured per-candidate cost is 1,014,000 credits, near a ninth of the
   // monthly allowance, and a plan that only discovered that half-way through would have spent it.
   const worstCaseCredits = usingIndexedWalk ? maxCandidates * indexedWalk.maxCreditsPerCandidate : 0;
   if (worstCaseCredits > indexedWalk.maxCreditsPerRun) {

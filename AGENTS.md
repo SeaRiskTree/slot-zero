@@ -234,7 +234,7 @@ bounds in `thresholds.json` → `creation_walk_helius`.
 - **CREDITS, NOT WALL CLOCK, ARE THE BINDING CONSTRAINT NOW, and that inversion is the thing to
   remember.** A request ceiling cannot bound a provider that bills by rows returned. Per-candidate
   cost for a COMPLETE history ranged 20 to 4,940 credits (median 320) over those twelve wallets, so
-  a 195-candidate run is ~62k credits expected and 975k worst case — a tenth of a month. The screen
+  a 195-candidate run is ~62k credits expected and 1,014k worst case — about a ninth of a month. The screen
   **refuses a plan that does not fit before its first request**, and a page is only started when a
   whole page's worst case still fits, so the ceiling is exact. Nothing tracks the month: the tool is
   stateless between runs, so the monthly arithmetic is the operator's.

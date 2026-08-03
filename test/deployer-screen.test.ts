@@ -3101,6 +3101,53 @@ describe('the keyless boundary holds in both directions', () => {
     expect(source).toMatch(/worstCaseKeyless/);
   });
 
+  it('the Helius credit ceiling funds every page its OWN page cap allows, guard included', () => {
+    // THE DEFECT THIS PINS, and it was live: the per-page guard costs MORE than a page. A page is
+    // only started when a whole page's worst case fits ALONGSIDE the curve-classification
+    // reservation, which floors at `creditsForCurveReads(pageLimit)` = 11 — so the guard demands
+    // 111 credits free, not 100. At a 5,000 ceiling that stopped the walk after 49 pages while the
+    // justification claimed 50, truncating `6Wg4aeZ2…` (49,367 succeeded transactions), the very
+    // wallet the ceiling was sized against. A ceiling that silently delivers one page less than its
+    // prose promises is a coverage claim that is wrong, which is the accuracy property this whole
+    // route exists to buy.
+    //
+    // Asserted as ARITHMETIC over the pinned values rather than as a literal, so the three numbers
+    // and the guard can never drift apart again: change `pageLimit`, `creditsForCurveReads` or
+    // either ceiling and this recomputes.
+    const thresholds = JSON.parse(readFileSync(join(TOOL_DIR, 'thresholds.json'), 'utf8')) as {
+      budget: { maxCandidates: number };
+      creation_walk_helius: {
+        maxCreditsPerCandidate: number;
+        maxCreditsPerRun: number;
+        maxPagesPerCandidate: number;
+        maxTransactionsPerCandidate: number;
+        pageLimit: number;
+      };
+    };
+    const h = thresholds.creation_walk_helius;
+    const perPageGuard = creditsForTransactions(h.pageLimit) + Math.ceil(h.pageLimit / 100) + 1;
+
+    // The walk starts page N only while `remaining >= perPageGuard`, and each full page costs
+    // `creditsForTransactions(pageLimit)`. So the last page it can start is bounded like this.
+    const pagesAffordable =
+      Math.floor((h.maxCreditsPerCandidate - perPageGuard) / creditsForTransactions(h.pageLimit)) + 1;
+    expect(
+      pagesAffordable,
+      'the credit ceiling must fund at least as many pages as the page cap allows',
+    ).toBeGreaterThanOrEqual(h.maxPagesPerCandidate);
+    // And the page cap must still cover the largest history in the measured population (49,367),
+    // or "every wallet walks its whole index" is false for a different reason.
+    expect(h.maxPagesPerCandidate * h.pageLimit).toBeGreaterThanOrEqual(49_367);
+    expect(h.maxTransactionsPerCandidate).toBeGreaterThanOrEqual(49_367);
+
+    // THE TWO CEILINGS ARE COUPLED: screen.mjs refuses a plan whose worst case exceeds the run
+    // ceiling BEFORE its first request, so raising the per-candidate one alone would refuse every
+    // default plan rather than buying the coverage it was raised for.
+    expect(thresholds.budget.maxCandidates * h.maxCreditsPerCandidate).toBeLessThanOrEqual(
+      h.maxCreditsPerRun,
+    );
+  });
+
   it('the README\'s schema table is in step with record.mjs — these two have drifted twice', () => {
     // The version boundary is documented in TWO prose copies: `record.mjs`\'s module comment, which
     // a reader of the code finds, and the README table, which a consumer of a record finds. They
@@ -5001,7 +5048,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 50,
+      maxRequests: 10,
       pageLimit: 100,
     });
     expect(w.usable).toBe(true);
@@ -5028,7 +5075,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 50,
+      maxRequests: 10,
       pageLimit: 100,
     });
     expect(w.usable).toBe(true);
@@ -5052,7 +5099,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 50,
+      maxRequests: 10,
       pageLimit: 100,
     });
     expect(calls[0]).toContain(`cursor=0-${CREATED - skewMs + 60_000 + SEEK_MARGIN_MS}`);
@@ -5073,7 +5120,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: 600_000,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 50,
+      maxRequests: 10,
       pageLimit: 100,
     });
     expect(w.dropReason).toBe('mint-time-disagreement');
@@ -5093,7 +5140,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 50,
+      maxRequests: 10,
       pageLimit: 100,
     });
     expect(w.fills.map((f) => f.wallet)).toContain('tail155');
@@ -5112,7 +5159,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 50,
+      maxRequests: 10,
       pageLimit: 100,
     });
     expect(w.mintTimeDisagreement).toBe(true);
@@ -5139,7 +5186,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
         windowMs: 60_000,
         seekMarginMs: SEEK_MARGIN_MS,
         windowSlotSpan: WINDOW_SLOT_SPAN,
-        maxRequests: 50,
+        maxRequests: 10,
         pageLimit: 100,
       });
       expect(w.usable).toBe(false);
@@ -5177,7 +5224,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 50,
+      maxRequests: 10,
       pageLimit: 100,
     });
     expect(w.usable).toBe(false);
@@ -5240,7 +5287,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 50,
+      maxRequests: 10,
       pageLimit: 1,
     });
     expect(w.usable).toBe(false);
@@ -5256,7 +5303,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 50,
+      maxRequests: 10,
       pageLimit: 2,
     });
     expect(w.reachedCreateSlot).toBe(true);
@@ -5272,7 +5319,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 50,
+      maxRequests: 10,
       pageLimit: 100,
     });
     expect(w.unparsedRows).toBe(1);

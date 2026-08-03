@@ -302,8 +302,11 @@ index cost 5,071 minutes keyless and **110 credits** indexed. That is the shape 
 is largest exactly where the keyless walk was least affordable, which is where coverage was being
 lost.
 
-The per-candidate ceiling is pinned at **5,000 credits**, just above the largest history here, so
-every wallet in this population walks its whole index. `thresholds.json` → `creation_walk_helius`
+The per-candidate ceiling is pinned at **5,200 credits** — the largest history here plus the
+per-page guard, which reserves a whole page (100) *and* the curve-classification pass (11) before
+starting a page, so a walk can never spend its last credit on a creation it must then score as not
+bonded (§4). At 5,000 that guard stopped after 49 pages and truncated `6Wg4aeZ2…`, the wallet the
+ceiling was sized against; at 5,200 every wallet in this population walks its whole index. `thresholds.json` → `creation_walk_helius`
 owns the derivation.
 
 ### 7.3 Pacing, re-measured on this endpoint rather than carried over

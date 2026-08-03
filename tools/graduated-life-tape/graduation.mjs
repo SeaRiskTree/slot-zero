@@ -130,7 +130,7 @@ export function graduatedByPage(page) {
  * @param {import('./client.mjs').KeylessClient} args.client
  * @param {string} args.mint
  * @param {number} args.mintMs
- * @param {readonly import('./trades.mjs').Fill[]} [args.tapeFills] The committed 60 s window, if held.
+ * @param {readonly import('./trades.mjs').Fill[]} [args.tapeFills] The committed window tape, if held.
  * @param {(message: string) => void} [args.log]
  * @returns {Promise<Graduation>}
  */
@@ -149,7 +149,7 @@ export async function findGraduation({ client, mint, mintMs, tapeFills = [], log
       source: 'tape',
       probes: 0,
       lastTradeMs: null,
-      note: 'bracketed inside the committed 60-second window tape; zero requests',
+      note: 'bracketed inside the committed window tape; zero requests',
     };
   }
 

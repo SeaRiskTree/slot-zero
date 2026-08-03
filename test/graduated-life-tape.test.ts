@@ -805,6 +805,42 @@ describe('the collected tape says what it covers and what it does not', () => {
     }
   });
 
+  it('states no fixed window width in a graduation note, because the committed window varies', () => {
+    // The one place a stale flat-60 s claim reached committed DATA rather than prose, which is why
+    // it survived two documentation sweeps. Of the 18 `tape`-sourced rows only 12 were collected
+    // over 60 s — 1 ran to 120 s and 5 to 300 s — so any note naming a duration is wrong for a
+    // third of the rows carrying it. Asserted on the committed file and on the string the collector
+    // would write next, so a future run cannot reintroduce it.
+    const rows = parseCsv(readFileSync(gradPath, 'utf8'));
+    const header = rows[0]!;
+    const iNote = header.indexOf('note');
+    const iSource = header.indexOf('source');
+
+    // A note may name an instant — the `page` rows record the probe offset that straddled the
+    // migration, and that is a measurement. What none may do is put a duration on "window".
+    const tapeRows = rows.slice(1).filter((cells) => cells[iSource] === 'tape');
+    expect(tapeRows.length).toBeGreaterThan(0);
+    for (const cells of rows.slice(1)) {
+      const note = cells[iNote] ?? '';
+      if (!/window/i.test(note)) continue;
+      expect(/\d/.test(note), `a note puts a fixed width on the window: ${note}`).toBe(false);
+    }
+    for (const cells of tapeRows) {
+      expect(cells[iNote]).toBe('bracketed inside the committed window tape; zero requests');
+    }
+
+    const source = readFileSync(
+      fileURLToPath(new URL('../tools/graduated-life-tape/graduation.mjs', import.meta.url)),
+      'utf8',
+    );
+    const noteLiterals = source.match(/note: '[^']*'/g) ?? [];
+    expect(noteLiterals.length).toBeGreaterThan(0);
+    for (const literal of noteLiterals) {
+      if (!/window/i.test(literal)) continue;
+      expect(/\d/.test(literal), `the collector would write a fixed width: ${literal}`).toBe(false);
+    }
+  });
+
   it('evaluates the closure baseline at each launch\'s own committed window, not a flat 60 s', () => {
     // A synthetic-fill test cannot catch this, which is why the bug survived one: the defect is
     // that the production baseline ignored the committed tape's per-launch `window_ms`. So this

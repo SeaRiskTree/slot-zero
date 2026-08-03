@@ -69,6 +69,29 @@ export const ALL_ENTRANT_FLOOR_CAVEAT =
   'disproportionately on late entrants, which is the population this reading is about. The ' +
   'create-slot reading beside it is far less exposed, because create-slot outsiders close early.';
 
+/**
+ * The one sentence that must travel with the zero-closed-pair exclusion count.
+ *
+ * **It scopes the published magnitude to the population that magnitude was measured over**, for the
+ * same reason {@link ALL_ENTRANT_FLOOR_CAVEAT} refuses to attach the blast report's 69-pairs figure
+ * to this tape: a number measured over one population does not describe another merely because the
+ * two overlap. It is one string, quoted verbatim by `arrival.json` and by this tool's README, so the
+ * three copies of the claim cannot drift.
+ */
+export const ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT =
+  'A measured launch with NO closed create-slot outsider round trip is EXCLUDED from the rank test ' +
+  'rather than entered as a 0, which is the exclusion the published measurement makes; 0 is a real ' +
+  'level in this series. THE PUBLISHED MAGNITUDE FOR THAT CHOICE WAS MEASURED OVER A NARROWER ' +
+  'POPULATION: section 11 reads it over the 25 launches with no outsider in the create slot AT ALL, ' +
+  'where imputing zeros lowers the window\'s median prize by roughly a fifth and moves neither ' +
+  'break. What is excluded here is wider — every launch with no CLOSED create-slot round trip, ' +
+  'which on the committed tape is 42: those 25 plus 17 that had outsiders and closed none. Over ' +
+  'that wider set the imputation is not harmless, and this lane\'s own reproduction test measures ' +
+  'it: the imputed zeros flatten the level enough that no break is detected and the published ' +
+  'window disappears entirely. Both readings are true of their own population, and neither figure ' +
+  'may be quoted as the other. The excluded launches stay rows in series.csv, because attendance is ' +
+  'evidence even when P&L is not.';
+
 /** The one sentence that must travel with every figure derived from a fill tape alone. */
 export const GROSS_OF_FEES_CAVEAT =
   'EVERY FIGURE HERE IS GROSS OF FEES and is therefore an UPPER BOUND. Only on-chain pricing is ' +
@@ -362,13 +385,14 @@ export function measureLaunch({ mint, deployer, mintMs, fills, reachedMint }) {
  * 0.** Its stake is zero, so §2.1's return per SOL does not exist for it — and 0 is a real level in
  * this series, not a null one: it is exactly what a launch whose outsiders broke even reads. The
  * published measurement excludes these launches for the same reason (`analysis/window-population/
- * measure.mjs` segments over `series.filter((r) => r.trips > 0)`), and its README §11 puts a size on
- * the difference: reading them as zeros rather than as missing would lower the window's median prize
- * by **roughly a fifth**. {@link import('./arrival.mjs').findWindows} says the same thing from the
- * other side — an unmeasured launch must not enter a rank test as one.
+ * measure.mjs` segments over `series.filter((r) => r.trips > 0)`).
+ * {@link import('./arrival.mjs').findWindows} says the same thing from the other side — an
+ * unmeasured launch must not enter a rank test as one.
  *
  * They are not discarded: every one of them is a row in `series.csv`, because attendance is evidence
  * even when P&L is not, and the count is reported so the exclusion is visible rather than silent.
+ * {@link ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT} is the sentence that travels with the count, and it is
+ * careful about **which population** the published magnitude was measured over.
  *
  * @param {readonly LaunchMeasurement[]} rows
  * @returns {RankInput}
@@ -437,10 +461,15 @@ export const SERIES_COLUMNS = Object.freeze([
  */
 export function seriesRow(m) {
   const f = (/** @type {number} */ v) => (Number.isFinite(v) ? v : '');
+  // The same treatment `f` gives a number, for the one field that is a DATE. A torn sidecar leaves
+  // no readable `created_timestamp`, and `new Date(NaN).toISOString()` throws — which would abort
+  // the whole offline series phase over one launch's interrupted write, exactly what reporting an
+  // unreadable checkpoint as a counted refusal exists to prevent.
+  const at = (/** @type {number} */ v) => (Number.isFinite(v) ? new Date(v).toISOString() : '');
   return [
     m.deployer,
     m.mint,
-    new Date(m.mintMs).toISOString(),
+    at(m.mintMs),
     m.measured ? 1 : 0,
     m.unmeasuredReason ?? '',
     m.createSlot ?? '',

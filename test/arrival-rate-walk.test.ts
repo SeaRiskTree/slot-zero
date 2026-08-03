@@ -75,6 +75,7 @@ import {
   seriesRow,
   toSeriesPoints,
   walletTotals,
+  ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT,
 } from '../tools/arrival-rate-walk/series.mjs';
 import type { LaunchMeasurement } from '../tools/arrival-rate-walk/series.mjs';
 import { changepoints, findWindows, median, summariseArrival } from '../tools/arrival-rate-walk/arrival.mjs';
@@ -821,6 +822,9 @@ describe('windows are segmented, never thresholded — and the published answer 
     expect(rank.launchesNoClosedCreateSlotPair).toBe(rows.length - 197);
     expect(rank.launchesNoClosedCreateSlotPair).toBeGreaterThan(0);
     expect(rank.launchesInRankTest).toBe(197);
+    // The number the caveat quotes for this exclusion, measured rather than asserted in prose.
+    expect(rank.launchesNoClosedCreateSlotPair).toBe(42);
+    expect(ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT).toContain('on the committed tape is 42');
 
     const points = rank.byDeployer.get(DEPLOYER)!;
     expect(points.map((p) => p.mint)).toEqual(publishedSeries().map((s) => s.mint));
@@ -1158,6 +1162,71 @@ describe('the collector end to end, on a scripted endpoint', () => {
       const arrival = JSON.parse(readFileSync(join(dir, 'arrival.json'), 'utf8'));
       expect(arrival.launchesUnreadable[0].mint).toBe(MINT);
       expect(arrival.launchesMeasured).toBe(0);
+
+      // The SIDECAR tears just as easily as the fill file, and it is the worse half: with no
+      // readable `created_timestamp` the row's date is NaN, and `new Date(NaN).toISOString()`
+      // throws — which would abort the whole phase exactly as before the guard was added.
+      writeFileSync(join(dir, 'window', `${MINT}.meta.json`), '{"mint":"x","created_time');
+      const tornSidecar = readPersistedWindow(join(dir, 'window'), MINT)!;
+      expect(tornSidecar.unreadable).toMatch(/sidecar could not be parsed/);
+      const after = runSeries({ out: dir });
+      expect(after.unreadable).toHaveLength(1);
+      expect(after.rows[0]!.measured).toBe(false);
+      expect(Number.isFinite(after.rows[0]!.mintMs)).toBe(false);
+      // The row is still written, with an EMPTY date rather than a thrown RangeError.
+      const csv = readFileSync(join(dir, 'series.csv'), 'utf8').trim().split('\n');
+      expect(csv).toHaveLength(2);
+      expect(csv[1]!.split(',')[2]).toBe('');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('gives up on a launch it cannot prove after the pinned cap, and says so rather than retrying forever', async () => {
+    // Retry-until-proved is not a bound. A mint the endpoint 404s, or one whose pages never say
+    // nothing is older, would re-spend a whole per-launch budget on every sitting of a days-long
+    // collection, ahead of launches never attempted.
+    const dir = mkdtempSync(join(tmpdir(), 'arrival-cap-'));
+    try {
+      const mintMs = Date.parse('2026-02-01T00:00:00.000Z');
+      const list = parseLaunchListRows([
+        { deployer: DEPLOYER, mint: MINT, created_at: '2026-02-01 00:00:00.000 UTC', bonded: true, launches_total: 1 },
+      ]);
+      const nowMs = Date.parse('2026-08-03T00:00:00Z');
+      const unprovable = pageBody([row({ slotIndexId: sid(500, 0), timestamp: new Date(mintMs + 10).toISOString() })], true, 'more');
+      const windowDir = join(dir, 'window');
+
+      const cap = BOUNDS.walk.maxWalkAttemptsPerLaunch;
+      for (let attempt = 1; attempt <= cap; attempt++) {
+        const { client } = scriptedClient([unprovable]);
+        expect((await runWalk({ out: dir, client, list, nowMs })).walked, `sitting ${attempt}`).toBe(1);
+        const meta = JSON.parse(readFileSync(join(windowDir, `${MINT}.meta.json`), 'utf8'));
+        expect(meta.attempts).toBe(attempt);
+        expect(meta.reached_mint).toBe(false);
+        // It is given up on at the cap and NOT before: a transient failure still gets its retries.
+        expect(typeof meta.given_up_reason === 'string', `sitting ${attempt}`).toBe(attempt === cap);
+      }
+
+      const capped = JSON.parse(readFileSync(join(windowDir, `${MINT}.meta.json`), 'utf8'));
+      expect(capped.given_up_reason).toMatch(/stopped trying/);
+      expect(capped.previous_attempts).toHaveLength(cap - 1);
+      const state = checkpointState(windowDir, MINT);
+      expect(state.done).toBe(true);
+      expect(state.gaveUp).toBe(true);
+
+      // The next sitting spends nothing on it.
+      const { client: after } = scriptedClient([unprovable]);
+      expect((await runWalk({ out: dir, client: after, list, nowMs })).walked).toBe(0);
+      expect(after.issued()).toBe(0);
+
+      // And giving up is REPORTED, not silent — while the launch still means UNMEASURED, not zero.
+      const { rankInput, givenUp } = runSeries({ out: dir });
+      expect(givenUp.map((g) => g.mint)).toEqual([MINT]);
+      expect(rankInput.launchesUnmeasured).toBe(1);
+      expect(rankInput.launchesInRankTest).toBe(0);
+      const arrival = JSON.parse(readFileSync(join(dir, 'arrival.json'), 'utf8'));
+      expect(arrival.launchesGivenUpAtAttemptCap[0].mint).toBe(MINT);
+      expect(arrival.launchesGivenUpAtAttemptCap[0].attempts).toBe(cap);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -1258,6 +1327,21 @@ describe('the keyless boundary holds around this tool', () => {
     expect(readme).toMatch(/## What this tool cannot answer/);
     // The one blocking dependency must be in the README, not only in a status line somewhere.
     expect(readme).toMatch(/saved quer/i);
+  });
+
+  it('keeps the zero-closed-pair caveat to ONE claim, scoped to the population it was measured over', () => {
+    // The published "roughly a fifth" is measured over the 25 launches with no outsider in the
+    // create slot at all; this lane excludes every launch with no CLOSED create-slot round trip,
+    // which is wider. Quoting the narrower figure for the wider exclusion is the same error the
+    // all-entrant caveat refuses when it declines to attach the blast report's 69-pairs figure to
+    // this tape. The README quotes the constant verbatim so the two copies cannot drift.
+    expect(ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT).toContain('25 launches with no outsider in the create slot AT ALL');
+    expect(ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT).toContain('What is excluded here is wider');
+    // Section 11's "moves neither break" and this lane's own reproduction both appear, because a
+    // reader meeting either without the other will think one of them is wrong.
+    expect(ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT).toContain('moves neither break');
+    expect(ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT).toContain('no break is detected');
+    expect(readFileSync(join(TOOL_DIR, 'README.md'), 'utf8')).toContain(ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT);
   });
 
   it('gives every pinned parameter a stated reason', () => {

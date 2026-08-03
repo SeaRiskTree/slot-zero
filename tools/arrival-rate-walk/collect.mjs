@@ -37,7 +37,15 @@ import { readLaunches, readWindowTape, csvField } from './tape.mjs';
 import { readDuneResultFile, parseCohortRows, parseLaunchListRows, assessCohortCoverage, chooseThreshold } from './cohort.mjs';
 import { selectPreflightLaunches, measureBlockTimeSkew, measureDuneClockSkew, assessSkew } from './preflight.mjs';
 import { walkOpeningWindow } from './walk.mjs';
-import { measureLaunch, seriesRow, toSeriesPoints, SERIES_COLUMNS, ALL_ENTRANT_FLOOR_CAVEAT, GROSS_OF_FEES_CAVEAT } from './series.mjs';
+import {
+  measureLaunch,
+  seriesRow,
+  toSeriesPoints,
+  SERIES_COLUMNS,
+  ALL_ENTRANT_FLOOR_CAVEAT,
+  GROSS_OF_FEES_CAVEAT,
+  ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT,
+} from './series.mjs';
 import { findWindows, summariseArrival } from './arrival.mjs';
 
 /** The pinned bounds. Read once, never overridden downward-unsafe by a flag. */
@@ -412,24 +420,50 @@ export function buildPlan({ cohortText, launchList, nowMs }) {
  * and is carried forward into the next attempt's sidecar, because a run that leaves no record of
  * what it spent is the thing `requests.csv` exists to prevent.
  *
+ * **But the retry is BOUNDED, because "retry until proved" is not a bound at all.** A launch that can
+ * never be proved — a mint the endpoint 404s, or one whose pages never say nothing is older — would
+ * otherwise re-spend a whole per-launch budget on every sitting of a days-long collection, ahead of
+ * launches never attempted. At `BOUNDS.walk.maxWalkAttemptsPerLaunch` recorded attempts it is done,
+ * and its sidecar's `given_up_reason` says we stopped trying rather than that we never tried. What
+ * the launch MEANS is unchanged: still unproved at series time is UNMEASURED, and never a zero.
+ *
  * An unreadable sidecar is NOT done: it cannot vouch for the walk it describes, so the launch is
  * re-attempted rather than counted on a file nothing can read.
  *
  * @param {string} windowDir
  * @param {string} mint
- * @returns {{ done: boolean, previous: Record<string, unknown> | null }}
+ * @returns {{ done: boolean, gaveUp: boolean, attempts: number, previous: Record<string, unknown> | null }}
  */
 export function checkpointState(windowDir, mint) {
   const metaPath = join(windowDir, `${mint}.meta.json`);
-  if (!existsSync(metaPath)) return { done: false, previous: null };
+  if (!existsSync(metaPath)) return { done: false, gaveUp: false, attempts: 0, previous: null };
   /** @type {Record<string, unknown>} */
   let meta;
   try {
     meta = JSON.parse(readFileSync(metaPath, 'utf8'));
   } catch {
-    return { done: false, previous: null };
+    return { done: false, gaveUp: false, attempts: 0, previous: null };
   }
-  return { done: meta['reached_mint'] === true, previous: meta };
+  const attempts = typeof meta['attempts'] === 'number' ? meta['attempts'] : 0;
+  if (meta['reached_mint'] === true) return { done: true, gaveUp: false, attempts, previous: meta };
+  const gaveUp = attempts >= BOUNDS.walk.maxWalkAttemptsPerLaunch;
+  return { done: gaveUp, gaveUp, attempts, previous: meta };
+}
+
+/**
+ * The sentence a sidecar carries when the collector stopped spending on a launch.
+ *
+ * @param {number} attempts
+ * @returns {string}
+ */
+export function givenUpReason(attempts) {
+  return (
+    `${attempts} whole sitting(s) failed to prove this walk reached the create slot, which is the ` +
+    `pinned cap of ${BOUNDS.walk.maxWalkAttemptsPerLaunch}, so the collector stopped spending on it. ` +
+    `That is "we stopped trying", not "we never tried" and not "there was nothing here": the launch ` +
+    `is still UNMEASURED at series time and is never read as a zero. Its attempts are on disk in ` +
+    `previous_attempts and every request they cost is in requests.csv.`
+  );
 }
 
 /**
@@ -461,8 +495,10 @@ export async function runWalk({ out, client, list, nowMs, limit = null, only = [
   /** @type {import('./cohort.mjs').DuneLaunch[]} */
   const pending = [];
   let retrying = 0;
+  let gaveUp = 0;
   for (const l of launches) {
     const state = checkpointState(windowDir, l.mint);
+    if (state.gaveUp) gaveUp += 1;
     if (state.done) continue;
     if (state.previous !== null) retrying += 1;
     previousAttempts.set(l.mint, state.previous);
@@ -470,8 +506,10 @@ export async function runWalk({ out, client, list, nowMs, limit = null, only = [
   }
   const todo = limit === null ? pending : pending.slice(0, limit);
   say(
-    `walk: ${todo.length} launches to walk (${launches.length - pending.length} proved and on disk, ` +
-      `${retrying} unproved attempt(s) being retried)`,
+    `walk: ${todo.length} launches to walk ` +
+      `(${launches.length - pending.length - gaveUp} proved and on disk, ` +
+      `${retrying} unproved attempt(s) being retried, ` +
+      `${gaveUp} given up on at the ${BOUNDS.walk.maxWalkAttemptsPerLaunch}-attempt cap)`,
   );
 
   let walked = 0;
@@ -531,8 +569,11 @@ export async function runWalk({ out, client, list, nowMs, limit = null, only = [
         pre_mint_fills: result.preMintFills,
         stop_reason: result.stopReason,
         // An UNPROVED walk is retried on the next sitting, so what the failed attempts spent has to
-        // survive the retry rather than be overwritten by the one that finally worked.
+        // survive the retry rather than be overwritten by the one that finally worked — and the
+        // retry is capped, so a launch that can never be proved stops taxing every future sitting.
         attempts,
+        given_up_reason:
+          result.reachedMint || attempts < BOUNDS.walk.maxWalkAttemptsPerLaunch ? null : givenUpReason(attempts),
         previous_attempts:
           previous === null
             ? []
@@ -644,6 +685,7 @@ function errorText(cause) {
  * @param {string} args.out
  * @returns {{ rows: import('./series.mjs').LaunchMeasurement[], perDeployer: import('./arrival.mjs').DeployerWindows[],
  *   summary: import('./arrival.mjs').ArrivalSummary, unreadable: { mint: string, reason: string }[],
+ *   givenUp: { mint: string, attempts: number, reason: string }[],
  *   rankInput: import('./series.mjs').RankInput }}
  */
 export function runSeries({ out }) {
@@ -657,12 +699,21 @@ export function runSeries({ out }) {
   const rows = [];
   /** @type {{ mint: string, reason: string }[]} */
   const unreadable = [];
+  /** @type {{ mint: string, attempts: number, reason: string }[]} */
+  const givenUp = [];
   for (const mint of mints) {
     const w = readPersistedWindow(windowDir, mint);
     if (w === null) continue;
     if (w.unreadable !== null) {
       unreadable.push({ mint, reason: w.unreadable });
       say(`series: ${mint} is UNREADABLE and is unmeasured — ${w.unreadable}`);
+    }
+    if (typeof w.meta['given_up_reason'] === 'string') {
+      givenUp.push({
+        mint,
+        attempts: typeof w.meta['attempts'] === 'number' ? w.meta['attempts'] : 0,
+        reason: w.meta['given_up_reason'],
+      });
     }
     rows.push(
       measureLaunch({
@@ -706,17 +757,16 @@ export function runSeries({ out }) {
         launchesUnmeasured: rankInput.launchesUnmeasured,
         launchesExcludedNoClosedCreateSlotPair: rankInput.launchesNoClosedCreateSlotPair,
         launchesUnreadable: unreadable,
+        // Giving up on a launch is a spending decision and it is REPORTED, never silent — a reader
+        // must be able to tell "we stopped trying" from "we never tried".
+        launchesGivenUpAtAttemptCap: givenUp,
         perDeployer,
         summary,
         caveats: [
           GROSS_OF_FEES_CAVEAT,
           ALL_ENTRANT_FLOOR_CAVEAT,
-          `${rankInput.launchesNoClosedCreateSlotPair} measured launch(es) had NO closed create-slot ` +
-            `outsider round trip and are excluded from the rank test rather than entered as a 0 — the ` +
-            `same exclusion the published measurement makes (it segments over launches with at least ` +
-            `one closed create-slot round trip). 0 is a real level in this series, and reading these ` +
-            `launches as zeros rather than as missing would lower the window's median prize by roughly ` +
-            `a fifth. They remain rows in series.csv: attendance is evidence even when P&L is not.`,
+          `${rankInput.launchesNoClosedCreateSlotPair} measured launch(es) were excluded here. ` +
+            ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT,
           ...summary.caveats,
         ],
       },
@@ -724,7 +774,7 @@ export function runSeries({ out }) {
       2,
     ) + '\n',
   );
-  return { rows, perDeployer, summary, unreadable, rankInput };
+  return { rows, perDeployer, summary, unreadable, givenUp, rankInput };
 }
 
 /* c8 ignore start -- the CLI shell; every part it calls is exercised directly by the tests. */
@@ -807,12 +857,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exit(0);
     }
 
-    const { rows, summary, rankInput, unreadable } = runSeries({ out: /** @type {string} */ (out) });
+    const { rows, summary, rankInput, unreadable, givenUp } = runSeries({ out: /** @type {string} */ (out) });
     say(
       `series: ${rows.length} launches, ${rankInput.launchesInRankTest} in the rank test, ` +
         `${rankInput.launchesUnmeasured} unmeasured, ${rankInput.launchesNoClosedCreateSlotPair} ` +
         `measured with no closed create-slot round trip (excluded, NOT read as zero), ` +
-        `${unreadable.length} unreadable`,
+        `${unreadable.length} unreadable, ${givenUp.length} given up on at the attempt cap`,
     );
     say(`arrival: ${JSON.stringify(summary)}`);
     process.exit(0);

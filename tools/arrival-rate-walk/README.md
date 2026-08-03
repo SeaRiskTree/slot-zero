@@ -220,15 +220,25 @@ The honest list, in the order that matters.
   opened early is systematically less visible than one that opened late** — which is a bias on
   exactly the quantity this lane measures, and this lane does not measure the gradient.
 - **A measured launch with no closed create-slot round trip is EXCLUDED from the rank test, not read
-  as a zero.** Its stake is zero, so §2.1's return per SOL does not exist for it — and 0 is a real
-  level in this series, the level a launch whose outsiders broke even reads. The exclusion is exactly
-  the published measurement's (`analysis/window-population/measure.mjs` segments over launches with
-  at least one closed create-slot round trip), and §11 of that report puts a size on the alternative:
-  reading these launches as zeros rather than as missing would lower the window's median prize by
-  **roughly a fifth**. They stay rows in `series.csv` — attendance is evidence even when P&L is not —
-  and `arrival.json` carries the count as `launchesExcludedNoClosedCreateSlotPair`, so the exclusion
-  is visible rather than silent. `series.mjs` → `toSeriesPoints` is the one place it happens, and the
-  reproduction test drives the published series through **that** function.
+  as a zero.** Its stake is zero, so §2.1's return per SOL does not exist for it. The exclusion is
+  exactly the published measurement's (`analysis/window-population/measure.mjs` segments over
+  launches with at least one closed create-slot round trip). `series.mjs` → `toSeriesPoints` is the
+  one place it happens, `arrival.json` carries the count as
+  `launchesExcludedNoClosedCreateSlotPair`, and the reproduction test drives the published series
+  through **that** function. The sentence that travels with the count is one string —
+  `series.mjs` → `ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT` — quoted here verbatim, and a test pins the two
+  copies together so they cannot drift:
+
+  > A measured launch with NO closed create-slot outsider round trip is EXCLUDED from the rank test rather than entered as a 0, which is the exclusion the published measurement makes; 0 is a real level in this series. THE PUBLISHED MAGNITUDE FOR THAT CHOICE WAS MEASURED OVER A NARROWER POPULATION: section 11 reads it over the 25 launches with no outsider in the create slot AT ALL, where imputing zeros lowers the window's median prize by roughly a fifth and moves neither break. What is excluded here is wider — every launch with no CLOSED create-slot round trip, which on the committed tape is 42: those 25 plus 17 that had outsiders and closed none. Over that wider set the imputation is not harmless, and this lane's own reproduction test measures it: the imputed zeros flatten the level enough that no break is detected and the published window disappears entirely. Both readings are true of their own population, and neither figure may be quoted as the other. The excluded launches stay rows in series.csv, because attendance is evidence even when P&L is not.
+
+- **A launch the collector cannot prove is retried, but only so many times.** An unproved sidecar is
+  re-offered on the next sitting; at `walk.maxWalkAttemptsPerLaunch` recorded attempts the launch is
+  done and its sidecar's `given_up_reason` says *we stopped trying*, not *we never tried*. Without
+  that cap a permanently-unwalkable launch — a mint the endpoint 404s, or one whose pages never say
+  nothing is older — re-spends a whole per-launch budget on every sitting, ahead of launches never
+  attempted. Capped launches are counted in `arrival.json` as `launchesGivenUpAtAttemptCap`. **The
+  cap changes when we stop spending, not what the launch means**: still unproved at series time is
+  UNMEASURED, and never a zero.
 - **A deployer with too few measured launches is UNSEGMENTABLE, and that is not "no window
   arrived".** A split needs 20 measured launches at the pinned minimum segment of 8. Those deployers
   are excluded from the arrival-rate denominator and counted in the output — and the exclusion drops

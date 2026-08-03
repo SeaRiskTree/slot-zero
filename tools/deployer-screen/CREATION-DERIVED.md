@@ -448,12 +448,20 @@ verdict.
    coverage), or a newest launch past the probed ceiling (reachable because the probe defaults to a
    cached read). Both refuse **that wallet only**, so one run can carry both sources;
 5. **a result read that cannot prove it is whole** — a missing `total_row_count`, a declared total
-   above `dune.maxResultRows`, or exactly as many rows as the `?limit=` it was issued with. A result
-   cut at the limit is indistinguishable from a complete one of that size;
+   above `dune.maxResultRows`, exactly as many rows as the `?limit=` it was issued with, or rows
+   **disagreeing** with the declared total. A result cut at the limit is indistinguishable from a
+   complete one of that size, and `/results` also pages on RESPONSE SIZE independently of our limit,
+   so a response declaring 5,000 rows and handing back 1,200 is a page, not an answer;
 6. **any unreadable row, which refuses the WHOLE batch.** A row that fails to parse commonly has no
-   readable `deployer` — that is one of the three ways it fails — so the wallet whose history came
-   back short is exactly the one that cannot be named. Partial attribution would leave it gated on a
-   silently short history, which is this module's own failure shape arriving through the parser;
+   readable `deployer` — that is one of the ways it fails — so the wallet whose history came back
+   short is exactly the one that cannot be named. Partial attribution would leave it gated on a
+   silently short history, which is this module's own failure shape arriving through the parser.
+   **`bonded` is TYPE-checked, not truth-checked, and it is the column that most needs it**: `false`
+   is a legitimate value there, so `=== true` would collapse "the column is gone" into "this launch
+   did not bond", and a shifted `LEFT JOIN pump_evt_completeevent` column would make every candidate
+   in the batch read 0% bonded and gate-FAIL on a run reporting itself fully measured. A non-boolean
+   `bonded` therefore counts the row unreadable and takes this same whole-batch route — the walk
+   reads bonded status from the chain's own `complete` byte, so the fallback genuinely answers it;
 7. **a wallet the enumeration returned no row for.** That is an absence of evidence, not evidence of
    absence. Read as a launch history of zero it would let `mergeHistories` reclassify that wallet's
    whole in-window ownership listing as acquired and gate it on nothing — the invisible false

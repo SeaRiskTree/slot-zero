@@ -277,10 +277,13 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
 - **The refusal rule is general, not coverage-only: a reading that cannot vouch for itself falls back
   to the walk rather than being gated on.** `CREATION-DERIVED.md` §8.2 lists all eight; four are not
   the probe. A result read that cannot prove it is whole (missing `total_row_count`, a total over the
-  ceiling, or exactly the `?limit=` many rows) is refused. **One unreadable row refuses the WHOLE
+  ceiling, exactly the `?limit=` many rows, or rows disagreeing with the declared total — `/results`
+  pages on response size independently of ours) is refused. **One unreadable row refuses the WHOLE
   batch** — a row that fails to parse commonly has no readable `deployer`, so the wallet whose history
   came back short is the one you cannot name, and partial attribution would gate it on what survived
-  the parser. **A wallet the enumeration returned NO row for is refused, never read as zero
+  the parser. **`bonded` is TYPE-checked, not truth-checked**: `false` is legitimate there, so
+  `=== true` would collapse "the column is gone" into "this launch did not bond" and gate-fail every
+  candidate at 0% bonded on a run reporting itself fully measured. **A wallet the enumeration returned NO row for is refused, never read as zero
   launches**: absence of evidence, not evidence of absence, and reading it the other way lets
   `mergeHistories` reclassify that wallet's whole in-window ownership listing as acquired and gate it
   on nothing — the invisible false rejection this lane exists to remove. **A candidate whose address

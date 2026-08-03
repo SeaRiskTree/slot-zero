@@ -51,16 +51,19 @@
  * one. Four more, each of which produces a complete-LOOKING answer that is short, and each of which
  * therefore refuses rather than publishes:
  *
- * - **A row the parser could not read.** `unreadableRows > 0` refuses the WHOLE batch, not the
- *   wallet the row belonged to — a row that fails to parse commonly has no readable `deployer`, so
- *   the wallet whose history went short is exactly the wallet that cannot be named.
+ * - **A row the parser could not read**, INCLUDING one whose `bonded` is not a boolean.
+ *   `unreadableRows > 0` refuses the WHOLE batch, not the wallet the row belonged to — a row that
+ *   fails to parse commonly has no readable `deployer`, so the wallet whose history went short is
+ *   exactly the wallet that cannot be named, and a shifted column shifts for every row at once.
  * - **A wallet the enumeration returned NO row for.** That is an absence of evidence, not evidence
  *   of absence, and gating a wallet on a zero-launch history built from it is the invisible false
  *   rejection this whole lane exists to remove. See {@link toWalletEnumeration}.
  * - **A wallet whose address is not base58-shaped.** Every wallet here is vendor-supplied and lands
  *   inside a single-quoted SQL literal, so {@link isEnumerableWallet} is checked before the batch is
  *   sent and anything failing it is dropped from the parameter and counted.
- * - **A result set that may have been truncated at the limit** — see {@link DuneResultSet}'s reader.
+ * - **A result read that cannot prove it is whole** — no declared total, a total over the ceiling,
+ *   rows sitting exactly on the `?limit=`, or rows disagreeing with the declared total, which is
+ *   Dune paging on response size rather than on ours. See {@link DuneResultSet}'s reader.
  *
  * Every one of them leaves `usable: false` with a whole-sentence reason, and the candidate takes the
  * walk. Falling back costs wall clock; publishing a count the evidence does not support costs a
@@ -464,9 +467,17 @@ export function assessCoverage(input) {
 /**
  * Group the enumeration query's rows by deployer.
  *
- * Rows whose timestamp will not parse, or whose mint or deployer is missing, are counted rather than
- * dropped silently: a partly-unreadable answer is not a shorter answer, and a wallet whose rows went
- * unread must fall back to the walk rather than be gated on what survived.
+ * Rows whose timestamp will not parse, whose mint or deployer is missing, or whose `bonded` is not a
+ * BOOLEAN are counted rather than dropped silently: a partly-unreadable answer is not a shorter
+ * answer, and a wallet whose rows went unread must fall back to the walk rather than be gated on
+ * what survived.
+ *
+ * **`bonded` is type-checked, not truth-checked, and it is the column that most needs it.** `false`
+ * is a legitimate value there, so `=== true` would collapse "the column is gone" into "this launch
+ * did not bond" — a `LEFT JOIN pump_evt_completeevent` whose spelling shifts would make every
+ * candidate in the batch read 0% bonded and gate-FAIL, on a run reporting itself fully measured.
+ * Absent and legitimately-false must not be indistinguishable, so an absent one takes the same route
+ * a bad timestamp already does rather than a second, weaker one of its own.
  *
  * **`unreadableRows > 0` refuses the WHOLE batch**, in {@link enumerateCreations}, and the blast
  * radius is deliberate rather than lazy. A row that fails to parse commonly has no readable
@@ -494,7 +505,20 @@ export function parseCreationRows(rows) {
     const deployer = row['deployer'];
     const mint = row['mint'];
     const createdAtMs = parseDuneTimestamp(row['created_at']);
-    if (typeof deployer !== 'string' || deployer === '' || typeof mint !== 'string' || mint === '' || createdAtMs === null) {
+    // `bonded` is TYPE-checked rather than read as `=== true`, and it is the one column where that
+    // distinction is the whole point: `false` is a legitimate value, so a truthiness test collapses
+    // "the column is gone" into "this launch did not bond". A LEFT JOIN whose column shifts would
+    // then make every candidate in the batch read 0% bonded and gate-fail, with `unreadableRows: 0`
+    // and a clean coverage probe reporting the run as fully measured.
+    const bonded = row['bonded'];
+    if (
+      typeof deployer !== 'string' ||
+      deployer === '' ||
+      typeof mint !== 'string' ||
+      mint === '' ||
+      createdAtMs === null ||
+      typeof bonded !== 'boolean'
+    ) {
       unreadableRows += 1;
       continue;
     }
@@ -508,7 +532,7 @@ export function parseCreationRows(rows) {
     // duplicated mint would double-count a launch on both sides of the gate's fraction.
     if (mints.has(mint)) continue;
     mints.add(mint);
-    byWallet.get(deployer)?.push({ mint, createdAtMs, bonded: row['bonded'] === true });
+    byWallet.get(deployer)?.push({ mint, createdAtMs, bonded });
   }
 
   for (const list of byWallet.values()) list.sort((a, b) => a.createdAtMs - b.createdAtMs);
@@ -715,6 +739,12 @@ export async function assertSavedQueryMatches(client, queryId, expectedSql) {
 /**
  * Pull an execution's — or a saved query's cached — result, exactly once, and account its bytes.
  *
+ * **A read that cannot prove it is whole is refused, never published.** Four ways it fails to:
+ * no `total_row_count` (so nothing bounds it), a declared total above `maxResultRows` (an unbounded
+ * read is an unbounded bill), rows sitting exactly on the `?limit=` it was issued with, and rows
+ * DISAGREEING with the declared total — `/results` pages on response size independently of our
+ * limit, so a page read as a whole answer is a launch history that is simply short.
+ *
  * @param {import('./client.mjs').DuneClient} client
  * @param {string} path
  * @param {{ maxResultRows: number }} bounds
@@ -757,6 +787,21 @@ async function readResult(client, path, bounds) {
     throw new DuneRefused(
       `Dune returned exactly the ${bounds.maxResultRows} rows requested for ${path}, so this read ` +
         `sits on its own limit and cannot prove it is whole. It is refused rather than published.`,
+      { status: null, terminal: false },
+    );
+  }
+  // Our `?limit=` is not the only cut Dune makes: `/results` also pages on RESPONSE SIZE, in which
+  // case `total_row_count` describes the whole result set while `rows` carries one page. A response
+  // declaring 5,000 and handing back 1,200 clears every check above and reads as a complete launch
+  // history 3,800 rows short — the same complete-looking-but-short failure, arriving from the
+  // vendor's own paging rather than from ours. It also settles `total_row_count: ""`, which
+  // `Number` makes a finite 0.
+  if (rows.length !== total) {
+    throw new DuneRefused(
+      `Dune declared ${total} rows for ${path} and handed back ${rows.length}, so this read is a ` +
+        `PAGE rather than the whole result — /results pages on response size independently of the ` +
+        `\`?limit=\` it was issued with. A page read as a whole answer is a launch history that is ` +
+        `simply short, so it is refused rather than published.`,
       { status: null, terminal: false },
     );
   }

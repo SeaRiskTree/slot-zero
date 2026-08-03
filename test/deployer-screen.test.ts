@@ -2944,6 +2944,31 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     expect(unreadableRows).toBe(2);
   });
 
+  it('tells an ABSENT `bonded` apart from a legitimately false one', () => {
+    // The whole point of type-checking this column rather than reading `=== true`: `false` is a
+    // legitimate value, so a truthiness test collapses "the column is gone" into "this launch did
+    // not bond". `bonded` becomes CurveState.complete -> mergeHistories -> measureCompletion -> the
+    // rate applyGate compares against, so that collapse is a mass gate-FAILURE on a run that
+    // reports itself fully measured.
+    const legitimatelyFalse = parseCreationRows([
+      { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: false },
+    ]);
+    expect(legitimatelyFalse.unreadableRows).toBe(0);
+    expect(legitimatelyFalse.byWallet.get('W')).toEqual([
+      { mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: false },
+    ]);
+
+    // Absent, renamed, or any non-boolean spelling of it: unreadable, by the same route a bad
+    // timestamp already takes, rather than a second and weaker path of its own.
+    for (const bad of [undefined, null, 0, 1, 'false', 'true', '']) {
+      const row: Record<string, unknown> = { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC' };
+      if (bad !== undefined) row['bonded'] = bad;
+      const parsed = parseCreationRows([row]);
+      expect(parsed.unreadableRows, `bonded: ${String(bad)} must not read as "did not bond"`).toBe(1);
+      expect(parsed.byWallet.get('W')).toBeUndefined();
+    }
+  });
+
   it('a Dune-sourced merge reports movedCreator as UNMEASURED, never as zero', () => {
     // The one that will bite a reader of an older record: a schema-<=8 `movedCreator: 0` means the
     // walk read every curve and none had moved. Here it means nothing was looked at.
@@ -3073,7 +3098,10 @@ describe('the enumeration spends nothing it does not have to', () => {
         probeReads += 1;
         return new Response(
           JSON.stringify({
-            result: { rows: HEALTHY_PROBE(), metadata: { total_row_count: 1, total_result_set_bytes: 1 } },
+            result: {
+              rows: HEALTHY_PROBE(),
+              metadata: { total_row_count: HEALTHY_PROBE().length, total_result_set_bytes: 1 },
+            },
           }),
           { status: 200 },
         );
@@ -3182,6 +3210,116 @@ describe('the enumeration spends nothing it does not have to', () => {
       '/query/2': okJson({ query_sql: COVERAGE_SQL }),
     });
     await expect(call(client(atLimit))).rejects.toThrow(/sits on its own limit/);
+  });
+
+  it('REFUSES A PAGE that is shorter than the total it declares, rather than reading it whole', async () => {
+    // Our `?limit=` is not the only cut Dune makes: /results also pages on RESPONSE SIZE. A response
+    // declaring 5,000 rows and handing back a page clears the ceiling check and every limit check,
+    // and would be read as a complete launch history thousands of rows short.
+    const fetchImpl = stub({
+      '/query/2/results': okJson({
+        result: { rows: HEALTHY_PROBE(), metadata: { total_row_count: 5_000, total_result_set_bytes: 1 } },
+      }),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    await expect(
+      enumerateCreations(c, {
+        wallets: [DUNE_WALLET],
+        creationQueryId: 1,
+        coverageQueryId: 2,
+        refreshProbe: false,
+        nowMs: NOW_MS,
+        bounds: DUNE_BOUNDS,
+      }),
+    ).rejects.toThrow(/is a PAGE rather than the whole result/);
+    // And nothing was executed on the strength of it.
+    expect(c.executions()).toBe(0);
+  });
+
+  it('REFUSES THE WHOLE BATCH when the `bonded` column stops being a boolean', async () => {
+    // The failure this closes is a mass gate-FAILURE reported as fully measured: a shifted LEFT JOIN
+    // column would make every candidate read 0% bonded with `unreadableRows: 0` and a clean probe.
+    // The walk reads bonded status from the chain's own `complete` byte, so falling back to it
+    // genuinely answers the question rather than deferring it.
+    const other = '32CdQdBUxbCsLy5AUHWmyidfwhgGUr9N573NBUrDpump';
+    const fetchImpl = stub({
+      '/query/2/results': resultOf(HEALTHY_PROBE()),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/query/1/execute': okJson({ execution_id: 'e1' }),
+      '/query/1': okJson({ query_sql: CREATION_SQL }),
+      '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      // The column is simply gone — which is what a renamed `LEFT JOIN pump_evt_completeevent`
+      // looks like, on every row at once.
+      '/execution/e1/results': resultOf([
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC' },
+        { deployer: other, mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC' },
+      ]),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET, other],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    expect(e.coverage.ok).toBe(true);
+    expect(e.unreadableRows).toBe(2);
+    for (const w of [DUNE_WALLET, other]) {
+      const r = e.byWallet.get(w);
+      expect(r?.usable, `${w} must fall back to the walk rather than read 0% bonded`).toBe(false);
+      expect(r?.reasons.join(' ')).toMatch(/whole batch is refused/);
+      expect(r?.covered.exhausted).toBe(false);
+    }
+
+    // The control: the SAME batch with `bonded: false` spelled out is a real answer, not a refusal.
+    const spelledOut = stub({
+      '/query/2/results': resultOf(HEALTHY_PROBE()),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/query/1/execute': okJson({ execution_id: 'e1' }),
+      '/query/1': okJson({ query_sql: CREATION_SQL }),
+      '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      '/execution/e1/results': resultOf([
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: false },
+        { deployer: other, mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC', bonded: false },
+      ]),
+    });
+    const c2 = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: spelledOut as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const ok = await enumerateCreations(c2, {
+      wallets: [DUNE_WALLET, other],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    expect(ok.unreadableRows).toBe(0);
+    expect(ok.byWallet.get(DUNE_WALLET)?.usable).toBe(true);
+    expect(ok.byWallet.get(DUNE_WALLET)?.bonded).toBe(0);
+    expect(ok.byWallet.get(DUNE_WALLET)?.launches).toBe(1);
   });
 
   it('REFUSES THE WHOLE BATCH when any row went unread, and every candidate falls back', async () => {
@@ -3612,6 +3750,34 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 9 deliberately leaves `spend` alone. Dune is a fourth vendor in a fourth unit, and it
     // gets its own run-level block rather than five more keys here — see the `dune` block.
     9: SPEND_KEYS_8,
+  };
+
+  // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
+  // unpinned for two rounds and grew in both of them with nothing failing and the README's schema
+  // table needing a hand edit to keep up — the same hole CREATION_KEYS_BY_SCHEMA closes one level
+  // down. Dune is metered in its own units (executions and bytes against a SHARED monthly
+  // allowance, where a FAILED execution is billed exactly like a successful one), which is why it is
+  // a block of its own rather than five more `spend` keys.
+  const DUNE_KEYS_9 = [
+    'used',
+    'reason',
+    'rejected',
+    'unusableNote',
+    'endpoint',
+    'creationQueryId',
+    'coverageQueryId',
+    'executions',
+    'executionCeiling',
+    'requests',
+    'resultBytes',
+    'estimatedCredits',
+    'rowsReturned',
+    'unreadableRows',
+    'walletsRefusedByShape',
+    'coverage',
+  ];
+  const DUNE_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    9: DUNE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -4289,6 +4455,18 @@ describe('the keyless boundary holds in both directions', () => {
       (m) => m[1]!,
     );
     expect(spendKeys.sort()).toEqual([...SPEND_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
+
+    // And the run-level `dune` block, read the same way out of `buildRecord`'s own literal. It is
+    // the block that grew twice with nothing failing, which is exactly what this pins.
+    const duneStart = source.indexOf('        dune: (() => {');
+    expect(duneStart, 'buildRecord no longer assembles a `dune` block').toBeGreaterThan(-1);
+    const duneBody = source.slice(source.indexOf('return {', duneStart) + 'return {'.length);
+    const duneEnd = duneBody.indexOf('\n          };');
+    expect(duneEnd, 'the `dune` literal is no longer where this assertion can read it').toBeGreaterThan(-1);
+    const duneKeys = [...duneBody.slice(0, duneEnd).matchAll(/^ {12}([A-Za-z][A-Za-z0-9]*)(?::|,$)/gm)].map(
+      (m) => m[1]!,
+    );
+    expect(duneKeys.sort()).toEqual([...DUNE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
   });
 });
 

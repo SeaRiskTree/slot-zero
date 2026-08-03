@@ -171,9 +171,13 @@ confident wrong answer:
 
 **And the same rule past coverage: a reading that cannot vouch for itself falls back to the walk
 rather than being gated on.** A result read that cannot prove it is whole (no `total_row_count`, a
-total above the ceiling, or exactly the `?limit=` many rows) is refused. **Any unreadable row refuses
-the whole batch** — a row that fails to parse commonly has no readable `deployer`, so the wallet
-whose history came back short is exactly the one that cannot be named. **A wallet the enumeration
+total above the ceiling, exactly the `?limit=` many rows, or rows disagreeing with the declared
+total — `/results` pages on response size independently of our limit) is refused. **Any unreadable
+row refuses the whole batch** — a row that fails to parse commonly has no readable `deployer`, so the
+wallet whose history came back short is exactly the one that cannot be named. **`bonded` is
+type-checked, not truth-checked**: `false` is legitimate there, so `=== true` would collapse "the
+column is gone" into "this launch did not bond" and gate-fail every candidate in the batch at 0%
+bonded on a run reporting itself fully measured. **A wallet the enumeration
 returned no row for is refused too**: that is an absence of evidence, not evidence of absence, and
 reading it as a launch history of zero would let the merge reclassify that wallet's whole ownership
 listing as acquired and gate it on nothing. **A candidate whose address is not base58-shaped is never

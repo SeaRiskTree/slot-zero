@@ -142,6 +142,29 @@ export const DROPPED_WINDOW_CAVEAT =
   'Counting an unreachable create slot as "no bundle" would manufacture the very finding this pass ' +
   'is measuring, so the denominator is windows PROVED to reach their create slot.';
 
+/**
+ * The third standing caveat: the two vendors' clocks do not agree to the millisecond, and this pass
+ * backdates the mint instant rather than losing a create slot to that.
+ *
+ * MEASURED ON THIS ROUTE (`thresholds.json` → `bundling_census.justification.mintTimeBackdateMs`
+ * holds the sample): `frontend-api-v3`'s `created_timestamp` carries millisecond precision on older
+ * listing rows while `swap-api`'s fill `ts` is whole seconds and floored, so the declared mint lands
+ * up to two seconds AFTER the launch's own first fill — the exact direction `readLaunchWindow`'s
+ * zero-slack pre-mint tripwire deletes a whole launch for. The first live run measured it firing on
+ * 5 of 8 launches of the first candidate walked.
+ *
+ * Backdating cannot reach the number: the create slot is the OLDEST end of the walk, so a wider
+ * floor admits more of this launch and nothing of any other — a token has no fill before its own
+ * create transaction. What it costs is that a genuine disagreement under 5 s is no longer seen.
+ */
+export const MINT_TIME_BACKDATE_CAVEAT =
+  'THE MINT INSTANT IS BACKDATED BY A PINNED MARGIN before the window is walked, because the two ' +
+  'vendors disagree: frontend-api-v3 gives millisecond-precision creation times on older rows while ' +
+  'swap-api gives whole-second fill times, floored, so the declared mint lands up to ~2s AFTER the ' +
+  'launch\'s own first fill and the zero-slack pre-mint tripwire would delete the whole launch. ' +
+  'A disagreement LARGER than the margin still drops the launch and is still counted; one SMALLER ' +
+  'than it is no longer detected.';
+
 /** @typedef {{ wallet: string, sources: string[], recordedGateVerdict: string | null }} CohortMember */
 
 /**
@@ -255,6 +278,9 @@ export function buildCohort(toolDir = HERE) {
  * @property {number} launchesAttempted
  * @property {number} launchesUsable   Windows walked back past the mint. **The denominator.**
  * @property {number} launchesDropped
+ * @property {Record<string, number>} dropsByReason Drops BY CAUSE. `mint-time-disagreement` is the
+ *   one that matters: it says the two vendors' clocks came apart by more than the backdate, which is
+ *   a reportable event rather than a busy launch. See {@link MINT_TIME_BACKDATE_CAVEAT}.
  * @property {string[]} dropNotes
  * @property {number} bundledLaunches
  * @property {boolean} fullSample      `launchesUsable === launchesPlanned === the Stage 2 cap`.
@@ -288,6 +314,9 @@ export function buildCohort(toolDir = HERE) {
  * @param {readonly { mint: string, deployedAtMs: number }[]} input.refs Newest first.
  * @param {number} input.nowMs
  * @param {import('./stage2.mjs').Stage2Thresholds} input.entry
+ * @param {number} input.mintTimeBackdateMs `thresholds.json` → `bundling_census`. See
+ *   {@link MINT_TIME_BACKDATE_CAVEAT}: the two vendors' clocks disagree by up to ~2s in the one
+ *   direction that deletes a create slot, and this is what makes that survivable.
  * @param {(line: string) => void} [input.log]
  * @returns {Promise<BundlingWalk>}
  */
@@ -301,6 +330,11 @@ export async function censusCandidate(client, input) {
   const launches = [];
   /** @type {string[]} */
   const dropNotes = [];
+  // Broken out BY CAUSE, never as a lump, for the reason `stage2.mjs` gives: a `mint-time-disagreement`
+  // says the two clocks have come apart and is a reportable event, while a `request-cap` just says
+  // the launch was busy. A total cannot be read for either.
+  /** @type {Record<string, number>} */
+  const dropsByReason = {};
   let attempted = 0;
   let dropped = 0;
 
@@ -321,7 +355,10 @@ export async function censusCandidate(client, input) {
     try {
       window = await readLaunchWindow(client, {
         mint: ref.mint,
-        createdAtMs: ref.deployedAtMs,
+        // BACKDATED. Not the declared instant — see `MINT_TIME_BACKDATE_CAVEAT`. It widens the walk
+        // at the OLD end only, which is the end the create slot sits at, so it can only admit more
+        // of this launch's own opening and never any of another token's.
+        createdAtMs: ref.deployedAtMs - input.mintTimeBackdateMs,
         windowMs: t.windowMs,
         seekMarginMs: t.seekMarginMs,
         windowSlotSpan: t.windowSlotSpan,
@@ -331,16 +368,19 @@ export async function censusCandidate(client, input) {
     } catch (cause) {
       if (cause instanceof CeilingReached) {
         dropped += 1;
+        dropsByReason['census-ceiling'] = (dropsByReason['census-ceiling'] ?? 0) + 1;
         dropNotes.push('the census request ceiling was reached mid-walk');
         break;
       }
       dropped += 1;
+      dropsByReason['transport-error'] = (dropsByReason['transport-error'] ?? 0) + 1;
       dropNotes.push(`DROPPED (transport error): ${describeTransportFailure(cause)}`);
       continue;
     }
 
     if (!window.usable) {
       dropped += 1;
+      if (window.dropReason !== null) dropsByReason[window.dropReason] = (dropsByReason[window.dropReason] ?? 0) + 1;
       dropNotes.push(window.note);
       input.log?.(`    ${window.note}`);
       continue;
@@ -349,6 +389,7 @@ export async function censusCandidate(client, input) {
     const measurement = measureCreateSlot(window.fills);
     if (measurement === null) {
       dropped += 1;
+      dropsByReason['no-create-slot'] = (dropsByReason['no-create-slot'] ?? 0) + 1;
       dropNotes.push('DROPPED: no bonding-curve buy in the window, so there is no create slot to read');
       continue;
     }
@@ -383,6 +424,7 @@ export async function censusCandidate(client, input) {
     launchesAttempted: attempted,
     launchesUsable: launches.length,
     launchesDropped: dropped,
+    dropsByReason,
     dropNotes,
     bundledLaunches,
     fullSample,
@@ -789,6 +831,7 @@ export function renderDryRun(plan) {
   L.push('');
   L.push(`CAVEAT CARRIED BY EVERY NUMBER: ${OWNERSHIP_LIST_CAVEAT}`);
   L.push(`CAVEAT CARRIED BY EVERY NUMBER: ${DROPPED_WINDOW_CAVEAT}`);
+  L.push(`CAVEAT CARRIED BY EVERY NUMBER: ${MINT_TIME_BACKDATE_CAVEAT}`);
   return L.join('\n');
 }
 
@@ -966,6 +1009,7 @@ export async function main(opts, out, err) {
         refs: s.refs,
         nowMs: Date.now(),
         entry,
+        mintTimeBackdateMs: census.mintTimeBackdateMs,
         log: opts.json ? undefined : (line) => out(line),
       });
       rows.push({
@@ -1037,10 +1081,13 @@ export async function main(opts, out, err) {
       maxLaunchesPerCandidate: entry.maxLaunchesPerCandidate,
       maxRequestsPerLaunch: entry.maxRequestsPerLaunch,
       minLaunchesSampled: entry.minLaunchesSampled,
+      // The one window-adjacent value this pass pins itself, and it is pinned because the CLOCK is
+      // different here, not the window. `bundling_census.justification` holds the measurement.
+      mintTimeBackdateMs: census.mintTimeBackdateMs,
     },
     summary,
     candidates: rows,
-    caveats: [OWNERSHIP_LIST_CAVEAT, DROPPED_WINDOW_CAVEAT],
+    caveats: [OWNERSHIP_LIST_CAVEAT, DROPPED_WINDOW_CAVEAT, MINT_TIME_BACKDATE_CAVEAT],
   };
 
   if (opts.out !== null) {

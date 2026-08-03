@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 
 import {
   DROPPED_WINDOW_CAVEAT,
+  MINT_TIME_BACKDATE_CAVEAT,
   OWNERSHIP_LIST_CAVEAT,
   buildCohort,
   censusCandidate,
@@ -52,6 +53,7 @@ const CENSUS_CODE = CENSUS_SOURCE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[
 
 const T = loadThresholds();
 const ENTRY: Stage2Thresholds = { ...T['stage2_entry'] };
+const BACKDATE: number = T['bundling_census'].mintTimeBackdateMs;
 
 const NOW = Date.parse('2026-08-03T12:00:00Z');
 const DAY = 86_400_000;
@@ -159,6 +161,7 @@ const candidate = (o: Partial<CandidateBundling>): CandidateBundling => ({
   launchesAttempted: 0,
   launchesUsable: 0,
   launchesDropped: 0,
+  dropsByReason: {},
   dropNotes: [],
   bundledLaunches: 0,
   fullSample: false,
@@ -262,6 +265,7 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
     // states for `LANDING_TIP_CAVEAT` and the reason it is a constant rather than a doc line.
     expect(text).toContain(OWNERSHIP_LIST_CAVEAT);
     expect(text).toContain(DROPPED_WINDOW_CAVEAT);
+    expect(text).toContain(MINT_TIME_BACKDATE_CAVEAT);
   });
 
   it('rejects bad input rather than guessing, and the caps can only be lowered', () => {
@@ -305,6 +309,7 @@ describe('it measures bundling and nothing else', () => {
       refs: refs(1),
       nowMs: NOW,
       entry: ENTRY,
+      mintTimeBackdateMs: BACKDATE,
     });
     expect(result.launchesUsable).toBe(1);
     expect(result.launches[0]).toMatchObject({
@@ -322,7 +327,7 @@ describe('it measures bundling and nothing else', () => {
     // nothing, which is observationally identical to there being nothing — `measure.mjs` →
     // `roomIsProven` is the refusal, and this pass reports the input to it rather than the verdict.
     const { client } = scriptedClient([page({ createSlot: 700, bundles: 0, loneWallets: 9 })]);
-    const result = await censusCandidate(client, { wallet: 'W', refs: refs(1), nowMs: NOW, entry: ENTRY });
+    const result = await censusCandidate(client, { wallet: 'W', refs: refs(1), nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
     expect(result.launches[0]).toMatchObject({ bundledTx: 0, maxWalletsInOneTx: 1, proven: false });
     expect(result.bundledLaunches).toBe(0);
     expect(result.neverBundles).toBe(true);
@@ -334,7 +339,7 @@ describe('it measures bundling and nothing else', () => {
   it('applies Stage 2\'s own eligibility floor, so a launch too young to have finished is skipped', async () => {
     const { client, urls } = scriptedClient([page({ createSlot: 500, bundles: 1, loneWallets: 1 })]);
     const tooYoung = [{ mint: 'YOUNG', deployedAtMs: NOW - (ENTRY.windowMs + ENTRY.seekMarginMs - 1) }];
-    const result = await censusCandidate(client, { wallet: 'W', refs: tooYoung, nowMs: NOW, entry: ENTRY });
+    const result = await censusCandidate(client, { wallet: 'W', refs: tooYoung, nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
     expect(result.launchesEligible).toBe(0);
     expect(result.launchesAttempted).toBe(0);
     expect(urls).toEqual([]);
@@ -347,10 +352,49 @@ describe('it measures bundling and nothing else', () => {
       refs: refs(ENTRY.maxLaunchesPerCandidate + 5),
       nowMs: NOW,
       entry: ENTRY,
+      mintTimeBackdateMs: BACKDATE,
     });
     expect(result.launchesEligible).toBe(ENTRY.maxLaunchesPerCandidate + 5);
     expect(result.launchesPlanned).toBe(ENTRY.maxLaunchesPerCandidate);
     expect(result.launchesUsable).toBe(ENTRY.maxLaunchesPerCandidate);
+  });
+
+  it('BACKDATES the mint instant, so a two-vendor clock difference cannot delete a create slot', async () => {
+    // MEASURED ON THIS ROUTE: frontend-api-v3's `created_timestamp` carries millisecond precision on
+    // older listing rows while swap-api's fill `ts` is whole seconds, floored, so the declared mint
+    // lands up to ~2s AFTER the launch's own first fill — and `readLaunchWindow` compares
+    // `ts < createdAtMs` with ZERO slack, which deletes the whole launch. The first live run
+    // measured that on 5 of 8 launches of the first candidate walked.
+    const declaredMintMs = OLDEST_MINT_MS + 1_900;
+    const fillsAt = OLDEST_MINT_MS; // the fill tape's floored second — 1.9s BEFORE the declared mint
+    const { client } = scriptedClient([
+      windowPage({ createSlot: 900, bundles: 1, loneWallets: 2, tsMs: fillsAt }),
+    ]);
+    const result = await censusCandidate(client, {
+      wallet: 'W',
+      refs: [{ mint: 'SKEWED', deployedAtMs: declaredMintMs }],
+      nowMs: NOW,
+      entry: ENTRY,
+      mintTimeBackdateMs: BACKDATE,
+    });
+    expect(result.launchesUsable).toBe(1);
+    expect(result.launchesDropped).toBe(0);
+    expect(result.launches[0]).toMatchObject({ bundledTx: 1, maxWalletsInOneTx: 2 });
+
+    // AND THE TRIPWIRE IS NARROWED, NOT DISARMED: a disagreement LARGER than the backdate still
+    // drops the launch, and it is still counted by cause rather than lumped.
+    const { client: far } = scriptedClient([
+      windowPage({ createSlot: 900, bundles: 1, loneWallets: 2, tsMs: OLDEST_MINT_MS - BACKDATE - 5_000 }),
+    ]);
+    const dropped = await censusCandidate(far, {
+      wallet: 'W',
+      refs: [{ mint: 'SKEWED', deployedAtMs: OLDEST_MINT_MS }],
+      nowMs: NOW,
+      entry: ENTRY,
+      mintTimeBackdateMs: BACKDATE,
+    });
+    expect(dropped.launchesUsable).toBe(0);
+    expect(dropped.dropsByReason['mint-time-disagreement']).toBe(1);
   });
 
   it('a window it could not walk is DROPPED, never counted as unbundled', async () => {
@@ -373,10 +417,11 @@ describe('it measures bundling and nothing else', () => {
         };
       }) as unknown as typeof fetch,
     });
-    const result = await censusCandidate(client, { wallet: 'W', refs: refs(1), nowMs: NOW, entry: ENTRY });
+    const result = await censusCandidate(client, { wallet: 'W', refs: refs(1), nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
     expect(calls).toBeGreaterThan(0);
     expect(result.launchesUsable).toBe(0);
     expect(result.launchesDropped).toBe(1);
+    expect(Object.values(result.dropsByReason).reduce((a, b) => a + b, 0)).toBe(1);
     expect(result.bundledLaunches).toBe(0);
     // A dropped window contributes to NEITHER side of the rate.
     expect(result.launches).toEqual([]);
@@ -392,7 +437,7 @@ describe('it measures bundling and nothing else', () => {
       [page({ createSlot: 500, bundles: 1, loneWallets: 1 })],
       ENTRY.maxRequestsPerLaunch,
     );
-    const result = await censusCandidate(client, { wallet: 'W', refs: refs(4), nowMs: NOW, entry: ENTRY });
+    const result = await censusCandidate(client, { wallet: 'W', refs: refs(4), nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
     expect(result.launchesAttempted).toBe(1);
     expect(result.dropNotes.some((n) => n.includes('census ceiling'))).toBe(true);
     expect(client.issued()).toBeLessThanOrEqual(ENTRY.maxRequestsPerLaunch);

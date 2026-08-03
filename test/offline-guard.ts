@@ -9,8 +9,9 @@
  * The network-capable area is `tools/`, and the boundary is the directory. Each tool there is
  * governed separately, by a test that asserts the *other* half of the boundary:
  * `tools/deployer-screen/` by test/deployer-screen.test.ts (which has a keyed client and an allowed
- * list of files that may name the credential) and `tools/graduated-life-tape/` by
- * test/graduated-life-tape.test.ts (which is keyless throughout, so its allowed list is empty).
+ * list of files that may name the credential), `tools/graduated-life-tape/` by
+ * test/graduated-life-tape.test.ts and `tools/arrival-rate-walk/` by test/arrival-rate-walk.test.ts
+ * (both keyless throughout, so both allowed lists are empty).
  */
 
 /** Anything that could open a socket, directly or through a client library. */

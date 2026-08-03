@@ -108,6 +108,11 @@ export const LEDGER_SCHEMA_VERSION = 1;
  *   nothing surfaced nothing because it asked for nothing. A dry run writes no ledger at all today,
  *   so this is a guard rather than a live filter — it exists so that a future path which does record
  *   a preview cannot silently corrupt the streak the alarm reads.
+ * @property {boolean} completed False when the run aborted — a credential, quota, ceiling or
+ *   transport failure. Never counted towards the dry streak either, and for the same reason as
+ *   `live`: a run that stopped surfaced nothing because it stopped, not because the population is
+ *   saturated. Without this, two runs dying on a 429 followed by one ordinary dry run reaches the
+ *   streak alarm and tells the operator to find a wider source when the fault was the credential.
  * @property {number} distinctWalletsSeeded
  * @property {number} alreadyKnown
  * @property {number} newlySurfaced
@@ -235,12 +240,12 @@ export function saveLedger(path, ledger, nowIso) {
  *    tracked contributes no observation at all, so no amount of this statistic bounds the lag on the
  *    population we cannot see. That ceiling is stated in `FEED.md` and it is permanent.
  *
- * @param {number} nowMs
+ * @param {number} nowMs The instant we FIRST SAW the wallet, not the instant we graded it.
  * @param {string | null} firstDeployIso
  * @returns {number | null} Days, or `null` when the vendor gave no usable deploy time.
  */
 export function discoveryLagDays(nowMs, firstDeployIso) {
-  if (firstDeployIso === null) return null;
+  if (firstDeployIso === null || !Number.isFinite(nowMs)) return null;
   const then = Date.parse(firstDeployIso);
   if (!Number.isFinite(then)) return null;
   return Number(((nowMs - then) / 86_400_000).toFixed(2));
@@ -317,9 +322,10 @@ export function recordSeen(ledger, wallet, seededBy, nowIso) {
  * @param {string} wallet
  * @param {Grade} grade
  * @param {string} nowIso
- * @param {number} nowMs
+ * @returns {LedgerEntry} The graded entry, so a caller reporting this run's lag reads the one figure
+ *   that was stored rather than recomputing it against a different instant.
  */
-export function gradeWallet(ledger, wallet, grade, nowIso, nowMs) {
+export function gradeWallet(ledger, wallet, grade, nowIso) {
   const entry = ledger.wallets[wallet] ?? blankEntry(wallet, nowIso, 'feed');
   entry.state = grade.state;
   entry.gateVerdict = grade.gateVerdict;
@@ -329,9 +335,19 @@ export function gradeWallet(ledger, wallet, grade, nowIso, nowMs) {
   entry.completionRate = Number.isFinite(grade.completionRate) ? Number(grade.completionRate.toFixed(6)) : null;
   entry.spanDays = Number(grade.spanDays.toFixed(2));
   entry.firstDeployIso = grade.firstDeployIso;
-  entry.discoveryLagDaysAtLeast = discoveryLagDays(nowMs, grade.firstDeployIso);
+  // Lag is measured against WHEN WE FIRST SAW IT, never against when we got round to grading it —
+  // the same basis {@link importRunRecords} uses, and the one FEED.md documents. The gate batch is a
+  // hard quota bound, so a wallet surfaced today is routinely gated days later out of the backlog;
+  // measuring at grading time would add that queue latency to every backlog wallet's lag and inflate
+  // the ledger-wide median the docs quote.
+  const firstSeenMs = Date.parse(entry.firstSeenIso);
+  entry.discoveryLagDaysAtLeast = discoveryLagDays(
+    Number.isFinite(firstSeenMs) ? firstSeenMs : Date.parse(nowIso),
+    grade.firstDeployIso,
+  );
   entry.shortfalls = [...grade.shortfalls];
   ledger.wallets[wallet] = entry;
+  return entry;
 }
 
 /**
@@ -410,11 +426,10 @@ export function backlogDepth(ledger) {
  *
  * @param {Ledger} ledger
  * @param {readonly { file: string, body: unknown }[]} records
- * @returns {{ imported: number, walletsSeen: number }} `imported` counts wallets this call ADDED.
+ * @returns {{ imported: number }} Counts wallets this call ADDED.
  */
 export function importRunRecords(ledger, records) {
   let imported = 0;
-  let walletsSeen = 0;
 
   for (const { body } of records) {
     if (typeof body !== 'object' || body === null) continue;
@@ -431,7 +446,6 @@ export function importRunRecords(ledger, records) {
         const row = /** @type {Record<string, unknown>} */ (raw);
         const wallet = row['wallet'];
         if (typeof wallet !== 'string' || wallet.length === 0) continue;
-        walletsSeen += 1;
 
         const existing = ledger.wallets[wallet];
         const entry = existing ?? blankEntry(wallet, seenAt, 'run-record');
@@ -494,7 +508,6 @@ export function importRunRecords(ledger, records) {
         if (typeof raw !== 'object' || raw === null) continue;
         const wallet = /** @type {Record<string, unknown>} */ (raw)['wallet'];
         if (typeof wallet !== 'string' || wallet.length === 0) continue;
-        walletsSeen += 1;
         const existing = ledger.wallets[wallet];
         if (existing === undefined) {
           const entry = blankEntry(wallet, seenAt, 'run-record');
@@ -506,7 +519,7 @@ export function importRunRecords(ledger, records) {
     }
   }
 
-  return { imported, walletsSeen };
+  return { imported };
 }
 
 /**
@@ -556,10 +569,14 @@ export function appendRun(ledger, row, keepRuns) {
 }
 
 /**
- * Consecutive LIVE runs, newest first, that surfaced no new wallet.
+ * Consecutive LIVE, COMPLETED runs, newest first, that surfaced no new wallet.
  *
  * Dry runs are skipped rather than counted as dry: a preview that requested nothing surfaced nothing
- * for a reason that says nothing about the population.
+ * for a reason that says nothing about the population. Aborted runs are skipped for the same reason
+ * — they surfaced nothing because they stopped. Counting either would let a credential or transport
+ * fault reach the streak alarm, whose remedy ("a wider source") is the wrong thing to point an
+ * operator at. A row that predates the `completed` field is counted rather than skipped: the
+ * conservative direction here is the one that keeps a dry feed audibly dry.
  *
  * @param {Ledger} ledger
  * @returns {number}
@@ -569,11 +586,24 @@ export function dryStreak(ledger) {
   for (let i = ledger.runs.length - 1; i >= 0; i--) {
     const row = ledger.runs[i];
     if (row === undefined || !row.live) continue;
+    if (row.completed === false) continue;
     if (row.newlySurfaced > 0) break;
     streak += 1;
   }
   return streak;
 }
+
+/**
+ * How many wallets a run must have gated before "every one came back unreadable" may be read as the
+ * vendor's profile shape having moved.
+ *
+ * A fixed floor, deliberately not scaled with the batch: the alarm makes an assertion about the
+ * vendor, and one empty deployer is an ordinary observation rather than evidence of a shape move —
+ * the alarm's own text says so. The cost is one run of latency at `--gate 2`, and that is a bound
+ * this lane accepts rather than an oversight; see `FEED.md` → "Yield, and why a dead feed cannot
+ * read as a healthy one".
+ */
+export const ALL_UNMEASURED_MIN_GATED = 2;
 
 /**
  * @typedef {object} FeedAlarm
@@ -602,10 +632,12 @@ export function dryStreak(ledger) {
  * 4. **Every gated wallet came back unreadable.** The profile shape moved, or the endpoint is
  *    answering with an envelope we do not parse. Same class as (1), one endpoint further in: the
  *    vendor answered and we learned nothing, which must never be recorded as a population of
- *    ordinary rejections.
+ *    ordinary rejections. Requires at least {@link ALL_UNMEASURED_MIN_GATED} gated wallets: this
+ *    condition ASSERTS a vendor-shape move, and its own message says one empty deployer is not
+ *    evidence of that — so it must not be assertable from a sample of one. At `--gate 1` a genuine
+ *    empty deployer would otherwise satisfy `1 === 1` and exit 9 claiming the vendor moved.
  *
  * @param {object} input
- * @param {number} input.newlySurfaced
  * @param {readonly { label: string, rowsReturned: number, walletsReturned: number }[]} input.seeds
  * @param {number} input.dryStreak
  * @param {number} input.dryStreakAlarm
@@ -635,7 +667,7 @@ export function feedAlarm(input) {
   }
 
   const gated = input.gated ?? 0;
-  if (gated > 0 && (input.unmeasured ?? 0) === gated) {
+  if (gated >= ALL_UNMEASURED_MIN_GATED && (input.unmeasured ?? 0) === gated) {
     reasons.push(
       `ALL ${gated} wallet(s) gated this run came back with no readable launch record. One such wallet ` +
         `is an empty deployer; all of them is the profile shape having moved — check ` +

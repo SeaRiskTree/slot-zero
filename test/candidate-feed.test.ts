@@ -107,7 +107,6 @@ describe('the ledger never lets a known wallet be offered as new twice', () => {
         shortfalls: ['sample too small: 14 tokens < 25 required'],
       },
       '2026-08-02T00:00:00.000Z',
-      T0,
     );
 
     recordSeen(ledger, 'W1', ['alerts'], '2026-08-03T00:00:00.000Z');
@@ -117,6 +116,33 @@ describe('the ledger never lets a known wallet be offered as new twice', () => {
     expect(entry.gradedAtIso).toBe('2026-08-02T00:00:00.000Z');
     // And it is not waiting for the gate, so no later batch spends a request on it.
     expect(nextGateBatch(ledger, 10)).not.toContain('W1');
+  });
+
+  it('measures the discovery lag from FIRST SIGHT, not from the run that got round to grading', () => {
+    // The gate batch is a hard quota bound, so a wallet surfaced today is routinely gated days later
+    // out of the backlog. Measuring at grading time would add that queue latency to the lag of every
+    // backlog wallet and inflate the ledger-wide median the docs quote.
+    const ledger = emptyLedger();
+    recordSeen(ledger, 'W1', ['recent-bonds'], '2026-08-02T00:00:00.000Z');
+    // Surfaced again, and only gated, ten days later.
+    recordSeen(ledger, 'W1', ['recent-bonds'], '2026-08-12T00:00:00.000Z');
+    gradeWallet(
+      ledger,
+      'W1',
+      {
+        state: 'queued',
+        gateVerdict: 'gate-passed',
+        gateReading: 'ownership-only',
+        tokens: 40,
+        completionRate: 0.5,
+        spanDays: 100,
+        firstDeployIso: '2026-07-03T00:00:00.000Z',
+        shortfalls: [],
+      },
+      '2026-08-12T00:00:00.000Z',
+    );
+    // 2026-07-03 -> 2026-08-02 is 30 days. Graded on the 12th, it must not read as 40.
+    expect(ledger.wallets['W1']!.discoveryLagDaysAtLeast).toBe(30);
   });
 
   it('a NaN completion rate is stored as null, never as a number', () => {
@@ -139,7 +165,6 @@ describe('the ledger never lets a known wallet be offered as new twice', () => {
         shortfalls: [],
       },
       '2026-08-02T00:00:00.000Z',
-      T0,
     );
     expect(ledger.wallets['W1']!.completionRate).toBeNull();
     expect(ledger.wallets['W1']!.discoveryLagDaysAtLeast).toBeNull();
@@ -175,7 +200,6 @@ describe('the ledger never lets a known wallet be offered as new twice', () => {
         shortfalls: [],
       },
       '2026-08-02T00:00:00.000Z',
-      T0,
     );
     markPrefiltered(ledger, 'W1', '2026-08-03T00:00:00.000Z');
     expect(ledger.wallets['W1']!.state).toBe('queued');
@@ -362,11 +386,11 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
   ];
 
   it('does not alarm on an ordinary run that found something', () => {
-    expect(feedAlarm({ newlySurfaced: 4, seeds: healthySeeds, dryStreak: 0, dryStreakAlarm: 3 }).alarmed).toBe(false);
+    expect(feedAlarm({ seeds: healthySeeds, dryStreak: 0, dryStreakAlarm: 3 }).alarmed).toBe(false);
   });
 
   it('does not alarm on ONE dry run — the vendor pages overlap heavily between runs', () => {
-    expect(feedAlarm({ newlySurfaced: 0, seeds: healthySeeds, dryStreak: 1, dryStreakAlarm: 3 }).alarmed).toBe(false);
+    expect(feedAlarm({ seeds: healthySeeds, dryStreak: 1, dryStreakAlarm: 3 }).alarmed).toBe(false);
   });
 
   it('alarms the moment a seed returns rows we read no wallet from — OUR bug, not theirs', () => {
@@ -375,7 +399,6 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
     // FIRST occurrence, never after a streak — a streak would mean waiting three runs to be told
     // our own reader is broken.
     const alarm = feedAlarm({
-      newlySurfaced: 9,
       seeds: [{ label: 'alerts', rowsReturned: 50, walletsReturned: 0 }, ...healthySeeds],
       dryStreak: 0,
       dryStreakAlarm: 3,
@@ -387,7 +410,6 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
 
   it('alarms when every seed is inert, separately from the dry streak', () => {
     const alarm = feedAlarm({
-      newlySurfaced: 0,
       seeds: [
         { label: 'recent-bonds', rowsReturned: 0, walletsReturned: 0 },
         { label: 'alerts', rowsReturned: 0, walletsReturned: 0 },
@@ -400,29 +422,57 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
   });
 
   it('alarms on the dry streak, and names the remedy as a wider source rather than more waiting', () => {
-    const alarm = feedAlarm({ newlySurfaced: 0, seeds: healthySeeds, dryStreak: 3, dryStreakAlarm: 3 });
+    const alarm = feedAlarm({ seeds: healthySeeds, dryStreak: 3, dryStreakAlarm: 3 });
     expect(alarm.alarmed).toBe(true);
     expect(alarm.reasons.join(' ')).toMatch(/DRY: 3 consecutive live run/);
     expect(alarm.reasons.join(' ')).toMatch(/a wider source does/);
   });
 
+  const row = (live: boolean, newlySurfaced: number, completed = true) => ({
+    startedAtIso: '2026-08-02T00:00:00.000Z',
+    live,
+    completed,
+    distinctWalletsSeeded: 10,
+    alreadyKnown: 10 - newlySurfaced,
+    newlySurfaced,
+    gated: 0,
+    queued: 0,
+    held: 0,
+    unmeasured: 0,
+    prefiltered: 0,
+    backlog: 0,
+    keyedRequests: 3,
+    inertSeeds: [],
+  });
+
+  it('does not assert a moved profile shape from a sample of ONE gated wallet', () => {
+    // The condition ASSERTS a vendor-shape move, and its own message says one empty deployer is not
+    // evidence of that. At --gate 1 a genuinely empty deployer satisfied `1 === 1` and exited 9
+    // claiming the vendor had moved — a false alarm on the exit code a scheduler acts on.
+    const alarm = feedAlarm({
+      seeds: healthySeeds,
+      dryStreak: 0,
+      dryStreakAlarm: 3,
+      gated: 1,
+      unmeasured: 1,
+    });
+    expect(alarm.alarmed).toBe(false);
+  });
+
+  it('alarms once TWO gated wallets in a row come back unreadable', () => {
+    const alarm = feedAlarm({
+      seeds: healthySeeds,
+      dryStreak: 0,
+      dryStreakAlarm: 3,
+      gated: 2,
+      unmeasured: 2,
+    });
+    expect(alarm.alarmed).toBe(true);
+    expect(alarm.reasons.join(' ')).toMatch(/ALL 2 wallet\(s\) gated this run/);
+  });
+
   it('counts the streak over LIVE runs only', () => {
     const ledger = emptyLedger();
-    const row = (live: boolean, newlySurfaced: number) => ({
-      startedAtIso: '2026-08-02T00:00:00.000Z',
-      live,
-      distinctWalletsSeeded: 10,
-      alreadyKnown: 10 - newlySurfaced,
-      newlySurfaced,
-      gated: 0,
-      queued: 0,
-      held: 0,
-      unmeasured: 0,
-      prefiltered: 0,
-      backlog: 0,
-      keyedRequests: 3,
-      inertSeeds: [],
-    });
 
     appendRun(ledger, row(true, 5), 60);
     appendRun(ledger, row(true, 0), 60);
@@ -436,6 +486,18 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
     expect(dryStreak(ledger)).toBe(0);
   });
 
+  it('an ABORTED live run does not accumulate into the dry streak', () => {
+    // Two runs dying on a 429 followed by one ordinary dry run must not reach the streak alarm and
+    // blame discovery breadth ("a wider source") for what was a credential or transport fault. An
+    // aborted run surfaced nothing because it stopped.
+    const ledger = emptyLedger();
+    appendRun(ledger, row(true, 5), 60);
+    appendRun(ledger, row(true, 0, false), 60);
+    appendRun(ledger, row(true, 0, false), 60);
+    appendRun(ledger, row(true, 0), 60);
+    expect(dryStreak(ledger)).toBe(1);
+  });
+
   it('bounds the run history so a committed ledger does not grow without limit', () => {
     const ledger = emptyLedger();
     for (let i = 0; i < 10; i++) {
@@ -444,6 +506,7 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
         {
           startedAtIso: `2026-08-0${i}T00:00:00.000Z`,
           live: true,
+          completed: true,
           distinctWalletsSeeded: i,
           alreadyKnown: 0,
           newlySurfaced: i,
@@ -572,14 +635,19 @@ describe('the feed end to end', () => {
   });
 
   /** A stub vendor. Counts every request so the ceiling can be asserted rather than assumed. */
-  function vendor(walletsByLabel: Record<string, string[]>, profiles: Record<string, unknown>) {
+  function vendor(
+    walletsByLabel: Record<string, string[]>,
+    profiles: Record<string, unknown>,
+    trailingDeploys: Record<string, number> = {},
+  ) {
     const calls: string[] = [];
+    const deployed = (w: string) => trailingDeploys[w] ?? 20;
     const fetchImpl = (async (input: Parameters<typeof fetch>[0]) => {
       const url = String(input);
       calls.push(url);
       const path = url.slice(url.indexOf('/api/v1') + '/api/v1'.length);
       const block = (w: string) => ({
-        deployers: { wallet_address: w, total_tokens_deployed: 20, total_bonded: 9 },
+        deployers: { wallet_address: w, total_tokens_deployed: deployed(w), total_bonded: 9 },
       });
       if (path.startsWith('/deployer-hunter/recent-bonds')) {
         return new Response(JSON.stringify({ tokens: (walletsByLabel['recent-bonds'] ?? []).map(block) }));
@@ -592,7 +660,7 @@ describe('the feed end to end', () => {
           JSON.stringify({
             deployers: (walletsByLabel['leaderboard'] ?? []).map((w) => ({
               wallet_address: w,
-              total_tokens_deployed: 20,
+              total_tokens_deployed: deployed(w),
               total_bonded: 9,
             })),
           }),
@@ -689,6 +757,31 @@ describe('the feed end to end', () => {
     const text = lines.join('\n');
     expect(text).toMatch(/NEW wallets this run\s+0\s+<< none\. This run discovered nothing\./);
     expect(text).toMatch(/already known \(duplicates\) 3 of 3 surfaced/);
+  });
+
+  it("the cadence filter's reported cost counts only wallets the gate could still have spent on", async () => {
+    // The vendor re-serves the same pages every run, so an already-graded wallet reappearing below
+    // the floor would otherwise be counted as a request the filter denied — every run, forever.
+    const profiles = { Wa: profile(40, 20, 200) };
+    const first = vendor({ 'recent-bonds': ['Wa'] }, profiles);
+    await main(opts({ gate: 1 }), env, () => {}, () => {}, { fetchImpl: first.fetchImpl, sleepImpl });
+    expect(loadLedger(ledgerPath).wallets['Wa']!.state).toBe('queued');
+
+    // Quiet week: Wa's trailing count drops below the floor. Wb is new and also below it.
+    const second = vendor({ 'recent-bonds': ['Wa', 'Wb'] }, profiles, { Wa: 1, Wb: 1 });
+    const outPath = join(dir, 'feed-run.json');
+    await main(opts({ gate: 1, out: outPath, json: true }), env, () => {}, () => {}, {
+      fetchImpl: second.fetchImpl,
+      sleepImpl,
+    });
+
+    const record = JSON.parse(readFileSync(outPath, 'utf8')) as {
+      cadenceFilter: { skipped: number; skippedAndNew: number };
+    };
+    expect(record.cadenceFilter.skipped).toBe(1);
+    expect(record.cadenceFilter.skippedAndNew).toBe(1);
+    // And the grade is untouched: the pre-filter never downgrades a wallet we already paid for.
+    expect(loadLedger(ledgerPath).wallets['Wa']!.state).toBe('queued');
   });
 
   it('exits 9 once the dry streak is reached — a scheduler must not read it as a quiet day', async () => {

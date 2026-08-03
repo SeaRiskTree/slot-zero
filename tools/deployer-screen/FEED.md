@@ -84,7 +84,9 @@ file.** Every wallet comes from a MadeOnSol enumeration endpoint (`seed.mjs`), s
 - **The pre-filter is a cadence filter.** It reads the vendor's trailing ~7.5-day deploy count
   (`PREFILTER_MIN_DEPLOYED`), so a slow-but-steady deployer is skipped before a request is spent on
   it. Every run reports how many were skipped and the min/median/max of their trailing counts, so the
-  cost is a number rather than a caveat — it is **visible, not eliminated**.
+  cost is a number rather than a caveat — it is **visible, not eliminated**. That count is the
+  filter's *cost*, so it counts only wallets still awaiting the gate: the vendor re-serves the same
+  pages every run, and an already-graded wallet below the floor was never going to be gated anyway.
 - **Tier is another trailing window.** `README.md` records that tier membership is not stable — the
   same wallet came back `elite` and, four days later, `good`, with its own numbers essentially
   unchanged. `--tier` narrows the pool; it does not partition the population.
@@ -168,10 +170,18 @@ So every run reports, in this order — alarm first, then the new count, then th
 1. **A seed returned rows we read no wallet from.** Our bug — the 2026-07-29 defect recurring. Loud on
    the *first* occurrence, never after a streak.
 2. **Every seed inert.** No input at all: check the tier filter, the credential's scope, the vendor.
-3. **Every gated wallet unreadable.** The profile shape moved.
-4. **A dry streak** — `feed.dryStreakAlarm` (3) consecutive *live* runs with no new wallet. One dry
-   run is ordinary; the vendor's pages overlap heavily between runs. Three is saturation, and the
-   remedy is a wider source, not a longer wait.
+3. **Every gated wallet unreadable.** The profile shape moved. Requires **at least 2 gated wallets**
+   (`ALL_UNMEASURED_MIN_GATED`): this condition *asserts* a move at the vendor, and its own message
+   says one empty deployer is not evidence of that, so it must not be assertable from a sample of
+   one. **The accepted cost:** at `--gate 2` a genuine profile-shape move takes one extra run to
+   surface, because the first run's single unreadable profile is indistinguishable from an empty
+   deployer. That latency is a **deliberate bound**, not an oversight — it buys the alarm the right
+   to be believed. Do not lower the floor back to 1 to make it fire sooner.
+4. **A dry streak** — `feed.dryStreakAlarm` (3) consecutive *live, completed* runs with no new
+   wallet. One dry run is ordinary; the vendor's pages overlap heavily between runs. Three is
+   saturation, and the remedy is a wider source, not a longer wait. An **aborted** run is skipped
+   like a preview is: it surfaced nothing because it stopped, so a credential or transport fault
+   cannot accumulate into a diagnosis of saturation.
 
 Exit 9 means *it ran, it spent quota, and its yield is not usable*. A scheduler must not treat it as a
 quiet day.

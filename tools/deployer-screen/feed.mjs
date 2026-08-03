@@ -62,7 +62,6 @@ import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import {
   appendRun,
   backlogDepth,
-  discoveryLagDays,
   dryStreak,
   feedAlarm,
   importRunRecords,
@@ -589,8 +588,15 @@ export async function main(opts, env, out, err, deps = {}) {
         markWorthARequest(ledger, seed.wallet);
       } else {
         markPrefiltered(ledger, seed.wallet, startedAtIso);
-        prefilteredThisRun.push({ wallet: seed.wallet, vendorDeployed: seed.vendorDeployed });
-        if (isNew) newPrefiltered += 1;
+        // Only a wallet the gate could still have spent a request on is a cost of the cadence
+        // filter. `markPrefiltered` leaves an already-graded wallet in its graded state, so this
+        // check excludes exactly those — in steady state the vendor re-serves the same pages every
+        // run, and counting them would report the filter as denying dozens of requests that were
+        // never going to be spent.
+        if (ledger.wallets[seed.wallet]?.state === 'prefiltered') {
+          prefilteredThisRun.push({ wallet: seed.wallet, vendorDeployed: seed.vendorDeployed });
+          if (isNew) newPrefiltered += 1;
+        }
       }
     }
 
@@ -609,7 +615,7 @@ export async function main(opts, env, out, err, deps = {}) {
     for (const wallet of batch) {
       const profile = await client.getJson(`/deployer-hunter/${encodeURIComponent(wallet)}`);
       const t = triage(profile, gateThresholds);
-      gradeWallet(
+      const graded = gradeWallet(
         ledger,
         wallet,
         {
@@ -623,7 +629,6 @@ export async function main(opts, env, out, err, deps = {}) {
           shortfalls: t.shortfalls,
         },
         startedAtIso,
-        startedAt,
       );
       gradedThisRun.push({
         wallet,
@@ -633,7 +638,9 @@ export async function main(opts, env, out, err, deps = {}) {
         tokens: t.completion.tokens,
         completionRate: t.completion.rate,
         spanDays: t.completion.spanDays,
-        lagDaysAtLeast: discoveryLagDays(startedAt, t.completion.firstDeployIso),
+        // The stored figure, which is measured from FIRST SIGHT of the wallet. Recomputing it
+        // against this run's clock would inflate every backlog wallet's lag by its queue latency.
+        lagDaysAtLeast: graded.discoveryLagDaysAtLeast,
         fromBacklog: backlogBefore.has(wallet),
       });
       if (!opts.json) {
@@ -671,11 +678,17 @@ export async function main(opts, env, out, err, deps = {}) {
   const alarm = emit(null);
   return alarm.alarmed ? EXIT.dry : EXIT.ok;
 
-  /** @returns {import('./ledger.mjs').FeedRunRow} */
-  function thisRunRow() {
+  /**
+   * @param {boolean} ranToCompletion Recorded on the row so the dry streak cannot absorb an abort:
+   *   a run that died on a 429 surfaced nothing because it stopped, and reading that as saturation
+   *   points the operator at discovery breadth when the fault was the credential or the transport.
+   * @returns {import('./ledger.mjs').FeedRunRow}
+   */
+  function thisRunRow(ranToCompletion) {
     return {
       startedAtIso,
       live: true,
+      completed: ranToCompletion,
       distinctWalletsSeeded,
       alreadyKnown: distinctWalletsSeeded - newlySurfaced,
       newlySurfaced,
@@ -697,17 +710,17 @@ export async function main(opts, env, out, err, deps = {}) {
    * the memory it paid for. Re-learning those wallets would cost the shared allowance twice.
    *
    * @param {number | null} abortCode The exit code an aborted run is returning, or `null` when the
-   *   run completed. Only used for the wording; the decision to abort was made by the caller.
+   *   run completed. Marks the run row incomplete and drives the wording; the decision to abort was
+   *   made by the caller.
    * @returns {import('./ledger.mjs').FeedAlarm}
    */
   function emit(abortCode) {
-    const row = thisRunRow();
+    const row = thisRunRow(abortCode === null);
     appendRun(ledger, row, feedT.runHistoryKept);
     const summary = summariseLedger(ledger);
     const queue = queuedForScreen(ledger);
     const streak = dryStreak(ledger);
     const finalAlarm = feedAlarm({
-      newlySurfaced,
       seeds: seedYields,
       dryStreak: streak,
       dryStreakAlarm: feedT.dryStreakAlarm,
@@ -774,13 +787,18 @@ export async function main(opts, env, out, err, deps = {}) {
       // The lag, and what it is a bound on. See FEED_LIMITATIONS — this measures how late we were
       // to the wallets we found and says nothing about the ones the vendor never profiled.
       discoveryLag: {
-        basis: 'age of the oldest deploy in the vendor profile, at grading time — a LOWER BOUND',
+        basis:
+          'age of the oldest deploy in the vendor profile, measured at FIRST SIGHT of the wallet ' +
+          'rather than at grading time — a LOWER BOUND',
         observations: lags.length,
         medianDaysAtLeast: lags.length === 0 ? null : Number(medianOf(lags).toFixed(2)),
         maxDaysAtLeast: lags.length === 0 ? null : Number(Math.max(...lags).toFixed(2)),
       },
       // What the cadence filter cost this run, in wallets and in their trailing counts. The
       // pre-filter is the one place a vendor aggregate is read, and this is what it bought.
+      // `skipped` counts only wallets the gate could still have spent a request on: an already
+      // graded wallet re-served below the floor was never a candidate, so counting it would make
+      // the filter's cost read larger every run without the filter denying anything more.
       cadenceFilter: {
         skipped: prefilteredThisRun.length,
         skippedAndNew: newPrefiltered,
@@ -905,7 +923,8 @@ export function renderFeedRun(record) {
   const cad = record['cadenceFilter'];
   lines.push('');
   lines.push('  CADENCE FILTER — wallets skipped before a request was spent, on the vendor\'s trailing');
-  lines.push('  ~7.5-day deploy count. A slow-but-steady deployer lands here.');
+  lines.push('  ~7.5-day deploy count. A slow-but-steady deployer lands here. Counts only wallets still');
+  lines.push('  awaiting the gate: one already graded is re-served every run and was never a candidate.');
   lines.push(
     `    ${cad.skipped} skipped (${cad.skippedAndNew} of them new)` +
       (cad.vendorTrailingDeploys.observations === 0

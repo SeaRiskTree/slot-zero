@@ -4743,6 +4743,56 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
       }) as unknown as typeof fetch,
     });
 
+  /** The run envelope the Stage 1 legend is read out of; only `candidates` varies below. */
+  const LEGEND_RUN = {
+    keyedRequests: 1,
+    keylessRequests: 10,
+    rpcRequests: 4,
+    rpcLoadShedEvents: 0,
+    historySource: 'creation-derived' as const,
+    elapsedMs: 1000,
+    startedAtIso: '2026-08-02T00:00:00.000Z',
+    completed: true,
+    truncationReason: null,
+    prefiltered: 0,
+    coverage: {
+      seeds: [],
+      inertSeeds: [],
+      distinctWalletsSeeded: 1,
+      prefilteredOut: 0,
+      worthARequest: 1,
+      candidateCap: 195,
+      droppedByCandidateCap: 0,
+      gated: 1,
+      coverageTruncated: false,
+    },
+    thresholds: {},
+  };
+
+  /** A gate-passing candidate carrying a real Stage 2 score, so the legend block renders. */
+  const passedCandidateWith = (score: EntryScore, coverage: unknown) => {
+    const completion = measureCompletion(
+      Array.from({ length: 40 }, (_, i) => ({ deployedAtMs: T0 + i * DAY, completed: i < 20 })),
+    );
+    return {
+      wallet: 'dev',
+      seededBy: ['leaderboard:total_bonded'],
+      completion,
+      completionCapped: false,
+      gate: { passed: true, reasons: [] as string[] },
+      verdict: 'gate-passed' as const,
+      rationale: '',
+      consistency: null,
+      historySource: 'creation-derived' as const,
+      vendorCompletion: completion,
+      vendorVerdict: 'gate-passed' as const,
+      vendorPageCapped: false,
+      creation: null,
+      entry: score,
+      entryCoverage: coverage,
+    };
+  };
+
   it('THE FREE LEGS RUN FIRST: a closed window costs ZERO Solana RPC requests', async () => {
     // The whole cost model of decision 136b. Room and the gross field are arithmetic over fills
     // already in hand, so a deployer that fails either is refused before the expensive leg starts —
@@ -4850,6 +4900,41 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     expect(row.entryCostSol.median).toBeCloseTo(0.02, 6);
     expect(row.fieldHitRateNetOfMeasuredFees.n).toBe(score.fieldClosedRoundTripsPriced);
     expect(renderEntry(score, coverage).join('\n')).toMatch(/LANDING TIP PAID IN A SEPARATE TRANSACTION/);
+
+    // THE STAGE 1 LEGEND SPEAKS THE VOCABULARY THE RUN EMITTED, AND STATES THE GROSS-ONLY LIMIT
+    // ONLY WHERE IT IS TRUE. It printed `ENTRY-ROOM-PRESENT` — a verdict this tool can no longer
+    // emit — beside candidates scored `entry-open-after-costs`, and asserted unconditionally that
+    // every realised figure above was gross of fees, next to a NET reading that had in fact run.
+    // Nothing covered the string, so nothing caught it.
+    const legend = renderStage1({
+      ...LEGEND_RUN,
+      candidates: [passedCandidateWith(score, coverage)],
+    } as never);
+    for (const removed of ['entry-room-present', 'ENTRY-ROOM-PRESENT']) {
+      expect(legend).not.toContain(removed);
+    }
+    // Every verdict it does name is one the vocabulary still holds.
+    for (const named of legend.match(/\bENTRY-[A-Z-]+\b/g) ?? []) {
+      expect(ENTRY_VERDICTS).toContain(named.toLowerCase());
+    }
+    expect(legend).toMatch(/ENTRY-OPEN-AFTER-COSTS is the strongest/);
+    expect(legend).toMatch(/ENTRY-COST-PROHIBITIVE and ENTRY-COST-UNMEASURED are both REFUSALS/);
+    expect(legend).toMatch(/absence of a finding rather than a finding of absence/);
+    expect(legend).toMatch(/NO VERDICT HERE MEANS "BEATABLE"/);
+    // The blanket claim is GONE on a rendering that carries a priced reading, and what replaces it
+    // says the net figures are themselves an upper bound.
+    expect(legend).not.toMatch(/every\s+realised figure above is gross/);
+    expect(legend).toMatch(/\*NET\* figures above are the on-chain correction/);
+    expect(legend).toMatch(/UPPER bound themselves/);
+
+    // And it IS still stated, unchanged in force, where the cost leg never ran.
+    const unpricedScore = { ...score, entryCostPriced: { ...score.entryCostPriced, hits: 0 } };
+    const unpriced = renderStage1({
+      ...LEGEND_RUN,
+      candidates: [passedCandidateWith(unpricedScore as never, coverage)],
+    } as never);
+    expect(unpriced).toMatch(/every realised figure above is gross\s+of fees and therefore an upper bound/);
+    expect(unpriced).not.toContain('ENTRY-ROOM-PRESENT');
   });
 
   it('a dead RPC leaves the candidate UNMEASURED and never aborts the run', async () => {
@@ -4928,6 +5013,82 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     expect(coverage.cost.launchesDiscarded).toBe(2);
     expect(coverage.cost.transactionsDiscarded).toBe(4);
     expect(coverage.cost.rpcRequests).toBeGreaterThan(0);
+
+    // AND THE SAME ROLLBACK WITH AN ATTACHED-BUT-PARTIAL LAUNCH IN FRONT OF IT. A launch that came
+    // back SHORT for a non-budget reason — one signature the endpoint never resolved — is still
+    // attached, still contributed its transactions, and is still dropped when the score is not
+    // recomputed; but it is not a `launchesPriced` launch. Reconstructing the rollback total from
+    // `launchesPriced` therefore lost it from launch-level accounting entirely, contradicting the
+    // JSDoc on `launchesDiscarded`. Every launch whose walk was paid for lands in exactly one of the
+    // two, so a reader can reconcile this block arithmetically without reading the prose.
+    const client2 = new KeylessClient({
+      maxRequests: 400,
+      minIntervalMs: 0,
+      fetchImpl: walkableWindow(10 * (1 / 0.6 - 1), 1),
+      sleepImpl: async () => {},
+    });
+    let served2 = 0;
+    let unresolvable: string | null = null;
+    const rpc2 = new SolanaRpcClient({
+      maxRequests: 200,
+      minIntervalMs: 0,
+      fetchImpl: (async (_url: string, init: { body: string }) => {
+        const req = JSON.parse(init.body) as { id: number; method: string; params: unknown[] };
+        if (req.method === 'getBlock') {
+          return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, result: null }) };
+        }
+        const sig = String((req.params as string[])[0]);
+        // The first transaction of the first launch never resolves, however often it is asked.
+        if (unresolvable === null) unresolvable = sig;
+        if (sig === unresolvable) {
+          return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, result: null }) };
+        }
+        served2 += 1;
+        // The other three of that launch price; the endpoint then dies on the second launch.
+        if (served2 > 3) return { ok: false, status: 503, json: async () => ({}) };
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            jsonrpc: '2.0',
+            id: req.id,
+            result: {
+              transaction: {
+                signatures: [sig],
+                message: { accountKeys: [{ pubkey: sig.endsWith('A') ? 'A' : 'B' }, { pubkey: 'C' }] },
+              },
+              meta: {
+                err: null,
+                fee: 5_000,
+                preBalances: [100 * LAMPORTS_PER_SOL, 0],
+                postBalances: [(100 - ((sig.startsWith('buy') ? 5 : -6) + 0.02)) * LAMPORTS_PER_SOL, 0],
+              },
+            },
+          }),
+        };
+      }) as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+
+    const partial = await scoreCandidateEntry(client2, {
+      wallet: 'dev',
+      profile: profile(8),
+      nowMs: NOW,
+      thresholds: T as never,
+      rpc: rpc2,
+    });
+
+    expect(partial.coverage.cost.ran).toBe(true);
+    expect(partial.coverage.cost.notes.join(' ')).toMatch(/ABANDONED for this candidate/);
+    expect(partial.coverage.cost.transactionsUnresolved).toBeGreaterThan(0);
+    expect(partial.score.verdict).toBe('entry-cost-unmeasured');
+    // The partial launch was NEVER a `launchesPriced` launch, so the old reconstruction booked one
+    // discarded launch here and the short launch vanished. It is two: the short one and the one the
+    // transport failure killed.
+    expect(partial.coverage.cost.launchesPriced).toBe(0);
+    expect(partial.coverage.cost.transactionsPriced).toBe(0);
+    expect(partial.coverage.cost.launchesDiscarded).toBe(2);
+    expect(partial.coverage.cost.transactionsDiscarded).toBe(3);
   });
 
   it('a ceiling that bites MID-WALK discards that launch whole and does not count it', async () => {

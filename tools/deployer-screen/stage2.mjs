@@ -427,6 +427,11 @@ export async function scoreCandidateEntry(client, input) {
     // thrown away over one wallet's bad luck on a public endpoint that sheds a quarter of what it
     // is asked for. The same degradation the creation walk and the consistency pass already apply.
     let transportFailed = false;
+    // Every launch whose walk was PAID FOR and whose pricing was attached, counted AS IT HAPPENS.
+    // `launchesPriced` is the wrong basis to reconstruct this from on rollback: it counts only
+    // launches where every target came back, so a launch that came back short for a non-budget
+    // reason would land in neither counter and vanish from launch-level accounting entirely.
+    let launchesAttached = 0;
 
     for (const { entry, fills } of measured) {
       const targets = entryCostTargets(fills, entry);
@@ -462,7 +467,7 @@ export async function scoreCandidateEntry(client, input) {
         // below. The counters follow the attachment rather than the spend: everything earlier
         // launches priced moves across to DISCARDED, and this launch is one more of them.
         cost.transactionsDiscarded += cost.transactionsPriced;
-        cost.launchesDiscarded += cost.launchesPriced + 1;
+        cost.launchesDiscarded += launchesAttached + 1;
         cost.transactionsPriced = 0;
         cost.launchesPriced = 0;
         cost.notes.push(
@@ -505,6 +510,7 @@ export async function scoreCandidateEntry(client, input) {
       // whatever entrants it could complete — `priceLaunchEntry` is all-or-nothing per wallet — but
       // it is not a priced launch, and counting it as one would overstate coverage.
       if (targets.length > 0 && walk.priced.size === targets.length) cost.launchesPriced += 1;
+      if (walk.priced.size > 0) launchesAttached += 1;
       cost.transactionsPriced += walk.priced.size;
       pricedLaunches.push(priceLaunchEntry(entry, targets, walk.priced));
     }

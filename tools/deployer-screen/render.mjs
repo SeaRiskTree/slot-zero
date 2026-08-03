@@ -774,9 +774,29 @@ export function renderStage1(run) {
   L.push('         which supplies everything before the creation window.');
     L.push('  seeds= how many of the 3 enumeration queries surfaced this wallet');
     L.push('');
-    L.push('  ENTRY-ROOM-PRESENT IS NOT "BEATABLE". It means the opening window is not already');
-    L.push('  closed, so the EXIT question is worth asking. Exit is unmeasured here, and every');
-    L.push('  realised figure above is gross of fees and therefore an upper bound.');
+    // The legend has to speak the vocabulary the run actually emitted, and it has to state the
+    // gross-only limit exactly where it is true. Naming a verdict this tool can no longer emit, or
+    // calling a NET figure gross, misreads the run for whoever reads it — and the candidates are
+    // already in hand here, so the condition is a fact about THIS run rather than a hedge.
+    const anyPriced = passed.some((c) => c.entry !== null && c.entry.entryCostPriced.hits > 0);
+    L.push('  NO VERDICT HERE MEANS "BEATABLE". ENTRY-OPEN-AFTER-COSTS is the strongest thing this');
+    L.push('  stage says: room was present, the seat was priced from the chain, and the field still');
+    L.push('  cleared after paying for it — so the EXIT question is worth asking. Exit is unmeasured.');
+    L.push('  ENTRY-COST-PROHIBITIVE and ENTRY-COST-UNMEASURED are both REFUSALS, and the second is');
+    L.push('  the absence of a finding rather than a finding of absence: the seat went unpriced, which');
+    L.push('  is never evidence that it was cheap.');
+    if (anyPriced) {
+      L.push('  The *NET* figures above are the on-chain correction and they sit BESIDE the *GROSS*');
+      L.push('  ones rather than replacing them. They are an UPPER bound themselves: a landing tip');
+      L.push('  paid in a separate transaction of the same bundle is in neither figure.');
+      L.push('  Where a candidate\'s own block says NOT MEASURED, only the gross figures exist for it,');
+      L.push('  and those are an upper bound.');
+    } else {
+      L.push('  No candidate in this run carries a priced seat — the cost leg does not run under');
+      L.push('  --no-stage2 or a --stage0 run, and does not run for a candidate the free legs (room,');
+      L.push('  or the field GROSS of fees) already refused. So every realised figure above is gross');
+      L.push('  of fees and therefore an upper bound.');
+    }
   }
 
   // Its own section, never folded into either list. A candidate that appeared in neither would

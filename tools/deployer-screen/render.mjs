@@ -114,6 +114,32 @@ const HELIUS_MONTHLY_CREDITS = 10_000_000;
 const MEASURED_MEDIAN_CREDITS = 320;
 
 /**
+ * Measured wall-clock cost of ONE indexed page, in milliseconds.
+ *
+ * This is a MEASUREMENT, not a guess, and it exists because the naive estimate — one page per
+ * `rpcMinIntervalMs` — understates the walk. From the 2026-08-03 full-mode pacing ladder against
+ * the busiest measured wallet, 20 requests a rung, one request in flight:
+ *
+ * ```
+ *   enforced interval 1000ms → 1.04 req/s →  962 ms per request
+ *   enforced interval  500ms → 2.04 req/s →  490 ms per request
+ *   enforced interval  250ms → 3.32 req/s →  301 ms per request
+ *   enforced interval  100ms → 3.98 req/s →  251 ms per request
+ *   enforced interval    0ms → 3.89 req/s →  257 ms per request
+ * ```
+ *
+ * Below roughly 250ms of enforced interval the cycle is pinned by RESPONSE LATENCY (p50 ~220ms) at
+ * 250–260ms; above it the interval dominates with ~50ms of overhead on top. So at the pinned 200ms
+ * floor a page really costs ~270–285ms, and the estimate is taken as
+ * `Math.max(rpcMinIntervalMs, MEASURED_PAGE_CYCLE_MS)`: at the pinned floor that prints the
+ * latency-bound truth, and if anyone later raises the interval past the measured cycle the interval
+ * correctly dominates again and the estimate keeps rising. An estimate stale in the OPTIMISTIC
+ * direction is the one that gets a healthy run killed by an operator who thinks the tool has hung —
+ * the same doctrine `thresholds.json` → `budget.keyedMinIntervalMs` already states.
+ */
+const MEASURED_PAGE_CYCLE_MS = 280;
+
+/**
  * What the dry run says when no Solana RPC key is configured.
  *
  * It deliberately does NOT spell the environment variable: this module is not on
@@ -1064,7 +1090,11 @@ export function renderDryRun(plan) {
 
   if (plan.historySource === 'creation-derived' && plan.rpcEndpoint.provider === 'helius') {
     const h = plan.indexedWalk;
-    const pageSeconds = (h.maxPagesPerCandidate * h.rpcMinIntervalMs) / 1000;
+    // Not `rpcMinIntervalMs` alone: below ~250ms of enforced interval this walk is latency-bound,
+    // so the pacing floor is not what a page costs. See MEASURED_PAGE_CYCLE_MS. Both printed
+    // figures come from this one value so the two lines cannot drift apart.
+    const pageCycleMs = Math.max(h.rpcMinIntervalMs, MEASURED_PAGE_CYCLE_MS);
+    const pageSeconds = (h.maxPagesPerCandidate * pageCycleMs) / 1000;
     L.push('KEYED — Helius Solana RPC, the creation-derived launch history. THE INDEXED ROUTE:');
     L.push(`  POST ${plan.rpcEndpoint.label}/  getTransactionsForAddress (full) + getMultipleAccounts`);
     if (plan.rpcEndpoint.keyDescription !== null) {

@@ -50,7 +50,7 @@ node tools/deployer-screen/screen.mjs --dry-run
 # 22 wallets it seeded. Budget HOURS, not minutes — up to about 15 at the candidate cap: the
 # creation-derived history is walked from on-chain create transactions, and at the pinned bounds
 # that KEYLESS walk alone is ~13.5 hours worst case. With HELIUS_API_KEY set the same leg is the
-# indexed walk, ~33 minutes, bounded in credits instead of hours (see Bounds).
+# indexed walk, ~46 minutes, bounded in credits instead of hours (see Bounds).
 # --dry-run prints the arithmetic for your own flags, on whichever route your key selects.
 node tools/deployer-screen/screen.mjs --tier elite \
   --consistency --out tools/deployer-screen/runs/$(date +%F).json
@@ -913,15 +913,16 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 and the creation walk is essentially all of it.** The arithmetic is `renderDryRun`'s, so `--dry-run`
 prints these same figures for whatever flags you actually pass:
 
-**With a Helius key that leg is ~33 minutes instead of ~13.5 hours**, and the run's worst case falls
-to roughly 2.5 hours end to end — at which point Stage 2 and its cost leg, not the creation walk,
-are the largest terms. `--dry-run` prints whichever route your environment actually selects.
+**With a Helius key that leg is ~46 minutes instead of ~13.5 hours**, and the run's worst case falls
+to roughly 3.2 hours end to end (21 + 46 + 26 + 50 + 50 minutes) — at which point Stage 2 and its
+cost leg, not the creation walk, are the largest terms. `--dry-run` prints whichever route your
+environment actually selects.
 
 | leg | worst case | at its pinned pacing |
 |---|---|---|
 | keyed MadeOnSol | 3 + 195 = 198 requests | 6.5s → **~21 min** |
 | **Solana RPC, the creation walk — keyless** | 195 × 100 = **19,500** requests | 2.5s → **~13.5 hours** |
-| **Solana RPC, the creation walk — indexed (Helius)** | 195 × 50 pages = 9,750 requests, 1,014,000 credits | 200ms → **~33 min** |
+| **Solana RPC, the creation walk — indexed (Helius)** | 195 × 50 pages = 9,750 requests, 1,014,000 credits | 200ms floor, ~280ms measured cycle → **~46 min** |
 | keyless `frontend-api-v3`, the gate's ownership listing | 195 × 4 = 780 requests | 2.0s → ~26 min |
 | keyless `frontend-api-v3`, `--consistency` | 195 × 3 = 585 requests | 2.0s → ~19.5 min |
 | keyless `swap-api`, Stage 2 | 3 × 8 × 18 = 432 requests | 7.0s → ~50 min |

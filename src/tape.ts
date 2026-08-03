@@ -391,13 +391,25 @@ export class Tape {
    * `onchain_fee_sample.csv` is an earlier 6-launch pass over the same launches and is
    * *not* merged in: its mints are a subset, so merging double-counts. Read it separately
    * with {@link onchainFeeSample} if you want the first pass.
+   *
+   * **Coverage is not uniform by month and no type here can stop you summing across it.**
+   * Nothing is priced before 2026-05; by month it is 30 of 41 in May, 41 of 41 in June and
+   * 52 of 56 in July. **A May total from this file understates by roughly 27%**, which is the
+   * direction that manufactures a rise into June. Compare per launch, not by monthly total —
+   * `IMPORT.md` → "Coverage caveats that must travel with the data", item 4.
    */
   onchainRows(): readonly OnchainRow[] {
     this._onchainRows ??= readCsv(this.path('onchain_create_slot_pnl.csv')).map(readOnchainRow);
     return this._onchainRows;
   }
 
-  /** The earlier 6-launch pass. Overlaps {@link onchainRows}; do not sum the two. */
+  /**
+   * The earlier 6-launch pass. Overlaps {@link onchainRows}; do not sum the two.
+   *
+   * Its six launches are all 2026-07, so it supports no monthly comparison at all; the month
+   * coverage caveat on {@link onchainRows} is the one to read before cutting priced P&L by
+   * month.
+   */
   onchainFeeSample(): readonly OnchainRow[] {
     this._onchainFeeSample ??= readCsv(this.path('onchain_fee_sample.csv')).map(readOnchainRow);
     return this._onchainFeeSample;
@@ -407,6 +419,9 @@ export class Tape {
    * Fee-inclusive create-slot round trips: `onchain_create_slot_pnl.csv` folded to one row
    * per (wallet, launch), keeping only pairs that are flat within {@link FLAT_TOLERANCE}.
    * This is what `report.md` §5.5 is computed over — 596 cohort and 630 non-cohort.
+   *
+   * Inherits {@link onchainRows}'s month coverage caveat: May is priced 30 of 41, so a May
+   * total from these round trips understates by roughly 27%.
    */
   onchainRoundTrips(): readonly OnchainRoundTrip[] {
     this._onchainRoundTrips ??= this.onchainPositions().filter(
@@ -415,7 +430,12 @@ export class Tape {
     return this._onchainRoundTrips;
   }
 
-  /** Every (wallet, launch) in the on-chain pass, flat or not. Mostly a diagnostic. */
+  /**
+   * Every (wallet, launch) in the on-chain pass, flat or not. Mostly a diagnostic.
+   *
+   * Inherits {@link onchainRows}'s month coverage caveat: May is priced 30 of 41, so a May
+   * total from these positions understates by roughly 27%.
+   */
   onchainPositions(): readonly OnchainRoundTrip[] {
     this._onchainPositions ??= foldOnchain(this.onchainRows());
     return this._onchainPositions;

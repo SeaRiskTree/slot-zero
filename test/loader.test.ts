@@ -166,6 +166,33 @@ describe('data hazards this dataset actually contains', () => {
     }
   });
 
+  it('the fee-inclusive pass is priced 30 of 41 in May — IMPORT.md coverage caveat 4', () => {
+    // Every row of onchain_create_slot_pnl.csv is individually valid, so no per-row type can
+    // refuse a monthly SUM over it. The caveat is prose (IMPORT.md → "Coverage caveats that
+    // must travel with the data", item 4) and the JSDoc on onchainRows/onchainRoundTrips
+    // repeats it; this pins the split those two texts quote, so neither can rot silently.
+    const priced = new Set(tape.onchainRows().map((r) => r.mint));
+    const byMonth = new Map<string, { total: number; priced: number }>();
+    for (const l of tape.launches()) {
+      const m = l.createdUtc.slice(0, 7);
+      const c = byMonth.get(m) ?? { total: 0, priced: 0 };
+      c.total += 1;
+      if (priced.has(l.mint)) c.priced += 1;
+      byMonth.set(m, c);
+    }
+    expect(byMonth.get('2026-05')).toEqual({ total: 41, priced: 30 });
+    expect(byMonth.get('2026-06')).toEqual({ total: 41, priced: 41 });
+    expect(byMonth.get('2026-07')).toEqual({ total: 56, priced: 52 });
+    expect(priced.size).toBe(123);
+    // Nothing at all is priced before 2026-05 — a whole-tape total is not a tape-wide figure.
+    for (const [m, c] of byMonth) if (m < '2026-05') expect(c.priced).toBe(0);
+    // July's four misses are exactly the four tapeless launches; May's eleven are not.
+    const missing = (m: string) =>
+      tape.launches().filter((l) => l.createdUtc.startsWith(m) && !priced.has(l.mint));
+    expect(missing('2026-07').every((l) => l.tape === 'none')).toBe(true);
+    expect(missing('2026-05').some((l) => l.tape === 'none')).toBe(false);
+  });
+
   it('percentiles use the linear convention the report used', () => {
     // Nearest-rank gives −0.2372 where the report publishes −0.238.
     const v = tape.onchainRoundTrips().filter((t) => t.isCohort).map((t) => t.netSol);

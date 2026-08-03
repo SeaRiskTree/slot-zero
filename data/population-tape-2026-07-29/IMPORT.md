@@ -210,8 +210,9 @@ directory; see the repo `README.md`, "What is open".
 
 ## Coverage caveats that must travel with the data
 
-Restating the three that silently corrupted an analysis during the research. The loader in
-`src/` enforces all three in its types; see the repo `README.md`.
+Restating the three that silently corrupted an analysis during the research, plus a fourth that
+the loader cannot enforce. The loader in `src/` enforces the first three in its types; see the
+repo `README.md`.
 
 1. **Every tape-derived P&L column is gross of fees.** Only `onchain_*.csv` are
    fee-inclusive. One wallet reads +31.2 SOL on the tape and −12.2 SOL in reality after
@@ -221,6 +222,31 @@ Restating the three that silently corrupted an analysis during the research. The
 3. **`dev_exit_complete = 0`** marks the seven launches whose deployer figures are
    window-truncated; `dev_position_timeline_large_buys.csv` is the correct source for those
    (`report.md` §3.6).
+4. **`onchain_create_slot_pnl.csv` prices only 30 of the 41 May 2026 launches, so every May
+   comparison drawn from it understates by roughly 27%.** Fee-inclusive pricing exists for 123
+   of 239 launches and **none before 2026-05**; by month it is **30 of 41 in May, 41 of 41 in
+   June, 52 of 56 in July** (the four July misses are exactly the four tapeless launches). May
+   is the only month whose coverage gap is large, and it is not neutral: it makes May look
+   *smaller* than the months it is compared against, which is the direction that manufactures a
+   rise. The June regime-change report, section 9.1, is the worked case — cohort `2CHrnc2L…`
+   reads **+71.38 SOL** in May from this file, but its **tape-gross** per-launch rate
+   (+2.43 SOL per launch) is identical on the priced 30 and the 11 unpriced May launches, so
+   the like-for-like May total is **≈ +97.6 SOL**. The apparent
+   "cohort doubled its take" across May → July is that 27% hole plus a rising launch count
+   (30 → 41 → 52 priced tokens); per launch the cohort's take is **flat** (+2.38, +2.22,
+   +2.76 SOL) while its return per SOL of capital fell about **five-fold** (1.67 → 0.278).
+   **Compare per launch, never by monthly total, and never across the May boundary without
+   restating May on its priced 30.**
+
+   **This one is prose, not a type, and that is a limit rather than an omission.** The other
+   three are properties of a *row* — a unit brand, an absent field, a truncation flag — so the
+   loader can withhold the value and make the mistake a compile error. Every row here is
+   present and correct; the defect only appears in the *denominator* of a month-level
+   aggregate the caller builds itself. `src/` exposes no month-level aggregation to gate, and
+   no per-row type can refuse a sum a caller writes over rows that are each individually
+   valid. `Tape.onchainRows()` and the readers folded from it — `onchainPositions()` and
+   `onchainRoundTrips()` — carry the warning in their JSDoc, which is as close to the call
+   site as the loader can put it.
 
 Four launches (`Marciana`, `Leo`, `Fridge`, `GLM`) have `tape = none` and no trade-derived
 columns at all. 235 of 239 launches carry a tape.

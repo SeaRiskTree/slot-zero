@@ -559,9 +559,9 @@ dev currently?"*, and the shape of the answer is the point:
 - **The run record is a VERSIONED CONTRACT: bump, never retro-edit.** Committed records are the
   grading lane's input; readers version-detect, and `test/deployer-screen.test.ts` asserts the exact
   key set PER version — for the candidate row, the `entry` block, (from schema 6) `entry.coverage`,
-  the run-level `spend` and (from schema 9) the run-level `dune` block and its `dune.coverage`
-  sub-block — against the committed
-  records themselves, as well as against `buildRecord`'s own source literal. Adding a field means a
+  the run-level `spend` and (from schema 9) the run-level `dune` block, its `dune.coverage`
+  sub-block and every row of `dune.coverage.tables` — against the committed records themselves, as
+  well as against `buildRecord`'s own source literal. Adding a field means a
   bump plus its assertions in **both** legs. **Every per-schema block pin follows ONE rule: the
   VERSION decides whether to assert, never the block's presence** — a `if (block !== undefined)`
   guard catches a key changing and misses the whole block being stripped or renamed, so a record

@@ -228,9 +228,10 @@ repo `README.md`.
    June, 52 of 56 in July** (the four July misses are exactly the four tapeless launches). May
    is the only month whose coverage gap is large, and it is not neutral: it makes May look
    *smaller* than the months it is compared against, which is the direction that manufactures a
-   rise. `slot-zero-june-regime-change/report.md` §9.1 is the worked case — cohort `2CHrnc2L…`
-   reads **+71.38 SOL** in May from this file, but its per-launch rate is identical on the 11
-   unpriced May launches, so the like-for-like May total is **≈ +97.6 SOL**. The apparent
+   rise. The June regime-change report, section 9.1, is the worked case — cohort `2CHrnc2L…`
+   reads **+71.38 SOL** in May from this file, but its **tape-gross** per-launch rate
+   (+2.43 SOL per launch) is identical on the priced 30 and the 11 unpriced May launches, so
+   the like-for-like May total is **≈ +97.6 SOL**. The apparent
    "cohort doubled its take" across May → July is that 27% hole plus a rising launch count
    (30 → 41 → 52 priced tokens); per launch the cohort's take is **flat** (+2.38, +2.22,
    +2.76 SOL) while its return per SOL of capital fell about **five-fold** (1.67 → 0.278).

@@ -91,6 +91,38 @@ export const LIMITATIONS = [
   'that window plus whatever the ownership listing carried over from before it.',
 ];
 
+/**
+ * The Helius Developer plan's monthly credit allowance, from their pricing page (read 2026-08-03).
+ *
+ * Printed by the dry run so the worst case has a denominator on the same screen. It is the plan's
+ * number, not a measurement of ours, and it is **unshared** — the key belongs to this lane alone
+ * (captain, 2026-08-03), so the whole allowance is what this tool may draw on.
+ */
+const HELIUS_MONTHLY_CREDITS = 10_000_000;
+
+/**
+ * Measured per-candidate credit cost of a COMPLETE creation history, at the median.
+ *
+ * From the only population where every wallet's whole index was enumerated: the twelve of
+ * `runs/2026-07-29-elite.json`, walked to exhaustion 2026-08-03. Their succeeded-transaction counts
+ * were 168 / 211 / 1,007 / 1,026 / 2,136 / 2,989 / 3,344 / 4,749 / 6,378 / 7,791 / 46,815 / 49,367,
+ * which at 10 credits per 100 returned is 20 / 30 / 110 / 110 / 220 / 300 / 340 / 480 / 640 / 780 /
+ * 4,690 / 4,940 — median 320. It is quoted as the EXPECTED cost beside the ceiling because the two
+ * differ by more than an order of magnitude and printing only one of them misleads in whichever
+ * direction it was chosen. `thresholds.json` → `creation_walk_helius` owns the full figures.
+ */
+const MEASURED_MEDIAN_CREDITS = 320;
+
+/**
+ * What the dry run says when no Solana RPC key is configured.
+ *
+ * It deliberately does NOT spell the environment variable: this module is not on
+ * `credential.mjs`'s allow-list, and a second copy of a credential's name is how an allow-list
+ * stops meaning anything. The endpoint descriptor carries the variable when there IS one
+ * (`rpcEndpoint.keyEnvVar`), which is the only place the tool reads it from.
+ */
+const KEYLESS_HINT = 'No Solana RPC key is configured.';
+
 /** @param {number} n @param {number} [dp] */
 const pct = (n, dp = 1) => (Number.isFinite(n) ? `${(n * 100).toFixed(dp)}%` : 'n/a');
 /** @param {number} n @param {number} [dp] */
@@ -897,6 +929,14 @@ export function renderStage1(run) {
  * @param {{ maxRpcRequestsPerCandidate: number, rpcMinIntervalMs: number }} plan.creationWalk
  * @param {{ maxRpcRequestsPerCandidate: number, rpcMinIntervalMs: number, preferBlockRoute: boolean }} plan.costBounds
  * @param {{ length: number, hasDocumentedPrefix: boolean } | null} plan.keyDescription
+ * @param {import('./credential.mjs').SolanaRpcEndpoint} plan.rpcEndpoint Which Solana RPC endpoint
+ *   the creation walk would reach, and — on the keyed one — the key's length and shape. **Never its
+ *   value and never the composed URL**: `label` is the only form printed.
+ * @param {{ maxCreditsPerCandidate: number, maxCreditsPerRun: number, maxPagesPerCandidate: number,
+ *   pageLimit: number, rpcMinIntervalMs: number }} plan.indexedWalk
+ * @param {number} plan.worstCaseCredits The run's declared worst-case Helius spend, 0 when the walk
+ *   would not run on Helius. Computed by `screen.mjs` from the same values it refuses a plan on, so
+ *   this is the preview of an enforced bound rather than a second estimate of it.
  * @returns {string}
  */
 export function renderDryRun(plan) {
@@ -1022,10 +1062,85 @@ export function renderDryRun(plan) {
   }
   L.push('');
 
-  if (plan.historySource === 'creation-derived') {
+  if (plan.historySource === 'creation-derived' && plan.rpcEndpoint.provider === 'helius') {
+    const h = plan.indexedWalk;
+    const pageSeconds = (h.maxPagesPerCandidate * h.rpcMinIntervalMs) / 1000;
+    L.push('KEYED — Helius Solana RPC, the creation-derived launch history. THE INDEXED ROUTE:');
+    L.push(`  POST ${plan.rpcEndpoint.label}/  getTransactionsForAddress (full) + getMultipleAccounts`);
+    if (plan.rpcEndpoint.keyDescription !== null) {
+      L.push(
+        `  credential   present, ${plan.rpcEndpoint.keyDescription.length} characters, ` +
+          `UUID-shaped: ${plan.rpcEndpoint.keyDescription.hasDocumentedShape ? 'yes' : 'no'} ` +
+          `(value never read, printed or stored)`,
+      );
+    }
+    L.push('');
+    L.push('  ONE request per 1,000 transactions, not one per transaction: `status: succeeded` is');
+    L.push('  applied server-side and the bodies come back in the same call, so both halves of the');
+    L.push('  keyless walk collapse into one. The parsers are unchanged — `full` + `jsonParsed`');
+    L.push('  returns getTransaction\'s own envelope, checked field for field on a known create.');
+    L.push('');
+    L.push('  THIS LEG IS BOUNDED IN CREDITS, NOT REQUESTS. Helius bills 10 credits per 100');
+    L.push('  transactions RETURNED, so a busy wallet is expensive in a way a request count cannot');
+    L.push('  see. A page is only STARTED when a whole page\'s worst case still fits.');
+    L.push('');
+    L.push(`  pages per candidate           up to ${h.maxPagesPerCandidate} x ${h.pageLimit} transactions`);
+    L.push(`  credits per candidate         ceiling ${h.maxCreditsPerCandidate}  (a full page costs 100)`);
+    L.push(
+      `  WORST CASE                    ${plan.maxCandidates} x ${h.maxCreditsPerCandidate} = ` +
+        `${plan.worstCaseCredits} credits, against a per-run ceiling of ${h.maxCreditsPerRun}`,
+    );
+    L.push(
+      plan.worstCaseCredits <= h.maxCreditsPerRun
+        ? '  It fits, so the plan above is the whole exposure — a plan that did not fit would be'
+        : '  !! IT DOES NOT FIT — a real run is REFUSED before its first request rather than allowed',
+    );
+    L.push(
+      plan.worstCaseCredits <= h.maxCreditsPerRun
+        ? '  refused before the first request rather than dying part-way through.'
+        : '  to die half-way through, after the keyed allowance has already been spent.',
+    );
+    // Both figures, because the brief asks for both and they differ by an order of magnitude. The
+    // expected one is the measured per-candidate MEDIAN over the only population where complete
+    // histories exist; the worst case is the ceiling. Neither is a guess and the record says which.
+    L.push(
+      `  EXPECTED                      about ${MEASURED_MEDIAN_CREDITS * plan.maxCandidates} credits ` +
+        `at the measured per-candidate median of ${MEASURED_MEDIAN_CREDITS} (12 wallets, complete histories)`,
+    );
+    L.push(
+      `  Monthly allowance ${HELIUS_MONTHLY_CREDITS.toLocaleString('en-US')} on the Developer plan, UNSHARED — this lane's alone. ` +
+        `So the`,
+    );
+    L.push(
+      `  worst case above is ${((plan.worstCaseCredits / HELIUS_MONTHLY_CREDITS) * 100).toFixed(2)}% of a month and ` +
+        `the expected cost ${(((MEASURED_MEDIAN_CREDITS * plan.maxCandidates) / HELIUS_MONTHLY_CREDITS) * 100).toFixed(2)}%. NOTHING HERE TRACKS THE`,
+    );
+    L.push('  MONTH: this tool holds no state between runs, so the monthly arithmetic is yours.');
+    L.push(
+      `  pacing                        ${h.rpcMinIntervalMs}ms, one request in flight ` +
+        `(measured: zero shed at every rung, including 0ms)`,
+    );
+    L.push(
+      `  TIME                          up to about ${Math.round(pageSeconds)}s per candidate, so about ` +
+        `${Math.round((pageSeconds * plan.maxCandidates) / 60)} min at the candidate cap.`,
+    );
+    L.push('  That replaces a 13.5-hour leg: the keyless route is up to 100 requests per candidate');
+    L.push(
+      `  at 2.5s, i.e. 195 x 100 x 2.5s. Unset ${plan.rpcEndpoint.keyEnvVar ?? 'the key'} to fall back to it.`,
+    );
+    L.push('');
+    L.push('KEYLESS — pump.fun creator listing, the ownership reading, for every candidate:');
+    L.push('  GET https://frontend-api-v3.pump.fun/coins?creator={wallet}&offset=...');
+    L.push(`  up to 4 pages per candidate, so up to ${4 * plan.maxCandidates} for the gate alone.`);
+  } else if (plan.historySource === 'creation-derived') {
     const w = plan.creationWalk;
     L.push('KEYLESS — Solana RPC, the creation-derived launch history. THE EXPENSIVE PART:');
     L.push('  POST https://api.mainnet-beta.solana.com  getSignaturesForAddress + getTransaction');
+    if (plan.rpcEndpoint.rejected !== null) L.push(`  !! ${plan.rpcEndpoint.rejected}`);
+    // The variable is NAMED FROM THE ENDPOINT rather than spelled here: this module is not on the
+    // credential allow-list, and a second copy of the string is how an allow-list stops meaning
+    // anything.
+    else L.push(`  ${KEYLESS_HINT} Setting a Helius key takes the indexed route, which is ~17x faster.`);
     L.push(`  up to ${w.maxRpcRequestsPerCandidate} requests per candidate, ` +
       `so up to ${w.maxRpcRequestsPerCandidate * plan.maxCandidates} in total.`);
     L.push(`  At the measured ${w.rpcMinIntervalMs}ms pacing that is up to ` +

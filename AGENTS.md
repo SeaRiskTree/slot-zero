@@ -207,6 +207,56 @@ Learned at real cost; the citations are to
   `getTransaction` per request, ~2.5 s between requests, giving ~0.42 requests/second. The
   nominally faster 1.4 s is *slower* in wall-clock once backoff is counted.
 
+## Helius facts — the keyed RPC route, and what it does NOT change
+
+Measured 2026-08-03. Long form and every figure in `tools/deployer-screen/CREATION-DERIVED.md` §7;
+bounds in `thresholds.json` → `creation_walk_helius`.
+
+- **`HELIUS_API_KEY` is OPTIONAL and its absence is a supported configuration, not a fault.** Set,
+  the creation walk takes the indexed route; unset, it is the keyless signature scan and every
+  number is what it was before. `credential.mjs` → `resolveSolanaRpcEndpoint` is the only chooser.
+  **Store the bare key, never the composed URL** — Helius's address is the host plus the key as a
+  query parameter, composed in code in exactly one place, and a URL in an env var is a credential
+  that leaks the moment anything formats it into a message. The client therefore carries `url`
+  (fetched, never printed) and `label` (printed, never keyed); a test drives every failure path
+  against a sentinel URL and asserts the sentinel reaches no message.
+- **Plan: Developer, $49/mo, 10M credits, 50 req/s, and the key is UNSHARED** (captain, 2026-08-03)
+  — this research lane's alone, so budget against the whole allowance. `getTransactionsForAddress`
+  in `full` mode bills **10 credits per 100 transactions RETURNED**; `getSignaturesForAddress`,
+  `getTransaction`, `getBlock`, `getMultipleAccounts` are 1 credit.
+- **`getTransactionsForAddress` collapses the whole creation walk into one call per 1,000
+  transactions**: `transactionDetails: 'full'`, `encoding: 'jsonParsed'`, `filters: {status:
+  'succeeded'}`, `sortOrder: 'asc'`, `paginationToken`. **`full` + `jsonParsed` returns
+  `getTransaction`'s own envelope**, so `parseCreateTransaction` and `readCurveState` are shared
+  unchanged — verified field for field on the `maxxing` create. Subject deployer's whole history:
+  **7,791 transactions, 9 pages, 793 credits, 5.7 s**, against 7,166 requests / ~287 min keyless.
+  All twelve elite wallets complete: 125,981 transactions, 12,660 credits, against ~153 hours.
+- **CREDITS, NOT WALL CLOCK, ARE THE BINDING CONSTRAINT NOW, and that inversion is the thing to
+  remember.** A request ceiling cannot bound a provider that bills by rows returned. Per-candidate
+  cost for a COMPLETE history ranged 20 to 4,940 credits (median 320) over those twelve wallets, so
+  a 195-candidate run is ~62k credits expected and 975k worst case — a tenth of a month. The screen
+  **refuses a plan that does not fit before its first request**, and a page is only started when a
+  whole page's worst case still fits, so the ceiling is exact. Nothing tracks the month: the tool is
+  stateless between runs, so the monthly arithmetic is the operator's.
+- **Helius's failure shapes are NOT the public endpoint's, and the retry-vs-exhausted rule had to be
+  rebuilt against them.** A bad parameter is **HTTP 200 carrying a JSON-RPC `error` envelope**
+  (invalid address, `limit > 1000`, corrupt pagination token); an absent result is load-shedding; a
+  bad or missing key is **HTTP 401 with a plain-text body**. So: an error envelope stops the walk
+  and is never retried and never read as exhaustion, a null is still a retry, a 401 stops
+  immediately, and **exhaustion is proved only by `paginationToken: null` on a page that
+  succeeded** — an empty page carrying a token is not the end. `covered.fromMs === null` still means
+  covered NOTHING. The route pages **ascending**, so a truncated walk loses the RECENT end to the
+  ownership listing rather than the old end.
+- **Pacing is 200 ms and nothing sheds.** A ladder at 1000/500/250/100/**0** ms recorded zero shed
+  events at every rung, and 150 concurrent requests were all answered 200 at 161 req/s. The walk is
+  latency-bound, not limit-bound. **The batching finding does not carry over because it no longer
+  arises** — one request per 1,000 transactions leaves nothing to batch; `api.mainnet-beta`'s
+  batch=1 rule is unchanged and still governs the keyless fallback.
+- **This route changed no measured value and no verdict.** Reproduced against the committed ground
+  truth: **239 of 239 launches found** including `maxxing`, 238/239 bonded flags identical (the one
+  difference bonded after the tape was cut), 8 extra launches all created after the tape's newest.
+  Stage 0 is offline and untouched by any of it.
+
 ## MadeOnSol Deployer Hunter facts
 
 Measured 2026-07-29 against our own ground truth. Long form and reproduction in
@@ -254,8 +304,10 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
   there is no free substitute for this data, so hoarding it buys nothing). The screen's pinned bounds
   are the full ~200/day; the earlier quarter-allowance ceiling is withdrawn, so do not re-derive it.
   The "if it gets results" conditional binds — no sweeps, no idle retries. **MadeOnSol only**:
-  Helius/SolanaTracker/CoinGecko keys are production-shared and unchanged, as is keyless pump.fun
-  pacing. `tools/deployer-screen/README.md` → "Bounds" owns the numbers and the endpoint list.
+  SolanaTracker/CoinGecko keys are production-shared and unchanged, as is keyless pump.fun
+  pacing. **Helius is NO LONGER production-shared** — captain, 2026-08-03: that key is this research
+  lane's alone, so budget against the whole allowance (see the Helius section below).
+  `tools/deployer-screen/README.md` → "Bounds" owns the numbers and the endpoint list.
 - **ToS §5a(b)/(d) bind us**: internal research only, and no accumulation beyond what is necessary.
   The screen derives and discards — per-token records live in memory for one run; only derived counts
   are ever written, and only with `--out`. Test fixtures are synthetic, never captured payloads.

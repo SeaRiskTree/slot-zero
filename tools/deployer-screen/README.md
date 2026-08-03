@@ -135,7 +135,32 @@ So creation is only recoverable from the create transaction, and the only keyles
 reaches one is the wallet's own signature index. `pumpfun.mjs` → `readCreatedHistory` walks it;
 `creation.mjs` parses it.
 
-### What that costs, measured
+### Two routes to the same reading, and which one runs
+
+The gate asks one question — *which tokens did this wallet CREATE* — and there are two ways to
+answer it. **Which one runs is decided by whether a Helius key is present, and nothing else.**
+
+| | keyless (`api.mainnet-beta`) | indexed (Helius, `HELIUS_API_KEY` set) |
+|---|---|---|
+| method | `getSignaturesForAddress` + one `getTransaction` per succeeded signature | `getTransactionsForAddress`, `full` mode, `status: succeeded` |
+| cost unit | requests | **credits** (10 per 100 transactions returned) |
+| subject deployer, whole history | 7,166 requests, **~287 min** | 12 requests, 793 credits, **5.7 s** |
+| all twelve elite wallets | ~153 hours | 136 pages, **12,660 credits** |
+| pacing | 2,500 ms (endpoint sheds ~25%) | 200 ms (zero shed measured at every rung) |
+| bound that bites | `creation_walk` | `creation_walk_helius` |
+
+Both produce a `CreationWalkResult` with the same fields and the same coverage rules, and
+**`parseCreateTransaction` and `readCurveState` are shared unchanged** — `full` + `jsonParsed`
+returns `getTransaction`'s own envelope, verified field for field on a known create
+([CREATION-DERIVED.md § The indexed route](./CREATION-DERIVED.md)). The indexed route is faster and
+reaches *further*; it is not a different measurement, and the section below still describes what
+the walk means in either case.
+
+The keyless route is not deprecated and is not a degraded mode. With no key the tool runs exactly
+as it did before Helius existed — same endpoint, same pacing, same ceilings, same numbers — and it
+says so in the dry run and on the gating line.
+
+### What the keyless route costs, measured
 
 `getSignaturesForAddress` returns *referencing* transactions, and for a pump.fun deployer the index
 is dominated by strangers' **failed** trades — the buy and sell instructions take the creator
@@ -154,6 +179,11 @@ Because of that, the walk covers a **bounded window backwards from now**. Inside
 is found; outside it the ownership listing is carried over unchanged and the record says how many
 rows that is. `stopReason: "index-exhausted"` is the only value under which the window is the
 wallet's whole history.
+
+On the indexed route the window runs the other way — the walk pages **ascending**, so a truncated
+one covers from the wallet's genesis forwards and leaves the *recent* end to the ownership listing.
+That is the better end to lose: ownership is least wrong about tokens the wallet has not yet had
+time to hand on. Everything else below is identical, including what an empty window means.
 
 Four rules keep that window from claiming more than it covers.
 
@@ -174,6 +204,17 @@ Four rules keep that window from claiming more than it covers.
   the walk on `upstream-error` with `wholeHistory: false`. Reading one as an empty page would have
   recorded page 2 of 200 as the wallet's whole history under `index-exhausted`: a ceiling presented
   as a measurement. Only a genuinely **empty array** is an exhausted index.
+  **On the indexed route the same rule holds against different shapes, re-measured rather than
+  assumed** (2026-08-03). Helius distinguishes the two cases the public endpoint conflates: a bad
+  parameter comes back as **HTTP 200 carrying `{"error":{"code":-32602,…}}`** — an invalid address,
+  a limit above 1,000 and a corrupt pagination token all take that form — while load-shedding is an
+  absent result. So an error envelope stops the walk on `upstream-error` and is *not* retried
+  (asking again spends credits to be told the same thing), an absent result is retried by the
+  client, and **neither is ever read as an exhausted index**. Exhaustion is proved only by
+  `paginationToken: null` on a page that succeeded; an empty page that still carries a token is not
+  the end, and a query over an empty slot range returns `{"data":[],"paginationToken":null}`
+  correctly. A wrong or missing key is **HTTP 401 with a plain-text body**, which is a credential
+  failure rather than a measurement and stops immediately without retrying.
 - **"Inside the window the walk is authoritative" holds only when `unresolvedTransactions` is 0.**
   A `getTransaction` that never came back may have been a create, so under a non-zero count an
   in-window listing row the walk did not see is **carried over as a launch** rather than relabelled
@@ -225,23 +266,51 @@ listing: a fee-sharing migration moves the on-chain field to a config PDA while 
 lists the token under the wallet. `hiddenByOwnership` is the count that matters for the bias, and
 it is measured directly rather than inferred from `movedCreator`.
 
-## The credential
+## The credentials
 
-The tool reads `MADEONSOL_API_KEY` from the environment. **Nothing in this repository holds a key,
-and nothing here ever will.** The value is never printed, logged, or written to disk; presence is
-verified by length and prefix shape only.
+Two, and they are unrelated to each other. Both are read from the environment. **Nothing in this
+repository holds a key and nothing here ever will**; neither value is printed, logged or written to
+disk, presence is verified by length and shape only, and `credential.mjs` is the only module
+permitted to name either variable — a test enforces that, the allow-list is exhaustive, and a
+committed file carrying either key's shape fails the build.
 
 ```bash
 export MADEONSOL_API_KEY="$(your-secret-manager read madeonsol)"
+export HELIUS_API_KEY="$(your-secret-manager read helius)"
 # or, from a dotenv file kept OUTSIDE this repo:
 set -a; . /path/to/your/.env; set +a
 ```
+
+### `MADEONSOL_API_KEY` — required
 
 Free-tier keys expire every 30 days. An expired key exits `4` with a message that says so, rather
 than producing an empty ranking. Get one at <https://madeonsol.com/developer>.
 
 **Free tier only.** Paid tiers are refused standing policy, so nothing here may need Pro, Ultra or
 Business. A `403` is treated as a bug to report, not as a prompt to upgrade.
+
+### `HELIUS_API_KEY` — optional, and its absence is a supported configuration
+
+It selects the indexed creation walk. With it unset the tool runs the keyless route and is slower
+rather than different; there is no exit code for its absence, because absence is not a fault. A key
+that is present but **malformed** falls back to the keyless endpoint and says why — running
+silently would leave a slow run and a `provider: "public"` record with no reason in it.
+
+The address is composed in code as the host plus the key in a query parameter, in exactly one place.
+**Store the bare key, never the composed URL** — a URL in an environment variable is a credential
+that leaks the moment anything formats it into a message.
+
+**Plan: Developer — $49/month, 10,000,000 credits, 50 requests/second** (their pricing page, read
+2026-08-03). `getTransactionsForAddress` in `full` mode bills **10 credits per 100 transactions
+returned**, rounded up, 10 minimum; `getSignaturesForAddress`, `getTransaction`, `getBlock` and
+`getMultipleAccounts` are 1 credit each. The key is **unshared** — it belongs to this research lane
+alone (captain, 2026-08-03), so the whole allowance is this tool's and no other consumer can be
+starved by a heavy run. Credits, not wall clock, are therefore what bounds this leg; see
+[Bounds](#bounds) and `thresholds.json` → `creation_walk_helius`.
+
+**Nothing here tracks the month.** The tool holds no state between runs, so it can bound one run
+and no more. `--dry-run` prints that run's worst case and its share of a month; the monthly
+arithmetic is the operator's.
 
 ## Why we never inherit their aggregate
 
@@ -817,10 +886,12 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here, and it bounds a shared public resource rather than expressing our own caution, so the MadeOnSol relaxation does not touch it. The fill host is paced separately — see below. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does — but a 429, a 5xx or a timeout means the request was not served, so re-issuing it is nearer to one successful request than to two. Without it the caller re-runs the whole walk, which is worse for pump.fun too. A 4xx that is not a 429 is never retried: it is the endpoint's considered answer. |
-| Solana RPC ceiling | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. The creation-derived walk. Whichever bound bites is recorded per candidate. |
+| Solana RPC ceiling, keyless creation walk | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. Governs the creation-derived walk **when no Helius key is present**. Whichever bound bites is recorded per candidate. |
+| Helius credit ceiling, indexed creation walk | **5,000 credits per candidate**, 1,000,000 per run | `thresholds.json` → `creation_walk_helius`, and the unit is the point — this provider bills by transactions **returned**, so a request ceiling cannot bound it. 5,000 is set just above the largest complete history measured (49,367 succeeded transactions = 4,940 credits); the per-candidate median is 320. The run ceiling makes the default plan admissible at 195 × 5,000 = 975,000 and is 10% of the monthly allowance, so **ten worst-case full-cap runs fit in a month** and the expected cost of one is ~0.62%. A plan that does not fit is **refused before the first request**, exactly like the keyed and keyless plans. A page is only started when a whole page's worst case still fits, so the ceiling is exact and never overshot. |
+| Helius pacing | 200ms | Measured 2026-08-03 on this endpoint and plan: a ladder at 1000/500/250/100/0 ms (full mode) and 500/200/100/50/0 ms (signatures mode) shed **nothing at any rung, including 0 ms**, and 150 concurrent requests were all answered 200 at an observed 161 req/s. The walk is latency-bound rather than limit-bound — throughput was 3.98 req/s at 100 ms against 3.89 at 0 ms — so 200 ms is a courtesy floor with an order of magnitude of headroom under the documented 50 req/s, not a shed-avoidance figure. |
 | Solana RPC ceiling, cost leg | 400 requests **per candidate** | `thresholds.json` → `stage2_cost`. Measured on our own tape: the create-slot scope is p50 7 / p90 13 / max 20 transactions per launch and the whole-window scope over CLOSED create-slot outsiders is p50 18 / p90 35 / max 70, unioned so none is paid for twice — **and the union is what the walk pays for: p50 19, p90 36.6, max 74 distinct transactions per launch**, so ~152 requests per candidate at the median and ~293 at p90 over 8 launches (an earlier version of this row said ~200 / ~380, which is the same arithmetic with the union left out). Worst case 3 × 400 = 1,200 requests, about 50 minutes, which `--dry-run` prints. **It runs only on a candidate the free legs have not already refused**, so the realistic cost is far lower. |
 | Solana RPC pacing | 2.5s | Measured: the nominally faster 1.4s was *slower* in wall-clock once 429 backoff is counted. Rate limiting is global across `getSignaturesForAddress` and `getTransaction`. |
-| `getTransaction` batch size | **1** | Measured harmful above 1 — see [Which history the gate counts](#which-history-the-gate-counts). |
+| `getTransaction` batch size | **1** | Measured harmful above 1 on `api.mainnet-beta` — see [Which history the gate counts](#which-history-the-gate-counts). It does not arise on the indexed route, which issues one request per 1,000 transactions and so has nothing left to batch. |
 | RPC retries | 3 with exponential backoff, each attempt counted against the ceiling | Unlike the keyed client, a 429 here is load-shedding and not a verdict — but a 429 storm still cannot outlast the ceiling. |
 
 ### How long a run takes, and how to bound it
@@ -829,10 +900,15 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 and the creation walk is essentially all of it.** The arithmetic is `renderDryRun`'s, so `--dry-run`
 prints these same figures for whatever flags you actually pass:
 
+**With a Helius key that leg is ~33 minutes instead of ~13.5 hours**, and the run's worst case falls
+to roughly 2.5 hours end to end — at which point Stage 2 and its cost leg, not the creation walk,
+are the largest terms. `--dry-run` prints whichever route your environment actually selects.
+
 | leg | worst case | at its pinned pacing |
 |---|---|---|
 | keyed MadeOnSol | 3 + 195 = 198 requests | 6.5s → **~21 min** |
-| **Solana RPC, the creation walk** | 195 × 100 = **19,500** requests | 2.5s → **~13.5 hours** |
+| **Solana RPC, the creation walk — keyless** | 195 × 100 = **19,500** requests | 2.5s → **~13.5 hours** |
+| **Solana RPC, the creation walk — indexed (Helius)** | 195 × 50 pages = 9,750 requests, 975,000 credits | 200ms → **~33 min** |
 | keyless `frontend-api-v3`, the gate's ownership listing | 195 × 4 = 780 requests | 2.0s → ~26 min |
 | keyless `frontend-api-v3`, `--consistency` | 195 × 3 = 585 requests | 2.0s → ~19.5 min |
 | keyless `swap-api`, Stage 2 | 3 × 8 × 18 = 432 requests | 7.0s → ~50 min |

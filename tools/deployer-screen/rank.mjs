@@ -125,7 +125,10 @@ export function applyGate(input, t) {
  * @property {number} coveredDays
  * @property {boolean} wholeHistory True only when the walk reached the end of the wallet's
  *   signature index. Under anything else the window is a ceiling, not a record.
- * @property {'index-exhausted' | 'page-cap' | 'transaction-cap' | 'request-ceiling' | 'upstream-error'} stopReason
+ * @property {'index-exhausted' | 'page-cap' | 'transaction-cap' | 'request-ceiling' | 'upstream-error' | 'credit-ceiling'} stopReason
+ *   `credit-ceiling` reaches only the indexed (Helius) walk, whose provider bills by transactions
+ *   returned rather than by request. It is a ceiling like the others and means the same thing about
+ *   the window: it is a bound, not a history.
  * @property {string | null} stopDetail
  * @property {number} rpcRequests
  * @property {number} loadShedEvents

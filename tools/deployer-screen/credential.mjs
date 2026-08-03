@@ -1,12 +1,21 @@
 /**
- * Credential resolution for the MadeOnSol deployer screen.
+ * Credential resolution for the deployer screen. **This is the only module that may name a key's
+ * environment variable** — `screen.mjs` is on the allow-list too, for its help text, and
+ * `test/deployer-screen.test.ts` pins both lists.
+ *
+ * Two credentials live here and they are unrelated to each other:
+ *
+ * - `MADEONSOL_API_KEY` — the Free-tier vendor key the competence gate runs on. Metered at ~200
+ *   requests/day, shared with whatever else holds it, and expiring every 30 days.
+ * - `HELIUS_API_KEY` — the paid Solana RPC key the creation walk runs on when it is present.
+ *   **Optional**: with it absent the walk falls back to the keyless public endpoint and behaves
+ *   exactly as it did before this key existed. See {@link resolveSolanaRpcEndpoint}.
  *
  * The rules this module exists to enforce, all of them from the task brief and none of them
  * negotiable:
  *
- * - The key is read from `MADEONSOL_API_KEY` in the environment. Nothing else is consulted;
- *   in particular no file inside this repository is ever read for a credential, and no path
- *   outside it is hard-coded.
+ * - A key is read from the environment. Nothing else is consulted; in particular no file inside
+ *   this repository is ever read for a credential, and no path outside it is hard-coded.
  * - The value is **never** returned to a caller that renders, never logged, never written to
  *   disk, and never included in an error message. {@link describeKey} is the only thing this
  *   module will say about a key out loud, and it reports a length and a prefix shape.
@@ -19,7 +28,7 @@
  * only observable as a rejection at request time — see {@link classifyAuthFailure}.
  */
 
-/** Environment variable the key is read from. The only one. */
+/** Environment variable the MadeOnSol key is read from. The only one. */
 export const KEY_ENV_VAR = 'MADEONSOL_API_KEY';
 
 /**
@@ -131,6 +140,157 @@ export function resolveKey(env) {
   }
 
   return { ok: true, key: raw, description };
+}
+
+// --- the Solana RPC credential, and the endpoint it selects -----------------------------------
+
+/**
+ * Environment variable the Helius key is read from. The only one.
+ *
+ * **Optional, unlike {@link KEY_ENV_VAR}.** Its absence is a supported configuration, not a fault:
+ * the creation walk falls back to the keyless public endpoint and the run is byte-for-byte what it
+ * was before this key existed. So nothing here produces a "credential missing" exit — see
+ * {@link resolveSolanaRpcEndpoint}.
+ */
+export const HELIUS_KEY_ENV_VAR = 'HELIUS_API_KEY';
+
+/**
+ * Helius's mainnet RPC host, **without the key**.
+ *
+ * The address is this host plus the key as a single query parameter, composed in
+ * {@link resolveSolanaRpcEndpoint}, never stored composed and never written down anywhere. This
+ * bare host is the only form that may be printed: it is what every log line, error message and run
+ * record shows, which is what makes "the key never reaches a log" a property of the types rather
+ * than a habit — see {@link SolanaRpcEndpoint.label}.
+ */
+export const HELIUS_RPC_HOST = 'https://mainnet.helius-rpc.com';
+
+/**
+ * The keyless Solana RPC endpoint, and the fallback when no Helius key is present.
+ *
+ * Declared here rather than imported from `pumpfun.mjs` so the endpoint decision lives entirely in
+ * one module; `pumpfun.mjs` exports the same constant for its own default and a test pins the two
+ * together, because two spellings of one host is how a job ends up sending half its requests
+ * somewhere else.
+ */
+export const PUBLIC_SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
+
+/**
+ * Plausible length band for a Helius key. The one we hold is 36 characters — a lowercase UUID,
+ * which is the shape Helius issues. The band is wide for the same reason the MadeOnSol one is: it
+ * exists to catch a truncated paste or a shell-quoting accident, not to assert a format the vendor
+ * never promised. A key outside the band is refused with a message that names neither its value nor
+ * any part of it.
+ */
+export const HELIUS_KEY_MIN_LENGTH = 24;
+/** Upper end of the plausible length band. See {@link HELIUS_KEY_MIN_LENGTH}. */
+export const HELIUS_KEY_MAX_LENGTH = 128;
+
+/** The UUID shape Helius issues. A **shape** test, and the only thing said out loud about a key. */
+const UUID_SHAPE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/**
+ * @typedef {object} HeliusKeyDescription
+ * @property {number} length               Character count. Safe to print.
+ * @property {boolean} hasDocumentedShape  Whether it is UUID-shaped, which is what Helius issues.
+ */
+
+/**
+ * Describe a Helius key without disclosing it. Length and shape only — the two facts that let a
+ * human debug a bad key without either of us ever seeing its value.
+ *
+ * @param {string} key
+ * @returns {HeliusKeyDescription}
+ */
+export function describeHeliusKey(key) {
+  return { length: key.length, hasDocumentedShape: UUID_SHAPE.test(key) };
+}
+
+/**
+ * @typedef {object} SolanaRpcEndpoint
+ * What the Solana RPC clients are pointed at, and everything they are allowed to say about it.
+ *
+ * @property {'helius' | 'public'} provider Which endpoint was selected, and therefore which walk
+ *   `screen.mjs` runs: `helius` takes the indexed route, `public` the signature-scan fallback.
+ * @property {string} url   The address to POST to. **On `helius` this carries the key.** It is
+ *   passed to the client and used for exactly one thing — `fetch` — and no code may format it into
+ *   a message, a log line or a record. `label` exists so nothing ever has to.
+ * @property {string} label The same endpoint with no credential in it. Every human-facing string,
+ *   every thrown error and every persisted field uses THIS. A test constructs a client against a
+ *   sentinel-bearing URL, drives every failure path, and asserts the sentinel reaches none of them.
+ * @property {string} authRemedy What to do when the endpoint rejects the credential, as a whole
+ *   sentence. It travels with the endpoint because `pumpfun.mjs` may not name a key variable and so
+ *   cannot write this itself.
+ * @property {string | null} keyEnvVar The variable this endpoint's credential is read from, `null`
+ *   on the keyless one. It travels with the endpoint for the same reason `authRemedy` does:
+ *   `render.mjs` has to name the variable in the dry run and is not allowed to spell it, so it
+ *   prints this field instead of holding a second copy of the string.
+ * @property {HeliusKeyDescription | null} keyDescription `null` on the keyless endpoint.
+ * @property {string | null} rejected When a key was PRESENT but malformed: why, in a sentence. The
+ *   endpoint then falls back to `public`, because a malformed key must not silently become a
+ *   keyless run that reads as a keyed one — the caller prints this.
+ */
+
+/**
+ * Choose the Solana RPC endpoint from the environment.
+ *
+ * **The absence of a key is a configuration, not a failure.** With `HELIUS_API_KEY` unset this
+ * returns the public endpoint and the run is exactly what it was before Helius existed: the
+ * signature-scan walk, its own pinned pacing, its own ceilings. With the key present the creation
+ * walk switches to Helius's indexed route, which is the same measurement over a cheaper index —
+ * `pumpfun.mjs` → `readCreatedHistoryIndexed` owns that claim and Stage 0 is untouched by either.
+ *
+ * A key that is present but malformed falls back to the public endpoint **and says so**. Refusing
+ * to run would be worse (the keyless route works), and running silently would be worse still: a
+ * reader seeing a slow run and a `provider: "public"` record with no reason would have to guess.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {SolanaRpcEndpoint}
+ */
+export function resolveSolanaRpcEndpoint(env) {
+  /** @type {SolanaRpcEndpoint} */
+  const keyless = {
+    provider: 'public',
+    url: PUBLIC_SOLANA_RPC,
+    label: PUBLIC_SOLANA_RPC,
+    authRemedy:
+      `This endpoint takes no credential, so a rejection here is the host refusing this client ` +
+      `outright rather than an expired key. Nothing to rotate.`,
+    keyDescription: null,
+    keyEnvVar: null,
+    rejected: null,
+  };
+
+  const raw = env[HELIUS_KEY_ENV_VAR];
+  if (raw === undefined || raw.trim().length === 0) return keyless;
+
+  const description = describeHeliusKey(raw);
+  if (raw.length < HELIUS_KEY_MIN_LENGTH || raw.length > HELIUS_KEY_MAX_LENGTH) {
+    return {
+      ...keyless,
+      rejected:
+        `${HELIUS_KEY_ENV_VAR} is ${raw.length} characters, outside the ` +
+        `${HELIUS_KEY_MIN_LENGTH}-${HELIUS_KEY_MAX_LENGTH} band for a plausible Helius key, so it was ` +
+        `NOT used and the walk fell back to the keyless public endpoint. That usually means a ` +
+        `truncated paste, a shell-quoting slip, or a whole dotenv line captured instead of the value. ` +
+        `The value is not shown, here or anywhere.`,
+    };
+  }
+
+  return {
+    provider: 'helius',
+    // Composed here and nowhere else. Never stored composed, never logged, never recorded.
+    url: `${HELIUS_RPC_HOST}/?api-key=${raw}`,
+    label: HELIUS_RPC_HOST,
+    authRemedy:
+      `Helius answers a bad or missing key with HTTP 401 and a plain-text body, so this is the key ` +
+      `and not the query. Re-export ${HELIUS_KEY_ENV_VAR} from the credential file and rerun; unset ` +
+      `it entirely to fall back to the keyless public endpoint, which needs no credential and is ` +
+      `slower rather than wrong.`,
+    keyDescription: description,
+    keyEnvVar: HELIUS_KEY_ENV_VAR,
+    rejected: null,
+  };
 }
 
 /**

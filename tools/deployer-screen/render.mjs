@@ -134,8 +134,10 @@ const DUNE_MONTHLY_CREDITS = 2_500;
  * 20 credits/MB. That is ~0.38 per deployer at a batch of 5, and it FALLS as the batch grows,
  * because the table scan is nearly independent of how many wallets are in the filter (measured at 5
  * and at 20) while only the bytes scale. 0.1 is the per-deployer figure at the candidate cap, where
- * the fixed scan is amortised over 195 wallets and ~97 bytes/row is the whole marginal cost: 195
+ * the fixed scan is amortised over 195 wallets and the per-row bytes are the whole marginal cost: 195
  * deployers at a median ~50 launches is ~0.95 MB, about 19 credits of export plus ~1 of compute.
+ * The 46,718 bytes above were measured at FOUR columns; `CREATION_SQL` now selects five, whose
+ * per-row cost is bounded rather than measured — see `DUNE_BYTES_PER_ROW_CEILING` below.
  * Quoted beside the ceiling for the same reason the Helius median is — they differ by 40x, and
  * printing only one of them misleads in whichever direction it was chosen.
  */

@@ -25,8 +25,8 @@ stage. **There is no strategy, backtest, signal or trading logic here.**
 `test/window-population.test.ts`. Every source behind the dataset is keyless and public, and the
 dataset was built with **zero metered provider requests**, and so was its extension past the bond.
 The network-capable area is `tools/`, and the boundary is the directory: `tools/deployer-screen/`
-is the only **keyed** one, `tools/graduated-life-tape/` is keyless throughout. Neither is imported
-by `src/` and neither imports from it. See each one's `README.md`.
+is the only **keyed** one, `tools/graduated-life-tape/` and `tools/arrival-rate-walk/` are keyless
+throughout. None of them is imported by `src/` and none imports from it. See each one's `README.md`.
 
 ```bash
 npm ci
@@ -100,6 +100,7 @@ call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md
 | `data/graduated-life-tape-2026-08-02/` | The same tape, **extended past the bond**: every fill of the 103 graduated launches from mint to graduation + 1 hour. 503,037 fills, 63% of them on PumpSwap. Closure over the wallets each launch's own committed window already shows rises from **47.2% to 94.4%**. 6,539 keyless requests, EUR 0. Method, coverage proofs and limits in its `README.md`. |
 | `tools/graduated-life-tape/` | The collector behind it. Network-capable and **keyless throughout** — one file opens a socket, one host, and the list of files that may name a credential is empty. |
 | `analysis/window-population/` | How many profitable windows the tape contains, how long, and how fast they close. **One window**, 2026-03-12 → 2026-06-04, **83 days**, closed in a single launch over **24.7 hours** — and **n = 1**, so "are windows numerous?" is *unmeasured*. Offline like `src/`. Findings, definitions and limits in its `README.md`. |
+| `tools/arrival-rate-walk/` | The collector that would answer that `n = 1` — the same per-launch series for a **cohort** of deployers, seeded from history rather than from success. **Keyless throughout**; the tool is built and proven on a bounded sample, the multi-day collection is a separate step and has not run. Scope, bounds, the undeployed cohort query and the limits in its `README.md`. |
 | `.github/workflows/ci.yml` | `npm ci` then `npm test` on Node 20, on PRs and pushes to `main`. The whole check set, on purpose. |
 | `AGENTS.md` | Provider facts that cost real time to learn. Read before touching pump.fun or Solana RPC. |
 
@@ -425,11 +426,13 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
 
 ### The rest
 
-- **How often a window arrives is the question the mission now turns on, and it is unmeasured.**
-  The tape holds one deployer and therefore one window: **n = 1**. Answering it needs per-launch
-  create-slot series for 10–20 other prolific deployers over 6+ months each — keyless, roughly
-  6,000–12,000 pump.fun requests, costed in `analysis/window-population/README.md` §8. Until then,
-  no arrival rate, no concurrency, and no idle-time estimate exists here.
+- **How often a window arrives is the question the mission now turns on, and it is still
+  unmeasured.** The tape holds one deployer and therefore one window: **n = 1**. Answering it needs
+  per-launch create-slot series for 10–20 other prolific deployers over 6+ months each — keyless,
+  and days of paced fetching. **The collector for it now exists** (`tools/arrival-rate-walk/`,
+  proven on a bounded sample), but the collection is a separate operational step that has not run,
+  and its cohort query is not deployed. Until it does, no arrival rate, no concurrency, and no
+  idle-time estimate exists here.
 - **Exit is not measured at all.** Stage 2 scores room to enter. Whether a position can be left —
   when the dev sells relative to mint and to outsider inflow, whether the trigger is a **size**
   that our own buy counts towards, whether an outsider could have exited first — is stage 3's

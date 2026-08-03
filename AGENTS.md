@@ -340,8 +340,10 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   `mergeHistories` reclassify that wallet's whole in-window ownership listing as acquired and gate it
   on nothing — the invisible false rejection this lane exists to remove. **A candidate whose address
   is not base58-shaped is never sent**: wallets are vendor-supplied and land inside a single-quoted
-  SQL literal, and this is the only path in the repo where such a string reaches a query language
-  (`dune.mjs` → `WALLET_SHAPE`; the record's `dune.walletsRefusedByShape` counts the drops).
+  SQL literal (`dune.mjs` → `WALLET_SHAPE`; the record's `dune.walletsRefusedByShape` counts the
+  drops). The rule binds wherever a vendor-derived wallet reaches a query language —
+  `tools/arrival-rate-walk/cohort.mjs` carries its own copy of the guard for the cohort it hands to
+  `CREATION_SQL`'s `{{deployers}}`.
 - **THE ROW CEILING REFUSES A RESULT, AND ENUMERATION IS ONE EXECUTION FOR THE WHOLE BATCH — so the
   cap that keeps one spam wallet from pricing the batch is PER DEPLOYER, inside the SQL.**
   `CREATION_SQL` returns at most `greatest(500, floor(19999 / <deployers in the batch>))` rows per

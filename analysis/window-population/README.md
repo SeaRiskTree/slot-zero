@@ -420,6 +420,13 @@ the arrival rate of the next window, which is §8.
 Three questions, all of them ones that decide the strategy, and none of them answerable here.
 Costs are stated because the brief asked for them; every route is keyless.
 
+**The collector for all three now exists — `tools/arrival-rate-walk/`, which owns the route, its
+bounds and its limits.** It supersedes the sketch below in two ways: the cohort is seeded from
+**history** (a Dune enumeration of one past month, taken whole) rather than from the
+`?creator=` listing, which lists by *current* creator and conditions on success; and the walk uses a
+single-bound cursor. The collection itself has not run, so everything below still stands as the
+state of the evidence.
+
 1. **How often does a window arrive?** Needs several deployers observed over several months each.
    One deployer × 8 months = one window; the arrival rate has a sample size of one deployer and
    no confidence interval worth writing down.

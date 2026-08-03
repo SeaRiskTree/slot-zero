@@ -49,6 +49,7 @@ import {
   COVERAGE_SQL,
   DEPLOYERS_PARAM,
   ENUMERATION_TABLES,
+  LAUNCH_CAP_FLOOR,
   SQL_ROW_CEILING,
   assessCoverage,
   coverageRecordRow,
@@ -2997,17 +2998,17 @@ describe('a per-wallet reading is refused at the launch level too', () => {
   });
 
   it('REFUSES a history the per-deployer cap truncated, and never reads it as a short one', () => {
-    // The prefix/short distinction is the whole point: 8,518 creations returned 102 rows is not a
-    // wallet with 102 launches, and gating on it would publish a truncated count as a total.
+    // The prefix/short distinction is the whole point: 8,518 creations returned 500 rows is not a
+    // wallet with 500 launches, and gating on it would publish a truncated count as a total.
     const capped = toWalletEnumeration({
       wallet: 'W',
-      launches: Array.from({ length: 102 }, (_, i) => ({
+      launches: Array.from({ length: LAUNCH_CAP_FLOOR }, (_, i) => ({
         mint: `M${i}`,
         createdAtMs: Date.parse('2026-01-01T00:00:00Z') + i * 1000,
         bonded: i % 2 === 0,
       })),
       declaredLaunches: 8518,
-      launchCap: 102,
+      launchCap: LAUNCH_CAP_FLOOR,
       batchWallets: 195,
       coverage: coverage(),
     });
@@ -3025,7 +3026,7 @@ describe('a per-wallet reading is refused at the launch level too', () => {
       wallet: 'W',
       launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
       declaredLaunches: 9,
-      launchCap: 102,
+      launchCap: LAUNCH_CAP_FLOOR,
       batchWallets: 195,
       coverage: coverage(),
     });
@@ -3038,7 +3039,7 @@ describe('a per-wallet reading is refused at the launch level too', () => {
       wallet: 'W',
       launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
       declaredLaunches: 1,
-      launchCap: 102,
+      launchCap: LAUNCH_CAP_FLOOR,
       batchWallets: 195,
       coverage: coverage(),
     });
@@ -3046,29 +3047,47 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     expect(whole.truncatedByLaunchCap).toBe(false);
   });
 
-  it('derives the per-deployer cap from the PINNED row ceiling, not from a second magic number', () => {
-    // No measurement fixes a good per-deployer launch count, so none is invented: what is pinned is
-    // the row ceiling the bill is bounded by, and the cap is that ceiling shared out between the
-    // batch. The consequence is the bound this change buys — rows <= SQL_ROW_CEILING for ANY batch.
+  it('caps a deployer at max(the pinned floor, the pinned row ceiling shared out)', () => {
+    // The share-out is derived rather than invented — what is pinned is the row ceiling the bill is
+    // bounded by. The FLOOR under it is the load-bearing half: a purely derived cap is 102 rows at
+    // the 195-candidate cap, which would truncate the subject deployer (247) and 4q4GKBpV (152) on
+    // every full run, i.e. exactly the largest and most gate-relevant wallets.
     const ceiling = (loadThresholds()['dune'] as { maxResultRows: number }).maxResultRows;
     expect(SQL_ROW_CEILING).toBe(ceiling - 1);
-    // The SQL carries the same number as a literal, because a saved Dune query cannot read
-    // thresholds.json. If the two ever disagree the saved query bounds a run at a size this
-    // reader no longer accepts, so the duplication is guarded rather than trusted.
-    expect(CREATION_SQL).toContain(`floor(${SQL_ROW_CEILING}.0 / greatest(count(DISTINCT wallet), 1))`);
-    for (const n of [1, 5, 72, 195, 1000]) {
-      expect(n * launchCapPerWallet(n, ceiling)).toBeLessThanOrEqual(SQL_ROW_CEILING);
-      expect(n * launchCapPerWallet(n, ceiling)).toBeLessThan(ceiling);
+    // The SQL carries both numbers as literals, because a saved Dune query cannot read
+    // thresholds.json. If they ever disagree with these the saved query applies a cap this tool
+    // does not report, so the mirrored arithmetic is guarded rather than trusted.
+    expect(CREATION_SQL).toContain(
+      `greatest(${LAUNCH_CAP_FLOOR}, cast(floor(${SQL_ROW_CEILING}.0 / greatest(count(DISTINCT wallet), 1)) AS bigint))`,
+    );
+    // THE BOUND THAT NOW HOLDS, and it is not "19,999 by construction": above 39 deployers the
+    // floor binds and the SQL may return more rows than the reader accepts — which the reader then
+    // refuses whole, the same fallback as before the cap existed. Claiming the tighter bound in
+    // prose would be claiming something the code does not do.
+    for (const n of [1, 5, 39, 40, 72, 195, 1000]) {
+      expect(n * launchCapPerWallet(n, ceiling)).toBeLessThanOrEqual(Math.max(SQL_ROW_CEILING, n * LAUNCH_CAP_FLOOR));
+      expect(launchCapPerWallet(n, ceiling)).toBeGreaterThanOrEqual(LAUNCH_CAP_FLOOR);
     }
-    // The measured population, for scale: at the 195-candidate cap a deployer may carry 102
-    // launches, at the ~72 both committed runs actually seeded it is 277, and a five-wallet
-    // reproduction run carries 3,999 — past the subject's own 247.
-    expect(launchCapPerWallet(195, ceiling)).toBe(102);
-    expect(launchCapPerWallet(72, ceiling)).toBe(277);
+    // Below the floor's crossover the share-out still governs and stays under the ceiling.
+    expect(39 * launchCapPerWallet(39, ceiling)).toBeLessThan(ceiling);
+    // The measured population, for scale: 500 is ~2x the largest per-wallet history this repo
+    // holds (247), so no measured deployer is capped at ANY batch size — the floor answers at both
+    // the 195-candidate cap and the ~72 both committed runs actually seeded, and only a small
+    // reproduction batch is governed by the share-out.
+    expect(launchCapPerWallet(195, ceiling)).toBe(500);
+    expect(launchCapPerWallet(72, ceiling)).toBe(500);
     expect(launchCapPerWallet(5, ceiling)).toBe(3999);
     // Never zero, whatever it is handed: a cap of 0 would return nothing and read as "no rows".
-    expect(launchCapPerWallet(1_000_000, ceiling)).toBe(1);
+    expect(launchCapPerWallet(1_000_000, ceiling)).toBe(LAUNCH_CAP_FLOOR);
     expect(launchCapPerWallet(0, ceiling)).toBe(ceiling - 1);
+  });
+
+  it('keeps the MOST RECENT launches when the cap truncates a deployer', () => {
+    // The tool asks what a wallet is creating NOW, so a capped deployer's surviving prefix must be
+    // its newest launches. An ascending rank would keep the least informative rows it has.
+    expect(CREATION_SQL).toContain(
+      'row_number() OVER (PARTITION BY b.deployer ORDER BY b.created_at DESC, b.mint DESC)',
+    );
   });
 
   it('tells an ABSENT `bonded` apart from a legitimately false one', () => {
@@ -3595,8 +3614,17 @@ describe('the enumeration spends nothing it does not have to', () => {
     // its own budget walks.
     const spam = '4q4GKBpVXwGKcVfHUP2xNRxrEpRNqNKrjqvBUCHhVsmL';
     const ordinary = '32CdQdBUxbCsLy5AUHWmyidfwhgGUr9N573NBUrDpump';
-    const askable = [DUNE_WALLET, spam, ordinary];
+    // Batched wide enough that the pinned FLOOR is the cap rather than the share-out, which is the
+    // regime a real run sits in: the floor binds above 39 deployers. The padding wallets return no
+    // rows and are refused as absences of evidence, which is a separate rule and not what this
+    // asserts — they are here only to make the cap 500.
+    const padding = Array.from(
+      { length: 37 },
+      (_, i) => `Pad${'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmn'[i]}${'x'.repeat(28)}`,
+    );
+    const askable = [DUNE_WALLET, spam, ordinary, ...padding];
     const cap = launchCapPerWallet(askable.length, DUNE_BOUNDS.maxResultRows);
+    expect(cap).toBe(LAUNCH_CAP_FLOOR);
     // What the SQL returns: the two ordinary wallets whole, the spam wallet cut to the cap with its
     // TRUE count travelling beside every row.
     const rows: unknown[] = [

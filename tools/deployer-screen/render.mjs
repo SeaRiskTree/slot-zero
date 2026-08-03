@@ -22,7 +22,7 @@ import { buildPath, ENDPOINT_ROLES } from './client.mjs';
 // The per-deployer cap's arithmetic, imported rather than restated: a dry run that printed a bound
 // the query does not apply would be worse than printing none. It is arithmetic over a pinned
 // threshold — no Dune-derived value crosses this import.
-import { launchCapPerWallet } from './dune.mjs';
+import { LAUNCH_CAP_FLOOR, launchCapPerWallet } from './dune.mjs';
 import { LANDING_TIP_CAVEAT } from './entry.mjs';
 import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
@@ -1176,23 +1176,27 @@ export function renderDryRun(plan) {
         `  executions                    up to ${d.maxExecutionsPerRun}  (1 enumeration + at most 1 probe refresh)`,
       );
       L.push(`  requests                      ceiling ${d.maxRequestsPerRun}, polling and result reads included`);
-      // The BOUND THAT NOW HOLDS, printed as the arithmetic that produces it rather than as a
-      // pinned number: the SQL divides the row ceiling between the batch's deployers, so a run's
-      // rows are bounded by construction and the ceiling below is the backstop for a cap that did
-      // not apply. `?limit=maxResultRows` is still what bounds the BYTES, which is the billed unit.
+      // THE TWO BOUNDS THAT ACTUALLY HOLD, printed as the arithmetic that produces them. The SQL's
+      // per-deployer cap is the greater of a pinned floor and the row ceiling shared out, so above
+      // 39 deployers the floor binds and the SQL's rows bound EXCEEDS the reader's ceiling — which
+      // the reader then refuses whole, the fallback merged `main` already had. What bounds the
+      // BILLED unit is unchanged: every read is issued with `?limit=maxResultRows`.
       const plannedCandidates = Math.max(1, plan.maxCandidates);
       const perDeployerRows = launchCapPerWallet(plannedCandidates, d.maxResultRows);
-      const boundedRows = perDeployerRows * plannedCandidates;
+      const sqlRows = perDeployerRows * plannedCandidates;
+      const readableRows = Math.min(sqlRows, d.maxResultRows);
       L.push(
         `  rows, per deployer            cap ${perDeployerRows.toLocaleString('en-US')} at this run's ${plannedCandidates} candidate(s) ` +
-          `(the ${d.maxResultRows.toLocaleString('en-US')}-row ceiling shared out)`,
+          `(the greater of the ${LAUNCH_CAP_FLOOR}-row floor and the ${d.maxResultRows.toLocaleString('en-US')}-row ceiling shared out)`,
       );
       L.push(
-        `  rows, whole run               at most ${boundedRows.toLocaleString('en-US')} BY CONSTRUCTION, ` +
-          `under the ${d.maxResultRows.toLocaleString('en-US')} ceiling the reader refuses at`,
+        `  rows, whole run               at most ${sqlRows.toLocaleString('en-US')} from the SQL` +
+          (sqlRows > d.maxResultRows
+            ? `, ABOVE the ${d.maxResultRows.toLocaleString('en-US')} ceiling — a batch that fills every cap is REFUSED whole and walks`
+            : `, under the ${d.maxResultRows.toLocaleString('en-US')} ceiling the reader refuses at`),
       );
       L.push(
-        `  bytes                         at most ~${((boundedRows * DUNE_BYTES_PER_ROW_CEILING) / 1_000_000).toFixed(2)} MB ` +
+        `  bytes                         at most ~${((readableRows * DUNE_BYTES_PER_ROW_CEILING) / 1_000_000).toFixed(2)} MB ` +
           `(<=${DUNE_BYTES_PER_ROW_CEILING} bytes/row: 97 MEASURED at four columns, +24 arithmetic for the fifth)`,
       );
       L.push(
@@ -1200,8 +1204,8 @@ export function renderDryRun(plan) {
           `(~${DUNE_EXPECTED_CREDITS_PER_CANDIDATE} per deployer, measured 2026-08-03)`,
       );
       L.push(
-        `  WORST CASE                    about ${Math.round((boundedRows * DUNE_BYTES_PER_ROW_CEILING * 20) / 1_000_000)} credits ` +
-          `if every deployer fills its cap, at the published 20 credits/MB`,
+        `  WORST CASE                    about ${Math.round((readableRows * DUNE_BYTES_PER_ROW_CEILING * 20) / 1_000_000)} credits ` +
+          `for the largest read the ?limit= allows, at the published 20 credits/MB`,
       );
       L.push(
         `  A DEPLOYER ABOVE THE CAP IS REFUSED, NOT TRUNCATED QUIETLY: its rows are a prefix, its`,

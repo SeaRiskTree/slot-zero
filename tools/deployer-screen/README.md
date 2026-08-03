@@ -176,14 +176,18 @@ confident wrong answer:
    single industrial-spam wallet — the `total_bonded` leaderboard this tool seeds from serves an
    **8,518-deploy** one — carried the result past `dune.maxResultRows` and sent **every** candidate
    in the run to the walk, trading ~13 hours of walking for ~1 credit of Dune. The SQL now returns at
-   most `floor(19999 / <deployers in the batch>)` rows per deployer and carries each deployer's
-   **true** count beside them, so the whole result is bounded at 19,999 rows *by construction* and a
-   truncated history is detected exactly. The oversized wallet is refused with a reason and takes the
-   walk **alone**; everyone else keeps their Dune answer. The cap is 102 rows at the 195-candidate
-   cap, 277 at the ~72 both committed runs actually seeded, and 3,999 on a five-wallet reproduction
-   run — past the subject deployer's own 247 launches. **The result-row ceiling is kept as the
-   backstop**, not deleted: ordinary data can no longer reach it, so reaching it means the cap did
-   not apply.
+   most `greatest(500, floor(19999 / <deployers in the batch>))` rows per deployer — most recent
+   first, since the question is what a wallet is creating *now* — and carries each deployer's
+   **true** count beside them, so a truncated history is detected exactly. The oversized wallet is
+   refused with a reason and takes the walk **alone**; everyone else keeps their Dune answer.
+   **The 500 is a floor, and it is what keeps an ordinary deployer whole at any batch size**: the
+   share-out alone is 102 rows at the 195-candidate cap, which would truncate the subject deployer
+   (247 launches) and `4q4GKBpV…` (152) on every full run. 500 is ~2× the largest per-wallet history
+   this repo has measured (8, 10, 65, 152, 247 — `CREATION-DERIVED.md` §8.3) and ~17× below the
+   8,518-deploy extreme. So the rows bound is `max(19,999, <deployers> × 500)`, **not** 19,999 by
+   construction: above 39 deployers it exceeds `dune.maxResultRows`, and **the result-row ceiling is
+   kept as the backstop** that refuses such a result whole — the same fallback as before the cap
+   existed. It takes roughly 40 wallets of 500+ launches in one batch to get there.
 
 **And the same rule past coverage: a reading that cannot vouch for itself falls back to the walk
 rather than being gated on.** A result read that cannot prove it is whole (no `total_row_count`, a
@@ -229,7 +233,10 @@ where the traps are written down.
 
 **Currently outstanding: `8204672` carries the pre-cap four-column SQL and must be updated to the
 five-column text with the per-deployer cap** before the next keyed run. Until it is, `DUNE_API_KEY`
-runs fall back to the creation walk with a message naming the mismatch.
+runs fall back to the creation walk with a message naming the mismatch. **Delete this paragraph (and
+the matching one in `CREATION-DERIVED.md` §8.6) as part of that update** — it is a point-in-time
+deployment status, and once `8204672` matches nothing fails, so left in place it reads as a live
+warning forever.
 
 **Spend.** Free tier, 2,500 credits/month, **shared**, and only 10 private queries. **A failed
 execution is still billed and is terminal — `DuneClient.execute` is the one call in this repository

@@ -83,7 +83,12 @@
  * is one of the three seeds) carried the whole batch past `maxResultRows` and sent EVERY candidate
  * to the walk. {@link CREATION_SQL}'s per-deployer cap moves that refusal onto the one wallet that
  * earned it. The batch-level ceiling in {@link DuneResultSet}'s reader is NOT deleted: it stays as
- * the backstop that catches a cap which did not apply.
+ * the backstop, and under {@link LAUNCH_CAP_FLOOR} it is genuinely reachable rather than
+ * unreachable-by-a-bug — roughly 40 wallets of 500+ launches in one batch put a result past it, and
+ * the run then falls back exactly as it did before the cap existed. Two bounds hold and they are
+ * different bounds: BYTES at `?limit=maxResultRows` (<=20,000 rows at <=121 bytes/row, ~2.42 MB),
+ * and ROWS from the SQL at `max(`{@link SQL_ROW_CEILING}`, <deployers> × 500)` with the ceiling
+ * refusing anything above `maxResultRows` rather than publishing it.
  *
  * ## Spend
  *
@@ -105,36 +110,66 @@ import { DuneRefused } from './client.mjs';
  * inside that SQL because a saved query cannot read `thresholds.json`.
  *
  * It is `dune.maxResultRows - 1`: one under the ceiling {@link DuneResultSet}'s reader refuses at,
- * so a result honouring the cap can never sit ON its own `?limit=` either. The duplication is real
- * and it is guarded — `test/deployer-screen.test.ts` → "the SQL's per-deployer cap is derived from
- * the pinned row ceiling" fails if this number and the pinned threshold stop agreeing, because the
- * saved query would then bound a run at a size the reader no longer accepts.
+ * so a result honouring the derived half of the cap can never sit ON its own `?limit=` either. The
+ * duplication is real and it is guarded — `test/deployer-screen.test.ts` → "the SQL's per-deployer
+ * cap is derived from the pinned row ceiling" fails if this number and the pinned threshold stop
+ * agreeing, because the saved query would then bound a run at a size the reader no longer accepts.
+ *
+ * **It does NOT bound a run's rows on its own.** {@link LAUNCH_CAP_FLOOR} is a floor under the
+ * share-out, so above 39 deployers the floor binds and the rows bound is `<deployers> × 500`. See
+ * {@link launchCapPerWallet} for the bound that actually holds and why the batch-level ceiling is
+ * kept as the backstop that refuses anything past `maxResultRows`.
  */
 export const SQL_ROW_CEILING = 19999;
+
+/**
+ * The floor under the per-deployer cap, mirrored as a literal in {@link CREATION_SQL}'s `cap` CTE.
+ *
+ * **It exists so that no deployer this repo has ever measured is capped at any batch size.** A
+ * purely derived cap makes the truncation threshold a function of batch size, and at the tool's own
+ * 195-candidate cap the share-out is 102 rows — which would refuse the subject deployer (247
+ * launches, the reproduction control) and `4q4GKBpV…` (152) on every full run, biasing the fallback
+ * towards exactly the largest and most gate-relevant wallets.
+ *
+ * 500 is anchored on the only per-wallet counts this repo holds: 8, 10, 65, 152 and 247
+ * (`CREATION-DERIVED.md` §8.3). It is ~2× the largest of them, so the whole measured population
+ * enumerates whole at any batch size, and ~17× below the industrial-spam extreme the `total_bonded`
+ * leaderboard serves (8,518 deploys), so a spam wallet is still contained to 500 rows rather than
+ * pricing the batch at 8,518.
+ */
+export const LAUNCH_CAP_FLOOR = 500;
 
 /**
  * How many rows one deployer may contribute to a batch of `walletCount` deployers.
  *
  * The same arithmetic {@link CREATION_SQL} performs server-side, mirrored here so the tool can name
- * the cap in a refusal reason. **It is derived, not pinned**: there is no measurement that fixes a
- * good per-deployer launch count, and inventing one would be worse than saying so — what IS pinned
- * is the row ceiling the bill is bounded by, and the cap is that ceiling shared out. So the whole
- * result is bounded at {@link SQL_ROW_CEILING} rows for ANY batch size, by construction rather than
- * by refusal.
+ * the cap in a refusal reason. It is `max(`{@link LAUNCH_CAP_FLOOR}`, ceiling shared out)`: the
+ * share-out is what keeps a small batch's bill bounded by the pinned ceiling, and the floor is what
+ * keeps an ordinary deployer whole in a large one.
  *
- * The cost of the derivation is that a wallet's cap depends on how many candidates it was batched
- * with: at the 195-candidate cap it is 102, at the ~72 both committed runs actually seeded it is
- * 277, and at a five-wallet reproduction run it is 3,999. A wallet above its run's cap falls back to
- * the walk, which is the slow answer rather than a wrong one — and the record carries enough to
- * recompute the cap exactly (`thresholds.dune.maxResultRows`, the gated candidate count and
- * `dune.walletsRefusedByShape`), so what a run applied is auditable after the fact.
+ * **The bound this produces, stated as it actually holds** — because the share-out alone would have
+ * bounded a run at {@link SQL_ROW_CEILING} rows and the floor breaks that above 39 deployers:
+ *
+ * - **BYTES, unchanged and provable.** Every result read is issued with `?limit=maxResultRows`, so
+ *   no read returns more than 20,000 rows at <=121 bytes/row, i.e. <=~2.42 MB.
+ * - **ROWS from the SQL: at most `max(`{@link SQL_ROW_CEILING}`, <deployers> × 500)`.** Above 39
+ *   deployers that exceeds `maxResultRows`, and the batch-level ceiling in {@link DuneResultSet}'s
+ *   reader REFUSES such a result rather than publishing it — the whole-batch fallback merged `main`
+ *   already had. It takes roughly 40 wallets of 500+ launches in one batch to get there, which the
+ *   `total_bonded` leaderboard seed can serve; that is the accepted trade for never truncating a
+ *   measured wallet.
+ *
+ * A wallet above its run's cap falls back to the walk, which is the slow answer rather than a wrong
+ * one — and the record carries enough to recompute the cap exactly
+ * (`thresholds.dune.maxResultRows`, the gated candidate count and `dune.walletsRefusedByShape`), so
+ * what a run applied is auditable after the fact.
  *
  * @param {number} walletCount How many deployers went into the query parameter.
  * @param {number} maxResultRows The pinned result-row ceiling — `dune.maxResultRows`.
- * @returns {number} Rows per deployer, never below 1.
+ * @returns {number} Rows per deployer, never below {@link LAUNCH_CAP_FLOOR}.
  */
 export function launchCapPerWallet(walletCount, maxResultRows) {
-  return Math.max(1, Math.floor((maxResultRows - 1) / Math.max(1, walletCount)));
+  return Math.max(LAUNCH_CAP_FLOOR, Math.floor((maxResultRows - 1) / Math.max(1, walletCount)));
 }
 
 /**
@@ -172,17 +207,27 @@ export const CREATION_SQL = `-- slot-zero: ORIGINAL-CREATOR launch enumeration. 
 -- a bigint and it is what makes the cap below DETECTABLE rather than silent.
 --
 -- THE CAP IS PER DEPLOYER, NOT PER BATCH, and that is the whole point of this shape. Each
--- deployer contributes at most floor(19999 / <deployers in the batch>) rows, so the result is
--- bounded at 19,999 rows BY CONSTRUCTION for any batch size — one under dune.maxResultRows, the
--- ceiling the reader refuses at, so an honest result can never sit on its own ?limit= either.
+-- deployer contributes at most greatest(500, floor(19999 / <deployers in the batch>)) rows.
 -- Without it a single industrial-spam wallet (8,518 deploys is a real row on the total_bonded
--- leaderboard this tool seeds from) pushes the whole batch past that ceiling and EVERY candidate
--- in the run loses its Dune answer to a walk measured in hours.
+-- leaderboard this tool seeds from) pushes the whole batch past dune.maxResultRows and EVERY
+-- candidate in the run loses its Dune answer to a walk measured in hours.
+--
+-- THE 500 IS A FLOOR, NOT A SECOND SHARE-OUT, and it is why the rows bound is
+-- max(19999, <deployers> x 500) rather than 19,999 flat: the share-out alone is 102 rows at the
+-- tool's 195-candidate cap, which would truncate the subject deployer (247 launches) and
+-- 4q4GKBpV (152) on every full run. 500 is ~2x the largest history this repo has measured, so no
+-- measured deployer is ever capped, and ~17x below the spam extreme. Above ~40 deployers of 500+
+-- launches the result can exceed the reader's ceiling, and the reader then refuses the whole
+-- batch exactly as it did before this cap existed. That backstop is kept, not loosened.
 --
 -- launches_total is each deployer's TRUE count, computed BEFORE the cap. So truncation is
 -- detected exactly — rows returned below launches_total — and only the truncated deployer falls
 -- back to the walk. A capped deployer must never be read as a short-but-complete history, which
 -- is why the count travels with the rows rather than being inferred from them.
+--
+-- THE SURVIVING PREFIX IS THE MOST RECENT LAUNCHES, so row_number() ranks created_at DESC. This
+-- tool asks what a wallet is creating NOW; a capped deployer's oldest launches are the least
+-- informative rows it could keep.
 WITH deployers AS (
   SELECT trim(w) AS wallet FROM unnest(split('{{deployers}}', ',')) AS t(w)
 ), ev AS (
@@ -199,11 +244,11 @@ WITH deployers AS (
   GROUP BY 1, 2
 ), ranked AS (
   SELECT b.deployer, b.mint, b.created_at,
-         row_number() OVER (PARTITION BY b.deployer ORDER BY b.created_at, b.mint) AS rn,
+         row_number() OVER (PARTITION BY b.deployer ORDER BY b.created_at DESC, b.mint DESC) AS rn,
          count(*) OVER (PARTITION BY b.deployer) AS launches_total
   FROM deduped b
 ), cap AS (
-  SELECT greatest(1, cast(floor(19999.0 / greatest(count(DISTINCT wallet), 1)) AS bigint)) AS max_rows
+  SELECT greatest(500, cast(floor(19999.0 / greatest(count(DISTINCT wallet), 1)) AS bigint)) AS max_rows
   FROM deployers
 )
 SELECT r.deployer, r.mint, r.created_at, (c.mint IS NOT NULL) AS bonded, r.launches_total
@@ -795,8 +840,9 @@ export function toWalletEnumeration(input) {
       reasons.push(
         `the Dune answer declares ${declaredLaunches} creation(s) for this wallet and returned ` +
           `${launches.length} of them — exactly the per-deployer cap this run applied, which is the ` +
-          `pinned result-row ceiling shared between the ${input.batchWallets ?? '?'} candidate(s) in ` +
-          `the batch. What came back is a PREFIX of this wallet's history, not a short history, and ` +
+          `greater of the pinned floor of ${LAUNCH_CAP_FLOOR} and the pinned result-row ceiling ` +
+          `shared between the ${input.batchWallets ?? '?'} candidate(s) in the batch. What came back ` +
+          `is its most recent ${launches.length}, a PREFIX of this wallet's history, not a short history, and ` +
           `gating on it would read a truncated count as a total. The creation walk enumerates this ` +
           `wallet instead — and only this wallet: every other candidate in the batch keeps its Dune ` +
           `answer, which is the whole reason the cap is per deployer rather than per batch.`,
@@ -942,11 +988,14 @@ export async function assertSavedQueryMatches(client, queryId, expectedSql) {
  * DISAGREEING with the declared total — `/results` pages on response size independently of our
  * limit, so a page read as a whole answer is a launch history that is simply short.
  *
- * **The row ceiling is a BACKSTOP now, not the first line.** {@link CREATION_SQL} bounds the
- * enumeration at {@link SQL_ROW_CEILING} rows by construction for any batch size, so ordinary data
- * cannot reach `maxResultRows` any more: reaching it means the cap did not apply — a saved query
- * edited past the pinned text, or a shape this reader does not understand. It is kept exactly as it
- * was rather than loosened, because a soft bound on a billed read is not a bound. Note also that the
+ * **The row ceiling is a BACKSTOP now, not the first line — but it is still REACHABLE.** {@link
+ * CREATION_SQL} bounds the enumeration at `max(`{@link SQL_ROW_CEILING}`, <deployers> × `{@link
+ * LAUNCH_CAP_FLOOR}`)` rows, so a median-shaped batch cannot come near `maxResultRows`, while
+ * roughly 40 wallets of 500+ launches in one batch can still exceed it. Reaching it means either
+ * that genuinely oversized batch — which falls back whole, as it did before the cap existed — or a
+ * cap that did not apply, i.e. a saved query edited past the pinned text or a shape this reader does
+ * not understand. It is kept exactly as it was rather than loosened, because a soft bound on a
+ * billed read is not a bound. Note also that the
  * per-deployer cap does NOT interact with the `rows.length !== total` check below: `total_row_count`
  * describes the RESULT SET the query produced, which is the capped one, so a capped enumeration
  * still returns exactly as many rows as it declares. Deliberate truncation is caught one level up,

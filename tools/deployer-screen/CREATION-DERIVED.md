@@ -485,22 +485,38 @@ pre-filter skips *low*-deploy wallets without capping high ones. Two or three of
 carry it past 20,000 rows. The cost of being wrong is large and one-sided: ~13 hours of RPC walking
 against ~1 credit of Dune.
 
-**The fix, and where it lives.** `CREATION_SQL` ranks each deployer's rows and returns at most
-`floor(19999 / <deployers in the batch>)` of them, plus that deployer's **true** count as
-`launches_total`. Three consequences:
+**The fix, and where it lives.** `CREATION_SQL` ranks each deployer's rows **most recent first** —
+the tool asks what a wallet is creating *now*, so a capped deployer's oldest launches are the least
+informative rows it could keep — and returns at most `greatest(500, floor(19999 / <deployers in the
+batch>))` of them, plus that deployer's **true** count as `launches_total`. Three consequences:
 
 | | before | after |
 |---|---|---|
-| rows a run may return | unbounded until the ceiling refuses | **<= 19,999 by construction**, any batch size |
-| one 8,518-deploy wallet in a batch of 195 | whole batch → RPC walk | that wallet → RPC walk, 194 keep Dune |
+| rows a run may return | unbounded until the ceiling refuses | **`max(19,999, <deployers> × 500)`**; above 20,000 the ceiling refuses the result whole, as before |
+| one 8,518-deploy wallet in a batch of 195 | whole batch → RPC walk | that wallet → RPC walk, **194 keep Dune** (the other 194 are under the 500 floor, so none of them is capped) |
 | executions per run | 1 | **1** (the cap is inside the same query) |
 
-The cap is **derived, not pinned**: no measurement fixes a good per-deployer launch count, and
-inventing one would be worse than saying so. What *is* pinned is the row ceiling the bill is bounded
-by, and the cap is that ceiling shared out — 102 rows at the 195-candidate cap, **277** at the ~72
-distinct wallets both committed runs actually seeded, **3,999** on a five-wallet reproduction run.
-Against the only true per-wallet counts this repo holds (§8.3: 8, 10, 65, 152, **247**), a realistic
-batch enumerates every one of them whole, and §8.3 reproduces unchanged at its own batch size.
+The cap is `max(pinned floor, ceiling shared out)`. The **share-out** is what a small batch's bill is
+bounded by, and it is derived rather than invented: what is pinned is the row ceiling the bill is
+bounded by — 102 rows at the 195-candidate cap, **277** at the ~72 distinct wallets both committed
+runs actually seeded, **3,999** on a five-wallet reproduction run.
+
+**The 500 floor is why the "194 keep Dune" row above holds at every batch size and not only below
+102.** A purely derived cap makes the truncation threshold a function of batch size, and at the
+tool's own 195-candidate cap it would refuse every deployer over 102 — including the subject
+deployer (**247**, the reproduction control) and `4q4GKBpV…` (152), i.e. exactly the largest, most
+gate-relevant and most expensive-to-walk wallets. 500 is anchored on the only true per-wallet counts
+this repo holds (§8.3: 8, 10, 65, 152, **247**): ~2× the largest of them, so **no measured deployer
+is capped at any batch size**, and ~17× below the industrial-spam extreme (8,518 deploys), so a spam
+wallet is still contained to 500 rows. §8.3 reproduces unchanged at any batch size, not merely at
+its own.
+
+**What the floor costs, stated rather than hidden.** The rows bound is no longer 19,999 by
+construction: above 39 deployers the floor binds and the SQL may return `<deployers> × 500`. The
+result-row ceiling stays exactly as it was and refuses such a result whole, which is the fallback
+merged `main` already had — never worse than today, just not eliminated. It takes roughly 40 wallets
+of 500+ launches in one batch to reach it, which the `total_bonded` leaderboard seed can serve. That
+is the accepted trade for never truncating a measured wallet.
 
 **A capped wallet is a prefix, never a short history**, and the two checks that could be confused are
 kept apart on purpose: `rows.length !== total_row_count` is about the RESULT SET losing bytes to
@@ -561,8 +577,10 @@ reads neither) — **that measurement was taken at four columns**, and §8.2b st
 ceiling and why it is arithmetic rather than a measurement. At the 195-candidate cap and a median
 ~50-launch history that is ~0.95 MB, about **20 credits a run — roughly 125 full-cap runs a month**.
 `dune.maxResultRows` caps a read at 20,000 rows and **refuses rather than pages**: an unbounded read
-is an unbounded bill. Since §8.2b the SQL also bounds a run at **19,999 rows by construction**, so
-that ceiling is the backstop rather than the first line of defence.
+is an unbounded bill. Since §8.2b the SQL also bounds a run's rows at
+**`max(19,999, <deployers> × 500)`**, so that ceiling is the backstop rather than the first line of
+defence — reachable only by roughly 40 wallets of 500+ launches in one batch, and a run that reaches
+it falls back whole exactly as it did before the cap existed.
 
 Two spend rules that are not negotiable, both from the vendor's own billing model:
 
@@ -621,6 +639,9 @@ step is taken the run refuses that leg rather than answering differently — whi
 direction, and still a run with no Dune answer for anybody. `README.md` → *"Deploying a change to the
 committed SQL"* holds the procedure and the id-to-text table. **Outstanding right now: `8204672`
 carries the pre-cap four-column SQL and must be updated in place to the five-column text of §8.2b.**
+**Delete that sentence (and the matching paragraph in `README.md`) as part of that update**: it is a
+point-in-time deployment status, and once `8204672` matches, nothing fails to make it stale — left in
+place it reads as a live warning forever.
 
 ### 8.7 Terms of service
 

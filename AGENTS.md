@@ -291,17 +291,23 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   SQL literal, and this is the only path in the repo where such a string reaches a query language
   (`dune.mjs` → `WALLET_SHAPE`; the record's `dune.walletsRefusedByShape` counts the drops).
 - **THE ROW CEILING REFUSES A RESULT, AND ENUMERATION IS ONE EXECUTION FOR THE WHOLE BATCH — so the
-  cap that keeps it reachable-only-by-a-bug is PER DEPLOYER, inside the SQL.** `CREATION_SQL` returns
-  at most `floor(19999 / <deployers in the batch>)` rows per deployer plus each deployer's TRUE count
-  (`launches_total`), so a run is bounded at 19,999 rows *by construction* at any batch size and an
-  oversized wallet — the `total_bonded` leaderboard seed serves an 8,518-deploy one — falls back
-  ALONE instead of costing all 195 candidates their Dune answer (~13 h of walking against ~1 credit).
-  **A capped wallet is a PREFIX, never a short-but-complete history**, and the check is deliberately
-  separate from the reader's `rows.length !== total_row_count` (vendor paging). `launches_total` is
-  type-checked as hard as `bonded`: absent ⇒ unreadable row, never "not capped". The cap is DERIVED
-  from `maxResultRows`, not a second pinned number — 102 at the 195-candidate cap, 277 at the ~72
-  both committed runs seeded, 3,999 on a five-wallet reproduction. `CREATION-DERIVED.md` §8.2b owns
-  it, and the ceiling stays as the backstop.
+  cap that keeps one spam wallet from pricing the batch is PER DEPLOYER, inside the SQL.**
+  `CREATION_SQL` returns at most `greatest(500, floor(19999 / <deployers in the batch>))` rows per
+  deployer — **most recent first**, because the tool asks what a wallet is creating now — plus each
+  deployer's TRUE count (`launches_total`), so an oversized wallet (the `total_bonded` leaderboard
+  seed serves an 8,518-deploy one) falls back ALONE instead of costing all 195 candidates their Dune
+  answer (~13 h of walking against ~1 credit). **A capped wallet is a PREFIX, never a
+  short-but-complete history**, and the check is deliberately separate from the reader's
+  `rows.length !== total_row_count` (vendor paging). `launches_total` is type-checked as hard as
+  `bonded`: absent ⇒ unreadable row, never "not capped". **The cap is `max(pinned floor 500, ceiling
+  shared out)`, and the floor is the load-bearing half**: the share-out alone is 102 rows at the
+  195-candidate cap, which would truncate the subject deployer (247) and `4q4GKBpV…` (152) on every
+  full run, so 500 (~2× the largest measured history, ~17× under the spam extreme) is what keeps
+  every measured wallet whole at ANY batch size. **The rows bound is therefore
+  `max(19,999, <deployers> × 500)`, NOT 19,999 by construction** — above 39 deployers it exceeds
+  `maxResultRows`, and the ceiling stays as the backstop that refuses such a result whole, exactly as
+  before the cap existed. Bytes are bounded separately and unchanged, by `?limit=maxResultRows`.
+  `CREATION-DERIVED.md` §8.2b owns it.
 - **A FAILED EXECUTION IS STILL BILLED AND IS TERMINAL.** `DuneClient.execute` is the one call in
   this repository that is never retried, on any failure, for any reason; polling and result reads are
   retried because they return no bytes when they fail. **Budget from *billed* credits, not

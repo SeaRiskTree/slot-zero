@@ -840,8 +840,9 @@ prints these same figures for whatever flags you actually pass:
 
 So: **~16 hours** for a default run, **~16.5** with `--consistency`. The cost leg's ~50 minutes is a
 worst case over three survivors; it runs only on candidates the free legs have not already refused,
-so on the committed live run's shape — one survivor of three — it is nearer ~8 minutes at the
-measured median. It shares the creation walk's limiter and is serialised after it, never beside it. The earlier "about 47 minutes"
+so on the committed live run's shape — one survivor of three — it is nearer ~6 minutes at the
+measured median (~152 requests at 2.5s; an earlier version of this sentence said ~8, which was the
+un-unioned 200). It shares the creation walk's limiter and is serialised after it, never beside it. The earlier "about 47 minutes"
 predated the creation walk and counted only the keyed and `frontend-api-v3` legs; it is wrong by a
 factor of twenty and is withdrawn. **Do not kill a default run because it is still going after an
 hour.**
@@ -1247,8 +1248,11 @@ net                                                     -0.0087  =  the gap that
 
 So the check was passing for the wrong reason. Refusing to score an unproven opening removes the
 first term; re-pinning removes the second. Era 2 now reproduces at **0.769 over its 86 proven
-launches** against `0.771` — the residual is three launches leaving an 89-member series and moving
-the order statistic, not a defect. **Widening the tolerance would have hidden both.**
+launches** against `0.771`, and the residual **0.002 is two different estimators, not a series
+shrinking**: the structural bundle rule reads 0.769153 over the 86 proven launches (0.759250 over all
+89 — the proven filter moves it *up*), while `0.771` is the named-cohort rule's 0.770796. The
+decomposition and the era-1 agreement that confirms it are in `stage0.mjs` beside the check itself.
+**Widening the tolerance would have hidden both.**
 
 The `readLaunchWindow` that the previous lane deleted rather than ship half-validated is written
 here, against a real caller and against ground truth — see [the live path](#the-live-path-checked-against-ground-truth).

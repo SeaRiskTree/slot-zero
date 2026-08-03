@@ -4040,9 +4040,12 @@ describe('the keyless boundary holds in both directions', () => {
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
-  // whole round exists to close — and it is the one place in the block where the vendor's own
-  // monthly counts are next to what survives, so `months` is a COUNT and a raw row field appearing
-  // here is a `derive and discard` breach, not just a schema drift.
+  // whole round exists to close. This level matters beyond schema drift — it is the one place in
+  // the block where the vendor's own monthly rows sit next to what survives, and `derive and
+  // discard` (ToS) is what says only the count may. What the pin ENFORCES is narrower than that
+  // reason: it catches KEY-SET drift on both legs, and the source-side leg additionally asserts
+  // that `months` is a derived count rather than the rows themselves. A value regression on any of
+  // the other five keys is not something this pin covers.
   const DUNE_COVERAGE_TABLE_KEYS_9 = ['table', 'read', 'firstRowIso', 'lastRowIso', 'rowsTotal', 'months'];
   const DUNE_COVERAGE_TABLE_KEYS_BY_SCHEMA: Record<number, string[]> = {
     9: DUNE_COVERAGE_TABLE_KEYS_9,
@@ -4803,12 +4806,23 @@ describe('the keyless boundary holds in both directions', () => {
     // added or dropped there — at either level — has to come and change the pinned list on purpose.
     // ONE synthetic table goes in on purpose: `tables` is a projection of its own, and with an empty
     // array the row projection is never constructed, so the eight top-level keys would be pinned
-    // while a field added inside a table row passed silently — the same gap one level down.
+    // while a field added inside a table row passed silently — the same gap one level down. The
+    // synthetic table's `months` is NON-EMPTY on purpose: the projection must carry the COUNT, and
+    // against an empty array a regression to the vendor's own rows would still project something
+    // key-shaped and empty. Two entries make `months === 2` discriminate count from rows.
     const duneCoverageRow = coverageRecordRow(
       {
         probedAtMs: 0,
         fromCache: false,
-        tables: [{ table: 'pump_evt_createevent', firstRowMs: 0, lastRowMs: 0, rowsTotal: 0, months: [] }],
+        tables: [
+          {
+            table: 'pump_evt_createevent',
+            firstRowMs: 0,
+            lastRowMs: 0,
+            rowsTotal: 0,
+            months: [{ monthIso: '2026-04-01', rows: 1 }, { monthIso: '2026-05-01', rows: 2 }],
+          },
+        ],
       } as never,
       { ok: true, fromMs: 0, toMs: 0, holes: [], reasons: [] } as never,
     ) as { tables: unknown[] } & Record<string, unknown>;
@@ -4819,6 +4833,9 @@ describe('the keyless boundary holds in both directions', () => {
     expect(Object.keys(duneCoverageRow.tables[0] as object).sort()).toEqual(
       [...DUNE_COVERAGE_TABLE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
     );
+    const projectedMonths = (duneCoverageRow.tables[0] as { months: unknown }).months;
+    expect(typeof projectedMonths, '`months` must be the derived COUNT, not the vendor rows').toBe('number');
+    expect(projectedMonths).toBe(2);
   });
 });
 

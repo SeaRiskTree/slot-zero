@@ -237,7 +237,7 @@ change that owns those.
 ## Scope boundaries
 
 - **Not a window-decay tripwire.** Detecting a window *closing* on a wallet we are currently trading is
-  a different deliverable (`slot-zero-screen-window-decay-tripwire`). Discovery finds the next wallet;
+  a different deliverable and it is built: `tools/window-decay-tripwire/`. Discovery finds the next wallet;
   the tripwire says leave the current one. The two must not be merged.
 - **Not a recommendation.** Clearing this gate means *competent enough to be worth measuring*. Whether
   a deployer leaves an outsider any room, and whether that room is profitable, is **unmeasured here** —

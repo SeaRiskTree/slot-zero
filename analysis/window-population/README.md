@@ -446,10 +446,10 @@ state of the evidence.
    machinery.
 
 **What is deliberately not done here.** The brief scoped this lane to the measurement, so no
-screening stage, grading loop or decay tripwire is built. §6.2's latency table characterises the
-observed close; it is not a tripwire design. Whoever builds one should note that the only close
-on record was a step, and that a trailing-3 statistic caught it in two days at a
-once-a-fortnight false-alarm rate.
+screening stage or grading loop is built. §6.2's latency table characterises the observed close;
+it is not a tripwire design. The tripwire itself has since been built in a separate lane —
+`tools/window-decay-tripwire/`, which owns that design, its latency and its false-alarm ceiling,
+and whose §6 scores §6.2's P&L route against the rule it chose instead.
 
 ---
 

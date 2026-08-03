@@ -661,8 +661,9 @@ its `README.md`; every number reproduces from `node tools/window-decay-tripwire/
   be stopped early at a mean cost of 347.8 SOL — **more than half the 591.7 SOL the whole window was
   worth**. One window cannot distinguish that from zero. Also, **this is a step detector**: it would
   miss a gradual close entirely, and no data here says whether that shape exists.
-- **The cohort is load-bearing and a dev-buy-only variant does NOT work.** Dropping the cohort from
-  the numerator collapses the separation (open p95 0.525 against closed p50 0.329). Without a
+- **The cohort is load-bearing and a dev-buy-only variant does NOT work.** The deployer's own buy is
+  the most exogenous signal available and alone it costs **5–6 false alarms** — the operation raised
+  its own stake repeatedly while the window stayed open (the tool's `README.md` §6). Without a
   supplied cohort the detector falls back to the repo's co-ordination rule and reaches the same
   verdict at the same latency with 0 false stops — but that rule recovers **nothing** on this
   deployer before 2026-04, so a create slot with no bundled transaction is silence, never an empty

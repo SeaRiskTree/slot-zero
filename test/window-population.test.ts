@@ -316,7 +316,7 @@ describe('analysis/ reaches no network and reads no credential', () => {
   // The brief for this measurement was "local tape only, no vendor spend at all". That is a
   // property of the code, so it is asserted like one — literally the same patterns
   // test/loader.test.ts runs over src/, imported from test/offline-guard.ts so the two guards
-  // cannot drift. tools/deployer-screen/ remains the only network-capable area in the repo.
+  // cannot drift. tools/ remains the only network-capable area in the repo; see test/offline-guard.ts.
   it('no socket and no credential, on the same list src/ is held to', () => {
     const code = readAll(ANALYSIS_DIR, 'analysis/', /\.(ts|mjs|js)$/);
     expect(code.size).toBeGreaterThan(0);

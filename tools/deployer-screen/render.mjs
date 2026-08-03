@@ -235,6 +235,10 @@ export function renderEntry(e, coverage) {
         `      cost walk: ${coverage.cost.transactionsPriced}/${coverage.cost.transactionsTargeted} ` +
           `transaction(s) priced in ${coverage.cost.rpcRequests} RPC request(s) over ` +
           `${coverage.cost.launchesPriced} launch(es)` +
+          (coverage.cost.transactionsDiscarded > 0 || coverage.cost.launchesDiscarded > 0
+            ? `, plus ${coverage.cost.transactionsDiscarded} transaction(s) over ` +
+              `${coverage.cost.launchesDiscarded} launch(es) PAID FOR AND DISCARDED (backing nothing)`
+            : '') +
           (coverage.cost.viaBlock > 0 ? `, ${coverage.cost.viaBlock} from a whole-block read` : '') +
           (coverage.cost.transactionsUnresolved > 0
             ? `, ${coverage.cost.transactionsUnresolved} UNRESOLVED (not "free")`
@@ -440,8 +444,12 @@ export function renderStage0(r, vendorReadings) {
   );
   L.push(
     `  entry cost: median ${num(r.costCheck.entryCostMedianSol, 4)} SOL, ` +
-      `${num(r.costCheck.entryCostPerSolStakedMedian, 4)} per SOL staked, ` +
       `${pct(r.costCheck.entryCostPositiveShare)} of entries above zero`,
+  );
+  L.push(
+    `  per SOL staked: ${num(r.costCheck.entryCostPerSolStakedMedianByLaunch, 4)} median PER LAUNCH ` +
+      `(the unit the entry-cost bar is compared against), ` +
+      `${num(r.costCheck.entryCostPerSolStakedMedianByEntry, 4)} pooled per ENTRY`,
   );
   L.push(
     `  the field: hit rate ${num(r.costCheck.grossHitRate, 4)} GROSS against ` +

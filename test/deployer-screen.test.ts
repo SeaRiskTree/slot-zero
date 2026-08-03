@@ -4864,10 +4864,42 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
       fetchImpl: walkableWindow(10 * (1 / 0.6 - 1), 1),
       sleepImpl: async () => {},
     });
+    // The first launch prices cleanly and the endpoint dies on the second, so this also covers the
+    // rollback: pricing that was PAID FOR but no longer backs the score must not stay in
+    // `transactionsPriced`, or a record reads `launchesPriced: 1` beside `entryCostPriced.hits: 0`.
+    let served = 0;
     const rpc = new SolanaRpcClient({
       maxRequests: 200,
       minIntervalMs: 0,
-      fetchImpl: (async () => ({ ok: false, status: 503, json: async () => ({}) })) as unknown as typeof fetch,
+      fetchImpl: (async (_url: string, init: { body: string }) => {
+        const req = JSON.parse(init.body) as { id: number; method: string; params: unknown[] };
+        if (req.method === 'getBlock') {
+          return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, result: null }) };
+        }
+        served += 1;
+        if (served > 4) return { ok: false, status: 503, json: async () => ({}) };
+        const sig = String((req.params as string[])[0]);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            jsonrpc: '2.0',
+            id: req.id,
+            result: {
+              transaction: {
+                signatures: [sig],
+                message: { accountKeys: [{ pubkey: sig.endsWith('A') ? 'A' : 'B' }, { pubkey: 'C' }] },
+              },
+              meta: {
+                err: null,
+                fee: 5_000,
+                preBalances: [100 * LAMPORTS_PER_SOL, 0],
+                postBalances: [(100 - ((sig.startsWith('buy') ? 5 : -6) + 0.02)) * LAMPORTS_PER_SOL, 0],
+              },
+            },
+          }),
+        };
+      }) as unknown as typeof fetch,
       sleepImpl: async () => {},
     });
 
@@ -4887,6 +4919,90 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     expect(score.entryCostPriced.hits).toBe(0);
     expect(score.entryCostSol.n).toBe(0);
     expect(score.entryCostPerSolStakedByLaunch.n).toBe(0);
+
+    // And the coverage block agrees with it rather than contradicting it. The four transactions the
+    // first launch priced are real spend and are still reported — as DISCARDED, which is what they
+    // are once the score no longer rests on them.
+    expect(coverage.cost.launchesPriced).toBe(0);
+    expect(coverage.cost.transactionsPriced).toBe(0);
+    expect(coverage.cost.launchesDiscarded).toBe(2);
+    expect(coverage.cost.transactionsDiscarded).toBe(4);
+    expect(coverage.cost.rpcRequests).toBeGreaterThan(0);
+  });
+
+  it('a ceiling that bites MID-WALK discards that launch whole and does not count it', async () => {
+    // The invariant thresholds.json -> minPricedFraction states as enforced at both ends. The
+    // reservation before a launch is a floor, not the worst case: every request may be retried and a
+    // null getTransaction is asked again, so the ceiling can still run out part-way through a
+    // launch. Here the ceiling is exactly one launch's four transactions and every signature is
+    // load-shed once, so the walk pays two requests per transaction and gets through two of four.
+    // A truncated walk holds the EARLIEST entrants by slot, which is a biased sample rather than a
+    // short one, so what it managed must be thrown away rather than attached.
+    const client = new KeylessClient({
+      maxRequests: 400,
+      minIntervalMs: 0,
+      fetchImpl: walkableWindow(10 * (1 / 0.6 - 1), 1),
+      sleepImpl: async () => {},
+    });
+    const shed = new Set<string>();
+    const rpc = new SolanaRpcClient({
+      maxRequests: 4,
+      minIntervalMs: 0,
+      fetchImpl: (async (_url: string, init: { body: string }) => {
+        const req = JSON.parse(init.body) as { id: number; method: string; params: unknown[] };
+        const sig = String((req.params as string[])[0]);
+        // A null result is load-shedding, so the walk asks again — which is exactly the retry the
+        // per-launch reservation cannot see.
+        if (!shed.has(sig)) {
+          shed.add(sig);
+          return { ok: true, status: 200, json: async () => ({ jsonrpc: '2.0', id: req.id, result: null }) };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            jsonrpc: '2.0',
+            id: req.id,
+            result: {
+              transaction: {
+                signatures: [sig],
+                message: { accountKeys: [{ pubkey: sig.endsWith('A') ? 'A' : 'B' }, { pubkey: 'C' }] },
+              },
+              meta: {
+                err: null,
+                fee: 5_000,
+                preBalances: [100 * LAMPORTS_PER_SOL, 0],
+                postBalances: [(100 - ((sig.startsWith('buy') ? 5 : -6) + 0.02)) * LAMPORTS_PER_SOL, 0],
+              },
+            },
+          }),
+        };
+      }) as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+
+    const { score, coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: profile(8),
+      nowMs: NOW,
+      thresholds: T as never,
+      rpc,
+      preferBlockRoute: false,
+    });
+
+    expect(coverage.cost.ran).toBe(true);
+    expect(coverage.cost.stoppedForBudget).toBe(true);
+    expect(coverage.cost.notes.join(' ')).toMatch(/partial reading was DISCARDED/);
+    // Discarded, not priced — and the launches the exhausted ceiling never started are counted
+    // apart from it, because those cost nothing at all.
+    expect(coverage.cost.launchesDiscarded).toBe(1);
+    expect(coverage.cost.transactionsDiscarded).toBeGreaterThan(0);
+    expect(coverage.cost.launchesPriced).toBe(0);
+    expect(coverage.cost.transactionsPriced).toBe(0);
+    expect(coverage.cost.launchesSkippedForBudget).toBe(7);
+    // Nothing was attached, so the candidate is unmeasured — which is terminal and never a pass.
+    expect(score.verdict).toBe('entry-cost-unmeasured');
+    expect(score.entryCostPriced.hits).toBe(0);
   });
 
   it('counts a mint-time disagreement separately and reports it as an event, per wallet', async () => {

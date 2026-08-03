@@ -1220,7 +1220,12 @@ function summariseStage0(s) {
       pairsPriced: s.costCheck.pairsPriced,
       minPairs: s.costCheck.minPairs,
       entryCostMedianSol: Number(s.costCheck.entryCostMedianSol.toFixed(6)),
-      entryCostPerSolStakedMedian: Number(s.costCheck.entryCostPerSolStakedMedian.toFixed(6)),
+      entryCostPerSolStakedMedianByEntry: Number(
+        s.costCheck.entryCostPerSolStakedMedianByEntry.toFixed(6),
+      ),
+      entryCostPerSolStakedMedianByLaunch: Number(
+        s.costCheck.entryCostPerSolStakedMedianByLaunch.toFixed(6),
+      ),
       entryCostPositiveShare: Number(s.costCheck.entryCostPositiveShare.toFixed(4)),
       grossHitRate: Number(s.costCheck.grossHitRate.toFixed(4)),
       netHitRate: Number(s.costCheck.netHitRate.toFixed(4)),

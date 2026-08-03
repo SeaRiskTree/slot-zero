@@ -93,7 +93,13 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   (`fieldRealisedSolNetOfMeasuredFees`, `fieldReturnPerSolNetOfMeasuredFees`,
  *   `fieldHitRateNetOfMeasuredFees`, `fieldClosedRoundTripsPriced`) and, in `entry.coverage`, the
  *   eligibility counts (`minAgeMs`, `launchesTooYoung`, `launchesEligible`, `launchesPlanned`,
- *   `launchesDroppedByCap`, `youngestRefAgeMs`, `youngestEligibleAgeMs`) plus a `cost` block. On a
+ *   `launchesDroppedByCap`, `youngestRefAgeMs`, `youngestEligibleAgeMs`) plus a `cost` block. That
+ *   block separates what backs the score from what the run merely PAID FOR: `launchesPriced` and
+ *   `transactionsPriced` count only pricing that reached the score, `launchesDiscarded` and
+ *   `transactionsDiscarded` count work that was bought and then dropped whole (a launch the RPC
+ *   ceiling cut short mid-walk, or the whole candidate on a transport failure), and `rpcRequests`
+ *   spans both because it is the spend. So `launchesPriced > 0` beside an `entryCostPriced.hits` of
+ *   `0` is a contradiction the record cannot express. On a
  *   schema-≤5 record `launchRefsAvailable` and `launchesAttempted` could not be told apart from the
  *   `maxLaunchesPerCandidate` cap, so **do not infer an eligibility count from an older record** —
  *   it is not in there. Every cost figure is a LOWER bound: an out-of-transaction landing tip is

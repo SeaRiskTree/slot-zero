@@ -114,15 +114,27 @@ import { redactAll, redactVendorIdentifiers } from './record.mjs';
  *
  * @property {boolean} ran                 Whether the leg ran at all. It does not when the free
  *   legs already refused the candidate, and that is a saving rather than a gap.
- * @property {number} rpcRequests          Solana RPC requests, retries included.
- * @property {number} launchesPriced       Launches EVERY target transaction of which came back.
- *   A launch missing one is not counted here even though its complete entrants still are.
- * @property {number} launchesSkippedForBudget Launches the per-candidate ceiling cost: never
- *   started because it could not cover them whole, or started and cut short and then DISCARDED
- *   whole. Either way no launch contributes a half-priced cost figure, because a truncated walk
- *   holds the earliest entrants and that is a biased sample rather than a short one.
+ * @property {number} rpcRequests          Solana RPC requests, retries included. **What the run
+ *   PAID**, which is a different question from what backs the score: work that was paid for and then
+ *   dropped is still spend, so this counts it and the `*Discarded` fields say how much of it there
+ *   was.
+ * @property {number} launchesPriced       Launches EVERY target transaction of which came back AND
+ *   whose pricing is attached to the score. A launch missing one is not counted here even though its
+ *   complete entrants still are, and neither is one that was priced and then discarded.
+ * @property {number} launchesDiscarded    Launches whose walk was PAID FOR and then dropped whole:
+ *   cut short mid-walk by the ceiling, or abandoned with the candidate on a transport failure.
+ *   Beside `launchesPriced` rather than inside it, so a record can be reconciled arithmetically —
+ *   `launchesPriced` never disagrees with `entry.entryCostPriced`, and this says what the disagreement
+ *   would have been.
+ * @property {number} launchesSkippedForBudget Launches NEVER STARTED, because the per-candidate
+ *   ceiling could not cover them whole. Zero requests were spent on them; a launch the ceiling cut
+ *   short after starting is `launchesDiscarded`. Either way no launch contributes a half-priced cost
+ *   figure, because a truncated walk holds the earliest entrants and that is a biased sample rather
+ *   than a short one.
  * @property {number} transactionsTargeted Distinct signatures the two scopes asked for.
- * @property {number} transactionsPriced
+ * @property {number} transactionsPriced   Signatures that came back AND back the score.
+ * @property {number} transactionsDiscarded Signatures that came back and were then dropped with the
+ *   launch or the candidate that asked for them. Paid for, and backing nothing.
  * @property {number} transactionsUnresolved The endpoint never resolved them, or their shape could
  *   not be priced exactly. **Not "cost zero".**
  * @property {number} viaBlock             Priced from a whole-block read (the §5.4 optimisation).
@@ -446,6 +458,13 @@ export async function scoreCandidateEntry(client, input) {
         });
       } catch (cause) {
         transportFailed = true;
+        // Nothing this candidate priced backs the score any more, because the score is not recomputed
+        // below. The counters follow the attachment rather than the spend: everything earlier
+        // launches priced moves across to DISCARDED, and this launch is one more of them.
+        cost.transactionsDiscarded += cost.transactionsPriced;
+        cost.launchesDiscarded += cost.launchesPriced + 1;
+        cost.transactionsPriced = 0;
+        cost.launchesPriced = 0;
         cost.notes.push(
           `the cost walk was ABANDONED for this candidate after a transport failure: ` +
             `${describeTransportFailure(cause)}. Nothing it had priced is attached, so the entry ` +
@@ -454,7 +473,6 @@ export async function scoreCandidateEntry(client, input) {
         );
         break;
       }
-      cost.transactionsPriced += walk.priced.size;
       cost.transactionsUnresolved += walk.unresolved;
       cost.viaBlock += walk.viaBlock;
       cost.viaTransaction += walk.viaTransaction;
@@ -471,7 +489,8 @@ export async function scoreCandidateEntry(client, input) {
       // which is the biased sample `minPricedFraction` exists to refuse, and a biased fifth can
       // still clear an 0.8 coverage bar. Short is acceptable; skewed is not.
       if (walk.stoppedForBudget && walk.priced.size < targets.length) {
-        cost.launchesSkippedForBudget += 1;
+        cost.launchesDiscarded += 1;
+        cost.transactionsDiscarded += walk.priced.size;
         cost.stoppedForBudget = true;
         cost.notes.push(
           `a launch was priced ${walk.priced.size} of ${targets.length} transaction(s) before the ` +
@@ -486,6 +505,7 @@ export async function scoreCandidateEntry(client, input) {
       // whatever entrants it could complete — `priceLaunchEntry` is all-or-nothing per wallet — but
       // it is not a priced launch, and counting it as one would overstate coverage.
       if (targets.length > 0 && walk.priced.size === targets.length) cost.launchesPriced += 1;
+      cost.transactionsPriced += walk.priced.size;
       pricedLaunches.push(priceLaunchEntry(entry, targets, walk.priced));
     }
 
@@ -531,9 +551,11 @@ export function emptyCostCoverage() {
     ran: false,
     rpcRequests: 0,
     launchesPriced: 0,
+    launchesDiscarded: 0,
     launchesSkippedForBudget: 0,
     transactionsTargeted: 0,
     transactionsPriced: 0,
+    transactionsDiscarded: 0,
     transactionsUnresolved: 0,
     viaBlock: 0,
     viaTransaction: 0,

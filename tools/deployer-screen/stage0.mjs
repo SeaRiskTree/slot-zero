@@ -446,7 +446,13 @@ export function readOnChainCosts(dataDir) {
  * @property {number} pairsPriced          Closed round trips priced across their whole window.
  * @property {number} minPairs             Pairs this check needs to mean anything.
  * @property {number} entryCostMedianSol
- * @property {number} entryCostPerSolStakedMedian
+ * @property {number} entryCostPerSolStakedMedianByEntry  Pooled over every priced create-slot
+ *   ENTRY, matching `EntryScore.entryCostPerSolStaked`. The finer-grained evidence.
+ * @property {number} entryCostPerSolStakedMedianByLaunch One figure per priced LAUNCH — each
+ *   launch's own median entry, then the median of those — matching
+ *   `EntryScore.entryCostPerSolStakedByLaunch`. **This is the unit `entry-cost-prohibitive`
+ *   compares against** (captain decision 140a), so it is the one Stage 0 must report if Stage 0 is
+ *   to regression-test the gate rather than a neighbouring quantity.
  * @property {number} entryCostPositiveShare Share of priced entries whose cost is above zero.
  * @property {number} grossHitRate
  * @property {number} netHitRate
@@ -498,6 +504,8 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
   const pricedPostBreak = [];
   /** @type {import('./entry.mjs').FieldEntrant[]} */
   const allEntries = [];
+  /** @type {number[]} */
+  const perLaunchCostPerSolStaked = [];
   let launchesPriced = 0;
 
   for (const l of launches) {
@@ -518,6 +526,10 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
     launchesPriced += 1;
     const priced = priceLaunchEntry(entry, targets, available);
     allEntries.push(...priced.field);
+    const perEntryHere = priced.field
+      .map((e) => e.entryCostPerSolStaked)
+      .filter((v) => Number.isFinite(v));
+    if (perEntryHere.length > 0) perLaunchCostPerSolStaked.push(median(perEntryHere));
     if (l.dateIso.slice(0, 10) >= REGIME_BOUNDARY) pricedPostBreak.push(priced);
   }
 
@@ -547,7 +559,8 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
     pairsPriced: pairs.length,
     minPairs,
     entryCostMedianSol,
-    entryCostPerSolStakedMedian: median(costed.map((e) => e.entryCostPerSolStaked)),
+    entryCostPerSolStakedMedianByEntry: median(costed.map((e) => e.entryCostPerSolStaked)),
+    entryCostPerSolStakedMedianByLaunch: median(perLaunchCostPerSolStaked),
     entryCostPositiveShare: positive(costed.map((e) => e.entryCostSol)),
     grossHitRate,
     netHitRate,

@@ -265,6 +265,23 @@ export function resolveSolanaRpcEndpoint(env) {
   if (raw === undefined || raw.trim().length === 0) return keyless;
 
   const description = describeHeliusKey(raw);
+  // **A COMPOSED URL PASTED HERE IS THE ONE MALFORMED VALUE THE LENGTH BAND CANNOT CATCH.** This
+  // host plus a UUID key is 76 characters, comfortably inside the 24-128 band, so it would be
+  // accepted and then composed a second time — every request 401s, and before this fail-fast landed
+  // that degraded all 195 candidates to an ownership-only reading while the shared MadeOnSol
+  // allowance drained. Refused on SHAPE, and the message names the shape only: the offending value
+  // is a credential and is not quoted, here or anywhere.
+  if (raw.includes('://') || raw.includes('api-key=')) {
+    return {
+      ...keyless,
+      rejected:
+        `${HELIUS_KEY_ENV_VAR} looks like a composed URL rather than a bare key, so it was NOT used ` +
+        `and the walk fell back to the keyless public endpoint. Store the KEY ALONE — the address is ` +
+        `built from it in exactly one place, and a URL in an environment variable is a credential ` +
+        `that leaks the moment anything formats it into a message. The value is not shown, here or ` +
+        `anywhere.`,
+    };
+  }
   if (raw.length < HELIUS_KEY_MIN_LENGTH || raw.length > HELIUS_KEY_MAX_LENGTH) {
     return {
       ...keyless,

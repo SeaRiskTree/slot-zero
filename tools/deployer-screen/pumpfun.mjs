@@ -1472,8 +1472,11 @@ export function creditsForTransactions(transactions) {
  * applies the same filter server-side, and `transactionDetails: 'full'` returns the transaction
  * bodies the other walk paid for one at a time. **Measured 2026-08-03 over those same twelve
  * wallets, every one of them walked to exhaustion: 125,981 succeeded transactions in 136 full pages.**
- * The subject deployer's whole history is 7,791 transactions in 8 pages, against 7,166 requests and
- * a measured ~287 minutes on the keyless route.
+ * The subject deployer's whole history is 7,791 transactions in **9 pages, 793 credits and 12
+ * requests end to end** — 8 data pages at 780 credits, one further page that returns no rows and
+ * proves exhaustion by answering `paginationToken: null` at the 10-credit minimum, and 3
+ * `getMultipleAccounts` curve reads for its 247 creations at 1 credit each — against 7,166 requests
+ * and a measured ~287 minutes on the keyless route.
  *
  * **The parsers are untouched and that is checked rather than assumed.** `full` + `jsonParsed`
  * returns `getTransaction`'s own envelope — `{ transaction: { signatures, message }, meta, blockTime }`
@@ -1484,7 +1487,7 @@ export function creditsForTransactions(transactions) {
  * ## What bounds it, and in which unit
  *
  * Credits, not requests. The provider bills by transactions returned, so a busy wallet is expensive
- * in a way a request count cannot see: 8 pages for the subject, 50 for the busiest wallet measured.
+ * in a way a request count cannot see: 9 pages for the subject, 50 for the busiest wallet measured.
  * `maxCredits` is therefore the real ceiling and `maxPages` is the same bound restated for the loop.
  * A page is only STARTED when a whole page's worst-case price still fits, so the ceiling is exact
  * and a page is never abandoned half-paid.
@@ -1543,13 +1546,21 @@ export async function readCreatedHistoryIndexed(rpc, wallet, bounds) {
       // Reserve a WHOLE page's worst-case price before starting one. Checking afterwards would let
       // the last page overshoot the ceiling by up to a page, and a credit ceiling that can be
       // exceeded is not a ceiling. Reserve the curve reads too — see the classification note below.
-      if (rpc.creditsRemaining() < worstCasePageCredits + creditsForCurveReads(creates.length)) {
+      //
+      // Reserved against `creates.length + pageLimit`, i.e. the WORST CASE AFTER the page about to
+      // be started, not the count before it. Against the pre-fetch count a page whose rows are all
+      // creations under-reserves by up to `pageLimit / 100` reads, leaving those mints unclassified
+      // — and an unread curve counts as NOT bonded, which deflates the very rate this walk was
+      // widened to measure. `CREATION-DERIVED.md` §4 owns the invariant: a walk must never spend its
+      // last unit finding one more creation it then has to score as a failure.
+      const worstCaseCreates = creates.length + pageLimit;
+      if (rpc.creditsRemaining() < worstCasePageCredits + creditsForCurveReads(worstCaseCreates)) {
         stopReason = 'credit-ceiling';
         break;
       }
       // Same reservation in requests, so whichever ceiling is tighter still stops the walk cleanly
       // rather than throwing part-way through a page.
-      if (rpc.remaining() <= curveReadRequests(creates.length)) {
+      if (rpc.remaining() <= curveReadRequests(worstCaseCreates)) {
         stopReason = 'request-ceiling';
         break;
       }
@@ -1633,6 +1644,12 @@ export async function readCreatedHistoryIndexed(rpc, wallet, bounds) {
       if (pages >= bounds.maxPages) stopReason = 'page-cap';
     }
   } catch (cause) {
+    // A REFUSED CREDENTIAL IS NOT A PROPERTY OF THIS WALLET, so it must not become this wallet's
+    // reading. Degrading it here would give every remaining candidate a silent ownership-only
+    // history under a record still claiming `historySource: creation-derived`, while the keyed
+    // MadeOnSol allowance drained one profile at a time. It is rethrown so the run stops on the
+    // first one, with the allowance it has not yet spent still unspent.
+    if (cause instanceof RpcCredentialRejected) throw cause;
     // Same rule as the keyless walk: keep what was paid for, label why it stopped, let the caller
     // decide. What must never happen is a short window presented as a measured history.
     stopReason = cause instanceof CeilingReached ? 'request-ceiling' : 'upstream-error';
@@ -1666,9 +1683,13 @@ export async function readCreatedHistoryIndexed(rpc, wallet, bounds) {
         if (state !== null) curves.set(mint, state);
       });
     }
-  } catch {
-    // Deliberately swallowed, exactly as in the keyless walk: `curvesUnread` reports what it cost,
-    // and it must be visible because an unread curve counts as NOT bonded.
+  } catch (cause) {
+    // Same exception as above and for the same reason: a credential the endpoint refuses says
+    // nothing about this wallet, so it may not be absorbed into `curvesUnread` — which would read
+    // as "these launches are not bonded" for every candidate after it.
+    if (cause instanceof RpcCredentialRejected) throw cause;
+    // Otherwise deliberately swallowed, exactly as in the keyless walk: `curvesUnread` reports what
+    // it cost, and it must be visible because an unread curve counts as NOT bonded.
   }
 
   return {

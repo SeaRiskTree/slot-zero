@@ -283,9 +283,18 @@ indexed route completed **all twelve**, in 27.7 seconds of enumeration.
 | `EeLjBXRE…` | 3,344 | 4 | 340 | 14,053 requests, 562 min |
 | `Eh3q5AXn…` | 4,749 | 5 | 480 | 58,186 requests, 2,327 min |
 | `GeBJSHK4…` | 6,378 | 7 | 640 | 3,263 requests, 131 min |
-| `7ufmve7Z…` | 7,791 | 8 | 780 | 7,166 requests, 287 min |
+| `7ufmve7Z…` | 7,791 | 9 † | 793 † | 7,166 requests, 287 min |
 | `yHCxHBEa…` | 46,815 | 47 | 4,690 | 2,734 requests, 109 min |
 | `6Wg4aeZ2…` | 49,367 | 50 | 4,940 | 6,568 requests, 263 min |
+
+† **The subject deployer's row is the END-TO-END figure the production walk actually recorded**
+(§7.5), and it is the only row here that is: 8 data pages at 780 credits, **plus** the further page
+that returns no rows and proves exhaustion by answering `paginationToken: null` at the 10-credit
+minimum, **plus** 3 `getMultipleAccounts` curve reads for its 247 creations at 1 credit each — 9
+pages, 793 credits, 12 requests. The other eleven rows are the enumeration measurement's **data
+pages only**, which is a standalone probe that counted neither the exhaustion-proving page nor the
+curve reads, so the aggregate below is unchanged and is a data-page figure. Read a row here as a
+lower bound on an end-to-end walk, never as one.
 
 **Median 320 credits, max 4,940, 12,660 for all twelve.** All twelve on the keyless route were
 ~153 hours; here they are 136 pages. Note the `3YpQRAGD…` row: 860 days of history behind a heavy

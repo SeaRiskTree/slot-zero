@@ -125,8 +125,24 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `minLaunches`/`minPairs` bars already there — a saved figure with no stated bar cannot be
  *   audited. No candidate row, `entry` or `entry.coverage` key changes, so `PERSISTED_BY_SCHEMA[7]`,
  *   `ENTRY_KEYS_BY_SCHEMA[7]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[7]` all equal `[6]`.
+ * - **8** — **the `spend` block reports THREE budgets separately**, because the creation walk can now
+ *   take a keyed indexed route. It gains `rpcProvider`, `rpcEndpoint`, `heliusCredits`,
+ *   `heliusCreditCeilingPerCandidate` and `plannedWorstCaseHeliusCredits`. The reason they are five
+ *   new keys rather than folded into the existing totals: MadeOnSol is metered in REQUESTS against a
+ *   shared daily allowance, Helius in CREDITS against an unshared monthly one, and the keyless hosts
+ *   in neither, and there is no exchange rate between them — a single "requests" total would hide
+ *   which allowance a heavy run actually spent. `rpcEndpoint` holds the endpoint's LABEL and never
+ *   the composed URL, which on the keyed route carries the credential in a query parameter;
+ *   `credential.mjs` → `SolanaRpcEndpoint` owns that split and a test drives a sentinel-bearing URL
+ *   through every failure path. On a schema-≤7 record these five keys are genuinely absent and must
+ *   not be reconstructed: those runs predate the indexed route, so the walk was the keyless one and
+ *   the record cannot say which host answered it. `heliusCredits: 0` with `rpcProvider: "public"` is
+ *   a keyless run that spent no credit; `heliusCreditCeilingPerCandidate: null` means the indexed
+ *   walk did not run at all. No candidate row, `entry` or `entry.coverage` key changes, so
+ *   `PERSISTED_BY_SCHEMA[8]`, `ENTRY_KEYS_BY_SCHEMA[8]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[8]` all
+ *   equal `[7]`.
  */
-export const RECORD_SCHEMA_VERSION = 7;
+export const RECORD_SCHEMA_VERSION = 8;
 
 /**
  * Completeness of a run, as the record can actually support.

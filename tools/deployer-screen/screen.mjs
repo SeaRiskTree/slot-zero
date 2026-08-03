@@ -48,6 +48,7 @@ import {
 } from './record.mjs';
 import {
   KeylessClient,
+  RpcCredentialRejected,
   SolanaRpcClient,
   readCreatedHistory,
   readCreatedHistoryIndexed,
@@ -959,12 +960,29 @@ export async function main(opts, env, out, err) {
     err('');
     err(abortReason);
 
+    // A REFUSED RPC CREDENTIAL IS TERMINAL FOR THE RUN, not a reading on one wallet. It says
+    // nothing about the deployer being screened, so it may never produce a per-candidate reading —
+    // and if it did, every candidate after it would fall back to the ownership listing while the
+    // record still claimed `historySource: creation-derived`, one paid-for MadeOnSol profile at a
+    // time. Stopping on the first one leaves the rest of the shared daily allowance unspent.
+    if (cause instanceof RpcCredentialRejected) {
+      err('');
+      err('CREDENTIAL PROBLEM — the run STOPPED HERE, and this is NOT a negative result.');
+      err(
+        `  Every gate reading after this point would have silently fallen back to the ownership ` +
+          `listing while the record still said historySource "${historySource}", so the run stops ` +
+          `instead. The rest of the shared MadeOnSol daily allowance is unspent.`,
+      );
+    }
+
     const code =
-      cause instanceof VendorRefused
-        ? exitForRefusal(cause.kind)
-        : cause instanceof CeilingReached
-          ? EXIT.ceiling
-          : EXIT.upstream;
+      cause instanceof RpcCredentialRejected
+        ? EXIT.credentialRejected
+        : cause instanceof VendorRefused
+          ? exitForRefusal(cause.kind)
+          : cause instanceof CeilingReached
+            ? EXIT.ceiling
+            : EXIT.upstream;
 
     emit(code);
     return code;

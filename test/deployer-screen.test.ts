@@ -2484,6 +2484,9 @@ describe('the keyless boundary holds in both directions', () => {
   // population under unchanged key names and carries the unfiltered reading beside it, so nothing
   // about a candidate row, `entry` or `entry.coverage` moves.
   PERSISTED_BY_SCHEMA[7] = PERSISTED_BY_SCHEMA[6]!;
+  // Schema 8 adds no candidate field either. It changes the run-level `spend` block, which reports
+  // three budgets in three units — asserted by SPEND_KEYS_BY_SCHEMA below.
+  PERSISTED_BY_SCHEMA[8] = PERSISTED_BY_SCHEMA[7]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -2540,6 +2543,8 @@ describe('the keyless boundary holds in both directions', () => {
     6: ENTRY_KEYS_6,
     // Schema 7 changes what a `stage0` block MEANS, not what `entry` carries.
     7: ENTRY_KEYS_6,
+    // Schema 8 changes the run-level `spend` block, not what `entry` carries.
+    8: ENTRY_KEYS_6,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -2572,6 +2577,42 @@ describe('the keyless boundary holds in both directions', () => {
     5: ENTRY_COVERAGE_KEYS_3_TO_5,
     6: ENTRY_COVERAGE_KEYS_6,
     7: ENTRY_COVERAGE_KEYS_6,
+    8: ENTRY_COVERAGE_KEYS_6,
+  };
+
+  // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
+  // the three key sets above see a candidate row, its `entry` and that block's `coverage`, and NONE
+  // of them can see a run-level block — so five new `spend` keys shipped under an unchanged version
+  // with every existing assertion still green. Two records both stamped 7 would then have had
+  // different shapes, which is exactly what "bump, never retro-edit" forbids.
+  //
+  // Committed records are never retro-edited, so the older shape stays legal keyed by its own
+  // version, exactly as PERSISTED_BY_SCHEMA already does.
+  const SPEND_KEYS_3_TO_7 = [
+    'candidateCap',
+    'endpoints',
+    'keyedCeiling',
+    'keyedRemaining',
+    'plannedWorstCaseKeyed',
+  ];
+  // Schema 8: three budgets, three units, no exchange rate between them. `rpcEndpoint` is the
+  // endpoint LABEL and never the composed URL — the keyed one carries the credential in a query
+  // parameter, so a record holding the URL would be a record holding the key.
+  const SPEND_KEYS_8 = [
+    ...SPEND_KEYS_3_TO_7,
+    'rpcProvider',
+    'rpcEndpoint',
+    'heliusCredits',
+    'heliusCreditCeilingPerCandidate',
+    'plannedWorstCaseHeliusCredits',
+  ];
+  const SPEND_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    3: SPEND_KEYS_3_TO_7,
+    4: SPEND_KEYS_3_TO_7,
+    5: SPEND_KEYS_3_TO_7,
+    6: SPEND_KEYS_3_TO_7,
+    7: SPEND_KEYS_3_TO_7,
+    8: SPEND_KEYS_8,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -2584,6 +2625,13 @@ describe('the keyless boundary holds in both directions', () => {
       'includingUnprovenEntryCostPerSolStakedMedianByLaunch',
       'minEntryCostPositiveShare',
     ],
+  };
+
+  // Keys a version adds to a block assembled in `buildRecord` rather than in a projection function
+  // below it — today the `spend` block. Kept apart from the list above because that one is asserted
+  // against the source AFTER `toRecordRow`, which is where `buildRecord` is not.
+  const RUN_LEVEL_KEYS_ADDED_BY_SCHEMA: Record<number, string[]> = {
+    8: SPEND_KEYS_8.filter((k) => !SPEND_KEYS_3_TO_7.includes(k)),
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -2653,7 +2701,18 @@ describe('the keyless boundary holds in both directions', () => {
       .split('\n')
       .filter((l) => !l.trimStart().startsWith('*') && !l.trimStart().startsWith('//') && !l.includes('/**'))
       .join('\n');
-    expect(credential.match(/api-key=/g)?.length, 'exactly one composition site').toBe(1);
+    // COMPOSITION is an interpolation — the query parameter followed by a value spliced into it —
+    // and that is what must happen once. The bare token may also appear as a SHAPE test, which is
+    // how a composed URL pasted into the key variable is refused (a 76-character paste sits inside
+    // the length band, so nothing else can catch it). Counting interpolations rather than tokens is
+    // the tighter statement of the property, not a looser one: the exhaustive cross-file rule above
+    // is untouched, and a second `api-key=${…}` anywhere still fails here.
+    expect(credential.match(/api-key=\$\{/g)?.length, 'exactly one composition site').toBe(1);
+    // And every other occurrence must be a non-composing one, so a URL cannot be assembled by
+    // concatenation to dodge the count above.
+    expect(credential.match(/api-key=(?!\$\{)./g) ?? [], 'a non-interpolating use must not build a URL').toSatisfy(
+      (uses: string[]) => uses.every((u) => u.endsWith("'") || u.endsWith('"') || u.endsWith('`')),
+    );
   });
 
   it('no committed file under the tool holds a key-shaped string', () => {
@@ -2710,6 +2769,39 @@ describe('the keyless boundary holds in both directions', () => {
     // And the complaint never quotes the value it is complaining about.
     expect(short.rejected).not.toContain('abc');
     expect(describeHeliusKey('not-a-uuid-but-long-enough-to-pass').hasDocumentedShape).toBe(false);
+  });
+
+  it('a composed URL pasted into the key variable is refused on SHAPE, which no length band can do', () => {
+    // The one malformed value the 24-128 band structurally cannot catch: this host plus a UUID key
+    // is 76 characters, comfortably inside it. Accepted, it would be composed a SECOND time, every
+    // request would 401, and before the walk's fail-fast landed that degraded every candidate to an
+    // ownership-only reading while the shared MadeOnSol daily allowance drained a profile at a time.
+    const key = '11111111-2222-4333-8444-555555555555';
+    const composed = `${HELIUS_RPC_HOST}/?api-key=${key}`;
+    expect(composed.length).toBeGreaterThanOrEqual(24);
+    expect(composed.length).toBeLessThanOrEqual(128);
+
+    const rejected = resolveSolanaRpcEndpoint({ [HELIUS_KEY_ENV_VAR]: composed });
+    // The existing fallback mechanism, unchanged: keyless AND a stated reason. A silent fallback
+    // would read as a deliberate keyless run in the record.
+    expect(rejected.provider).toBe('public');
+    expect(rejected.url).toBe(PUBLIC_SOLANA_RPC);
+    expect(rejected.rejected).toMatch(/composed URL/);
+    // The message names the SHAPE and never the value — same rule as the too-short/too-long ones.
+    // A rejection that quoted the paste would print the key it exists to protect.
+    expect(rejected.rejected).not.toContain(key);
+    expect(rejected.rejected).not.toContain(composed);
+
+    // A bare scheme is enough; so is a stray query fragment with no scheme at all.
+    expect(resolveSolanaRpcEndpoint({ [HELIUS_KEY_ENV_VAR]: `https://example.invalid/${key}` }).provider).toBe(
+      'public',
+    );
+    expect(resolveSolanaRpcEndpoint({ [HELIUS_KEY_ENV_VAR]: `?api-key=${key}` }).rejected).toMatch(
+      /composed URL/,
+    );
+    // And a real bare key is still accepted — the check must not be so broad it refuses the thing
+    // it is protecting.
+    expect(resolveSolanaRpcEndpoint({ [HELIUS_KEY_ENV_VAR]: key }).provider).toBe('helius');
   });
 
   it('a keyed endpoint\'s credential reaches no message, on any failure path', () => {
@@ -2877,10 +2969,27 @@ describe('the keyless boundary holds in both directions', () => {
     const records = readAll(join(TOOL_DIR, 'runs'), '', /\.json$/);
     expect(records.size).toBeGreaterThan(0);
     for (const [file, text] of records) {
-      const parsed = JSON.parse(text) as { candidates: Record<string, unknown>[] };
+      const parsed = JSON.parse(text) as {
+        candidates: Record<string, unknown>[];
+        spend?: Record<string, unknown>;
+      };
       expect(parsed.candidates.length, file).toBeGreaterThan(0);
       const expected = PERSISTED_BY_SCHEMA[schemaVersionOf(parsed)];
       expect(expected, `${file} has an unknown schemaVersion`).toBeDefined();
+      // The run-level `spend` block, keyed by version for the same reason: schema 8 added five keys
+      // to it and nothing above this line could have seen them.
+      if (parsed.spend !== undefined && parsed.spend !== null) {
+        const spendExpected = SPEND_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+        expect(spendExpected, `${file} spend block at an unknown schemaVersion`).toBeDefined();
+        expect(Object.keys(parsed.spend).sort(), `${file} spend block`).toEqual(
+          [...spendExpected!].sort(),
+        );
+        // And the label, never the composed URL. The keyed endpoint's address carries the
+        // credential in a query parameter, so a URL here would be a persisted key.
+        expect(JSON.stringify(parsed.spend), `${file} spend block holds a composed RPC URL`).not.toMatch(
+          /api-key=/,
+        );
+      }
       for (const row of parsed.candidates) {
         expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(expected);
         expect(FORBIDDEN.test(JSON.stringify(row)), `${file} holds per-token vendor data`).toBe(false);
@@ -3033,6 +3142,12 @@ describe('the keyless boundary holds in both directions', () => {
       expect(toRecordRow, `toRecordRow must emit ${key}`).toMatch(new RegExp(`\\b${key}:`));
       expect(row, `the README row omits ${key}`).toContain(key);
     }
+    for (const key of RUN_LEVEL_KEYS_ADDED_BY_SCHEMA[RECORD_SCHEMA_VERSION] ?? []) {
+      // `[:,]` because an emitted key may be shorthand — `heliusCredits,` is the same field as
+      // `heliusCredits: heliusCredits` and a colon-only pattern would have missed it.
+      expect(projection, `buildRecord must emit ${key}`).toMatch(new RegExp(`\\b${key}[:,]`));
+      expect(row, `the README row omits ${key}`).toContain(key);
+    }
   });
 
   it('the row this build writes matches the schema it declares', () => {
@@ -3052,6 +3167,19 @@ describe('the keyless boundary holds in both directions', () => {
     expect(Object.keys(row.coverage).sort()).toEqual(
       [...ENTRY_COVERAGE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
     );
+
+    // The run-level `spend` block too, read out of `buildRecord`'s own object literal. There is no
+    // committed schema-8 record yet, so the loop over `runs/` cannot see this block at this version
+    // — and a key added here without a bump is precisely the drift that made schema 8 necessary.
+    const spendStart = source.indexOf('spend: {');
+    expect(spendStart, 'buildRecord no longer assembles a `spend` block').toBeGreaterThan(-1);
+    const spendBody = source.slice(spendStart + 'spend: {'.length);
+    const spendEnd = spendBody.indexOf('\n        },');
+    expect(spendEnd, 'the `spend` literal is no longer where this assertion can read it').toBeGreaterThan(-1);
+    const spendKeys = [...spendBody.slice(0, spendEnd).matchAll(/^ {10}([A-Za-z][A-Za-z0-9]*)(?::|,$)/gm)].map(
+      (m) => m[1]!,
+    );
+    expect(spendKeys.sort()).toEqual([...SPEND_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
   });
 });
 
@@ -3956,7 +4084,7 @@ describe('the indexed creation walk is the same measurement under a credit ceili
 
   it('asks for exactly the query the measurement was taken against', async () => {
     const { fetchImpl, seen } = fakeIndexed([{ data: [createTx()], paginationToken: null }]);
-    const rpc = new SolanaRpcClient({ maxRequests: 10, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
     await readCreatedHistoryIndexed(rpc, DEV, BOUNDS);
     // Every one of these is load-bearing: `full` + `jsonParsed` is what makes the response
     // `getTransaction`-shaped so the parsers work unchanged, `status: succeeded` is the
@@ -3987,7 +4115,7 @@ describe('the indexed creation walk is the same measurement under a credit ceili
       },
       { data: [createTx({ blockTime: 1_700_000_200 })], paginationToken: null },
     ]);
-    const rpc = new SolanaRpcClient({ maxRequests: 10, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
     const walk = await readCreatedHistoryIndexed(rpc, DEV, BOUNDS);
 
     expect(walk.creates).toHaveLength(2);
@@ -4012,7 +4140,7 @@ describe('the indexed creation walk is the same measurement under a credit ceili
       { data: [], paginationToken: 'still-more' },
       { data: [createTx()], paginationToken: null },
     ]);
-    const rpc = new SolanaRpcClient({ maxRequests: 10, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
     const walk = await readCreatedHistoryIndexed(rpc, DEV, BOUNDS);
     expect(walk.pages).toBe(2);
     expect(walk.creates).toHaveLength(1);
@@ -4024,7 +4152,7 @@ describe('the indexed creation walk is the same measurement under a credit ceili
     // pagination token"}}. A walk that read that as "nothing older exists" would record page 2 of
     // 200 as a wallet's whole history — a ceiling presented as a measurement.
     const { fetchImpl } = fakeIndexed([], { error: { code: -32603, message: 'Bad request: Invalid pagination token' } });
-    const rpc = new SolanaRpcClient({ maxRequests: 10, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
     const walk = await readCreatedHistoryIndexed(rpc, DEV, BOUNDS);
     expect(walk.stopReason).toBe('upstream-error');
     expect(walk.covered.exhausted).toBe(false);
@@ -4035,7 +4163,7 @@ describe('the indexed creation walk is the same measurement under a credit ceili
 
   it('an absent result is load-shedding, and still not an exhausted index', async () => {
     const { fetchImpl } = fakeIndexed([], { nullResult: true });
-    const rpc = new SolanaRpcClient({ maxRequests: 10, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
     const walk = await readCreatedHistoryIndexed(rpc, DEV, BOUNDS);
     expect(walk.stopReason).toBe('upstream-error');
     expect(walk.covered.exhausted).toBe(false);
@@ -4103,11 +4231,76 @@ describe('the indexed creation walk is the same measurement under a credit ceili
     expect(sawCurveRead, 'the curve read must still have been affordable').toBe(true);
   });
 
+  it('a REFUSED CREDENTIAL propagates instead of becoming this wallet\'s reading', async () => {
+    // The failure this forbids is silent and expensive. A revoked key 401s every candidate; if the
+    // walk absorbed that into `stopReason: upstream-error`, all 195 candidates would fall back to
+    // the ownership listing while the record still said `historySource: creation-derived`, and the
+    // whole shared MadeOnSol daily allowance would be spent one profile at a time to learn nothing.
+    // A refused credential is not a property of the wallet being screened, so it must not be able
+    // to produce a per-candidate reading at all.
+    const fetchImpl = vi.fn(
+      async () => new Response('Unauthorized', { status: 401, headers: { 'content-type': 'text/plain' } }),
+    ) as unknown as typeof fetch;
+    const rpc = new SolanaRpcClient({
+      maxRequests: 50,
+      maxCredits: 5_000,
+      minIntervalMs: 0,
+      backoffMs: 0,
+      fetchImpl,
+      sleepImpl: async () => {},
+    });
+    await expect(readCreatedHistoryIndexed(rpc, DEV, BOUNDS)).rejects.toThrow(RpcCredentialRejected);
+
+    // And the same on the curve-classification pass, whose catch is otherwise deliberately silent:
+    // absorbed there, a mid-walk revocation would score every launch it found as NOT bonded.
+    let calls = 0;
+    const failingCurves = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const one = JSON.parse(String(init.body));
+      calls += 1;
+      if (one.method === 'getMultipleAccounts') {
+        return new Response('Unauthorized', { status: 401, headers: { 'content-type': 'text/plain' } });
+      }
+      return new Response(JSON.stringify({ id: 0, result: { data: [createTx()], paginationToken: null } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const rpc2 = new SolanaRpcClient({
+      maxRequests: 50,
+      maxCredits: 5_000,
+      minIntervalMs: 0,
+      backoffMs: 0,
+      fetchImpl: failingCurves,
+      sleepImpl: async () => {},
+    });
+    await expect(readCreatedHistoryIndexed(rpc2, DEV, BOUNDS)).rejects.toThrow(RpcCredentialRejected);
+    expect(calls).toBeGreaterThan(1);
+  });
+
+  it('the screen treats a refused RPC credential as TERMINAL, not as a candidate outcome', () => {
+    // The other half of the fail-fast, and it is structural because the alternative — a live run
+    // against a revoked key — is exactly what this must never cost. The walk is deliberately NOT
+    // wrapped in the per-candidate guard the ownership listing has, so it reaches the outer catch;
+    // that catch has to map it to `credentialRejected` rather than to the generic upstream code,
+    // because the screen's standing rule is that a rejected credential is NOT a negative result.
+    const source = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    expect(source).toMatch(/import \{[^}]*RpcCredentialRejected/s);
+    const outer = source.slice(source.indexOf('const code ='), source.indexOf('emit(code);'));
+    expect(outer).toMatch(/cause instanceof RpcCredentialRejected\s*\?\s*EXIT\.credentialRejected/);
+    // Non-zero, and distinct from every other terminal code so an operator can tell "rotate the
+    // key" from "wait for the window" and from "the walk hit its ceiling".
+    const exits = /const EXIT = \{([^}]*)\}/.exec(source)?.[1] ?? '';
+    expect(Number(/credentialRejected: (\d+)/.exec(exits)?.[1])).toBeGreaterThan(0);
+    // And the walk call itself must stay OUTSIDE a try that would swallow it back into a reading.
+    const walkCall = source.slice(source.indexOf('const walk = usingIndexedWalk'), source.indexOf('rpcRequests += rpc.issued()'));
+    expect(walkCall, 'the indexed walk must not be re-guarded per candidate').not.toMatch(/catch\s*[({]/);
+  });
+
   it('feeds mergeHistories a window it can read, including the empty one', async () => {
     // The merge is the consumer that a covered-window bug actually hurts, so the two are checked
     // together rather than the walk's fields being checked in isolation.
     const { fetchImpl } = fakeIndexed([], { nullResult: true });
-    const rpc = new SolanaRpcClient({ maxRequests: 10, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
     const walk = await readCreatedHistoryIndexed(rpc, DEV, BOUNDS);
     const merged = mergeHistories({
       creates: walk.creates,
@@ -4808,7 +5001,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 10,
+      maxRequests: 50,
       pageLimit: 100,
     });
     expect(w.usable).toBe(true);
@@ -4835,7 +5028,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 10,
+      maxRequests: 50,
       pageLimit: 100,
     });
     expect(w.usable).toBe(true);
@@ -4859,7 +5052,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 10,
+      maxRequests: 50,
       pageLimit: 100,
     });
     expect(calls[0]).toContain(`cursor=0-${CREATED - skewMs + 60_000 + SEEK_MARGIN_MS}`);
@@ -4880,7 +5073,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: 600_000,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 10,
+      maxRequests: 50,
       pageLimit: 100,
     });
     expect(w.dropReason).toBe('mint-time-disagreement');
@@ -4900,7 +5093,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 10,
+      maxRequests: 50,
       pageLimit: 100,
     });
     expect(w.fills.map((f) => f.wallet)).toContain('tail155');
@@ -4919,7 +5112,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 10,
+      maxRequests: 50,
       pageLimit: 100,
     });
     expect(w.mintTimeDisagreement).toBe(true);
@@ -4946,7 +5139,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
         windowMs: 60_000,
         seekMarginMs: SEEK_MARGIN_MS,
         windowSlotSpan: WINDOW_SLOT_SPAN,
-        maxRequests: 10,
+        maxRequests: 50,
         pageLimit: 100,
       });
       expect(w.usable).toBe(false);
@@ -4984,7 +5177,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 10,
+      maxRequests: 50,
       pageLimit: 100,
     });
     expect(w.usable).toBe(false);
@@ -5047,7 +5240,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 10,
+      maxRequests: 50,
       pageLimit: 1,
     });
     expect(w.usable).toBe(false);
@@ -5063,7 +5256,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 10,
+      maxRequests: 50,
       pageLimit: 2,
     });
     expect(w.reachedCreateSlot).toBe(true);
@@ -5079,7 +5272,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       windowMs: 60_000,
       seekMarginMs: SEEK_MARGIN_MS,
       windowSlotSpan: WINDOW_SLOT_SPAN,
-      maxRequests: 10,
+      maxRequests: 50,
       pageLimit: 100,
     });
     expect(w.unparsedRows).toBe(1);

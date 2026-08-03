@@ -124,8 +124,8 @@ Five facts that bind any lane touching it:
   of that window. **Do not treat its oldest fill as its create slot.** Every other launch proved
   coverage, and 99 of 99 applicable launches agree with the committed window tape's own create slot.
 - **`Marciana`, `Leo` and `Fridge` now have trade tapes.** The population tape lists them as having
-  none, which is why their dev exits were never measured. That statement is now out of date for
-  three of the four.
+  none, which is why their dev exits were never measured; `GLM` never graduated and is still
+  untaped. `IMPORT.md` → "Corrections", item 9 owns the fix.
 - **The §5 cost projection was wrong by ~2.5x and the real numbers are here.** It costed this shape
   at 1,000–4,000 requests; it cost **6,539** (857 pinning graduations + 5,682 walking). Pages per
   launch for this window run **median 46, p90 89, max 179**, not the 10–40 planned. Size any future

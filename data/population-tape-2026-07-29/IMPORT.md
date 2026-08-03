@@ -37,7 +37,7 @@ for size other than the two directories named above.
 
 ## Corrections
 
-Later evidence has contradicted the imported prose eight times. **The originals stay unmodified** —
+Later evidence has contradicted the imported prose nine times. **The originals stay unmodified** —
 that is what makes this directory a primary record — so the corrections live here, and this
 is the file to add to when it happens again. The first two come from
 `kol-cohort-vs-outsider-funding/report.md` (2026-07-29, read-only, keyless, zero metered
@@ -190,6 +190,18 @@ across, and what is re-derivable in this repo is asserted in `test/reproduction.
    **+0.0028** documentation error — so the check had been passing for the wrong reason. Both are
    now removed rather than accommodated; `tools/deployer-screen/README.md` → "Stage 0" owns the
    decomposition.
+
+9. **Three of the four launches with "no tape" now have complete ones.** `report.md` §10.1 and its
+   coverage table call `Marciana`, `Leo`, `Fridge` and `GLM` the run's only gaps — "returned an empty
+   tape across three passes" — and `tape = none` in `launches.csv` is what stopped their dev exits
+   from ever being measured. The keyless re-walk in `data/graduated-life-tape-2026-08-02/`
+   (2026-08-02, **zero metered requests**) reached the mint on three of them, with the endpoint
+   confirming nothing older exists: **`Marciana` 4,846 fills, `Leo` 2,697, `Fridge` 9,737**, each
+   over that launch's own mint → graduation + 1 h window. `GLM` did not graduate and was not walked,
+   so it is still untaped. **No column in this directory changes** — `tape = none` remains the
+   correct description of *this* directory's contents, and the new tape lives beside it rather than
+   in it; that dataset's `README.md` → "Three launches that previously had no trade tape at all"
+   owns the coverage proof, and everything it adds is still gross of fees.
 
 The funding investigation also settles `report.md` §10.3 — **both `5brv79eF…` and `EgQX9R3Q…` are
 genuine outsiders, confidence high** — and strengthens §7's "the six create-slot wallets are

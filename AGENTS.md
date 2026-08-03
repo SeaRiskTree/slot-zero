@@ -27,10 +27,12 @@ what is established and what is open.
   scans `src/` **recursively** for sockets, `process.env` and key-shaped strings. Keep it that
   way; the entire dataset was built keyless and its value depends on staying reproducible offline.
 - **The one network-capable area is `tools/`, and the boundary is the directory.** Each tool there is
-  governed by its own test, and there are two. `tools/deployer-screen/` holds a keyed MadeOnSol
-  client; `test/deployer-screen.test.ts` asserts no imports across `src/`↔`tools/`, only
-  `client.mjs`/`pumpfun.mjs` may call `fetch`, only `credential.mjs`/`screen.mjs` may name
-  `MADEONSOL_API_KEY`, and no file there may contain a key-shaped string. `tools/graduated-life-tape/`
+  governed by its own test, and there are two. `tools/deployer-screen/` holds the keyed MadeOnSol and
+  Dune clients; `test/deployer-screen.test.ts` asserts no imports across `src/`↔`tools/`, only
+  `client.mjs`/`pumpfun.mjs` may call `fetch` (**a third vendor goes into `client.mjs`, not a new
+  file — keeping that allow-list at two is what makes the ceilings auditable by reading two files**),
+  only `credential.mjs`/`screen.mjs` may name `MADEONSOL_API_KEY` / `HELIUS_API_KEY` / `DUNE_API_KEY`,
+  and no file there may contain a key-shaped string or assign a value to a credential variable. `tools/graduated-life-tape/`
   is **keyless throughout** — `test/graduated-life-tape.test.ts` holds it to the same shape with the
   credential allow-list **empty**, which is what makes captain decision 112a's "EUR 0" a property of
   the tree. Duplicated curve constants between `src/index.ts` and `tools/deployer-screen/measure.mjs`,
@@ -245,11 +247,68 @@ Learned at real cost; the citations are to
   `getTransaction` per request, ~2.5 s between requests, giving ~0.42 requests/second. The
   nominally faster 1.4 s is *slower* in wall-clock once backoff is counted.
 
+## Dune facts — the PRIMARY creation-enumeration surface
+
+Captain decision 156a, 2026-08-03. Long form and every figure in
+`tools/deployer-screen/CREATION-DERIVED.md` §8; bounds in `thresholds.json` → `dune`; method in
+`tools/deployer-screen/dune.mjs`.
+
+- **Creation ENUMERATION — "which mints did this wallet create" — is Dune now; the Solana RPC walk is
+  the FALLBACK.** Helius is undemoted for everything transaction-level, including Stage 2's
+  entry-cost leg (`meta.fee`, pre/post balances), which no decoded table serves. `DUNE_API_KEY` is
+  OPTIONAL: unset, the run is byte-for-byte what it was before this decision. **No Dune value may
+  reach a Stage 2 entry number or Stage 3**, and a test asserts it structurally.
+- **The surface is `pump_evt_createevent` UNION `pump_call_create`, deduped by mint, and neither
+  alone is usable.** `pump_call_create` alone returns **zero rows** for our deployer (it decodes only
+  the original `Create`; we use `CreateV2`). `pump_call_create_v2` alone is **not backfilled before
+  2026-04-30** and silently misses **101 of our 239 launches, `maxxing` included**.
+- **Attribute on `"user"` / `account_user`, the SIGNER — never on `creator`**, a settable `CreateV2`
+  argument: six mints declare our deployer as `creator` while being signed by six different
+  bot-shaped wallets, inflating the count 247 → 253.
+- **EVERY Dune-derived count ships with its own coverage probe, and a count that reaches outside the
+  probed coverage is refused, never published.** Decoded tables have **silent start dates**: a
+  confident, well-formed, complete-looking answer that is simply wrong before their first row, with
+  nothing in the response saying so — the same failure shape as a truncated backwards walk in
+  `pumpfun.mjs`, failing in the same direction. `dune.mjs` → `assessCoverage` refuses a missing or
+  empty table, **a month inside the covered span where every read table is empty**, staleness past
+  6 h, and per wallet a history reaching the probed floor or past the probed ceiling. A refused
+  reading falls back to the walk — **per wallet**, so one run can carry both sources and every
+  candidate's `enumerationSource` says which answered it.
+- **A FAILED EXECUTION IS STILL BILLED AND IS TERMINAL.** `DuneClient.execute` is the one call in
+  this repository that is never retried, on any failure, for any reason; polling and result reads are
+  retried because they return no bytes when they fail. **Budget from *billed* credits, not
+  `execution_cost_credits`, which understates by ~3.5×** — retrieving results is ~71% of the bill at
+  ~20 credits/MB. Hence: aggregate server-side, select only the columns the tool reads (dropping the
+  create tx and graduation timestamp halved the payload to **~97 bytes/row**), one execution for the
+  whole batch, and a **cached** probe read by default.
+- **Free tier: 2,500 credits/month, SHARED, and only 10 PRIVATE QUERIES — the account holds 10, so a
+  new query cannot be created.** The two production queries were upgraded in place (`8204672`
+  enumeration, `8204603` coverage). Their SQL is committed in `dune.mjs` and
+  `assertSavedQueryMatches` compares it before spending an execution, because a saved query is
+  editable from a browser and its answer is a gate input. **Nothing tracks the month** — the tool is
+  stateless between runs. Auth is the `X-Dune-API-Key` **header**, never `Bearer`.
+- **Measured cost, 2026-08-03:** five deployers' whole histories = **8 requests, 1 execution, 1.75
+  billed credits**; a 195-candidate run ≈ 20 credits, i.e. ~125 full-cap runs a month. Against 793
+  Helius credits and 12 requests for ONE deployer, or 7,166 keyless requests and ~287 min.
+- **It changed no measured value and no verdict**, reproduced through the wired code path: 239 of 239
+  tape launches with `maxxing`, 8 extras all post-tape, and all five `CREATION-DERIVED.md` wallets
+  exact on launches *and* bonded rate.
+- **`movedCreator` is UNMEASURED on this route, not zero.** Dune says who created a mint and whether
+  it completed, and nothing about who owns the curve today. `CurveState.creator` is `null` there,
+  `mergeHistories` counts `creatorMovementUnmeasured`, and a schema-≤8 record's `movedCreator: 0` —
+  which means the walk read every curve and none had moved — is not the same number.
+- **ToS reviewed 2026-08-03** (`CREATION-DERIVED.md` §8.7): no conflict. The scraping ban is on the
+  Site, not the SQL API; the addendum forbids substituting for or competing with Dune, which internal
+  research does not. `derive and discard` applies unchanged.
+
 ## Helius facts — the keyed RPC route, and what it does NOT change
 
 Measured 2026-08-03. Long form and every figure in `tools/deployer-screen/CREATION-DERIVED.md` §7;
 bounds in `thresholds.json` → `creation_walk_helius`.
 
+- **Helius is the creation walk's FALLBACK role now (captain decision 156a) and its PRIMARY role for
+  every transaction-level measurement.** The walk below runs when Dune is absent, fails, or has a
+  reading refused by its coverage probe; Stage 2's entry-cost leg is Helius/RPC always.
 - **`HELIUS_API_KEY` is OPTIONAL and its absence is a supported configuration, not a fault.** Set,
   the creation walk takes the indexed route; unset, it is the keyless signature scan and every
   number is what it was before. `credential.mjs` → `resolveSolanaRpcEndpoint` is the only chooser.
@@ -356,7 +415,8 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
 captain's question *"can I beat the dev and all other wallets sniping the same tokens created by the
 dev currently?"*, and the shape of the answer is the point:
 
-- **Stage 1 GATES on competence** (keyed, MadeOnSol). **Stage 2 SCORES ENTRY** (keyless): room in
+- **Stage 1 ENUMERATES on Dune** (keyed, free tier — which mints the wallet created, with the RPC
+  walk as fallback) and **GATES on competence** (keyed, MadeOnSol). **Stage 2 SCORES ENTRY** (keyless): room in
   the opening window, what every *other* sniping wallet there achieved, and — since the captain's
   ruling of 2026-08-02 — **what it cost them to land**. **Stage 3 — EXIT — is a separate lane and no
   exit signal may reach an entry number.** Room to enter is not room to leave, and one blended score

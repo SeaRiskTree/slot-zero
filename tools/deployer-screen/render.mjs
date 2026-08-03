@@ -114,6 +114,30 @@ const HELIUS_MONTHLY_CREDITS = 10_000_000;
 const MEASURED_MEDIAN_CREDITS = 320;
 
 /**
+ * Dune's Free-tier monthly credit allowance, from their pricing page.
+ *
+ * Printed by the dry run so the Dune worst case has a denominator on the same screen, exactly as
+ * {@link HELIUS_MONTHLY_CREDITS} does. Unlike the Helius allowance this one is **shared** with
+ * whatever else holds the key, and nothing in this tool tracks the month — the dry run says so.
+ */
+const DUNE_MONTHLY_CREDITS = 2_500;
+
+/**
+ * Measured per-deployer credit cost of a Dune creation enumeration.
+ *
+ * MEASURED 2026-08-03 on this account: the union enumeration over 5 wallets returned 482 rows in
+ * 46,718 bytes and cost 1.919 BILLED credits — 0.919 of compute plus ~1.0 of export at the published
+ * 20 credits/MB. That is ~0.38 per deployer at a batch of 5, and it FALLS as the batch grows,
+ * because the table scan is nearly independent of how many wallets are in the filter (measured at 5
+ * and at 20) while only the bytes scale. 0.1 is the per-deployer figure at the candidate cap, where
+ * the fixed scan is amortised over 195 wallets and ~97 bytes/row is the whole marginal cost: 195
+ * deployers at a median ~50 launches is ~0.95 MB, about 19 credits of export plus ~1 of compute.
+ * Quoted beside the ceiling for the same reason the Helius median is — they differ by 40x, and
+ * printing only one of them misleads in whichever direction it was chosen.
+ */
+const DUNE_EXPECTED_CREDITS_PER_CANDIDATE = 0.1;
+
+/**
  * Measured wall-clock cost of ONE indexed page, in milliseconds.
  *
  * This is a MEASUREMENT, not a guess, and it exists because the naive estimate — one page per
@@ -963,6 +987,14 @@ export function renderStage1(run) {
  * @param {number} plan.worstCaseCredits The run's declared worst-case Helius spend, 0 when the walk
  *   would not run on Helius. Computed by `screen.mjs` from the same values it refuses a plan on, so
  *   this is the preview of an enforced bound rather than a second estimate of it.
+ * @param {{ creationQueryId: number, coverageQueryId: number, maxExecutionsPerRun: number,
+ *   maxRequestsPerRun: number, maxResultRows: number, maxCoverageLagMs: number,
+ *   minIntervalMs: number }} plan.dune The pinned Dune bounds.
+ * @param {import('./credential.mjs').DuneCredential} plan.duneCredential Never its value: `label`,
+ *   a length and a shape are the only things printed.
+ * @param {boolean} plan.usingDune Whether creation enumeration would take the Dune route.
+ * @param {boolean} plan.duneRefreshProbe Whether the coverage probe would be re-EXECUTED (billed)
+ *   rather than read from Dune's cache (free).
  * @returns {string}
  */
 export function renderDryRun(plan) {
@@ -1088,6 +1120,70 @@ export function renderDryRun(plan) {
   }
   L.push('');
 
+  if (plan.historySource === 'creation-derived') {
+    const d = plan.dune;
+    L.push('KEYED — Dune, CREATION ENUMERATION. THE PRIMARY SURFACE (captain decision 156a):');
+    if (!plan.usingDune) {
+      L.push(
+        `  NOT USED — ${plan.duneCredential.rejected !== null ? 'the key was present but malformed' : plan.duneCredential.available ? '--no-dune was passed' : `${plan.duneCredential.keyEnvVar ?? 'the key variable'} is not set`}. ` +
+          'Creation enumeration falls back to the',
+      );
+      L.push('  Solana RPC walk below: the same measurement, slower by about an order of magnitude.');
+      if (plan.duneCredential.rejected !== null) L.push(`  !! ${plan.duneCredential.rejected}`);
+    } else {
+      if (plan.duneCredential.keyDescription !== null) {
+        L.push(
+          `  credential   present, ${plan.duneCredential.keyDescription.length} characters, ` +
+            `alphanumeric: ${plan.duneCredential.keyDescription.hasDocumentedShape ? 'yes' : 'no'} ` +
+            `(value never read, printed or stored; sent as a header, never in a URL)`,
+        );
+      }
+      L.push(`  GET  ${plan.duneCredential.label}/query/{id}                 x 2   verify the saved SQL`);
+      L.push(
+        `  GET  ${plan.duneCredential.label}/query/${d.coverageQueryId}/results` +
+          `   x 1   COVERAGE PROBE${plan.duneRefreshProbe ? ' (--dune-refresh-probe: EXECUTED instead)' : ' (CACHED — no execution)'}`,
+      );
+      L.push(`  POST ${plan.duneCredential.label}/query/${d.creationQueryId}/execute   x 1   one execution for ALL candidates`);
+      L.push('');
+      L.push('  ONE EXECUTION FOR THE WHOLE BATCH, and that is the cost model rather than a');
+      L.push('  convenience: the table scan costs nearly the same for 5 wallets as for 20, so the');
+      L.push('  per-deployer price falls as the batch grows. What scales is BYTES RETURNED, which');
+      L.push('  is why the SQL selects four columns and why maxResultRows is the binding ceiling.');
+      L.push('');
+      L.push('  A FAILED EXECUTION IS STILL BILLED AND IS NEVER RETRIED. Polling is retried; an');
+      L.push('  execution is not, because a second one buys a second bill for the same answer.');
+      L.push('');
+      L.push(
+        `  executions                    up to ${d.maxExecutionsPerRun}  (1 enumeration + at most 1 probe refresh)`,
+      );
+      L.push(`  requests                      ceiling ${d.maxRequestsPerRun}, polling and result reads included`);
+      L.push(
+        `  rows                          ceiling ${d.maxResultRows.toLocaleString('en-US')} ` +
+          `(~97 bytes/row measured, so ~${((d.maxResultRows * 97) / 1_000_000).toFixed(2)} MB)`,
+      );
+      L.push(
+        `  EXPECTED                      about ${DUNE_EXPECTED_CREDITS_PER_CANDIDATE * plan.maxCandidates} credits at the candidate cap ` +
+          `(~${DUNE_EXPECTED_CREDITS_PER_CANDIDATE} per deployer, measured 2026-08-03)`,
+      );
+      L.push(
+        `  WORST CASE                    about ${Math.round((d.maxResultRows * 97 * 20) / 1_000_000)} credits ` +
+          `if the row ceiling is reached, at the published 20 credits/MB`,
+      );
+      L.push(
+        `  Free tier ${DUNE_MONTHLY_CREDITS.toLocaleString('en-US')} credits/month and SHARED with whatever else holds this key.`,
+      );
+      L.push('  NOTHING HERE TRACKS THE MONTH: this tool holds no state between runs, so the monthly');
+      L.push('  arithmetic is yours — the same limit the Helius block below states.');
+      L.push(`  pacing                        ${d.minIntervalMs}ms between requests (a courtesy floor; unmeasured)`);
+      L.push('');
+      L.push('  EVERY COUNT SHIPS WITH ITS OWN COVERAGE PROBE, and a count reaching outside the');
+      L.push('  probed coverage is REFUSED rather than published — that wallet falls back to the');
+      L.push('  walk. Decoded tables have silent start dates: they answer confidently and wrongly');
+      L.push(`  before their first row. Staleness past ${Math.round(d.maxCoverageLagMs / 3_600_000)}h re-executes the probe once.`);
+    }
+    L.push('');
+  }
+
   if (plan.historySource === 'creation-derived' && plan.rpcEndpoint.provider === 'helius') {
     const h = plan.indexedWalk;
     // Not `rpcMinIntervalMs` alone: below ~250ms of enforced interval this walk is latency-bound,
@@ -1095,7 +1191,7 @@ export function renderDryRun(plan) {
     // figures come from this one value so the two lines cannot drift apart.
     const pageCycleMs = Math.max(h.rpcMinIntervalMs, MEASURED_PAGE_CYCLE_MS);
     const pageSeconds = (h.maxPagesPerCandidate * pageCycleMs) / 1000;
-    L.push('KEYED — Helius Solana RPC, the creation-derived launch history. THE INDEXED ROUTE:');
+    L.push('KEYED — Helius Solana RPC. FALLBACK for enumeration, PRIMARY for transaction-level work:');
     L.push(`  POST ${plan.rpcEndpoint.label}/  getTransactionsForAddress (full) + getMultipleAccounts`);
     if (plan.rpcEndpoint.keyDescription !== null) {
       L.push(
@@ -1164,7 +1260,7 @@ export function renderDryRun(plan) {
     L.push(`  up to 4 pages per candidate, so up to ${4 * plan.maxCandidates} for the gate alone.`);
   } else if (plan.historySource === 'creation-derived') {
     const w = plan.creationWalk;
-    L.push('KEYLESS — Solana RPC, the creation-derived launch history. THE EXPENSIVE PART:');
+    L.push('KEYLESS — Solana RPC. FALLBACK enumeration when Dune is absent or refuses. EXPENSIVE:');
     L.push('  POST https://api.mainnet-beta.solana.com  getSignaturesForAddress + getTransaction');
     if (plan.rpcEndpoint.rejected !== null) L.push(`  !! ${plan.rpcEndpoint.rejected}`);
     // The variable is NAMED FROM THE ENDPOINT rather than spelled here: this module is not on the

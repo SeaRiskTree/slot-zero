@@ -1,5 +1,9 @@
 /**
- * The only network-capable module in this repository.
+ * One of the two network-capable modules in this repository (the other is `pumpfun.mjs`), and the
+ * one that holds every KEYED vendor client: MadeOnSol's {@link BoundedClient} and Dune's
+ * {@link DuneClient}. New clients land here rather than in a file of their own on purpose — the
+ * `fetch` allow-list in `test/deployer-screen.test.ts` is exactly two files, and keeping it at two
+ * is what makes "one request in flight, under a ceiling" auditable by reading two files.
  *
  * slot-zero's analysis core under `src/` is keyless by construction and
  * `test/loader.test.ts` proves it by grepping the sources for sockets, `process.env` and
@@ -27,7 +31,7 @@
  * only long enough to return it.
  */
 
-import { classifyAuthFailure } from './credential.mjs';
+import { DUNE_API_BASE, classifyAuthFailure } from './credential.mjs';
 
 /** Production base URL, from `servers[0].url` of their OpenAPI document. */
 export const BASE_URL = 'https://madeonsol.com/api/v1';
@@ -375,6 +379,332 @@ export class BoundedClient {
 
     throw lastTransportError ?? new Error(`Request to ${label} failed with no diagnosis`);
   }
+}
+
+// --- Dune ------------------------------------------------------------------------------------
+
+/**
+ * Thrown when Dune refuses the key, the plan or the request shape. Terminal for the Dune leg: the
+ * caller falls back to the Solana RPC creation walk rather than retrying.
+ *
+ * Its own type rather than a reused {@link VendorRefused} because the two vendors' failure shapes do
+ * not line up — `classifyAuthFailure` speaks of 30-day Free-tier expiry and a ~200/day request
+ * allowance, neither of which is true of Dune — and a message naming the wrong vendor's remedy sends
+ * an operator to rotate a key that is working.
+ */
+export class DuneRefused extends Error {
+  /**
+   * @param {string} message
+   * @param {{ status: number | null, terminal: boolean }} what `terminal` is whether this refusal
+   *   means the whole Dune leg is unusable for this run, as opposed to one call going wrong.
+   */
+  constructor(message, what) {
+    super(message);
+    this.name = 'DuneRefused';
+    /** @type {number | null} */ this.status = what.status;
+    /** @type {boolean} */ this.terminal = what.terminal;
+  }
+}
+
+/**
+ * @typedef {object} DuneClientOptions
+ * @property {string} key                Held in this closure and nowhere else.
+ * @property {number} maxExecutions      Hard ceiling on **executions**, the billed unit that cannot
+ *   be taken back. See {@link DuneClient} for why this is separate from the request ceiling.
+ * @property {number} maxRequests        Hard ceiling on requests of every kind, polling included.
+ * @property {number} [minIntervalMs]    Minimum gap between request starts. Default 250.
+ * @property {number} [timeoutMs]        Per-request timeout. Default 60000 — an execution POST can
+ *   sit for a while before it hands back an id.
+ * @property {(label: string, attempt: number) => void} [onRequest] Progress hook. Receives a path
+ *   only — never a header, never the key.
+ * @property {typeof fetch} [fetchImpl]
+ * @property {(ms: number) => Promise<void>} [sleepImpl]
+ */
+
+const DUNE_DEFAULT_MIN_INTERVAL_MS = 250;
+const DUNE_DEFAULT_TIMEOUT_MS = 60_000;
+
+/**
+ * A serialised, ceiling-bounded client for Dune's SQL API.
+ *
+ * It differs from {@link BoundedClient} in the one way that matters, and the difference is the whole
+ * reason it is a separate class rather than a base URL parameter:
+ *
+ * **AN EXECUTION IS BILLED WHETHER OR NOT IT SUCCEEDS, AND IT IS TERMINAL.** So
+ * {@link DuneClient.execute} is the one call in this repository that is *never* retried, on any
+ * failure, for any reason — a retried execution buys a second bill for the same answer and there is
+ * no failure mode where that is the right move. Reads ({@link DuneClient.getJson}) may retry: they
+ * are billed by bytes returned, and a failed read returns none.
+ *
+ * The two ceilings are separate for the same reason. Requests bound the wall clock and the polite
+ * use of a shared host; **executions bound the money**, and a poll loop that spent an execution's
+ * worth of budget on status checks would be counting the wrong thing.
+ *
+ * Credits are estimated, never asserted: the vendor bills compute plus ~20 credits/MB of results and
+ * reports the total only on a lagging, whole-credit ledger. {@link DuneClient.stats} reports what
+ * this client can actually see — executions issued and result bytes read — and
+ * `estimatedExportCredits` is labelled an estimate everywhere it surfaces.
+ */
+export class DuneClient {
+  /** @param {DuneClientOptions} options */
+  constructor(options) {
+    if (!Number.isInteger(options.maxExecutions) || options.maxExecutions < 0) {
+      throw new TypeError('maxExecutions must be a non-negative integer');
+    }
+    if (!Number.isInteger(options.maxRequests) || options.maxRequests < 1) {
+      throw new TypeError('maxRequests must be a positive integer');
+    }
+    this.#key = options.key;
+    this.#maxExecutions = options.maxExecutions;
+    this.#ceiling = options.maxRequests;
+    this.#minIntervalMs = options.minIntervalMs ?? DUNE_DEFAULT_MIN_INTERVAL_MS;
+    this.#timeoutMs = options.timeoutMs ?? DUNE_DEFAULT_TIMEOUT_MS;
+    this.#onRequest = options.onRequest;
+    this.#fetch = options.fetchImpl ?? globalThis.fetch;
+    this.#sleep = options.sleepImpl ?? realSleep;
+  }
+
+  /** @type {string} */ #key;
+  /** @type {number} */ #maxExecutions;
+  /** @type {number} */ #ceiling;
+  /** @type {number} */ #minIntervalMs;
+  /** @type {number} */ #timeoutMs;
+  /** @type {((label: string, attempt: number) => void) | undefined} */ #onRequest;
+  /** @type {typeof fetch} */ #fetch;
+  /** @type {(ms: number) => Promise<void>} */ #sleep;
+
+  /** @type {number} */ #issued = 0;
+  /** @type {number} */ #executions = 0;
+  /** @type {number} */ #resultBytes = 0;
+  /** @type {number} */ #lastStartedAt = 0;
+  /** @type {Promise<unknown>} */ #queue = Promise.resolve();
+
+  /** Requests issued so far, retries and failures included. @returns {number} */
+  issued() {
+    return this.#issued;
+  }
+
+  /** Executions actually started. The billed, unrecoverable unit. @returns {number} */
+  executions() {
+    return this.#executions;
+  }
+
+  /** Result bytes read, as the vendor's own metadata reports them. @returns {number} */
+  resultBytes() {
+    return this.#resultBytes;
+  }
+
+  /**
+   * What this run spent, in the units this client can actually observe.
+   *
+   * `estimatedExportCredits` applies the Free tier's published 20 credits/MB to the result bytes the
+   * vendor's own response metadata declared. It is NOT the bill: compute is billed on top, and the
+   * only authoritative figure is `POST /usage`, which lags minutes and lands in whole-credit jumps.
+   * It is here so a run record carries an order-of-magnitude figure rather than nothing.
+   *
+   * @returns {{ requests: number, executions: number, executionCeiling: number, resultBytes: number,
+   *   estimatedExportCredits: number }}
+   */
+  stats() {
+    return {
+      requests: this.#issued,
+      executions: this.#executions,
+      executionCeiling: this.#maxExecutions,
+      resultBytes: this.#resultBytes,
+      estimatedExportCredits: Number(((this.#resultBytes / 1_000_000) * 20).toFixed(3)),
+    };
+  }
+
+  /**
+   * Start a query execution. **Never retried, on any failure.**
+   *
+   * @param {number} queryId
+   * @param {Record<string, string>} parameters Query parameters, by name.
+   * @returns {Promise<string>} The execution id.
+   */
+  async execute(queryId, parameters) {
+    const label = `/query/${queryId}/execute`;
+    const run = this.#queue.then(
+      () => this.#startExecution(queryId, parameters, label),
+      () => this.#startExecution(queryId, parameters, label),
+    );
+    this.#queue = run.catch(() => undefined);
+    return run;
+  }
+
+  /**
+   * @param {number} queryId
+   * @param {Record<string, string>} parameters
+   * @param {string} label
+   * @returns {Promise<string>}
+   */
+  async #startExecution(queryId, parameters, label) {
+    if (this.#executions >= this.#maxExecutions) {
+      throw new CeilingReached(
+        this.#maxExecutions,
+        label,
+        'The Dune execution ceiling is the run\'s spend bound and an execution is billed whether or ' +
+          'not it succeeds. Raise thresholds.json dune.maxExecutionsPerRun only against a stated ' +
+          'monthly arithmetic.',
+      );
+    }
+    // Counted BEFORE the request, not after. An execution that times out on our side may well have
+    // started on theirs, and a counter that only increments on success would under-report the bill.
+    this.#executions += 1;
+    const body = await this.#request(label, { method: 'POST', body: { query_parameters: parameters } });
+    const id = typeof body === 'object' && body !== null ? /** @type {Record<string, unknown>} */ (body)['execution_id'] : undefined;
+    if (typeof id !== 'string' || id === '') {
+      throw new DuneRefused(`Dune accepted ${label} but returned no execution id.`, { status: null, terminal: true });
+    }
+    return id;
+  }
+
+  /**
+   * GET a JSON document from a path relative to Dune's API base. Retried once on a 5xx or a
+   * transport failure — reads are billed by bytes returned, so a failed one costs nothing.
+   *
+   * @param {string} path e.g. `/execution/{id}/status`
+   * @returns {Promise<unknown>}
+   */
+  async getJson(path) {
+    const run = this.#queue.then(
+      () => this.#request(path, { method: 'GET', retries: 1 }),
+      () => this.#request(path, { method: 'GET', retries: 1 }),
+    );
+    this.#queue = run.catch(() => undefined);
+    return run;
+  }
+
+  /** Sleep between polls, on this client's own injected clock so tests stay free. @param {number} ms */
+  async wait(ms) {
+    await this.#sleep(ms);
+  }
+
+  /**
+   * Record the result bytes a response declared, for the export half of the credit estimate.
+   * Called by `dune.mjs` because only it knows where in a payload the vendor puts that number.
+   *
+   * @param {number} bytes
+   */
+  noteResultBytes(bytes) {
+    if (Number.isFinite(bytes) && bytes > 0) this.#resultBytes += bytes;
+  }
+
+  /**
+   * @param {string} path
+   * @param {{ method: 'GET' | 'POST', body?: unknown, retries?: number }} opts
+   * @returns {Promise<unknown>}
+   */
+  async #request(path, opts) {
+    const retries = opts.retries ?? 0;
+    let lastTransportError = null;
+
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      if (this.#issued >= this.#ceiling) {
+        throw new CeilingReached(
+          this.#ceiling,
+          path,
+          'The Dune request ceiling bounds polling and result reads. Raise thresholds.json ' +
+            'dune.maxRequestsPerRun, or lower dune.pollIntervalMs so a slow execution costs fewer polls.',
+        );
+      }
+
+      const wait = this.#minIntervalMs - (Date.now() - this.#lastStartedAt);
+      if (this.#lastStartedAt !== 0 && wait > 0) await this.#sleep(wait);
+
+      this.#issued += 1;
+      this.#lastStartedAt = Date.now();
+      this.#onRequest?.(path, attempt);
+
+      let response;
+      try {
+        response = await this.#fetch(`${DUNE_API_BASE}${path}`, {
+          method: opts.method,
+          headers: {
+            // The only place the key is ever interpolated. A HEADER, never `Bearer`, and never a
+            // query parameter — so no URL this client builds can carry a credential.
+            'x-dune-api-key': this.#key,
+            'content-type': 'application/json',
+            accept: 'application/json',
+          },
+          ...(opts.body === undefined ? {} : { body: JSON.stringify(opts.body) }),
+          signal: AbortSignal.timeout(this.#timeoutMs),
+        });
+      } catch (cause) {
+        lastTransportError = new DuneRefused(
+          `Transport failure on ${path}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          { status: null, terminal: false },
+        );
+        if (attempt < retries) continue;
+        throw lastTransportError;
+      }
+
+      if (!response.ok) {
+        const excerpt = await excerptBody(response);
+        if (response.status >= 500 && attempt < retries) {
+          lastTransportError = new DuneRefused(`HTTP ${response.status} on ${path}: ${excerpt}`, {
+            status: response.status,
+            terminal: false,
+          });
+          continue;
+        }
+        throw new DuneRefused(describeDuneStatus(response.status, path, excerpt), {
+          status: response.status,
+          // 401/402/403/429 mean the whole leg is unusable this run: a bad key, an exhausted free
+          // allowance or a rate limit are not conditions the next call will find different.
+          terminal: [401, 402, 403, 429].includes(response.status),
+        });
+      }
+
+      try {
+        return await response.json();
+      } catch (cause) {
+        throw new DuneRefused(
+          `Response to ${path} was not JSON: ${cause instanceof Error ? cause.message : String(cause)}`,
+          { status: response.status, terminal: false },
+        );
+      }
+    }
+
+    throw lastTransportError ?? new DuneRefused(`Request to ${path} failed with no diagnosis`, { status: null, terminal: false });
+  }
+}
+
+/**
+ * Turn a Dune HTTP status into a specific sentence.
+ *
+ * The distinction that matters is 401 versus 429 versus 402: a rejected key, a rate limit and an
+ * exhausted monthly allowance all stop the Dune leg, but they call for different responses and only
+ * one of them is fixed by waiting. None of them is a reason to retry an execution.
+ *
+ * @param {number} status
+ * @param {string} path
+ * @param {string} excerpt
+ * @returns {string}
+ */
+export function describeDuneStatus(status, path, excerpt) {
+  const tail = excerpt.trim().length > 0 ? ` Vendor said: ${excerpt.trim()}` : '';
+  if (status === 401 || status === 403) {
+    return (
+      `HTTP ${status} on ${path} — Dune rejected the key. Creation enumeration fell back to the ` +
+      `Solana RPC walk, which needs no Dune credential and is slower rather than wrong.${tail}`
+    );
+  }
+  if (status === 402) {
+    return (
+      `HTTP 402 on ${path} — the Dune plan's allowance is spent. The Free tier is 2,500 credits a ` +
+      `month, SHARED with whatever else holds this key, and nothing in this tool tracks the month. ` +
+      `Creation enumeration fell back to the Solana RPC walk.${tail}`
+    );
+  }
+  if (status === 429) {
+    return (
+      `HTTP 429 on ${path} — rate-limited. Creation enumeration fell back to the Solana RPC walk ` +
+      `for this run; a rerun costs no more than the first run did, because nothing here is cached ` +
+      `between runs.${tail}`
+    );
+  }
+  return `HTTP ${status} on ${path}.${tail}`;
 }
 
 /**

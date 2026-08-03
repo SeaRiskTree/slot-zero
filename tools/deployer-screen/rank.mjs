@@ -125,10 +125,12 @@ export function applyGate(input, t) {
  * @property {number} coveredDays
  * @property {boolean} wholeHistory True only when the walk reached the end of the wallet's
  *   signature index. Under anything else the window is a ceiling, not a record.
- * @property {'index-exhausted' | 'page-cap' | 'transaction-cap' | 'request-ceiling' | 'upstream-error' | 'credit-ceiling'} stopReason
+ * @property {'index-exhausted' | 'page-cap' | 'transaction-cap' | 'request-ceiling' | 'upstream-error' | 'credit-ceiling' | 'dune-enumerated'} stopReason
  *   `credit-ceiling` reaches only the indexed (Helius) walk, whose provider bills by transactions
  *   returned rather than by request. It is a ceiling like the others and means the same thing about
  *   the window: it is a bound, not a history.
+ *   `dune-enumerated` is the ONE value that is not a stop at all: nothing was walked, so nothing
+ *   stopped. The window is the coverage probe's own bound and `wholeHistory` is true inside it.
  * @property {string | null} stopDetail
  * @property {number} rpcRequests
  * @property {number} loadShedEvents
@@ -153,10 +155,25 @@ export function applyGate(input, t) {
  * @property {number} listedOutsideWindow
  * @property {number} listedInWindowCarried
  * @property {boolean} windowExact
- * @property {number} bondedFromCurve Launches whose bonded status came from the on-chain curve.
+ * @property {number} bondedFromCurve Launches whose bonded status came from the chain's own
+ *   statement — the curve's `complete` byte, or the `CompleteEvent` the same transition emits.
  * @property {number} bondedFromListing Launches whose bonded status came from the listing's flag.
  * @property {number} bondedUndecidable Launches neither source could answer for. Any non-zero
  *   value makes the candidate's verdict `gate-unmeasured`.
+ * @property {'dune' | 'helius' | 'keyless-rpc'} enumerationSource Which surface answered "which
+ *   mints did this wallet create" for THIS candidate. Per-candidate rather than per-run because the
+ *   Dune coverage probe refuses a wallet at a time: a wallet whose earliest launch sits at or before
+ *   the probed surfaces' own first row falls back to the walk while the rest of the batch does not.
+ * @property {number | null} duneLaunches Launches the Dune enumeration attributed to this wallet,
+ *   `null` when Dune was not consulted. Kept even when the reading FELL BACK, so a record shows what
+ *   the refused answer would have said rather than only that it was refused.
+ * @property {string[]} duneFallbackReasons Why this candidate did not use the Dune reading, empty
+ *   when it did. **An empty list on a `keyless-rpc`/`helius` source means Dune was never consulted
+ *   at all** — no key, `--no-dune`, or `--ownership-only`; the run-level `dune` block says which.
+ * @property {number} creatorMovementUnmeasured Launches whose curve state came from a route that
+ *   does not report a current creator. `movedCreator` says nothing about these — the Dune
+ *   enumeration answers who created a mint and whether it completed, and nothing about who owns the
+ *   curve today. Do not add the two.
  */
 
 /**

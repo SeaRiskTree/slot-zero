@@ -1,8 +1,15 @@
 # Creation-derived launch history — what was measured
 
-Measured 2026-08-02, extended 2026-08-03 with the indexed (Helius) route — see §7. Method and code:
-`creation.mjs`, `pumpfun.mjs` → `readCreatedHistory` (keyless) and `readCreatedHistoryIndexed`
-(keyed), and README → [Which history the gate counts](./README.md#which-history-the-gate-counts).
+Measured 2026-08-02, extended 2026-08-03 with the indexed (Helius) route (§7) and again the same day
+with the **Dune enumeration, which is now the primary surface** (§8, captain decision 156a). Method
+and code: `dune.mjs` (primary), `creation.mjs`, `pumpfun.mjs` → `readCreatedHistory` (keyless
+fallback) and `readCreatedHistoryIndexed` (keyed fallback), and README →
+[Which history the gate counts](./README.md#which-history-the-gate-counts).
+
+**Read §8 before quoting §1–§7 on how a launch history is obtained.** Those sections measure the
+signature walk, which is still wired and still correct — it is the FALLBACK now, not the default.
+Their *findings* about the ownership bias are unaffected and are what §8 reproduces from an
+independent surface.
 
 This file records **numbers**, not method. It exists because the correction it documents turned out
 to be small, and a small correction with no record of its size is indistinguishable from a large one
@@ -374,3 +381,172 @@ and the check being run, and each one runs in the only direction it can. **No me
 and no verdict changed.** Compare the keyless cost for this same wallet: 7,166 requests and ~287
 minutes, and that is only reachable at all with the per-candidate ceiling lifted — under the pinned
 100 requests it covers a window, not a history.
+
+---
+
+## 8. The Dune route — the PRIMARY enumeration surface, measured 2026-08-03
+
+Captain decision 156a (`data/decisions/156-slot-zero-dune-vs-helius-creation-walk.md`): creation
+enumeration — *"which mints did this wallet create"* — switches to Dune's decoded pump.fun creation
+events. **The walk of §1–§7 is not deleted; it is the fallback**, taken when there is no
+`DUNE_API_KEY`, when Dune fails, or when the coverage probe refuses a reading. **Helius stays
+primary and necessary for every transaction-level measurement**, including Stage 2's entry-cost leg,
+which reads `meta.fee` and pre/post balances per transaction — no decoded table serves that.
+
+Method and code: `dune.mjs` (`CREATION_SQL`, `COVERAGE_SQL`, `assessCoverage`,
+`enumerateCreations`), bounds in `thresholds.json` → `dune`. The evaluation that established the
+surface is `data/slot-zero-dune-evaluate/report.md` in the firstmate home; this section records what
+the **wired code** produces, which is a different claim.
+
+### 8.1 The surface, and the two traps that make it non-obvious
+
+`pump_evt_createevent` **UNION** `pump_call_create`, deduped by mint. Neither alone is correct:
+
+| table | what it decodes | why it is not enough alone |
+|---|---|---|
+| `pump_call_create` | the original `Create` instruction | returns **zero rows** for our subject, which launches with `CreateV2` |
+| `pump_call_create_v2` | `CreateV2` | **not backfilled before 2026-04-30**; silently misses 101 of our 239 launches, `maxxing` included |
+| `pump_evt_createevent` | the `CreateEvent` **both** emit | begins 2024-04-26, so it cannot see the earliest era |
+
+Attribution is `"user"` / `account_user`, **the signer**. `creator` is a settable `CreateV2`
+*argument*: six mints declare our subject as `creator` while being signed by six different
+bot-shaped wallets, which inflates the count 247 → 253. A test pins both traps against the
+executable half of `CREATION_SQL`.
+
+### 8.2 The coverage probe, and what it refuses
+
+The binding condition of the decision. Decoded tables have **silent start dates** — they return a
+confident, well-formed, complete-looking answer that is simply wrong before their first row, with
+nothing in the response saying so. Same failure shape as a truncated backwards walk in `pumpfun.mjs`
+and the same direction: plausible and silent.
+
+Every Dune-derived count therefore ships with `min(block_time)`, `max(block_time)` and monthly row
+counts for the exact tables read. The probe deliberately reads **three** tables while the enumeration
+reads **two**, so its own output demonstrates the boundary that disqualifies the third rather than
+this file asserting it. Read through the wired code, 2026-08-03:
+
+| table | read by the enumeration | first row | last row | rows | months |
+|---|---|---|---|---:|---:|
+| `call_create` | **yes** | 2024-01-14T12:57:12Z | 2026-08-03T07:23:27Z | 14,145,301 | 32 |
+| `evt_createevent` | **yes** | 2024-04-26T09:55:52Z | 2026-08-03T09:09:26Z | 20,571,130 | 29 |
+| `call_create_v2` | no | **2026-04-30T18:48:02Z** | 2026-08-03T09:09:26Z | 2,664,286 | **5** |
+
+Union coverage **2024-01-14 → 2026-08-03, 0 months with no row**. `call_create_v2`'s five months is
+the trap, measured rather than quoted.
+
+Four refusals, and a refused reading **falls back to the walk** rather than being published:
+
+1. a read table the probe did not return, or that holds no rows;
+2. **any month inside the covered span where every read table is empty** — the `create_v2` defect
+   stated mechanically, and what stops this being a start-date check wearing a longer name;
+3. **staleness** past `dune.maxCoverageLagMs` (6 h). This is the one refusal asking again can fix,
+   so a stale *cached* probe is re-executed once — the second of the two budgeted executions;
+4. **per wallet**: an earliest launch at or before the probed floor (its history may reach outside
+   coverage), or a newest launch past the probed ceiling (reachable because the probe defaults to a
+   cached read). Both refuse **that wallet only**, so one run can carry both sources.
+
+### 8.3 Reproduced against the 239-launch ground truth, through the production code path
+
+`enumerateCreations` → `mergeHistories` → `measureCompletion`, the same three functions `screen.mjs`
+calls, over the five wallets §3.2 records. Ownership listing empty, so these are the Dune reading
+alone.
+
+| wallet | `CREATION-DERIVED` §3.2 | Dune launches | Dune bonded | rate | gap |
+|---|---:|---:|---:|---|---:|
+| `F5ExBJxM…` | 10 (6 bonded) | **10** | **6** | 0.6000 | **0** |
+| `ELcFk5c9…` | 8 (7 bonded) | **8** | **7** | 0.8750 | **0** |
+| `4q4GKBpV…` | 152 (49 bonded) | **152** | **49** | 0.3224 | **0** |
+| `3FiWnNDT…` | 65 (25 bonded) | **65** | **25** | 0.3846 | **0** |
+| `7ufmve7Z…` | 239 in the tape | **247** | 107 | 0.4332 | **0 missing** |
+
+For the subject: **239 of 239 tape launches found, 0 missing**, `32CdQdBU…pump` (`maxxing`)
+**present**, and **8 extras all created after the tape's newest launch** — the same 239/0/8 the
+Helius walk produced in §7.5, from an independent surface. Bonded status came from the chain's own
+`CompleteEvent` on 247 of 247, so `bondedUndecidable` is 0 and no reading is unmeasured for want of
+a curve read.
+
+**No measured value moved and no verdict changed.**
+
+### 8.4 What it costs, against the walk it replaces
+
+| | Dune | Helius indexed walk (§7.5) | keyless walk |
+|---|---|---|---|
+| requests, one deployer's whole history | — (batched) | 12 | 7,166 |
+| requests, **five** deployers | **8 total** | ~60 | ~35,000 |
+| executions | **1** for the whole batch | n/a | n/a |
+| billed | **1.75 credits of 2,500/month** | 793 of 10,000,000/month | free |
+| wall clock | ~9 s | 5.7 s | ~287 min |
+
+The scan cost is nearly independent of how many wallets are in the filter, so **batching is the cost
+model**: what scales is bytes returned, measured at **~97 bytes/row** after the create transaction
+and the graduation timestamp were dropped from the `SELECT` (they halved the payload and the tool
+reads neither). At the 195-candidate cap and a median ~50-launch history that is ~0.95 MB, about
+**20 credits a run — roughly 125 full-cap runs a month**. `dune.maxResultRows` caps a read at 20,000
+rows (~1.94 MB, ~39 credits) and **refuses rather than pages**: an unbounded read is an unbounded
+bill.
+
+Two spend rules that are not negotiable, both from the vendor's own billing model:
+
+- **A failed execution is still billed and it is terminal.** `DuneClient.execute` is the one call in
+  this repository that is never retried, on any failure, for any reason. Polling and result reads
+  are retried; they return no bytes when they fail, so they cost nothing.
+- **Budget from *billed* credits, not `execution_cost_credits`**, which understates by ~3.5×:
+  retrieving results is ~71% of the bill at ~20 credits/MB. Measured on this account 2026-08-03: the
+  probe cost 0.751 billed against 0.751 of compute (2.5 kB of result), and the five-wallet
+  enumeration cost 1.75 billed against 0.92 of compute (48 kB of result).
+
+The Free tier is **2,500 credits/month and SHARED** with whatever else holds the key, only 10
+private queries exist, and **nothing in this tool tracks the month** — it is stateless between runs,
+so the monthly arithmetic is the operator's. The same limit `creation_walk_helius` states.
+
+### 8.5 What the Dune route does NOT measure, and where that shows
+
+**`movedCreator` is unmeasured on a Dune-sourced candidate, and it must not read as zero.** Dune says
+who created a mint and whether it completed; it says nothing about who owns the curve *today*. So
+`CurveState.creator` is `null` on that path, `mergeHistories` counts `creatorMovementUnmeasured`
+instead, and the run record carries both. On the five wallets above that is 482 of 482 launches
+unmeasured — the whole §3 measurement is a **walk** result and stays one.
+
+A Dune-sourced candidate also reads `rpcRequests: 0`, `loadShedEvents: 0`, `signaturesScanned: 0`,
+`signaturesSucceeded: 0`, `transactionsInspected: 0`, `curvesUnread: 0` and
+`stopReason: "dune-enumerated"`, which is not a stop at all — nothing was walked. Its
+`coveredFrom/ToIso` is the **probe's** bound, not a walk's window, and `wholeHistory` is true inside
+it because the enumeration is an index of creation events rather than a window walked backwards
+until a budget bit.
+
+**Nothing here touches the permanent ceiling.** "Unaffiliated" still means *no on-chain relationship
+on complete sets*, never *provably unrelated*; shared custodial venues remain invisible
+(`README.md` → "The ceiling of the method"). Dune widens enumeration, not attribution. And it is a
+third-party re-derivation of chain state, not the chain: treat it as an **enumeration** surface and
+keep price, P&L and entry-cost measurement on our own tape and our own RPC, where the fee-inclusive
+rules and the `GrossOfFees` / `NetOfMeasuredFees` discipline live. **No Dune value reaches a Stage 2
+entry number or Stage 3**, and a test asserts it structurally.
+
+### 8.6 Custody of the two saved queries
+
+The free tier allows **10 private queries and the account holds 10**, so the two production queries
+were **upgraded in place** rather than created: `8204672` (the shape the evaluation designated as
+production, widened from event-only to the union) and `8204603` (its coverage query, widened to
+carry `min`/`max` block time beside the monthly counts). The other six evaluation queries are
+untouched.
+
+A saved Dune query is editable from a browser and its answer is a gate input, so **the SQL is
+committed here too** — `dune.mjs` → `CREATION_SQL` and `COVERAGE_SQL` — and
+`assertSavedQueryMatches` compares them **before** an execution is spent. Drift fails the run
+loudly instead of returning a different measurement under the same name. The comparison normalises
+line endings and trailing space only: an edited *comment* still fails it, because the comments are
+where the traps above are written down.
+
+### 8.7 Terms of service
+
+Read 2026-08-03, before the first committed run: Dune's [Terms of Service](https://dune.com/terms)
+and the [SQL API Service Addendum](https://dune.com/sql-api-terms). Nothing in them conflicts with
+this use. The prohibition on "bots, crawlers, scrapers" is on scraping *the Site*; the SQL API is
+the sanctioned programmatic route under a subscription plan, which is what this uses. The addendum's
+substantive restriction is on uses that "be a substitute for the Service by a third party, affect
+Dune's ability to realize revenue, or compete with Dune's business" — none of which describes
+internal private research. Query manipulation *to bypass the byte limit* is prohibited; selecting
+only the columns the tool reads and aggregating server-side is the opposite of that and is what
+their own fair-use text calls acceptable. Neither document addresses caching or derived data, so the
+`derive and discard` posture applied to MadeOnSol applies here unchanged: per-launch rows live in
+memory for one run, only derived counts are written, and only with `--out`.

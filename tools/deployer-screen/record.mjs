@@ -141,8 +141,29 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   walk did not run at all. No candidate row, `entry` or `entry.coverage` key changes, so
  *   `PERSISTED_BY_SCHEMA[8]`, `ENTRY_KEYS_BY_SCHEMA[8]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[8]` all
  *   equal `[7]`.
+ * - **9** — **creation ENUMERATION is primary on Dune** (captain decision 156a). The record gains a
+ *   run-level `dune` block — the coverage probe's own bounds, what it refused, and the Dune spend in
+ *   executions, requests and estimated credits — and every candidate's `creation` block gains
+ *   `enumerationSource`, `duneLaunches`, `duneFallbackReasons` and `creatorMovementUnmeasured`.
+ *   **The one that will bite a reader: on a schema-≤8 record, `creation.movedCreator: 0` means the
+ *   walk read every curve and none had moved.** On a schema-9 record with
+ *   `enumerationSource: "dune"` it means nothing was looked at — Dune says who created a mint and
+ *   whether it completed, and says nothing about who owns the curve today — and
+ *   `creatorMovementUnmeasured` carries the size of what went unmeasured. Do not add the two, and do
+ *   not read a Dune-sourced 0 as the walk's 0.
+ *   `creation.rpcRequests` and `creation.loadShedEvents` read 0 on a Dune-sourced candidate because
+ *   no walk happened, and so do `signaturesScanned`, `signaturesSucceeded`, `transactionsInspected`
+ *   and `curvesUnread`; `stopReason` is `dune-enumerated`, which is not a stop at all. **A run may
+ *   carry BOTH sources**: the coverage probe refuses a wallet at a time, so a wallet whose earliest
+ *   launch sits at or before the probed surfaces' own first row falls back to the walk while the
+ *   rest of the batch does not. `creation.coveredFrom/ToIso` on a Dune candidate is the PROBE's
+ *   bound rather than a walk's window, and `wholeHistory` is true inside it because the enumeration
+ *   is an index of creation events, not a window walked backwards until a budget bit.
+ *   No candidate ROW key changes, so `PERSISTED_BY_SCHEMA[9]` equals `[8]`, and nothing about
+ *   `entry`, `entry.coverage` or `spend` moves — Dune is metered in its own units in its own block,
+ *   because a fourth budget folded into `spend` would imply an exchange rate that does not exist.
  */
-export const RECORD_SCHEMA_VERSION = 8;
+export const RECORD_SCHEMA_VERSION = 9;
 
 /**
  * Completeness of a run, as the record can actually support.

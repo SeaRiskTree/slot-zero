@@ -25,6 +25,14 @@ The denominator of that question is **launches the wallet created**, not tokens 
 are different sets and the difference is not neutral — see
 [Which history the gate counts](#which-history-the-gate-counts).
 
+**Where the wallets come from is a separate lane.** `feed.mjs` is a scheduled discovery feed that
+surfaces deployers this project has not seen before, triages them on the Stage 1 gate over the cheap
+ownership reading, and queues the survivors for this screen — 3 + `--gate` keyed requests a run, no
+keyless requests at all, dry by default. It remembers what it has seen so a known wallet is never
+offered as new again, and it exits non-zero when its own yield goes dry. **[FEED.md](FEED.md) owns
+it**, including the measured discovery lag and the ceiling that vendor-selected discovery imposes on
+both lanes.
+
 ## Run it
 
 No agent, no build step, no dependencies. Node 20+.

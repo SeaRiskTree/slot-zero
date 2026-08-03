@@ -1,0 +1,1892 @@
+{
+  "tool": "deployer-screen-feed",
+  "schemaVersion": 1,
+  "updatedAtIso": "2026-08-03T00:35:31.468Z",
+  "wallets": {
+    "2N7qg9a3N6DXgDBXvgZ5JGnXvxUnX1YhBEC5Y7waqxmi": {
+      "wallet": "2N7qg9a3N6DXgDBXvgZ5JGnXvxUnX1YhBEC5Y7waqxmi",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 61,
+      "completionRate": 0.540984,
+      "spanDays": 581.59,
+      "firstDeployIso": "2024-10-30T04:11:10.486Z",
+      "discoveryLagDaysAtLeast": 641.18,
+      "screened": false,
+      "shortfalls": []
+    },
+    "2PkPfbNytC8wiiAS8XLmNTPqHwgfqJe3yu3euVZTj9qv": {
+      "wallet": "2PkPfbNytC8wiiAS8XLmNTPqHwgfqJe3yu3euVZTj9qv",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 14,
+      "completionRate": 0.357143,
+      "spanDays": 66.94,
+      "firstDeployIso": "2026-05-24T07:16:05.000Z",
+      "discoveryLagDaysAtLeast": 70.05,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 14 tokens < 25 required"
+      ]
+    },
+    "2fjnasKeqKS63myiKHqeVjaCKGEN75U4iPv6ZjsoJ8xa": {
+      "wallet": "2fjnasKeqKS63myiKHqeVjaCKGEN75U4iPv6ZjsoJ8xa",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 52,
+      "completionRate": 0.134615,
+      "spanDays": 837.92,
+      "firstDeployIso": "2024-04-05T00:25:27.000Z",
+      "discoveryLagDaysAtLeast": 849.34,
+      "screened": false,
+      "shortfalls": [
+        "completion rate 0.1346 < 0.25 required"
+      ]
+    },
+    "2mWsxN9AqCDybfHbmy7gv4y6y5NcN7a2Kfm9AgJNsXhz": {
+      "wallet": "2mWsxN9AqCDybfHbmy7gv4y6y5NcN7a2Kfm9AgJNsXhz",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 18,
+      "completionRate": 0.277778,
+      "spanDays": 0.19,
+      "firstDeployIso": "2026-04-04T05:24:05.000Z",
+      "discoveryLagDaysAtLeast": 120.13,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 18 tokens < 25 required",
+        "history spans 0.2 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "2snLHXhkP3rrvxnRK3nXrmGxwqH462eEWqRAo7ny4HM7": {
+      "wallet": "2snLHXhkP3rrvxnRK3nXrmGxwqH462eEWqRAo7ny4HM7",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 19,
+      "completionRate": 0.368421,
+      "spanDays": 2.87,
+      "firstDeployIso": "2026-03-17T22:20:46.000Z",
+      "discoveryLagDaysAtLeast": 137.43,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 19 tokens < 25 required",
+        "history spans 2.9 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "3FiWnNDTZrKPbjPeMiTe2r5m5zygxSu57ePck5LUQp7d": {
+      "wallet": "3FiWnNDTZrKPbjPeMiTe2r5m5zygxSu57ePck5LUQp7d",
+      "firstSeenIso": "2026-07-30T01:34:30.254Z",
+      "lastSeenIso": "2026-07-30T01:34:30.254Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:elite",
+        "recent-bonds:elite"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-07-30T01:34:30.254Z",
+      "origin": "run-record",
+      "tokens": 63,
+      "completionRate": 0.380952,
+      "spanDays": 37.55,
+      "firstDeployIso": "2026-06-22T09:44:11.000Z",
+      "discoveryLagDaysAtLeast": 37.66,
+      "screened": false,
+      "shortfalls": []
+    },
+    "3YpQRAGDCpraoXG9c9ntVaax9jRKPRSQQRXm7mg8YMiF": {
+      "wallet": "3YpQRAGDCpraoXG9c9ntVaax9jRKPRSQQRXm7mg8YMiF",
+      "firstSeenIso": "2026-07-30T01:34:30.254Z",
+      "lastSeenIso": "2026-07-30T01:34:30.254Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:elite"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-07-30T01:34:30.254Z",
+      "origin": "run-record",
+      "tokens": 6,
+      "completionRate": 0.833333,
+      "spanDays": 856.07,
+      "firstDeployIso": "2024-03-25T21:51:55.000Z",
+      "discoveryLagDaysAtLeast": 856.15,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 6 tokens < 25 required"
+      ]
+    },
+    "3bUNy4GnZpZqECHvEoQEQwTyeAoRJgcSSMJ95d7ZGLDv": {
+      "wallet": "3bUNy4GnZpZqECHvEoQEQwTyeAoRJgcSSMJ95d7ZGLDv",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "leaderboard:total_bonded:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 16,
+      "completionRate": 0.3125,
+      "spanDays": 162.27,
+      "firstDeployIso": "2026-02-19T18:10:43.000Z",
+      "discoveryLagDaysAtLeast": 163.6,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 16 tokens < 25 required"
+      ]
+    },
+    "3jBzE4c92T5F9qYok9KjoiaLr1oALJmCwoxGSXBJhAfg": {
+      "wallet": "3jBzE4c92T5F9qYok9KjoiaLr1oALJmCwoxGSXBJhAfg",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 56,
+      "completionRate": 0.267857,
+      "spanDays": 297.02,
+      "firstDeployIso": "2025-09-06T06:38:31.291Z",
+      "discoveryLagDaysAtLeast": 330.08,
+      "screened": false,
+      "shortfalls": []
+    },
+    "3p2458ekGpicxPTAduGwa9JMvugTWDtpvodcTnufmaAE": {
+      "wallet": "3p2458ekGpicxPTAduGwa9JMvugTWDtpvodcTnufmaAE",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 17,
+      "completionRate": 0.411765,
+      "spanDays": 622.95,
+      "firstDeployIso": "2024-11-14T22:46:13.871Z",
+      "discoveryLagDaysAtLeast": 625.41,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 17 tokens < 25 required"
+      ]
+    },
+    "3vU5HSbmB4k29ezFPYeLxLtmzG2Z5Fqph1FtegMcptYd": {
+      "wallet": "3vU5HSbmB4k29ezFPYeLxLtmzG2Z5Fqph1FtegMcptYd",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 13,
+      "completionRate": 0.538462,
+      "spanDays": 24.49,
+      "firstDeployIso": "2026-07-07T22:55:45.000Z",
+      "discoveryLagDaysAtLeast": 25.4,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 13 tokens < 25 required"
+      ]
+    },
+    "3yKebvkagP4iokHryqnE5KnTQUSqdExvS3iFkGPXykLP": {
+      "wallet": "3yKebvkagP4iokHryqnE5KnTQUSqdExvS3iFkGPXykLP",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 29,
+      "completionRate": 0.344828,
+      "spanDays": 116.96,
+      "firstDeployIso": "2026-04-02T17:56:06.000Z",
+      "discoveryLagDaysAtLeast": 121.61,
+      "screened": false,
+      "shortfalls": []
+    },
+    "44V2DZpFkoXSfiXTSFESiLpdXdG6Nm3jMCpMNexN11TB": {
+      "wallet": "44V2DZpFkoXSfiXTSFESiLpdXdG6Nm3jMCpMNexN11TB",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 5,
+      "completionRate": 0.6,
+      "spanDays": 142.48,
+      "firstDeployIso": "2026-03-12T18:38:12.000Z",
+      "discoveryLagDaysAtLeast": 142.58,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 5 tokens < 25 required"
+      ]
+    },
+    "4J54atPc5YU48PXBTfjhQRV9bhkL4eYA8ocBmMkERoNq": {
+      "wallet": "4J54atPc5YU48PXBTfjhQRV9bhkL4eYA8ocBmMkERoNq",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 26,
+      "completionRate": 0.307692,
+      "spanDays": 216.35,
+      "firstDeployIso": "2024-11-08T01:03:30.737Z",
+      "discoveryLagDaysAtLeast": 632.31,
+      "screened": false,
+      "shortfalls": []
+    },
+    "4q4GKBpVmXGhXYNaR4DetQjf5WjHEHhbJ9Wgybt7F8Yu": {
+      "wallet": "4q4GKBpVmXGhXYNaR4DetQjf5WjHEHhbJ9Wgybt7F8Yu",
+      "firstSeenIso": "2026-07-30T01:34:30.254Z",
+      "lastSeenIso": "2026-07-30T01:34:30.254Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:elite"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-07-30T01:34:30.254Z",
+      "origin": "run-record",
+      "tokens": 70,
+      "completionRate": 0.314286,
+      "spanDays": 3.01,
+      "firstDeployIso": "2026-07-01T14:45:45.000Z",
+      "discoveryLagDaysAtLeast": 28.45,
+      "screened": false,
+      "shortfalls": [
+        "history spans 3.0 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "4v7nGvhrYgHxwkeVAUijm3HPaFLBA133Z3SBrxsFWjzD": {
+      "wallet": "4v7nGvhrYgHxwkeVAUijm3HPaFLBA133Z3SBrxsFWjzD",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 12,
+      "completionRate": 0.416667,
+      "spanDays": 227.82,
+      "firstDeployIso": "2025-11-16T08:49:44.000Z",
+      "discoveryLagDaysAtLeast": 258.99,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 12 tokens < 25 required"
+      ]
+    },
+    "5KTX7LZyoewhQ2keNCNQ6qQCXW9uermzr8r5K6uss4PY": {
+      "wallet": "5KTX7LZyoewhQ2keNCNQ6qQCXW9uermzr8r5K6uss4PY",
+      "firstSeenIso": "2026-07-30T01:34:30.254Z",
+      "lastSeenIso": "2026-07-30T01:34:30.254Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:elite",
+        "leaderboard:total_bonded:elite"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-07-30T01:34:30.254Z",
+      "origin": "run-record",
+      "tokens": 27,
+      "completionRate": 0.703704,
+      "spanDays": 36.98,
+      "firstDeployIso": "2026-06-22T19:26:35.000Z",
+      "discoveryLagDaysAtLeast": 37.26,
+      "screened": false,
+      "shortfalls": []
+    },
+    "5YRgrP3mjGzrzirYYN5HAQH19cTYREYwGxW6XRJQUzij": {
+      "wallet": "5YRgrP3mjGzrzirYYN5HAQH19cTYREYwGxW6XRJQUzij",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 6,
+      "completionRate": 0.666667,
+      "spanDays": 32.97,
+      "firstDeployIso": "2026-06-29T21:26:00.000Z",
+      "discoveryLagDaysAtLeast": 33.46,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 6 tokens < 25 required"
+      ]
+    },
+    "5YuKHN997GPHySap8tDn57HZsgzp5aVngsk5RnNDvrhv": {
+      "wallet": "5YuKHN997GPHySap8tDn57HZsgzp5aVngsk5RnNDvrhv",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 13,
+      "completionRate": 0.384615,
+      "spanDays": 64.01,
+      "firstDeployIso": "2026-04-22T19:07:15.000Z",
+      "discoveryLagDaysAtLeast": 101.56,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 13 tokens < 25 required"
+      ]
+    },
+    "5dg4URWnaJHzcinhADG21FAcsuvi32TXEekiJW6yMVo5": {
+      "wallet": "5dg4URWnaJHzcinhADG21FAcsuvi32TXEekiJW6yMVo5",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "leaderboard:total_bonded:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 18,
+      "completionRate": 0.333333,
+      "spanDays": 141,
+      "firstDeployIso": "2026-03-13T04:17:19.000Z",
+      "discoveryLagDaysAtLeast": 142.18,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 18 tokens < 25 required"
+      ]
+    },
+    "5pYk7CGc3ExfhfTQRSvPSVM8yHNdyeaYwKgNeWeKwiGw": {
+      "wallet": "5pYk7CGc3ExfhfTQRSvPSVM8yHNdyeaYwKgNeWeKwiGw",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [],
+      "state": "prefiltered",
+      "gateVerdict": null,
+      "gateReading": null,
+      "gradedAtIso": null,
+      "origin": "run-record",
+      "tokens": null,
+      "completionRate": null,
+      "spanDays": null,
+      "firstDeployIso": null,
+      "discoveryLagDaysAtLeast": null,
+      "screened": false,
+      "shortfalls": []
+    },
+    "5wg1KsGRW8PixReBszaDeCrfMYVg9SsHhyDfeydvm2tt": {
+      "wallet": "5wg1KsGRW8PixReBszaDeCrfMYVg9SsHhyDfeydvm2tt",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 12,
+      "completionRate": 0.416667,
+      "spanDays": 31.49,
+      "firstDeployIso": "2026-03-12T03:56:45.000Z",
+      "discoveryLagDaysAtLeast": 143.19,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 12 tokens < 25 required"
+      ]
+    },
+    "643pwUUZwCeP68Lai21Hq9ara2nYmcw5pBRDtbP5xDUt": {
+      "wallet": "643pwUUZwCeP68Lai21Hq9ara2nYmcw5pBRDtbP5xDUt",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 18,
+      "completionRate": 0.388889,
+      "spanDays": 845.73,
+      "firstDeployIso": "2024-03-27T22:07:27.133Z",
+      "discoveryLagDaysAtLeast": 857.44,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 18 tokens < 25 required"
+      ]
+    },
+    "6Wg4aeZ29WRKDsM695c7tTT8oYAcbvFq7DYn8416BPBg": {
+      "wallet": "6Wg4aeZ29WRKDsM695c7tTT8oYAcbvFq7DYn8416BPBg",
+      "firstSeenIso": "2026-07-30T01:34:30.254Z",
+      "lastSeenIso": "2026-07-30T01:34:30.254Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:elite",
+        "recent-bonds:elite"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-07-30T01:34:30.254Z",
+      "origin": "run-record",
+      "tokens": 5,
+      "completionRate": 1,
+      "spanDays": 1.73,
+      "firstDeployIso": "2026-07-27T16:11:07.000Z",
+      "discoveryLagDaysAtLeast": 2.39,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 5 tokens < 25 required",
+        "history spans 1.7 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "6ocxhLEqU55DGEdS8NT362FpRJpfQuUAiK3K8Dvxnp1S": {
+      "wallet": "6ocxhLEqU55DGEdS8NT362FpRJpfQuUAiK3K8Dvxnp1S",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 19,
+      "completionRate": 0.263158,
+      "spanDays": 11.97,
+      "firstDeployIso": "2026-03-22T08:30:00.000Z",
+      "discoveryLagDaysAtLeast": 133,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 19 tokens < 25 required",
+        "history spans 12.0 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "6vxobdjQLxEUP8dvzPEvjuDCKT2UHtXFVbeDuq3M5UhE": {
+      "wallet": "6vxobdjQLxEUP8dvzPEvjuDCKT2UHtXFVbeDuq3M5UhE",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 13,
+      "completionRate": 0.307692,
+      "spanDays": 116.95,
+      "firstDeployIso": "2026-04-05T19:40:05.000Z",
+      "discoveryLagDaysAtLeast": 118.54,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 13 tokens < 25 required"
+      ]
+    },
+    "7ZCwMre2ir7tAViA9f9qWu3BBe4jtrMJq1FrNBtntq3T": {
+      "wallet": "7ZCwMre2ir7tAViA9f9qWu3BBe4jtrMJq1FrNBtntq3T",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 12,
+      "completionRate": 0.416667,
+      "spanDays": 6,
+      "firstDeployIso": "2026-06-29T00:52:50.000Z",
+      "discoveryLagDaysAtLeast": 34.32,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 12 tokens < 25 required",
+        "history spans 6.0 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL": {
+      "wallet": "7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL",
+      "firstSeenIso": "2026-07-30T01:34:30.254Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:elite",
+        "alerts:good",
+        "leaderboard:total_bonded:elite",
+        "leaderboard:total_bonded:good",
+        "recent-bonds:elite",
+        "recent-bonds:good"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 70,
+      "completionRate": 0.528571,
+      "spanDays": 34.05,
+      "firstDeployIso": "2026-06-27T15:50:52.000Z",
+      "discoveryLagDaysAtLeast": 32.41,
+      "screened": true,
+      "shortfalls": []
+    },
+    "8KYMfXzpbB6atKguR1q3rK8wFX72fjWMknGMXDhHnLrg": {
+      "wallet": "8KYMfXzpbB6atKguR1q3rK8wFX72fjWMknGMXDhHnLrg",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 70,
+      "completionRate": 0.242857,
+      "spanDays": 111.68,
+      "firstDeployIso": "2026-03-15T22:26:48.000Z",
+      "discoveryLagDaysAtLeast": 139.42,
+      "screened": false,
+      "shortfalls": [
+        "completion rate 0.2429 < 0.25 required"
+      ]
+    },
+    "9GJXZzdLc3qF2hdvikcVjCYmmG5mERbykzZAu66iZ1Xr": {
+      "wallet": "9GJXZzdLc3qF2hdvikcVjCYmmG5mERbykzZAu66iZ1Xr",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [],
+      "state": "prefiltered",
+      "gateVerdict": null,
+      "gateReading": null,
+      "gradedAtIso": null,
+      "origin": "run-record",
+      "tokens": null,
+      "completionRate": null,
+      "spanDays": null,
+      "firstDeployIso": null,
+      "discoveryLagDaysAtLeast": null,
+      "screened": false,
+      "shortfalls": []
+    },
+    "9LUgfzet43ZdwdAzbvV5msQjGzx9g6sqvtgLaQyQAEog": {
+      "wallet": "9LUgfzet43ZdwdAzbvV5msQjGzx9g6sqvtgLaQyQAEog",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good",
+        "recent-bonds:good"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 44,
+      "completionRate": 0.25,
+      "spanDays": 63.61,
+      "firstDeployIso": "2026-05-30T00:58:14.000Z",
+      "discoveryLagDaysAtLeast": 64.32,
+      "screened": false,
+      "shortfalls": []
+    },
+    "9R6PV5KTFW94ZhfPg6BF3xKeGkBNSKAGgQtSeLmyxN2R": {
+      "wallet": "9R6PV5KTFW94ZhfPg6BF3xKeGkBNSKAGgQtSeLmyxN2R",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 10,
+      "completionRate": 0.4,
+      "spanDays": 53.34,
+      "firstDeployIso": "2026-06-07T20:50:02.000Z",
+      "discoveryLagDaysAtLeast": 55.49,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 10 tokens < 25 required"
+      ]
+    },
+    "9g6A9S8rvwEiRwhezK19genZhEqhGcd834XF24FxfGmx": {
+      "wallet": "9g6A9S8rvwEiRwhezK19genZhEqhGcd834XF24FxfGmx",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 10,
+      "completionRate": 0.3,
+      "spanDays": 321.07,
+      "firstDeployIso": "2025-09-15T01:49:29.489Z",
+      "discoveryLagDaysAtLeast": 321.28,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 10 tokens < 25 required"
+      ]
+    },
+    "AKtRfNN7anBbCiPMr5CwHxAuCiqKgpWem9DhZpu27maR": {
+      "wallet": "AKtRfNN7anBbCiPMr5CwHxAuCiqKgpWem9DhZpu27maR",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "leaderboard:total_bonded:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 46,
+      "completionRate": 0.23913,
+      "spanDays": 120.23,
+      "firstDeployIso": "2026-04-03T12:22:53.000Z",
+      "discoveryLagDaysAtLeast": 120.84,
+      "screened": false,
+      "shortfalls": [
+        "completion rate 0.2391 < 0.25 required"
+      ]
+    },
+    "ALJ4P5QNyHeLEjpKGmA1eUfJHSEGQMjY8HLnDkSgjczb": {
+      "wallet": "ALJ4P5QNyHeLEjpKGmA1eUfJHSEGQMjY8HLnDkSgjczb",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 70,
+      "completionRate": 0.457143,
+      "spanDays": 121.88,
+      "firstDeployIso": "2026-04-01T06:27:25.000Z",
+      "discoveryLagDaysAtLeast": 123.09,
+      "screened": true,
+      "shortfalls": []
+    },
+    "AQdBYZNy3BZ1vouGUjA1w9Ay7aq7kH5UQSuh4LQWKotY": {
+      "wallet": "AQdBYZNy3BZ1vouGUjA1w9Ay7aq7kH5UQSuh4LQWKotY",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good",
+        "recent-bonds:good"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 70,
+      "completionRate": 0.342857,
+      "spanDays": 121.08,
+      "firstDeployIso": "2026-03-30T13:32:11.000Z",
+      "discoveryLagDaysAtLeast": 124.79,
+      "screened": false,
+      "shortfalls": []
+    },
+    "AYJSaJiDbxZjPjTKWdLjpFfoqMBvivp8uHEHqvabPFvb": {
+      "wallet": "AYJSaJiDbxZjPjTKWdLjpFfoqMBvivp8uHEHqvabPFvb",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 12,
+      "completionRate": 0.416667,
+      "spanDays": 1.45,
+      "firstDeployIso": "2026-07-18T07:14:26.000Z",
+      "discoveryLagDaysAtLeast": 15.06,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 12 tokens < 25 required",
+        "history spans 1.4 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "AacCtWWCMRJTmWCXDZxwoaeXVVcFftGpZtZjYTe3r3id": {
+      "wallet": "AacCtWWCMRJTmWCXDZxwoaeXVVcFftGpZtZjYTe3r3id",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 7,
+      "completionRate": 0.428571,
+      "spanDays": 1.07,
+      "firstDeployIso": "2026-07-30T19:53:12.000Z",
+      "discoveryLagDaysAtLeast": 2.53,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 7 tokens < 25 required",
+        "history spans 1.1 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "AbVkRUfynaEo6PMWyBCihRcirKbu3GkiyEoH5vny8aT9": {
+      "wallet": "AbVkRUfynaEo6PMWyBCihRcirKbu3GkiyEoH5vny8aT9",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 70,
+      "completionRate": 0.328571,
+      "spanDays": 156.76,
+      "firstDeployIso": "2026-02-09T04:39:04.000Z",
+      "discoveryLagDaysAtLeast": 174.16,
+      "screened": false,
+      "shortfalls": []
+    },
+    "ArfVe1K5gt5zsxzRCWSQeWc1rJSJjZzuuYxmvRh71mMQ": {
+      "wallet": "ArfVe1K5gt5zsxzRCWSQeWc1rJSJjZzuuYxmvRh71mMQ",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 70,
+      "completionRate": 0.1,
+      "spanDays": 312.5,
+      "firstDeployIso": "2025-05-09T17:40:12.280Z",
+      "discoveryLagDaysAtLeast": 449.62,
+      "screened": false,
+      "shortfalls": [
+        "completion rate 0.1000 < 0.25 required"
+      ]
+    },
+    "Aw9SEwyyVdtKiL97bHPrRzDYXcdj87BSApL3eZ8BMGrU": {
+      "wallet": "Aw9SEwyyVdtKiL97bHPrRzDYXcdj87BSApL3eZ8BMGrU",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 7,
+      "completionRate": 0.428571,
+      "spanDays": 64.12,
+      "firstDeployIso": "2026-05-30T03:05:47.000Z",
+      "discoveryLagDaysAtLeast": 64.23,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 7 tokens < 25 required"
+      ]
+    },
+    "B3ZNdoxQB5zSro19P97nGyQM8b7roReprRw3EiFX3SvC": {
+      "wallet": "B3ZNdoxQB5zSro19P97nGyQM8b7roReprRw3EiFX3SvC",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 17,
+      "completionRate": 0.411765,
+      "spanDays": 0.19,
+      "firstDeployIso": "2026-07-25T04:47:41.000Z",
+      "discoveryLagDaysAtLeast": 8.16,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 17 tokens < 25 required",
+        "history spans 0.2 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "B6Q3VmDnYWwUbSujtsZ9sY9Pk4Vgu31D7DbMNNR1iWR2": {
+      "wallet": "B6Q3VmDnYWwUbSujtsZ9sY9Pk4Vgu31D7DbMNNR1iWR2",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [],
+      "state": "prefiltered",
+      "gateVerdict": null,
+      "gateReading": null,
+      "gradedAtIso": null,
+      "origin": "run-record",
+      "tokens": null,
+      "completionRate": null,
+      "spanDays": null,
+      "firstDeployIso": null,
+      "discoveryLagDaysAtLeast": null,
+      "screened": false,
+      "shortfalls": []
+    },
+    "B6QvkTWSqJZv5tK4AxFnJRy54Skrk4S1VH4QG2qqs66N": {
+      "wallet": "B6QvkTWSqJZv5tK4AxFnJRy54Skrk4S1VH4QG2qqs66N",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good",
+        "recent-bonds:good"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 39,
+      "completionRate": 0.307692,
+      "spanDays": 789.91,
+      "firstDeployIso": "2024-06-02T23:12:55.074Z",
+      "discoveryLagDaysAtLeast": 790.39,
+      "screened": true,
+      "shortfalls": []
+    },
+    "BK2ciybp5WEeWUpPzPACUDfwcNFHeDQSrQsdKyT3Wdkb": {
+      "wallet": "BK2ciybp5WEeWUpPzPACUDfwcNFHeDQSrQsdKyT3Wdkb",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "leaderboard:total_bonded:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 20,
+      "completionRate": 0.3,
+      "spanDays": 16.56,
+      "firstDeployIso": "2026-07-16T12:24:21.000Z",
+      "discoveryLagDaysAtLeast": 16.84,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 20 tokens < 25 required"
+      ]
+    },
+    "CXnxRV24ywNw3NyTmfgu7upN7VNAfRqjkdmAwNv6c1Pv": {
+      "wallet": "CXnxRV24ywNw3NyTmfgu7upN7VNAfRqjkdmAwNv6c1Pv",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 13,
+      "completionRate": 0.384615,
+      "spanDays": 177.03,
+      "firstDeployIso": "2025-12-25T02:17:56.000Z",
+      "discoveryLagDaysAtLeast": 220.26,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 13 tokens < 25 required"
+      ]
+    },
+    "DCWjW618t6x8djYrrCFDFLXYT6MHDDnjMbBK4CknWzdp": {
+      "wallet": "DCWjW618t6x8djYrrCFDFLXYT6MHDDnjMbBK4CknWzdp",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 10,
+      "completionRate": 0.3,
+      "spanDays": 552.48,
+      "firstDeployIso": "2025-01-25T19:35:46.612Z",
+      "discoveryLagDaysAtLeast": 553.54,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 10 tokens < 25 required"
+      ]
+    },
+    "DFrfDB7vsQRNQYFWyQwtihMWGEfD8vAPPHFEW6krXytc": {
+      "wallet": "DFrfDB7vsQRNQYFWyQwtihMWGEfD8vAPPHFEW6krXytc",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 11,
+      "completionRate": 0.454545,
+      "spanDays": 652.89,
+      "firstDeployIso": "2024-10-16T21:16:52.719Z",
+      "discoveryLagDaysAtLeast": 654.47,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 11 tokens < 25 required"
+      ]
+    },
+    "DMB4e5ajAukCtQpKyKut9vBEbjfQVZZpmePGWhSXNKHe": {
+      "wallet": "DMB4e5ajAukCtQpKyKut9vBEbjfQVZZpmePGWhSXNKHe",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 26,
+      "completionRate": 0.307692,
+      "spanDays": 0.06,
+      "firstDeployIso": "2026-07-11T02:08:08.000Z",
+      "discoveryLagDaysAtLeast": 22.27,
+      "screened": false,
+      "shortfalls": [
+        "history spans 0.1 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "DeiACb3M5VXwXzwbgUzZUaAhatRfgzd7tYxWtEFwYv7D": {
+      "wallet": "DeiACb3M5VXwXzwbgUzZUaAhatRfgzd7tYxWtEFwYv7D",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 24,
+      "completionRate": 0.416667,
+      "spanDays": 130.81,
+      "firstDeployIso": "2026-03-19T12:51:25.000Z",
+      "discoveryLagDaysAtLeast": 135.82,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 24 tokens < 25 required"
+      ]
+    },
+    "DfVJPcKxX1RXGf9szMQt9MNSyULCmjJoxidSWAd66SHx": {
+      "wallet": "DfVJPcKxX1RXGf9szMQt9MNSyULCmjJoxidSWAd66SHx",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 9,
+      "completionRate": 0.333333,
+      "spanDays": 59.85,
+      "firstDeployIso": "2026-06-01T18:25:46.000Z",
+      "discoveryLagDaysAtLeast": 61.59,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 9 tokens < 25 required"
+      ]
+    },
+    "DrZhh8Uz9ahWYEXyv1zWNgemN3BRAi42aSZVV2vsKsVy": {
+      "wallet": "DrZhh8Uz9ahWYEXyv1zWNgemN3BRAi42aSZVV2vsKsVy",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [],
+      "state": "prefiltered",
+      "gateVerdict": null,
+      "gateReading": null,
+      "gradedAtIso": null,
+      "origin": "run-record",
+      "tokens": null,
+      "completionRate": null,
+      "spanDays": null,
+      "firstDeployIso": null,
+      "discoveryLagDaysAtLeast": null,
+      "screened": false,
+      "shortfalls": []
+    },
+    "EDQPidE8fqqpPtnLi6fQmU4krwc7S6ppEpm4qLXKcTro": {
+      "wallet": "EDQPidE8fqqpPtnLi6fQmU4krwc7S6ppEpm4qLXKcTro",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 19,
+      "completionRate": 0.315789,
+      "spanDays": 17.82,
+      "firstDeployIso": "2025-12-08T14:43:03.298Z",
+      "discoveryLagDaysAtLeast": 236.74,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 19 tokens < 25 required"
+      ]
+    },
+    "EFENbNBq1HXt69GGZMW6igtZqD42pz2sqDJRnmG4cxfD": {
+      "wallet": "EFENbNBq1HXt69GGZMW6igtZqD42pz2sqDJRnmG4cxfD",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 5,
+      "completionRate": 0.6,
+      "spanDays": 37.58,
+      "firstDeployIso": "2026-06-24T05:10:42.000Z",
+      "discoveryLagDaysAtLeast": 39.14,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 5 tokens < 25 required"
+      ]
+    },
+    "ELcFk5c9pTiHcjMUoGgT2afHvvp6hmLhuJnhisgV6bXh": {
+      "wallet": "ELcFk5c9pTiHcjMUoGgT2afHvvp6hmLhuJnhisgV6bXh",
+      "firstSeenIso": "2026-07-30T01:34:30.254Z",
+      "lastSeenIso": "2026-07-30T01:34:30.254Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:elite",
+        "recent-bonds:elite"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-07-30T01:34:30.254Z",
+      "origin": "run-record",
+      "tokens": 7,
+      "completionRate": 1,
+      "spanDays": 244.41,
+      "firstDeployIso": "2025-11-27T06:04:34.000Z",
+      "discoveryLagDaysAtLeast": 244.81,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 7 tokens < 25 required"
+      ]
+    },
+    "EQtWSB9HexxkHPYBNHiz9XQzwGpeH21kMkbkVCpoaQFm": {
+      "wallet": "EQtWSB9HexxkHPYBNHiz9XQzwGpeH21kMkbkVCpoaQFm",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [],
+      "state": "prefiltered",
+      "gateVerdict": null,
+      "gateReading": null,
+      "gradedAtIso": null,
+      "origin": "run-record",
+      "tokens": null,
+      "completionRate": null,
+      "spanDays": null,
+      "firstDeployIso": null,
+      "discoveryLagDaysAtLeast": null,
+      "screened": false,
+      "shortfalls": []
+    },
+    "EeLjBXRELqrcWAXbnj8T4jQPS9Qh7UGWiKxovsJ36pZY": {
+      "wallet": "EeLjBXRELqrcWAXbnj8T4jQPS9Qh7UGWiKxovsJ36pZY",
+      "firstSeenIso": "2026-07-30T01:34:30.254Z",
+      "lastSeenIso": "2026-07-30T01:34:30.254Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:elite",
+        "leaderboard:total_bonded:elite"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-07-30T01:34:30.254Z",
+      "origin": "run-record",
+      "tokens": 16,
+      "completionRate": 0.9375,
+      "spanDays": 566.97,
+      "firstDeployIso": "2025-01-08T08:20:05.906Z",
+      "discoveryLagDaysAtLeast": 567.72,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 16 tokens < 25 required"
+      ]
+    },
+    "EeSxnqdQSkrqAwH79pfeiANoG6UqUcr1Ccb89g4HQBjb": {
+      "wallet": "EeSxnqdQSkrqAwH79pfeiANoG6UqUcr1Ccb89g4HQBjb",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 7,
+      "completionRate": 0.428571,
+      "spanDays": 447.57,
+      "firstDeployIso": "2025-05-10T08:35:54.233Z",
+      "discoveryLagDaysAtLeast": 449,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 7 tokens < 25 required"
+      ]
+    },
+    "Eh3q5AXnopCFULMLGv6QeVqpZhRvPgkWHBMKqNGQvQTX": {
+      "wallet": "Eh3q5AXnopCFULMLGv6QeVqpZhRvPgkWHBMKqNGQvQTX",
+      "firstSeenIso": "2026-07-30T01:34:30.254Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:elite",
+        "alerts:good",
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 11,
+      "completionRate": 0.454545,
+      "spanDays": 149.88,
+      "firstDeployIso": "2026-03-05T00:18:32.000Z",
+      "discoveryLagDaysAtLeast": 147.05,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 11 tokens < 25 required"
+      ]
+    },
+    "EzeE6S6NnYKf7h4VdoTBvs4fmTR7E4prub2XhqKhi7zG": {
+      "wallet": "EzeE6S6NnYKf7h4VdoTBvs4fmTR7E4prub2XhqKhi7zG",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [],
+      "state": "prefiltered",
+      "gateVerdict": null,
+      "gateReading": null,
+      "gradedAtIso": null,
+      "origin": "run-record",
+      "tokens": null,
+      "completionRate": null,
+      "spanDays": null,
+      "firstDeployIso": null,
+      "discoveryLagDaysAtLeast": null,
+      "screened": false,
+      "shortfalls": []
+    },
+    "F5ExBJxM7zJhowwSBYGMTQVesxWvNzsPJhJTuXxLHiyZ": {
+      "wallet": "F5ExBJxM7zJhowwSBYGMTQVesxWvNzsPJhJTuXxLHiyZ",
+      "firstSeenIso": "2026-07-30T01:34:30.254Z",
+      "lastSeenIso": "2026-07-30T01:34:30.254Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:elite",
+        "recent-bonds:elite"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-07-30T01:34:30.254Z",
+      "origin": "run-record",
+      "tokens": 9,
+      "completionRate": 0.555556,
+      "spanDays": 48.87,
+      "firstDeployIso": "2026-06-10T19:13:40.000Z",
+      "discoveryLagDaysAtLeast": 49.26,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 9 tokens < 25 required"
+      ]
+    },
+    "FHDnZeKo62gCtUKSKCKbLYJLCq6yUTWzYZPiEwSLorzw": {
+      "wallet": "FHDnZeKo62gCtUKSKCKbLYJLCq6yUTWzYZPiEwSLorzw",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "leaderboard:total_bonded:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 19,
+      "completionRate": 0.368421,
+      "spanDays": 39.4,
+      "firstDeployIso": "2026-06-22T12:53:58.000Z",
+      "discoveryLagDaysAtLeast": 40.82,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 19 tokens < 25 required"
+      ]
+    },
+    "FXXsfWJCz3WnQ9VD2uhz8ZHp8zxVf696mQJ95S9rJawM": {
+      "wallet": "FXXsfWJCz3WnQ9VD2uhz8ZHp8zxVf696mQJ95S9rJawM",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 12,
+      "completionRate": 0.5,
+      "spanDays": 151.97,
+      "firstDeployIso": "2026-02-27T06:28:46.000Z",
+      "discoveryLagDaysAtLeast": 156.09,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 12 tokens < 25 required"
+      ]
+    },
+    "FePSGRavtQty99PFUty5WnaK6M7eibcEEpZRcrmZ6Xi1": {
+      "wallet": "FePSGRavtQty99PFUty5WnaK6M7eibcEEpZRcrmZ6Xi1",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 17,
+      "completionRate": 0.352941,
+      "spanDays": 132,
+      "firstDeployIso": "2026-03-22T20:50:52.000Z",
+      "discoveryLagDaysAtLeast": 132.49,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 17 tokens < 25 required"
+      ]
+    },
+    "FmrWE54cwDtH5vwkde6epWACqojmK5P4eKq53GwYBR2C": {
+      "wallet": "FmrWE54cwDtH5vwkde6epWACqojmK5P4eKq53GwYBR2C",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 12,
+      "completionRate": 0.416667,
+      "spanDays": 27.96,
+      "firstDeployIso": "2026-05-26T23:00:47.000Z",
+      "discoveryLagDaysAtLeast": 67.4,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 12 tokens < 25 required"
+      ]
+    },
+    "FnNQkCL2a1uwf65wzP9ujztZ4WfKcu5aMGdmWf1KYBBK": {
+      "wallet": "FnNQkCL2a1uwf65wzP9ujztZ4WfKcu5aMGdmWf1KYBBK",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 45,
+      "completionRate": 0.222222,
+      "spanDays": 196.01,
+      "firstDeployIso": "2026-01-13T12:43:23.000Z",
+      "discoveryLagDaysAtLeast": 200.83,
+      "screened": false,
+      "shortfalls": [
+        "completion rate 0.2222 < 0.25 required"
+      ]
+    },
+    "Fs4nhRXo6ZJbREEbzShb447zj8Dr6Mn3jB6BqjhPsfto": {
+      "wallet": "Fs4nhRXo6ZJbREEbzShb447zj8Dr6Mn3jB6BqjhPsfto",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 14,
+      "completionRate": 0.428571,
+      "spanDays": 209.48,
+      "firstDeployIso": "2025-06-25T20:28:35.014Z",
+      "discoveryLagDaysAtLeast": 402.5,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 14 tokens < 25 required"
+      ]
+    },
+    "GCc5qzbbN8xjARVJPovDxfKTCyeqXeeRzhwPH5csKwY6": {
+      "wallet": "GCc5qzbbN8xjARVJPovDxfKTCyeqXeeRzhwPH5csKwY6",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 8,
+      "completionRate": 0.5,
+      "spanDays": 8.74,
+      "firstDeployIso": "2026-07-22T09:10:17.000Z",
+      "discoveryLagDaysAtLeast": 10.98,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 8 tokens < 25 required",
+        "history spans 8.7 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "GKVhR9BuJUTDkV6KC2i6QGujJ1PZjVn9KR66fsi1jwBp": {
+      "wallet": "GKVhR9BuJUTDkV6KC2i6QGujJ1PZjVn9KR66fsi1jwBp",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 16,
+      "completionRate": 0.375,
+      "spanDays": 331.2,
+      "firstDeployIso": "2025-08-31T15:25:37.795Z",
+      "discoveryLagDaysAtLeast": 335.72,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 16 tokens < 25 required"
+      ]
+    },
+    "GeBJSHK4WsGrz2HRvTbqvWGx4JRMpHfJG2ikzrYBDuwR": {
+      "wallet": "GeBJSHK4WsGrz2HRvTbqvWGx4JRMpHfJG2ikzrYBDuwR",
+      "firstSeenIso": "2026-07-30T01:34:30.254Z",
+      "lastSeenIso": "2026-07-30T01:34:30.254Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:elite",
+        "leaderboard:total_bonded:elite"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-07-30T01:34:30.254Z",
+      "origin": "run-record",
+      "tokens": 70,
+      "completionRate": 0.957143,
+      "spanDays": 27.96,
+      "firstDeployIso": "2026-06-30T16:58:08.000Z",
+      "discoveryLagDaysAtLeast": 29.36,
+      "screened": false,
+      "shortfalls": []
+    },
+    "GeyhK3eoPg9HoKbYqpnK9D5tZ3hR5vKwLRShZX8LRdF5": {
+      "wallet": "GeyhK3eoPg9HoKbYqpnK9D5tZ3hR5vKwLRShZX8LRdF5",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [],
+      "state": "prefiltered",
+      "gateVerdict": null,
+      "gateReading": null,
+      "gradedAtIso": null,
+      "origin": "run-record",
+      "tokens": null,
+      "completionRate": null,
+      "spanDays": null,
+      "firstDeployIso": null,
+      "discoveryLagDaysAtLeast": null,
+      "screened": false,
+      "shortfalls": []
+    },
+    "HAANcpC18zv5eVdZvSVTTMDygUmFjbYg5G8mx9jmxCh9": {
+      "wallet": "HAANcpC18zv5eVdZvSVTTMDygUmFjbYg5G8mx9jmxCh9",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 40,
+      "completionRate": 0.2,
+      "spanDays": 130.54,
+      "firstDeployIso": "2024-12-19T13:59:11.395Z",
+      "discoveryLagDaysAtLeast": 590.78,
+      "screened": false,
+      "shortfalls": [
+        "completion rate 0.2000 < 0.25 required"
+      ]
+    },
+    "HHEYhNexb6m7hrzkKhzKWuD328GF1xs9gVqAZiniVmbG": {
+      "wallet": "HHEYhNexb6m7hrzkKhzKWuD328GF1xs9gVqAZiniVmbG",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 6,
+      "completionRate": 0.5,
+      "spanDays": 152.03,
+      "firstDeployIso": "2026-03-02T19:16:21.000Z",
+      "discoveryLagDaysAtLeast": 152.55,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 6 tokens < 25 required"
+      ]
+    },
+    "HM83ZrK2UdfHzUHDZKoD79gb7NxpyzdGcX1RPiReCrJW": {
+      "wallet": "HM83ZrK2UdfHzUHDZKoD79gb7NxpyzdGcX1RPiReCrJW",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 18,
+      "completionRate": 0.277778,
+      "spanDays": 6.94,
+      "firstDeployIso": "2026-06-25T11:26:47.000Z",
+      "discoveryLagDaysAtLeast": 37.88,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 18 tokens < 25 required",
+        "history spans 6.9 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "HdNUXNqPRP6WhnHNQwKGGvGqPGHSk5okoV17RZAkW43r": {
+      "wallet": "HdNUXNqPRP6WhnHNQwKGGvGqPGHSk5okoV17RZAkW43r",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 15,
+      "completionRate": 0.333333,
+      "spanDays": 114.91,
+      "firstDeployIso": "2026-01-18T17:11:31.000Z",
+      "discoveryLagDaysAtLeast": 195.64,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 15 tokens < 25 required"
+      ]
+    },
+    "HieXn5GgdKtXKa92WR3JuJPGyuR7pSMJTZw2KszQEPtJ": {
+      "wallet": "HieXn5GgdKtXKa92WR3JuJPGyuR7pSMJTZw2KszQEPtJ",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:good",
+        "leaderboard:total_bonded:good",
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 26,
+      "completionRate": 0.269231,
+      "spanDays": 11.42,
+      "firstDeployIso": "2026-07-21T11:42:36.000Z",
+      "discoveryLagDaysAtLeast": 11.87,
+      "screened": false,
+      "shortfalls": [
+        "history spans 11.4 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "HoKiWhcU3YBN9f5Uxj1bBLkcWkw5iDEQbPiiU6EnYCwQ": {
+      "wallet": "HoKiWhcU3YBN9f5Uxj1bBLkcWkw5iDEQbPiiU6EnYCwQ",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 16,
+      "completionRate": 0.4375,
+      "spanDays": 24.98,
+      "firstDeployIso": "2026-07-03T16:46:13.000Z",
+      "discoveryLagDaysAtLeast": 29.66,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 16 tokens < 25 required"
+      ]
+    },
+    "Hssk6qusiviYGKqnYG3iexuSUHG3eksq5XiiqyBRRWfm": {
+      "wallet": "Hssk6qusiviYGKqnYG3iexuSUHG3eksq5XiiqyBRRWfm",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 15,
+      "completionRate": 0.333333,
+      "spanDays": 708.57,
+      "firstDeployIso": "2024-04-09T07:21:34.000Z",
+      "discoveryLagDaysAtLeast": 845.05,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 15 tokens < 25 required"
+      ]
+    },
+    "J9zWFYtRN2g7ZCqz73MvP5SVowUvYNxpYYsoUvyZ1QXw": {
+      "wallet": "J9zWFYtRN2g7ZCqz73MvP5SVowUvYNxpYYsoUvyZ1QXw",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "recent-bonds:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 5,
+      "completionRate": 0.6,
+      "spanDays": 0.06,
+      "firstDeployIso": "2024-11-07T16:06:57.711Z",
+      "discoveryLagDaysAtLeast": 632.69,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 5 tokens < 25 required",
+        "history spans 0.1 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "UVXV1BHPQFBfDS1tSVb48kXFMkeZ7ojfFkfsVFEAgyE": {
+      "wallet": "UVXV1BHPQFBfDS1tSVb48kXFMkeZ7ojfFkfsVFEAgyE",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 0,
+      "completionRate": null,
+      "spanDays": 0,
+      "firstDeployIso": null,
+      "discoveryLagDaysAtLeast": null,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 0 tokens < 25 required (the vendor listed no tokens with a usable deploy time)",
+        "completion rate is undefined (no usable token records)",
+        "history spans 0.0 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "uH9FY1StsAHWbDQaHNu2ZcHtBtWXqkNtwzi83MSFgmC": {
+      "wallet": "uH9FY1StsAHWbDQaHNu2ZcHtBtWXqkNtwzi83MSFgmC",
+      "firstSeenIso": "2026-08-02T08:35:14.567Z",
+      "lastSeenIso": "2026-08-02T08:35:14.567Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "leaderboard:total_bonded:good"
+      ],
+      "state": "held",
+      "gateVerdict": "gate-failed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-08-02T08:35:14.567Z",
+      "origin": "run-record",
+      "tokens": 16,
+      "completionRate": 0.3125,
+      "spanDays": 1.25,
+      "firstDeployIso": "2026-07-21T04:36:25.000Z",
+      "discoveryLagDaysAtLeast": 12.17,
+      "screened": false,
+      "shortfalls": [
+        "sample too small: 16 tokens < 25 required",
+        "history spans 1.3 days < 14 required (a rate earned inside a burst is not a record)"
+      ]
+    },
+    "yHCxHBEaJW5tbndqC8JciSThr7U1cqLpdcsvHcx6PRe": {
+      "wallet": "yHCxHBEaJW5tbndqC8JciSThr7U1cqLpdcsvHcx6PRe",
+      "firstSeenIso": "2026-07-30T01:34:30.254Z",
+      "lastSeenIso": "2026-07-30T01:34:30.254Z",
+      "timesSeen": 0,
+      "seededBy": [
+        "alerts:elite",
+        "leaderboard:total_bonded:elite"
+      ],
+      "state": "queued",
+      "gateVerdict": "gate-passed",
+      "gateReading": "ownership-only",
+      "gradedAtIso": "2026-07-30T01:34:30.254Z",
+      "origin": "run-record",
+      "tokens": 70,
+      "completionRate": 1,
+      "spanDays": 25.84,
+      "firstDeployIso": "2026-07-03T18:38:22.000Z",
+      "discoveryLagDaysAtLeast": 26.29,
+      "screened": false,
+      "shortfalls": []
+    }
+  },
+  "runs": []
+}

@@ -311,6 +311,32 @@ dev currently?"*, and the shape of the answer is the point:
   bought). Reproducing it from raw fills agrees with `wallet_launch_pnl.csv` on **1,502 create-slot
   outsider pairs, 0 closure mismatches, max error 5e-7 SOL** — checked in Stage 0 every run.
 
+## Where candidate wallets come from, and the ceiling on that
+
+`tools/deployer-screen/feed.mjs` — the scheduled discovery lane, long form in its `FEED.md`. It
+supersedes the re-open monitor (captain, 2026-08-02: *a competent dev will not reopen a window*), so
+**nothing here ever re-polls a wallet already graded — it is simply never offered as new again**;
+`ledger.mjs` is that memory and `tools/deployer-screen/feed/ledger.json` is the committed state.
+
+- **Discovery is 100% vendor-selected and no count the lane prints bounds what it cannot see.** Every
+  candidate comes from a MadeOnSol enumeration endpoint, so a deployer they never profiled is
+  invisible, not rare. **Measured consequence: a wallet in the ledger had already been deploying for a
+  median of ≥132.7 days (max ≥857, n=74) before this project first saw it.** That figure is a lower
+  bound and it exists only for wallets the vendor profiled — cite it, do not let it read as coverage.
+- **The feed grades on the OWNERSHIP reading, so its failures are `held`, never `gate-failed`.** The
+  creation-derived walk is ~100 RPC per candidate and no schedule can carry it. Ownership is biased
+  towards rejection, so `held` is a triage outcome and `screen.mjs` stays the authority; every run
+  prints the standing held count and the one-leg near-misses inside it.
+- **Bounds are per-run and pinned in `thresholds.json` → `feed`: 3 enumeration + at most `--gate`
+  keyed requests, zero keyless, and `--live` is required to spend anything.** The daily arithmetic
+  (15 × 6 = 90 of ~200) is deliberately a minority share; raising the cadence without lowering the
+  per-run ceiling makes this lane the allowance's largest consumer.
+- **Exit 9 means the feed is dry or broken, not quiet** — a seed serving rows we read no wallet from,
+  every seed inert, every gated profile unreadable (needs ≥2 gated, so `--gate 1` disarms it), or 3
+  consecutive live, completed runs with no new wallet.
+- **The queue is not yet wired into the screen**: `screen.mjs` enumerates its own candidates and has
+  no wallet-list flag, so handing the queue over is an operator step today.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

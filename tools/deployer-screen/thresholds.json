@@ -32,6 +32,53 @@
       "minSpanDays": "A high rate earned inside a single day is a burst, not a record. 14 days is the shortest span over which pump.fun's own time-to-bond distribution puts a large majority of eventual graduations behind us: on our tape 82.5% of graduations occur within 7 days and 85.4% within 14."
     }
   },
+
+  "feed": {
+    "$comment": [
+      "THE CANDIDATE DISCOVERY FEED — tools/deployer-screen/feed.mjs, documented in FEED.md.",
+      "A scheduled lane that surfaces deployers this project has NOT seen before, triages them on",
+      "the Stage 1 gate, and queues the survivors for the beatability screen. It supersedes the",
+      "re-open monitor (captain, 2026-08-02: a competent dev that tightened its own launch bot does",
+      "not loosen it again, so re-polling wallets already graded closed watches the one place a",
+      "window will not reopen; the opportunity is in the POPULATION, not the graveyard).",
+      "",
+      "THESE BOUNDS EXIST BECAUSE THIS LANE RUNS FOREVER. Every other caller of the MadeOnSol key",
+      "is a one-off a human decided to spend. A scheduled lane is not, so an unbounded provider",
+      "call here is worse than anywhere else in the tool: it would drain the shared allowance on a",
+      "cron and the screen would find nothing left. The feed's per-run keyed cost is therefore",
+      "3 enumeration + at most gateBatch profile requests, and NOTHING else is keyed.",
+      "",
+      "THE DAILY ARITHMETIC IS THE POINT AND IT IS DELIBERATELY A MINORITY SHARE:",
+      "maxKeyedRequestsPerRun 15 x runsPerDayAssumed 6 = 90 of the ~200/day Free-tier allowance,",
+      "worst case, leaving >=110 for screen.mjs. At the DEFAULT gateBatch of 6 it is 9 x 6 = 54.",
+      "Raising runsPerDayAssumed without lowering the per-run ceiling is how this lane silently",
+      "becomes the allowance's largest consumer — change both or neither.",
+      "",
+      "THE FEED SPENDS NO KEYLESS REQUEST AT ALL. It grades on the ownership reading, which is one",
+      "keyed profile call, and does NOT walk the creation-derived history: that walk is ~100 RPC",
+      "requests per candidate at 2.5s apart, which no schedule can carry. The consequence is stated",
+      "rather than hidden — the ownership reading is biased TOWARDS REJECTION (README.md, 'Which",
+      "history the gate counts'), so a feed failure is recorded as `held`, never as a rejection, and",
+      "the standing count of held wallets is printed by every run. screen.mjs remains the authority."
+    ],
+    "gateBatch": 6,
+    "maxGateBatch": 12,
+    "maxKeyedRequestsPerRun": 15,
+    "runsPerDayAssumed": 6,
+    "seedLimit": 50,
+    "dryStreakAlarm": 3,
+    "runHistoryKept": 60,
+    "justification": {
+      "gateBatch": "Six new wallets a run, six runs a day, is 36 gate readings a day for 54 keyed requests. The two committed screen runs surfaced 61 and 84 distinct wallets from one enumeration each, so a first live run defers most of what it sees and drains the backlog over the following days — which is why nextGateBatch is FIFO. Lower it if the screen needs more of the allowance; it can only ever be lowered from the command line.",
+      "maxGateBatch": "The hard cap --gate cannot exceed. 12 keeps the worst-case per-run keyed cost at 15 and therefore the assumed daily cost at 90, under half the allowance. A bound a flag can widen is not a bound.",
+      "maxKeyedRequestsPerRun": "3 enumeration + maxGateBatch 12. Enforced before the first request: a plan whose worst case does not fit is refused with nothing spent, exactly as screen.mjs refuses one.",
+      "runsPerDayAssumed": "NOT enforced by the tool — nothing here can see a cron table. It is the number the daily arithmetic above is computed against, and it is recorded so that a schedule which contradicts it is contradicting a written figure rather than an assumption. Six runs a day is four-hourly.",
+      "seedLimit": "The page size asked of each enumeration query. 50 is the maximum recent-bonds and leaderboard accept (their spec's 100 returns HTTP 400) and is what alerts is clamped to as well, so this is 'as much as the vendor will give for one request' rather than a tunable.",
+      "dryStreakAlarm": "Three consecutive live, completed runs with no new wallet — an aborted run surfaced nothing because it stopped, so it is skipped rather than counted. One dry run is ordinary: the vendor's pages overlap heavily between runs and at four-hourly cadence most of what comes back is yesterday's list. Three in a row is saturation of what this vendor exposes, and it exits non-zero so a scheduler notices. A dead feed that reads as a healthy quiet one is the exact failure this lane was told to make impossible.",
+      "runHistoryKept": "60 run rows, i.e. ten days at the assumed cadence. Enough to see a yield trend and to compute the dry streak; bounded so a committed ledger does not grow without limit."
+    }
+  },
+
   "consistency_over_time": {
     "$comment": [
       "The captain's word was 'consistently'. MadeOnSol cannot answer it: their only",

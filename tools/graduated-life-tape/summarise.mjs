@@ -72,6 +72,29 @@ export function closureAt(fills, untilMs) {
   return { closed, open };
 }
 
+/**
+ * Closure **of the same wallets**, at two different window ends.
+ *
+ * The headline comparison has to be apples-to-apples and the obvious one is not: a longer window
+ * contains far more wallets, so "42% of pairs closed at 60 s" against "78% of pairs closed at
+ * graduation + 1 h" compares two different populations and flatters the widening for the wrong
+ * reason. This restricts to the wallets **visible in the first 60 seconds** and asks what the wider
+ * window did for *them*. That is the population whose P&L the committed tape already publishes, and
+ * therefore the population whose numbers this tape can correct.
+ *
+ * @param {readonly {u: string, k: string, base: string, tsMs: number}[]} fills
+ * @param {number} earlyMs Cut-off defining which wallets count.
+ * @param {number} fullMs  Cut-off at which they are re-evaluated.
+ * @returns {{ population: number, closedEarly: number, closedFull: number }}
+ */
+export function closureOfEarlyPairs(fills, earlyMs, fullMs) {
+  const early = new Set(fills.filter((f) => f.tsMs <= earlyMs).map((f) => f.u));
+  const restricted = fills.filter((f) => early.has(f.u));
+  const atEarly = closureAt(restricted, earlyMs);
+  const atFull = closureAt(restricted, fullMs);
+  return { population: early.size, closedEarly: atEarly.closed, closedFull: atFull.closed };
+}
+
 /** @param {readonly number[]} xs @param {number} q */
 export function quantile(xs, q) {
   if (xs.length === 0) return NaN;
@@ -103,6 +126,9 @@ export function quantile(xs, q) {
  * @property {number} openOld
  * @property {number} closedNew
  * @property {number} openNew
+ * @property {number} earlyPopulation Wallets visible in the first 60 s — the apples-to-apples base.
+ * @property {number} earlyClosedAt60s
+ * @property {number} earlyClosedAtFull
  */
 
 /**
@@ -123,6 +149,9 @@ export function summarise(out) {
   let openNew = 0;
   let closedOld = 0;
   let openOld = 0;
+  let earlyPopulation = 0;
+  let earlyClosedAt60s = 0;
+  let earlyClosedAtFull = 0;
   /** @type {number[]} */
   const gradS = [];
   /** @type {number[]} */
@@ -146,6 +175,7 @@ export function summarise(out) {
     // cut at the window the committed tape already covers and at the one this tape adds.
     const before = closureAt(launchFills, meta.floor_ms + EXISTING_WINDOW_MS);
     const after = closureAt(launchFills, meta.end_ms);
+    const early = closureOfEarlyPairs(launchFills, meta.floor_ms + EXISTING_WINDOW_MS, meta.end_ms);
 
     fills += launchFills.length;
     ammFills += launchFills.filter((f) => f.p === VENUE_AMM).length;
@@ -155,6 +185,9 @@ export function summarise(out) {
     openOld += before.open;
     closedNew += after.closed;
     openNew += after.open;
+    earlyPopulation += early.population;
+    earlyClosedAt60s += early.closedEarly;
+    earlyClosedAtFull += early.closedFull;
     gradS.push((meta.grad_ms - meta.created_timestamp) / 1000);
     bracketS.push((meta.grad_bracket_ms ?? 0) / 1000);
     pages.push(meta.pages);
@@ -177,6 +210,9 @@ export function summarise(out) {
       pairs_open_60s: before.open,
       pairs_closed_full: after.closed,
       pairs_open_full: after.open,
+      early_pairs: early.population,
+      early_closed_60s: early.closedEarly,
+      early_closed_full: early.closedFull,
     });
   }
 
@@ -223,6 +259,9 @@ export function summarise(out) {
       openOld,
       closedNew,
       openNew,
+      earlyPopulation,
+      earlyClosedAt60s,
+      earlyClosedAtFull,
     },
   };
 }
@@ -243,8 +282,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       `truncated              ${totals.truncated}`,
       `graduation from mint   p10 ${totals.gradP10S.toFixed(0)}s  median ${totals.gradMedianS.toFixed(0)}s  p90 ${totals.gradP90S.toFixed(0)}s`,
       `graduation bracket     median ${totals.bracketMedianS.toFixed(1)}s  p90 ${totals.bracketP90S.toFixed(0)}s`,
-      `pairs closed at 60s    ${totals.closedOld}/${totals.closedOld + totals.openOld} (${pct(totals.closedOld, totals.closedOld + totals.openOld)}%)`,
-      `pairs closed at grad+1h ${totals.closedNew}/${totals.closedNew + totals.openNew} (${pct(totals.closedNew, totals.closedNew + totals.openNew)}%)`,
+      `all pairs closed at 60s     ${totals.closedOld}/${totals.closedOld + totals.openOld} (${pct(totals.closedOld, totals.closedOld + totals.openOld)}%)`,
+      `all pairs closed at grad+1h ${totals.closedNew}/${totals.closedNew + totals.openNew} (${pct(totals.closedNew, totals.closedNew + totals.openNew)}%)`,
+      `  -- those two have DIFFERENT denominators; the like-for-like comparison is below --`,
+      `wallets seen in first 60s    ${totals.earlyPopulation}`,
+      `  of those, closed at 60s    ${totals.earlyClosedAt60s} (${pct(totals.earlyClosedAt60s, totals.earlyPopulation)}%)`,
+      `  of those, closed at grad+1h ${totals.earlyClosedAtFull} (${pct(totals.earlyClosedAtFull, totals.earlyPopulation)}%)`,
       '',
     ].join('\n'),
   );

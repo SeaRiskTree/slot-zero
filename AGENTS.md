@@ -26,13 +26,16 @@ what is established and what is open.
   `test/loader.test.ts` → "this repo does not reach the network and reads no credential", which
   scans `src/` **recursively** for sockets, `process.env` and key-shaped strings. Keep it that
   way; the entire dataset was built keyless and its value depends on staying reproducible offline.
-- **The one network-capable area is `tools/`, and the boundary is the directory.** `tools/deployer-screen/`
-  holds a keyed MadeOnSol client; `test/deployer-screen.test.ts` asserts the other half of the
-  boundary — no imports across `src/`↔`tools/`, only `client.mjs`/`pumpfun.mjs` may call `fetch`,
-  only `credential.mjs`/`screen.mjs` may name `MADEONSOL_API_KEY`, and no file there may contain a
-  key-shaped string. Duplicated curve constants between `src/index.ts` and
-  `tools/deployer-screen/measure.mjs` are this boundary's deliberate cost — do not "fix" them by
-  importing across it.
+- **The one network-capable area is `tools/`, and the boundary is the directory.** Each tool there is
+  governed by its own test, and there are two. `tools/deployer-screen/` holds a keyed MadeOnSol
+  client; `test/deployer-screen.test.ts` asserts no imports across `src/`↔`tools/`, only
+  `client.mjs`/`pumpfun.mjs` may call `fetch`, only `credential.mjs`/`screen.mjs` may name
+  `MADEONSOL_API_KEY`, and no file there may contain a key-shaped string. `tools/graduated-life-tape/`
+  is **keyless throughout** — `test/graduated-life-tape.test.ts` holds it to the same shape with the
+  credential allow-list **empty**, which is what makes captain decision 112a's "EUR 0" a property of
+  the tree. Duplicated curve constants between `src/index.ts` and `tools/deployer-screen/measure.mjs`,
+  and the duplicated keyless client between the two tools, are this boundary's deliberate cost — do
+  not "fix" either by importing across it.
 - **`analysis/` is a third area and it is offline like `src/`.** One-off measurements over the
   local tape that are neither library nor tool. `test/window-population.test.ts` scans it for
   sockets, `process.env` and key-shaped strings, and asserts no imports across `analysis/`↔`tools/`.
@@ -99,6 +102,30 @@ permanent limit of the evidence:
   creator with no dates and no P&L, so it holds zero window observations, and no amount of work
   on this tape produces a second one.
 
+## The tape past the bond, and what it cost
+
+`data/graduated-life-tape-2026-08-02/` extends the population tape from its 60-second window to
+**mint → graduation + 1 hour on all 103 graduated launches**. Collector, method and bounds in
+`tools/graduated-life-tape/README.md`; coverage proofs and limits in the dataset's own `README.md`.
+Four facts that bind any lane touching it:
+
+- **Closure, not P&L, is what it changes.** Over the 21,313 (wallet, launch) pairs the 60-second
+  window already shows, complete round trips go **42.0% → 95.7%**. Everything it adds is still
+  **gross of fees**, so it completes positions without making their P&L fee-inclusive. Do not
+  compare "42% of pairs at 60 s" with "78.5% of all pairs at graduation + 1 h" — different
+  denominators; the wider window holds far more wallets. `summarise.mjs` → `closureOfEarlyPairs` is
+  the like-for-like measure and the only one to quote.
+- **`69420` is truncated at its MINT end** — it bonded ~20 days after mint and the walk covered 1.5%
+  of that window. **Do not treat its oldest fill as its create slot.** Every other launch proved
+  coverage, and 99 of 99 applicable launches agree with the committed window tape's own create slot.
+- **`Marciana`, `Leo` and `Fridge` now have trade tapes.** The population tape lists them as having
+  none, which is why their dev exits were never measured. That statement is now out of date for
+  three of the four.
+- **The §5 cost projection was wrong by ~2.5x and the real numbers are here.** It costed this shape
+  at 1,000–4,000 requests; it cost **6,539** (857 pinning graduations + 5,682 walking). Pages per
+  launch for this window run **median 46, p90 89, max 179**, not the 10–40 planned. Size any future
+  walk from those.
+
 ## pump.fun / Solana provider facts
 
 Learned at real cost; the citations are to
@@ -112,7 +139,13 @@ Learned at real cost; the citations are to
   ~500,000-request job into ~2,000. `/v1/…/trades` is 410; `frontend-api-v3` `/trades/…` is 404.
   `tools/deployer-screen/pumpfun.mjs` → `readLaunchWindow` is the walk; the two traps it exists
   to refuse are below.
-- **It sheds about a quarter of every request, and a client without retry cannot use it.**
+- **Its shed rate is a function of YOUR pacing, and at a 4-second floor it is nil.** The
+  graduated-life collection issued **6,539 requests with zero HTTP 429** and three transport
+  failures (2026-08-03). The tape build below measured 24.7% shed — at a `delay` that went as low as
+  0.75 s. 2 s is refused outright, 8 s is clean, **4 s with adaptive backoff sustains indefinitely**.
+  Retry is still mandatory (transport failures happen), but a run that sheds heavily is a run that is
+  going too fast, not an endpoint having a bad day.
+- **It sheds about a quarter of every request when pushed, and a client without retry cannot use it.**
   Measured from the tape's own build metadata (`window/*.meta.json` → `stats`): **16,960 HTTP
   429 against 51,715 OK across 235 launches, and 221 of the 235 shed at least once.** The
   builder's recorded `delay` ranges 0.75s–40s, i.e. it backed off adaptively. A 429 here is the

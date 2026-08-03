@@ -71,7 +71,10 @@ export const MIN_AGE_MS = 1_000;
  * @property {boolean} graduated
  * @property {number | null} gradMs      Best estimate: the earliest instant *known* to be post-migration.
  * @property {number | null} lowerMs     Latest instant known to be pre-migration. The bracket's floor.
- * @property {number | null} bracketMs   `gradMs - lowerMs`. Zero is impossible; one fill apart is the floor.
+ * @property {number | null} bracketMs   `gradMs - lowerMs`. **Zero is a real and common value**, not
+ *   a missing one: the endpoint's timestamps are second-resolution, so a migration bracketed
+ *   between two adjacent fills in the same second reads as a zero-width bracket. It means "exact to
+ *   the resolution the endpoint has", never "unmeasured".
  * @property {'tape' | 'page' | 'bisect' | 'unresolved'} source
  * @property {number} probes             Requests this launch cost. `tape` costs zero.
  * @property {number | null} lastTradeMs The newest fill the endpoint holds. The walk's outer bound.

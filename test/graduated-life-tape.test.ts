@@ -48,7 +48,7 @@ import {
 import { MAX_PAGES_PER_LAUNCH, POST_GRADUATION_MS, walkLife } from '../tools/graduated-life-tape/walk.mjs';
 import { parseCsv, readLaunches, readWindowTape } from '../tools/graduated-life-tape/launches.mjs';
 import { readGraduationCsv, toTapeRow } from '../tools/graduated-life-tape/collect.mjs';
-import { CLOSURE_TOLERANCE, closureAt, quantile } from '../tools/graduated-life-tape/summarise.mjs';
+import { CLOSURE_TOLERANCE, closureAt, closureOfEarlyPairs, quantile } from '../tools/graduated-life-tape/summarise.mjs';
 import { CREDENTIAL_PATTERNS, KEY_SHAPED } from './offline-guard.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -647,6 +647,26 @@ describe('the summary counts closure, and deliberately never counts money', () =
     const fills = [at('w', 'buy', '1000', 0), at('w', 'sell', '1000', 600_000)];
     expect(closureAt(fills, 60_000)).toEqual({ closed: 0, open: 1 });
     expect(closureAt(fills, 3_600_000)).toEqual({ closed: 1, open: 0 });
+  });
+
+  it('compares the SAME wallets at two window ends, not two different populations', () => {
+    // The obvious comparison is wrong and flatters the widening: a longer window contains far more
+    // wallets, so "42% closed at 60s" against "78% closed at graduation+1h" is two populations, not
+    // a before and after. This restricts to wallets visible early and re-evaluates *them*.
+    const fills = [
+      at('early', 'buy', '1000', 0),
+      at('early', 'sell', '1000', 600_000), // closes only in the wider window
+      at('late', 'buy', '500', 900_000), // never visible at 60s
+      at('late', 'sell', '500', 950_000),
+    ];
+    const r = closureOfEarlyPairs(fills, 60_000, 3_600_000);
+    expect(r.population).toBe(1); // 'late' is excluded from the base entirely
+    expect(r.closedEarly).toBe(0);
+    expect(r.closedFull).toBe(1);
+
+    // The naive comparison would have counted 'late' as a closed pair in the wider window and
+    // credited the widening with it — a wallet the narrow window never saw at all.
+    expect(closureAt(fills, 3_600_000).closed).toBe(2);
   });
 
   it('interpolates quantiles and survives an empty series', () => {

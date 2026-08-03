@@ -6,8 +6,11 @@
  * guarantee both make is identical, so a pattern added for one must apply to the other. Two
  * hand-maintained copies drifted once already, which is why this file exists.
  *
- * `tools/deployer-screen/` is the repo's only network-capable area and is governed separately by
- * test/deployer-screen.test.ts, which asserts the *other* half of that boundary.
+ * The network-capable area is `tools/`, and the boundary is the directory. Each tool there is
+ * governed separately, by a test that asserts the *other* half of the boundary:
+ * `tools/deployer-screen/` by test/deployer-screen.test.ts (which has a keyed client and an allowed
+ * list of files that may name the credential) and `tools/graduated-life-tape/` by
+ * test/graduated-life-tape.test.ts (which is keyless throughout, so its allowed list is empty).
  */
 
 /** Anything that could open a socket, directly or through a client library. */

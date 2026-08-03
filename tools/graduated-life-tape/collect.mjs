@@ -52,8 +52,15 @@ export const LIFE_CEILING = 6_000;
 
 /** @param {readonly string[]} argv */
 export function parseArgs(argv) {
-  /** @type {{ phase: string, out: string | null, limit: number | null, minIntervalMs: number, only: string[] }} */
-  const args = { phase: '', out: null, limit: null, minIntervalMs: DEFAULT_MIN_INTERVAL_MS, only: [] };
+  /** @type {{ phase: string, out: string | null, limit: number | null, minIntervalMs: number, only: string[], maxPages: number }} */
+  const args = {
+    phase: '',
+    out: null,
+    limit: null,
+    minIntervalMs: DEFAULT_MIN_INTERVAL_MS,
+    only: [],
+    maxPages: MAX_PAGES_PER_LAUNCH,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const next = () => {
@@ -66,6 +73,7 @@ export function parseArgs(argv) {
     else if (a === '--limit') args.limit = Number(next());
     else if (a === '--min-interval-ms') args.minIntervalMs = Number(next());
     else if (a === '--only') args.only.push(next());
+    else if (a === '--max-pages') args.maxPages = Number(next());
     else throw new Error(`unknown argument ${a}`);
   }
   if (args.phase !== 'graduation' && args.phase !== 'life') {
@@ -199,8 +207,9 @@ export async function runGraduationPhase({ out, client, limit = null, only = [] 
  * @param {KeylessClient} args.client
  * @param {number | null} [args.limit]
  * @param {readonly string[]} [args.only]
+ * @param {number} [args.maxPages] Raised only to re-walk a launch the default ceiling truncated.
  */
-export async function runLifePhase({ out, client, limit = null, only = [] }) {
+export async function runLifePhase({ out, client, limit = null, only = [], maxPages = MAX_PAGES_PER_LAUNCH }) {
   const lifeDir = join(out, 'life');
   mkdirSync(lifeDir, { recursive: true });
 
@@ -237,7 +246,7 @@ export async function runLifePhase({ out, client, limit = null, only = [] }) {
     /** @type {import('./walk.mjs').WalkResult} */
     let result;
     try {
-      result = await walkLife({ client, mint, mintMs: floorMs, endMs });
+      result = await walkLife({ client, mint, mintMs: floorMs, endMs, maxPages });
     } catch (cause) {
       if (cause instanceof CeilingReached) {
         say(`life phase: ${cause.message} — stopping with ${i} walked this run`);
@@ -269,6 +278,7 @@ export async function runLifePhase({ out, client, limit = null, only = [] }) {
           requests: result.requests,
           reached_mint: result.reachedMint,
           truncated: result.truncated,
+          max_pages: maxPages,
           from_ms: result.fromMs,
           to_ms: result.toMs,
           oldest_slot: result.oldestSlot,
@@ -366,7 +376,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       `ceiling=${client.remaining()} maxPages=${MAX_PAGES_PER_LAUNCH}`,
   );
   const run = args.phase === 'graduation' ? runGraduationPhase : runLifePhase;
-  run({ out, client, limit: args.limit, only: args.only }).then(
+  run({ out, client, limit: args.limit, only: args.only, maxPages: args.maxPages }).then(
     () => process.exit(0),
     (cause) => {
       say(`FAILED: ${cause instanceof Error ? cause.stack : String(cause)}`);

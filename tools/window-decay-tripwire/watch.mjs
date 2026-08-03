@@ -33,11 +33,12 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { CeilingReached, HttpRefused, KeylessClient } from './client.mjs';
+import { ATTEMPTS_PER_REQUEST, CeilingReached, HttpRefused, KeylessClient } from './client.mjs';
 import { Tripwire, classifyCreateSlot } from './detector.mjs';
 import { creatorLaunchesUrl, isReadableMint, parseLaunchListing, readCreateSlot } from './createslot.mjs';
 
-/** @type {{ detector: { shareBar: number, confirmLaunches: number }, bounds: Record<string, number> }} */
+/** @type {{ detector: { shareBar: number, confirmLaunches: number, maxAdjacentGapDays: number },
+ *   bounds: Record<string, number> }} */
 export const THRESHOLDS = JSON.parse(
   readFileSync(fileURLToPath(new URL('./thresholds.json', import.meta.url)), 'utf8'),
 );
@@ -65,6 +66,22 @@ export const ASYMMETRY_CAVEAT =
   'tool is tuned to be late rather than wrong: "watching" is weaker evidence than "stop-and-rotate".';
 
 /**
+ * The caveat a `--mints` run must carry, because it changes what the run's own verdict MEANS.
+ *
+ * The streak is a statement about launches that are adjacent in the deployer's series, and the only
+ * evidence of adjacency this tool has is the launch listing. `--mints` does not read the listing, so
+ * command-line order is all there is — and command-line order is not a fact about the series. Rather
+ * than let an argument order assert adjacency, a `--mints` reading records no predecessor at all,
+ * which puts every one of them in a chain of its own: such a run can reach `armed` and can never
+ * confirm a stop. Same pattern as `tools/deployer-screen/entry.mjs` → `LANDING_TIP_CAVEAT`: a
+ * caveat that changes the meaning of a result belongs in the result, not only in a doc.
+ */
+export const MINTS_CAVEAT =
+  '--mints records NO adjacency: the launch listing is the only evidence of which launches are ' +
+  'consecutive, and argument order is not that evidence. Every --mints reading therefore stands ' +
+  'alone, so this run can reach "armed" and can NEVER confirm a stop. Drop --mints to confirm one.';
+
+/**
  * @typedef {object} StoredReading One settled launch, as the state file keeps it.
  * @property {string} mint
  * @property {string} at
@@ -72,9 +89,10 @@ export const ASYMMETRY_CAVEAT =
  * @property {import('./detector.mjs').Unread | null} unread
  * @property {string | null} [prevMint] The launch immediately BEFORE this one in the deployer's
  *   listing when it was read, or `null` when this run could not see one — the oldest launch the
- *   listing carries has no visible predecessor, and inventing adjacency there is the one error this
- *   field exists to refuse. `undefined` marks a reading written before the field existed, when the
- *   queue was strictly oldest-first and every reading was adjacent by construction.
+ *   listing carries has no visible predecessor, and a `--mints` run has no listing and therefore no
+ *   evidence of adjacency at all. Inventing adjacency in either case is the one error this field
+ *   exists to refuse. `undefined` marks a reading written before the field existed, when the queue
+ *   was strictly oldest-first and every reading was adjacent by construction.
  */
 
 /**
@@ -127,34 +145,70 @@ export function loadState(path, wallet) {
  * order readings were APPENDED in is not the order the launches happened in. Everything downstream
  * of here reasons about adjacency, and adjacency is a fact about launch order.
  *
- * Stable, and readings with no timestamp (the `--mints` path) therefore keep the order they were
- * recorded in rather than being sorted against a value they do not have.
+ * Readings with no timestamp (the `--mints` path) are PARTITIONED OUT rather than sorted against a
+ * value they do not have. A comparator that answers 0 whenever either side is untimestamped and a
+ * real ordering otherwise is not transitive, and a sort given a non-transitive comparator may return
+ * any permutation at all — so "they keep the order they were recorded in" was a claim the code did
+ * not deliver. Timestamped readings are sorted among themselves and the untimestamped ones keep
+ * their recorded order after them.
  *
  * @param {readonly StoredReading[]} readings
  * @returns {StoredReading[]}
  */
 export function orderReadings(readings) {
-  return [...readings].sort((a, b) =>
-    (a.at === '' || b.at === '' ? 0 : a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  const timestamped = readings.filter((r) => r.at !== '');
+  const untimestamped = readings.filter((r) => r.at === '');
+  timestamped.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+  return [...timestamped, ...untimestamped];
+}
+
+/** The widest gap between two launches this project has measured as consecutive, in ms. */
+export const MAX_ADJACENT_GAP_MS = THRESHOLDS.detector.maxAdjacentGapDays * 24 * 60 * 60 * 1000;
+
+/**
+ * Whether `reading` really is the launch right after `previous`, on the evidence the record holds.
+ *
+ * Two things have to hold, and the second exists because the first can be a lie told by omission.
+ * `prevMint` comes from the launch listing, which lists by CURRENT creator and therefore drops a
+ * launch whose creator record has moved (`AGENTS.md`; `maxxing` is the known instance) — and a
+ * dropped launch leaves its two neighbours naming each other as neighbours. So the claim is
+ * corroborated against the time between them: an adjacency spanning a wider gap than any this
+ * project has measured between consecutive launches is refused. An untimestamped reading cannot be
+ * corroborated at all, so it only continues a chain when it predates the field entirely.
+ *
+ * Every branch fails towards NO stop, which is the direction the 380:1 asymmetry requires.
+ *
+ * @param {StoredReading} previous
+ * @param {StoredReading} reading
+ * @param {number} maxGapMs
+ */
+function continuesChain(previous, reading, maxGapMs) {
+  // `undefined` is a reading written before gaps were possible; it cannot break a chain by mint.
+  if (reading.prevMint !== undefined && reading.prevMint !== previous.mint) return false;
+  if (previous.at === '' || reading.at === '') return reading.prevMint === undefined;
+  const gap = Date.parse(reading.at) - Date.parse(previous.at);
+  return Number.isFinite(gap) && gap <= maxGapMs;
 }
 
 /**
  * Split ordered readings into runs of launches that are **adjacent in the deployer's launch order**.
  *
  * A chain breaks wherever a reading's recorded predecessor is not the reading before it — i.e.
- * wherever a launch between the two has not been settled. It is self-healing: when that launch is
- * finally read, its own `prevMint` links the two halves and they become one chain.
+ * wherever a launch between the two has not been settled — and wherever the claimed adjacency
+ * cannot be corroborated by the time between the two launches ({@link continuesChain}). It is
+ * self-healing on the first: when the unsettled launch is finally read, its own `prevMint` links
+ * the two halves and they become one chain.
  *
  * @param {readonly StoredReading[]} ordered
+ * @param {number} [maxGapMs]
  * @returns {StoredReading[][]}
  */
-export function chainsOf(ordered) {
+export function chainsOf(ordered, maxGapMs = MAX_ADJACENT_GAP_MS) {
   /** @type {StoredReading[][]} */ const chains = [];
   /** @type {StoredReading[]} */ let current = [];
   for (const reading of ordered) {
     const previous = current[current.length - 1];
-    // `undefined` is a reading written before gaps were possible; it cannot break a chain.
-    if (previous !== undefined && reading.prevMint !== undefined && reading.prevMint !== previous.mint) {
+    if (previous !== undefined && !continuesChain(previous, reading, maxGapMs)) {
       chains.push(current);
       current = [];
     }
@@ -187,7 +241,9 @@ const rank = (/** @type {Tripwire} */ tripwire) =>
  * requirement at once:
  *
  * - It cannot MANUFACTURE a stop. Two breaches on non-adjacent launches sit in different chains and
- *   are never observed in sequence, so they cannot confirm each other.
+ *   are never observed in sequence, so they cannot confirm each other — including when the launch
+ *   between them is missing from the listing rather than merely unread, which {@link continuesChain}
+ *   catches by corroborating the claimed adjacency against the time between the two launches.
  * - It cannot SUPPRESS one. The strongest chain wins rather than the newest, so a reading taken out
  *   of order never discards an armed chain elsewhere in the record; and when the gap between two
  *   chains is finally read, they merge and the streak that was always there is counted.
@@ -252,9 +308,20 @@ export function parseArgs(argv) {
   const wallet = flags['wallet'];
   if (wallet === undefined || wallet === '') throw new Error('--wallet is required');
   const cohortRaw = flags['cohort'];
+  // An EMPTY cohort is not "no cohort": a `Set` of size zero is still a supplied cohort, so it
+  // suppresses both the `no-cohort-evidence` guard and the co-ordination-rule fallback and credits
+  // every wallet but the deployer to the outsiders. That pushes the share DOWN — towards "the
+  // window is still open", the one direction this instrument must never fail in — with nothing in
+  // the output saying so. Refused rather than silently reinterpreted.
+  const cohort = cohortRaw === undefined
+    ? undefined
+    : new Set(cohortRaw.split(',').filter((w) => w !== ''));
+  if (cohort !== undefined && cohort.size === 0) {
+    throw new Error('--cohort was given but names no wallet; omit it to derive the cohort from the create slot');
+  }
   return {
     wallet,
-    cohort: cohortRaw === undefined ? undefined : new Set(cohortRaw.split(',').filter((w) => w !== '')),
+    cohort,
     mints: (flags['mints'] ?? '').split(',').filter((m) => m !== ''),
     state: flags['state'] ?? null,
     live,
@@ -271,15 +338,22 @@ export function parseArgs(argv) {
  * reported `WATCHING` over launches it never looked at. That is the one outcome this tool must
  * never produce quietly, so a value that is not a positive integer is refused here.
  *
+ * The fallback goes through the same check. It comes from `thresholds.json` → `bounds`, and a key
+ * renamed or dropped there is `undefined`, `Number(undefined)` is `NaN`, and that is the identical
+ * silent failure arriving by the other door.
+ *
  * @param {string} flag
  * @param {string | undefined} raw
  * @param {number | undefined} fallback
  * @returns {number}
  */
 export function positiveInteger(flag, raw, fallback) {
-  if (raw === undefined) return Number(fallback);
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1) throw new Error(`${flag} must be a positive integer, not "${raw}"`);
+  const [source, value] = raw === undefined
+    ? [`the pinned bound behind ${flag}`, Number(fallback)]
+    : [flag, Number(raw)];
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${source} must be a positive integer, not "${raw === undefined ? fallback : raw}"`);
+  }
   return value;
 }
 
@@ -289,11 +363,15 @@ export function positiveInteger(flag, raw, fallback) {
  * Worst case, not expected: the ceiling has to be exact, and a plan that merely usually fits is a
  * plan that spends past its bound on the day it does not.
  *
+ * The attempts-per-request term defaults to the client's own, derived from its retry ladder rather
+ * than repeated as a literal: the pinned ceiling is exactly this product, so a rung added to the
+ * ladder must move the plan too or the bound stops being exact.
+ *
  * @param {number} newLaunches
  * @param {boolean} needsListing
  * @param {number} [attemptsPerRequest]
  */
-export function planCost(newLaunches, needsListing, attemptsPerRequest = 4) {
+export function planCost(newLaunches, needsListing, attemptsPerRequest = ATTEMPTS_PER_REQUEST) {
   const requests = (needsListing ? 1 : 0) + newLaunches * Number(THRESHOLDS.bounds['maxPagesPerLaunch']);
   return { requests, attempts: requests * attemptsPerRequest };
 }
@@ -359,6 +437,7 @@ export async function run(args, seams = {}) {
     log(`  hosts: both keyless, zero token. Pacing floor ${THRESHOLDS.bounds['minIntervalMs']} ms.`);
     log(`  ${SAMPLE_CAVEAT}`);
     log(`  ${ASYMMETRY_CAVEAT}`);
+    if (!needsListing) log(`  ${MINTS_CAVEAT}`);
     return { state, issued: 0, plannedAttempts: worst.attempts, read: 0, undecided: 0, abandoned: null };
   }
 
@@ -385,6 +464,7 @@ export async function run(args, seams = {}) {
     log(`  listing: ${listing.rawRows} rows, ${listing.launches.length} launches read`);
   } else {
     queue = args.mints.map((m) => ({ mint: m, createdAtMs: null, symbol: '' }));
+    log(`  ${MINTS_CAVEAT}`);
   }
 
   // Mints are vendor-supplied or operator-supplied and land in a URL PATH, which `..`, `?` or `#`
@@ -402,8 +482,15 @@ export async function run(args, seams = {}) {
   // Every launch's immediate predecessor in the deployer's own series, read or unread. This is what
   // a reading records so that adjacency can be re-derived later; the oldest launch the listing
   // carries has no visible predecessor and gets `null` rather than an invented one.
+  //
+  // ON THE `--mints` PATH THERE IS NO PREDECESSOR TO RECORD. Those launches carry no timestamp, so
+  // `ordered` above is sorting a constant and the only order left is the order the operator typed —
+  // which is not a fact about the deployer's series. Writing it down as one would let `--mints A,B`
+  // confirm a stop out of two launches that were never neighbours, which is the exact failure
+  // adjacency derivation exists to refuse. `null` instead: every such reading stands alone.
   /** @type {Map<string, string | null>} */ const predecessor = new Map();
-  ordered.forEach((l, i) => predecessor.set(l.mint, i === 0 ? null : /** @type {{mint: string}} */ (ordered[i - 1]).mint));
+  ordered.forEach((l, i) => predecessor.set(
+    l.mint, !needsListing || i === 0 ? null : /** @type {{mint: string}} */ (ordered[i - 1]).mint));
 
   const already = new Set(state.readMints);
   const fresh = ordered.filter((l) => !already.has(l.mint));
@@ -495,7 +582,9 @@ export async function run(args, seams = {}) {
     // Derived from the whole record rather than from arrival order, so a launch read out of order
     // cannot confirm a stop with a launch it was never adjacent to.
     tripwire = resume(state, settings);
-    const adjacent = prevMint === null ? state.readings.length === 1 : already.has(prevMint);
+    // Only the listing path can say anything about series order at all; on `--mints` the annotation
+    // would be noise beside MINTS_CAVEAT, which says the stronger thing.
+    const adjacent = !needsListing || (prevMint === null ? state.readings.length === 1 : already.has(prevMint));
     log(label +
       (reading.unread === null
         ? `share ${(reading.share ?? 0).toFixed(3)}  outsiders ${reading.outsiderStake.toFixed(2)} SOL` +
@@ -529,15 +618,35 @@ export async function run(args, seams = {}) {
     log('  and the next run retries them. Run again before treating "watching" as a reading of the series.');
   }
   if (state.quarantine.length > 0) {
-    log(`  QUARANTINE — ${state.quarantine.length} launch(es) this tool has not been able to settle. They are`);
-    log('  retried every run and never recorded as read, and every run reserves slots for the newest');
-    log('  launches so this list cannot crowd the current end of the series out:');
-    for (const q of state.quarantine) log(`    ${q.at.slice(0, 16) || '(no timestamp)'}  ${q.mint}  ${q.reason}`);
+    // What this block used to claim — "they are retried every run" — is not what the run does. A
+    // run reads at most `maxLaunchesPerRun` launches, so a quarantine longer than the slice has a
+    // tail it did not reach this time; and a launch that has aged past the listing window is not in
+    // the queue at all, so no future run reaches it either. Both are now stated per entry rather
+    // than papered over by a sentence that reads as full coverage.
+    const visible = new Set(queue.map((l) => l.mint));
+    const retried = state.quarantine.filter((q) => chosen.has(q.mint)).length;
+    const unreachable = state.quarantine.filter((q) => needsListing && !visible.has(q.mint)).length;
+    log(`  QUARANTINE — ${state.quarantine.length} launch(es) this tool has not been able to settle. None is`);
+    log(`  recorded as read, so each returns to the head of the queue; this run retried ${retried} of them,`);
+    log(`  and every run reserves slots for the newest launches so this list cannot crowd the current`);
+    log('  end of the series out. Marked entries were NOT looked at on this run:');
+    for (const q of state.quarantine) {
+      const mark = chosen.has(q.mint) ? ''
+        : needsListing && !visible.has(q.mint)
+          ? '   [past the listing window — no future run reaches it either; use --mints]'
+          : `   [beyond this run's ${args.maxLaunches}-launch slice — a later run retries it]`;
+      log(`    ${q.at.slice(0, 16) || '(no timestamp)'}  ${q.mint}  ${q.reason}${mark}`);
+    }
+    if (unreachable > 0) {
+      log(`  ${unreachable} of them have aged out of the ${THRESHOLDS.bounds['listingLimit']}-row listing and can only be`);
+      log('  settled by naming them with --mints. Until then this verdict does not cover them.');
+    }
   }
   if (abandoned !== null) log(`  run abandoned early: ${abandoned}. Everything read before that point is saved.`);
   log(`  requests issued ${client.issued()}, shed ${client.shed()}, transport failures ${client.transportFailures()}`);
   log(`  ${SAMPLE_CAVEAT}`);
   log(`  ${ASYMMETRY_CAVEAT}`);
+  if (!needsListing) log(`  ${MINTS_CAVEAT}`);
 
   if (args.state !== null) writeFileSync(args.state, `${JSON.stringify(state, null, 2)}\n`);
   return { state, issued: client.issued(), plannedAttempts: 0, read, undecided, abandoned };

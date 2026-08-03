@@ -357,8 +357,12 @@ export async function readCreateSlot(client, mint, options) {
  * is the same failure shape `dune.mjs` refuses when a decoded table returns no row for a wallet.
  *
  * It lists by **current** creator, so a launch whose creator record has moved is missing from it
- * (`AGENTS.md`). For this tool the bias is one-directional: a missing launch delays a reading, it
- * cannot manufacture one — and it cannot un-fire a latched stop.
+ * (`AGENTS.md`). That hole does not only delay a reading: it also leaves the launch's two
+ * neighbours recorded as adjacent when they were not, which would let two breaches confirm each
+ * other. `watch.mjs` → `chainsOf` therefore corroborates a claimed adjacency against the elapsed
+ * time between the two launches and refuses one that spans an implausible gap
+ * (`thresholds.json` → `detector.maxAdjacentGapDays`), so a hole fails towards no stop. It cannot
+ * un-fire a latched stop either way.
  *
  * @param {unknown} body
  * @returns {LaunchListing}

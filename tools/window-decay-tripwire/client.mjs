@@ -39,8 +39,11 @@ export const SWAP_API = 'https://swap-api.pump.fun';
 /**
  * Launch listing by creator. Keyless, and **biased**: it lists by CURRENT owner, so a launch whose
  * creator record has moved goes missing, and the one known to have gone missing was this
- * operation's best ever (`AGENTS.md`). For this tool the bias is one-directional and mild — a
- * missing launch delays a reading, it cannot manufacture one — and `--mints` avoids it entirely.
+ * operation's best ever (`AGENTS.md`). A missing launch delays a reading — but it also makes its two
+ * neighbours LOOK adjacent, which is a second-order way to manufacture a stop out of two breaches
+ * that were never consecutive. `watch.mjs` → `chainsOf` corroborates every claimed adjacency
+ * against the elapsed time between the two launches and breaks the chain across a gap wider than
+ * any the open window on record contains, so a hole fails towards no stop.
  */
 export const FRONTEND_API = 'https://frontend-api-v3.pump.fun';
 
@@ -58,6 +61,16 @@ export const BACKOFF = Object.freeze({ growth: 1.6, decay: 0.85, decayAfter: 5, 
 
 /** Waits before the 2nd, 3rd and 4th attempt at a shed request, on top of the pacing interval. */
 export const RETRY_BACKOFF_MS = Object.freeze([3_000, 9_000, 27_000]);
+
+/**
+ * Attempts one request can cost, worst case: the first plus one per retry rung.
+ *
+ * Derived from `RETRY_BACKOFF_MS` rather than written down beside it, because the pinned per-run
+ * ceiling is the exact product of this number and the request bounds. A rung added to the ladder
+ * with this left at a literal would raise the real worst case while every plan kept reporting the
+ * old one, which is the one way this tool's ceiling could become nominal.
+ */
+export const ATTEMPTS_PER_REQUEST = RETRY_BACKOFF_MS.length + 1;
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 

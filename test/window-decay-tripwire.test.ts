@@ -28,8 +28,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  BACKOFF, CeilingReached, HOSTS, HostRefused, HttpRefused, KeylessClient,
-  DEFAULT_MIN_INTERVAL_MS, FRONTEND_API, SWAP_API,
+  ATTEMPTS_PER_REQUEST, BACKOFF, CeilingReached, HOSTS, HostRefused, HttpRefused, KeylessClient,
+  DEFAULT_MIN_INTERVAL_MS, FRONTEND_API, RETRY_BACKOFF_MS, SWAP_API,
 } from '../tools/window-decay-tripwire/client.mjs';
 import type { Fill } from '../tools/window-decay-tripwire/detector.mjs';
 import {
@@ -46,7 +46,8 @@ import {
 } from '../tools/window-decay-tripwire/backtest.mjs';
 import { SUBJECT_COHORT, SUBJECT_DEPLOYER, readWindowFills } from '../tools/window-decay-tripwire/tape.mjs';
 import {
-  THRESHOLDS, chainsOf, emptyState, loadState, orderReadings, parseArgs, planCost, resume, run,
+  THRESHOLDS, chainsOf, emptyState, loadState, orderReadings, parseArgs, planCost, positiveInteger,
+  resume, run,
 } from '../tools/window-decay-tripwire/watch.mjs';
 import { CREDENTIAL_PATTERNS, KEY_SHAPED } from './offline-guard.js';
 
@@ -643,7 +644,12 @@ describe('every provider call is bounded, and a dry run spends nothing', () => {
   });
 
   it('the pinned worst case is exactly the pinned ceiling — an exact bound, not a nominal one', () => {
-    const worst = planCost(Number(THRESHOLDS.bounds['maxLaunchesPerRun']), true, 4);
+    // Derived from the client's own retry ladder, never a literal: the identity is what makes the
+    // ceiling exact, so a rung added to the ladder must break this test rather than silently raise
+    // the real worst case while every plan keeps reporting the old one.
+    expect(ATTEMPTS_PER_REQUEST).toBe(RETRY_BACKOFF_MS.length + 1);
+    expect(new KeylessClient({ maxRequests: 1 }).attemptsPerRequest()).toBe(ATTEMPTS_PER_REQUEST);
+    const worst = planCost(Number(THRESHOLDS.bounds['maxLaunchesPerRun']), true);
     expect(worst.attempts).toBe(Number(THRESHOLDS.bounds['maxRequestsPerRun']));
   });
 
@@ -861,9 +867,11 @@ describe('every provider call is bounded, and a dry run spends nothing', () => {
       const lines: string[] = [];
       const responses: unknown[] = [
         // The listing carries both, which is how the second launch knows the first is its neighbour.
+        // Its timestamp for the launch already in the state file is the one that reading was
+        // recorded under, and the two are a day apart — inside the gap a real adjacency can span.
         { coins: [
-          { mint: MINT, created_timestamp: 1_779_000_000_000 },
-          { mint: MINT_2, created_timestamp: 1_780_000_000_000 },
+          { mint: MINT, created_timestamp: Date.parse('2026-06-04T12:08:52.000Z') },
+          { mint: MINT_2, created_timestamp: Date.parse('2026-06-05T12:08:52.000Z') },
         ] },
         page([
           rawRow({ slotIndexId: sid(101, 2), userAddress: 'out-2', amountSol: '1' }),
@@ -980,6 +988,74 @@ describe('every provider call is bounded, and a dry run spends nothing', () => {
     const split = [readings[0]!, readings[2]!];
     expect(chainsOf(orderReadings(split))).toHaveLength(2);
     expect(resume({ ...emptyState('W'), readings: split }, settings).verdict).toBe('armed');
+  });
+
+  it('refuses an adjacency the listing could only be claiming because a launch is missing from it', () => {
+    // The listing lists by CURRENT creator, so a launch whose creator record has moved is absent and
+    // its two neighbours name each other. Corroborate against the time between them: 4.04 days is
+    // the widest gap the one open window on record contains between consecutive launches.
+    const settings = { bar: SHARE_BAR, confirmLaunches: CONFIRM_LAUNCHES };
+    const pair = (days: number) => [
+      { mint: 'a', at: '2026-06-01T00:00:00.000Z', share: 0.9, unread: null, prevMint: null },
+      { mint: 'b', at: new Date(Date.parse('2026-06-01T00:00:00.000Z') + days * 86_400_000).toISOString(),
+        share: 0.9, unread: null, prevMint: 'a' },
+    ];
+    expect(chainsOf(orderReadings(pair(1)))).toHaveLength(1);
+    expect(resume({ ...emptyState('W'), readings: pair(1) }, settings).verdict).toBe('stop-and-rotate');
+    const wide = pair(Number(THRESHOLDS.detector.maxAdjacentGapDays) + 0.5);
+    expect(chainsOf(orderReadings(wide))).toHaveLength(2);
+    expect(resume({ ...emptyState('W'), readings: wide }, settings).verdict).toBe('armed');
+  });
+
+  it('orders readings without a non-transitive comparator, so untimestamped ones keep their order', () => {
+    const readings = [
+      { mint: 'x', at: '', share: 0.9, unread: null, prevMint: null },
+      { mint: 'b', at: '2026-06-02T00:00:00.000Z', share: 0.9, unread: null, prevMint: 'a' },
+      { mint: 'y', at: '', share: 0.9, unread: null, prevMint: null },
+      { mint: 'a', at: '2026-06-01T00:00:00.000Z', share: 0.9, unread: null, prevMint: null },
+    ];
+    expect(orderReadings(readings).map((r) => r.mint)).toEqual(['a', 'b', 'x', 'y']);
+  });
+
+  it('records NO adjacency on the --mints path, so argument order can never confirm a stop', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tripwire-'));
+    try {
+      const path = join(dir, 's.json');
+      const lines: string[] = [];
+      const high = (slot: number) => page([
+        rawRow({ slotIndexId: sid(slot, 2), userAddress: 'out-1', amountSol: '1' }),
+        rawRow({ slotIndexId: sid(slot, 1), userAddress: 'cohort-a', tx: 'bundle', amountSol: '9' }),
+        rawRow({ slotIndexId: sid(slot, 0), userAddress: 'W', amountSol: '10' }),
+      ], false, null);
+      const result = await run(parseArgs([
+        '--wallet', 'W', '--cohort', 'cohort-a', '--mints', `${MINT},${MINT_2}`, '--state', path, '--live',
+      ]), {
+        log: (l) => lines.push(l), sleepImpl: async () => undefined, nowImpl: () => 0,
+        fetchImpl: (async (url: string) => ({
+          ok: true, status: 200, json: async () => high(url.includes(MINT_2) ? 501 : 500),
+        } as unknown as Response)) as unknown as typeof fetch,
+      });
+      // Two readings well above the bar, and still no stop: nothing here says they were neighbours.
+      expect(result.read).toBe(2);
+      expect(result.state.readings.every((r) => r.prevMint === null)).toBe(true);
+      expect(result.state.verdict).toBe('armed');
+      // And the operator is told, in the run output, that this run cannot confirm one.
+      expect(lines.join('\n')).toContain('can NEVER confirm a stop');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses an empty --cohort rather than crediting the whole create slot to outsiders', () => {
+    // An empty Set is still a supplied cohort, so it would skip both the no-cohort-evidence guard
+    // and the co-ordination fallback and push the share DOWN — towards "still open".
+    expect(() => parseArgs(['--wallet', 'W', '--cohort', ','])).toThrow(/names no wallet/);
+    expect(parseArgs(['--wallet', 'W', '--cohort', 'a,b']).cohort?.size).toBe(2);
+  });
+
+  it('validates the pinned fallback bound the same way it validates the flag', () => {
+    expect(() => positiveInteger('--max-launches', undefined, undefined)).toThrow(/positive integer/);
+    expect(positiveInteger('--max-launches', undefined, 8)).toBe(8);
   });
 
   it('drops a mint that is not base58-shaped and says so, rather than building a URL out of it', async () => {

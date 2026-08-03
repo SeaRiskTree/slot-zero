@@ -348,7 +348,8 @@ node tools/window-decay-tripwire/watch.mjs --wallet <deployer> --state ./tripwir
 # spend. --live is required, and so is --state
 node tools/window-decay-tripwire/watch.mjs --wallet <deployer> --state ./tripwire-<deployer>.json --live
 
-# a wallet whose operation wallets are known, and an explicit mint list (no listing request)
+# a wallet whose operation wallets are known, and an explicit mint list (no listing request).
+# This run CANNOT confirm a stop — see below.
 node tools/window-decay-tripwire/watch.mjs --wallet <deployer> --cohort <a>,<b> --mints <m1>,<m2> \
   --state ./tripwire-<deployer>.json --live
 ```
@@ -356,6 +357,25 @@ node tools/window-decay-tripwire/watch.mjs --wallet <deployer> --cohort <a>,<b> 
 **`--state` is not optional for a live run and the CLI refuses without it.** The stop needs two
 consecutive readings and a run sees one launch at a time, so without a file to carry the streak the
 tool would silently become the single-launch alarm this lane measured and rejected.
+
+**`--mints` can reach `armed` and can NEVER confirm a stop, and the run says so.** The streak is a
+statement about launches that are *adjacent* in the deployer's series, and the only evidence of
+adjacency this tool has is the launch listing — which `--mints` does not read. Command-line order is
+not that evidence: `--mints A,B` says nothing about whether `B` followed `A`, and letting an argument
+order assert it would confirm a stop out of two launches that were never neighbours, which is the
+one-way ~380:1 error the whole design is built around. So a `--mints` reading records no predecessor
+at all and stands alone. Use it to settle a specific launch — one the listing has aged past, say —
+and drop it for the run that has to decide.
+
+**The listing itself can also lie by omission, and the fix is a pinned bound.** It lists by *current*
+creator, so a launch whose creator record has moved is simply absent (`maxxing` is the known
+instance, `AGENTS.md`) — and an absent launch leaves its two neighbours recorded as neighbours of
+each other. `chainsOf` therefore corroborates every claimed adjacency against the elapsed time
+between the two launches and breaks the chain above `detector.maxAdjacentGapDays` = **4.04 days**,
+the widest gap between consecutive launches in the one open window on record (§7.3 of
+`analysis/window-population/README.md`; p50 0.69, p90 1.19). It is one-sided: a hole whose survivors
+are still less than 4.04 days apart is not caught, so this narrows the failure rather than closing
+it — and every branch of it errs towards *no* stop.
 
 Every verdict printed carries two caveats, in the output and not only here: `n = 1`, and the 380:1
 asymmetry that means a `watching` verdict is weaker evidence than a `stop-and-rotate` one.

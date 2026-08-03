@@ -75,11 +75,19 @@ export const ASYMMETRY_CAVEAT =
  * which puts every one of them in a chain of its own: such a run can reach `armed` and can never
  * confirm a stop. Same pattern as `tools/deployer-screen/entry.mjs` → `LANDING_TIP_CAVEAT`: a
  * caveat that changes the meaning of a result belongs in the result, not only in a doc.
+ *
+ * **And the split is permanent, which is what decides how the tool may recommend it.** A settled
+ * mint joins `readMints` and is never fetched again, so a launch inside the series settled this way
+ * keeps its successor's `prevMint` unmatched for good and no later listing run can confirm a stop
+ * spanning it. Leaving that launch in quarantine breaks the chain too, but reversibly — so the
+ * quarantine block does not offer `--mints` as the remedy for an unsettleable in-series launch.
  */
 export const MINTS_CAVEAT =
   '--mints records NO adjacency: the launch listing is the only evidence of which launches are ' +
   'consecutive, and argument order is not that evidence. Every --mints reading therefore stands ' +
-  'alone, so this run can reach "armed" and can NEVER confirm a stop. Drop --mints to confirm one.';
+  'alone, so this run can reach "armed" and can NEVER confirm a stop. It is also PERMANENT: the ' +
+  'mint joins readMints and is never fetched again, so a launch settled this way splits the chain ' +
+  'at that point for good and no later listing run can confirm a stop across it.';
 
 /**
  * @typedef {object} StoredReading One settled launch, as the state file keeps it.
@@ -162,8 +170,32 @@ export function orderReadings(readings) {
   return [...timestamped, ...untimestamped];
 }
 
+/**
+ * A pinned parameter read strictly, for the same reason {@link positiveInteger} reads a bound
+ * strictly and by the same failure shape arriving through the other door.
+ *
+ * A missing, renamed or non-numeric value makes this `NaN`, every `gap <= NaN` is false, every
+ * timestamped chain breaks at every step, and the instrument can then NEVER confirm a stop while
+ * reporting `watching` with nothing in the output saying it has been disarmed. A tripwire that
+ * cannot fire is worse than no tripwire, so this throws at load rather than degrading.
+ *
+ * @param {unknown} raw
+ * @returns {number}
+ */
+export function positiveFinite(raw) {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(
+      `thresholds.json detector.maxAdjacentGapDays must be a positive finite number, not "${String(raw)}": ` +
+      'without it every chain breaks at every step and this tripwire can never confirm a stop',
+    );
+  }
+  return value;
+}
+
 /** The widest gap between two launches this project has measured as consecutive, in ms. */
-export const MAX_ADJACENT_GAP_MS = THRESHOLDS.detector.maxAdjacentGapDays * 24 * 60 * 60 * 1000;
+export const MAX_ADJACENT_GAP_MS =
+  positiveFinite(THRESHOLDS.detector.maxAdjacentGapDays) * 24 * 60 * 60 * 1000;
 
 /**
  * Whether `reading` really is the launch right after `previous`, on the evidence the record holds.
@@ -527,8 +559,10 @@ export async function run(args, seams = {}) {
   /** @type {string | null} */ let abandoned = null;
   /** @type {Map<string, QuarantinedLaunch>} */ const quarantinedNow = new Map();
   /** @type {Set<string>} */ const settledNow = new Set();
+  /** @type {Set<string>} */ const attempted = new Set();
   let tripwire = resume(state, settings);
   for (const l of selected) {
+    attempted.add(l.mint);
     const at = l.createdAtMs === null ? '' : new Date(l.createdAtMs).toISOString();
     const label = `  ${at.slice(0, 16) || l.mint.slice(0, 12)} ${(l.symbol || '').padEnd(12)} `;
     /** @type {import('./createslot.mjs').CreateSlotWalk} */ let walk;
@@ -623,23 +657,32 @@ export async function run(args, seams = {}) {
     // tail it did not reach this time; and a launch that has aged past the listing window is not in
     // the queue at all, so no future run reaches it either. Both are now stated per entry rather
     // than papered over by a sentence that reads as full coverage.
+    // Selection is not attempt: the loop breaks on the request ceiling and on a confirmed stop, so
+    // entries chosen after the break point were never looked at either. Both the count and the
+    // per-entry mark are keyed off what the loop actually attempted.
     const visible = new Set(queue.map((l) => l.mint));
-    const retried = state.quarantine.filter((q) => chosen.has(q.mint)).length;
-    const unreachable = state.quarantine.filter((q) => needsListing && !visible.has(q.mint)).length;
+    const retried = state.quarantine.filter((q) => attempted.has(q.mint)).length;
+    const unreachable = state.quarantine.filter((q) => !visible.has(q.mint)).length;
     log(`  QUARANTINE — ${state.quarantine.length} launch(es) this tool has not been able to settle. None is`);
-    log(`  recorded as read, so each returns to the head of the queue; this run retried ${retried} of them,`);
+    log(`  recorded as read, so each returns to the head of the queue; this run attempted ${retried} of them,`);
     log(`  and every run reserves slots for the newest launches so this list cannot crowd the current`);
     log('  end of the series out. Marked entries were NOT looked at on this run:');
     for (const q of state.quarantine) {
-      const mark = chosen.has(q.mint) ? ''
-        : needsListing && !visible.has(q.mint)
-          ? '   [past the listing window — no future run reaches it either; use --mints]'
+      const mark = attempted.has(q.mint) ? ''
+        : !visible.has(q.mint)
+          ? (needsListing
+            ? '   [past the listing window — no listing run reaches it again]'
+            : '   [not named on this run — a later --mints run reaches it only if named again]')
           : `   [beyond this run's ${args.maxLaunches}-launch slice — a later run retries it]`;
       log(`    ${q.at.slice(0, 16) || '(no timestamp)'}  ${q.mint}  ${q.reason}${mark}`);
     }
-    if (unreachable > 0) {
-      log(`  ${unreachable} of them have aged out of the ${THRESHOLDS.bounds['listingLimit']}-row listing and can only be`);
-      log('  settled by naming them with --mints. Until then this verdict does not cover them.');
+    if (unreachable > 0 && needsListing) {
+      log(`  ${unreachable} of them are outside the ${THRESHOLDS.bounds['listingLimit']}-row listing, so no listing run reaches`);
+      log('  them again and this verdict does not cover them. DO NOT reach for --mints to settle one that');
+      log('  sits INSIDE the series: a --mints reading records no predecessor and carries no timestamp, so');
+      log('  it splits the chain at that launch PERMANENTLY and no later run can ever confirm a stop across');
+      log('  it. Leaving it unsettled costs one broken chain too, and it stays self-healing if the listing');
+      log('  ever carries the launch again. --mints is for a launch you only want a share reading of.');
     }
   }
   if (abandoned !== null) log(`  run abandoned early: ${abandoned}. Everything read before that point is saved.`);

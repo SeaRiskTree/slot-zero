@@ -46,8 +46,8 @@ import {
 } from '../tools/window-decay-tripwire/backtest.mjs';
 import { SUBJECT_COHORT, SUBJECT_DEPLOYER, readWindowFills } from '../tools/window-decay-tripwire/tape.mjs';
 import {
-  THRESHOLDS, chainsOf, emptyState, loadState, orderReadings, parseArgs, planCost, positiveInteger,
-  resume, run,
+  MAX_ADJACENT_GAP_MS, THRESHOLDS, chainsOf, emptyState, loadState, orderReadings, parseArgs,
+  planCost, positiveFinite, positiveInteger, resume, run,
 } from '../tools/window-decay-tripwire/watch.mjs';
 import { CREDENTIAL_PATTERNS, KEY_SHAPED } from './offline-guard.js';
 
@@ -1206,5 +1206,18 @@ describe('the pinned parameters and the README state the same thing', () => {
     expect(marker('avoided-hours')).toBeCloseTo(l.avoidedHours ?? NaN, 1);
     expect(marker('false-stops')).toBe(falseAlarms(steps).fired.length);
     expect(marker('open-window-population')).toBe(falseAlarms(steps).read);
+    // The adjacency bound is prose in the README and a value in thresholds.json; pinned together so
+    // moving the threshold cannot leave the README quietly wrong.
+    expect(marker('max-adjacent-gap-days')).toBe(Number(THRESHOLDS.detector.maxAdjacentGapDays));
+  });
+
+  it('refuses an unusable adjacency bound rather than becoming a tripwire that can never fire', () => {
+    // NaN would make every `gap <= NaN` false, break every chain at every step, and leave the tool
+    // printing "watching" forever with nothing saying it had been disarmed.
+    for (const bad of [undefined, 'four', NaN, Infinity, 0, -1]) {
+      expect(() => positiveFinite(bad)).toThrow(/positive finite number/);
+    }
+    expect(positiveFinite(4.04)).toBe(4.04);
+    expect(MAX_ADJACENT_GAP_MS).toBe(Number(THRESHOLDS.detector.maxAdjacentGapDays) * 86_400_000);
   });
 });

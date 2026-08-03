@@ -596,7 +596,9 @@ and never folded in with a refusal, which are different findings.
 **The cost is real and it is accepted.** Replaying the live recipe — median room over the trailing 8
 launches against the 0.55 bar — at all 228 points of our own tape's history: refusing removes **24
 of 24 false-positive windows and creates none in the other direction**, at a price of **81 windows
-that become unmeasured** rather than wrong. On a stranger the same trade applies and cannot be
+that become unmeasured** rather than wrong. Per launch rather than per window, the same refusal
+takes **60 of the 235 covered launches (25.5%)** out of every score — that is the coverage it costs,
+and it is the intended trade rather than a regression. On a stranger the same trade applies and cannot be
 priced, because there is no ground truth to price it against. `bundledTx` and `maxWalletsInOneTx`
 reach the score, the record and the rendered line for exactly that reason: they are the only
 observable that exposes the condition, so a saved run can be audited for it after the fact.

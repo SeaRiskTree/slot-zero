@@ -314,8 +314,8 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   `execution_cost_credits`, which understates by ~3.5×** — retrieving results is ~71% of the bill at
   ~20 credits/MB. Hence: aggregate server-side, select only the columns the tool reads (dropping the
   create tx and graduation timestamp halved the payload to **~97 bytes/row**, measured at FOUR
-  columns — the fifth is bounded by arithmetic, not measured), one execution for the
-  whole batch, and a **cached** probe read by default.
+  columns — the fifth is bounded by arithmetic, not measured), one execution for the whole batch,
+  and a **cached** probe read by default.
 - **Free tier: 2,500 credits/month, SHARED, and only 10 PRIVATE QUERIES — the account holds 10, so a
   new query cannot be created.** The two production queries were upgraded in place (`8204672`
   enumeration, `8204603` coverage). Their SQL is committed in `dune.mjs` and
@@ -323,8 +323,8 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   editable from a browser and its answer is a gate input. **EDITING EITHER SQL IN THIS REPO IS HALF
   THE CHANGE: the saved query must be updated IN PLACE or the next real run refuses the whole Dune
   leg terminally** — the comparison happens before the execution. `README.md` → "Deploying a change
-  to the committed SQL" owns the step and names which id goes with which text. **Nothing tracks the month** — the tool is
-  stateless between runs. Auth is the `X-Dune-API-Key` **header**, never `Bearer`.
+  to the committed SQL" owns the step and names which id goes with which text. **Nothing tracks the
+  month** — the tool is stateless between runs. Auth is the `X-Dune-API-Key` **header**, never `Bearer`.
 - **Measured cost, 2026-08-03:** five deployers' whole histories = **8 requests, 1 execution, 1.75
   billed credits**; a 195-candidate run ≈ 20 credits, i.e. ~125 full-cap runs a month. Against 793
   Helius credits and 12 requests for ONE deployer, or 7,166 keyless requests and ~287 min.

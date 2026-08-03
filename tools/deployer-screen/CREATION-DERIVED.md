@@ -505,13 +505,13 @@ runs actually seeded, **3,999** on a five-wallet reproduction run.
 wallet with fewer than 500 launches is ever capped, at any batch size.** How many candidates keep
 their Dune answer in a given run is a property of that run's population, not of the floor — the
 `total_bonded` seed serves 8,518-, 4,324- and 2,660-deploy wallets, so a batch drawn from it may
-hold several over the cap, and each of those falls back alone. A purely derived cap makes the truncation threshold a function of batch size, and at the
-tool's own 195-candidate cap it would refuse every deployer over 102 — including the subject
-deployer (**247**, the reproduction control) and `4q4GKBpV…` (152), i.e. exactly the largest, most
-gate-relevant and most expensive-to-walk wallets. 500 is anchored on the only true per-wallet counts
-this repo holds (§8.3: 8, 10, 65, 152, **247**): ~2× the largest of them, so **no measured deployer
-is capped at any batch size**, and ~17× below the industrial-spam extreme (8,518 deploys), so a spam
-wallet is still contained to 500 rows. §8.3 reproduces unchanged at any batch size, not merely at
+hold several over the cap, and each of those falls back alone. A purely derived cap makes the
+truncation threshold a function of batch size, and at the tool's own 195-candidate cap it would
+refuse every deployer over 102 — including the subject deployer (**247**, the reproduction control)
+and `4q4GKBpV…` (152), i.e. exactly the largest, most gate-relevant and most expensive-to-walk
+wallets. 500 is anchored on the only true per-wallet counts this repo holds (§8.3: 8, 10, 65, 152,
+**247**): ~2× the largest of them, so **no measured deployer is capped at any batch size**, and ~17×
+below the industrial-spam extreme (8,518 deploys), so a spam wallet is still contained to 500 rows. §8.3 reproduces unchanged at any batch size, not merely at
 its own.
 
 **What the floor costs, stated rather than hidden.** The rows bound is no longer 19,999 by
@@ -537,9 +537,8 @@ nobody has observed** — replace it with a measurement from the next real run r
 as one. A median-shaped full-cap run is unchanged at ~9,750 rows and ~20 credits.
 
 **DEPLOY STEP.** This changed `CREATION_SQL`, so **saved query `8204672` must be updated in place**
-to the committed text. `assertSavedQueryMatches` runs *before* the execution, so until it is, every
-keyed run refuses the Dune leg terminally and falls back to the walk. `README.md` → *"Deploying a
-change to the committed SQL"* owns the step.
+to the committed text. `README.md` → *"Deploying a change to the committed SQL"* owns the procedure
+and what a mismatch costs; §8.6 owns the custody rule behind it.
 
 ### 8.3 Reproduced against the 239-launch ground truth, through the production code path
 

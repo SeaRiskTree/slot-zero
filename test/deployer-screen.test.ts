@@ -3065,21 +3065,21 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     // refuses whole, the same fallback as before the cap existed. Claiming the tighter bound in
     // prose would be claiming something the code does not do.
     for (const n of [1, 5, 39, 40, 72, 195, 1000]) {
-      expect(n * launchCapPerWallet(n, ceiling)).toBeLessThanOrEqual(Math.max(SQL_ROW_CEILING, n * LAUNCH_CAP_FLOOR));
-      expect(launchCapPerWallet(n, ceiling)).toBeGreaterThanOrEqual(LAUNCH_CAP_FLOOR);
+      expect(n * launchCapPerWallet(n)).toBeLessThanOrEqual(Math.max(SQL_ROW_CEILING, n * LAUNCH_CAP_FLOOR));
+      expect(launchCapPerWallet(n)).toBeGreaterThanOrEqual(LAUNCH_CAP_FLOOR);
     }
     // Below the floor's crossover the share-out still governs and stays under the ceiling.
-    expect(39 * launchCapPerWallet(39, ceiling)).toBeLessThan(ceiling);
+    expect(39 * launchCapPerWallet(39)).toBeLessThan(ceiling);
     // The measured population, for scale: 500 is ~2x the largest per-wallet history this repo
     // holds (247), so no measured deployer is capped at ANY batch size — the floor answers at both
     // the 195-candidate cap and the ~72 both committed runs actually seeded, and only a small
     // reproduction batch is governed by the share-out.
-    expect(launchCapPerWallet(195, ceiling)).toBe(500);
-    expect(launchCapPerWallet(72, ceiling)).toBe(500);
-    expect(launchCapPerWallet(5, ceiling)).toBe(3999);
+    expect(launchCapPerWallet(195)).toBe(500);
+    expect(launchCapPerWallet(72)).toBe(500);
+    expect(launchCapPerWallet(5)).toBe(3999);
     // Never zero, whatever it is handed: a cap of 0 would return nothing and read as "no rows".
-    expect(launchCapPerWallet(1_000_000, ceiling)).toBe(LAUNCH_CAP_FLOOR);
-    expect(launchCapPerWallet(0, ceiling)).toBe(ceiling - 1);
+    expect(launchCapPerWallet(1_000_000)).toBe(LAUNCH_CAP_FLOOR);
+    expect(launchCapPerWallet(0)).toBe(ceiling - 1);
   });
 
   it('keeps the MOST RECENT launches when the cap truncates a deployer', () => {
@@ -3623,7 +3623,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       (_, i) => `Pad${'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmn'[i]}${'x'.repeat(28)}`,
     );
     const askable = [DUNE_WALLET, spam, ordinary, ...padding];
-    const cap = launchCapPerWallet(askable.length, DUNE_BOUNDS.maxResultRows);
+    const cap = launchCapPerWallet(askable.length);
     expect(cap).toBe(LAUNCH_CAP_FLOOR);
     // What the SQL returns: the two ordinary wallets whole, the spam wallet cut to the cap with its
     // TRUE count travelling beside every row.

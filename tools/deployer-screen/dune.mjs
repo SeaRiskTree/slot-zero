@@ -164,12 +164,15 @@ export const LAUNCH_CAP_FLOOR = 500;
  * (`thresholds.dune.maxResultRows`, the gated candidate count and `dune.walletsRefusedByShape`), so
  * what a run applied is auditable after the fact.
  *
+ * The share-out reads {@link SQL_ROW_CEILING} itself — the literal the SQL contains — rather than
+ * re-deriving it from the pinned threshold, so this mirror cannot name a cap the vendor did not
+ * apply. That the ceiling and the threshold agree is a separate, guarded assertion.
+ *
  * @param {number} walletCount How many deployers went into the query parameter.
- * @param {number} maxResultRows The pinned result-row ceiling — `dune.maxResultRows`.
  * @returns {number} Rows per deployer, never below {@link LAUNCH_CAP_FLOOR}.
  */
-export function launchCapPerWallet(walletCount, maxResultRows) {
-  return Math.max(LAUNCH_CAP_FLOOR, Math.floor((maxResultRows - 1) / Math.max(1, walletCount)));
+export function launchCapPerWallet(walletCount) {
+  return Math.max(LAUNCH_CAP_FLOOR, Math.floor(SQL_ROW_CEILING / Math.max(1, walletCount)));
 }
 
 /**
@@ -1216,7 +1219,7 @@ export async function enumerateCreations(client, opts) {
   // DISTINCT wallets sent, because that is what the query's own `count(DISTINCT wallet)` counts —
   // the two arithmetics have to agree or the tool would report a cap the vendor did not apply.
   const batchWallets = new Set(askable).size;
-  const launchCap = batchWallets === 0 ? 0 : launchCapPerWallet(batchWallets, opts.bounds.maxResultRows);
+  const launchCap = batchWallets === 0 ? 0 : launchCapPerWallet(batchWallets);
 
   /** @type {Map<string, WalletEnumeration>} */
   const byWallet = new Map();

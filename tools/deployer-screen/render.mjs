@@ -1184,7 +1184,7 @@ export function renderDryRun(plan) {
       // the reader then refuses whole, the fallback merged `main` already had. What bounds the
       // BILLED unit is unchanged: every read is issued with `?limit=maxResultRows`.
       const plannedCandidates = Math.max(1, plan.maxCandidates);
-      const perDeployerRows = launchCapPerWallet(plannedCandidates, d.maxResultRows);
+      const perDeployerRows = launchCapPerWallet(plannedCandidates);
       const sqlRows = perDeployerRows * plannedCandidates;
       const readableRows = Math.min(sqlRows, d.maxResultRows);
       L.push(

@@ -493,7 +493,7 @@ batch>))` of them, plus that deployer's **true** count as `launches_total`. Thre
 | | before | after |
 |---|---|---|
 | rows a run may return | unbounded until the ceiling refuses | **`max(19,999, <deployers> × 500)`**; above 20,000 the ceiling refuses the result whole, as before |
-| one 8,518-deploy wallet in a batch of 195 | whole batch → RPC walk | that wallet → RPC walk, **194 keep Dune** (the other 194 are under the 500 floor, so none of them is capped) |
+| a wallet over the cap in the batch | **the whole batch → RPC walk** | **only the wallets over the cap walk, however many there are**; every other candidate keeps its Dune answer |
 | executions per run | 1 | **1** (the cap is inside the same query) |
 
 The cap is `max(pinned floor, ceiling shared out)`. The **share-out** is what a small batch's bill is
@@ -501,8 +501,11 @@ bounded by, and it is derived rather than invented: what is pinned is the row ce
 bounded by — 102 rows at the 195-candidate cap, **277** at the ~72 distinct wallets both committed
 runs actually seeded, **3,999** on a five-wallet reproduction run.
 
-**The 500 floor is why the "194 keep Dune" row above holds at every batch size and not only below
-102.** A purely derived cap makes the truncation threshold a function of batch size, and at the
+**What the floor guarantees, and it is a statement about wallets rather than about batches: no
+wallet with fewer than 500 launches is ever capped, at any batch size.** How many candidates keep
+their Dune answer in a given run is a property of that run's population, not of the floor — the
+`total_bonded` seed serves 8,518-, 4,324- and 2,660-deploy wallets, so a batch drawn from it may
+hold several over the cap, and each of those falls back alone. A purely derived cap makes the truncation threshold a function of batch size, and at the
 tool's own 195-candidate cap it would refuse every deployer over 102 — including the subject
 deployer (**247**, the reproduction control) and `4q4GKBpV…` (152), i.e. exactly the largest, most
 gate-relevant and most expensive-to-walk wallets. 500 is anchored on the only true per-wallet counts

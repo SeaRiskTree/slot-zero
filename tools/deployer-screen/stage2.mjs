@@ -14,6 +14,8 @@
  * | requests per launch, RETRIES INCLUDED | `stage2_entry.maxRequestsPerLaunch` | 18 |
  * | requests for the whole stage | `stage2_entry.maxKeylessRequests`, on its own client | 432 |
  * | pacing, this host only | `stage2_entry.keylessMinIntervalMs` | 7s |
+ * | Solana RPC, the cost leg | `thresholds.json` → `stage2_cost.maxRpcRequestsPerCandidate` | 400 |
+ * | pacing, the cost leg | `stage2_cost.rpcMinIntervalMs`, inherited from `creation_walk` | 2.5s |
  *
  * That pacing is pinned **per host**. swap-api sheds about a quarter of what it is asked for, and at
  * the 2s the general keyless client uses it shed half of a real run's launches past all their
@@ -45,7 +47,16 @@
  *
  * **No keyed request is issued here, ever.** The mint list comes from the profile Stage 1 already
  * paid for. The shared vendor allowance — which production also draws on — is untouched by this
- * stage, and the endpoints it does reach are pump.fun's free ones.
+ * stage, and the endpoints it does reach are pump.fun's free ones and Solana's public RPC.
+ *
+ * ## The cost leg's bound is separate, and it only spends on a candidate still alive
+ *
+ * Pricing what it cost to land runs on `api.mainnet-beta`, not on swap-api, so it draws on its own
+ * per-candidate ceiling and on the creation walk's pacing — that host rate-limits **globally across
+ * methods**, so the two legs share one limiter and are serialised rather than run beside each other.
+ * It starts only after room and the gross field have both failed to refuse the candidate, which is
+ * what keeps the expensive scope (every window transaction of every CLOSED create-slot outsider)
+ * affordable. See {@link scoreCandidateEntry}.
  *
  * ## What it will not do
  *
@@ -53,9 +64,9 @@
  */
 
 import { CeilingReached } from './client.mjs';
-import { measureLaunchEntry, scoreEntry } from './entry.mjs';
+import { entryCostTargets, measureLaunchEntry, priceLaunchEntry, scoreEntry } from './entry.mjs';
 import { toLaunchRefs } from './measure.mjs';
-import { KeylessHttpError, readLaunchWindow } from './pumpfun.mjs';
+import { KeylessHttpError, readCreateSlotCosts, readLaunchWindow } from './pumpfun.mjs';
 import { redactAll, redactVendorIdentifiers } from './record.mjs';
 
 /**
@@ -64,6 +75,9 @@ import { redactAll, redactVendorIdentifiers } from './record.mjs';
  * @property {number} minLaunchesSampled
  * @property {number} minFieldRoundTrips
  * @property {number} minFieldHitRateGross
+ * @property {number} minFieldHitRateNet
+ * @property {number} maxEntryCostPerSolStaked
+ * @property {number} minPricedFraction
  * @property {number} maxCandidatesScored
  * @property {number} maxLaunchesPerCandidate
  * @property {number} maxRequestsPerLaunch
@@ -95,8 +109,44 @@ import { redactAll, redactVendorIdentifiers } from './record.mjs';
  */
 
 /**
+ * @typedef {object} Stage2CostCoverage
+ * What the on-chain cost leg did, and what it could not do.
+ *
+ * @property {boolean} ran                 Whether the leg ran at all. It does not when the free
+ *   legs already refused the candidate, and that is a saving rather than a gap.
+ * @property {number} rpcRequests          Solana RPC requests, retries included.
+ * @property {number} launchesPriced       Launches EVERY target transaction of which came back.
+ *   A launch missing one is not counted here even though its complete entrants still are.
+ * @property {number} launchesSkippedForBudget Launches never started because the per-candidate
+ *   ceiling could not cover them whole. Never half-walked.
+ * @property {number} transactionsTargeted Distinct signatures the two scopes asked for.
+ * @property {number} transactionsPriced
+ * @property {number} transactionsUnresolved The endpoint never resolved them, or their shape could
+ *   not be priced exactly. **Not "cost zero".**
+ * @property {number} viaBlock             Priced from a whole-block read (the §5.4 optimisation).
+ * @property {number} viaTransaction       Priced one `getTransaction` at a time.
+ * @property {boolean} stoppedForBudget
+ * @property {string[]} notes              Why a route or a launch went the way it did.
+ */
+
+/**
  * @typedef {object} Stage2Coverage
  * @property {number} launchRefsAvailable  Launches the vendor profile offered.
+ * @property {number} minAgeMs             The eligibility gate itself, `windowMs + seekMarginMs`,
+ *   persisted so a record PROVES the property rather than leaving it to be reconstructed from a
+ *   log's seek cursors. See {@link scoreCandidateEntry}.
+ * @property {number} launchesTooYoung     Refs refused by that gate: their window had not finished
+ *   happening at the moment the walk would have placed its cursor.
+ * @property {number} launchesEligible     `launchRefsAvailable − launchesTooYoung`.
+ * @property {number} launchesPlanned      Eligible launches inside `maxLaunchesPerCandidate`.
+ * @property {number} launchesDroppedByCap `launchesEligible − launchesPlanned`. A bound of ours,
+ *   not a property of the deployer — and the count nothing in the record could previously separate
+ *   from the two above it.
+ * @property {number | null} youngestRefAgeMs Age of the newest launch the profile offered, at the
+ *   moment eligibility was decided. `null` when it offered none.
+ * @property {number | null} youngestEligibleAgeMs Age of the newest launch that PASSED. Read beside
+ *   `minAgeMs` this is what says whether a run exercised the boundary or sat far above it — the
+ *   committed live run sat ~5 hours above it and could not discriminate the gate from its absence.
  * @property {number} launchesAttempted    Windows we started walking.
  * @property {number} launchesUsable       Windows walked back past the mint.
  * @property {number} launchesDropped      Windows dropped for incomplete coverage.
@@ -104,6 +154,7 @@ import { redactAll, redactVendorIdentifiers } from './record.mjs';
  * @property {number} requestsIssued
  * @property {boolean} stoppedForBudget    Whether the stage ceiling ended the walk early.
  * @property {string[]} dropNotes          One line per dropped window, so a drop is never silent.
+ * @property {Stage2CostCoverage} cost     The on-chain cost leg's own coverage and spend.
  */
 
 /** @returns {Stage2DropReasons} */
@@ -196,12 +247,28 @@ export function describeTransportFailure(cause) {
  * `launchesRoomUnproven`, and says so in a caveat. They are still counted here as usable windows,
  * because the walk did what it was asked to.
  *
+ * ## The cost leg runs SECOND, and only when the free legs have not already refused
+ *
+ * Room and the gross field cost nothing — they are arithmetic over fills already in hand — so they
+ * are scored first and a candidate that fails either never costs a Solana RPC request. Only a
+ * candidate still alive after both is priced, which is what makes captain decision 136b affordable:
+ * the expensive scope is every window transaction of every CLOSED create-slot outsider, ~19 requests
+ * per launch at the median against ~7 for the create slot alone.
+ *
+ * The first scoring pass is never reported. Its only job is to answer "is this worth pricing", and
+ * `entry-cost-unmeasured` is exactly that answer — the free legs passed and the cost leg has
+ * nothing yet.
+ *
  * @param {import('./pumpfun.mjs').KeylessClient} client
  * @param {object} input
  * @param {string} input.wallet
  * @param {unknown} input.profile A parsed `/deployer-hunter/{wallet}` response from Stage 1.
  * @param {number} input.nowMs    Clock, injected so a run is reproducible in a test.
  * @param {Stage2Thresholds} input.thresholds
+ * @param {import('./pumpfun.mjs').SolanaRpcClient | null} [input.rpc] The cost leg's client, with
+ *   its own per-candidate ceiling. `null` or absent disables the leg, and the verdict then cannot
+ *   be better than `entry-cost-unmeasured` — which is the intended consequence, not a degradation.
+ * @param {boolean} [input.preferBlockRoute] `thresholds.json` → `stage2_cost.preferBlockRoute`.
  * @param {(line: string) => void} [input.log]
  * @returns {Promise<{ score: import('./entry.mjs').EntryScore, coverage: Stage2Coverage }>}
  */
@@ -227,11 +294,25 @@ export async function scoreCandidateEntry(client, input) {
   // agree: a launch is old enough exactly when the cursor the same numbers place is in the past.
   // A test pins `windowSlotSpan × 400ms <= windowMs + seekMarginMs`, so widening the span past this
   // bound fails loudly instead of quietly reopening the gap.
+  //
+  // **The counts below are persisted, and that is the point of computing them here.** Before
+  // schema 6 a record carried `launchRefsAvailable` and `launchesAttempted` and nothing between
+  // them, so three quite different reasons a launch went unmeasured — too young, dropped by our own
+  // per-candidate cap, or never reached because the budget ran out — were indistinguishable, and
+  // the gate above was observable only by reading seek cursors out of a run log. `minAgeMs`,
+  // `launchesTooYoung`, `launchesEligible`, `launchesPlanned` and `launchesDroppedByCap` make the
+  // filter's whole arithmetic readable from the record itself.
   const minAgeMs = t.windowMs + t.seekMarginMs;
+  const ages = refs.map((r) => input.nowMs - r.deployedAtMs);
   const eligible = refs.filter((r) => input.nowMs - r.deployedAtMs >= minAgeMs);
   const planned = eligible.slice(0, t.maxLaunchesPerCandidate);
+  // `toLaunchRefs` returns newest first, so the youngest is the head of each list. Both are ages
+  // rather than instants so the record stays free of anything that could identify a launch.
+  const youngestRefAgeMs = ages.length === 0 ? null : Math.min(...ages);
+  const youngestEligibleAgeMs =
+    eligible.length === 0 ? null : Math.min(...eligible.map((r) => input.nowMs - r.deployedAtMs));
 
-  /** @type {import('./entry.mjs').LaunchEntry[]} */
+  /** @type {{ entry: import('./entry.mjs').LaunchEntry, fills: readonly import('./measure.mjs').Fill[] }[]} */
   const measured = [];
   /** @type {string[]} */
   const dropNotes = [];
@@ -296,23 +377,98 @@ export async function scoreCandidateEntry(client, input) {
       dropNotes.push('DROPPED: no bonding-curve buy in the window, so there is no create slot to anchor on');
       continue;
     }
-    measured.push(entry);
+    measured.push({ entry, fills: window.fills });
     input.log?.(
       `    ${window.pages} page(s) / ${window.requests} request(s), ${window.fills.length} fill(s), room ` +
         `${entry.createSlot.roomLeft.toFixed(3)}, ${entry.field.length} competing wallet(s)`,
     );
   }
 
-  const score = scoreEntry(measured, t, {
+  const context = {
     candidateWallet: input.wallet,
     launchesDropped: dropped,
     mintTimeDisagreements: dropsByReason.mintTimeDisagreement,
-  });
+  };
+  let score = scoreEntry(
+    measured.map((m) => m.entry),
+    t,
+    context,
+  );
+  const cost = emptyCostCoverage();
+
+  // The free legs have spoken. `entry-cost-unmeasured` here means they did not refuse the candidate
+  // and the cost leg has nothing yet — the one state worth spending a Solana RPC request on.
+  if (input.rpc != null && score.verdict === 'entry-cost-unmeasured') {
+    cost.ran = true;
+    const rpc = input.rpc;
+    const rpcBefore = rpc.issued();
+    /** @type {import('./entry.mjs').LaunchEntry[]} */
+    const pricedLaunches = [];
+    // Latched per candidate rather than per launch: the whole-block route is UNTESTED against this
+    // endpoint, so the first launch pays one request to find out and the rest of the candidate
+    // inherits the answer. Bounded waste, and the answer reaches the record.
+    let preferBlock = input.preferBlockRoute ?? true;
+
+    for (const { entry, fills } of measured) {
+      const targets = entryCostTargets(fills, entry);
+      cost.transactionsTargeted += targets.length;
+      // Never start what cannot be finished, the same rule the fill walk applies. A launch priced
+      // half-way yields a cost figure for whichever entrants happened to come first, which is a
+      // biased sample rather than a short one.
+      if (targets.length > 0 && rpc.remaining() < targets.length) {
+        cost.launchesSkippedForBudget += 1;
+        cost.stoppedForBudget = true;
+        cost.notes.push(
+          `a launch needing ${targets.length} transaction(s) was not started: fewer remain of the ` +
+            `per-candidate RPC ceiling, and a launch is never priced half-way`,
+        );
+        pricedLaunches.push(entry);
+        continue;
+      }
+
+      const walk = await readCreateSlotCosts(rpc, {
+        transactions: targets,
+        createSlot: entry.createSlot.slot,
+        preferBlock,
+      });
+      cost.transactionsPriced += walk.priced.size;
+      cost.transactionsUnresolved += walk.unresolved;
+      cost.viaBlock += walk.viaBlock;
+      cost.viaTransaction += walk.viaTransaction;
+      if (walk.stoppedForBudget) cost.stoppedForBudget = true;
+      if (walk.blockRouteNote !== null && !cost.notes.includes(walk.blockRouteNote)) {
+        cost.notes.push(walk.blockRouteNote);
+      }
+      // One probe decides the route for the candidate. `blockRouteTried` with nothing to show for
+      // it is the failure; a route that was never applicable leaves the probe available.
+      if (walk.blockRouteTried && walk.viaBlock === 0) preferBlock = false;
+      // Priced means EVERY target came back. A launch missing one transaction still contributes
+      // whatever entrants it could complete — `priceLaunchEntry` is all-or-nothing per wallet — but
+      // it is not a priced launch, and counting it as one would overstate coverage.
+      if (targets.length > 0 && walk.priced.size === targets.length) cost.launchesPriced += 1;
+      pricedLaunches.push(priceLaunchEntry(entry, targets, walk.priced));
+    }
+
+    cost.rpcRequests = rpc.issued() - rpcBefore;
+    score = scoreEntry(pricedLaunches, t, context);
+    input.log?.(
+      `    entry cost: ${cost.transactionsPriced} of ${cost.transactionsTargeted} transaction(s) ` +
+        `priced in ${cost.rpcRequests} RPC request(s)` +
+        (cost.viaBlock > 0 ? `, ${cost.viaBlock} from a whole-block read` : ''),
+    );
+  }
 
   return {
     score,
     coverage: {
       launchRefsAvailable: refs.length,
+      minAgeMs,
+      launchesTooYoung: refs.length - eligible.length,
+      launchesEligible: eligible.length,
+      launchesPlanned: planned.length,
+      launchesDroppedByCap: eligible.length - planned.length,
+      youngestRefAgeMs,
+      youngestEligibleAgeMs,
       launchesAttempted: attempted,
       launchesUsable: measured.length,
       launchesDropped: dropped,
@@ -320,7 +476,25 @@ export async function scoreCandidateEntry(client, input) {
       requestsIssued: client.issued() - requestsBefore,
       stoppedForBudget,
       dropNotes,
+      cost,
     },
+  };
+}
+
+/** @returns {Stage2CostCoverage} */
+export function emptyCostCoverage() {
+  return {
+    ran: false,
+    rpcRequests: 0,
+    launchesPriced: 0,
+    launchesSkippedForBudget: 0,
+    transactionsTargeted: 0,
+    transactionsPriced: 0,
+    transactionsUnresolved: 0,
+    viaBlock: 0,
+    viaTransaction: 0,
+    stoppedForBudget: false,
+    notes: [],
   };
 }
 
@@ -381,6 +555,17 @@ export function toEntryRecordRow(s, coverage) {
     fieldRealisedSolGrossOfFees: dist(s.fieldRealisedSolGrossOfFees),
     fieldReturnPerSolGrossOfFees: dist(s.fieldReturnPerSolGrossOfFees),
     fieldHitRateGrossOfFees: hit(s.fieldHitRateGrossOfFees),
+    // Schema 6. The price of the seat, and what the field cleared after paying it. Every one of
+    // these carries `entry.mjs` → `LANDING_TIP_CAVEAT` in `caveats`, which is the requirement: the
+    // limit travels with the number, not only with the documentation.
+    entryCostSol: dist(s.entryCostSol),
+    entryCostPerSolStaked: dist(s.entryCostPerSolStaked),
+    entryTxFeeSol: dist(s.entryTxFeeSol),
+    entryCostPriced: hit(s.entryCostPriced),
+    fieldRealisedSolNetOfMeasuredFees: dist(s.fieldRealisedSolNetOfMeasuredFees),
+    fieldReturnPerSolNetOfMeasuredFees: dist(s.fieldReturnPerSolNetOfMeasuredFees),
+    fieldHitRateNetOfMeasuredFees: hit(s.fieldHitRateNetOfMeasuredFees),
+    fieldClosedRoundTripsPriced: s.fieldClosedRoundTripsPriced,
     fieldEntrants: s.fieldEntrants,
     fieldClosedRoundTrips: s.fieldClosedRoundTrips,
     fieldOpenPositions: s.fieldOpenPositions,
@@ -388,6 +573,15 @@ export function toEntryRecordRow(s, coverage) {
     caveats: redactAll(s.caveats),
     coverage: {
       launchRefsAvailable: coverage.launchRefsAvailable,
+      // Schema 6. The eligibility filter's own arithmetic, so the gate is a property of the record
+      // rather than something a person reconstructs from a log's seek cursors.
+      minAgeMs: coverage.minAgeMs,
+      launchesTooYoung: coverage.launchesTooYoung,
+      launchesEligible: coverage.launchesEligible,
+      launchesPlanned: coverage.launchesPlanned,
+      launchesDroppedByCap: coverage.launchesDroppedByCap,
+      youngestRefAgeMs: coverage.youngestRefAgeMs,
+      youngestEligibleAgeMs: coverage.youngestEligibleAgeMs,
       launchesAttempted: coverage.launchesAttempted,
       launchesUsable: coverage.launchesUsable,
       launchesDropped: coverage.launchesDropped,
@@ -397,6 +591,7 @@ export function toEntryRecordRow(s, coverage) {
       requestsIssued: coverage.requestsIssued,
       stoppedForBudget: coverage.stoppedForBudget,
       dropNotes: redactAll(coverage.dropNotes),
+      cost: { ...coverage.cost, notes: redactAll(coverage.cost.notes) },
     },
   };
 }

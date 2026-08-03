@@ -337,6 +337,69 @@ export function createSlotGroups(fills) {
 }
 
 /**
+ * @typedef {object} WalletTransaction
+ * One on-chain transaction a set of wallets traded in, and what the fill tape says each of them
+ * committed inside it.
+ *
+ * @property {string} tx        Transaction signature — the thing an RPC call is spent on.
+ * @property {number} slot
+ * @property {{ wallet: string, quotedSol: number }[]} wallets `quotedSol` is buys minus sells for
+ *   that wallet **in this transaction**, in swap-quote SOL. It is the baseline the entry cost is
+ *   measured against: what the wallet's real lamport change exceeds this by is the fee, the venue
+ *   fee, the rent, any tip paid inside the same transaction, and execution difference.
+ */
+
+/**
+ * Group a launch's fills into the distinct TRANSACTIONS a named set of wallets traded in.
+ *
+ * **This is why pricing entry costs a walk and not a search.** Every fill Stage 2 already parses
+ * carries `tx` ({@link Fill}), so the signatures that bought a stranger's create slot are a
+ * by-product of a walk that has already happened — no discovery step, no vendor request, no extra
+ * `swap-api` page. The cost of the walk is then **distinct transactions, not entrants**: one
+ * bundled transaction prices every wallet in it, which is the same fee-payer asymmetry
+ * `onchain_*.csv` carries `is_fee_payer` for.
+ *
+ * Pure, and deliberately so — the network stays out of the measurement core, exactly as it does for
+ * the room and field legs. `pumpfun.mjs` → `readCreateSlotCosts` is what spends requests on the
+ * result.
+ *
+ * @param {readonly Fill[]} fills All fills for one launch's opening window.
+ * @param {ReadonlySet<string>} wallets Whose transactions to collect.
+ * @param {number | null} slot Restrict to this slot — the create slot, for the entry-cost scope —
+ *   or `null` for every transaction in the window, which is what a round trip's true P&L needs.
+ * @returns {WalletTransaction[]} Ascending by slot, then by signature, so a walk is deterministic.
+ */
+export function walletTransactions(fills, wallets, slot) {
+  /** @type {Map<string, { tx: string, slot: number, byWallet: Map<string, number> }>} */
+  const byTx = new Map();
+  for (const f of fills) {
+    if (!wallets.has(f.wallet)) continue;
+    let entry = byTx.get(f.tx);
+    if (entry === undefined) {
+      entry = { tx: f.tx, slot: f.slot, byWallet: new Map() };
+      byTx.set(f.tx, entry);
+    }
+    // A transaction sits in one slot; the earliest fill's slot is that slot, and taking the minimum
+    // rather than the first-seen keeps this independent of the order the tape arrived in.
+    if (f.slot < entry.slot) entry.slot = f.slot;
+    entry.byWallet.set(f.wallet, (entry.byWallet.get(f.wallet) ?? 0) + (f.side === 'buy' ? f.sol : -f.sol));
+  }
+
+  /** @type {WalletTransaction[]} */
+  const out = [];
+  for (const entry of byTx.values()) {
+    if (slot !== null && entry.slot !== slot) continue;
+    out.push({
+      tx: entry.tx,
+      slot: entry.slot,
+      wallets: [...entry.byWallet].map(([wallet, quotedSol]) => ({ wallet, quotedSol })),
+    });
+  }
+  out.sort((a, b) => a.slot - b.slot || (a.tx < b.tx ? -1 : a.tx > b.tx ? 1 : 0));
+  return out;
+}
+
+/**
  * @typedef {object} CompletionMeasurement
  * @property {number} tokens        Denominator: token records seen.
  * @property {number} completed     Numerator: records whose curve completed.

@@ -75,8 +75,31 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `nRoomUnproven` for the refused remainder, and the block gains `rollingRoom`, the replay of the
  *   live entry recipe at every trailing window against the named cohort. Do not read a schema-4 and
  *   a schema-5 `stage2SeamReproduction` as answering the same question.
+ * - **6** — **the fee is inside the entry window** (captain's ruling of 2026-08-02 and decision
+ *   136b), and the eligibility filter became observable. Again no candidate field changes, so
+ *   `PERSISTED_BY_SCHEMA[6]` equals `[5]`; everything is inside `entry`.
+ *   **THE VERDICT VOCABULARY CHANGED, AND THIS IS THE ONE THAT WILL BITE A READER.**
+ *   `entry-room-present` no longer exists. A schema-≤5 record's `entry-room-present` means *room
+ *   was present and the price of the seat was never measured*; a schema-6 `entry-open-after-costs`
+ *   means room was present, the seat was priced, and the field still cleared after paying for it.
+ *   **They are not the same verdict and the older one must not be read as the newer.** Two new
+ *   verdicts have no schema-≤5 equivalent at all: `entry-cost-unmeasured` (the free legs passed and
+ *   the cost leg could not price enough of the field — terminal, and never a pass) and
+ *   `entry-cost-prohibitive`. `entry-field-loss-making` survives but is now reachable from two
+ *   places: gross, as before, and net of measured fees, which the older records could not compute.
+ *   The `entry` block gains the cost distributions (`entryCostSol`, `entryCostPerSolStaked`,
+ *   `entryTxFeeSol`, `entryCostPriced`), the after-cost field figures
+ *   (`fieldRealisedSolNetOfMeasuredFees`, `fieldReturnPerSolNetOfMeasuredFees`,
+ *   `fieldHitRateNetOfMeasuredFees`, `fieldClosedRoundTripsPriced`) and, in `entry.coverage`, the
+ *   eligibility counts (`minAgeMs`, `launchesTooYoung`, `launchesEligible`, `launchesPlanned`,
+ *   `launchesDroppedByCap`, `youngestRefAgeMs`, `youngestEligibleAgeMs`) plus a `cost` block. On a
+ *   schema-≤5 record `launchRefsAvailable` and `launchesAttempted` could not be told apart from the
+ *   `maxLaunchesPerCandidate` cap, so **do not infer an eligibility count from an older record** —
+ *   it is not in there. Every cost figure is a LOWER bound: an out-of-transaction landing tip is
+ *   not recoverable from the entrant's own transaction, which the record states on the number
+ *   itself in `entry.caveats`, not only here.
  */
-export const RECORD_SCHEMA_VERSION = 5;
+export const RECORD_SCHEMA_VERSION = 6;
 
 /**
  * Completeness of a run, as the record can actually support.

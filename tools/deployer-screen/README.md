@@ -451,6 +451,29 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 3 | `spend` (the keyed ceiling, the unspent remainder, the planned worst case, and every endpoint called with its per-call cost) and `unmeasured` (every measurement the run could not take, and why). |
 | 4 | the creation-derived launch history beside the ownership one: `creation`, `historySource`, `gateReadingPageCapped`, `vendorTokens`, `vendorCompleted`, `vendorCompletionRate`, `vendorSpanDays`, `vendorVerdict`, `verdictChanged`. |
 | 5 | no new candidate field — the candidate-row change is **inside `entry`**, which gains `launchesRoomUnproven`, `bundledTx` and `maxWalletsInOneTx`. The **`stage0` block also changed**, and it is not comparable across the boundary — below. Consequences for a reader of an older record, below. |
+| 6 | no new candidate field either. **The fee moved inside the entry window** and the eligibility filter became observable, both inside `entry`. **The verdict vocabulary changed and `entry-room-present` no longer exists** — below. `entry` gains `entryCostSol`, `entryCostPerSolStaked`, `entryTxFeeSol`, `entryCostPriced`, `fieldRealisedSolNetOfMeasuredFees`, `fieldReturnPerSolNetOfMeasuredFees`, `fieldHitRateNetOfMeasuredFees` and `fieldClosedRoundTripsPriced`; `entry.coverage` gains `minAgeMs`, `launchesTooYoung`, `launchesEligible`, `launchesPlanned`, `launchesDroppedByCap`, `youngestRefAgeMs`, `youngestEligibleAgeMs` and a `cost` block. |
+
+**Reading a verdict across the schema-6 boundary — this is the one that will bite.**
+`entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
+of the seat was never measured*; a schema-6 `entry-open-after-costs` means room was present, the seat
+was priced, and the field still cleared after paying for it. **They are not the same verdict and the
+older one must not be read as the newer.** Two schema-6 verdicts have no older equivalent at all —
+`entry-cost-unmeasured` (the free legs passed and the cost leg could not price enough of the field;
+terminal, and never a pass) and `entry-cost-prohibitive`. `entry-field-loss-making` survives but is
+now reachable from two places: gross, as before, and **net of measured fees**, which no older record
+could compute.
+
+**Every cost figure is a LOWER bound**, and the record says so on the number rather than only here:
+a landing tip paid in a separate transaction of the same bundle is not recoverable from the
+entrant's own transaction, so `entry.caveats` carries that sentence on every priced score.
+
+**Eligibility counts are not reconstructable from an older record.** On schema ≤5,
+`launchRefsAvailable` and `launchesAttempted` could not be told apart from the
+`maxLaunchesPerCandidate` cap, so **do not infer one** — the numbers are not in there. From schema 6
+the filter's whole arithmetic is: `launchesTooYoung + launchesEligible = launchRefsAvailable`, and
+`launchesPlanned + launchesDroppedByCap = launchesEligible`. `youngestEligibleAgeMs` read beside
+`minAgeMs` says whether the run exercised the 65s boundary or sat hours above it, which the committed
+live run did and could not report.
 
 **Reading `entry` across the schema-5 boundary.** `entry.launchesSampled` on schema 3 and 4 counts
 every measured window, including ones whose opening was unproven; on schema 5 it counts only the
@@ -556,7 +579,9 @@ For version 2 onwards the pairing to read is:
 
 ## Stage 2 — ENTRY
 
-Two measurements per candidate, over that candidate's own most recent launches.
+Three measurements per candidate, over that candidate's own most recent launches. The first two are
+free — arithmetic over fills already in hand — and the third is not, so the first two run first and
+a deployer that fails either is refused before one Solana RPC request is spent on it.
 
 ### 1. Entry room
 
@@ -598,7 +623,7 @@ Captain **decision 134a**: do not score those launches. Call the opening **unpro
 measured. A launch whose create slot carried no bundled transaction contributes **no room figure, no
 field entrant and no round trip**; `measure.mjs` → `roomIsProven` is the predicate and
 `entry.mjs` → `scoreEntry` applies it before anything is computed. A candidate left with fewer
-proven launches than `minLaunchesSampled` scores `entry-unmeasured` — never `entry-room-present`,
+proven launches than `minLaunchesSampled` scores `entry-unmeasured` — never `entry-open-after-costs`,
 and never folded in with a refusal, which are different findings.
 
 **The cost is real and it is accepted.** Replaying the live recipe — median room over the trailing 8
@@ -647,18 +672,80 @@ whichever tail is fatter and describes nobody. **A mean here is a wrong answer, 
 Nothing in `entry.mjs` computes one, and a test asserts the word does not appear in its executable
 half.
 
-### The two legs are not symmetric, and that is the design
+### 3. The price of the seat, and what the field cleared after paying it
 
-| leg | can it earn `entry-room-present`? | can it deny it? |
+**Captain's standing ruling, 2026-08-02: fees are part of the entry window, and "enterable" means
+enterable AFTER what it costs to enter.** Captain decision 136b adds the field's after-cost result,
+which is what stops the field leg being veto-only. So Stage 2 has a third leg.
+
+**The signatures are free.** Every fill Stage 2 parses carries its transaction, so the transactions
+that bought a stranger's create slot are a by-product of a walk that has already happened — no
+discovery step, no vendor request, no extra `swap-api` page. `measure.mjs` → `walletTransactions`
+names them and `entry.mjs` → `entryCostTargets` unions the two scopes so a signature is never paid
+for twice. What is *not* free is the reading: one `getTransaction` per transaction, on
+`api.mainnet-beta`, at the creation walk's own 2.5s pacing.
+
+Two exact quantities come out of one response, and `pumpfun.mjs` → `parseTransactionCosts` reads
+both: the **transaction fee**, base plus priority, from `meta.fee`; and the **entrant's real lamport
+change**, from `preBalances`/`postBalances`. Against the fill tape's swap quote that gives what an
+entrant paid over and above the position it took — fee, venue fee, rent, execution difference, and
+any tip paid inside its own transaction. This is the route the committed
+`onchain_create_slot_pnl.csv` was built by, which is why Stage 0 can regression-test the whole leg
+offline before it is pointed at a stranger.
+
+**Two limits travel with every number, in the score's caveats, the rendered block, the run record
+and the dry-run plan — not only here.** Both run in the same direction:
+
+- **A landing tip paid in a SEPARATE transaction of the same bundle is not in any of it.** It is not
+  recoverable from the entrant's own transaction and it is not measured anywhere in this repo's
+  ground truth either, so every cost is a **lower** bound and every after-cost result an **upper**
+  bound. Entry looks cheaper, and the field more profitable, than either was.
+- **The cost is the cost paid by WINNERS.** Every fill belongs to a wallet that won the auction;
+  post-break our own subject saw a median 41.6 attempts per landed transaction, and a wallet that
+  paid and did not land is invisible. So this understates the cost of *trying*.
+
+Under the captain's tiebreaker — a null beats a false positive — that is exactly why the cost leg is
+a **gate and never a pass**: unmeasured cost yields `entry-cost-unmeasured`, which is terminal.
+
+**The free legs run first, and that is the cost model.** Room and the gross field are arithmetic over
+fills already in hand, so a deployer failing either is refused before one RPC request is spent on
+pricing it. Only a candidate still alive after both is walked.
+
+**Measured on the committed tape, 2026-08-02** (`data/population-tape-2026-07-29` →
+`onchain_create_slot_pnl.csv`, 113 launches, 775 create-slot entries, 631 closed round trips priced
+end to end):
+
+| | reading |
+|---|---|
+| entry cost, per create-slot entry | median **0.0308 SOL**, and **99.4%** of entries pay something |
+| entry cost, per SOL staked | median **0.0367** (post-break 0.0292; the worst launch on the tape is 0.136) |
+| the field, hit rate | **0.7401 gross** against **0.6070 net of measured fees** |
+| the field, median round trip | **+0.109 SOL gross** against **+0.038 SOL net** |
+| round trips that flip sign | **87** positive-gross → negative-net |
+
+Whole-block reads (`getBlock(slot, transactionDetails='full')`) would collapse the create-slot scope
+from ~7 requests a launch to one. That route is **untested against this endpoint**, so it is probed
+behind a fallback to per-signature reads and the record says which one paid for its numbers. It buys
+request count and nothing else — in particular it does **not** reach out-of-transaction tips, because
+attributing a sibling transaction in the same slot to the same bundle is an inference the chain does
+not support.
+
+### The legs are not symmetric, and that is the design
+
+| leg | can it earn `entry-open-after-costs`? | can it deny it? |
 |---|---|---|
 | room, on a launch whose opening is **proven** | **yes** | yes |
 | room, on a launch whose opening is **unproven** | **never — the launch is not scored at all** | no: it is removed, not counted against |
-| the field | **never** | yes |
+| the field, gross of fees | **never** | yes |
+| the field, net of measured fees | **never** | yes |
+| the price of the seat | **never** — an unmeasured one is not a pass either | yes |
 
-Because **everything Stage 2 measures is gross of fees.** The fill tape carries swap-quote SOL and
-no priority fee, landing tip, venue fee or rent, so every P&L is an upper bound. A field that loses
-money before costs certainly loses money after them — conclusive. A field that *makes* money before
-costs has established nothing at all.
+Because **everything the fill tape can say is gross of fees.** It carries swap-quote SOL and no
+priority fee, landing tip, venue fee or rent, so every P&L computed from it alone is an upper bound.
+A field that loses money before costs certainly loses money after them — conclusive. A field that
+*makes* money before costs has established nothing at all. Netting the measured cost onto it
+sharpens the veto without changing its direction: measured cost is itself a lower bound, so the net
+figure is still an upper bound on what anyone took.
 
 The size of that gap is measured rather than feared, on the one wallet where we hold the answer:
 
@@ -676,10 +763,27 @@ Read naively, the field says this wallet is beatable. It is not. So the field ca
 
 ### Verdicts
 
-`entry-room-present` · `entry-room-absent` · `entry-field-loss-making` · `entry-unmeasured`
+`entry-open-after-costs` · `entry-room-absent` · `entry-cost-prohibitive` · `entry-cost-unmeasured` ·
+`entry-field-loss-making` · `entry-unmeasured`
 
-Nothing in that vocabulary says beatable, profitable, or worth trading. **`entry-room-present` means
-the opening window is not already closed, so the exit question is worth asking** — and nothing more.
+Nothing in that vocabulary says beatable, profitable, or worth trading. **`entry-open-after-costs`
+means the opening window is not already closed AND what it costs to land there does not consume it,
+so the exit question is worth asking** — and nothing more.
+
+| verdict | what it means | costs an RPC request? |
+|---|---|---|
+| `entry-room-absent` | median room below the bar. The enquiry ends before anything is priced. | no |
+| `entry-field-loss-making` | the field loses money — **before** costs (conclusive on its own), or **net of measured fees** (the leg the gross reading cannot see). | only the second |
+| `entry-cost-unmeasured` | the free legs passed and the cost leg could not price enough of the field. **Terminal for that candidate in that run, and never a pass.** | yes, and it ran out |
+| `entry-cost-prohibitive` | room present and priced, and the price of the seat consumes the opening. | yes |
+| `entry-open-after-costs` | all three legs allow it. | yes |
+| `entry-unmeasured` | too few usable launches for any distribution. | no |
+
+**`entry-room-present` was removed, not renamed.** Under the captain's ruling of 2026-08-02 fees are
+part of the entry window and "enterable" means enterable *after what it costs to enter*, so a verdict
+that spoke only of room could no longer be the strongest thing this stage says. A schema-≤5 record's
+`entry-room-present` is not the same finding as a schema-6 `entry-open-after-costs`; see the schema
+table above.
 
 **`entry-unmeasured` and `entry-room-absent` are deliberately not the same verdict**, and unproven
 openings land on the first. "We could not measure this" is not "we measured it and there was
@@ -703,6 +807,7 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does — but a 429, a 5xx or a timeout means the request was not served, so re-issuing it is nearer to one successful request than to two. Without it the caller re-runs the whole walk, which is worse for pump.fun too. A 4xx that is not a 429 is never retried: it is the endpoint's considered answer. |
 | Solana RPC ceiling | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. The creation-derived walk. Whichever bound bites is recorded per candidate. |
+| Solana RPC ceiling, cost leg | 400 requests **per candidate** | `thresholds.json` → `stage2_cost`. Measured on our own tape: the create-slot scope is p50 7 / p90 13 / max 20 transactions per launch and the whole-window scope over CLOSED create-slot outsiders is p50 18 / p90 35 / max 70, unioned so none is paid for twice — so ~200 requests per candidate at the median and ~380 at p90 over 8 launches. Worst case 3 × 400 = 1,200 requests, about 50 minutes, which `--dry-run` prints. **It runs only on a candidate the free legs have not already refused**, so the realistic cost is far lower. |
 | Solana RPC pacing | 2.5s | Measured: the nominally faster 1.4s was *slower* in wall-clock once 429 backoff is counted. Rate limiting is global across `getSignaturesForAddress` and `getTransaction`. |
 | `getTransaction` batch size | **1** | Measured harmful above 1 — see [Which history the gate counts](#which-history-the-gate-counts). |
 | RPC retries | 3 with exponential backoff, each attempt counted against the ceiling | Unlike the keyed client, a 429 here is load-shedding and not a verdict — but a 429 storm still cannot outlast the ceiling. |
@@ -720,8 +825,12 @@ prints these same figures for whatever flags you actually pass:
 | keyless `frontend-api-v3`, the gate's ownership listing | 195 × 4 = 780 requests | 2.0s → ~26 min |
 | keyless `frontend-api-v3`, `--consistency` | 195 × 3 = 585 requests | 2.0s → ~19.5 min |
 | keyless `swap-api`, Stage 2 | 3 × 8 × 18 = 432 requests | 7.0s → ~50 min |
+| **Solana RPC, Stage 2's cost leg** | 3 × 400 = **1,200** requests | 2.5s → **~50 min** |
 
-So: **~15 hours** for a default run, **~15.5** with `--consistency`. The earlier "about 47 minutes"
+So: **~16 hours** for a default run, **~16.5** with `--consistency`. The cost leg's ~50 minutes is a
+worst case over three survivors; it runs only on candidates the free legs have not already refused,
+so on the committed live run's shape — one survivor of three — it is nearer ~8 minutes at the
+measured median. It shares the creation walk's limiter and is serialised after it, never beside it. The earlier "about 47 minutes"
 predated the creation walk and counted only the keyed and `frontend-api-v3` legs; it is wrong by a
 factor of twenty and is withdrawn. **Do not kill a default run because it is still going after an
 hour.**
@@ -738,6 +847,7 @@ candidates that would be some twenty thousand lines — so it prints a **periodi
 
 The first request of each candidate, then **every tenth** — so at the pinned 2.5s pacing a line
 roughly **every 25 seconds**, carrying that candidate's spend against its per-candidate ceiling.
+Stage 2's cost leg prints the same heartbeat, against its own `stage2_cost` ceiling.
 That counter, not a per-request one, is the liveness signal to watch. It is suppressed under
 `--json` so machine-readable output stays machine-readable.
 
@@ -998,6 +1108,16 @@ truncation this margin exists to prevent, arriving from the future side, and sil
 because an absent tail reads as a quiet one. A test pins both the behaviour and the relation
 `windowSlotSpan × 400ms ≤ windowMs + seekMarginMs`, so widening the span past the gate fails loudly.
 
+**And from schema 6 the filter is readable from the record itself, not only from a log.**
+`entry.coverage` carries `minAgeMs` (the 65s gate), `launchesTooYoung`, `launchesEligible`,
+`launchesPlanned` and `launchesDroppedByCap`, so the three quite different reasons a launch went
+unmeasured — too young, dropped by our own per-candidate cap, or never reached — are separate
+numbers rather than one gap between `launchRefsAvailable` and `launchesAttempted`. It also carries
+`youngestRefAgeMs` and `youngestEligibleAgeMs`: read beside `minAgeMs` those say whether a run
+**exercised** the boundary or sat hours above it. The committed live run sat about five hours above
+it, which meant it confirmed the property without discriminating the gate from its absence — and a
+reader of that record had no way to know.
+
 **Every run reports its drops per cause, per wallet and in total**, in the record (`entry.coverage.dropsByReason`
 and the run-level `entryDrops`) and in the rendered output. A non-zero
 `mintTimeDisagreement` is treated as a **reportable event, not a footnote**: all 235 clock
@@ -1053,16 +1173,36 @@ transaction; the floor is 20.
 
 **Built — Stage 1**, the keyed gate: enumerate, compute the rate ourselves, apply pinned thresholds.
 
-**Built — Stage 2**, the ENTRY score. Room in the opening window, and what the field there achieved.
-Keyless, and it spends no vendor quota. Stage 0 validates it four ways before a single request is
-issued:
+**Built — Stage 2**, the ENTRY score. Room in the opening window, what the field there achieved,
+and what it cost them to land. Keyless throughout, and it spends no vendor quota. Stage 0 validates
+it five ways before a single request is issued:
 
 | check | result on the committed tape |
 |---|---|
 | the create-slot primitive reproduces the published §5.1 era split | operation share 0.451 → 0.769 against a published 0.451 → **0.771** (see below) |
 | the **field** measurement reproduces `wallet_launch_pnl.csv` | **1,502 create-slot outsider pairs, 0 closure mismatches, max realised error 5.0e-7 SOL** |
-| **the known-negative control**, at two points in time | see below |
+| **the known-negative control**, at two points in time and once more with costs attached | see below |
 | **the rolling replay**, at every point in time | **228 trailing windows, 0 false positives and 0 false negatives**, 81 refused as unmeasured — see below |
+| **the cost leg**, against `onchain_create_slot_pnl.csv` | **113 launches, 775 create-slot entries, 631 round trips priced end to end**; median entry cost **0.0308 SOL**; hit rate **0.7401 gross → 0.6070 net**, **87** round trips flipping sign — see below |
+
+#### The cost leg is regression-tested offline, using the live attach function
+
+The committed on-chain table is `api.mainnet-beta`'s answer, recorded: per (mint, transaction,
+wallet) it carries the transaction's whole fee attributed to its payer and the named wallet's real
+lamport change. `stage0.mjs` → `readOnChainCosts` projects it onto exactly the shape
+`parseTransactionCosts` returns from a live `getTransaction`, so **`priceLaunchEntry` — the
+production attach — runs over committed ground truth**. One code path, two sources, as for the room
+and field legs.
+
+It asserts the two things a wiring error breaks silently: that netting measured fees moves the field
+**down**, and that the seat is not free. A sign error in the lamport delta would raise them instead —
+silently, and in the one direction the captain's tiebreaker forbids.
+
+**What it deliberately does not assert, because it is not true:** that the net field leg vetoes our
+subject. Post-break its priced round trips are still 0.64 positive at a median +0.05 SOL net, so the
+after-cost field would pass it. `7ufmve7Z…` is refused by **room**, which is exactly why room is the
+gate and the field is only ever a veto — and pinning a property the evidence does not support would
+make the control a decoration.
 
 #### The era-2 constant is pinned at 0.771, and the tolerance is not the fix
 
@@ -1160,9 +1300,12 @@ signal reaches any number Stage 2 produces. Its own lane, and it is blocked on t
 grade the screen's own hit rate. Its own lane. Run records under `runs/` are the input it will read.
 
 **A Stage 2 run record is committed**: `runs/2026-08-02-good.json` scored 3 gate survivors on live
-fills, and `runs/2026-08-02-good-vs-elite.md` reads it. It carries this tool's first
-`entry-room-present` verdict on a stranger wallet, and that document states the five reasons the
-verdict is marginal — it is one candidate worth a closer look, not a finding. The `--dry-run` output
+fills, and `runs/2026-08-02-good-vs-elite.md` reads it. It is a **schema-3** record and it carries
+this tool's first `entry-room-present` verdict on a stranger wallet; that document states the five
+reasons the verdict is marginal — it is one candidate worth a closer look, not a finding. **Read
+that verdict as its schema means it**: room was present and the price of the seat was never
+measured, which is not what a schema-6 `entry-open-after-costs` says. It is committed evidence and
+is never retro-edited, so the reader is what has to be correct. The `--dry-run` output
 and the live-vs-tape check above remain the keyless evidence that the walk is the same code path.
 
 ## The keyless boundary

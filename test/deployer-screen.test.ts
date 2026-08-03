@@ -49,9 +49,11 @@ import {
   COVERAGE_SQL,
   DEPLOYERS_PARAM,
   ENUMERATION_TABLES,
+  SQL_ROW_CEILING,
   assessCoverage,
   coverageRecordRow,
   enumerateCreations,
+  launchCapPerWallet,
   normaliseSql,
   parseCoverageProbe,
   parseCreationRows,
@@ -2932,16 +2934,141 @@ describe('a per-wallet reading is refused at the launch level too', () => {
   });
 
   it('dedupes by mint and counts what it could not read rather than dropping it silently', () => {
-    const { byWallet, unreadableRows } = parseCreationRows([
-      { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
-      { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
-      { deployer: 'W', mint: 'N', created_at: 'not a timestamp', bonded: false },
+    const { byWallet, declaredByWallet, unreadableRows } = parseCreationRows([
+      { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true, launches_total: 1 },
+      { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true, launches_total: 1 },
+      { deployer: 'W', mint: 'N', created_at: 'not a timestamp', bonded: false, launches_total: 1 },
       null,
     ]);
     // A duplicated mint would double-count a launch on BOTH sides of the gate's fraction.
     expect(byWallet.get('W')?.length).toBe(1);
     // A partly-unreadable answer is not a shorter answer.
     expect(unreadableRows).toBe(2);
+    // And the count the answer declares for the wallet travels with its rows.
+    expect(declaredByWallet.get('W')).toBe(1);
+  });
+
+  it('tells an ABSENT `launches_total` apart from a small one, exactly as it does `bonded`', () => {
+    // This column is the ONLY thing that says a wallet's rows are a prefix rather than its history.
+    // Default it to "not capped" when it goes missing and CREATION_SQL's per-deployer cap becomes
+    // silent: every capped wallet would be gated on a prefix reported as a total, on a run reporting
+    // itself fully measured. So an absent one takes the same whole-batch route a bad timestamp does.
+    for (const bad of [undefined, null, 0, -1, 'many', '', true, 1.5]) {
+      const row: Record<string, unknown> = {
+        deployer: 'W',
+        mint: 'M',
+        created_at: '2026-01-01 00:00:00.000 UTC',
+        bonded: true,
+      };
+      if (bad !== undefined) row['launches_total'] = bad;
+      const parsed = parseCreationRows([row]);
+      expect(parsed.unreadableRows, `launches_total: ${String(bad)} must not read as "not capped"`).toBe(1);
+      expect(parsed.byWallet.get('W')).toBeUndefined();
+    }
+    // A bigint arriving as a numeric STRING is legitimate and is read.
+    const asString = parseCreationRows([
+      { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true, launches_total: '3' },
+    ]);
+    expect(asString.unreadableRows).toBe(0);
+    expect(asString.declaredByWallet.get('W')).toBe(3);
+  });
+
+  it('refuses a wallet whose own rows disagree about its size, and only that wallet', () => {
+    // Nameable, unlike a row that will not parse at all — so the blast radius is the wallet rather
+    // than the batch. `null` in `declaredByWallet` is that disagreement, never "nothing declared".
+    const { declaredByWallet, unreadableRows } = parseCreationRows([
+      { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true, launches_total: 2 },
+      { deployer: 'W', mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC', bonded: true, launches_total: 9 },
+      { deployer: 'V', mint: 'P', created_at: '2026-02-01 00:00:00.000 UTC', bonded: true, launches_total: 1 },
+    ]);
+    expect(unreadableRows).toBe(0);
+    expect(declaredByWallet.get('W')).toBeNull();
+    expect(declaredByWallet.get('V')).toBe(1);
+    const refused = toWalletEnumeration({
+      wallet: 'W',
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
+      declaredLaunches: null,
+      launchCap: 100,
+      batchWallets: 2,
+      coverage: coverage(),
+    });
+    expect(refused.usable).toBe(false);
+    expect(refused.reasons.join(' ')).toMatch(/more than one value for its own creation total/);
+  });
+
+  it('REFUSES a history the per-deployer cap truncated, and never reads it as a short one', () => {
+    // The prefix/short distinction is the whole point: 8,518 creations returned 102 rows is not a
+    // wallet with 102 launches, and gating on it would publish a truncated count as a total.
+    const capped = toWalletEnumeration({
+      wallet: 'W',
+      launches: Array.from({ length: 102 }, (_, i) => ({
+        mint: `M${i}`,
+        createdAtMs: Date.parse('2026-01-01T00:00:00Z') + i * 1000,
+        bonded: i % 2 === 0,
+      })),
+      declaredLaunches: 8518,
+      launchCap: 102,
+      batchWallets: 195,
+      coverage: coverage(),
+    });
+    expect(capped.usable).toBe(false);
+    expect(capped.truncatedByLaunchCap).toBe(true);
+    expect(capped.declaredLaunches).toBe(8518);
+    expect(capped.reasons.join(' ')).toMatch(/PREFIX of this wallet's history, not a short history/);
+    // And it claims no exhaustive coverage into the merge, so the ownership listing is not
+    // reclassified as acquired on the strength of a prefix.
+    expect(capped.covered.exhausted).toBe(false);
+
+    // A shortfall the cap does NOT explain is refused too, under its own sentence: a reading that
+    // cannot account for its own row count may not be gated on either.
+    const unexplained = toWalletEnumeration({
+      wallet: 'W',
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
+      declaredLaunches: 9,
+      launchCap: 102,
+      batchWallets: 195,
+      coverage: coverage(),
+    });
+    expect(unexplained.usable).toBe(false);
+    expect(unexplained.truncatedByLaunchCap).toBe(false);
+    expect(unexplained.reasons.join(' ')).toMatch(/neither its whole history nor the per-deployer cap/);
+
+    // The control: a wallet whose declared count and returned rows agree is whole, and usable.
+    const whole = toWalletEnumeration({
+      wallet: 'W',
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
+      declaredLaunches: 1,
+      launchCap: 102,
+      batchWallets: 195,
+      coverage: coverage(),
+    });
+    expect(whole.usable).toBe(true);
+    expect(whole.truncatedByLaunchCap).toBe(false);
+  });
+
+  it('derives the per-deployer cap from the PINNED row ceiling, not from a second magic number', () => {
+    // No measurement fixes a good per-deployer launch count, so none is invented: what is pinned is
+    // the row ceiling the bill is bounded by, and the cap is that ceiling shared out between the
+    // batch. The consequence is the bound this change buys — rows <= SQL_ROW_CEILING for ANY batch.
+    const ceiling = (loadThresholds()['dune'] as { maxResultRows: number }).maxResultRows;
+    expect(SQL_ROW_CEILING).toBe(ceiling - 1);
+    // The SQL carries the same number as a literal, because a saved Dune query cannot read
+    // thresholds.json. If the two ever disagree the saved query bounds a run at a size this
+    // reader no longer accepts, so the duplication is guarded rather than trusted.
+    expect(CREATION_SQL).toContain(`floor(${SQL_ROW_CEILING}.0 / greatest(count(DISTINCT wallet), 1))`);
+    for (const n of [1, 5, 72, 195, 1000]) {
+      expect(n * launchCapPerWallet(n, ceiling)).toBeLessThanOrEqual(SQL_ROW_CEILING);
+      expect(n * launchCapPerWallet(n, ceiling)).toBeLessThan(ceiling);
+    }
+    // The measured population, for scale: at the 195-candidate cap a deployer may carry 102
+    // launches, at the ~72 both committed runs actually seeded it is 277, and a five-wallet
+    // reproduction run carries 3,999 — past the subject's own 247.
+    expect(launchCapPerWallet(195, ceiling)).toBe(102);
+    expect(launchCapPerWallet(72, ceiling)).toBe(277);
+    expect(launchCapPerWallet(5, ceiling)).toBe(3999);
+    // Never zero, whatever it is handed: a cap of 0 would return nothing and read as "no rows".
+    expect(launchCapPerWallet(1_000_000, ceiling)).toBe(1);
+    expect(launchCapPerWallet(0, ceiling)).toBe(ceiling - 1);
   });
 
   it('tells an ABSENT `bonded` apart from a legitimately false one', () => {
@@ -2951,7 +3078,7 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     // rate applyGate compares against, so that collapse is a mass gate-FAILURE on a run that
     // reports itself fully measured.
     const legitimatelyFalse = parseCreationRows([
-      { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: false },
+      { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: false, launches_total: 1 },
     ]);
     expect(legitimatelyFalse.unreadableRows).toBe(0);
     expect(legitimatelyFalse.byWallet.get('W')).toEqual([
@@ -2961,7 +3088,12 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     // Absent, renamed, or any non-boolean spelling of it: unreadable, by the same route a bad
     // timestamp already takes, rather than a second and weaker path of its own.
     for (const bad of [undefined, null, 0, 1, 'false', 'true', '']) {
-      const row: Record<string, unknown> = { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC' };
+      const row: Record<string, unknown> = {
+        deployer: 'W',
+        mint: 'M',
+        created_at: '2026-01-01 00:00:00.000 UTC',
+        launches_total: 1,
+      };
       if (bad !== undefined) row['bonded'] = bad;
       const parsed = parseCreationRows([row]);
       expect(parsed.unreadableRows, `bonded: ${String(bad)} must not read as "did not bond"`).toBe(1);
@@ -3013,7 +3145,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       '/query/1': okJson({ query_sql: CREATION_SQL }),
       '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
       '/execution/e1/results': resultOf([
-        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true, launches_total: 1 },
       ]),
     });
     const c = new DuneClient({
@@ -3259,8 +3391,8 @@ describe('the enumeration spends nothing it does not have to', () => {
       // The column is simply gone — which is what a renamed `LEFT JOIN pump_evt_completeevent`
       // looks like, on every row at once.
       '/execution/e1/results': resultOf([
-        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC' },
-        { deployer: other, mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC' },
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', launches_total: 1 },
+        { deployer: other, mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC', launches_total: 1 },
       ]),
     });
     const c = new DuneClient({
@@ -3296,8 +3428,8 @@ describe('the enumeration spends nothing it does not have to', () => {
       '/query/1': okJson({ query_sql: CREATION_SQL }),
       '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
       '/execution/e1/results': resultOf([
-        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: false },
-        { deployer: other, mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC', bonded: false },
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: false, launches_total: 1 },
+        { deployer: other, mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC', bonded: false, launches_total: 1 },
       ]),
     });
     const c2 = new DuneClient({
@@ -3334,10 +3466,10 @@ describe('the enumeration spends nothing it does not have to', () => {
       '/query/1': okJson({ query_sql: CREATION_SQL }),
       '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
       '/execution/e1/results': resultOf([
-        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
-        { deployer: other, mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC', bonded: false },
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true, launches_total: 1 },
+        { deployer: other, mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC', bonded: false, launches_total: 1 },
         // No readable deployer, which is the whole point: this row's wallet cannot be named.
-        { mint: 'X', created_at: 'not a timestamp', bonded: false },
+        { mint: 'X', created_at: 'not a timestamp', bonded: false, launches_total: 1 },
       ]),
     });
     const c = new DuneClient({
@@ -3377,7 +3509,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       '/query/1': okJson({ query_sql: CREATION_SQL }),
       '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
       '/execution/e1/results': resultOf([
-        { deployer: answered, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
+        { deployer: answered, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true, launches_total: 1 },
       ]),
     });
     const c = new DuneClient({
@@ -3421,7 +3553,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       if (path.startsWith('/query/1')) return okJson({ query_sql: CREATION_SQL })();
       if (path.startsWith('/execution/e1/status')) return okJson({ state: 'QUERY_STATE_COMPLETED' })();
       if (path.startsWith('/execution/e1/results')) {
-        return resultOf([{ deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true }])();
+        return resultOf([{ deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true, launches_total: 1 }])();
       }
       throw new Error(`unstubbed ${path}`);
     });
@@ -3452,6 +3584,85 @@ describe('the enumeration spends nothing it does not have to', () => {
       expect(e.byWallet.get(w)?.reasons.join(' ')).toMatch(/not the base58 shape/);
     }
     expect(e.byWallet.get(DUNE_WALLET)?.usable).toBe(true);
+  });
+
+  it('lets ONE oversized wallet fall back ALONE, and the rest of the batch keeps its Dune answer', async () => {
+    // The defect this closes: enumeration is ONE execution for the whole batch, so a batch-level
+    // row refusal is an all-or-nothing failure. An industrial-spam deployer — README records an
+    // 8,518-deploy wallet reachable from the `total_bonded` leaderboard, one of the three seeds —
+    // carried the whole result past `maxResultRows` and sent EVERY candidate to a walk measured in
+    // hours over ~1 credit of Dune spend. The cap is per DEPLOYER now, so only the wallet that blew
+    // its own budget walks.
+    const spam = '4q4GKBpVXwGKcVfHUP2xNRxrEpRNqNKrjqvBUCHhVsmL';
+    const ordinary = '32CdQdBUxbCsLy5AUHWmyidfwhgGUr9N573NBUrDpump';
+    const askable = [DUNE_WALLET, spam, ordinary];
+    const cap = launchCapPerWallet(askable.length, DUNE_BOUNDS.maxResultRows);
+    // What the SQL returns: the two ordinary wallets whole, the spam wallet cut to the cap with its
+    // TRUE count travelling beside every row.
+    const rows: unknown[] = [
+      { deployer: DUNE_WALLET, mint: 'A', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true, launches_total: 2 },
+      { deployer: DUNE_WALLET, mint: 'B', created_at: '2026-01-02 00:00:00.000 UTC', bonded: false, launches_total: 2 },
+      { deployer: ordinary, mint: 'C', created_at: '2026-01-03 00:00:00.000 UTC', bonded: true, launches_total: 1 },
+    ];
+    for (let i = 0; i < cap; i++) {
+      rows.push({
+        deployer: spam,
+        mint: `S${i}`,
+        created_at: '2026-01-04 00:00:00.000 UTC',
+        bonded: false,
+        launches_total: 8518,
+      });
+    }
+    const fetchImpl = stub({
+      '/query/2/results': resultOf(HEALTHY_PROBE()),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/query/1/execute': okJson({ execution_id: 'e1' }),
+      '/query/1': okJson({ query_sql: CREATION_SQL }),
+      '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      '/execution/e1/results': resultOf(rows),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: askable,
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+
+    // Every OTHER candidate is enumerated from Dune, which is the whole acceptance test.
+    expect(e.byWallet.get(DUNE_WALLET)?.usable).toBe(true);
+    expect(e.byWallet.get(DUNE_WALLET)?.launches).toBe(2);
+    expect(e.byWallet.get(ordinary)?.usable).toBe(true);
+
+    // The oversized one falls back ALONE, carrying a readable reason that names both numbers —
+    // asserted as a reason, not as a count, because "1 wallet refused" does not tell an operator
+    // whether the cap fired or the vendor did something else.
+    const refused = e.byWallet.get(spam);
+    expect(refused?.usable).toBe(false);
+    expect(refused?.truncatedByLaunchCap).toBe(true);
+    expect(refused?.declaredLaunches).toBe(8518);
+    expect(refused?.reasons.join(' ')).toMatch(
+      new RegExp(`declares 8518 creation\\(s\\) for this wallet and returned ${cap} of them`),
+    );
+    expect(refused?.reasons.join(' ')).toMatch(/PREFIX of this wallet's history, not a short history/);
+    expect(refused?.reasons.join(' ')).toMatch(/every other candidate in the batch keeps its Dune answer/);
+    // And it is not read as a wallet with `cap` launches: the merge must not be handed a prefix.
+    expect(refused?.covered.exhausted).toBe(false);
+
+    expect(e.launchCap).toBe(cap);
+    expect(e.walletsRefusedByLaunchCap).toBe(1);
+    // Still ONE execution for the whole batch. The fix costs no extra Dune spend — which is the
+    // reason it is a per-deployer cap inside the SQL rather than chunking or a second query.
+    expect(c.executions()).toBe(1);
   });
 
   it('spends no execution at all when every candidate fails the wallet shape', async () => {

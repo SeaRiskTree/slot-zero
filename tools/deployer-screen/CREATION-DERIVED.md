@@ -434,7 +434,7 @@ this file asserting it. Read through the wired code, 2026-08-03:
 Union coverage **2024-01-14 → 2026-08-03, 0 months with no row**. `call_create_v2`'s five months is
 the trap, measured rather than quoted.
 
-Eight refusals, and a refused reading **falls back to the walk** rather than being published. The
+Nine refusals, and a refused reading **falls back to the walk** rather than being published. The
 rule behind all of them is one rule: *when the Dune reading cannot vouch for itself, the walk answers
 instead*. Falling back costs wall clock; publishing a count the evidence does not support costs a
 verdict.
@@ -469,7 +469,58 @@ verdict.
 8. **a candidate whose address is not base58-shaped**, which is never put in the query parameter at
    all. Wallets are vendor-supplied and land inside a single-quoted SQL literal; this is the first
    path in the repo where such a string reaches a query language. The count of dropped candidates is
-   on the run record (`dune.walletsRefusedByShape`) so a narrowed batch is visible, not silent.
+   on the run record (`dune.walletsRefusedByShape`) so a narrowed batch is visible, not silent;
+9. **a wallet the per-deployer cap truncated** — see §8.2b. Its rows are a *prefix* of its history
+   and the answer says so, so it is refused rather than read as a short one, and it falls back
+   **alone**.
+
+### 8.2b The per-deployer cap, and why the refusal moved off the batch
+
+**The defect it fixes.** Enumeration is ONE execution for a whole candidate batch, and
+`dune.maxResultRows` refuses the whole RESULT. Those two together made the row ceiling an
+all-or-nothing failure: one deployer above it cost every other candidate in the run its Dune answer.
+That is not hypothetical for this seed population — `README.md` records the `total_bonded`
+leaderboard, one of the three enumeration seeds, serving an **8,518-deploy** wallet, and the
+pre-filter skips *low*-deploy wallets without capping high ones. Two or three of those in one batch
+carry it past 20,000 rows. The cost of being wrong is large and one-sided: ~13 hours of RPC walking
+against ~1 credit of Dune.
+
+**The fix, and where it lives.** `CREATION_SQL` ranks each deployer's rows and returns at most
+`floor(19999 / <deployers in the batch>)` of them, plus that deployer's **true** count as
+`launches_total`. Three consequences:
+
+| | before | after |
+|---|---|---|
+| rows a run may return | unbounded until the ceiling refuses | **<= 19,999 by construction**, any batch size |
+| one 8,518-deploy wallet in a batch of 195 | whole batch → RPC walk | that wallet → RPC walk, 194 keep Dune |
+| executions per run | 1 | **1** (the cap is inside the same query) |
+
+The cap is **derived, not pinned**: no measurement fixes a good per-deployer launch count, and
+inventing one would be worse than saying so. What *is* pinned is the row ceiling the bill is bounded
+by, and the cap is that ceiling shared out — 102 rows at the 195-candidate cap, **277** at the ~72
+distinct wallets both committed runs actually seeded, **3,999** on a five-wallet reproduction run.
+Against the only true per-wallet counts this repo holds (§8.3: 8, 10, 65, 152, **247**), a realistic
+batch enumerates every one of them whole, and §8.3 reproduces unchanged at its own batch size.
+
+**A capped wallet is a prefix, never a short history**, and the two checks that could be confused are
+kept apart on purpose: `rows.length !== total_row_count` is about the RESULT SET losing bytes to
+`/results` paging on response size, and `launches_total > rows returned for this wallet` is about the
+QUERY cutting one wallet's history deliberately. `launches_total` is type-checked as hard as
+`bonded` — a missing one counts the row **unreadable** rather than defaulting to "not capped",
+because a default would delete the detection the day the column is renamed and gate every capped
+wallet on a truncated count reported as a total.
+
+**Bytes, which is the billed unit, stay bounded and the bound is stated.** Reads are still issued
+with `?limit=dune.maxResultRows`, so no read can exceed it whatever the query does. The measured
+**~97 bytes/row was taken at four columns**; the fifth is bounded by arithmetic at <=24 bytes, so
+<=121 bytes/row and <=~2.42 MB (~48 credits) for a read that fills the ceiling. **121 is a ceiling
+nobody has observed** — replace it with a measurement from the next real run rather than quoting it
+as one. A median-shaped full-cap run is unchanged at ~9,750 rows and ~20 credits.
+
+**DEPLOY STEP.** This changed `CREATION_SQL`, so **saved query `8204672` must be updated in place**
+to the committed text. `assertSavedQueryMatches` runs *before* the execution, so until it is, every
+keyed run refuses the Dune leg terminally and falls back to the walk. `README.md` → *"Deploying a
+change to the committed SQL"* owns the step.
 
 ### 8.3 Reproduced against the 239-launch ground truth, through the production code path
 
@@ -506,10 +557,12 @@ a curve read.
 The scan cost is nearly independent of how many wallets are in the filter, so **batching is the cost
 model**: what scales is bytes returned, measured at **~97 bytes/row** after the create transaction
 and the graduation timestamp were dropped from the `SELECT` (they halved the payload and the tool
-reads neither). At the 195-candidate cap and a median ~50-launch history that is ~0.95 MB, about
-**20 credits a run — roughly 125 full-cap runs a month**. `dune.maxResultRows` caps a read at 20,000
-rows (~1.94 MB, ~39 credits) and **refuses rather than pages**: an unbounded read is an unbounded
-bill.
+reads neither) — **that measurement was taken at four columns**, and §8.2b states the five-column
+ceiling and why it is arithmetic rather than a measurement. At the 195-candidate cap and a median
+~50-launch history that is ~0.95 MB, about **20 credits a run — roughly 125 full-cap runs a month**.
+`dune.maxResultRows` caps a read at 20,000 rows and **refuses rather than pages**: an unbounded read
+is an unbounded bill. Since §8.2b the SQL also bounds a run at **19,999 rows by construction**, so
+that ceiling is the backstop rather than the first line of defence.
 
 Two spend rules that are not negotiable, both from the vendor's own billing model:
 
@@ -562,6 +615,12 @@ committed here too** — `dune.mjs` → `CREATION_SQL` and `COVERAGE_SQL` — an
 loudly instead of returning a different measurement under the same name. The comparison normalises
 line endings and trailing space only: an edited *comment* still fails it, because the comments are
 where the traps above are written down.
+
+**So a change to either committed text is a DEPLOY STEP against its saved query**, and until the
+step is taken the run refuses that leg rather than answering differently — which is the safe
+direction, and still a run with no Dune answer for anybody. `README.md` → *"Deploying a change to the
+committed SQL"* holds the procedure and the id-to-text table. **Outstanding right now: `8204672`
+carries the pre-cap four-column SQL and must be updated in place to the five-column text of §8.2b.**
 
 ### 8.7 Terms of service
 

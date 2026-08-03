@@ -171,10 +171,30 @@ confident wrong answer:
    past 6 h (re-executed once, since that is the one refusal asking again can fix), and per wallet a
    history reaching the probed floor or past the probed ceiling.
 
+4. **One deployer may not price the whole batch.** Enumeration is ONE execution for every candidate,
+   so a refusal at the RESULT level is an all-or-nothing failure: before the per-deployer cap, a
+   single industrial-spam wallet — the `total_bonded` leaderboard this tool seeds from serves an
+   **8,518-deploy** one — carried the result past `dune.maxResultRows` and sent **every** candidate
+   in the run to the walk, trading ~13 hours of walking for ~1 credit of Dune. The SQL now returns at
+   most `floor(19999 / <deployers in the batch>)` rows per deployer and carries each deployer's
+   **true** count beside them, so the whole result is bounded at 19,999 rows *by construction* and a
+   truncated history is detected exactly. The oversized wallet is refused with a reason and takes the
+   walk **alone**; everyone else keeps their Dune answer. The cap is 102 rows at the 195-candidate
+   cap, 277 at the ~72 both committed runs actually seeded, and 3,999 on a five-wallet reproduction
+   run — past the subject deployer's own 247 launches. **The result-row ceiling is kept as the
+   backstop**, not deleted: ordinary data can no longer reach it, so reaching it means the cap did
+   not apply.
+
 **And the same rule past coverage: a reading that cannot vouch for itself falls back to the walk
 rather than being gated on.** A result read that cannot prove it is whole (no `total_row_count`, a
 total above the ceiling, exactly the `?limit=` many rows, or rows disagreeing with the declared
-total — `/results` pages on response size independently of our limit) is refused. **Any unreadable
+total — `/results` pages on response size independently of our limit) is refused. **A wallet the
+per-deployer cap truncated is refused too, and it is NOT the same check**: that one compares
+`rows.length` against the result set's own `total_row_count`, where a mismatch means the vendor
+paged on response size; this one compares the rows returned for ONE wallet against the count that
+wallet's own rows declare, where a shortfall means the query cut the history on purpose. A capped
+wallet is a **prefix**, never a short-but-complete launch history, and reading it as the second
+would gate a deployer on a truncated count presented as a total. **Any unreadable
 row refuses the whole batch** — a row that fails to parse commonly has no readable `deployer`, so the
 wallet whose history came back short is exactly the one that cannot be named. **`bonded` is
 type-checked, not truth-checked**: `false` is legitimate there, so `=== true` would collapse "the
@@ -185,7 +205,31 @@ reading it as a launch history of zero would let the merge reclassify that walle
 listing as acquired and gate it on nothing. **A candidate whose address is not base58-shaped is never
 sent** — wallets are vendor-supplied and land inside a single-quoted SQL literal — and the count of
 dropped candidates is on the record so a narrowed batch is visible.
-[CREATION-DERIVED.md §8.2](./CREATION-DERIVED.md) lists all eight.
+[CREATION-DERIVED.md §8.2](./CREATION-DERIVED.md) lists all nine.
+
+### Deploying a change to the committed SQL
+
+**`CREATION_SQL` and `COVERAGE_SQL` are committed byte for byte, and `assertSavedQueryMatches`
+compares each against the SAVED query before an execution is spent.** So editing either text in this
+repo is only half the change: **the saved Dune query must be updated in place to match, or the next
+real run refuses the whole Dune leg terminally** — before spending anything, on every run, until they
+agree. The failure is loud and costs no credits, which is the design; it is still a run with no Dune
+answer for anybody.
+
+| what changed | saved query to update, in place |
+|---|---|
+| `CREATION_SQL` | **`8204672`** — the enumeration |
+| `COVERAGE_SQL` | **`8204603`** — the coverage probe |
+
+The ids are pinned in `thresholds.json` → `dune`. **There is no new query to create**: the free tier
+allows 10 private queries and the account holds 10, which is why both production queries were
+upgraded in place rather than added. Paste the committed text verbatim — comments included, since
+`normaliseSql` compares everything but line endings and trailing whitespace, and the comments are
+where the traps are written down.
+
+**Currently outstanding: `8204672` carries the pre-cap four-column SQL and must be updated to the
+five-column text with the per-deployer cap** before the next keyed run. Until it is, `DUNE_API_KEY`
+runs fall back to the creation walk with a message naming the mismatch.
 
 **Spend.** Free tier, 2,500 credits/month, **shared**, and only 10 private queries. **A failed
 execution is still billed and is terminal — `DuneClient.execute` is the one call in this repository

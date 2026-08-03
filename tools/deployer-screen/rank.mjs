@@ -166,7 +166,11 @@ export function applyGate(input, t) {
  *   the probed surfaces' own first row falls back to the walk while the rest of the batch does not.
  * @property {number | null} duneLaunches Launches the Dune enumeration attributed to this wallet,
  *   `null` when Dune was not consulted. Kept even when the reading FELL BACK, so a record shows what
- *   the refused answer would have said rather than only that it was refused.
+ *   the refused answer would have said rather than only that it was refused. **On a candidate the
+ *   per-deployer row cap truncated this is a PREFIX, not a count**: it is how many rows came back,
+ *   while the true count the answer declared appears only in the `duneFallbackReasons` sentence. So
+ *   a large disagreement between this and the walk's own total on a cap-refused candidate is the
+ *   contract working, not two broken surfaces — read the reason before diffing the two.
  * @property {string[]} duneFallbackReasons Why this candidate did not use the Dune reading, empty
  *   when it did. **An empty list on a `keyless-rpc`/`helius` source means Dune was never consulted
  *   at all** — no key, `--no-dune`, or `--ownership-only`; the run-level `dune` block says which.

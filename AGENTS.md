@@ -275,7 +275,7 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   reading falls back to the walk — **per wallet**, so one run can carry both sources and every
   candidate's `enumerationSource` says which answered it.
 - **The refusal rule is general, not coverage-only: a reading that cannot vouch for itself falls back
-  to the walk rather than being gated on.** `CREATION-DERIVED.md` §8.2 lists all eight; four are not
+  to the walk rather than being gated on.** `CREATION-DERIVED.md` §8.2 lists all nine; five are not
   the probe. A result read that cannot prove it is whole (missing `total_row_count`, a total over the
   ceiling, exactly the `?limit=` many rows, or rows disagreeing with the declared total — `/results`
   pages on response size independently of ours) is refused. **One unreadable row refuses the WHOLE
@@ -290,19 +290,41 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   is not base58-shaped is never sent**: wallets are vendor-supplied and land inside a single-quoted
   SQL literal, and this is the only path in the repo where such a string reaches a query language
   (`dune.mjs` → `WALLET_SHAPE`; the record's `dune.walletsRefusedByShape` counts the drops).
+- **THE ROW CEILING REFUSES A RESULT, AND ENUMERATION IS ONE EXECUTION FOR THE WHOLE BATCH — so the
+  cap that keeps one spam wallet from pricing the batch is PER DEPLOYER, inside the SQL.**
+  `CREATION_SQL` returns at most `greatest(500, floor(19999 / <deployers in the batch>))` rows per
+  deployer — **most recent first**, because the tool asks what a wallet is creating now — plus each
+  deployer's TRUE count (`launches_total`), so an oversized wallet (the `total_bonded` leaderboard
+  seed serves an 8,518-deploy one) falls back ALONE instead of costing all 195 candidates their Dune
+  answer (~13 h of walking against ~1 credit). **A capped wallet is a PREFIX, never a
+  short-but-complete history**, and the check is deliberately separate from the reader's
+  `rows.length !== total_row_count` (vendor paging). `launches_total` is type-checked as hard as
+  `bonded`: absent ⇒ unreadable row, never "not capped". **The cap is `max(pinned floor 500, ceiling
+  shared out)`, and the floor is the load-bearing half**: the share-out alone is 102 rows at the
+  195-candidate cap, which would truncate the subject deployer (247) and `4q4GKBpV…` (152) on every
+  full run, so 500 (~2× the largest measured history, ~17× under the spam extreme) is what keeps
+  every measured wallet whole at ANY batch size. **The rows bound is therefore
+  `max(19,999, <deployers> × 500)`, NOT 19,999 by construction** — above 39 deployers it exceeds
+  `maxResultRows`, and the ceiling stays as the backstop that refuses such a result whole, exactly as
+  before the cap existed. Bytes are bounded separately and unchanged, by `?limit=maxResultRows`.
+  `CREATION-DERIVED.md` §8.2b owns it.
 - **A FAILED EXECUTION IS STILL BILLED AND IS TERMINAL.** `DuneClient.execute` is the one call in
   this repository that is never retried, on any failure, for any reason; polling and result reads are
   retried because they return no bytes when they fail. **Budget from *billed* credits, not
   `execution_cost_credits`, which understates by ~3.5×** — retrieving results is ~71% of the bill at
   ~20 credits/MB. Hence: aggregate server-side, select only the columns the tool reads (dropping the
-  create tx and graduation timestamp halved the payload to **~97 bytes/row**), one execution for the
-  whole batch, and a **cached** probe read by default.
+  create tx and graduation timestamp halved the payload to **~97 bytes/row**, measured at FOUR
+  columns — the fifth is bounded by arithmetic, not measured), one execution for the whole batch,
+  and a **cached** probe read by default.
 - **Free tier: 2,500 credits/month, SHARED, and only 10 PRIVATE QUERIES — the account holds 10, so a
   new query cannot be created.** The two production queries were upgraded in place (`8204672`
   enumeration, `8204603` coverage). Their SQL is committed in `dune.mjs` and
   `assertSavedQueryMatches` compares it before spending an execution, because a saved query is
-  editable from a browser and its answer is a gate input. **Nothing tracks the month** — the tool is
-  stateless between runs. Auth is the `X-Dune-API-Key` **header**, never `Bearer`.
+  editable from a browser and its answer is a gate input. **EDITING EITHER SQL IN THIS REPO IS HALF
+  THE CHANGE: the saved query must be updated IN PLACE or the next real run refuses the whole Dune
+  leg terminally** — the comparison happens before the execution. `README.md` → "Deploying a change
+  to the committed SQL" owns the step and names which id goes with which text. **Nothing tracks the
+  month** — the tool is stateless between runs. Auth is the `X-Dune-API-Key` **header**, never `Bearer`.
 - **Measured cost, 2026-08-03:** five deployers' whole histories = **8 requests, 1 execution, 1.75
   billed credits**; a 195-candidate run ≈ 20 credits, i.e. ~125 full-cap runs a month. Against 793
   Helius credits and 12 requests for ONE deployer, or 7,166 keyless requests and ~287 min.

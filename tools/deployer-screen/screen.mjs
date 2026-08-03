@@ -747,6 +747,16 @@ export async function main(opts, env, out, err) {
           if (duneEnumeration.unreadableRows > 0) {
             out('  !! unreadable rows: the whole batch is REFUSED and every candidate takes the walk');
           }
+          // The cap is per DEPLOYER, so this line reports a handful of wallets walking rather than
+          // a whole batch losing its Dune answer — which is what the run-level row ceiling used to
+          // cost when one industrial-spam wallet blew it for everyone. See dune.mjs → CREATION_SQL.
+          if (duneEnumeration.walletsRefusedByLaunchCap > 0) {
+            out(
+              `  !! ${duneEnumeration.walletsRefusedByLaunchCap} candidate(s) have more creations than ` +
+                `this batch's per-deployer cap of ${duneEnumeration.launchCap} row(s) — their Dune ` +
+                `history is a prefix, so THEY take the walk and every other candidate keeps its answer`,
+            );
+          }
           if (duneEnumeration.walletsRefusedByShape > 0) {
             out(
               `  !! ${duneEnumeration.walletsRefusedByShape} candidate(s) were never sent to Dune — ` +

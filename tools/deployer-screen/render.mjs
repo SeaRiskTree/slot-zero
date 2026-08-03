@@ -19,6 +19,10 @@
  */
 
 import { buildPath, ENDPOINT_ROLES } from './client.mjs';
+// The per-deployer cap's arithmetic, imported rather than restated: a dry run that printed a bound
+// the query does not apply would be worse than printing none. It is arithmetic over a pinned
+// threshold — no Dune-derived value crosses this import.
+import { LAUNCH_CAP_FLOOR, launchCapPerWallet } from './dune.mjs';
 import { LANDING_TIP_CAVEAT } from './entry.mjs';
 import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
@@ -130,12 +134,26 @@ const DUNE_MONTHLY_CREDITS = 2_500;
  * 20 credits/MB. That is ~0.38 per deployer at a batch of 5, and it FALLS as the batch grows,
  * because the table scan is nearly independent of how many wallets are in the filter (measured at 5
  * and at 20) while only the bytes scale. 0.1 is the per-deployer figure at the candidate cap, where
- * the fixed scan is amortised over 195 wallets and ~97 bytes/row is the whole marginal cost: 195
+ * the fixed scan is amortised over 195 wallets and the per-row bytes are the whole marginal cost: 195
  * deployers at a median ~50 launches is ~0.95 MB, about 19 credits of export plus ~1 of compute.
+ * The 46,718 bytes above were measured at FOUR columns; `CREATION_SQL` now selects five, whose
+ * per-row cost is bounded rather than measured — see `DUNE_BYTES_PER_ROW_CEILING` below.
  * Quoted beside the ceiling for the same reason the Helius median is — they differ by 40x, and
  * printing only one of them misleads in whichever direction it was chosen.
  */
 const DUNE_EXPECTED_CREDITS_PER_CANDIDATE = 0.1;
+
+/**
+ * An UPPER BOUND on the bytes one enumeration row costs, in bytes.
+ *
+ * **97 is a MEASUREMENT and it was taken at FOUR columns** (482 rows, 46,718 bytes, 2026-08-03).
+ * `CREATION_SQL` now selects five: `launches_total` is what makes its per-deployer cap detectable
+ * instead of silent. The fifth column's cost has NOT been measured on this account, so it is bounded
+ * by arithmetic rather than invented — the widest a JSON row can carry it is the key plus a count
+ * with more digits than pump.fun has mints, about 24 bytes. 121 is therefore a ceiling that the next
+ * real run should REPLACE with a measurement, not a figure anyone has observed.
+ */
+const DUNE_BYTES_PER_ROW_CEILING = 121;
 
 /**
  * Measured wall-clock cost of ONE indexed page, in milliseconds.
@@ -1148,7 +1166,10 @@ export function renderDryRun(plan) {
       L.push('  ONE EXECUTION FOR THE WHOLE BATCH, and that is the cost model rather than a');
       L.push('  convenience: the table scan costs nearly the same for 5 wallets as for 20, so the');
       L.push('  per-deployer price falls as the batch grows. What scales is BYTES RETURNED, which');
-      L.push('  is why the SQL selects four columns and why maxResultRows is the binding ceiling.');
+      L.push('  is why the SQL selects five columns and no more, and why the rows a single deployer');
+      L.push('  may contribute are CAPPED. The cap is per DEPLOYER, not per batch: one');
+      L.push('  industrial-spam wallet used to carry the whole result past the row ceiling and send');
+      L.push('  EVERY candidate to the walk. Now that wallet walks alone and the rest keep Dune.');
       L.push('');
       L.push('  A FAILED EXECUTION IS STILL BILLED AND IS NEVER RETRIED. Polling is retried; an');
       L.push('  execution is not, because a second one buys a second bill for the same answer.');
@@ -1157,18 +1178,41 @@ export function renderDryRun(plan) {
         `  executions                    up to ${d.maxExecutionsPerRun}  (1 enumeration + at most 1 probe refresh)`,
       );
       L.push(`  requests                      ceiling ${d.maxRequestsPerRun}, polling and result reads included`);
+      // THE TWO BOUNDS THAT ACTUALLY HOLD, printed as the arithmetic that produces them. The SQL's
+      // per-deployer cap is the greater of a pinned floor and the row ceiling shared out, so above
+      // 39 deployers the floor binds and the SQL's rows bound EXCEEDS the reader's ceiling — which
+      // the reader then refuses whole, the fallback merged `main` already had. What bounds the
+      // BILLED unit is unchanged: every read is issued with `?limit=maxResultRows`.
+      const plannedCandidates = Math.max(1, plan.maxCandidates);
+      const perDeployerRows = launchCapPerWallet(plannedCandidates);
+      const sqlRows = perDeployerRows * plannedCandidates;
+      const readableRows = Math.min(sqlRows, d.maxResultRows);
       L.push(
-        `  rows                          ceiling ${d.maxResultRows.toLocaleString('en-US')} ` +
-          `(~97 bytes/row measured, so ~${((d.maxResultRows * 97) / 1_000_000).toFixed(2)} MB)`,
+        `  rows, per deployer            cap ${perDeployerRows.toLocaleString('en-US')} at this run's ${plannedCandidates} candidate(s) ` +
+          `(the greater of the ${LAUNCH_CAP_FLOOR}-row floor and the ${d.maxResultRows.toLocaleString('en-US')}-row ceiling shared out)`,
+      );
+      L.push(
+        `  rows, whole run               at most ${sqlRows.toLocaleString('en-US')} from the SQL` +
+          (sqlRows > d.maxResultRows
+            ? `, ABOVE the ${d.maxResultRows.toLocaleString('en-US')} ceiling — a batch that fills every cap is REFUSED whole and walks`
+            : `, under the ${d.maxResultRows.toLocaleString('en-US')} ceiling the reader refuses at`),
+      );
+      L.push(
+        `  bytes                         at most ~${((readableRows * DUNE_BYTES_PER_ROW_CEILING) / 1_000_000).toFixed(2)} MB ` +
+          `(<=${DUNE_BYTES_PER_ROW_CEILING} bytes/row: 97 MEASURED at four columns, +24 arithmetic for the fifth)`,
       );
       L.push(
         `  EXPECTED                      about ${(DUNE_EXPECTED_CREDITS_PER_CANDIDATE * plan.maxCandidates).toFixed(1)} credits at the candidate cap ` +
           `(~${DUNE_EXPECTED_CREDITS_PER_CANDIDATE} per deployer, measured 2026-08-03)`,
       );
       L.push(
-        `  WORST CASE                    about ${Math.round((d.maxResultRows * 97 * 20) / 1_000_000)} credits ` +
-          `if the row ceiling is reached, at the published 20 credits/MB`,
+        `  WORST CASE                    about ${Math.round((readableRows * DUNE_BYTES_PER_ROW_CEILING * 20) / 1_000_000)} credits ` +
+          `for the largest read the ?limit= allows, at the published 20 credits/MB`,
       );
+      L.push(
+        `  A DEPLOYER ABOVE THE CAP IS REFUSED, NOT TRUNCATED QUIETLY: its rows are a prefix, its`,
+      );
+      L.push('  true count comes back beside them, and it alone falls back to the creation walk.');
       L.push(
         `  Free tier ${DUNE_MONTHLY_CREDITS.toLocaleString('en-US')} credits/month and SHARED with whatever else holds this key.`,
       );

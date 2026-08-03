@@ -171,10 +171,34 @@ confident wrong answer:
    past 6 h (re-executed once, since that is the one refusal asking again can fix), and per wallet a
    history reaching the probed floor or past the probed ceiling.
 
+4. **One deployer may not price the whole batch.** Enumeration is ONE execution for every candidate,
+   so a refusal at the RESULT level is an all-or-nothing failure: before the per-deployer cap, a
+   single industrial-spam wallet — the `total_bonded` leaderboard this tool seeds from serves an
+   **8,518-deploy** one — carried the result past `dune.maxResultRows` and sent **every** candidate
+   in the run to the walk, trading ~13 hours of walking for ~1 credit of Dune. The SQL now returns at
+   most `greatest(500, floor(19999 / <deployers in the batch>))` rows per deployer — most recent
+   first, since the question is what a wallet is creating *now* — and carries each deployer's
+   **true** count beside them, so a truncated history is detected exactly. The oversized wallet is
+   refused with a reason and takes the walk **alone**; everyone else keeps their Dune answer.
+   **The 500 is a floor, and it is what keeps an ordinary deployer whole at any batch size**: the
+   share-out alone is 102 rows at the 195-candidate cap, which would truncate the subject deployer
+   (247 launches) and `4q4GKBpV…` (152) on every full run. 500 is ~2× the largest per-wallet history
+   this repo has measured (8, 10, 65, 152, 247 — `CREATION-DERIVED.md` §8.3) and ~17× below the
+   8,518-deploy extreme. So the rows bound is `max(19,999, <deployers> × 500)`, **not** 19,999 by
+   construction: above 39 deployers it exceeds `dune.maxResultRows`, and **the result-row ceiling is
+   kept as the backstop** that refuses such a result whole — the same fallback as before the cap
+   existed. It takes roughly 40 wallets of 500+ launches in one batch to get there.
+
 **And the same rule past coverage: a reading that cannot vouch for itself falls back to the walk
 rather than being gated on.** A result read that cannot prove it is whole (no `total_row_count`, a
 total above the ceiling, exactly the `?limit=` many rows, or rows disagreeing with the declared
-total — `/results` pages on response size independently of our limit) is refused. **Any unreadable
+total — `/results` pages on response size independently of our limit) is refused. **A wallet the
+per-deployer cap truncated is refused too, and it is NOT the same check**: that one compares
+`rows.length` against the result set's own `total_row_count`, where a mismatch means the vendor
+paged on response size; this one compares the rows returned for ONE wallet against the count that
+wallet's own rows declare, where a shortfall means the query cut the history on purpose. A capped
+wallet is a **prefix**, never a short-but-complete launch history, and reading it as the second
+would gate a deployer on a truncated count presented as a total. **Any unreadable
 row refuses the whole batch** — a row that fails to parse commonly has no readable `deployer`, so the
 wallet whose history came back short is exactly the one that cannot be named. **`bonded` is
 type-checked, not truth-checked**: `false` is legitimate there, so `=== true` would collapse "the
@@ -185,7 +209,34 @@ reading it as a launch history of zero would let the merge reclassify that walle
 listing as acquired and gate it on nothing. **A candidate whose address is not base58-shaped is never
 sent** — wallets are vendor-supplied and land inside a single-quoted SQL literal — and the count of
 dropped candidates is on the record so a narrowed batch is visible.
-[CREATION-DERIVED.md §8.2](./CREATION-DERIVED.md) lists all eight.
+[CREATION-DERIVED.md §8.2](./CREATION-DERIVED.md) lists all nine.
+
+### Deploying a change to the committed SQL
+
+**`CREATION_SQL` and `COVERAGE_SQL` are committed byte for byte, and `assertSavedQueryMatches`
+compares each against the SAVED query before an execution is spent.** So editing either text in this
+repo is only half the change: **the saved Dune query must be updated in place to match, or the next
+real run refuses the whole Dune leg terminally** — before spending anything, on every run, until they
+agree. The failure is loud and costs no credits, which is the design; it is still a run with no Dune
+answer for anybody.
+
+| what changed | saved query to update, in place |
+|---|---|
+| `CREATION_SQL` | **`8204672`** — the enumeration |
+| `COVERAGE_SQL` | **`8204603`** — the coverage probe |
+
+The ids are pinned in `thresholds.json` → `dune`. **There is no new query to create**: the free tier
+allows 10 private queries and the account holds 10, which is why both production queries were
+upgraded in place rather than added. Paste the committed text verbatim — comments included, since
+`normaliseSql` compares everything but line endings and trailing whitespace, and the comments are
+where the traps are written down.
+
+**Currently outstanding: `8204672` carries the pre-cap four-column SQL and must be updated to the
+five-column text with the per-deployer cap** before the next keyed run. Until it is, `DUNE_API_KEY`
+runs fall back to the creation walk with a message naming the mismatch. **Delete this paragraph (and
+the matching one in `CREATION-DERIVED.md` §8.6) as part of that update** — it is a point-in-time
+deployment status, and once `8204672` matches nothing fails, so left in place it reads as a live
+warning forever.
 
 **Spend.** Free tier, 2,500 credits/month, **shared**, and only 10 private queries. **A failed
 execution is still billed and is terminal — `DuneClient.execute` is the one call in this repository
@@ -994,7 +1045,7 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does — but a 429, a 5xx or a timeout means the request was not served, so re-issuing it is nearer to one successful request than to two. Without it the caller re-runs the whole walk, which is worse for pump.fun too. A 4xx that is not a 429 is never retried: it is the endpoint's considered answer. |
 | Dune executions, creation enumeration | **2 per run** (1 enumeration + at most 1 probe refresh) | `thresholds.json` → `dune`, and the unit is the point: **an execution is billed whether or not it succeeds and is never retried**, so this is the bound on the only unrecoverable Dune spend. ONE execution serves the whole candidate batch — the table scan costs nearly the same for 5 wallets as for 20, so what scales is bytes returned, not wallets. |
 | Dune requests, creation enumeration | 100 per run | Separate from the execution ceiling because it bounds a different thing: polling and result reads bound the wall clock and the polite use of a shared free-tier host, not the money. 2 × (1 SQL verification + 1 execute + 40 status polls + 1 results read) = 86, plus 14 retry headroom. A real run spends about **8**. |
-| Dune result rows | 20,000 | Results are billed at ~20 credits/MB and that is ~71% of the bill. At the measured **~97 bytes/row** this ceiling is ~1.94 MB (~39 credits); a 195-candidate run at a median ~50-launch history is ~0.95 MB (~20 credits), i.e. roughly 125 full-cap runs against the free 2,500/month. It **refuses rather than pages**: an unbounded read is an unbounded bill. The allowance is **shared** and **nothing here tracks the month**. |
+| Dune result rows | 20,000 per read, and **at most `greatest(500, floor(19999 / <deployers in the batch>))` rows per deployer inside the SQL** | Results are billed at ~20 credits/MB and that is ~71% of the bill. The **~97 bytes/row** measurement was taken at FOUR columns; `CREATION_SQL` now selects five, and the fifth is bounded by arithmetic at ≤24 bytes, so ≤121 bytes/row — this ceiling is ≤~2.42 MB (~48 credits), **a ceiling nobody has observed** and one the next real run should replace with a measurement. A 195-candidate run at a median ~50-launch history is ~0.95 MB (~20 credits), i.e. roughly 125 full-cap runs against the free 2,500/month, unchanged by the cap. The read ceiling **refuses rather than pages** and is now the **backstop** behind the per-deployer cap, not the first line of defence; it stays reachable at roughly 40 wallets of 500+ launches in one batch, since the rows bound is `max(19,999, <deployers> × 500)` rather than 19,999 by construction. The allowance is **shared** and **nothing here tracks the month**. `thresholds.json` → `dune.justification.maxResultRows` and [CREATION-DERIVED.md §8.2b](./CREATION-DERIVED.md) own the arithmetic. |
 | Dune coverage staleness | 6 h | The probe cannot vouch for a period it does not reach, and the recent end is where a live screen looks. Dune's own freshness is ~3–4 minutes, so this bounds OUR cache, not the vendor: the probe defaults to a free cached read. Staleness is the one refusal asking again can fix, so it re-executes the probe **once**; a structural refusal (a missing table, a month with no rows) is not retried. |
 | Solana RPC ceiling, keyless creation walk | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. Governs the creation-derived walk **when no Helius key is present**. Whichever bound bites is recorded per candidate. |
 | Helius credit ceiling, indexed creation walk | **5,200 credits per candidate**, 1,100,000 per run | `thresholds.json` → `creation_walk_helius`, and the unit is the point — this provider bills by transactions **returned**, so a request ceiling cannot bound it. 5,200 clears the largest complete history measured (49,367 succeeded transactions = 4,940 credits) **plus the per-page guard**, which demands 100 credits for the page and 11 more reserved for the curve-classification pass — at 5,000 that guard stopped the walk after 49 pages, truncating the very wallet the ceiling was sized against. The per-candidate median is 320. The run ceiling makes the default plan admissible at 195 × 5,200 = 1,014,000 and is 11% of the monthly allowance, so **nine worst-case full-cap runs fit in a month** and the expected cost of one is ~0.62%. **The two move together**: the run ceiling is checked before the first request, so raising the per-candidate one alone would refuse every default plan. A plan that does not fit is **refused before the first request**, exactly like the keyed and keyless plans. A page is only started when a whole page's worst case still fits, so the ceiling is exact and never overshot. |

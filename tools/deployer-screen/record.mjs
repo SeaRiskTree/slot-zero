@@ -158,9 +158,13 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   launch sits at or before the probed surfaces' own first row falls back to the walk while the
  *   rest of the batch does not. Coverage is not the only refusal `duneFallbackReasons` carries — an
  *   unreadable row anywhere in the answer refuses the WHOLE batch, a wallet the enumeration returned
- *   no row for is refused as an absence of evidence rather than read as zero launches, and a
- *   candidate whose address is not base58-shaped is never sent to Dune at all, which the `dune`
- *   block's `walletsRefusedByShape` counts.
+ *   no row for is refused as an absence of evidence rather than read as zero launches, a candidate
+ *   whose address is not base58-shaped is never sent to Dune at all, which the `dune` block's
+ *   `walletsRefusedByShape` counts, and a candidate whose history the PER-DEPLOYER ROW CAP truncated
+ *   is refused so that it alone walks while the rest of the batch keeps its Dune answer. **That last
+ *   one changes how `creation.duneLaunches` reads on that candidate: it is the truncated PREFIX the
+ *   cap returned, not the count the answer declared**, and the declared total is only in the
+ *   `duneFallbackReasons` sentence. Do not read the two surfaces disagreeing there as a broken one.
  *   `creation.coveredFrom/ToIso` on a Dune candidate is the PROBE's
  *   bound rather than a walk's window, and `wholeHistory` is true inside it because the enumeration
  *   is an index of creation events, not a window walked backwards until a budget bit.

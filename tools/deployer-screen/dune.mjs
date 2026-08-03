@@ -64,10 +64,31 @@
  * - **A result read that cannot prove it is whole** — no declared total, a total over the ceiling,
  *   rows sitting exactly on the `?limit=`, or rows disagreeing with the declared total, which is
  *   Dune paging on response size rather than on ours. See {@link DuneResultSet}'s reader.
+ * - **A wallet whose rows the per-deployer cap TRUNCATED.** {@link CREATION_SQL} returns at most
+ *   {@link launchCapPerWallet} rows per deployer and carries each deployer's TRUE count beside them,
+ *   so a truncated history is detected exactly — rows returned below `launches_total` — and refused.
+ *   The cap is deliberate truncation rather than a vendor failure, and the two must not be confused:
+ *   see {@link toWalletEnumeration} for why a capped wallet is never a short-but-complete history.
  *
  * Every one of them leaves `usable: false` with a whole-sentence reason, and the candidate takes the
  * walk. Falling back costs wall clock; publishing a count the evidence does not support costs a
  * verdict, and that is the expensive side of the trade.
+ *
+ * ## The refusal's GRANULARITY is the wallet, not the batch, wherever the wallet can be named
+ *
+ * One execution answers for a whole batch, so a batch-wide refusal is expensive in a way a
+ * per-wallet one is not: every OTHER candidate loses a ~1-credit Dune answer and takes a walk
+ * measured in hours. The result-row ceiling used to be exactly that — one industrial-spam deployer
+ * (`README.md` records an 8,518-deploy wallet reachable from the `total_bonded` leaderboard, which
+ * is one of the three seeds) carried the whole batch past `maxResultRows` and sent EVERY candidate
+ * to the walk. {@link CREATION_SQL}'s per-deployer cap moves that refusal onto the one wallet that
+ * earned it. The batch-level ceiling in {@link DuneResultSet}'s reader is NOT deleted: it stays as
+ * the backstop, and under {@link LAUNCH_CAP_FLOOR} it is genuinely reachable rather than
+ * unreachable-by-a-bug — roughly 40 wallets of 500+ launches in one batch put a result past it, and
+ * the run then falls back exactly as it did before the cap existed. Two bounds hold and they are
+ * different bounds: BYTES at `?limit=maxResultRows` (<=20,000 rows at <=121 bytes/row, ~2.42 MB),
+ * and ROWS from the SQL at `max(`{@link SQL_ROW_CEILING}`, <deployers> × 500)` with the ceiling
+ * refusing anything above `maxResultRows` rather than publishing it.
  *
  * ## Spend
  *
@@ -85,11 +106,87 @@
 import { DuneRefused } from './client.mjs';
 
 /**
+ * The row ceiling {@link CREATION_SQL} divides between the batch's deployers, written as a literal
+ * inside that SQL because a saved query cannot read `thresholds.json`.
+ *
+ * It is `dune.maxResultRows - 1`: one under the ceiling {@link DuneResultSet}'s reader refuses at,
+ * so a result honouring the derived half of the cap can never sit ON its own `?limit=` either. The
+ * duplication is real and it is guarded — `test/deployer-screen.test.ts` → "the SQL's per-deployer
+ * cap is derived from the pinned row ceiling" fails if this number and the pinned threshold stop
+ * agreeing, because the saved query would then bound a run at a size the reader no longer accepts.
+ *
+ * **It does NOT bound a run's rows on its own.** {@link LAUNCH_CAP_FLOOR} is a floor under the
+ * share-out, so above 39 deployers the floor binds and the rows bound is `<deployers> × 500`. See
+ * {@link launchCapPerWallet} for the bound that actually holds and why the batch-level ceiling is
+ * kept as the backstop that refuses anything past `maxResultRows`.
+ */
+export const SQL_ROW_CEILING = 19999;
+
+/**
+ * The floor under the per-deployer cap, mirrored as a literal in {@link CREATION_SQL}'s `cap` CTE.
+ *
+ * **It exists so that no deployer this repo has ever measured is capped at any batch size.** A
+ * purely derived cap makes the truncation threshold a function of batch size, and at the tool's own
+ * 195-candidate cap the share-out is 102 rows — which would refuse the subject deployer (247
+ * launches, the reproduction control) and `4q4GKBpV…` (152) on every full run, biasing the fallback
+ * towards exactly the largest and most gate-relevant wallets.
+ *
+ * 500 is anchored on the only per-wallet counts this repo holds: 8, 10, 65, 152 and 247
+ * (`CREATION-DERIVED.md` §8.3). It is ~2× the largest of them, so the whole measured population
+ * enumerates whole at any batch size, and ~17× below the industrial-spam extreme the `total_bonded`
+ * leaderboard serves (8,518 deploys), so a spam wallet is still contained to 500 rows rather than
+ * pricing the batch at 8,518.
+ */
+export const LAUNCH_CAP_FLOOR = 500;
+
+/**
+ * How many rows one deployer may contribute to a batch of `walletCount` deployers.
+ *
+ * The same arithmetic {@link CREATION_SQL} performs server-side, mirrored here so the tool can name
+ * the cap in a refusal reason. It is `max(`{@link LAUNCH_CAP_FLOOR}`, ceiling shared out)`: the
+ * share-out is what keeps a small batch's bill bounded by the pinned ceiling, and the floor is what
+ * keeps an ordinary deployer whole in a large one.
+ *
+ * **The bound this produces, stated as it actually holds** — because the share-out alone would have
+ * bounded a run at {@link SQL_ROW_CEILING} rows and the floor breaks that above 39 deployers:
+ *
+ * - **BYTES, unchanged and provable.** Every result read is issued with `?limit=maxResultRows`, so
+ *   no read returns more than 20,000 rows at <=121 bytes/row, i.e. <=~2.42 MB.
+ * - **ROWS from the SQL: at most `max(`{@link SQL_ROW_CEILING}`, <deployers> × 500)`.** Above 39
+ *   deployers that exceeds `maxResultRows`, and the batch-level ceiling in {@link DuneResultSet}'s
+ *   reader REFUSES such a result rather than publishing it — the whole-batch fallback merged `main`
+ *   already had. It takes roughly 40 wallets of 500+ launches in one batch to get there, which the
+ *   `total_bonded` leaderboard seed can serve; that is the accepted trade for never truncating a
+ *   measured wallet.
+ *
+ * A wallet above its run's cap falls back to the walk, which is the slow answer rather than a wrong
+ * one — and the record carries enough to recompute the cap exactly
+ * (`thresholds.dune.maxResultRows`, the gated candidate count and `dune.walletsRefusedByShape`), so
+ * what a run applied is auditable after the fact.
+ *
+ * The share-out reads {@link SQL_ROW_CEILING} itself — the literal the SQL contains — rather than
+ * re-deriving it from the pinned threshold, so this mirror cannot name a cap the vendor did not
+ * apply. That the ceiling and the threshold agree is a separate, guarded assertion.
+ *
+ * @param {number} walletCount How many deployers went into the query parameter.
+ * @returns {number} Rows per deployer, never below {@link LAUNCH_CAP_FLOOR}.
+ */
+export function launchCapPerWallet(walletCount) {
+  return Math.max(LAUNCH_CAP_FLOOR, Math.floor(SQL_ROW_CEILING / Math.max(1, walletCount)));
+}
+
+/**
  * The enumeration query's SQL, committed byte for byte.
  *
  * A saved Dune query is editable from a browser and its answer is a gate input, so
  * {@link assertSavedQueryMatches} compares this text against the saved query before an execution is
  * spent. Drift fails loudly instead of returning a different measurement under the same name.
+ *
+ * **DEPLOY STEP: changing this text means updating saved query `8204672` in place.** The comparison
+ * runs BEFORE the execution, so a mismatch is not a wrong answer — it is a terminal refusal of the
+ * whole Dune leg on every run until the saved query is restored to this text. The free tier holds
+ * only 10 private queries and the account holds 10, so there is no new query to create: the
+ * production one is edited. `README.md` → "Deploying a change to the committed SQL" owns the step.
  */
 export const CREATION_SQL = `-- slot-zero: ORIGINAL-CREATOR launch enumeration. One execution per candidate batch.
 --
@@ -107,9 +204,33 @@ export const CREATION_SQL = `-- slot-zero: ORIGINAL-CREATOR launch enumeration. 
 -- CreateV2 argument and is NOT proof of authorship: six mints declare our subject as \`creator\`
 -- while being signed by six different bot-shaped wallets.
 --
--- FOUR COLUMNS AND NO MORE, because retrieving results is ~71% of the bill at ~20 credits/MB.
+-- FIVE COLUMNS AND NO MORE, because retrieving results is ~71% of the bill at ~20 credits/MB.
 -- The create transaction and the graduation timestamp were both dropped once the tool was shown
--- not to read them; that halves the bytes of every production run.
+-- not to read them; that halves the bytes of every production run. The fifth, launches_total, is
+-- a bigint and it is what makes the cap below DETECTABLE rather than silent.
+--
+-- THE CAP IS PER DEPLOYER, NOT PER BATCH, and that is the whole point of this shape. Each
+-- deployer contributes at most greatest(500, floor(19999 / <deployers in the batch>)) rows.
+-- Without it a single industrial-spam wallet (8,518 deploys is a real row on the total_bonded
+-- leaderboard this tool seeds from) pushes the whole batch past dune.maxResultRows and EVERY
+-- candidate in the run loses its Dune answer to a walk measured in hours.
+--
+-- THE 500 IS A FLOOR, NOT A SECOND SHARE-OUT, and it is why the rows bound is
+-- max(19999, <deployers> x 500) rather than 19,999 flat: the share-out alone is 102 rows at the
+-- tool's 195-candidate cap, which would truncate the subject deployer (247 launches) and
+-- 4q4GKBpV (152) on every full run. 500 is ~2x the largest history this repo has measured, so no
+-- measured deployer is ever capped, and ~17x below the spam extreme. Above ~40 deployers of 500+
+-- launches the result can exceed the reader's ceiling, and the reader then refuses the whole
+-- batch exactly as it did before this cap existed. That backstop is kept, not loosened.
+--
+-- launches_total is each deployer's TRUE count, computed BEFORE the cap. So truncation is
+-- detected exactly — rows returned below launches_total — and only the truncated deployer falls
+-- back to the walk. A capped deployer must never be read as a short-but-complete history, which
+-- is why the count travels with the rows rather than being inferred from them.
+--
+-- THE SURVIVING PREFIX IS THE MOST RECENT LAUNCHES, so row_number() ranks created_at DESC. This
+-- tool asks what a wallet is creating NOW; a capped deployer's oldest launches are the least
+-- informative rows it could keep.
 WITH deployers AS (
   SELECT trim(w) AS wallet FROM unnest(split('{{deployers}}', ',')) AS t(w)
 ), ev AS (
@@ -124,11 +245,20 @@ WITH deployers AS (
   SELECT deployer, mint, min(created_at) AS created_at
   FROM (SELECT * FROM ev UNION ALL SELECT * FROM cl)
   GROUP BY 1, 2
+), ranked AS (
+  SELECT b.deployer, b.mint, b.created_at,
+         row_number() OVER (PARTITION BY b.deployer ORDER BY b.created_at DESC, b.mint DESC) AS rn,
+         count(*) OVER (PARTITION BY b.deployer) AS launches_total
+  FROM deduped b
+), cap AS (
+  SELECT greatest(500, cast(floor(19999.0 / greatest(count(DISTINCT wallet), 1)) AS bigint)) AS max_rows
+  FROM deployers
 )
-SELECT b.deployer, b.mint, b.created_at, (c.mint IS NOT NULL) AS bonded
-FROM deduped b
-LEFT JOIN (SELECT DISTINCT mint FROM pumpdotfun_solana.pump_evt_completeevent) c ON c.mint = b.mint
-ORDER BY b.deployer, b.created_at
+SELECT r.deployer, r.mint, r.created_at, (c.mint IS NOT NULL) AS bonded, r.launches_total
+FROM ranked r
+LEFT JOIN (SELECT DISTINCT mint FROM pumpdotfun_solana.pump_evt_completeevent) c ON c.mint = r.mint
+WHERE r.rn <= (SELECT max_rows FROM cap)
+ORDER BY r.deployer, r.created_at
 `;
 
 /**
@@ -479,21 +609,34 @@ export function assessCoverage(input) {
  * Absent and legitimately-false must not be indistinguishable, so an absent one takes the same route
  * a bad timestamp already does rather than a second, weaker one of its own.
  *
+ * **`launches_total` is checked exactly as hard as `bonded`, and for the same reason.** It is the
+ * deployer's true count before {@link CREATION_SQL}'s per-deployer cap, and it is the ONLY thing
+ * that distinguishes a capped history from a whole one. A missing or non-numeric value therefore
+ * counts the row unreadable rather than defaulting to "not capped": a default would delete the cap's
+ * detection the day the column is renamed, and every capped wallet would be gated on a prefix of its
+ * history reported as a total — silently, on a run reporting itself fully measured.
+ *
+ * `declaredByWallet` carries that count per wallet, or `null` when the wallet's own rows disagreed
+ * about it. A disagreement is nameable per wallet, unlike a parse failure, so it refuses that wallet
+ * rather than the batch — see {@link toWalletEnumeration}.
+ *
  * **`unreadableRows > 0` refuses the WHOLE batch**, in {@link enumerateCreations}, and the blast
  * radius is deliberate rather than lazy. A row that fails to parse commonly has no readable
- * `deployer` — that is one of the three ways it fails to parse — so the wallet whose history came
+ * `deployer` — that is one of the ways it fails to parse — so the wallet whose history came
  * back short is exactly the wallet that cannot be named. Attributing the damage per wallet would
  * leave the affected one gated on a silently short history, which is the confident-wrong-answer
  * shape this module exists to refuse, arriving through the parser instead of through coverage.
  *
  * @param {readonly unknown[]} rows
- * @returns {{ byWallet: Map<string, DuneLaunch[]>, unreadableRows: number }}
+ * @returns {{ byWallet: Map<string, DuneLaunch[]>, declaredByWallet: Map<string, number | null>, unreadableRows: number }}
  */
 export function parseCreationRows(rows) {
   /** @type {Map<string, DuneLaunch[]>} */
   const byWallet = new Map();
   /** @type {Map<string, Set<string>>} */
   const seen = new Map();
+  /** @type {Map<string, number | null>} */
+  const declaredByWallet = new Map();
   let unreadableRows = 0;
 
   for (const raw of rows) {
@@ -511,13 +654,20 @@ export function parseCreationRows(rows) {
     // then make every candidate in the batch read 0% bonded and gate-fail, with `unreadableRows: 0`
     // and a clean coverage probe reporting the run as fully measured.
     const bonded = row['bonded'];
+    // The deployer's TRUE launch count, before CREATION_SQL's per-deployer cap. Read as strictly as
+    // `bonded` and for the same reason: it is the only signal that says the rows are a prefix, so
+    // treating an absent one as "not capped" would silently reinstate the very failure the cap
+    // exists to make visible. A numeric STRING is accepted because a bigint column may arrive as
+    // one; a boolean is not, so a shifted column cannot be read as the count 1.
+    const declared = readRowCount(row['launches_total']);
     if (
       typeof deployer !== 'string' ||
       deployer === '' ||
       typeof mint !== 'string' ||
       mint === '' ||
       createdAtMs === null ||
-      typeof bonded !== 'boolean'
+      typeof bonded !== 'boolean' ||
+      declared === null
     ) {
       unreadableRows += 1;
       continue;
@@ -527,6 +677,10 @@ export function parseCreationRows(rows) {
       mints = new Set();
       seen.set(deployer, mints);
       byWallet.set(deployer, []);
+      declaredByWallet.set(deployer, declared);
+    } else if (declaredByWallet.get(deployer) !== declared) {
+      // One deployer, two answers about its own size. Nameable, so it refuses this wallet only.
+      declaredByWallet.set(deployer, null);
     }
     // The SQL already dedupes by (deployer, mint); this is the belt to that braces, because a
     // duplicated mint would double-count a launch on both sides of the gate's fraction.
@@ -536,7 +690,22 @@ export function parseCreationRows(rows) {
   }
 
   for (const list of byWallet.values()) list.sort((a, b) => a.createdAtMs - b.createdAtMs);
-  return { byWallet, unreadableRows };
+  return { byWallet, declaredByWallet, unreadableRows };
+}
+
+/**
+ * Read a positive whole-number count out of a result cell, or `null` when the cell is not one.
+ *
+ * Deliberately narrower than `Number`: `true`, `null`, `''` and `'12abc'` all become numbers under
+ * it, and a shifted column read as the count 1 or 0 is exactly the silent shortening this module
+ * refuses. A numeric string IS accepted, because a bigint may arrive as one.
+ *
+ * @param {unknown} value
+ * @returns {number | null}
+ */
+function readRowCount(value) {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && /^\d+$/.test(value.trim()) ? Number(value) : NaN;
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
 /**
@@ -547,7 +716,15 @@ export function parseCreationRows(rows) {
  * @property {import('./creation.mjs').CreateRecord[]} creates
  * @property {Map<string, import('./creation.mjs').CurveState>} curves
  * @property {import('./creation.mjs').CoveredWindow} covered
- * @property {number} launches     Distinct mints the enumeration attributes to this wallet.
+ * @property {number} launches     Distinct mints the enumeration RETURNED for this wallet. On a
+ *   usable reading that is its whole history; on one the per-deployer cap truncated it is a prefix,
+ *   which is why `usable` is false there and `declaredLaunches` says how much was left behind.
+ * @property {number | null} declaredLaunches The count the answer declared for this wallet
+ *   (`launches_total`), before {@link CREATION_SQL}'s cap. `null` when the wallet had no row at all,
+ *   or when its rows disagreed about it.
+ * @property {boolean} truncatedByLaunchCap Whether this wallet was refused because the per-deployer
+ *   cap cut its history. Counted at run level so a batch that lost one wallet to the cap does not
+ *   look like a batch that lost nothing.
  * @property {number} bonded       How many of them the chain says completed.
  * @property {number | null} firstLaunchMs
  * @property {number | null} lastLaunchMs
@@ -576,6 +753,22 @@ export function parseCreationRows(rows) {
  * refused reading must not carry a claim of exhaustive coverage into the merge even if nothing
  * downstream reads it today.
  *
+ * **A wallet the per-deployer cap TRUNCATED is refused, and it is not the same thing as the vendor
+ * handing back a page.** {@link CREATION_SQL} returns at most {@link launchCapPerWallet} rows per
+ * deployer and carries each deployer's true `launches_total` beside them, so this is DELIBERATE
+ * truncation and the tool knows its exact size. The distinction from `/results` paging on response
+ * size matters and the two checks stay separate: that one compares `rows.length` against the result
+ * set's own `total_row_count` and lives in {@link DuneResultSet}'s reader, where a mismatch means
+ * bytes went missing in transit; this one compares the rows returned FOR ONE WALLET against the
+ * count that wallet's own rows declare, where a shortfall means the query cut the history on
+ * purpose. A capped wallet must never be read as a short-but-complete launch history — that is
+ * precisely the invisible false rejection this lane exists to remove — so it takes the walk, which
+ * enumerates the whole thing, while every other candidate in the batch keeps its Dune answer.
+ *
+ * A shortfall the cap does NOT explain is refused too, under its own sentence. Nothing measured
+ * produces it; it is the shape a future defect would arrive in, and a reading that cannot account
+ * for its own row count may not be gated on.
+ *
  * `curves` carries `creator: null` on every entry, deliberately. Dune says who created a mint and
  * whether it completed; it does not say who the curve's creator is NOW, so
  * `mergeHistories.movedCreator` must not be allowed to report 0 as though it had measured one.
@@ -584,6 +777,12 @@ export function parseCreationRows(rows) {
  * @param {string} input.wallet
  * @param {readonly DuneLaunch[]} input.launches
  * @param {CoverageAssessment} input.coverage
+ * @param {number | null} [input.declaredLaunches] `launches_total` for this wallet, `null` when its
+ *   rows disagreed about it. OMITTED means the caller declares nothing and the row-count check is
+ *   skipped; `null` is a refusal. Only {@link enumerateCreations} is in a position to supply it.
+ * @param {number | null} [input.launchCap] The per-deployer cap this run applied, for the reason's
+ *   own arithmetic. See {@link launchCapPerWallet}.
+ * @param {number | null} [input.batchWallets] How many deployers shared that cap.
  * @param {readonly string[]} [input.priorReasons] Batch-level refusals already established for this
  *   wallet — an unreadable row anywhere in the answer, or an address never sent. They are carried
  *   here so every refusal reaches `reasons` by one route.
@@ -593,6 +792,15 @@ export function toWalletEnumeration(input) {
   const { wallet, launches, coverage } = input;
   /** @type {string[]} */
   const reasons = [...(input.priorReasons ?? [])];
+  // `undefined` means the caller declared nothing — the shape check below is skipped. `null` means
+  // the answer declared something that could not be reconciled, which is a refusal. The two are
+  // deliberately not collapsed, and the strictness that matters lives where the absence actually
+  // arrives from the network: `parseCreationRows` counts a row with no `launches_total` unreadable,
+  // so a vendor omission never reaches here wearing a caller's "nothing to declare".
+  const declaredSupplied = input.declaredLaunches !== undefined;
+  const declaredLaunches = launches.length === 0 ? null : (input.declaredLaunches ?? null);
+  const launchCap = input.launchCap ?? null;
+  let truncatedByLaunchCap = false;
 
   const firstLaunchMs = launches.length === 0 ? null : Math.min(...launches.map((l) => l.createdAtMs));
   const lastLaunchMs = launches.length === 0 ? null : Math.max(...launches.map((l) => l.createdAtMs));
@@ -613,6 +821,42 @@ export function toWalletEnumeration(input) {
         `this wallet's newest enumerated launch (${new Date(lastLaunchMs).toISOString()}) is newer than ` +
           `the probed surfaces' own last row (${new Date(coverage.toMs).toISOString()}), so the probe ` +
           `does not cover the period the count was read over.`,
+      );
+    }
+  }
+
+  // What the answer says about this wallet's SIZE, against what it handed over for it. The cap is
+  // deliberate truncation and it is checked here rather than in the reader, because the reader's
+  // `rows.length !== total_row_count` check is about the RESULT SET losing bytes in transit and
+  // this one is about the QUERY cutting one wallet's history on purpose. Conflating them would
+  // either refuse every capped batch wholesale or, far worse, let a prefix pass as a total.
+  if (launches.length > 0 && declaredSupplied) {
+    if (declaredLaunches === null) {
+      reasons.push(
+        `the Dune answer gave this wallet more than one value for its own creation total, so its ` +
+          `rows cannot be reconciled with the history they claim to be. A reading that cannot ` +
+          `account for its own size is refused rather than published, and the creation walk answers ` +
+          `for this wallet.`,
+      );
+    } else if (declaredLaunches > launches.length && launchCap !== null && launches.length === launchCap) {
+      truncatedByLaunchCap = true;
+      reasons.push(
+        `the Dune answer declares ${declaredLaunches} creation(s) for this wallet and returned ` +
+          `${launches.length} of them — exactly the per-deployer cap this run applied, which is the ` +
+          `greater of the pinned floor of ${LAUNCH_CAP_FLOOR} and the pinned result-row ceiling ` +
+          `shared between the ${input.batchWallets ?? '?'} candidate(s) in the batch. What came back ` +
+          `is its most recent ${launches.length}, a PREFIX of this wallet's history, not a short history, and ` +
+          `gating on it would read a truncated count as a total. The creation walk enumerates this ` +
+          `wallet instead — and only this wallet: every other candidate in the batch keeps its Dune ` +
+          `answer, which is the whole reason the cap is per deployer rather than per batch.`,
+      );
+    } else if (declaredLaunches !== launches.length) {
+      reasons.push(
+        `the Dune answer declares ${declaredLaunches} creation(s) for this wallet and returned ` +
+          `${launches.length} distinct mint(s), which is neither its whole history nor the ` +
+          `per-deployer cap of ${launchCap ?? 'unknown'} this run applied. A reading that cannot ` +
+          `account for its own row count is refused rather than published, and the creation walk ` +
+          `answers for this wallet.`,
       );
     }
   }
@@ -663,6 +907,8 @@ export function toWalletEnumeration(input) {
       exhausted: usable,
     },
     launches: launches.length,
+    declaredLaunches,
+    truncatedByLaunchCap,
     bonded,
     firstLaunchMs,
     lastLaunchMs,
@@ -744,6 +990,19 @@ export async function assertSavedQueryMatches(client, queryId, expectedSql) {
  * read is an unbounded bill), rows sitting exactly on the `?limit=` it was issued with, and rows
  * DISAGREEING with the declared total — `/results` pages on response size independently of our
  * limit, so a page read as a whole answer is a launch history that is simply short.
+ *
+ * **The row ceiling is a BACKSTOP now, not the first line — but it is still REACHABLE.** {@link
+ * CREATION_SQL} bounds the enumeration at `max(`{@link SQL_ROW_CEILING}`, <deployers> × `{@link
+ * LAUNCH_CAP_FLOOR}`)` rows, so a median-shaped batch cannot come near `maxResultRows`, while
+ * roughly 40 wallets of 500+ launches in one batch can still exceed it. Reaching it means either
+ * that genuinely oversized batch — which falls back whole, as it did before the cap existed — or a
+ * cap that did not apply, i.e. a saved query edited past the pinned text or a shape this reader does
+ * not understand. It is kept exactly as it was rather than loosened, because a soft bound on a
+ * billed read is not a bound. Note also that the
+ * per-deployer cap does NOT interact with the `rows.length !== total` check below: `total_row_count`
+ * describes the RESULT SET the query produced, which is the capped one, so a capped enumeration
+ * still returns exactly as many rows as it declares. Deliberate truncation is caught one level up,
+ * per wallet, against `launches_total` — see {@link toWalletEnumeration}.
  *
  * @param {import('./client.mjs').DuneClient} client
  * @param {string} path
@@ -883,6 +1142,11 @@ export async function readCoverageProbe(client, opts) {
  * @property {number} rowsReturned
  * @property {number} walletsRefusedByShape How many candidates were dropped from the query parameter
  *   for not matching {@link WALLET_SHAPE}. Counted rather than silently narrowing the batch.
+ * @property {number} launchCap The per-deployer row cap this batch applied — {@link
+ *   launchCapPerWallet} over the wallets actually sent. `0` when nothing was sent.
+ * @property {number} walletsRefusedByLaunchCap How many candidates the cap truncated and therefore
+ *   refused. The number that says the batch-level ceiling did NOT fire: these wallets take the walk
+ *   and everyone else keeps their Dune answer.
  */
 
 /**
@@ -891,12 +1155,13 @@ export async function readCoverageProbe(client, opts) {
  * Batching is the cost model rather than a convenience: the scan cost is nearly independent of how
  * many wallets are in the filter — measured, 5 wallets and 20 wallets cost the same table scan — so
  * the per-deployer price falls as the batch grows. What scales is the bytes returned, which is why
- * the SQL selects four columns.
+ * the SQL selects five columns and no more, and why {@link CREATION_SQL} caps the rows ONE DEPLOYER
+ * may contribute rather than letting a single spam wallet's history price the batch.
  *
  * **Every wallet asked about comes back with an answer, and "fall back to the walk" is one of the
  * answers.** A refused coverage probe, an unreadable row anywhere in the batch, an address that is
- * not base58-shaped, or no row for that wallet at all each leave `usable: false` with a reason. None
- * of them is ever reported as a launch history of zero.
+ * not base58-shaped, a history the per-deployer cap truncated, or no row for that wallet at all each
+ * leave `usable: false` with a reason. None of them is ever reported as a launch history of zero.
  *
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} opts
@@ -950,16 +1215,25 @@ export async function enumerateCreations(client, opts) {
   }
   const walletsRefusedByShape = opts.wallets.length - askable.length;
 
+  // The cap the SQL will apply, mirrored here so a refusal can name it. It is derived from the
+  // DISTINCT wallets sent, because that is what the query's own `count(DISTINCT wallet)` counts —
+  // the two arithmetics have to agree or the tool would report a cap the vendor did not apply.
+  const batchWallets = new Set(askable).size;
+  const launchCap = batchWallets === 0 ? 0 : launchCapPerWallet(batchWallets);
+
   /** @type {Map<string, WalletEnumeration>} */
   const byWallet = new Map();
-  /** @type {(rowsByWallet: Map<string, DuneLaunch[]>, batchReasons: readonly string[]) => void} */
-  const fill = (rowsByWallet, batchReasons) => {
+  /** @type {(rowsByWallet: Map<string, DuneLaunch[]>, declaredByWallet: Map<string, number | null>, batchReasons: readonly string[]) => void} */
+  const fill = (rowsByWallet, declaredByWallet, batchReasons) => {
     for (const w of opts.wallets) {
       byWallet.set(
         w,
         toWalletEnumeration({
           wallet: w,
           launches: rowsByWallet.get(w) ?? [],
+          declaredLaunches: declaredByWallet.get(w) ?? null,
+          launchCap: launchCap === 0 ? null : launchCap,
+          batchWallets,
           coverage,
           priorReasons: [...(priorReasons.get(w) ?? []), ...batchReasons],
         }),
@@ -968,8 +1242,17 @@ export async function enumerateCreations(client, opts) {
   };
 
   if (!coverage.ok || askable.length === 0) {
-    fill(new Map(), []);
-    return { probe, coverage, byWallet, unreadableRows: 0, rowsReturned: 0, walletsRefusedByShape };
+    fill(new Map(), new Map(), []);
+    return {
+      probe,
+      coverage,
+      byWallet,
+      unreadableRows: 0,
+      rowsReturned: 0,
+      walletsRefusedByShape,
+      launchCap,
+      walletsRefusedByLaunchCap: 0,
+    };
   }
 
   await assertSavedQueryMatches(client, opts.creationQueryId, CREATION_SQL);
@@ -979,7 +1262,7 @@ export async function enumerateCreations(client, opts) {
     { [DEPLOYERS_PARAM]: askable.join(',') },
     opts.bounds,
   );
-  const { byWallet: rowsByWallet, unreadableRows } = parseCreationRows(result.rows);
+  const { byWallet: rowsByWallet, declaredByWallet, unreadableRows } = parseCreationRows(result.rows);
 
   // A row that would not parse refuses the WHOLE batch. Not the wallet it belonged to: a row that
   // fails to parse commonly has no readable `deployer`, so the wallet whose history came back short
@@ -995,8 +1278,19 @@ export async function enumerateCreations(client, opts) {
             `creation walk rather than being gated on what survived the parser.`,
         ];
 
-  fill(rowsByWallet, batchReasons);
-  return { probe, coverage, byWallet, unreadableRows, rowsReturned: result.rows.length, walletsRefusedByShape };
+  fill(rowsByWallet, declaredByWallet, batchReasons);
+  let walletsRefusedByLaunchCap = 0;
+  for (const e of byWallet.values()) if (e.truncatedByLaunchCap) walletsRefusedByLaunchCap += 1;
+  return {
+    probe,
+    coverage,
+    byWallet,
+    unreadableRows,
+    rowsReturned: result.rows.length,
+    walletsRefusedByShape,
+    launchCap,
+    walletsRefusedByLaunchCap,
+  };
 }
 
 /**

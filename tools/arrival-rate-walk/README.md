@@ -144,6 +144,16 @@ backs this, and here is what would"* is an acceptable reason — inventing an an
 each is ~2,100 launches, which at the measured p50 of 4 pages is ~8,400 requests and **days** of paced
 fetching. §8 costed the same shape at 6,000–12,000 requests for ten deployers.
 
+**A collection larger than one sitting is the shape, not a failure.** A p95 estimate above the run
+ceiling is an **advisory** in the plan — it names how many sittings to expect and clears nothing;
+refusing it would make this lane's own target cohort unwalkable. Only `plan.refusals` stops a run,
+and the run's real bound is the client's per-run ceiling, which stops a sitting exactly and leaves it
+resumable. **Resume re-attempts an unproved walk**: a sidecar is skipped only when `reached_mint` is
+`true`, so a truncation or a transport failure costs that launch one more sitting rather than
+permanently marking it unmeasured — and the loss would not have been random, since a busy launch
+issues more requests and busy launches are the high-prize tail. The failed attempt's own evidence
+(`stop_reason`, `requests`, `pages`) is carried forward in the sidecar's `previous_attempts`.
+
 ### The one thing that is not deployed
 
 **`COHORT_SQL` needs a saved Dune query of its own, and the free tier's ten private query slots are
@@ -209,6 +219,16 @@ The honest list, in the order that matters.
   2026-05. If that gradient is venue-wide rather than one operator's submission habit, **a window that
   opened early is systematically less visible than one that opened late** — which is a bias on
   exactly the quantity this lane measures, and this lane does not measure the gradient.
+- **A measured launch with no closed create-slot round trip is EXCLUDED from the rank test, not read
+  as a zero.** Its stake is zero, so §2.1's return per SOL does not exist for it — and 0 is a real
+  level in this series, the level a launch whose outsiders broke even reads. The exclusion is exactly
+  the published measurement's (`analysis/window-population/measure.mjs` segments over launches with
+  at least one closed create-slot round trip), and §11 of that report puts a size on the alternative:
+  reading these launches as zeros rather than as missing would lower the window's median prize by
+  **roughly a fifth**. They stay rows in `series.csv` — attendance is evidence even when P&L is not —
+  and `arrival.json` carries the count as `launchesExcludedNoClosedCreateSlotPair`, so the exclusion
+  is visible rather than silent. `series.mjs` → `toSeriesPoints` is the one place it happens, and the
+  reproduction test drives the published series through **that** function.
 - **A deployer with too few measured launches is UNSEGMENTABLE, and that is not "no window
   arrived".** A split needs 20 measured launches at the pinned minimum segment of 8. Those deployers
   are excluded from the arrival-rate denominator and counted in the output — and the exclusion drops

@@ -37,6 +37,8 @@
  * left for a reader to remember.
  */
 
+import { CeilingReached } from './client.mjs';
+
 /** Both clocks in play are second-resolution, so every comparison carries this much granularity. */
 export const SECOND_RESOLUTION_MS = 1_000;
 
@@ -51,6 +53,10 @@ export const SECOND_RESOLUTION_MS = 1_000;
  * @param {import('./client.mjs').KeylessClient} client
  * @param {number} slot
  * @param {number} attempts Bounded by the caller; each attempt is one request against the ceiling.
+ * @throws {CeilingReached} The run's own request ceiling, propagated exactly as `walk.mjs` does. It
+ *   is not a failure of this launch: swallowing it would burn the whole attempt budget of every
+ *   remaining launch against a client that throws immediately, and would report them as merely
+ *   unread rather than as "the ceiling stopped the pre-flight".
  * @returns {Promise<{ blockTimeMs: number | null, note: string | null }>}
  */
 export async function readBlockTimeMs(client, slot, attempts) {
@@ -62,6 +68,7 @@ export async function readBlockTimeMs(client, slot, attempts) {
     try {
       body = await client.rpc('getBlockTime', [slot]);
     } catch (cause) {
+      if (cause instanceof CeilingReached) throw cause;
       note = `request failed: ${cause instanceof Error ? cause.message : String(cause)}`;
       continue;
     }
@@ -130,6 +137,12 @@ export function selectPreflightLaunches(launches, readTape, n) {
 /**
  * Leg A: chain block time against the vendor's creation instant, over a bounded sample.
  *
+ * **The run's request ceiling stops the leg; it does not fail a launch.** Once the client refuses,
+ * every further attempt would throw without issuing anything, so continuing would spend the whole
+ * attempt budget of every remaining launch on nothing and report them as merely unread. The launch
+ * in flight is recorded with the ceiling named in its note, and the rest are simply not attempted —
+ * so a reader of `preflight.json` sees a stopped pre-flight rather than a partly unreadable chain.
+ *
  * @param {object} args
  * @param {import('./client.mjs').KeylessClient} args.client
  * @param {ReturnType<typeof selectPreflightLaunches>} args.launches
@@ -141,7 +154,25 @@ export async function measureBlockTimeSkew({ client, launches, attemptsPerLaunch
   /** @type {SkewSample[]} */
   const out = [];
   for (const l of launches) {
-    const { blockTimeMs, note } = await readBlockTimeMs(client, l.createSlot, attemptsPerLaunch);
+    /** @type {{ blockTimeMs: number | null, note: string | null }} */
+    let read;
+    try {
+      read = await readBlockTimeMs(client, l.createSlot, attemptsPerLaunch);
+    } catch (cause) {
+      if (!(cause instanceof CeilingReached)) throw cause;
+      out.push({
+        mint: l.mint,
+        symbol: l.symbol,
+        vendorMs: l.vendorMs,
+        chainMs: null,
+        skewMs: null,
+        note: `the pre-flight's own request ceiling stopped it here: ${cause.message}. ` +
+          `${launches.length - out.length - 1} launch(es) after this one were never attempted.`,
+      });
+      log?.(`preflight leg A stopped at its request ceiling after ${out.length - 1} launch(es): ${cause.message}`);
+      break;
+    }
+    const { blockTimeMs, note } = read;
     out.push({
       mint: l.mint,
       symbol: l.symbol,

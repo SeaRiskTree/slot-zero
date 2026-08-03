@@ -347,6 +347,62 @@ export function measureLaunch({ mint, deployer, mintMs, fills, reachedMint }) {
 }
 
 /**
+ * @typedef {object} RankInput
+ * @property {Map<string, import('./arrival.mjs').SeriesPoint[]>} byDeployer Ascending by `mintMs`.
+ * @property {number} launchesInRankTest        Points that actually reach the segmentation.
+ * @property {number} launchesUnmeasured        Launches with no complete create-slot reading at all.
+ * @property {number} launchesNoClosedCreateSlotPair Measured launches DROPPED for having no closed
+ *   create-slot outsider round trip — see {@link toSeriesPoints}.
+ */
+
+/**
+ * Turn per-launch measurements into the per-deployer input the rank test reads.
+ *
+ * **A measured launch with no closed create-slot outsider round trip is DROPPED, never imputed as
+ * 0.** Its stake is zero, so §2.1's return per SOL does not exist for it — and 0 is a real level in
+ * this series, not a null one: it is exactly what a launch whose outsiders broke even reads. The
+ * published measurement excludes these launches for the same reason (`analysis/window-population/
+ * measure.mjs` segments over `series.filter((r) => r.trips > 0)`), and its README §11 puts a size on
+ * the difference: reading them as zeros rather than as missing would lower the window's median prize
+ * by **roughly a fifth**. {@link import('./arrival.mjs').findWindows} says the same thing from the
+ * other side — an unmeasured launch must not enter a rank test as one.
+ *
+ * They are not discarded: every one of them is a row in `series.csv`, because attendance is evidence
+ * even when P&L is not, and the count is reported so the exclusion is visible rather than silent.
+ *
+ * @param {readonly LaunchMeasurement[]} rows
+ * @returns {RankInput}
+ */
+export function toSeriesPoints(rows) {
+  /** @type {Map<string, import('./arrival.mjs').SeriesPoint[]>} */
+  const byDeployer = new Map();
+  let launchesInRankTest = 0;
+  let launchesUnmeasured = 0;
+  let launchesNoClosedCreateSlotPair = 0;
+  for (const r of rows) {
+    if (!r.measured) {
+      launchesUnmeasured += 1;
+      continue;
+    }
+    if (!Number.isFinite(r.createSlotReturnPerSolGrossOfFees)) {
+      launchesNoClosedCreateSlotPair += 1;
+      continue;
+    }
+    const list = byDeployer.get(r.deployer) ?? [];
+    list.push({
+      mint: r.mint,
+      mintMs: r.mintMs,
+      returnPerSol: r.createSlotReturnPerSolGrossOfFees,
+      prizeSol: r.createSlotPrizeSolGrossOfFees,
+    });
+    byDeployer.set(r.deployer, list);
+    launchesInRankTest += 1;
+  }
+  for (const list of byDeployer.values()) list.sort((a, b) => a.mintMs - b.mintMs);
+  return { byDeployer, launchesInRankTest, launchesUnmeasured, launchesNoClosedCreateSlotPair };
+}
+
+/**
  * The header a series CSV is written with. **The all-entrant columns carry `floor` in their own
  * names**, so a reader who never opens the README still cannot mistake one for a total.
  */

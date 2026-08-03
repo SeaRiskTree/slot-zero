@@ -37,7 +37,7 @@ import { readLaunches, readWindowTape, csvField } from './tape.mjs';
 import { readDuneResultFile, parseCohortRows, parseLaunchListRows, assessCohortCoverage, chooseThreshold } from './cohort.mjs';
 import { selectPreflightLaunches, measureBlockTimeSkew, measureDuneClockSkew, assessSkew } from './preflight.mjs';
 import { walkOpeningWindow } from './walk.mjs';
-import { measureLaunch, seriesRow, SERIES_COLUMNS, ALL_ENTRANT_FLOOR_CAVEAT, GROSS_OF_FEES_CAVEAT } from './series.mjs';
+import { measureLaunch, seriesRow, toSeriesPoints, SERIES_COLUMNS, ALL_ENTRANT_FLOOR_CAVEAT, GROSS_OF_FEES_CAVEAT } from './series.mjs';
 import { findWindows, summariseArrival } from './arrival.mjs';
 
 /** The pinned bounds. Read once, never overridden downward-unsafe by a flag. */
@@ -205,9 +205,25 @@ export async function runPreflight({ out, client, launchListPath = null, sampleL
 // plan
 
 /**
+ * Read a launch-list export once, in the one shape every phase agrees on.
+ *
+ * Parsed once and shared, rather than re-parsed per caller: two readings of the same file that can
+ * diverge is a plan that costs one run and a walk that walks another.
+ *
+ * @param {string} text
+ * @param {string} label
+ * @returns {import('./cohort.mjs').LaunchList}
+ */
+export function readLaunchList(text, label) {
+  return parseLaunchListRows(readDuneResultFile(text, label));
+}
+
+/**
  * @typedef {object} Plan
- * @property {boolean} ok
- * @property {string[]} refusals
+ * @property {boolean} ok Cleared by a {@link Plan.refusals} entry only. An advisory never clears it.
+ * @property {string[]} refusals Each one stops the run.
+ * @property {string[]} advisories Stated before the first request and **fatal to nothing**: a
+ *   collection this tool checkpoints and resumes is not failed by being large.
  * @property {number | null} threshold
  * @property {{ threshold: number, deployers: number }[]} ladder
  * @property {{ wallet: string, launchesInMonth: number, launchesToWalk: number }[]} cohort
@@ -227,13 +243,16 @@ export async function runPreflight({ out, client, launchListPath = null, sampleL
  * @param {object} input
  * @param {string | null} input.cohortText   The cohort query's export, or `null` when the launch
  *   list alone is being costed.
- * @param {string} input.launchListText
+ * @param {import('./cohort.mjs').LaunchList} input.launchList The already-parsed launch list — see
+ *   {@link readLaunchList}.
  * @param {number} input.nowMs
  * @returns {Plan}
  */
-export function buildPlan({ cohortText, launchListText, nowMs }) {
+export function buildPlan({ cohortText, launchList, nowMs }) {
   /** @type {string[]} */
   const refusals = [];
+  /** @type {string[]} */
+  const advisories = [];
   /** @type {{ threshold: number, deployers: number }[]} */
   let ladder = [];
   /** @type {number | null} */
@@ -266,7 +285,7 @@ export function buildPlan({ cohortText, launchListText, nowMs }) {
     }
   }
 
-  const list = parseLaunchListRows(readDuneResultFile(launchListText, 'the launch-list export'));
+  const list = launchList;
   if (list.unreadableRows > 0) {
     refusals.push(
       `${list.unreadableRows} row(s) of the launch list could not be read. A row that fails to parse ` +
@@ -337,18 +356,25 @@ export function buildPlan({ cohortText, launchListText, nowMs }) {
   };
   const hours = (/** @type {number} */ n) => (n * BOUNDS.walk.minIntervalMs) / 3_600_000;
 
+  // ADVISORY, not a refusal. The collector checkpoints every launch and resumes, so a cohort larger
+  // than one sitting is the shape this lane was designed for — the README's own headline scenario is
+  // ~2,100 launches, which is a p95 well past this ceiling. Refusing it would make the lane's target
+  // population unwalkable while the real bound — the client's own per-run ceiling — already stops a
+  // run exactly and leaves it resumable.
   if (expectedRequests.p95 > BOUNDS.walk.maxRequestsPerRun) {
-    refusals.push(
+    advisories.push(
       `the p95 request estimate is ${expectedRequests.p95}, above the pinned run ceiling of ` +
         `${BOUNDS.walk.maxRequestsPerRun}. The collector checkpoints and resumes, so this is a ` +
         `statement about how many sittings the collection takes rather than a failure — but it is ` +
-        `said before the first request rather than discovered at the ceiling.`,
+        `said before the first request rather than discovered at the ceiling. Expect at least ` +
+        `${Math.ceil(expectedRequests.p95 / BOUNDS.walk.maxRequestsPerRun)} sittings.`,
     );
   }
 
   return {
     ok: refusals.length === 0,
     refusals,
+    advisories,
     threshold,
     ladder,
     cohort,
@@ -374,6 +400,39 @@ export function buildPlan({ cohortText, launchListText, nowMs }) {
 // walk
 
 /**
+ * Whether a launch already on disk is DONE, as opposed to merely attempted.
+ *
+ * **Only a PROVED walk is done.** A walk that ended truncated, or on a transport failure the client
+ * had already retried out, wrote a sidecar saying `reached_mint: false` — and a resume that skipped
+ * on the sidecar's existence would make one transient failure a permanent unmeasured launch. The
+ * loss is not random either: a busy launch issues more requests, so it is likelier to be shed or cut
+ * short, and busy launches are the high-prize tail the 40-request per-launch budget exists to keep.
+ *
+ * The failed attempt's own evidence — `stop_reason`, `requests`, `pages`, `attempts` — stays on disk
+ * and is carried forward into the next attempt's sidecar, because a run that leaves no record of
+ * what it spent is the thing `requests.csv` exists to prevent.
+ *
+ * An unreadable sidecar is NOT done: it cannot vouch for the walk it describes, so the launch is
+ * re-attempted rather than counted on a file nothing can read.
+ *
+ * @param {string} windowDir
+ * @param {string} mint
+ * @returns {{ done: boolean, previous: Record<string, unknown> | null }}
+ */
+export function checkpointState(windowDir, mint) {
+  const metaPath = join(windowDir, `${mint}.meta.json`);
+  if (!existsSync(metaPath)) return { done: false, previous: null };
+  /** @type {Record<string, unknown>} */
+  let meta;
+  try {
+    meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+  } catch {
+    return { done: false, previous: null };
+  }
+  return { done: meta['reached_mint'] === true, previous: meta };
+}
+
+/**
  * Walk every launch in the plan, checkpointing each one.
  *
  * @param {object} args
@@ -397,9 +456,23 @@ export async function runWalk({ out, client, list, nowMs, limit = null, only = [
   }
   launches.sort((a, b) => a.createdAtMs - b.createdAtMs);
   if (only.length > 0) launches = launches.filter((l) => only.includes(l.mint));
-  const pending = launches.filter((l) => !existsSync(join(windowDir, `${l.mint}.meta.json`)));
+  /** @type {Map<string, Record<string, unknown> | null>} */
+  const previousAttempts = new Map();
+  /** @type {import('./cohort.mjs').DuneLaunch[]} */
+  const pending = [];
+  let retrying = 0;
+  for (const l of launches) {
+    const state = checkpointState(windowDir, l.mint);
+    if (state.done) continue;
+    if (state.previous !== null) retrying += 1;
+    previousAttempts.set(l.mint, state.previous);
+    pending.push(l);
+  }
   const todo = limit === null ? pending : pending.slice(0, limit);
-  say(`walk: ${todo.length} launches to walk (${launches.length - pending.length} already on disk)`);
+  say(
+    `walk: ${todo.length} launches to walk (${launches.length - pending.length} proved and on disk, ` +
+      `${retrying} unproved attempt(s) being retried)`,
+  );
 
   let walked = 0;
   let truncated = 0;
@@ -430,6 +503,8 @@ export async function runWalk({ out, client, list, nowMs, limit = null, only = [
       join(windowDir, `${launch.mint}.jsonl.gz`),
       gzipSync(result.fills.map((f) => JSON.stringify(toTapeRow(f))).join('\n') + '\n'),
     );
+    const previous = previousAttempts.get(launch.mint) ?? null;
+    const attempts = (typeof previous?.['attempts'] === 'number' ? previous['attempts'] : 0) + 1;
     writeFileSync(
       join(windowDir, `${launch.mint}.meta.json`),
       JSON.stringify({
@@ -455,6 +530,23 @@ export async function runWalk({ out, client, list, nowMs, limit = null, only = [
         // create slot; this is what makes the disagreement visible rather than merely survived.
         pre_mint_fills: result.preMintFills,
         stop_reason: result.stopReason,
+        // An UNPROVED walk is retried on the next sitting, so what the failed attempts spent has to
+        // survive the retry rather than be overwritten by the one that finally worked.
+        attempts,
+        previous_attempts:
+          previous === null
+            ? []
+            : [
+                ...(Array.isArray(previous['previous_attempts']) ? previous['previous_attempts'] : []),
+                {
+                  n: previous['n'],
+                  pages: previous['pages'],
+                  requests: previous['requests'],
+                  reached_mint: previous['reached_mint'],
+                  truncated: previous['truncated'],
+                  stop_reason: previous['stop_reason'],
+                },
+              ],
       }) + '\n',
     );
     walked += 1;
@@ -487,23 +579,62 @@ export function toTapeRow(f) {
 /**
  * Read one persisted window back.
  *
+ * **An unreadable checkpoint is a named refusal, never a throw.** A walk killed mid-write leaves a
+ * truncated last line, and letting that abort the whole offline `series` phase would lose every
+ * other launch's measurement to one launch's interrupted write. It is reported as unreadable and
+ * counted, which is how every other unreadable input in this lane is treated — and the launch is
+ * then UNMEASURED, which is not a zero.
+ *
  * @param {string} windowDir
  * @param {string} mint
- * @returns {{ fills: import('./trades.mjs').Fill[], meta: Record<string, unknown> } | null}
+ * @returns {{ fills: import('./trades.mjs').Fill[], meta: Record<string, unknown>, unreadable: string | null } | null}
  */
 export function readPersistedWindow(windowDir, mint) {
   const metaPath = join(windowDir, `${mint}.meta.json`);
   const gz = join(windowDir, `${mint}.jsonl.gz`);
   if (!existsSync(metaPath) || !existsSync(gz)) return null;
-  const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+  /** @type {Record<string, unknown>} */
+  let meta;
+  try {
+    meta = JSON.parse(readFileSync(metaPath, 'utf8'));
+  } catch (cause) {
+    return { fills: [], meta: {}, unreadable: `its sidecar could not be parsed: ${errorText(cause)}` };
+  }
   /** @type {import('./trades.mjs').Fill[]} */
   const fills = [];
-  for (const line of gunzipSync(readFileSync(gz)).toString('utf8').split('\n')) {
+  /** @type {string} */
+  let text;
+  try {
+    text = gunzipSync(readFileSync(gz)).toString('utf8');
+  } catch (cause) {
+    return { fills, meta, unreadable: `its fill file could not be decompressed: ${errorText(cause)}` };
+  }
+  const lines = text.split('\n');
+  for (const [i, line] of lines.entries()) {
     if (line === '') continue;
-    const r = JSON.parse(line);
+    /** @type {any} */
+    let r;
+    try {
+      r = JSON.parse(line);
+    } catch (cause) {
+      return {
+        fills,
+        meta,
+        unreadable:
+          `line ${i + 1} of ${lines.length} in its fill file could not be parsed (${errorText(cause)}), ` +
+          `which is what a walk killed mid-write leaves. The launch is UNMEASURED rather than measured ` +
+          `on the ${fills.length} fill(s) that did parse: a window read short is a biased sample, not a ` +
+          `small one. Re-walk it.`,
+      };
+    }
     fills.push({ ...r, tsMs: Date.parse(r.ts) });
   }
-  return { fills, meta };
+  return { fills, meta, unreadable: null };
+}
+
+/** @param {unknown} cause */
+function errorText(cause) {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 /**
@@ -512,7 +643,8 @@ export function readPersistedWindow(windowDir, mint) {
  * @param {object} args
  * @param {string} args.out
  * @returns {{ rows: import('./series.mjs').LaunchMeasurement[], perDeployer: import('./arrival.mjs').DeployerWindows[],
- *   summary: import('./arrival.mjs').ArrivalSummary }}
+ *   summary: import('./arrival.mjs').ArrivalSummary, unreadable: { mint: string, reason: string }[],
+ *   rankInput: import('./series.mjs').RankInput }}
  */
 export function runSeries({ out }) {
   const windowDir = join(out, 'window');
@@ -523,16 +655,24 @@ export function runSeries({ out }) {
 
   /** @type {import('./series.mjs').LaunchMeasurement[]} */
   const rows = [];
+  /** @type {{ mint: string, reason: string }[]} */
+  const unreadable = [];
   for (const mint of mints) {
     const w = readPersistedWindow(windowDir, mint);
     if (w === null) continue;
+    if (w.unreadable !== null) {
+      unreadable.push({ mint, reason: w.unreadable });
+      say(`series: ${mint} is UNREADABLE and is unmeasured — ${w.unreadable}`);
+    }
     rows.push(
       measureLaunch({
         mint,
         deployer: String(w.meta['deployer'] ?? ''),
         mintMs: Number(w.meta['created_timestamp']),
         fills: w.fills,
-        reachedMint: w.meta['reached_mint'] === true,
+        // An unreadable checkpoint proves nothing about its own coverage, whatever its sidecar
+        // claims: the fills that back that claim are the ones that would not parse.
+        reachedMint: w.unreadable === null && w.meta['reached_mint'] === true,
       }),
     );
   }
@@ -543,20 +683,11 @@ export function runSeries({ out }) {
     [SERIES_COLUMNS.join(','), ...rows.map((r) => seriesRow(r).map(csvField).join(','))].join('\n') + '\n',
   );
 
-  /** @type {Map<string, import('./arrival.mjs').SeriesPoint[]>} */
-  const byDeployer = new Map();
-  for (const r of rows) {
-    if (!r.measured) continue;
-    const list = byDeployer.get(r.deployer) ?? [];
-    list.push({
-      mint: r.mint,
-      mintMs: r.mintMs,
-      returnPerSol: Number.isFinite(r.createSlotReturnPerSolGrossOfFees) ? r.createSlotReturnPerSolGrossOfFees : 0,
-      prizeSol: r.createSlotPrizeSolGrossOfFees,
-    });
-    byDeployer.set(r.deployer, list);
-  }
-  const perDeployer = [...byDeployer].map(([deployer, series]) =>
+  // The rank test's input, and the exclusions are made HERE rather than imputed: a measured launch
+  // with no closed create-slot outsider round trip has no return per SOL and never enters the
+  // segmentation as a 0. `series.csv` above already carries every one of those launches as a row.
+  const rankInput = toSeriesPoints(rows);
+  const perDeployer = [...rankInput.byDeployer].map(([deployer, series]) =>
     findWindows(series, { deployer, minZ: BOUNDS.series.minZ, minSegment: BOUNDS.series.minSegment }),
   );
   const summary = summariseArrival(perDeployer);
@@ -568,16 +699,32 @@ export function runSeries({ out }) {
         at: new Date().toISOString(),
         bounds: { seed: BOUNDS.seed, walk: BOUNDS.walk, series: BOUNDS.series },
         launches: rows.length,
-        launchesMeasured: rows.filter((r) => r.measured).length,
+        // What actually reached the rank test, and every launch that did not, counted by reason.
+        // `launchesMeasured` is the segmentation's own denominator: a launch excluded below is in
+        // NEITHER it nor any deployer's observation span.
+        launchesMeasured: rankInput.launchesInRankTest,
+        launchesUnmeasured: rankInput.launchesUnmeasured,
+        launchesExcludedNoClosedCreateSlotPair: rankInput.launchesNoClosedCreateSlotPair,
+        launchesUnreadable: unreadable,
         perDeployer,
         summary,
-        caveats: [GROSS_OF_FEES_CAVEAT, ALL_ENTRANT_FLOOR_CAVEAT, ...summary.caveats],
+        caveats: [
+          GROSS_OF_FEES_CAVEAT,
+          ALL_ENTRANT_FLOOR_CAVEAT,
+          `${rankInput.launchesNoClosedCreateSlotPair} measured launch(es) had NO closed create-slot ` +
+            `outsider round trip and are excluded from the rank test rather than entered as a 0 — the ` +
+            `same exclusion the published measurement makes (it segments over launches with at least ` +
+            `one closed create-slot round trip). 0 is a real level in this series, and reading these ` +
+            `launches as zeros rather than as missing would lower the window's median prize by roughly ` +
+            `a fifth. They remain rows in series.csv: attendance is evidence even when P&L is not.`,
+          ...summary.caveats,
+        ],
       },
       null,
       2,
     ) + '\n',
   );
-  return { rows, perDeployer, summary };
+  return { rows, perDeployer, summary, unreadable, rankInput };
 }
 
 /* c8 ignore start -- the CLI shell; every part it calls is exercised directly by the tests. */
@@ -610,7 +757,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       if (args.launchList === null) throw new Error('--launch-list is required to cost a run');
       const plan = buildPlan({
         cohortText: args.cohort === null ? null : readFileSync(args.cohort, 'utf8'),
-        launchListText: readFileSync(args.launchList, 'utf8'),
+        launchList: readLaunchList(readFileSync(args.launchList, 'utf8'), args.launchList),
         nowMs: Date.now(),
       });
       process.stdout.write(JSON.stringify(plan, null, 2) + '\n');
@@ -619,14 +766,22 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     }
 
     if (args.phase === 'walk') {
-      const listText = readFileSync(/** @type {string} */ (args.launchList), 'utf8');
-      const plan = buildPlan({ cohortText: null, launchListText: listText, nowMs: Date.now() });
+      // Parsed ONCE and shared with the walk below: two readings of the same file that can diverge
+      // is a plan costing one run and a walk walking another.
+      const list = readLaunchList(
+        readFileSync(/** @type {string} */ (args.launchList), 'utf8'),
+        args.launchList ?? 'launch list',
+      );
+      const plan = buildPlan({ cohortText: null, launchList: list, nowMs: Date.now() });
       say(
         `plan: ${plan.launchesToWalk} launches, p50 ~${plan.expectedRequests.p50} requests ` +
           `(~${plan.expectedWallClock.p50Hours.toFixed(1)} h), p95 ~${plan.expectedRequests.p95} ` +
           `(~${plan.expectedWallClock.p95Hours.toFixed(1)} h), ceiling ${plan.expectedRequests.ceiling}`,
       );
       for (const r of plan.refusals) say(`REFUSED: ${r}`);
+      // Advisories are printed exactly as loudly and stop nothing: the run's real bound is the
+      // client's own per-run ceiling, which stops a sitting and leaves it resumable.
+      for (const a of plan.advisories) say(`ADVISORY: ${a}`);
       if (args.dryRun) {
         say('dry run: no request issued');
         process.exit(plan.ok ? 0 : 2);
@@ -644,7 +799,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       await runWalk({
         out: /** @type {string} */ (out),
         client,
-        list: parseLaunchListRows(readDuneResultFile(listText, args.launchList ?? 'launch list')),
+        list,
         nowMs: Date.now(),
         limit: args.limit,
         only: args.only,
@@ -652,8 +807,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exit(0);
     }
 
-    const { rows, summary } = runSeries({ out: /** @type {string} */ (out) });
-    say(`series: ${rows.length} launches, ${rows.filter((r) => r.measured).length} measured`);
+    const { rows, summary, rankInput, unreadable } = runSeries({ out: /** @type {string} */ (out) });
+    say(
+      `series: ${rows.length} launches, ${rankInput.launchesInRankTest} in the rank test, ` +
+        `${rankInput.launchesUnmeasured} unmeasured, ${rankInput.launchesNoClosedCreateSlotPair} ` +
+        `measured with no closed create-slot round trip (excluded, NOT read as zero), ` +
+        `${unreadable.length} unreadable`,
+    );
     say(`arrival: ${JSON.stringify(summary)}`);
     process.exit(0);
   };

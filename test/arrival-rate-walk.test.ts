@@ -29,7 +29,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, w
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gunzipSync } from 'node:zlib';
+import { gunzipSync, gzipSync } from 'node:zlib';
 
 import { KeylessClient, CeilingReached, HttpRefused, SWAP_API, SOLANA_RPC, SWAP_MIN_INTERVAL_MS } from '../tools/arrival-rate-walk/client.mjs';
 import {
@@ -60,6 +60,7 @@ import {
 import {
   SECOND_RESOLUTION_MS,
   assessSkew,
+  measureBlockTimeSkew,
   measureDuneClockSkew,
   readBlockTimeMs,
   selectPreflightLaunches,
@@ -72,10 +73,22 @@ import {
   measureLaunch,
   roomIsProven,
   seriesRow,
+  toSeriesPoints,
   walletTotals,
 } from '../tools/arrival-rate-walk/series.mjs';
+import type { LaunchMeasurement } from '../tools/arrival-rate-walk/series.mjs';
 import { changepoints, findWindows, median, summariseArrival } from '../tools/arrival-rate-walk/arrival.mjs';
-import { BOUNDS, buildPlan, parseArgs, readPersistedWindow, runSeries, runWalk, toTapeRow } from '../tools/arrival-rate-walk/collect.mjs';
+import {
+  BOUNDS,
+  buildPlan,
+  checkpointState,
+  parseArgs,
+  readLaunchList,
+  readPersistedWindow,
+  runSeries,
+  runWalk,
+  toTapeRow,
+} from '../tools/arrival-rate-walk/collect.mjs';
 import { CREDENTIAL_PATTERNS, KEY_SHAPED } from './offline-guard.js';
 
 // ---------------------------------------------------------------------------------------------
@@ -144,8 +157,8 @@ function scriptedClient(
   return { client, urls, bodies };
 }
 
-/** The §2.1 per-launch series, built from the committed CSVs exactly as the published measurement does. */
-function publishedSeries(): { mint: string; symbol: string; date: string; mintMs: number; returnPerSol: number; prizeSol: number }[] {
+/** Every launch on the committed tape with its §2.1 create-slot totals — INCLUDING the zero-trip ones. */
+function publishedLaunchTotals(): { mint: string; symbol: string; date: string; stake: number; gross: number; trips: number }[] {
   const launches = csvRecords(parseCsv(readFileSync(join(TAPE_DIR, 'launches.csv'), 'utf8')));
   const pairs = csvRecords(parseCsv(readFileSync(join(TAPE_DIR, 'wallet_launch_pnl.csv'), 'utf8')));
   const byMint = new Map(
@@ -163,10 +176,47 @@ function publishedSeries(): { mint: string; symbol: string; date: string; mintMs
       r.trips += 1;
     }
   }
-  return [...byMint.values()]
+  return [...byMint.values()].sort((a, b) => Date.parse(a.date) - Date.parse(b.date));
+}
+
+/** The §2.1 per-launch series, built from the committed CSVs exactly as the published measurement does. */
+function publishedSeries(): { mint: string; symbol: string; date: string; mintMs: number; returnPerSol: number; prizeSol: number }[] {
+  return publishedLaunchTotals()
     .filter((r) => r.trips > 0)
     .map((r) => ({ mint: r.mint, symbol: r.symbol, date: r.date, mintMs: Date.parse(r.date), returnPerSol: r.gross / r.stake, prizeSol: r.gross }))
     .sort((a, b) => a.mintMs - b.mintMs);
+}
+
+/**
+ * The same launches as {@link publishedLaunchTotals}, in the shape the PRODUCTION series-construction
+ * path consumes — zero-trip launches included, so the exclusion is made by `toSeriesPoints` rather
+ * than by this helper. That is the whole point: a reproduction proof that pre-filters its own input
+ * never exercises the code that decides what enters the rank test.
+ */
+function publishedMeasurements(): LaunchMeasurement[] {
+  return publishedLaunchTotals().map((r) => ({
+    mint: r.mint,
+    deployer: DEPLOYER,
+    mintMs: Date.parse(r.date),
+    measured: true,
+    unmeasuredReason: null,
+    createSlot: 0,
+    deployerIsFirstBuyer: true,
+    bundledTx: 1,
+    maxWalletsInOneTx: 2,
+    createSlotOutsiders: r.trips,
+    createSlotClosedPairs: r.trips,
+    createSlotStakeSol: r.stake,
+    createSlotPrizeSolGrossOfFees: r.gross,
+    createSlotReturnPerSolGrossOfFees: r.stake > 0 ? r.gross / r.stake : Number.NaN,
+    allEntrantClosedPairsFloor: 0,
+    allEntrantStakeSolFloor: 0,
+    allEntrantPrizeFloorSolGrossOfFees: 0,
+    allEntrantReturnPerSolFloorGrossOfFees: Number.NaN,
+    fills: 0,
+    wallets: 0,
+    caveats: [GROSS_OF_FEES_CAVEAT, ALL_ENTRANT_FLOOR_CAVEAT],
+  }));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -553,6 +603,25 @@ describe('the clock pre-flight refuses rather than shrugs', () => {
     expect(nothing.reasons.join(' ')).toMatch(/established nothing/);
   });
 
+  it('stops at its own request ceiling instead of burning every attempt against a refusing client', async () => {
+    // Swallowing CeilingReached as a per-attempt note would run the full attempt loop for every
+    // remaining launch against a client that throws immediately, and would report them as merely
+    // unread rather than as "the ceiling stopped the pre-flight".
+    const { client, urls } = scriptedClient([{ jsonrpc: '2.0', id: 1, result: 1 }], { host: SOLANA_RPC, maxRequests: 1 });
+    await client.rpc('getBlockTime', [1]);
+    await expect(readBlockTimeMs(client, 2, 3)).rejects.toBeInstanceOf(CeilingReached);
+    expect(urls).toHaveLength(1);
+
+    const launches = [1, 2, 3].map((i) => ({ mint: `m${i}`, symbol: `s${i}`, createSlot: i, vendorMs: 0 }));
+    const { client: paced } = scriptedClient([{ jsonrpc: '2.0', id: 1, result: 1 }], { host: SOLANA_RPC, maxRequests: 1 });
+    const samples = await measureBlockTimeSkew({ client: paced, launches, attemptsPerLaunch: 3 });
+    expect(samples).toHaveLength(2);
+    expect(samples[1]!.skewMs).toBeNull();
+    expect(samples[1]!.note).toMatch(/ceiling stopped it here/);
+    // The launches after it were never attempted, and the verdict says so rather than calling them unread.
+    expect(samples[1]!.note).toMatch(/1 launch\(es\) after this one were never attempted/);
+  });
+
   it('only offers launches whose create slot is PROVED', () => {
     const launches = readLaunches();
     const picked = selectPreflightLaunches(launches, (m) => readWindowTape(m), 6);
@@ -741,6 +810,53 @@ describe('windows are segmented, never thresholded — and the published answer 
     expect(w.gapToNextRegimeDays * 24).toBeCloseTo(24.7, 1);
   });
 
+  it('reproduces those breaks through the PRODUCTION series-construction path, zero-trip launches and all', () => {
+    // The gap this closes: the two tests above hand `changepoints` a series this file pre-filtered,
+    // so they never exercised the code that decides what enters the rank test. `toSeriesPoints` is
+    // that code, and it is given every launch — including the ones with no closed create-slot round
+    // trip, which is what the collector actually reads off disk.
+    const rows = publishedMeasurements();
+    const rank = toSeriesPoints(rows);
+    expect(rows.length).toBeGreaterThan(197);
+    expect(rank.launchesNoClosedCreateSlotPair).toBe(rows.length - 197);
+    expect(rank.launchesNoClosedCreateSlotPair).toBeGreaterThan(0);
+    expect(rank.launchesInRankTest).toBe(197);
+
+    const points = rank.byDeployer.get(DEPLOYER)!;
+    expect(points.map((p) => p.mint)).toEqual(publishedSeries().map((s) => s.mint));
+    const found = findWindows(points, { deployer: DEPLOYER });
+    expect(found.segments.map((s) => s.launches)).toEqual([15, 102, 80]);
+    expect(found.windows).toHaveLength(1);
+    expect(new Date(found.windows[0]!.segment.fromMs).toISOString()).toBe('2026-03-12T18:09:24.000Z');
+    expect(found.windows[0]!.durationDays).toBeCloseTo(82.7, 1);
+    // The dropped launches do not inflate the denominator either.
+    expect(found.launchesMeasured).toBe(197);
+  });
+
+  it('shows why 0 is not the missing value: imputing it moves the published answer', () => {
+    // §11 of the published measurement puts a size on this — reading the launches with no outsider
+    // in the create slot as zeros rather than as missing lowers the window's median prize by roughly
+    // a fifth. On this series it is worse than a shift: the imputed zeros flatten the level enough
+    // that the rank test finds NO break at all, so the published window disappears entirely. A test
+    // that only asserted the exclusion happens would pass on an imputation too.
+    const kept = findWindows(toSeriesPoints(publishedMeasurements()).byDeployer.get(DEPLOYER)!, { deployer: DEPLOYER });
+    const imputed = findWindows(
+      publishedMeasurements().map((r) => ({
+        mint: r.mint,
+        mintMs: r.mintMs,
+        returnPerSol: Number.isFinite(r.createSlotReturnPerSolGrossOfFees) ? r.createSlotReturnPerSolGrossOfFees : 0,
+        prizeSol: r.createSlotPrizeSolGrossOfFees,
+      })),
+      { deployer: DEPLOYER },
+    );
+    expect(imputed.launchesMeasured).toBeGreaterThan(kept.launchesMeasured);
+    expect(kept.windows).toHaveLength(1);
+    expect(imputed.segments).toHaveLength(1);
+    expect(imputed.windows).toHaveLength(0);
+    // And the level it flattens to sits far below the window's own.
+    expect(imputed.segments[0]!.medianPrizeSol).toBeLessThan(kept.windows[0]!.segment.medianPrizeSol);
+  });
+
   it('flags a censored end instead of reporting a bound as a measurement', () => {
     const point = (i: number, r: number) => ({ mint: `m${i}`, mintMs: i * 86_400_000, returnPerSol: r, prizeSol: r });
     const highThenLow = [...Array(20)].map((_, i) => point(i, 1 + i * 1e-6)).concat([...Array(20)].map((_, i) => point(20 + i, -1 + i * 1e-6)));
@@ -788,7 +904,7 @@ describe('the plan is the only place a run states its cost, and it issues nothin
 
   it('costs a run in requests and wall clock before a single request is spent', () => {
     const rows = [...Array(10)].map((_, i) => launchRow(`m${i}`, `2026-02-0${(i % 9) + 1} 00:00:00.000 UTC`, 10));
-    const plan = buildPlan({ cohortText: null, launchListText: JSON.stringify(rows), nowMs: Date.parse('2026-08-03T00:00:00Z') });
+    const plan = buildPlan({ cohortText: null, launchList: readLaunchList(JSON.stringify(rows), 'test launch list'), nowMs: Date.parse('2026-08-03T00:00:00Z') });
     expect(plan.ok).toBe(true);
     expect(plan.launchesToWalk).toBe(10);
     expect(plan.expectedRequests.p50).toBe(40);
@@ -802,7 +918,7 @@ describe('the plan is the only place a run states its cost, and it issues nothin
   it('refuses a prefix read as a total, and an oversized history read as a truncation', () => {
     const short = buildPlan({
       cohortText: null,
-      launchListText: JSON.stringify([launchRow('m1', '2026-02-01 00:00:00.000 UTC', 99)]),
+      launchList: readLaunchList(JSON.stringify([launchRow('m1', '2026-02-01 00:00:00.000 UTC', 99)]), 'test launch list'),
       nowMs: Date.parse('2026-08-03T00:00:00Z'),
     });
     expect(short.ok).toBe(false);
@@ -811,7 +927,7 @@ describe('the plan is the only place a run states its cost, and it issues nothin
     const huge = [...Array(BOUNDS.walk.maxLaunchesPerDeployer + 1)].map((_, i) =>
       launchRow(`m${i}`, '2026-02-01 00:00:00.000 UTC', BOUNDS.walk.maxLaunchesPerDeployer + 1),
     );
-    const over = buildPlan({ cohortText: null, launchListText: JSON.stringify(huge), nowMs: Date.parse('2026-08-03T00:00:00Z') });
+    const over = buildPlan({ cohortText: null, launchList: readLaunchList(JSON.stringify(huge), 'test launch list'), nowMs: Date.parse('2026-08-03T00:00:00Z') });
     expect(over.refusals.join(' ')).toMatch(/refused from the plan rather than truncated/);
     expect(over.launchesToWalk).toBe(0);
   });
@@ -828,7 +944,7 @@ describe('the plan is the only place a run states its cost, and it issues nothin
     ]);
     const plan = buildPlan({
       cohortText,
-      launchListText: JSON.stringify([launchRow('m1', '2026-02-01 00:00:00.000 UTC', 1)]),
+      launchList: readLaunchList(JSON.stringify([launchRow('m1', '2026-02-01 00:00:00.000 UTC', 1)]), 'test launch list'),
       nowMs: Date.parse('2026-08-03T00:00:00Z'),
     });
     expect(plan.ok).toBe(false);
@@ -840,13 +956,43 @@ describe('the plan is the only place a run states its cost, and it issues nothin
     expect(plan.cohort[0]!.launchesInMonth).toBe(40);
   });
 
+  it('states a multi-sitting collection as an ADVISORY, and does not refuse its own target cohort', () => {
+    // The collector checkpoints every launch and resumes, so a p95 above the run ceiling says how
+    // many sittings to expect — it is not a failure. Refusing it would make the README's own headline
+    // scenario (~2,100 launches) unwalkable before the first request. The real bound is the client's
+    // per-run ceiling, which stops a sitting exactly and leaves it resumable.
+    // Spread over several deployers, each well inside the per-deployer ceiling, so the only thing
+    // over a bound is the RUN's request estimate.
+    const perDeployer = Math.floor(BOUNDS.walk.maxLaunchesPerDeployer / 2);
+    const deployers = Math.ceil(BOUNDS.walk.maxRequestsPerRun / 13 / perDeployer) + 1;
+    const rows = [...Array(deployers)].flatMap((_, d) =>
+      [...Array(perDeployer)].map((__, i) => ({
+        deployer: `deployer-${d}`,
+        mint: `m${d}-${i}`,
+        created_at: '2026-02-01 00:00:00.000 UTC',
+        bonded: false,
+        launches_total: perDeployer,
+      })),
+    );
+    const plan = buildPlan({
+      cohortText: null,
+      launchList: readLaunchList(JSON.stringify(rows), 'test launch list'),
+      nowMs: Date.parse('2026-08-03T00:00:00Z'),
+    });
+    expect(plan.expectedRequests.p95).toBeGreaterThan(BOUNDS.walk.maxRequestsPerRun);
+    expect(plan.ok).toBe(true);
+    expect(plan.refusals).toEqual([]);
+    expect(plan.advisories.join(' ')).toMatch(/above the pinned run ceiling/);
+    expect(plan.advisories.join(' ')).toMatch(/sittings/);
+  });
+
   it('walks only forward from the seed month, so every deployer gets the same observation', () => {
     const rows = [
       launchRow('before', '2025-11-01 00:00:00.000 UTC', 3),
       launchRow('inside', '2026-02-01 00:00:00.000 UTC', 3),
       launchRow('future', '2027-01-01 00:00:00.000 UTC', 3),
     ];
-    const plan = buildPlan({ cohortText: null, launchListText: JSON.stringify(rows), nowMs: Date.parse('2026-08-03T00:00:00Z') });
+    const plan = buildPlan({ cohortText: null, launchList: readLaunchList(JSON.stringify(rows), 'test launch list'), nowMs: Date.parse('2026-08-03T00:00:00Z') });
     expect(plan.launchesToWalk).toBe(1);
   });
 });
@@ -924,6 +1070,94 @@ describe('the collector end to end, on a scripted endpoint', () => {
       const { client: second } = scriptedClient([pageBody(fills, false, null)]);
       expect((await runWalk({ out: dir, client: second, list, nowMs: Date.parse('2026-08-03T00:00:00Z') })).walked).toBe(0);
       expect(second.issued()).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('re-attempts an UNPROVED walk on the next sitting, and keeps what the failed one spent', async () => {
+    // A sidecar's existence is not proof of coverage. A walk that ended truncated wrote one saying
+    // `reached_mint: false`, and skipping on existence alone would make one transient failure a
+    // permanent unmeasured launch — biased towards the busiest launches, which are the high-prize
+    // tail the 40-request per-launch budget exists to keep.
+    const dir = mkdtempSync(join(tmpdir(), 'arrival-retry-'));
+    try {
+      const mintMs = Date.parse('2026-02-01T00:00:00.000Z');
+      const list = parseLaunchListRows([
+        { deployer: DEPLOYER, mint: MINT, created_at: '2026-02-01 00:00:00.000 UTC', bonded: true, launches_total: 1 },
+      ]);
+      const nowMs = Date.parse('2026-08-03T00:00:00Z');
+      const late = row({ slotIndexId: sid(500, 0), timestamp: new Date(mintMs + 10).toISOString() });
+
+      // Sitting one: the endpoint never proves it holds nothing older, so the walk is truncated.
+      const { client: first } = scriptedClient([pageBody([late], true, 'more')]);
+      await runWalk({ out: dir, client: first, list, nowMs });
+      const windowDir = join(dir, 'window');
+      const attempt = JSON.parse(readFileSync(join(windowDir, `${MINT}.meta.json`), 'utf8'));
+      expect(attempt.reached_mint).toBe(false);
+      expect(attempt.attempts).toBe(1);
+      expect(typeof attempt.stop_reason).toBe('string');
+      expect(checkpointState(windowDir, MINT).done).toBe(false);
+
+      // Sitting two: it is offered again, and the failed attempt's evidence survives the retry.
+      const proving = [
+        row({ slotIndexId: sid(10, 0), tx: 'dev', userAddress: DEPLOYER, timestamp: new Date(mintMs).toISOString() }),
+        row({ slotIndexId: sid(10, 1), tx: 'bundle', userAddress: 'coord-a', timestamp: new Date(mintMs).toISOString() }),
+        row({ slotIndexId: sid(10, 2), tx: 'bundle', userAddress: 'coord-b', timestamp: new Date(mintMs).toISOString() }),
+      ];
+      const { client: second } = scriptedClient([pageBody(proving, false, null)]);
+      expect((await runWalk({ out: dir, client: second, list, nowMs })).walked).toBe(1);
+      const proved = JSON.parse(readFileSync(join(windowDir, `${MINT}.meta.json`), 'utf8'));
+      expect(proved.reached_mint).toBe(true);
+      expect(proved.attempts).toBe(2);
+      expect(proved.previous_attempts).toHaveLength(1);
+      expect(proved.previous_attempts[0].reached_mint).toBe(false);
+      expect(proved.previous_attempts[0].requests).toBe(attempt.requests);
+
+      // And now it IS done, so a third sitting spends nothing on it.
+      expect(checkpointState(windowDir, MINT).done).toBe(true);
+      const { client: third } = scriptedClient([pageBody(proving, false, null)]);
+      expect((await runWalk({ out: dir, client: third, list, nowMs })).walked).toBe(0);
+      expect(third.issued()).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports a checkpoint killed mid-write as unreadable and UNMEASURED, instead of throwing', async () => {
+    // One truncated last line is what a walk killed mid-write leaves. Aborting the whole offline
+    // phase over it would lose every other launch's measurement to one launch's interrupted write.
+    const dir = mkdtempSync(join(tmpdir(), 'arrival-torn-'));
+    try {
+      const mintMs = Date.parse('2026-02-01T00:00:00.000Z');
+      const fills = [
+        row({ slotIndexId: sid(10, 0), tx: 'dev', userAddress: DEPLOYER, timestamp: new Date(mintMs).toISOString() }),
+        row({ slotIndexId: sid(10, 1), tx: 'bundle', userAddress: 'coord-a', timestamp: new Date(mintMs).toISOString() }),
+        row({ slotIndexId: sid(10, 2), tx: 'bundle', userAddress: 'coord-b', timestamp: new Date(mintMs).toISOString() }),
+        row({ slotIndexId: sid(10, 3), tx: 'solo', userAddress: 'outsider', amountSol: '1', baseAmount: '1000', timestamp: new Date(mintMs).toISOString() }),
+        row({ slotIndexId: sid(12, 0), tx: 's1', userAddress: 'outsider', type: 'sell', amountSol: '4', baseAmount: '1000', timestamp: new Date(mintMs + 10_000).toISOString() }),
+      ];
+      const { client } = scriptedClient([pageBody(fills, false, null)]);
+      const list = parseLaunchListRows([
+        { deployer: DEPLOYER, mint: MINT, created_at: '2026-02-01 00:00:00.000 UTC', bonded: true, launches_total: 1 },
+      ]);
+      await runWalk({ out: dir, client, list, nowMs: Date.parse('2026-08-03T00:00:00Z') });
+
+      const gz = join(dir, 'window', `${MINT}.jsonl.gz`);
+      const lines = gunzipSync(readFileSync(gz)).toString('utf8').trimEnd().split('\n');
+      writeFileSync(gz, gzipSync(`${lines.slice(0, -1).join('\n')}\n{"slot":12,"sid":"000`));
+
+      const torn = readPersistedWindow(join(dir, 'window'), MINT)!;
+      expect(torn.unreadable).toMatch(/could not be parsed/);
+      const { rows, rankInput, unreadable } = runSeries({ out: dir });
+      expect(unreadable).toHaveLength(1);
+      expect(rows[0]!.measured).toBe(false);
+      // Unmeasured, never a zero: it reaches neither the rank test nor a deployer's observation span.
+      expect(rankInput.launchesInRankTest).toBe(0);
+      expect(rankInput.launchesUnmeasured).toBe(1);
+      const arrival = JSON.parse(readFileSync(join(dir, 'arrival.json'), 'utf8'));
+      expect(arrival.launchesUnreadable[0].mint).toBe(MINT);
+      expect(arrival.launchesMeasured).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

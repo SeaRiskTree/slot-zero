@@ -442,15 +442,15 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
   without changing its direction. The counterexample is on our own subject: 76.3% of post-break
   closed round trips are positive gross (351 / 460), and the same population is not worth trading
   fee-inclusive.
-- **P&L in the population tape is bounded by each launch's own collection window** — 60 s on most,
-  300 s on 21 launches and 120 s on 4 — and **on the 103 graduated launches that bound is now
-  lifted**: `data/graduated-life-tape-2026-08-02/` carries mint → graduation + 1 hour, taking
-  closure over the same early wallets from 47.2% to 94.4%. That baseline is each launch's own
-  committed window, never a flat 60 s; on the graduated 103 it is 60 s on 83, 120 s on 3 and 300 s
-  on 17. Two things it does **not** do — the 136
-  non-graduated launches are still bounded by their committed window (by design; 98 of them are
-  within 1% of the empty curve), and **everything it adds is still gross of fees**, so it can complete a position
-  without making its P&L fee-inclusive.
+- **P&L in the population tape is bounded by each launch's own collection window** — across the
+  239 it is 60 s on 210, 120 s on 4 and 300 s on 25 — and **on the 103 graduated launches that
+  bound is now lifted**: `data/graduated-life-tape-2026-08-02/` carries mint → graduation + 1 hour,
+  taking closure over the same early wallets from 47.2% to 94.4%. That baseline is each launch's
+  own committed window, never a flat 60 s; on the graduated 103 it is 60 s on 83, 120 s on 3 and
+  300 s on 17. Two things it does **not** do — the 136 non-graduated launches are still bounded by
+  their committed window (by design; 98 of them are within 1% of the empty curve), and **everything
+  it adds is still gross of fees**, so it can complete a position without making its P&L
+  fee-inclusive.
 - **The launch universe is a lower bound, not the population.** `?creator=` lists by
   *current* creator, and creator records move. The one launch we know was missing was this
   operation's best result by two orders of magnitude. Any other launch whose creator record

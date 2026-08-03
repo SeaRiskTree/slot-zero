@@ -170,7 +170,7 @@ export function readWindowMeta(mint, dir = TAPE_DIR) {
  */
 
 /**
- * Read one committed 60-second window tape, if it exists.
+ * Read one committed window tape, if it exists.
  *
  * Serves two jobs in this collector: it brackets the migration for free on the eighteen launches
  * that bonded inside their own window, and its create slot is a free cross-check on the oldest end

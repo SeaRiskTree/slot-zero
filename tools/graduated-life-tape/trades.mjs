@@ -110,7 +110,7 @@ export function slotOf(sid) {
  * Normalise one endpoint row into the committed tape's row schema.
  *
  * The field names are the population tape's, not the endpoint's, and that is deliberate: a life
- * tape written in a second schema could not be concatenated with the 60-second window tape it
+ * tape written in a second schema could not be concatenated with the committed window tape it
  * extends, and the first thing anyone will want to do is exactly that. `tsMs` is the one addition,
  * and it is derived rather than stored (see `writeFills` in `walk.mjs`).
  *

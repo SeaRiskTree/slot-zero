@@ -71,7 +71,7 @@ window file and a life file concatenate without translation:
 
 **`p` is the venue and it is the new column that matters**: `pump` is the bonding curve, `pump_amm`
 is PumpSwap. **316,201 of the 503,037 fills here are `pump_amm`** — 62.9% of this tape is trading
-that happened after graduation, which no 60-second window could contain at all.
+that happened after graduation, which no opening window could contain at all.
 
 ---
 

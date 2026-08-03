@@ -29,7 +29,7 @@
  *   back newest-first and the venue sequence is monotone, so such a page reads
  *   `[AMM … AMM, curve … curve]` and the migration sits in the gap. That is an *exact* answer, not
  *   a converged one, and it terminates the search wherever it happens.
- * - **The on-disk 60-second window tape is free.** Eighteen launches bonded inside their own
+ * - **The on-disk committed window tape is free.** Eighteen launches bonded inside their own
  *   opening window, so their migration is already bracketed in committed data at **zero requests**.
  *
  * ## What "the graduation instant" means here, exactly
@@ -84,7 +84,7 @@ export const MIN_AGE_MS = 1_000;
 /**
  * Bracket the migration from an already-in-hand, newest-first run of fills.
  *
- * Used twice: on the committed 60-second window tape (zero requests) and on any fetched page that
+ * Used twice: on the committed window tape (zero requests) and on any fetched page that
  * happens to straddle the boundary. The caller supplies fills in **any** order; monotonicity in
  * time is what makes the bracket exact, not the array's order.
  *

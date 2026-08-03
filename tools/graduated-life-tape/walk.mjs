@@ -3,12 +3,12 @@
  *
  * ## Why this window and not another
  *
- * The committed population tape covers the first **60 seconds** of each launch. That was the right
- * window for the question it was built for and it is the wrong window for what is left, because the
- * median bond in this population lands at **+17 minutes** — so the 60-second window ends at roughly
- * 27% of the bond price, **52% of (wallet, launch) pairs are still open when it ends**, and every
- * counterparty who held past a minute currently has a P&L that is an artefact of where the window
- * stopped rather than of what they did. One hour past graduation covers the median peak (1.21× the
+ * The committed population tape covers each launch's **opening window** — 60 s on 210 of the 239,
+ * 120 s on 4 and 300 s on 25. That was the right window for the question it was built for and it is
+ * the wrong window for what is left, because the median bond in this population lands at
+ * **+17 minutes** — so that window ends at roughly 27% of the bond price, **52% of (wallet, launch)
+ * pairs are still open when it ends**, and every counterparty who held past it currently has a P&L
+ * that is an artefact of where the window stopped rather than of what they did. One hour past graduation covers the median peak (1.21× the
  * bond) and closes the great majority of those positions.
  *
  * ## Why it is bounded at all
@@ -18,8 +18,8 @@
  *
  * - **Graduated launches only.** 98 of the 136 non-graduated sit within 1% of the empty curve with
  *   under 0.1 SOL of reserves and a median 42 days since their last trade. There is no price path
- *   left to reconstruct and the interesting part of their life is already inside the 60-second
- *   window. That alone is ~57% of the token count.
+ *   left to reconstruct and the interesting part of their life is already inside their committed
+ *   opening window. That alone is ~57% of the token count.
  * - **Stop at graduation + 1 hour**, which is knowable in advance because `graduation.mjs` pins it
  *   first. That is what makes this a bounded walk rather than an open-ended one.
  * - **Stop at the last trade.** Median idle time is 3.7 days for graduated tokens; walking past the
@@ -45,7 +45,7 @@ export const POST_GRADUATION_MS = 3_600_000;
  * Successful pages one launch may cost before the walk gives up on it.
  *
  * Set from the endpoint's own measured shape rather than from taste: per-launch page budgets on the
- * committed tape ran p50 4 / p90 8 / p95 13 / max 24 for a 60-second window, and the scout costed
+ * committed tape ran p50 4 / p90 8 / p95 13 / max 24 for its opening window, and the scout costed
  * this wider window at 10–40 pages. One hundred pages is 10,000 fills, four times the widest
  * launch in the tape, so a launch that hits it is genuinely enormous rather than merely busy — and
  * it is recorded as truncated rather than quietly short.
@@ -66,7 +66,7 @@ export const MAX_PAGES_PER_LAUNCH = 100;
  * @property {number} fromMs      Oldest fill kept, or the bound if none.
  * @property {number} toMs        Newest fill kept, or the bound if none.
  * @property {number | null} oldestSlot
- * @property {number} ammFills    Fills on PumpSwap — the part no 60-second window could hold.
+ * @property {number} ammFills    Fills on PumpSwap — the part no opening window could hold.
  * @property {string | null} stopReason
  */
 

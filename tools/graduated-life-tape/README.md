@@ -48,12 +48,12 @@ is the explicit, visible way to spend requests on a launch twice.
 
 ## What it collects, and why that shape
 
-The committed population tape covers the **first 60 seconds** of each of 239 launches. That window
-was right for the question it was built for and is wrong for what is left, because in this
-population the median bond lands at **+17 minutes**. So the 60-second window ends at roughly **27%
-of the bond price**, **52% of (wallet, launch) pairs are still open when it ends**, and every
-counterparty who held past a minute currently has a P&L that is an artefact of where the window
-stopped rather than of what they did.
+The committed population tape covers each of its 239 launches for that launch's own **opening
+window** — 60 s on 210 of them, 120 s on 4 and 300 s on 25. That window was right for the question
+it was built for and is wrong for what is left, because in this population the median bond lands at
+**+17 minutes**. So the committed window ends at roughly **27% of the bond price**, **52% of
+(wallet, launch) pairs are still open when it ends**, and every counterparty who held past it
+currently has a P&L that is an artefact of where the window stopped rather than of what they did.
 
 The naive fix — a whole-life walk on all 239 launches — was costed at **~9,500 keyless requests**
 and would spend most of them on nothing. This collector is the narrowed shape recommended by
@@ -68,14 +68,14 @@ remaining information.**
 2. **Graduated launches only** — 103 of 239. Of the 136 skipped, 98 sit within 1% of the empty
    curve with under 0.1 SOL of reserves and a median 42 days since their last trade. There is no
    price path left to reconstruct and the interesting part of their life is already inside the
-   committed 60-second window. That alone is ~57% of the token count.
+   committed opening window. That alone is ~57% of the token count.
 3. **Bounded at the last trade, not at "now."** Median idle time is 3.7 days for graduated tokens.
    A walk that runs to the present spends requests on silence.
 
 **Three widenings**, all of which fall out of walking `mint → graduation + 1 hour` on all 103:
 
 4. **The window where the remaining question lives.** The median peak is 1.21× the bond, and one
-   hour past graduation closes the great majority of the positions the 60-second window left open.
+   hour past graduation closes the great majority of the positions the committed window left open.
 5. **The dev's own behaviour on the ten launches where the deployer is still holding at the bond** —
    the one mode in which he can sell into a graduated pool. Seven were chain-reconstructed by an
    earlier scout at considerable cost; `TruthGPT`, `Sol` and `Fox` never were. The trade endpoint
@@ -107,7 +107,7 @@ is 5 seconds or 30 days.
 
 Three accelerations, and each is **exact rather than converged**:
 
-- **The committed 60-second window is free.** Launches that bonded inside their own opening window
+- **The committed window is free.** Launches that bonded inside their own opening window
   are already bracketed in committed data at **zero requests**.
 - **A page holding both venues brackets the migration between two adjacent fills.** Rows come back
   newest-first and the sequence is monotone, so such a page reads `[AMM … AMM, curve … curve]` and
@@ -144,7 +144,7 @@ the same standard as the committed tape's `meta.reached_mint`, and `reached_mint
 sidecar carries the answer per launch — never summed, because a truncated walk loses its **oldest**
 end, which is the mint end, which is the valuable one.
 
-**One free cross-check runs on every launch.** The committed 60-second tape proved its own coverage
+**One free cross-check runs on every launch.** The committed window tape proved its own coverage
 of the create slot. A life walk that claims to have reached the mint must land on the same slot;
 `create_slot_agrees` in each sidecar records the comparison, and `test/graduated-life-tape.test.ts`
 asserts it never comes back false.

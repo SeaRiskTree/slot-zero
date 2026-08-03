@@ -104,7 +104,10 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `maxLaunchesPerCandidate` cap, so **do not infer an eligibility count from an older record** —
  *   it is not in there. Every cost figure is a LOWER bound: an out-of-transaction landing tip is
  *   not recoverable from the entrant's own transaction, which the record states on the number
- *   itself in `entry.caveats`, not only here.
+ *   itself in `entry.caveats`, not only here. **The `stage0` block gains
+ *   `onChainCostReproduction`** — the offline cost regression in full, so a saved run says by how
+ *   much and over what netting the measured fees moved the field, not only that it passed; the
+ *   README's schema table lists its fields.
  */
 export const RECORD_SCHEMA_VERSION = 6;
 

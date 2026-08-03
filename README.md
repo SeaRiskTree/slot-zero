@@ -59,7 +59,7 @@ top of this file. Answering it means screening *other* deployers, present tense.
 |---|---|
 | **Stage 0** — local validation, no network, no key | `tools/deployer-screen/stage0.mjs` |
 | **Stage 1** — the completion-rate **gate**: keyed MadeOnSol counts, over a launch history derived from the keyless on-chain **create** transactions rather than from who owns the tokens now | `tools/deployer-screen/screen.mjs` |
-| **Stage 2** — the keyless **entry** score: room in the opening window, and what the field there achieved | `tools/deployer-screen/stage2.mjs`, `entry.mjs` |
+| **Stage 2** — the keyless **entry** score: room in the opening window, what the field there achieved, and **what it cost that field to land** | `tools/deployer-screen/stage2.mjs`, `entry.mjs` |
 | **The candidate discovery feed** — the scheduled lane that surfaces deployer wallets this project has not seen before and queues the gate-clearing ones for the screen; scope, quota bounds and the vendor-selection ceiling in `tools/deployer-screen/FEED.md` | `tools/deployer-screen/feed.mjs` |
 | **The window-population measurement** — how many profitable windows the tape contains, how long, how fast they close | `analysis/window-population/` |
 | **CI** — `npm test` on the Node 20 engines floor | `.github/workflows/ci.yml` |
@@ -432,10 +432,13 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
   that our own buy counts towards, whether an outsider could have exited first — is stage 3's
   separate deliverable, and it is not built. An entry with room in it can still be a position you
   cannot leave.
-- **Everything Stage 2 measures about profit is gross of fees and therefore an upper bound**, so
-  its field leg can only ever *veto* a verdict, never earn one. The counterexample is on our own
-  subject: 76.3% of post-break closed round trips are positive gross (351 / 460), and the same
-  population is not worth trading fee-inclusive.
+- **Everything Stage 2 measures about profit is an upper bound**, so its field leg can only ever
+  *veto* a verdict, never earn one. The fill tape alone is gross of fees; Stage 2 also nets the
+  entry cost it recovers from the chain, but that cost is itself a lower bound — a landing tip paid
+  in a separate transaction of the same bundle is in no figure — so netting sharpens the veto
+  without changing its direction. The counterexample is on our own subject: 76.3% of post-break
+  closed round trips are positive gross (351 / 460), and the same population is not worth trading
+  fee-inclusive.
 - **Every P&L here is bounded by a 60-second window** (300 s on 21 launches, 120 s on 4).
   48% of pairs close inside it; the other 52% are late, small and still holding, and their
   outcome is unknown. A whole-life tape is the same endpoint with no window bound — roughly

@@ -4424,6 +4424,7 @@ describe('the keyless boundary holds in both directions', () => {
       const parsed = JSON.parse(text) as {
         candidates: Record<string, unknown>[];
         spend?: Record<string, unknown>;
+        dune?: Record<string, unknown>;
       };
       expect(parsed.candidates.length, file).toBeGreaterThan(0);
       const expected = PERSISTED_BY_SCHEMA[schemaVersionOf(parsed)];
@@ -4441,6 +4442,24 @@ describe('the keyless boundary holds in both directions', () => {
         expect(JSON.stringify(parsed.spend), `${file} spend block holds a composed RPC URL`).not.toMatch(
           /api-key=/,
         );
+      }
+      // And the run-level `dune` block, read out of the SAVED record the same way. The source-side
+      // pin below catches a field added to `buildRecord`; this one catches a committed record that
+      // no longer matches the version it declares. No committed record carries the block yet — the
+      // first schema-9 run to land here is exactly what it exists to hold.
+      //
+      // Deliberately NOT the presence-conditional shape the `spend` guard above uses: `buildRecord`
+      // emits `dune` unconditionally, so keying on presence would let a schema-9 record with the
+      // block stripped or renamed pass silently — half of what this guard is for. The version, not
+      // the block, decides whether to assert. `spend` has the identical blind spot; that is a known
+      // gap filed separately, not the pattern to copy back into here (captain approved the
+      // divergence).
+      const duneExpected = DUNE_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+      if (duneExpected !== undefined) {
+        expect(parsed.dune, `${file} declares a schema whose record carries a dune block, and has none`)
+          .toBeDefined();
+        expect(parsed.dune, `${file} dune block is null`).not.toBeNull();
+        expect(Object.keys(parsed.dune!).sort(), `${file} dune block`).toEqual([...duneExpected].sort());
       }
       for (const row of parsed.candidates) {
         expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(expected);

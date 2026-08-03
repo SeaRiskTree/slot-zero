@@ -558,8 +558,11 @@ dev currently?"*, and the shape of the answer is the point:
   outsider pairs, 0 closure mismatches, max error 5e-7 SOL** — checked in Stage 0 every run.
 - **The run record is a VERSIONED CONTRACT: bump, never retro-edit.** Committed records are the
   grading lane's input; readers version-detect, and `test/deployer-screen.test.ts` asserts the exact
-  key set PER version — for the candidate row, the `entry` block and (from schema 6) `entry.coverage`
-  — against the committed records themselves. Adding a field means a bump plus its assertions.
+  key set PER version — for the candidate row, the `entry` block, (from schema 6) `entry.coverage`,
+  the run-level `spend` and (from schema 9) the run-level `dune` block — against the committed
+  records themselves, as well as against `buildRecord`'s own source literal. Adding a field means a
+  bump plus its assertions in **both** legs; the `dune` leg keys on the record's declared version
+  rather than on the block being present, so a schema-9 record with it stripped fails too.
   **`record.mjs` and the README's schema table are two prose copies of the same contract and have
   drifted twice**; a test now pins them together, so move both in one commit. Current version:
   `RECORD_SCHEMA_VERSION` in `record.mjs`.

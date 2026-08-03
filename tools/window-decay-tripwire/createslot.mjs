@@ -43,12 +43,30 @@ export const SEEK_PAD_MS = 1_000;
  *
  * With `createdAtMs` known the walk is normally **one** page: the seek lands just past the mint,
  * and the create slot is the oldest thing there is. Three is headroom for a launch whose first
- * second carried more than `PAGE_LIMIT` fills. Without `createdAtMs` the walk starts at the newest
- * fill and this bound is what stops it becoming a whole-history walk — it will usually fail to
- * prove coverage instead, which is the correct outcome and is why `--mints` without timestamps is
- * documented as the expensive path.
+ * second carried more than `PAGE_LIMIT` fills — reachable on both paging routes, the endpoint's own
+ * `nextCursor` and, when it sends none, a seek cursor built from the oldest row's own timestamp.
+ * Without `createdAtMs` the walk starts at the newest fill and this bound is what stops it becoming
+ * a whole-history walk — it will usually fail to prove coverage instead, which is the correct
+ * outcome and is why `--mints` without timestamps is documented as the expensive path.
  */
 export const MAX_PAGES_PER_LAUNCH = 3;
+
+/**
+ * The shape a mint must have before it may be built into a URL.
+ *
+ * Mints reach this module vendor-supplied (`parseLaunchListing` reads whatever string the listing
+ * body puts in `mint`) or operator-supplied (`--mints`), and they land in a URL **path**, which
+ * `..`, `?` or `#` rewrite. The keyless client's host allow-list checks the host prefix and cannot
+ * catch that. Same rule and same alphabet as `tools/deployer-screen/dune.mjs` → `WALLET_SHAPE`,
+ * for the same reason: a vendor-supplied identifier reaching a query surface is shape-checked
+ * first, and a candidate that fails is dropped and counted rather than passed through.
+ */
+export const MINT_SHAPE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/** @param {unknown} mint @returns {boolean} */
+export function isReadableMint(mint) {
+  return typeof mint === 'string' && MINT_SHAPE.test(mint);
+}
 
 /**
  * Build a cursor that seeks to an instant. The slot half is ignored by the endpoint and is pinned
@@ -66,7 +84,7 @@ export const seekCursor = (atMs) => `9999999999990000000000-${Math.floor(atMs)}`
 export function tradesUrl(mint, cursor = null) {
   const query = new URLSearchParams({ limit: String(PAGE_LIMIT) });
   if (cursor !== null) query.set('cursor', cursor);
-  return `${SWAP_API}/v2/coins/${mint}/trades?${query.toString()}`;
+  return `${SWAP_API}/v2/coins/${encodeURIComponent(mint)}/trades?${query.toString()}`;
 }
 
 /**
@@ -105,6 +123,28 @@ export function creatorLaunchesUrl(creator, limit) {
 export const slotOf = (sid) => Number(sid.slice(0, 12));
 
 /**
+ * A row's own instant in unix ms, or `null` when the endpoint sent none this module can read.
+ *
+ * It is kept because the cursor's **timestamp** half is the half that seeks: without it, a page the
+ * endpoint sends no `nextCursor` on cannot be paged past at all, and the page bound is nominal
+ * rather than real. A seconds-resolution epoch is widened to ms; anything else is `null`, and a
+ * `null` stops the walk rather than being seeked from, because a cursor built out of a guess would
+ * page to the wrong place silently.
+ *
+ * @param {unknown} raw
+ * @returns {number | null}
+ */
+export function parseRowTimestamp(raw) {
+  const widen = (/** @type {number} */ n) => (n < 1e12 ? Math.round(n * 1_000) : Math.round(n));
+  if (typeof raw === 'number') return Number.isFinite(raw) && raw > 0 ? widen(raw) : null;
+  if (typeof raw !== 'string' || raw === '') return null;
+  const parsed = Date.parse(raw);
+  if (Number.isFinite(parsed)) return parsed;
+  const numeric = Number(raw);
+  return Number.isFinite(numeric) && numeric > 0 ? widen(numeric) : null;
+}
+
+/**
  * Normalise one endpoint row. Returns `null` for a row missing anything a caller must not invent —
  * dropped rows are counted by {@link parseTradePage}, never silently absorbed.
  *
@@ -129,7 +169,7 @@ export function parseFill(row) {
   // A fill whose size will not parse cannot be summed, and summing it as zero would understate the
   // denominator — i.e. push the share UP, towards a stop. Dropped instead, and counted.
   if (!Number.isFinite(sol) || sol < 0) return null;
-  return { slot, sid, tx, u, k, sol };
+  return { slot, sid, tx, u, k, sol, atMs: parseRowTimestamp(r['timestamp'] ?? r['timestampMs']) };
 }
 
 /**
@@ -196,10 +236,29 @@ export function reachedTheBeginning(fills, deployer) {
 }
 
 /**
+ * Why a walk cannot say anything about this launch **yet**, as opposed to having read it.
+ *
+ * - `ceiling` — the run's request budget ran out mid-walk.
+ * - `pages` — the per-launch page bound ran out before coverage was proved.
+ * - `unreadable` — a body this module could not read rows out of, or a page whose rows all failed
+ *   to parse.
+ * - `no-cursor` — the endpoint sent no `nextCursor` and no row carried a timestamp to seek from,
+ *   so there is no way to ask for the page before this one.
+ *
+ * @typedef {'ceiling' | 'pages' | 'unreadable' | 'no-cursor'} UndecidedReason
+ */
+
+/**
  * @typedef {object} CreateSlotWalk
  * @property {import('./detector.mjs').Fill[]} fills Everything read, ascending by `sid`.
  * @property {boolean} proven Whether the walk reached the beginning. **A `false` here must reach
  *   the reading as `no-create-slot`, never as a create slot the walk merely happened to stop at.**
+ * @property {boolean} decided Whether this walk settled the launch at all — coverage proved, or the
+ *   endpoint itself saying there is nothing older. **A walk that is not decided must not be
+ *   recorded as read**: "we ran out of budget" and "this launch has no create slot" are different
+ *   findings, and storing the first as the second destroys the evidence permanently, because a mint
+ *   in `readMints` is never fetched again.
+ * @property {UndecidedReason | null} undecidedReason `null` exactly when `decided`.
  * @property {number} pages Pages read.
  * @property {number} droppedRows Rows the endpoint sent that would not parse.
  */
@@ -219,29 +278,45 @@ export function reachedTheBeginning(fills, deployer) {
  */
 export async function readCreateSlot(client, mint, options) {
   const { deployer, createdAtMs = null, maxPages = MAX_PAGES_PER_LAUNCH } = options;
+  if (!isReadableMint(mint)) throw new TypeError(`refusing a mint that is not base58-shaped: ${mint}`);
   /** @type {import('./detector.mjs').Fill[]} */ let fills = [];
   let cursor = createdAtMs === null ? null : seekCursor(createdAtMs + SEEK_PAD_MS);
   let pages = 0, droppedRows = 0;
+  /** @type {UndecidedReason | null} */ let undecided = 'pages';
 
   while (pages < maxPages) {
     // Reserve a whole request's worth of attempts before starting one, so the per-launch bound is
     // exact rather than nominal: a retry spends the shared public endpoint exactly as a first try does.
-    if (client.remaining() < client.attemptsPerRequest()) break;
+    if (client.remaining() < client.attemptsPerRequest()) { undecided = 'ceiling'; break; }
     const page = parseTradePage(await client.getJson(tradesUrl(mint, cursor)));
     pages += 1;
     droppedRows += page.rawRows - page.fills.length;
-    // An unrecognised body is not an empty one. Stopping here leaves `proven` false, which the
-    // caller reads as "no reading from this launch" rather than as a create slot.
-    if (!page.recognised) break;
+    // An unrecognised body is not an empty one. Stopping here leaves the walk UNDECIDED, which the
+    // caller reads as "come back to this launch" rather than as a create slot or as a settled silence.
+    if (!page.recognised) { undecided = 'unreadable'; break; }
     fills = dedupeBySid([...fills, ...page.fills]);
-    if (reachedTheBeginning(fills, deployer)) break;
-    if (page.hasMore === false) break;
+    if (reachedTheBeginning(fills, deployer)) { undecided = null; break; }
+    // The endpoint's own statement that there is nothing older. That settles the launch: there is
+    // genuinely nothing to read, which is a finding rather than a gap.
+    if (page.hasMore === false) { undecided = null; break; }
     const oldest = sortAscending(page.fills)[0];
-    if (oldest === undefined) break;
-    cursor = page.nextCursor ?? `${oldest.sid}-0`;
+    if (oldest === undefined) { undecided = page.rawRows > 0 ? 'unreadable' : null; break; }
+    // The endpoint's own cursor when it sent one; otherwise a seek built from the oldest row's own
+    // instant, which is the half of the cursor that seeks. Rows at that instant come back again and
+    // are deduped by `sid`.
+    const next = page.nextCursor ?? (oldest.atMs == null ? null : seekCursor(oldest.atMs));
+    if (next === null) { undecided = 'no-cursor'; break; }
+    cursor = next;
   }
 
-  return { fills: sortAscending(fills), proven: reachedTheBeginning(fills, deployer), pages, droppedRows };
+  return {
+    fills: sortAscending(fills),
+    proven: reachedTheBeginning(fills, deployer),
+    decided: undecided === null,
+    undecidedReason: undecided,
+    pages,
+    droppedRows,
+  };
 }
 
 /**

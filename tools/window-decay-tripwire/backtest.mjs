@@ -296,10 +296,9 @@ export function score(name, steps, flags, firstClosed) {
     const s = /** @type {ReplayStep} */ (steps[i]), f = /** @type {{read: boolean, fire: boolean}} */ (flags[i]);
     // Rising edges only. A stop is one-way, so a detector that stays fired for the rest of the
     // series has raised ONE alarm, not one per launch — counting the latch would flatter the slow
-    // detectors and bury the fast ones. The edge tracker is reset at the regime boundary so the two
-    // properties stay separable: a rule already firing on the window's last launch is reported as a
-    // false alarm AND is still credited with the latency it achieves on the close, rather than
-    // having its latency read off whenever its stuck signal next happens to blink.
+    // detectors and bury the fast ones. The edge tracker deliberately runs UNBROKEN across the
+    // regime boundary: only the false-alarm count reads edges, and the latency below reads the
+    // signal as a level, which is what keeps the two properties separable without a reset.
     const edge = f.fire && !previous;
     previous = f.fire;
     if (s.regime === 'open') { if (f.read) population += 1; if (edge) falseCount += 1; }

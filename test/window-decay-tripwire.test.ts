@@ -37,6 +37,7 @@ import {
 } from '../tools/window-decay-tripwire/detector.mjs';
 import {
   MAX_PAGES_PER_LAUNCH, PAGE_LIMIT, SEEK_PAD_MS, creatorLaunchesUrl, dedupeBySid, parseFill,
+  isReadableMint,
   parseLaunchListing, parseTradePage, readCreateSlot, reachedTheBeginning, seekCursor, slotOf,
   sortAscending, tradesUrl,
 } from '../tools/window-decay-tripwire/createslot.mjs';
@@ -79,6 +80,10 @@ function createSlot(opts: { dev: number; operation: number[]; outsiders: number[
 }
 
 const KNOWN_COHORT = new Set(['cohort-0', 'cohort-1', 'cohort-2']);
+
+/** Base58-shaped mints, because a mint that is not one never reaches a URL. */
+const MINT = 'FaEXgcaRekBgQ6aVFDK2PuVX7ps9K9xn2JvfuTbEpump';
+const MINT_2 = 'DkPmMBHZUQqbCPbjmVCkfSbFGpEbQoLZTKPnJLGXpump';
 
 /** A client whose every response is scripted. Never touches the network. */
 function scriptedClient(responses: Array<unknown | Error>, opts: { maxRequests?: number } = {}) {
@@ -476,9 +481,11 @@ describe('the trade endpoint is read, never assumed', () => {
       rawRow({ slotIndexId: sid(100, 1), userAddress: 'outsider', amountSol: '5' }),
       rawRow({ slotIndexId: sid(100, 0), userAddress: DEPLOYER, amountSol: '10' }),
     ], true, 'more')]);
-    return readCreateSlot(client, 'MINT', { deployer: DEPLOYER, createdAtMs: 1_000_000 }).then((walk) => {
+    return readCreateSlot(client, MINT, { deployer: DEPLOYER, createdAtMs: 1_000_000 }).then((walk) => {
       expect(walk.pages).toBe(1);
       expect(walk.proven).toBe(true);
+      expect(walk.decided).toBe(true);
+      expect(walk.undecidedReason).toBeNull();
       expect(urls[0]).toContain(`cursor=${encodeURIComponent(seekCursor(1_000_000 + SEEK_PAD_MS))}`);
       // Ascending, so the deployer's buy leads — the shape `classifyCreateSlot` reads.
       expect(walk.fills[0]?.u).toBe(DEPLOYER);
@@ -489,16 +496,66 @@ describe('the trade endpoint is read, never assumed', () => {
     // Every page is somebody else's fills. Running out of pages proves nothing, and the caller
     // turns `proven: false` into "no reading from this launch".
     const { client } = scriptedClient([page([rawRow({ slotIndexId: sid(200, 0), userAddress: 'sniper' })], true, 'c')]);
-    const walk = await readCreateSlot(client, 'MINT', { deployer: DEPLOYER, createdAtMs: null });
+    const walk = await readCreateSlot(client, MINT, { deployer: DEPLOYER, createdAtMs: null });
     expect(walk.proven).toBe(false);
     expect(walk.pages).toBe(MAX_PAGES_PER_LAUNCH);
+    // Out of pages is not an answer about the launch, so the caller must come back to it.
+    expect(walk.decided).toBe(false);
+    expect(walk.undecidedReason).toBe('pages');
   });
 
   it('stops on a body it cannot read, without treating it as an empty create slot', async () => {
     const { client } = scriptedClient([{ error: 'nope' }]);
-    const walk = await readCreateSlot(client, 'MINT', { deployer: DEPLOYER, createdAtMs: 1 });
+    const walk = await readCreateSlot(client, MINT, { deployer: DEPLOYER, createdAtMs: 1 });
     expect(walk.proven).toBe(false);
     expect(walk.pages).toBe(1);
+    expect(walk.decided).toBe(false);
+    expect(walk.undecidedReason).toBe('unreadable');
+  });
+
+  it('reaches its page bound on a page carrying no nextCursor, by seeking on the oldest row’s own instant', async () => {
+    // The bound is only real if the second page is reachable. The endpoint's cursor is
+    // `<slotIndexId>-<timestampMs>` and the TIMESTAMP half is the half that seeks, so a fallback
+    // built with a zero timestamp would ask for rows older than the epoch — one page, every time.
+    const { client, urls } = scriptedClient([
+      { trades: [rawRow({ slotIndexId: sid(300, 0), userAddress: 'sniper', timestamp: '2026-06-04T12:08:52.000Z' })] },
+    ]);
+    const walk = await readCreateSlot(client, MINT, { deployer: DEPLOYER, createdAtMs: null });
+    expect(walk.pages).toBe(MAX_PAGES_PER_LAUNCH);
+    expect(urls).toHaveLength(MAX_PAGES_PER_LAUNCH);
+    expect(urls[1]).toContain(encodeURIComponent(seekCursor(Date.parse('2026-06-04T12:08:52.000Z'))));
+    expect(walk.undecidedReason).toBe('pages');
+  });
+
+  it('stops rather than guessing when there is no cursor and no timestamp to seek from', async () => {
+    const { client, urls } = scriptedClient([
+      { trades: [rawRow({ slotIndexId: sid(300, 0), userAddress: 'sniper', timestamp: 'not-a-time' })] },
+    ]);
+    const walk = await readCreateSlot(client, MINT, { deployer: DEPLOYER, createdAtMs: null });
+    expect(urls).toHaveLength(1);
+    expect(walk.decided).toBe(false);
+    expect(walk.undecidedReason).toBe('no-cursor');
+  });
+
+  it('settles a launch the endpoint itself says there is nothing older for', async () => {
+    // The one silence that IS an answer: hasMore false. Everything else is "come back to it".
+    const { client } = scriptedClient([page([rawRow({ slotIndexId: sid(300, 0), userAddress: 'sniper' })], false, null)]);
+    const walk = await readCreateSlot(client, MINT, { deployer: DEPLOYER, createdAtMs: 1 });
+    expect(walk.proven).toBe(false);
+    expect(walk.decided).toBe(true);
+    expect(walk.undecidedReason).toBeNull();
+  });
+
+  it('refuses a mint that is not base58-shaped before it reaches a URL, and encodes the ones that are', () => {
+    // Same rule as `dune.mjs` → WALLET_SHAPE: the mint lands in a URL PATH, which `..`, `?` and `#`
+    // rewrite, and the client's host allow-list checks the host prefix and cannot catch that.
+    expect(isReadableMint(MINT)).toBe(true);
+    expect(isReadableMint('../../../etc/passwd')).toBe(false);
+    expect(isReadableMint('MINT?x=1')).toBe(false);
+    expect(isReadableMint(42)).toBe(false);
+    expect(tradesUrl('a/../b')).toContain('coins/a%2F..%2Fb/trades');
+    const { client } = scriptedClient([page([])]);
+    return expect(readCreateSlot(client, '../evil', { deployer: DEPLOYER, createdAtMs: 1 })).rejects.toThrow(/base58/);
   });
 
   it('refuses an unreadable launch listing rather than reading it as "this wallet launched nothing"', () => {
@@ -622,7 +679,7 @@ describe('every provider call is bounded, and a dry run spends nothing', () => {
         rawRow({ slotIndexId: sid(slot, 0), userAddress: 'W', amountSol: '10' }),
       ], false, null);
       const responses = [
-        { coins: [{ mint: 'm1', created_timestamp: 1000 }, { mint: 'm2', created_timestamp: 2000 }] },
+        { coins: [{ mint: MINT, created_timestamp: 1000 }, { mint: MINT_2, created_timestamp: 2000 }] },
         slotPage(100, 'out-1'),
         slotPage(101, 'out-2'),
       ];
@@ -641,6 +698,145 @@ describe('every provider call is bounded, and a dry run spends nothing', () => {
       expect(result.issued).toBeLessThanOrEqual(Number(THRESHOLDS.bounds['maxRequestsPerRun']));
       expect(JSON.parse(readFileSync(path, 'utf8')).verdict).toBe('stop-and-rotate');
       expect(lines.join('\n')).toContain('STOP-AND-ROTATE');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a plan that does not fit BEFORE its first request, not by exhausting the budget', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tripwire-'));
+    try {
+      const path = join(dir, 's.json');
+      await expect(run(parseArgs(['--wallet', 'W', '--state', path, '--live', '--max-launches', '20']), {
+        log: () => undefined,
+        fetchImpl: (() => { throw new Error('a refused plan must not fetch'); }) as unknown as typeof fetch,
+      })).rejects.toThrow(/does not fit/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses a bound that is not a positive integer rather than reading nothing and saying "watching"', () => {
+    // `Number('eight')` is NaN, `fresh.slice(0, NaN)` is empty, and the run then reports WATCHING
+    // over launches it never looked at — the one outcome this tool must never produce quietly.
+    expect(() => parseArgs(['--wallet', 'W', '--max-launches', 'eight'])).toThrow(/positive integer/);
+    expect(() => parseArgs(['--wallet', 'W', '--max-launches', '0'])).toThrow(/positive integer/);
+    expect(() => parseArgs(['--wallet', 'W', '--max-requests', '2.5'])).toThrow(/positive integer/);
+    expect(parseArgs(['--wallet', 'W', '--max-launches', '3']).maxLaunches).toBe(3);
+  });
+
+  it('keeps a launch it could not settle OUT of the read set, so the next run retries it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tripwire-'));
+    try {
+      const path = join(dir, 's.json');
+      // Page one is somebody else's fills and the endpoint makes no statement about there being
+      // more, so the walk runs out of pages without proving coverage: undecided, not "no create slot".
+      const responses: unknown[] = [
+        { coins: [{ mint: MINT, created_timestamp: 1000 }] },
+        { trades: [rawRow({ slotIndexId: sid(300, 0), userAddress: 'sniper', timestamp: 'not-a-time' })] },
+      ];
+      let i = 0;
+      const lines: string[] = [];
+      const result = await run(parseArgs(['--wallet', 'W', '--cohort', 'cohort-a', '--state', path, '--live']), {
+        log: (l) => lines.push(l), sleepImpl: async () => undefined, nowImpl: () => 0,
+        fetchImpl: (async () => ({ ok: true, status: 200, json: async () => responses[Math.min(i++, responses.length - 1)] } as unknown as Response)) as unknown as typeof fetch,
+      });
+      expect(result.read).toBe(0);
+      expect(result.undecided).toBe(1);
+      expect(result.state.readMints).toEqual([]);
+      expect(result.state.readings).toEqual([]);
+      expect(JSON.parse(readFileSync(path, 'utf8')).readMints).toEqual([]);
+      expect(lines.join('\n')).toContain('undecided');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('saves the readings it already took when the endpoint refuses a later launch mid-series', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tripwire-'));
+    try {
+      const path = join(dir, 's.json');
+      const slotPage = (slot: number) => page([
+        rawRow({ slotIndexId: sid(slot, 2), userAddress: 'out-1', amountSol: '10' }),
+        rawRow({ slotIndexId: sid(slot, 1), userAddress: 'cohort-a', tx: 'bundle', amountSol: '1' }),
+        rawRow({ slotIndexId: sid(slot, 0), userAddress: 'W', amountSol: '1' }),
+      ], false, null);
+      let call = 0;
+      const lines: string[] = [];
+      const result = await run(parseArgs(['--wallet', 'W', '--cohort', 'cohort-a', '--state', path, '--live']), {
+        log: (l) => lines.push(l), sleepImpl: async () => undefined, nowImpl: () => 0,
+        fetchImpl: (async () => {
+          call += 1;
+          if (call === 1) {
+            return { ok: true, status: 200, json: async () => ({
+              coins: [{ mint: MINT, created_timestamp: 1000 }, { mint: MINT_2, created_timestamp: 2000 }],
+            }) } as unknown as Response;
+          }
+          if (call === 2) return { ok: true, status: 200, json: async () => slotPage(100) } as unknown as Response;
+          // A 404 on a mint the listing still carries: the endpoint's considered answer, not retried.
+          return { ok: false, status: 404, json: async () => ({}) } as unknown as Response;
+        }) as unknown as typeof fetch,
+      });
+      // Launch one was read and is saved; launch two is neither read nor recorded, so it is retried.
+      expect(result.read).toBe(1);
+      expect(result.undecided).toBe(1);
+      const saved = JSON.parse(readFileSync(path, 'utf8'));
+      expect(saved.readMints).toEqual([MINT]);
+      expect(saved.readings).toHaveLength(1);
+      expect(lines.join('\n')).toContain('HTTP 404');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('prints BOTH readings a stop confirmed across two runs rests on', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tripwire-'));
+    try {
+      const path = join(dir, 's.json');
+      // The normal case: a run sees one launch, so the first breach is in the state file and the
+      // second arrives now. The evidence line must show the pair, not the half it observed itself.
+      writeFileSync(path, JSON.stringify({
+        ...emptyState('W'), verdict: 'armed', streak: 1, readMints: [MINT],
+        readings: [{ mint: MINT, at: '2026-06-04T12:08:52.000Z', share: 0.9, unread: null }],
+      }));
+      const lines: string[] = [];
+      const responses: unknown[] = [
+        { coins: [{ mint: MINT_2, created_timestamp: 1_780_000_000_000 }] },
+        page([
+          rawRow({ slotIndexId: sid(101, 2), userAddress: 'out-2', amountSol: '1' }),
+          rawRow({ slotIndexId: sid(101, 1), userAddress: 'cohort-a', tx: 'bundle', amountSol: '9' }),
+          rawRow({ slotIndexId: sid(101, 0), userAddress: 'W', amountSol: '10' }),
+        ], false, null),
+      ];
+      let i = 0;
+      const result = await run(parseArgs(['--wallet', 'W', '--cohort', 'cohort-a', '--state', path, '--live']), {
+        log: (l) => lines.push(l), sleepImpl: async () => undefined, nowImpl: () => 0,
+        fetchImpl: (async () => ({ ok: true, status: 200, json: async () => responses[Math.min(i++, responses.length - 1)] } as unknown as Response)) as unknown as typeof fetch,
+      });
+      expect(result.state.verdict).toBe('stop-and-rotate');
+      const evidence = lines.find((l) => l.includes('evidence:')) ?? '';
+      expect(evidence).toContain('2026-06-04 share 0.900');
+      expect(evidence).toContain('then');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops a mint that is not base58-shaped and says so, rather than building a URL out of it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tripwire-'));
+    try {
+      const path = join(dir, 's.json');
+      const lines: string[] = [];
+      const result = await run(parseArgs(['--wallet', 'W', '--state', path, '--live']), {
+        log: (l) => lines.push(l), sleepImpl: async () => undefined, nowImpl: () => 0,
+        fetchImpl: (async () => ({ ok: true, status: 200, json: async () => ({
+          coins: [{ mint: '../../evil', created_timestamp: 1000 }],
+        }) } as unknown as Response)) as unknown as typeof fetch,
+      });
+      // One request — the listing — and nothing built out of the mint it could not read.
+      expect(result.issued).toBe(1);
+      expect(result.read).toBe(0);
+      expect(lines.join('\n')).toContain('refused by shape');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

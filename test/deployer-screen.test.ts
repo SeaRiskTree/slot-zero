@@ -4019,6 +4019,26 @@ describe('the keyless boundary holds in both directions', () => {
     9: DUNE_KEYS_9,
   };
 
+  // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
+  // ENTRY_COVERAGE_KEYS_BY_SCHEMA. Without it the block above pins only that a `coverage` key
+  // exists, so `coverageRecordRow` could gain or lose a field with nothing failing. What survives a
+  // run here is the BOUND, not the vendor's data: which tables, from when, to when, whether the
+  // span had holes — so a field appearing or vanishing changes what a saved count was allowed to
+  // claim.
+  const DUNE_COVERAGE_KEYS_9 = [
+    'ok',
+    'fromIso',
+    'toIso',
+    'probedAtIso',
+    'fromCache',
+    'monthsWithNoRow',
+    'reasons',
+    'tables',
+  ];
+  const DUNE_COVERAGE_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    9: DUNE_COVERAGE_KEYS_9,
+  };
+
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
   // `stage0` block. The three key sets above cannot see these, which is how schema 7 could have
   // shipped a second meaning under version 6 with every existing assertion still green.
@@ -4429,54 +4449,87 @@ describe('the keyless boundary holds in both directions', () => {
       expect(parsed.candidates.length, file).toBeGreaterThan(0);
       const expected = PERSISTED_BY_SCHEMA[schemaVersionOf(parsed)];
       expect(expected, `${file} has an unknown schemaVersion`).toBeDefined();
-      // The run-level `spend` block, keyed by version for the same reason: schema 8 added five keys
-      // to it and nothing above this line could have seen them.
-      if (parsed.spend !== undefined && parsed.spend !== null) {
-        const spendExpected = SPEND_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
-        expect(spendExpected, `${file} spend block at an unknown schemaVersion`).toBeDefined();
-        expect(Object.keys(parsed.spend).sort(), `${file} spend block`).toEqual(
-          [...spendExpected!].sort(),
-        );
+      // ONE RULE for every per-schema block pin in this test, settled under captain decision 162a
+      // and made uniform here: **the VERSION decides whether to assert, never the block's
+      // presence.** A guard of the form `if (record.block !== undefined)` catches a key changing
+      // inside the block and misses the block itself being stripped or renamed — the record then
+      // passes a pin whose whole job is to say its shape matches the version it declares. So each
+      // pin below reads its version's key set first, and if that key set is DEFINED for the
+      // version the block MUST be there. An undefined key set is not a skip for convenience: it
+      // means the version predates the block (schemas 1–2 have no `spend`, no `entry`, no `dune`),
+      // and PERSISTED_BY_SCHEMA above has already refused a version this file does not know at all.
+      //
+      // The one licensed deviation is a value that is legitimately `null` (`entry` on an unscored
+      // candidate, `dune.coverage` on a run that never enumerated). Those are guarded on null and
+      // say so at the site — and in both cases the KEY's own presence is pinned one level up, by
+      // PERSISTED_BY_SCHEMA and DUNE_KEYS_BY_SCHEMA respectively, so nothing can vanish silently
+      // there either. Reading the version's key set is unconditional even then, so an unknown
+      // schemaVersion cannot buy a skipped assertion.
+
+      // The run-level `spend` block. `buildRecord` emits it unconditionally from schema 3 on, which
+      // is where its key set starts; schema 8 added five keys to it and nothing above this line
+      // could have seen them.
+      const spendExpected = SPEND_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+      if (spendExpected !== undefined) {
+        expect(parsed.spend, `${file} declares a schema whose record carries a spend block, and has none`)
+          .toBeDefined();
+        expect(parsed.spend, `${file} spend block is null`).not.toBeNull();
+        expect(Object.keys(parsed.spend!).sort(), `${file} spend block`).toEqual([...spendExpected].sort());
         // And the label, never the composed URL. The keyed endpoint's address carries the
         // credential in a query parameter, so a URL here would be a persisted key.
         expect(JSON.stringify(parsed.spend), `${file} spend block holds a composed RPC URL`).not.toMatch(
           /api-key=/,
         );
       }
+
       // And the run-level `dune` block, read out of the SAVED record the same way. The source-side
       // pin below catches a field added to `buildRecord`; this one catches a committed record that
       // no longer matches the version it declares. No committed record carries the block yet — the
       // first schema-9 run to land here is exactly what it exists to hold.
-      //
-      // Deliberately NOT the presence-conditional shape the `spend` guard above uses: `buildRecord`
-      // emits `dune` unconditionally, so keying on presence would let a schema-9 record with the
-      // block stripped or renamed pass silently — half of what this guard is for. The version, not
-      // the block, decides whether to assert. `spend` has the identical blind spot; that is a known
-      // gap filed separately, not the pattern to copy back into here (captain approved the
-      // divergence).
       const duneExpected = DUNE_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
       if (duneExpected !== undefined) {
         expect(parsed.dune, `${file} declares a schema whose record carries a dune block, and has none`)
           .toBeDefined();
         expect(parsed.dune, `${file} dune block is null`).not.toBeNull();
         expect(Object.keys(parsed.dune!).sort(), `${file} dune block`).toEqual([...duneExpected].sort());
+        // And `dune.coverage` one level down, the probe's own bounds. Pinned like `entry.coverage`
+        // so a field added to or removed from `coverageRecordRow` fails here rather than passing.
+        // `null` is the legitimate value on a run that never enumerated (no key, `--no-dune`,
+        // `--ownership-only`); the KEY itself is already pinned by DUNE_KEYS_BY_SCHEMA above, so
+        // this null guard cannot hide a vanished block.
+        const duneCoverageExpected = DUNE_COVERAGE_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+        expect(duneCoverageExpected, `${file} dune.coverage at an unknown schemaVersion`).toBeDefined();
+        const duneCoverage = parsed.dune!['coverage'];
+        if (duneCoverage !== null) {
+          expect(Object.keys(duneCoverage as object).sort(), `${file} dune.coverage`).toEqual(
+            [...duneCoverageExpected!].sort(),
+          );
+        }
       }
       for (const row of parsed.candidates) {
         expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(expected);
         expect(FORBIDDEN.test(JSON.stringify(row)), `${file} holds per-token vendor data`).toBe(false);
         // And the `entry` block's own key set, for the same reason one level down: schema 5 changed
         // nothing about a candidate row and everything about what `entry` means.
-        const entry = row['entry'];
-        if (entry !== undefined && entry !== null) {
-          const entryExpected = ENTRY_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
-          expect(entryExpected, `${file} entry block at an unknown schemaVersion`).toBeDefined();
-          expect(Object.keys(entry as object).sort(), `${file} entry block`).toEqual([...entryExpected!].sort());
-          const coverage = (entry as Record<string, unknown>)['coverage'];
+        //
+        // This is the licensed null deviation from the rule stated above, and it is NOT the old
+        // presence guard: `entry` is `null` on a prefiltered or unscored candidate, which is a
+        // legitimate value, while the KEY's presence is already pinned by the candidate-row
+        // assertion on the line above. The version's key set is read unconditionally either way.
+        const entryExpected = ENTRY_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+        if (entryExpected !== undefined) {
           const coverageExpected = ENTRY_COVERAGE_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
           expect(coverageExpected, `${file} entry.coverage at an unknown schemaVersion`).toBeDefined();
-          expect(Object.keys(coverage as object).sort(), `${file} entry.coverage`).toEqual(
-            [...coverageExpected!].sort(),
-          );
+          const entry = row['entry'];
+          expect(entry, `${file} declares a schema whose candidate row carries an entry key, and has none`)
+            .not.toBeUndefined();
+          if (entry !== null) {
+            expect(Object.keys(entry as object).sort(), `${file} entry block`).toEqual([...entryExpected].sort());
+            const coverage = (entry as Record<string, unknown>)['coverage'];
+            expect(Object.keys(coverage as object).sort(), `${file} entry.coverage`).toEqual(
+              [...coverageExpected!].sort(),
+            );
+          }
         }
       }
     }
@@ -4725,6 +4778,17 @@ describe('the keyless boundary holds in both directions', () => {
       (m) => m[1]!,
     );
     expect(duneKeys.sort()).toEqual([...DUNE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
+
+    // And `dune.coverage` against the real projection, the way `entry.coverage` is pinned above:
+    // `coverageRecordRow` is what decides which of the probe's fields survive a run, so a field
+    // added or dropped there has to come and change the pinned list on purpose.
+    const duneCoverageRow = coverageRecordRow(
+      { probedAtMs: 0, fromCache: false, tables: [] } as never,
+      { ok: true, fromMs: 0, toMs: 0, holes: [], reasons: [] } as never,
+    ) as Record<string, unknown>;
+    expect(Object.keys(duneCoverageRow).sort()).toEqual(
+      [...DUNE_COVERAGE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
   });
 });
 

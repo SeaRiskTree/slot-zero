@@ -4424,6 +4424,7 @@ describe('the keyless boundary holds in both directions', () => {
       const parsed = JSON.parse(text) as {
         candidates: Record<string, unknown>[];
         spend?: Record<string, unknown>;
+        dune?: Record<string, unknown>;
       };
       expect(parsed.candidates.length, file).toBeGreaterThan(0);
       const expected = PERSISTED_BY_SCHEMA[schemaVersionOf(parsed)];
@@ -4441,6 +4442,15 @@ describe('the keyless boundary holds in both directions', () => {
         expect(JSON.stringify(parsed.spend), `${file} spend block holds a composed RPC URL`).not.toMatch(
           /api-key=/,
         );
+      }
+      // And the run-level `dune` block, read out of the SAVED record the same way. The source-side
+      // pin below catches a field added to `buildRecord`; this one catches a committed record that
+      // no longer matches the version it declares. No committed record carries the block yet — the
+      // first schema-9 run to land here is exactly what it exists to hold.
+      if (parsed.dune !== undefined && parsed.dune !== null) {
+        const duneExpected = DUNE_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+        expect(duneExpected, `${file} dune block at an unknown schemaVersion`).toBeDefined();
+        expect(Object.keys(parsed.dune).sort(), `${file} dune block`).toEqual([...duneExpected!].sort());
       }
       for (const row of parsed.candidates) {
         expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(expected);

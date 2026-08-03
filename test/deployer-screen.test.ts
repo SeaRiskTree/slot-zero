@@ -18,10 +18,15 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  HELIUS_KEY_ENV_VAR,
+  HELIUS_RPC_HOST,
   KEY_ENV_VAR,
+  PUBLIC_SOLANA_RPC,
   classifyAuthFailure,
+  describeHeliusKey,
   describeKey,
   resolveKey,
+  resolveSolanaRpcEndpoint,
 } from '../tools/deployer-screen/credential.mjs';
 import {
   BoundedClient,
@@ -84,12 +89,16 @@ import {
 import {
   KeylessClient,
   LAMPORTS_PER_SOL,
+  RpcCredentialRejected,
+  SOLANA_RPC,
   SolanaRpcClient,
+  creditsForTransactions,
   extractTradeRows,
   parseFillLoose,
   parseTransactionCosts,
   readCreateSlotCosts,
   readCreatedHistory,
+  readCreatedHistoryIndexed,
   readLaunchWindow,
   slotFromSlotIndexId,
   windowFilter,
@@ -1259,6 +1268,9 @@ describe('the CLI contract', () => {
       maxScored: T['stage2_entry'].maxCandidatesScored,
       entryThresholds: T['stage2_entry'],
       keyDescription: null,
+      rpcEndpoint: resolveSolanaRpcEndpoint({}),
+      indexedWalk: T['creation_walk_helius'],
+      worstCaseCredits: 0,
     });
     const worstCase =
       T['stage2_entry'].maxCandidatesScored *
@@ -1299,6 +1311,9 @@ describe('the CLI contract', () => {
       maxScored: 0,
       entryThresholds: T['stage2_entry'],
       keyDescription: null,
+      rpcEndpoint: resolveSolanaRpcEndpoint({}),
+      indexedWalk: T['creation_walk_helius'],
+      worstCaseCredits: 0,
     });
     expect(off).toMatch(/STAGE 2 DISABLED/);
     expect(off).toMatch(/nothing about whether a window is enterable/);
@@ -2469,6 +2484,9 @@ describe('the keyless boundary holds in both directions', () => {
   // population under unchanged key names and carries the unfiltered reading beside it, so nothing
   // about a candidate row, `entry` or `entry.coverage` moves.
   PERSISTED_BY_SCHEMA[7] = PERSISTED_BY_SCHEMA[6]!;
+  // Schema 8 adds no candidate field either. It changes the run-level `spend` block, which reports
+  // three budgets in three units — asserted by SPEND_KEYS_BY_SCHEMA below.
+  PERSISTED_BY_SCHEMA[8] = PERSISTED_BY_SCHEMA[7]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -2525,6 +2543,8 @@ describe('the keyless boundary holds in both directions', () => {
     6: ENTRY_KEYS_6,
     // Schema 7 changes what a `stage0` block MEANS, not what `entry` carries.
     7: ENTRY_KEYS_6,
+    // Schema 8 changes the run-level `spend` block, not what `entry` carries.
+    8: ENTRY_KEYS_6,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -2557,6 +2577,42 @@ describe('the keyless boundary holds in both directions', () => {
     5: ENTRY_COVERAGE_KEYS_3_TO_5,
     6: ENTRY_COVERAGE_KEYS_6,
     7: ENTRY_COVERAGE_KEYS_6,
+    8: ENTRY_COVERAGE_KEYS_6,
+  };
+
+  // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
+  // the three key sets above see a candidate row, its `entry` and that block's `coverage`, and NONE
+  // of them can see a run-level block — so five new `spend` keys shipped under an unchanged version
+  // with every existing assertion still green. Two records both stamped 7 would then have had
+  // different shapes, which is exactly what "bump, never retro-edit" forbids.
+  //
+  // Committed records are never retro-edited, so the older shape stays legal keyed by its own
+  // version, exactly as PERSISTED_BY_SCHEMA already does.
+  const SPEND_KEYS_3_TO_7 = [
+    'candidateCap',
+    'endpoints',
+    'keyedCeiling',
+    'keyedRemaining',
+    'plannedWorstCaseKeyed',
+  ];
+  // Schema 8: three budgets, three units, no exchange rate between them. `rpcEndpoint` is the
+  // endpoint LABEL and never the composed URL — the keyed one carries the credential in a query
+  // parameter, so a record holding the URL would be a record holding the key.
+  const SPEND_KEYS_8 = [
+    ...SPEND_KEYS_3_TO_7,
+    'rpcProvider',
+    'rpcEndpoint',
+    'heliusCredits',
+    'heliusCreditCeilingPerCandidate',
+    'plannedWorstCaseHeliusCredits',
+  ];
+  const SPEND_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    3: SPEND_KEYS_3_TO_7,
+    4: SPEND_KEYS_3_TO_7,
+    5: SPEND_KEYS_3_TO_7,
+    6: SPEND_KEYS_3_TO_7,
+    7: SPEND_KEYS_3_TO_7,
+    8: SPEND_KEYS_8,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -2569,6 +2625,13 @@ describe('the keyless boundary holds in both directions', () => {
       'includingUnprovenEntryCostPerSolStakedMedianByLaunch',
       'minEntryCostPositiveShare',
     ],
+  };
+
+  // Keys a version adds to a block assembled in `buildRecord` rather than in a projection function
+  // below it — today the `spend` block. Kept apart from the list above because that one is asserted
+  // against the source AFTER `toRecordRow`, which is where `buildRecord` is not.
+  const RUN_LEVEL_KEYS_ADDED_BY_SCHEMA: Record<number, string[]> = {
+    8: SPEND_KEYS_8.filter((k) => !SPEND_KEYS_3_TO_7.includes(k)),
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -2594,17 +2657,62 @@ describe('the keyless boundary holds in both directions', () => {
     }
   });
 
-  it('only the credential module names the environment variable that holds the key', () => {
-    // screen.mjs may re-export it for the help text, but nothing else may reach for process.env
+  it('only the credential module names an environment variable that holds a key', () => {
+    // screen.mjs may re-export one for the help text, but nothing else may reach for process.env
     // to find a credential.
+    //
+    // WIDENED DELIBERATELY, 2026-08-03, in the commit that needed it: `HELIUS_API_KEY` joins
+    // `MADEONSOL_API_KEY` under the SAME two-file allow-list rather than getting a looser one. It
+    // is named explicitly and the list is still exhaustive — no wildcard, no per-variable exception
+    // — so adding a third credential means coming back here on purpose. `DUNE_API_KEY` is listed
+    // now too, before any Dune code exists: the assertion costs nothing while the answer is
+    // vacuously true, and it means the lane that adds that client cannot quietly name it somewhere
+    // else first.
+    const KEY_VARIABLES = ['MADEONSOL_API_KEY', 'HELIUS_API_KEY', 'DUNE_API_KEY'];
     const allowed = new Set([
       'tools/deployer-screen/credential.mjs',
       'tools/deployer-screen/screen.mjs',
     ]);
     for (const [file, text] of readAll(TOOL_DIR, 'tools/deployer-screen/')) {
       if (allowed.has(file)) continue;
-      expect(/MADEONSOL_API_KEY/.test(text), `${file} must not name the key variable`).toBe(false);
+      for (const variable of KEY_VARIABLES) {
+        expect(text.includes(variable), `${file} must not name ${variable}`).toBe(false);
+      }
     }
+    // And the allow-list is only meaningful if the module it points at actually holds the handling.
+    const credential = readFileSync(join(TOOL_DIR, 'credential.mjs'), 'utf8');
+    for (const variable of ['MADEONSOL_API_KEY', 'HELIUS_API_KEY']) {
+      expect(credential.includes(variable), `credential.mjs must own ${variable}`).toBe(true);
+    }
+  });
+
+  it('the composed Helius URL is built in one place and stored nowhere', () => {
+    // The key reaches the wire as a QUERY PARAMETER, which is the one credential shape that leaks
+    // by being formatted rather than by being logged on purpose. Two structural rules keep it in:
+    // the composition appears once, and no other file may spell the query parameter at all.
+    const all = readAll(TOOL_DIR, 'tools/deployer-screen/', /./);
+    for (const [file, text] of all) {
+      if (file === 'tools/deployer-screen/credential.mjs') continue;
+      expect(/api-key=/.test(text), `${file} must not compose a keyed RPC URL`).toBe(false);
+    }
+    // Counted over the EXECUTABLE half only. The rule is about code; prose that describes the URL
+    // shape is documentation, and making documentation unwritable is not a security property.
+    const credential = (all.get('tools/deployer-screen/credential.mjs') ?? '')
+      .split('\n')
+      .filter((l) => !l.trimStart().startsWith('*') && !l.trimStart().startsWith('//') && !l.includes('/**'))
+      .join('\n');
+    // COMPOSITION is an interpolation — the query parameter followed by a value spliced into it —
+    // and that is what must happen once. The bare token may also appear as a SHAPE test, which is
+    // how a composed URL pasted into the key variable is refused (a 76-character paste sits inside
+    // the length band, so nothing else can catch it). Counting interpolations rather than tokens is
+    // the tighter statement of the property, not a looser one: the exhaustive cross-file rule above
+    // is untouched, and a second `api-key=${…}` anywhere still fails here.
+    expect(credential.match(/api-key=\$\{/g)?.length, 'exactly one composition site').toBe(1);
+    // And every other occurrence must be a non-composing one, so a URL cannot be assembled by
+    // concatenation to dodge the count above.
+    expect(credential.match(/api-key=(?!\$\{)./g) ?? [], 'a non-interpolating use must not build a URL').toSatisfy(
+      (uses: string[]) => uses.every((u) => u.endsWith("'") || u.endsWith('"') || u.endsWith('`')),
+    );
   });
 
   it('no committed file under the tool holds a key-shaped string', () => {
@@ -2619,7 +2727,231 @@ describe('the keyless boundary holds in both directions', () => {
       // A real msk_ key is 47 characters. Test doubles are shorter or obviously fake, and no
       // committed file has any business containing one at all.
       expect(/msk_[A-Za-z0-9_-]{20,}/.test(text), `${file} may contain a real key`).toBe(false);
+      // TIGHTENED, not loosened: a Helius key is a UUID, so the scan gains a second shape rather
+      // than trading the first one away. Nothing under this directory has any business carrying a
+      // bare UUID — no mint, signature or wallet address takes that form — so a hit is either a
+      // pasted credential or a genuinely new kind of value that has to come and justify itself here.
+      expect(
+        /\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b/.test(text),
+        `${file} may contain a real Helius key`,
+      ).toBe(false);
     }
+  });
+
+  it('the RPC endpoint is chosen by the key\'s presence, and both paths are the real ones', () => {
+    // The fallback must be the endpoint it always was, byte for byte — not a re-spelling of it.
+    const keyless = resolveSolanaRpcEndpoint({});
+    expect(keyless.provider).toBe('public');
+    expect(keyless.url).toBe(PUBLIC_SOLANA_RPC);
+    expect(keyless.url).toBe(SOLANA_RPC);
+    expect(keyless.keyDescription).toBeNull();
+    expect(keyless.rejected).toBeNull();
+    // An empty or whitespace value is "not configured", not "configured badly": that is what an
+    // unset variable expands to in a shell, and refusing it as malformed would send an operator
+    // hunting a key problem they do not have.
+    expect(resolveSolanaRpcEndpoint({ [HELIUS_KEY_ENV_VAR]: '' }).provider).toBe('public');
+    expect(resolveSolanaRpcEndpoint({ [HELIUS_KEY_ENV_VAR]: '   ' }).rejected).toBeNull();
+
+    const key = '11111111-2222-4333-8444-555555555555';
+    const keyed = resolveSolanaRpcEndpoint({ [HELIUS_KEY_ENV_VAR]: key });
+    expect(keyed.provider).toBe('helius');
+    expect(keyed.url).toBe(`${HELIUS_RPC_HOST}/?api-key=${key}`);
+    // The label is the whole no-leak guarantee, so it is asserted rather than assumed.
+    expect(keyed.label).toBe(HELIUS_RPC_HOST);
+    expect(keyed.label).not.toContain(key);
+    expect(keyed.keyDescription).toEqual({ length: 36, hasDocumentedShape: true });
+
+    // A key that is present but malformed falls back AND says so. Silently running keyless would
+    // produce a slow run and a `provider: "public"` record with no reason in it.
+    const short = resolveSolanaRpcEndpoint({ [HELIUS_KEY_ENV_VAR]: 'abc' });
+    expect(short.provider).toBe('public');
+    expect(short.rejected).toMatch(/outside the 24-128 band/);
+    // And the complaint never quotes the value it is complaining about.
+    expect(short.rejected).not.toContain('abc');
+    expect(describeHeliusKey('not-a-uuid-but-long-enough-to-pass').hasDocumentedShape).toBe(false);
+  });
+
+  it('a composed URL pasted into the key variable is refused on SHAPE, which no length band can do', () => {
+    // The one malformed value the 24-128 band structurally cannot catch: this host plus a UUID key
+    // is 76 characters, comfortably inside it. Accepted, it would be composed a SECOND time, every
+    // request would 401, and before the walk's fail-fast landed that degraded every candidate to an
+    // ownership-only reading while the shared MadeOnSol daily allowance drained a profile at a time.
+    const key = '11111111-2222-4333-8444-555555555555';
+    const composed = `${HELIUS_RPC_HOST}/?api-key=${key}`;
+    expect(composed.length).toBeGreaterThanOrEqual(24);
+    expect(composed.length).toBeLessThanOrEqual(128);
+
+    const rejected = resolveSolanaRpcEndpoint({ [HELIUS_KEY_ENV_VAR]: composed });
+    // The existing fallback mechanism, unchanged: keyless AND a stated reason. A silent fallback
+    // would read as a deliberate keyless run in the record.
+    expect(rejected.provider).toBe('public');
+    expect(rejected.url).toBe(PUBLIC_SOLANA_RPC);
+    expect(rejected.rejected).toMatch(/composed URL/);
+    // The message names the SHAPE and never the value — same rule as the too-short/too-long ones.
+    // A rejection that quoted the paste would print the key it exists to protect.
+    expect(rejected.rejected).not.toContain(key);
+    expect(rejected.rejected).not.toContain(composed);
+
+    // A bare scheme is enough; so is a stray query fragment with no scheme at all.
+    expect(resolveSolanaRpcEndpoint({ [HELIUS_KEY_ENV_VAR]: `https://example.invalid/${key}` }).provider).toBe(
+      'public',
+    );
+    expect(resolveSolanaRpcEndpoint({ [HELIUS_KEY_ENV_VAR]: `?api-key=${key}` }).rejected).toMatch(
+      /composed URL/,
+    );
+    // And a real bare key is still accepted — the check must not be so broad it refuses the thing
+    // it is protecting.
+    expect(resolveSolanaRpcEndpoint({ [HELIUS_KEY_ENV_VAR]: key }).provider).toBe('helius');
+  });
+
+  it('a keyed endpoint\'s credential reaches no message, on any failure path', () => {
+    // The structural half of "never logged": the key rides in the URL, so every failure path is
+    // driven against a sentinel-bearing endpoint and the sentinel must appear in none of them.
+    // A comment saying "we are careful here" would not have caught the interpolation this replaced.
+    const SENTINEL = 'SENTINEL-KEY-MUST-NEVER-APPEAR';
+    const endpoint = {
+      url: `https://mainnet.helius-rpc.com/?api-key=${SENTINEL}`,
+      label: 'https://mainnet.helius-rpc.com',
+      authRemedy: 'Re-export the key and rerun.',
+    };
+    /** @param status what the endpoint answers with */
+    const clientAnswering = (status: number, body: unknown = {}) =>
+      new SolanaRpcClient({
+        maxRequests: 6,
+        endpoint,
+        minIntervalMs: 0,
+        backoffMs: 0,
+        sleepImpl: async () => {},
+        fetchImpl: (async () =>
+          new Response(JSON.stringify(body), {
+            status,
+            headers: { 'content-type': 'application/json' },
+          })) as unknown as typeof fetch,
+      });
+
+    const messages: string[] = [];
+    return (async () => {
+      // 401 — the credential path, and the one that carries a remedy sentence.
+      await clientAnswering(401)
+        .call('getHealth', [])
+        .catch((e: unknown) => messages.push(String((e as Error).message)));
+      // 429 and 500 — load-shedding, retried to exhaustion, then thrown.
+      await clientAnswering(429).call('getHealth', []).catch((e: unknown) => messages.push(String((e as Error).message)));
+      await clientAnswering(503).call('getHealth', []).catch((e: unknown) => messages.push(String((e as Error).message)));
+      // 404 — a plain non-ok status.
+      await clientAnswering(404).call('getHealth', []).catch((e: unknown) => messages.push(String((e as Error).message)));
+      // A transport failure, where the cause is somebody else's string entirely.
+      const dead = new SolanaRpcClient({
+        maxRequests: 4,
+        endpoint,
+        minIntervalMs: 0,
+        backoffMs: 0,
+        sleepImpl: async () => {},
+        fetchImpl: (async () => {
+          throw new Error('ECONNRESET');
+        }) as unknown as typeof fetch,
+      });
+      await dead.call('getHealth', []).catch((e: unknown) => messages.push(String((e as Error).message)));
+      // And the ceiling message, which is persisted verbatim into a run record.
+      const spent = new SolanaRpcClient({ maxRequests: 1, endpoint, minIntervalMs: 0, sleepImpl: async () => {},
+        fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch });
+      await spent.call('getHealth', []);
+      await spent.call('getHealth', []).catch((e: unknown) => messages.push(String((e as Error).message)));
+
+      expect(messages.length).toBe(6);
+      for (const m of messages) {
+        expect(m, 'a credential reached an error message').not.toContain(SENTINEL);
+        expect(m).not.toContain('api-key=');
+      }
+      // The safe label DID reach them, so this is a redaction rather than a silence.
+      expect(messages.filter((m) => m.includes('mainnet.helius-rpc.com')).length).toBeGreaterThan(0);
+      // And a refused credential is not retried: one attempt, not four.
+      expect(messages[0]).toMatch(/refused this client's credential/);
+      expect(messages[0]).toMatch(/Re-export the key and rerun/);
+    })();
+  });
+
+  it('a refused credential stops immediately; a shed request is retried', async () => {
+    let attempts = 0;
+    const rejecting = new SolanaRpcClient({
+      maxRequests: 8,
+      endpoint: { url: 'https://helius.example/?api-key=x', label: 'https://helius.example' },
+      minIntervalMs: 0,
+      backoffMs: 0,
+      sleepImpl: async () => {},
+      fetchImpl: (async () => {
+        attempts += 1;
+        return new Response('Unauthorized', { status: 401 });
+      }) as unknown as typeof fetch,
+    });
+    await expect(rejecting.call('getHealth', [])).rejects.toThrow(RpcCredentialRejected);
+    // ONE attempt. The allowance is not what is wrong, so asking three more times over ~35s only
+    // spends the ceiling to be refused again.
+    expect(attempts).toBe(1);
+    expect(rejecting.issued()).toBe(1);
+
+    // A 429 is the opposite: load-shedding, retried, and every attempt still counted.
+    let shedAttempts = 0;
+    const shedding = new SolanaRpcClient({
+      maxRequests: 8,
+      minIntervalMs: 0,
+      backoffMs: 0,
+      maxRetriesPerRequest: 2,
+      sleepImpl: async () => {},
+      fetchImpl: (async () => {
+        shedAttempts += 1;
+        return new Response('{}', { status: 429 });
+      }) as unknown as typeof fetch,
+    });
+    await expect(shedding.call('getHealth', [])).rejects.toThrow();
+    expect(shedAttempts).toBe(3);
+    expect(shedding.issued()).toBe(3);
+    expect(shedding.loadShedEvents()).toBe(3);
+  });
+
+  it('a JSON-RPC error envelope is an ANSWER, and a null result is a retry', async () => {
+    // Measured 2026-08-03: Helius answers a bad parameter with HTTP 200 and
+    // {"error":{"code":-32602,…}}. The keyless endpoint sheds load with a null result inside an
+    // otherwise fine response. `call` flattens both to null — which is what the keyless walk needs
+    // — and `callDetailed` keeps them apart, which is what the indexed walk needs.
+    const erroring = new SolanaRpcClient({
+      maxRequests: 4,
+      minIntervalMs: 0,
+      sleepImpl: async () => {},
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ jsonrpc: '2.0', id: 0, error: { code: -32602, message: 'Invalid param' } }), {
+          status: 200,
+        })) as unknown as typeof fetch,
+    });
+    expect(await erroring.call('x', [])).toBeNull();
+    const detailed = await erroring.callDetailed('x', []);
+    expect(detailed.result).toBeNull();
+    expect(detailed.error).toEqual({ code: -32602, message: 'Invalid param' });
+
+    // A missing result with NO error stays a null, i.e. still a retry rather than an answer.
+    const shedding = new SolanaRpcClient({
+      maxRequests: 4,
+      minIntervalMs: 0,
+      sleepImpl: async () => {},
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ jsonrpc: '2.0', id: 0, result: null }), { status: 200 })) as unknown as typeof fetch,
+    });
+    const shed = await shedding.callDetailed('x', []);
+    expect(shed.result).toBeNull();
+    expect(shed.error).toBeNull();
+
+    // `id: null` is what a JSON-RPC server sends when it could not read the request at all —
+    // Helius returns it for an unknown method — and it must not be dropped on the floor.
+    const unknownMethod = new SolanaRpcClient({
+      maxRequests: 4,
+      minIntervalMs: 0,
+      sleepImpl: async () => {},
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32601, message: 'Method not found' } }), {
+          status: 200,
+        })) as unknown as typeof fetch,
+    });
+    expect((await unknownMethod.callDetailed('nope', [])).error?.code).toBe(-32601);
   });
 
   it('a committed run record persists derived fields only — ToS §5a(d), asserted', () => {
@@ -2637,10 +2969,27 @@ describe('the keyless boundary holds in both directions', () => {
     const records = readAll(join(TOOL_DIR, 'runs'), '', /\.json$/);
     expect(records.size).toBeGreaterThan(0);
     for (const [file, text] of records) {
-      const parsed = JSON.parse(text) as { candidates: Record<string, unknown>[] };
+      const parsed = JSON.parse(text) as {
+        candidates: Record<string, unknown>[];
+        spend?: Record<string, unknown>;
+      };
       expect(parsed.candidates.length, file).toBeGreaterThan(0);
       const expected = PERSISTED_BY_SCHEMA[schemaVersionOf(parsed)];
       expect(expected, `${file} has an unknown schemaVersion`).toBeDefined();
+      // The run-level `spend` block, keyed by version for the same reason: schema 8 added five keys
+      // to it and nothing above this line could have seen them.
+      if (parsed.spend !== undefined && parsed.spend !== null) {
+        const spendExpected = SPEND_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+        expect(spendExpected, `${file} spend block at an unknown schemaVersion`).toBeDefined();
+        expect(Object.keys(parsed.spend).sort(), `${file} spend block`).toEqual(
+          [...spendExpected!].sort(),
+        );
+        // And the label, never the composed URL. The keyed endpoint's address carries the
+        // credential in a query parameter, so a URL here would be a persisted key.
+        expect(JSON.stringify(parsed.spend), `${file} spend block holds a composed RPC URL`).not.toMatch(
+          /api-key=/,
+        );
+      }
       for (const row of parsed.candidates) {
         expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(expected);
         expect(FORBIDDEN.test(JSON.stringify(row)), `${file} holds per-token vendor data`).toBe(false);
@@ -2752,6 +3101,53 @@ describe('the keyless boundary holds in both directions', () => {
     expect(source).toMatch(/worstCaseKeyless/);
   });
 
+  it('the Helius credit ceiling funds every page its OWN page cap allows, guard included', () => {
+    // THE DEFECT THIS PINS, and it was live: the per-page guard costs MORE than a page. A page is
+    // only started when a whole page's worst case fits ALONGSIDE the curve-classification
+    // reservation, which floors at `creditsForCurveReads(pageLimit)` = 11 — so the guard demands
+    // 111 credits free, not 100. At a 5,000 ceiling that stopped the walk after 49 pages while the
+    // justification claimed 50, truncating `6Wg4aeZ2…` (49,367 succeeded transactions), the very
+    // wallet the ceiling was sized against. A ceiling that silently delivers one page less than its
+    // prose promises is a coverage claim that is wrong, which is the accuracy property this whole
+    // route exists to buy.
+    //
+    // Asserted as ARITHMETIC over the pinned values rather than as a literal, so the three numbers
+    // and the guard can never drift apart again: change `pageLimit`, `creditsForCurveReads` or
+    // either ceiling and this recomputes.
+    const thresholds = JSON.parse(readFileSync(join(TOOL_DIR, 'thresholds.json'), 'utf8')) as {
+      budget: { maxCandidates: number };
+      creation_walk_helius: {
+        maxCreditsPerCandidate: number;
+        maxCreditsPerRun: number;
+        maxPagesPerCandidate: number;
+        maxTransactionsPerCandidate: number;
+        pageLimit: number;
+      };
+    };
+    const h = thresholds.creation_walk_helius;
+    const perPageGuard = creditsForTransactions(h.pageLimit) + Math.ceil(h.pageLimit / 100) + 1;
+
+    // The walk starts page N only while `remaining >= perPageGuard`, and each full page costs
+    // `creditsForTransactions(pageLimit)`. So the last page it can start is bounded like this.
+    const pagesAffordable =
+      Math.floor((h.maxCreditsPerCandidate - perPageGuard) / creditsForTransactions(h.pageLimit)) + 1;
+    expect(
+      pagesAffordable,
+      'the credit ceiling must fund at least as many pages as the page cap allows',
+    ).toBeGreaterThanOrEqual(h.maxPagesPerCandidate);
+    // And the page cap must still cover the largest history in the measured population (49,367),
+    // or "every wallet walks its whole index" is false for a different reason.
+    expect(h.maxPagesPerCandidate * h.pageLimit).toBeGreaterThanOrEqual(49_367);
+    expect(h.maxTransactionsPerCandidate).toBeGreaterThanOrEqual(49_367);
+
+    // THE TWO CEILINGS ARE COUPLED: screen.mjs refuses a plan whose worst case exceeds the run
+    // ceiling BEFORE its first request, so raising the per-candidate one alone would refuse every
+    // default plan rather than buying the coverage it was raised for.
+    expect(thresholds.budget.maxCandidates * h.maxCreditsPerCandidate).toBeLessThanOrEqual(
+      h.maxCreditsPerRun,
+    );
+  });
+
   it('the README\'s schema table is in step with record.mjs — these two have drifted twice', () => {
     // The version boundary is documented in TWO prose copies: `record.mjs`\'s module comment, which
     // a reader of the code finds, and the README table, which a consumer of a record finds. They
@@ -2793,6 +3189,12 @@ describe('the keyless boundary holds in both directions', () => {
       expect(toRecordRow, `toRecordRow must emit ${key}`).toMatch(new RegExp(`\\b${key}:`));
       expect(row, `the README row omits ${key}`).toContain(key);
     }
+    for (const key of RUN_LEVEL_KEYS_ADDED_BY_SCHEMA[RECORD_SCHEMA_VERSION] ?? []) {
+      // `[:,]` because an emitted key may be shorthand — `heliusCredits,` is the same field as
+      // `heliusCredits: heliusCredits` and a colon-only pattern would have missed it.
+      expect(projection, `buildRecord must emit ${key}`).toMatch(new RegExp(`\\b${key}[:,]`));
+      expect(row, `the README row omits ${key}`).toContain(key);
+    }
   });
 
   it('the row this build writes matches the schema it declares', () => {
@@ -2812,6 +3214,19 @@ describe('the keyless boundary holds in both directions', () => {
     expect(Object.keys(row.coverage).sort()).toEqual(
       [...ENTRY_COVERAGE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
     );
+
+    // The run-level `spend` block too, read out of `buildRecord`'s own object literal. There is no
+    // committed schema-8 record yet, so the loop over `runs/` cannot see this block at this version
+    // — and a key added here without a bump is precisely the drift that made schema 8 necessary.
+    const spendStart = source.indexOf('spend: {');
+    expect(spendStart, 'buildRecord no longer assembles a `spend` block').toBeGreaterThan(-1);
+    const spendBody = source.slice(spendStart + 'spend: {'.length);
+    const spendEnd = spendBody.indexOf('\n        },');
+    expect(spendEnd, 'the `spend` literal is no longer where this assertion can read it').toBeGreaterThan(-1);
+    const spendKeys = [...spendBody.slice(0, spendEnd).matchAll(/^ {10}([A-Za-z][A-Za-z0-9]*)(?::|,$)/gm)].map(
+      (m) => m[1]!,
+    );
+    expect(spendKeys.sort()).toEqual([...SPEND_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
   });
 });
 
@@ -3679,6 +4094,274 @@ describe('the walk keeps enough budget to classify what it found', () => {
     expect(walk.stopReason).toBe('request-ceiling');
     expect(walk.creates.length).toBeGreaterThan(0);
     expect(sawGetMultipleAccounts, 'the curve read must still have been affordable').toBe(true);
+  });
+});
+
+describe('the indexed creation walk is the same measurement under a credit ceiling', () => {
+  /**
+   * A fake `getTransactionsForAddress`, shaped from the real 2026-08-03 responses: a
+   * `{ data, paginationToken }` result, `paginationToken: null` as the ONLY end-of-index signal,
+   * and JSON-RPC errors arriving on HTTP 200.
+   */
+  function fakeIndexed(
+    pages: { data: unknown[]; paginationToken: string | null }[],
+    opts: { error?: { code: number; message: string }; nullResult?: boolean } = {},
+  ) {
+    const seen: Record<string, unknown>[] = [];
+    const fetchImpl = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      const one = Array.isArray(body) ? body[0] : body;
+      if (one.method === 'getMultipleAccounts') {
+        return { ok: true, status: 200, json: async () => ({ id: 0, result: { value: [] } }) };
+      }
+      seen.push(one.params[1]);
+      if (opts.error !== undefined) {
+        return { ok: true, status: 200, json: async () => ({ id: 0, error: opts.error }) };
+      }
+      if (opts.nullResult === true) return { ok: true, status: 200, json: async () => ({ id: 0, result: null }) };
+      const token = one.params[1]?.paginationToken;
+      const idx = token === undefined ? 0 : pages.findIndex((p) => p.paginationToken === token) + 1;
+      const page = pages[idx] ?? { data: [], paginationToken: null };
+      return { ok: true, status: 200, json: async () => ({ id: 0, result: page }) };
+    }) as unknown as typeof fetch;
+    return { fetchImpl, seen };
+  }
+
+  const BOUNDS = { maxPages: 50, pageLimit: 1000, maxTransactions: 50_000, maxCredits: 5_000 };
+
+  it('asks for exactly the query the measurement was taken against', async () => {
+    const { fetchImpl, seen } = fakeIndexed([{ data: [createTx()], paginationToken: null }]);
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    await readCreatedHistoryIndexed(rpc, DEV, BOUNDS);
+    // Every one of these is load-bearing: `full` + `jsonParsed` is what makes the response
+    // `getTransaction`-shaped so the parsers work unchanged, `status: succeeded` is the
+    // server-side form of the err===null filter the keyless walk pays for client-side, and `asc`
+    // is what makes a truncated window grow forwards from genesis.
+    expect(seen[0]).toMatchObject({
+      transactionDetails: 'full',
+      encoding: 'jsonParsed',
+      maxSupportedTransactionVersion: 0,
+      sortOrder: 'asc',
+      limit: 1000,
+      filters: { status: 'succeeded' },
+    });
+    expect(seen[0]).not.toHaveProperty('paginationToken');
+  });
+
+  it('parses creates out of full-mode rows with the UNCHANGED parser', async () => {
+    // The whole premise of the replacement: gTFA `full` returns getTransaction's own envelope, so
+    // `parseCreateTransaction` is not adapted, forked or wrapped. Verified live on the `maxxing`
+    // create transaction, where both routes agree field for field (CREATION-DERIVED.md §7).
+    const { fetchImpl } = fakeIndexed([
+      {
+        data: [
+          createTx({ blockTime: 1_700_000_100 }),
+          createTx({ blockTime: 1_700_000_150, logs: ['Program log: Instruction: Buy'] }),
+        ],
+        paginationToken: 'p1',
+      },
+      { data: [createTx({ blockTime: 1_700_000_200 })], paginationToken: null },
+    ]);
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreatedHistoryIndexed(rpc, DEV, BOUNDS);
+
+    expect(walk.creates).toHaveLength(2);
+    expect(walk.creates[0]?.creator).toBe(DEV);
+    expect(walk.pages).toBe(2);
+    expect(walk.transactionsInspected).toBe(3);
+    expect(walk.stopReason).toBe('index-exhausted');
+    expect(walk.covered.exhausted).toBe(true);
+    // Ascending order, so the floor is genesis and the ceiling is the newest row seen.
+    expect(walk.covered.fromMs).toBe(1_700_000_100_000);
+    expect(walk.covered.toMs).toBe(1_700_000_200_000);
+    // Structurally zero on this route — a page arrives whole or not at all — which is what lets
+    // `mergeHistories` treat the covered window as exact.
+    expect(walk.unresolvedTransactions).toBe(0);
+  });
+
+  it('proves exhaustion from the provider\'s own token, never from an empty page', async () => {
+    // A page that is empty but still carries a token is NOT the end of the index. Reading it as one
+    // is the exact failure the keyless walk's null-is-retry rule exists to prevent, arriving in a
+    // different shape.
+    const { fetchImpl } = fakeIndexed([
+      { data: [], paginationToken: 'still-more' },
+      { data: [createTx()], paginationToken: null },
+    ]);
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreatedHistoryIndexed(rpc, DEV, BOUNDS);
+    expect(walk.pages).toBe(2);
+    expect(walk.creates).toHaveLength(1);
+    expect(walk.stopReason).toBe('index-exhausted');
+  });
+
+  it('an error envelope stops the walk and is never read as an exhausted index', async () => {
+    // Measured shape: HTTP 200 carrying {"error":{"code":-32603,"message":"Bad request: Invalid
+    // pagination token"}}. A walk that read that as "nothing older exists" would record page 2 of
+    // 200 as a wallet's whole history — a ceiling presented as a measurement.
+    const { fetchImpl } = fakeIndexed([], { error: { code: -32603, message: 'Bad request: Invalid pagination token' } });
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreatedHistoryIndexed(rpc, DEV, BOUNDS);
+    expect(walk.stopReason).toBe('upstream-error');
+    expect(walk.covered.exhausted).toBe(false);
+    expect(walk.covered.fromMs).toBeNull();
+    expect(walk.stopDetail).toMatch(/considered answer/);
+    expect(walk.stopDetail).toMatch(/NOT known to have ended/);
+  });
+
+  it('an absent result is load-shedding, and still not an exhausted index', async () => {
+    const { fetchImpl } = fakeIndexed([], { nullResult: true });
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreatedHistoryIndexed(rpc, DEV, BOUNDS);
+    expect(walk.stopReason).toBe('upstream-error');
+    expect(walk.covered.exhausted).toBe(false);
+    // NULL, not 0. `0` reads as "covered since the epoch", which deleted 29 of one wallet's 30
+    // launches in a live run.
+    expect(walk.covered.fromMs).toBeNull();
+    expect(walk.stopDetail).toMatch(/load-shedding/);
+  });
+
+  it('bills what the provider bills, and never starts a page it cannot pay for', async () => {
+    // 10 credits per 100 transactions returned, rounded up, 10 minimum — so a full page of 1,000
+    // costs exactly 100 and a page of 7 costs 10.
+    expect(creditsForTransactions(1000)).toBe(100);
+    expect(creditsForTransactions(101)).toBe(20);
+    expect(creditsForTransactions(7)).toBe(10);
+    expect(creditsForTransactions(0)).toBe(10);
+
+    const page = (token: string | null) => ({ data: Array.from({ length: 1000 }, () => ({})), paginationToken: token });
+    const { fetchImpl } = fakeIndexed([page('a'), page('b'), page('c'), page(null)]);
+    // 250 credits buys two whole pages (100 each) and refuses to start a third, because a page's
+    // WORST case must fit before it is started — plus the curve pass's own reservation.
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 250, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreatedHistoryIndexed(rpc, DEV, { ...BOUNDS, maxCredits: 250 });
+
+    expect(walk.stopReason).toBe('credit-ceiling');
+    expect(walk.pages).toBe(2);
+    expect(rpc.creditsSpent()).toBe(200);
+    // THE CEILING IS EXACT, never overshot: that is the whole point of reserving a page's worst
+    // case rather than checking after it arrives.
+    expect(rpc.creditsSpent()).toBeLessThanOrEqual(250);
+    expect(walk.covered.exhausted).toBe(false);
+  });
+
+  it('stops at the page cap and reports the window as a window', async () => {
+    const page = (token: string | null) => ({ data: [createTx()], paginationToken: token });
+    const { fetchImpl } = fakeIndexed([page('a'), page('b'), page('c'), page(null)]);
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreatedHistoryIndexed(rpc, DEV, { ...BOUNDS, maxPages: 2 });
+    expect(walk.stopReason).toBe('page-cap');
+    expect(walk.pages).toBe(2);
+    expect(walk.covered.exhausted).toBe(false);
+    // A create found IS a create, ceiling or no ceiling — the walk keeps what it paid for.
+    expect(walk.creates).toHaveLength(2);
+  });
+
+  it('keeps budget to CLASSIFY what it found, exactly as the keyless walk does', async () => {
+    // CREATION-DERIVED.md §4: a walk that spends its last unit finding one more creation has bought
+    // a launch it must then score as not-bonded, deflating the very rate it was widening.
+    let sawCurveRead = false;
+    const fetchImpl = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const one = JSON.parse(String(init.body));
+      if (one.method === 'getMultipleAccounts') {
+        sawCurveRead = true;
+        return { ok: true, status: 200, json: async () => ({ id: 0, result: { value: [] } }) };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ id: 0, result: { data: [createTx()], paginationToken: 'more' } }),
+      };
+    }) as unknown as typeof fetch;
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 120, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreatedHistoryIndexed(rpc, DEV, { ...BOUNDS, maxCredits: 120 });
+    expect(walk.creates.length).toBeGreaterThan(0);
+    expect(sawCurveRead, 'the curve read must still have been affordable').toBe(true);
+  });
+
+  it('a REFUSED CREDENTIAL propagates instead of becoming this wallet\'s reading', async () => {
+    // The failure this forbids is silent and expensive. A revoked key 401s every candidate; if the
+    // walk absorbed that into `stopReason: upstream-error`, all 195 candidates would fall back to
+    // the ownership listing while the record still said `historySource: creation-derived`, and the
+    // whole shared MadeOnSol daily allowance would be spent one profile at a time to learn nothing.
+    // A refused credential is not a property of the wallet being screened, so it must not be able
+    // to produce a per-candidate reading at all.
+    const fetchImpl = vi.fn(
+      async () => new Response('Unauthorized', { status: 401, headers: { 'content-type': 'text/plain' } }),
+    ) as unknown as typeof fetch;
+    const rpc = new SolanaRpcClient({
+      maxRequests: 50,
+      maxCredits: 5_000,
+      minIntervalMs: 0,
+      backoffMs: 0,
+      fetchImpl,
+      sleepImpl: async () => {},
+    });
+    await expect(readCreatedHistoryIndexed(rpc, DEV, BOUNDS)).rejects.toThrow(RpcCredentialRejected);
+
+    // And the same on the curve-classification pass, whose catch is otherwise deliberately silent:
+    // absorbed there, a mid-walk revocation would score every launch it found as NOT bonded.
+    let calls = 0;
+    const failingCurves = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const one = JSON.parse(String(init.body));
+      calls += 1;
+      if (one.method === 'getMultipleAccounts') {
+        return new Response('Unauthorized', { status: 401, headers: { 'content-type': 'text/plain' } });
+      }
+      return new Response(JSON.stringify({ id: 0, result: { data: [createTx()], paginationToken: null } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+    const rpc2 = new SolanaRpcClient({
+      maxRequests: 50,
+      maxCredits: 5_000,
+      minIntervalMs: 0,
+      backoffMs: 0,
+      fetchImpl: failingCurves,
+      sleepImpl: async () => {},
+    });
+    await expect(readCreatedHistoryIndexed(rpc2, DEV, BOUNDS)).rejects.toThrow(RpcCredentialRejected);
+    expect(calls).toBeGreaterThan(1);
+  });
+
+  it('the screen treats a refused RPC credential as TERMINAL, not as a candidate outcome', () => {
+    // The other half of the fail-fast, and it is structural because the alternative — a live run
+    // against a revoked key — is exactly what this must never cost. The walk is deliberately NOT
+    // wrapped in the per-candidate guard the ownership listing has, so it reaches the outer catch;
+    // that catch has to map it to `credentialRejected` rather than to the generic upstream code,
+    // because the screen's standing rule is that a rejected credential is NOT a negative result.
+    const source = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    expect(source).toMatch(/import \{[^}]*RpcCredentialRejected/s);
+    const outer = source.slice(source.indexOf('const code ='), source.indexOf('emit(code);'));
+    expect(outer).toMatch(/cause instanceof RpcCredentialRejected\s*\?\s*EXIT\.credentialRejected/);
+    // Non-zero, and distinct from every other terminal code so an operator can tell "rotate the
+    // key" from "wait for the window" and from "the walk hit its ceiling".
+    const exits = /const EXIT = \{([^}]*)\}/.exec(source)?.[1] ?? '';
+    expect(Number(/credentialRejected: (\d+)/.exec(exits)?.[1])).toBeGreaterThan(0);
+    // And the walk call itself must stay OUTSIDE a try that would swallow it back into a reading.
+    const walkCall = source.slice(source.indexOf('const walk = usingIndexedWalk'), source.indexOf('rpcRequests += rpc.issued()'));
+    expect(walkCall, 'the indexed walk must not be re-guarded per candidate').not.toMatch(/catch\s*[({]/);
+  });
+
+  it('feeds mergeHistories a window it can read, including the empty one', async () => {
+    // The merge is the consumer that a covered-window bug actually hurts, so the two are checked
+    // together rather than the walk's fields being checked in isolation.
+    const { fetchImpl } = fakeIndexed([], { nullResult: true });
+    const rpc = new SolanaRpcClient({ maxRequests: 50, maxCredits: 5_000, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreatedHistoryIndexed(rpc, DEV, BOUNDS);
+    const merged = mergeHistories({
+      creates: walk.creates,
+      wallet: DEV,
+      curves: walk.curves,
+      listed: [{ mint: 'm1', deployedAtMs: 1_700_000_000_000, completed: true }],
+      covered: walk.covered,
+      unresolvedTransactions: walk.unresolvedTransactions,
+    });
+    // An EMPTY window is the degenerate case of "outside", so the whole reading falls back to the
+    // ownership listing rather than relabelling its rows "acquired".
+    expect(merged.listedOutsideWindow).toBe(1);
+    expect(merged.notCreatedByWallet).toBe(0);
+    expect(merged.records).toHaveLength(1);
   });
 });
 

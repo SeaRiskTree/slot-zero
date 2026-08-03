@@ -120,9 +120,11 @@ sentence into every record.
 The Stage 1 gate can be applied to either of two histories, and `README.md` →
 "Which history the gate counts" owns the difference:
 
-- **creation-derived** — which tokens the wallet *created*. Correct, and ~100 Solana RPC requests per
-  candidate at 2.5s apart. **No schedule can carry it**: one default `screen.mjs` run is budgeted in
-  *hours*.
+- **creation-derived** — which tokens the wallet *created*. Correct, and expensive: keyless it is
+  ~100 Solana RPC requests per candidate at 2.5s apart, so one default `screen.mjs` run is budgeted
+  in *hours*; with `HELIUS_API_KEY` set it is the indexed walk instead, fast but metered in credits
+  against a monthly allowance (`README.md` → "Bounds"). **This lane carries neither**: its bounds
+  pin zero keyless requests and no Solana RPC spend at all.
 - **ownership** — which tokens the wallet *owns now*. One keyed request, already paid for.
 
 This lane reads ownership. That reading **understates** a wallet's launches, understates its bonded

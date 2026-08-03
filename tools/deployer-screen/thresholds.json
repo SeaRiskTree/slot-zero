@@ -142,6 +142,54 @@
       "rpcMinIntervalMs": "1,400ms is the documented floor, but a 200-request run at that pace on 2026-08-02 took over 890 seconds instead of the expected 280 \u2014 the endpoint was shedding load and the retry backoff was paying for it. 2,500ms is the observed rate at which that stops happening, so it is faster in wall-clock than the nominally quicker setting. api.mainnet-beta rate-limits GLOBALLY across getSignaturesForAddress and getTransaction, and two concurrent jobs earned a sustained 429 lockout, so this is one queue with one request in flight."
     }
   },
+  "creation_walk_helius": {
+    "$comment": [
+      "The SAME measurement as creation_walk, over an indexed provider instead of a raw signature",
+      "scan. It is used when HELIUS_API_KEY is set; with the key unset the creation_walk block above",
+      "governs and the run is byte-for-byte what it was before this block existed.",
+      "",
+      "Helius getTransactionsForAddress applies `status: succeeded` server-side and returns the",
+      "transaction bodies in the same call, so it collapses BOTH halves of the keyless walk — page",
+      "signatures, then one getTransaction per survivor — into one request per 1,000 transactions.",
+      "",
+      "PLAN: Helius Developer, $49/month, 10,000,000 credits/month, 50 requests/second (their",
+      "pricing page, read 2026-08-03). getTransactionsForAddress in `full` mode bills 10 CREDITS PER",
+      "100 TRANSACTIONS RETURNED, rounded up, 10 minimum; getMultipleAccounts is a standard method at",
+      "1 credit. The key is UNSHARED — it belongs to this research lane alone (captain, 2026-08-03),",
+      "so the whole allowance is this tool's and no other consumer can be starved by a heavy run.",
+      "",
+      "CREDITS ARE THE BINDING CONSTRAINT, NOT WALL CLOCK, and that is the inversion this block",
+      "exists to record. The keyless walk was bounded by time: 195 candidates x 100 requests x 2.5s",
+      "is 13.5 hours. Here the same 195 candidates at the worst measured per-candidate cost is about",
+      "46 minutes — and 1,014,000 credits, which is 10.14% of a month's allowance in one run. DO NOT",
+      "'CORRECT' THAT 46 DOWN TO THE 32.5 THE PACING FLOOR IMPLIES: 195 x 50 pages x 200ms is the",
+      "naive arithmetic, and this walk is LATENCY-BOUND below ~250ms of enforced interval. The",
+      "2026-08-03 full-mode ladder (20 requests a rung, one in flight) measured 962/490/301/251/257 ms",
+      "per request at enforced intervals of 1000/500/250/100/0 ms, i.e. a floor of ~250-260ms set by",
+      "response latency (p50 ~220ms) with ~50ms of overhead once the interval dominates. At the pinned",
+      "200ms a page really costs ~280ms, so 195 x 50 x 280ms = 45.5 min. render.mjs prints the same",
+      "figure from MEASURED_PAGE_CYCLE_MS rather than from the interval. So the",
+      "ceiling below is stated in credits, and the page count is a SEPARATE bound rather than the",
+      "same one restated: since the per-page guard reserves the curve-classification pass on top of",
+      "a whole page, the credit ceiling carries headroom the page cap does not, and the page cap is",
+      "what binds first. See the two justifications for the arithmetic."
+    ],
+    "maxCreditsPerCandidate": 5200,
+    "maxCreditsPerRun": 1100000,
+    "maxPagesPerCandidate": 50,
+    "pageLimit": 1000,
+    "maxTransactionsPerCandidate": 50000,
+    "rpcMinIntervalMs": 200,
+    "justification": {
+      "maxCreditsPerCandidate": "MEASURED 2026-08-03 against the only population where both readings exist: the twelve wallets of runs/2026-07-29-elite.json, every one of them enumerated to EXHAUSTION. Succeeded-transaction counts per wallet: 168, 211, 1007, 1026, 2136, 2989, 3344, 4749, 6378, 7791, 46815, 49367 — median ~3,167, max 49,367. At 10 credits per 100 returned that is 20, 30, 110, 110, 220, 300, 340, 480, 640, 780, 4690, 4940 credits for a COMPLETE history, median ~320, max 4,940, and 12,660 for all twelve together. THE CEILING IS 5,200 RATHER THAN 5,000 BECAUSE THE PER-PAGE GUARD COSTS MORE THAN A PAGE, and the arithmetic has to be stated or the next reader re-derives 5,000 and reintroduces the defect: a page is only STARTED when a whole page's worst case still fits ALONGSIDE the curve-classification reservation, and that reservation is creditsForCurveReads(creates.length + pageLimit) = ceil(n/100) + 1, whose floor at pageLimit 1,000 is 11. So the guard demands 100 + 11 = 111 credits free, not 100. At 5,000 the walk could start a page only while 111 remained, which after 49 full pages leaves 100 and stops on `credit-ceiling` at 49,000 transactions — SHORT OF THE 49,367 OF 6Wg4aeZ2, the very wallet the ceiling was sized against, so the population's largest history would have truncated while this text claimed it did not. 5,200 affords 51 data pages, past both the 50-page cap and that largest history, so every wallet in the measured population walks its whole index rather than a window — which is the coverage this route buys and the reason the ceiling is not set at the median. The reservation itself is not negotiable: CREATION-DERIVED.md §4 owns it, and a walk that spends its last unit finding one more creation has bought a launch it must then score as NOT bonded, deflating the very rate the walk was widening. The failure direction is the one the keyless walk already has and already reports: a wallet costlier than 5,200 credits stops on `credit-ceiling`, its covered window is a window and says so, and mergeHistories falls back to the ownership listing beyond it. WHAT WOULD MOVE IT: a wallet measured above 49,367 succeeded transactions whose reading the gate needs whole, or a change to pageLimit or to creditsForCurveReads, both of which move the 111.",
+      "maxCreditsPerRun": "11% of the Developer plan's 10,000,000 monthly credits, chosen so that the DEFAULT plan is admissible and the arithmetic is visible: maxCandidates 195 x maxCreditsPerCandidate 5,200 = 1,014,000 worst case, which fits under 1,100,000 with margin. THE TWO CEILINGS ARE COUPLED AND MUST MOVE TOGETHER — that is the whole reason this one changed: screen.mjs refuses a plan whose worst case exceeds this value BEFORE its first request, so raising the per-candidate ceiling from 5,000 to 5,200 while leaving this at 1,000,000 would have made EVERY default run refuse to start (1,014,000 > 1,000,000). That worst case is ~10.14% of the monthly allowance, so roughly nine worst-case full-cap runs fit in a month, and the measured EXPECTED cost is far lower — at the median per-candidate 320 credits a full 195-candidate run is about 62,400 credits, i.e. 0.62% of the month, so roughly 160 such runs would fit. THE POINT IS THE REFUSAL, NOT THE NUMBER: screen.mjs computes the worst case before its first request and refuses a plan that does not fit, so raising either per-candidate bound or the candidate cap without raising this one stops the run BEFORE it spends rather than part-way through, which is the same rule the keyed and keyless ceilings already enforce. NOTHING HERE TRACKS THE MONTH: this tool holds no state between runs and cannot see what the allowance has already paid for, so this bounds ONE run and the monthly arithmetic is the operator's. That limit is stated rather than papered over.",
+      "maxPagesPerCandidate": "NOT the same bound as maxCreditsPerCandidate any more, and the correction is the point: it USED to be an exact restatement — a full page of pageLimit 1,000 costs exactly 100 credits, so 5,000 credits was precisely 50 pages and neither could bind before the other. That stopped being true when the credit ceiling rose to 5,200 to clear the 111-credit per-page guard (see maxCreditsPerCandidate). At 5,200 the credit ceiling affords 51 data pages, so THE PAGE CAP IS NOW WHAT BINDS FIRST and the credit ceiling carries the guard's headroom behind it. 50 is kept rather than raised because 50 pages is 50,000 transactions, still above the largest history measured (49,367), so the measured population still walks whole; and the page cap exists at all because the walk's loop counts pages, and because a future pageLimit change would otherwise silently move the page bound with no line saying so.",
+      "pageLimit": "1000 is the endpoint's own maximum and it is enforced rather than documented-only: `limit: 5000` returns HTTP 200 carrying {\"error\":{\"code\":-32603,\"message\":\"Bad request: Invalid limit: You can only request up to 1000 transactions at a time…\"}} (measured 2026-08-03). Asking for less would multiply both the request count and the 10-credit-per-page MINIMUM — a walk at limit 100 pays the same 10 credits for a tenth of the answer — so the endpoint's cap is also the cheapest setting.",
+      "maxTransactionsPerCandidate": "A BACKSTOP THAT CANNOT CURRENTLY BIND, stated as one, exactly like creation_walk.maxTransactionsPerCandidate. 50 pages x 1,000 = 50,000, so this equals the page bound and no walk can reach it first. It is kept rather than deleted so that raising maxPagesPerCandidate or pageLimit does not silently remove the only bound expressed in the unit the parser actually works in. No measurement fixes it beyond the page arithmetic above, and inventing one would be worse than saying so.",
+      "rpcMinIntervalMs": "MEASURED 2026-08-03 on this endpoint, this plan, this client shape (one request in flight). A pacing ladder over getTransactionsForAddress against the busiest measured wallet — full mode at 1000/500/250/100/0 ms, 20 requests a rung, and signatures mode at 500/200/100/50/0 ms, 30 a rung — recorded ZERO shed events and zero JSON-RPC errors at EVERY rung, including 0 ms. Throughput saturated well below the plan's documented 50 req/s because the walk is latency-bound, not limit-bound: full pages returned p50 ~220 ms and topped out at 3.98 req/s (interval 100) against 3.89 (interval 0), signature pages at 7.54 against 7.38. A separate concurrency probe of 150 simultaneous requests observed 161 req/s with all 150 answered 200, so the documented ceiling was never reached at any pacing this client can produce serially. 200 ms is therefore NOT a shed-avoidance figure — nothing shed — it is a courtesy floor with an order of magnitude of headroom under the documented 50 req/s, and it costs about 17% of wall clock against the fastest rung on a leg that now takes seconds. THIS IS THE FREE ENDPOINT'S OPPOSITE and the contrast is the point: creation_walk.rpcMinIntervalMs is 2,500 ms because api.mainnet-beta sheds a quarter of what it is asked for and the nominally faster 1,400 ms measured SLOWER once backoff was counted. BATCHING IS NOT USED AND WAS NOT RE-MEASURED, because it no longer applies: this route issues one request per 1,000 transactions instead of one per transaction, so there is nothing left to batch. The JSON-RPC batching finding recorded against api.mainnet-beta (58s at batch=1 with zero shed, 110s at batch=8 with eleven) is untouched and still governs the keyless fallback."
+    }
+  },
+
   "budget": {
     "$comment": [
       "Hard bounds, enforced in code. There is no flag that disables one.",
@@ -156,10 +204,14 @@
       "question needs. It does NOT authorise sweeping, idle retrying, or re-running to re-evidence a",
       "side observation. A run that cannot say in advance what it will answer does not get the",
       "allowance.",
-      "SCOPE: this relaxation is MadeOnSol ONLY. The Helius / SolanaTracker / CoinGecko keys are",
-      "shared with production and the standing 'do not waste the quota that is production quota too'",
-      "is unchanged, as is the keyless pump.fun pacing below, which bounds a shared public resource",
-      "for an entirely different reason.",
+      "SCOPE: this relaxation is MadeOnSol ONLY. The SolanaTracker / CoinGecko keys are shared with",
+      "production and the standing 'do not waste the quota that is production quota too' is",
+      "unchanged, as is the keyless pump.fun pacing below, which bounds a shared public resource for",
+      "an entirely different reason.",
+      "HELIUS IS NO LONGER IN THAT LIST (captain, 2026-08-03): its key is UNSHARED and belongs to",
+      "this research lane alone, so the whole 10M monthly allowance is this tool's and no other",
+      "consumer can be starved by a heavy run. It is metered on its own terms in",
+      "creation_walk_helius, in CREDITS rather than requests, because that is what the vendor bills.",
       "The burst limit is NOT relaxed either: ~10/minute is a rate the vendor enforces, not a",
       "self-imposed caution, so keyedMinIntervalMs stays."
     ],

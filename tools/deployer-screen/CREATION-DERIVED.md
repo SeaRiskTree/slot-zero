@@ -1,7 +1,8 @@
 # Creation-derived launch history — what was measured
 
-Measured 2026-08-02. Method and code: `creation.mjs`, `pumpfun.mjs` → `readCreatedHistory`, and
-README → [Which history the gate counts](./README.md#which-history-the-gate-counts).
+Measured 2026-08-02, extended 2026-08-03 with the indexed (Helius) route — see §7. Method and code:
+`creation.mjs`, `pumpfun.mjs` → `readCreatedHistory` (keyless) and `readCreatedHistoryIndexed`
+(keyed), and README → [Which history the gate counts](./README.md#which-history-the-gate-counts).
 
 This file records **numbers**, not method. It exists because the correction it documents turned out
 to be small, and a small correction with no record of its size is indistinguishable from a large one
@@ -194,19 +195,29 @@ records, and no bound expressed in launches would have caught that in advance.
 
 ## 5. Does this need a paid provider?
 
-**Not for the gate as it stands, and the decision is the captain's, not this tool's.**
+**Asked 2026-08-02 and answered no; superseded 2026-08-03, when the captain bought the plan.** The
+original assessment is kept verbatim below because it is the baseline the new route is measured
+against, and because a decision whose predecessor is not recorded beside it becomes an invisible
+assumption one release later. §7 records what the paid route actually turned out to cost and cover.
 
-The keyless route is correct, validated, and bounded, and it is affordable for a wallet whose
-index is small or whose failure rate is high. It is *not* affordable for a routine twelve-candidate
-screen over full histories. An indexed provider (Helius DAS, Bitquery, Dune, Shyft) would answer
-"tokens created by wallet W" in one request instead of thousands — but every one of them is keyed,
-which is a new dependency and a standing-policy decision. **No such provider was contacted and no
-key was obtained.** It is recorded here as an option with its cost, not taken.
+> **Not for the gate as it stands, and the decision is the captain's, not this tool's.**
+>
+> The keyless route is correct, validated, and bounded, and it is affordable for a wallet whose
+> index is small or whose failure rate is high. It is *not* affordable for a routine twelve-candidate
+> screen over full histories. An indexed provider (Helius DAS, Bitquery, Dune, Shyft) would answer
+> "tokens created by wallet W" in one request instead of thousands — but every one of them is keyed,
+> which is a new dependency and a standing-policy decision. **No such provider was contacted and no
+> key was obtained.** It is recorded here as an option with its cost, not taken.
+>
+> The measured case for spending that money is currently weak: on the only wallet where the true
+> answer is known, the correction is 0.42% of launches and 0.0024 of the rate, and it changes no
+> verdict. The case would strengthen the moment Stage 2 scores a deployer on its *best* launch
+> rather than its count, because that is precisely the launch the ownership reading loses.
 
-The measured case for spending that money is currently weak: on the only wallet where the true
-answer is known, the correction is 0.42% of launches and 0.0024 of the rate, and it changes no
-verdict. The case would strengthen the moment Stage 2 scores a deployer on its *best* launch
-rather than its count, because that is precisely the launch the ownership reading loses.
+**What changed is the price of coverage, not the size of the correction.** §3's measured zero still
+stands and nothing in §7 revises it. What the paid route buys is that the walk now *finishes*: four
+of twelve wallets were measured on the keyless route and two of those four were windows rather than
+histories, because the rest were unaffordable. All twelve are now complete.
 
 ## 6. Two things easy to misread
 
@@ -232,3 +243,134 @@ rather than its count, because that is precisely the launch the ownership readin
   verdict `gate-unmeasured`. Do not aggregate those rows with `gate-failed` ones: the wallet was
   not judged, and treating "not judged" as "judged and rejected" would reintroduce the invisible
   false rejection this document is about, one layer up.
+
+## 7. The indexed route — Helius, measured 2026-08-03
+
+The captain bought a **Helius Developer** plan, so the walk in §4 is no longer the only way to
+reach a create transaction. `pumpfun.mjs` → `readCreatedHistoryIndexed` replaces the
+signature-scan-plus-fetch with one call: `getTransactionsForAddress`, `transactionDetails: "full"`,
+`filters: { status: "succeeded" }`, `sortOrder: "asc"`, paged by `paginationToken`. The keyless
+walk is untouched and still runs when no key is set.
+
+**Plan and prices**, from Helius's own pricing and billing pages read on the day: $49/month,
+**10,000,000 credits**, **50 requests/second**. `getTransactionsForAddress` in `full` mode bills
+**10 credits per 100 transactions returned**, rounded up, 10 minimum; `getSignaturesForAddress`,
+`getTransaction`, `getBlock` and `getMultipleAccounts` are **1 credit** each. The key is
+**unshared** — this research lane's alone (captain, 2026-08-03).
+
+### 7.1 The parsers work unchanged, and that was checked rather than assumed
+
+`full` + `jsonParsed` returns `getTransaction`'s own envelope — `{ transaction: { signatures,
+message }, meta, blockTime }`. Fetched the `maxxing` create transaction
+(`64pCziaL…`) by both routes and compared every field `parseCreateTransaction` reads — block time,
+`meta.err`, log count, signature, account-key count, the signer set, and the pump.fun instruction's
+account list. **Identical.** So `parseCreateTransaction` and `readCurveState` are shared between the
+two walks with no adapter, no fork and no wrapper.
+
+### 7.2 Cost and coverage, all twelve elite wallets, every one walked to exhaustion
+
+The keyless route could afford four of these twelve, and two of those four were windows. The
+indexed route completed **all twelve**, in 27.7 seconds of enumeration.
+
+| wallet | succeeded transactions | full pages | credits | keyless equivalent (§4) |
+|---|---|---|---|---|
+| `F5ExBJxM…` | 168 | 1 | 20 | 169 requests, 7 min |
+| `ELcFk5c9…` | 211 | 1 | 30 | 212 requests, 8 min |
+| `3FiWnNDT…` | 1,007 | 2 | 110 | 656 requests, 26 min |
+| `3YpQRAGD…` | 1,026 | 2 | 110 | 126,766 requests, **5,071 min** |
+| `4q4GKBpV…` | 2,136 | 3 | 220 | 173 requests, 7 min |
+| `5KTX7LZy…` | 2,989 | 3 | 300 | 9,439 requests, 378 min |
+| `EeLjBXRE…` | 3,344 | 4 | 340 | 14,053 requests, 562 min |
+| `Eh3q5AXn…` | 4,749 | 5 | 480 | 58,186 requests, 2,327 min |
+| `GeBJSHK4…` | 6,378 | 7 | 640 | 3,263 requests, 131 min |
+| `7ufmve7Z…` | 7,791 | 9 † | 793 † | 7,166 requests, 287 min |
+| `yHCxHBEa…` | 46,815 | 47 | 4,690 | 2,734 requests, 109 min |
+| `6Wg4aeZ2…` | 49,367 | 50 | 4,940 | 6,568 requests, 263 min |
+
+† **The subject deployer's row is the END-TO-END figure the production walk actually recorded**
+(§7.5), and it is the only row here that is: 8 data pages at 780 credits, **plus** the further page
+that returns no rows and proves exhaustion by answering `paginationToken: null` at the 10-credit
+minimum, **plus** 3 `getMultipleAccounts` curve reads for its 247 creations at 1 credit each — 9
+pages, 793 credits, 12 requests. The other eleven rows are the enumeration measurement's **data
+pages only**, which is a standalone probe that counted neither the exhaustion-proving page nor the
+curve reads, so the aggregate below is unchanged and is a data-page figure. Read a row here as a
+lower bound on an end-to-end walk, never as one.
+
+**Median 320 credits, max 4,940, 12,660 for all twelve.** All twelve on the keyless route were
+~153 hours; here they are 136 pages. Note the `3YpQRAGD…` row: 860 days of history behind a heavy
+index cost 5,071 minutes keyless and **110 credits** indexed. That is the shape of the change — it
+is largest exactly where the keyless walk was least affordable, which is where coverage was being
+lost.
+
+The per-candidate ceiling is pinned at **5,200 credits** — the largest history here plus the
+per-page guard, which reserves a whole page (100) *and* the curve-classification pass (11) before
+starting a page, so a walk can never spend its last credit on a creation it must then score as not
+bonded (§4). At 5,000 that guard stopped after 49 pages and truncated `6Wg4aeZ2…`, the wallet the
+ceiling was sized against; at 5,200 every wallet in this population walks its whole index. `thresholds.json` → `creation_walk_helius`
+owns the derivation.
+
+### 7.3 Pacing, re-measured on this endpoint rather than carried over
+
+A ladder against the busiest wallet — full mode at 1000/500/250/100/0 ms, 20 requests a rung, and
+signatures mode at 500/200/100/50/0 ms, 30 a rung — recorded **zero shed events and zero JSON-RPC
+errors at every rung, including 0 ms**. A concurrency probe of 150 simultaneous requests was
+answered 200 on all 150 at an observed 161 req/s. Throughput is **latency-bound, not limit-bound**:
+3.98 req/s at 100 ms against 3.89 at 0 ms in full mode, 7.54 against 7.38 in signatures mode. Pinned
+at **200 ms** — a courtesy floor with an order of magnitude of headroom, not a shed-avoidance
+figure. This is the opposite of `api.mainnet-beta`, where 2.5 s is *faster* in wall clock than 1.4 s
+because of backoff, and that keyless finding is unchanged.
+
+**The batching question does not carry over because it no longer arises.** §4's finding — batch=1
+at 58 s with zero shed against batch=8 at 110 s with eleven — was about issuing one `getTransaction`
+per transaction. The indexed route issues one request per 1,000 transactions, so there is nothing
+left to batch. The keyless finding still governs the keyless walk.
+
+### 7.4 Failure shapes, confirmed before being trusted
+
+The keyless client's rule is *a null is a retry, never absent*. Helius does not use the same
+signals, so they were measured rather than assumed:
+
+| condition | response |
+|---|---|
+| invalid address | HTTP **200**, `{"error":{"code":-32602,"message":"Invalid param: Invalid Base58 string"}}` |
+| `limit: 5000` | HTTP **200**, `{"error":{"code":-32603,…"You can only request up to 1000 transactions at a time"}}` |
+| corrupt `paginationToken` | HTTP **200**, `{"error":{"code":-32603,"message":"Bad request: Invalid pagination token"}}` |
+| unknown method | HTTP **200**, `{"error":{"code":-32601},"id":null}` |
+| empty slot range | HTTP **200**, `{"data":[],"paginationToken":null}` |
+| wrong or missing key | HTTP **401**, plain-text `Unauthorized` (not JSON) |
+
+So the distinction the walk turns on is **different from the keyless one and had to be rebuilt**:
+an `error` envelope is the endpoint's considered answer and arrives on a 200, so it stops the walk
+on `upstream-error` and is never retried and never read as an exhausted index; an absent result is
+load-shedding and is retried; and exhaustion is proved **only** by `paginationToken: null` on a page
+that succeeded. An empty page carrying a token is not the end. A 401 is a credential failure, not a
+measurement, and stops immediately rather than being retried three times.
+
+`covered.fromMs === null` still means **covered nothing**, never "since the epoch". The route pages
+ascending, so a truncated walk covers from genesis forwards and leaves the recent end to the
+ownership listing — the opposite end from the keyless walk, and the better one to lose.
+
+### 7.5 The whole thing reproduced against the 239-launch ground truth
+
+The strongest available check, run with the production code rather than a probe: the indexed walk
+over `7ufmve7Z…`, compared against `data/population-tape-2026-07-29/launches.csv`.
+
+| | |
+|---|---|
+| wall clock | **5.7 seconds** |
+| requests / credits | 12 / **793** (ceiling 5,000) |
+| pages, transactions | 9 pages, 7,791 transactions |
+| stop reason | `index-exhausted`, covering 2025-12-01 → 2026-08-03 |
+| unresolved transactions | **0** |
+| **launches in the tape found** | **239 of 239** |
+| `maxxing` (`32CdQdBU…`) found | **yes** — the launch `?creator=` cannot return |
+| launches found but not in the tape | 8, **all created after the tape's newest launch** (2026-07-28T20:51:02Z) |
+| bonded flag vs the tape's `graduated` | **238 of 239 identical** |
+| the one difference | `DGWppJtf…`, created 2026-07-16 — tape says not graduated, curve says complete, i.e. it bonded after the 2026-07-29 snapshot |
+| curves read / unread | 247 / **0** |
+
+Every difference from the committed census is the six days of activity between the tape being cut
+and the check being run, and each one runs in the only direction it can. **No measured value moved
+and no verdict changed.** Compare the keyless cost for this same wallet: 7,166 requests and ~287
+minutes, and that is only reachable at all with the per-candidate ceiling lifted — under the pinned
+100 requests it covers a window, not a history.

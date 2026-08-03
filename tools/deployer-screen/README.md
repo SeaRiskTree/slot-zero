@@ -49,11 +49,13 @@ node tools/deployer-screen/screen.mjs --dry-run
 # ceiling silently truncates coverage, which is exactly how the first elite run graded 12 of the
 # 22 wallets it seeded. Budget HOURS, not minutes — up to about 15 at the candidate cap: the
 # creation-derived history is walked from on-chain create transactions, and at the pinned bounds
-# that walk alone is ~13.5 hours worst case. --dry-run prints the arithmetic for your own flags.
+# that KEYLESS walk alone is ~13.5 hours worst case. With HELIUS_API_KEY set the same leg is the
+# indexed walk, ~46 minutes, bounded in credits instead of hours (see Bounds).
+# --dry-run prints the arithmetic for your own flags, on whichever route your key selects.
 node tools/deployer-screen/screen.mjs --tier elite \
   --consistency --out tools/deployer-screen/runs/$(date +%F).json
 
-# Bound the run instead. The RPC walk is N x 100 x 2.5s, so this is ~40 minutes, not ~13.5 hours.
+# Bound the run instead. The keyless RPC walk is N x 100 x 2.5s, so this is ~40 minutes, not ~13.5 hours.
 # It truncates coverage, and the record says so.
 node tools/deployer-screen/screen.mjs --tier elite --candidates 12
 
@@ -135,7 +137,32 @@ So creation is only recoverable from the create transaction, and the only keyles
 reaches one is the wallet's own signature index. `pumpfun.mjs` → `readCreatedHistory` walks it;
 `creation.mjs` parses it.
 
-### What that costs, measured
+### Two routes to the same reading, and which one runs
+
+The gate asks one question — *which tokens did this wallet CREATE* — and there are two ways to
+answer it. **Which one runs is decided by whether a Helius key is present, and nothing else.**
+
+| | keyless (`api.mainnet-beta`) | indexed (Helius, `HELIUS_API_KEY` set) |
+|---|---|---|
+| method | `getSignaturesForAddress` + one `getTransaction` per succeeded signature | `getTransactionsForAddress`, `full` mode, `status: succeeded` |
+| cost unit | requests | **credits** (10 per 100 transactions returned) |
+| subject deployer, whole history | 7,166 requests, **~287 min** | 12 requests, 793 credits, **5.7 s** |
+| all twelve elite wallets | ~153 hours | 136 pages, **12,660 credits** |
+| pacing | 2,500 ms (endpoint sheds ~25%) | 200 ms (zero shed measured at every rung) |
+| bound that bites | `creation_walk` | `creation_walk_helius` |
+
+Both produce a `CreationWalkResult` with the same fields and the same coverage rules, and
+**`parseCreateTransaction` and `readCurveState` are shared unchanged** — `full` + `jsonParsed`
+returns `getTransaction`'s own envelope, verified field for field on a known create
+([CREATION-DERIVED.md § The indexed route](./CREATION-DERIVED.md)). The indexed route is faster and
+reaches *further*; it is not a different measurement, and the section below still describes what
+the walk means in either case.
+
+The keyless route is not deprecated and is not a degraded mode. With no key the tool runs exactly
+as it did before Helius existed — same endpoint, same pacing, same ceilings, same numbers — and it
+says so in the dry run and on the gating line.
+
+### What the keyless route costs, measured
 
 `getSignaturesForAddress` returns *referencing* transactions, and for a pump.fun deployer the index
 is dominated by strangers' **failed** trades — the buy and sell instructions take the creator
@@ -154,6 +181,11 @@ Because of that, the walk covers a **bounded window backwards from now**. Inside
 is found; outside it the ownership listing is carried over unchanged and the record says how many
 rows that is. `stopReason: "index-exhausted"` is the only value under which the window is the
 wallet's whole history.
+
+On the indexed route the window runs the other way — the walk pages **ascending**, so a truncated
+one covers from the wallet's genesis forwards and leaves the *recent* end to the ownership listing.
+That is the better end to lose: ownership is least wrong about tokens the wallet has not yet had
+time to hand on. Everything else below is identical, including what an empty window means.
 
 Four rules keep that window from claiming more than it covers.
 
@@ -174,6 +206,17 @@ Four rules keep that window from claiming more than it covers.
   the walk on `upstream-error` with `wholeHistory: false`. Reading one as an empty page would have
   recorded page 2 of 200 as the wallet's whole history under `index-exhausted`: a ceiling presented
   as a measurement. Only a genuinely **empty array** is an exhausted index.
+  **On the indexed route the same rule holds against different shapes, re-measured rather than
+  assumed** (2026-08-03). Helius distinguishes the two cases the public endpoint conflates: a bad
+  parameter comes back as **HTTP 200 carrying `{"error":{"code":-32602,…}}`** — an invalid address,
+  a limit above 1,000 and a corrupt pagination token all take that form — while load-shedding is an
+  absent result. So an error envelope stops the walk on `upstream-error` and is *not* retried
+  (asking again spends credits to be told the same thing), an absent result is retried by the
+  client, and **neither is ever read as an exhausted index**. Exhaustion is proved only by
+  `paginationToken: null` on a page that succeeded; an empty page that still carries a token is not
+  the end, and a query over an empty slot range returns `{"data":[],"paginationToken":null}`
+  correctly. A wrong or missing key is **HTTP 401 with a plain-text body**, which is a credential
+  failure rather than a measurement and stops immediately without retrying.
 - **"Inside the window the walk is authoritative" holds only when `unresolvedTransactions` is 0.**
   A `getTransaction` that never came back may have been a create, so under a non-zero count an
   in-window listing row the walk did not see is **carried over as a launch** rather than relabelled
@@ -225,23 +268,61 @@ listing: a fee-sharing migration moves the on-chain field to a config PDA while 
 lists the token under the wallet. `hiddenByOwnership` is the count that matters for the bias, and
 it is measured directly rather than inferred from `movedCreator`.
 
-## The credential
+## The credentials
 
-The tool reads `MADEONSOL_API_KEY` from the environment. **Nothing in this repository holds a key,
-and nothing here ever will.** The value is never printed, logged, or written to disk; presence is
-verified by length and prefix shape only.
+Two, and they are unrelated to each other. Both are read from the environment. **Nothing in this
+repository holds a key and nothing here ever will**; neither value is printed, logged or written to
+disk, presence is verified by length and shape only, and `credential.mjs` is the only module
+permitted to name either variable — a test enforces that, the allow-list is exhaustive, and a
+committed file carrying either key's shape fails the build.
 
 ```bash
 export MADEONSOL_API_KEY="$(your-secret-manager read madeonsol)"
+export HELIUS_API_KEY="$(your-secret-manager read helius)"
 # or, from a dotenv file kept OUTSIDE this repo:
 set -a; . /path/to/your/.env; set +a
 ```
+
+### `MADEONSOL_API_KEY` — required
 
 Free-tier keys expire every 30 days. An expired key exits `4` with a message that says so, rather
 than producing an empty ranking. Get one at <https://madeonsol.com/developer>.
 
 **Free tier only.** Paid tiers are refused standing policy, so nothing here may need Pro, Ultra or
 Business. A `403` is treated as a bug to report, not as a prompt to upgrade.
+
+### `HELIUS_API_KEY` — optional, and its absence is a supported configuration
+
+It selects the indexed creation walk. With it unset the tool runs the keyless route and is slower
+rather than different; there is no exit code for its absence, because absence is not a fault. A key
+that is present but **malformed** falls back to the keyless endpoint and says why — running
+silently would leave a slow run and a `provider: "public"` record with no reason in it.
+
+The address is composed in code as the host plus the key in a query parameter, in exactly one place.
+**Store the bare key, never the composed URL** — a URL in an environment variable is a credential
+that leaks the moment anything formats it into a message. A value that looks like one (it contains
+`://` or a query parameter) is **refused on shape**, because the length band structurally cannot
+catch it: this host plus a UUID key is 76 characters, comfortably inside 24-128. It falls back to
+the keyless endpoint and says why, naming the shape and never the value.
+
+**A credential the endpoint refuses is TERMINAL for the run, and exits `4`.** It says nothing about
+the deployer being screened, so it may not become that deployer's reading. Absorbed into one
+candidate's `stopReason`, a revoked key would give every candidate after it a silent ownership-only
+history while the record still claimed `historySource: "creation-derived"`, and the whole shared
+MadeOnSol daily allowance would drain one paid-for profile at a time. Stopping on the first one
+leaves the rest of that allowance unspent; the partial-record rules above apply unchanged.
+
+**Plan: Developer — $49/month, 10,000,000 credits, 50 requests/second** (their pricing page, read
+2026-08-03). `getTransactionsForAddress` in `full` mode bills **10 credits per 100 transactions
+returned**, rounded up, 10 minimum; `getSignaturesForAddress`, `getTransaction`, `getBlock` and
+`getMultipleAccounts` are 1 credit each. The key is **unshared** — it belongs to this research lane
+alone (captain, 2026-08-03), so the whole allowance is this tool's and no other consumer can be
+starved by a heavy run. Credits, not wall clock, are therefore what bounds this leg; see
+[Bounds](#bounds) and `thresholds.json` → `creation_walk_helius`.
+
+**Nothing here tracks the month.** The tool holds no state between runs, so it can bound one run
+and no more. `--dry-run` prints that run's worst case and its share of a month; the monthly
+arithmetic is the operator's.
 
 ## Why we never inherit their aggregate
 
@@ -453,6 +534,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 5 | no new candidate field — the candidate-row change is **inside `entry`**, which gains `launchesRoomUnproven`, `bundledTx` and `maxWalletsInOneTx`. The **`stage0` block also changed**, and it is not comparable across the boundary — below. Consequences for a reader of an older record, below. |
 | 6 | no new candidate field either. **The fee moved inside the entry window** and the eligibility filter became observable, both inside `entry`. **The verdict vocabulary changed and `entry-room-present` no longer exists** — below. `entry` gains `entryCostSol`, `entryCostPerSolStaked` (pooled over ENTRIES), `entryCostPerSolStakedByLaunch` (one figure per LAUNCH, and the one `entry-cost-prohibitive` is compared against), `entryTxFeeSol`, `entryCostPriced`, `fieldRealisedSolNetOfMeasuredFees`, `fieldReturnPerSolNetOfMeasuredFees`, `fieldHitRateNetOfMeasuredFees` and `fieldClosedRoundTripsPriced`; `entry.coverage` gains `minAgeMs`, `launchesTooYoung`, `launchesEligible`, `launchesPlanned`, `launchesDroppedByCap`, `youngestRefAgeMs`, `youngestEligibleAgeMs` and a `cost` block whose `launchesPriced`/`transactionsPriced` count only pricing that BACKS the score, with `launchesDiscarded`/`transactionsDiscarded` beside them for work paid for and then dropped whole and `rpcRequests` spanning both. The **`stage0` block gains `onChainCostReproduction`** — Stage 0's offline cost regression, carried in full (`launchesPriced`, `entriesPriced`, `pairsPriced`, the gross and net medians and hit rates, `flipsPositiveToNegative`, the known-negative wallet's `postBreakVerdict`, `ok`) so a saved run says by how much and over what the fee correction moved the field, not only that it passed — and `thresholds` gains `stage2_cost`, the bounds the cost leg ran under. Those figures are over the **unfiltered** population — every taped launch the committed table can price — which schema 7 changes without renaming a single key. |
 | 7 | no new candidate field, no new `entry` field and no new `entry.coverage` field: `PERSISTED_BY_SCHEMA[7]`, `ENTRY_KEYS_BY_SCHEMA[7]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[7]` all equal `[6]`. **What changed is a POPULATION, under unchanged key names.** `stage0.onChainCostReproduction`'s `launchesPriced`, `entriesPriced`, `entries`, `pairsPriced`, the entry-cost medians, `entryCostPositiveShare`, the gross/net hit rates and medians and `flipsPositiveToNegative` are now measured over the **GATED** population — launches whose create-slot opening is proven (`measure.mjs` → `roomIsProven`), which is the population `entry-cost-prohibitive` is itself computed from — where a schema-6 record's identically named keys meant the unfiltered one. So a schema-6 `launchesPriced: 113 / pairsPriced: 631` and a schema-7 `110 / 618` are not one series; version-detect before comparing them. Three new keys carry the unfiltered reading so the record is self-describing rather than needing external context: `includingUnprovenLaunchesPriced`, `includingUnprovenPairsPriced` and `includingUnprovenEntryCostPerSolStakedMedianByLaunch` (on the committed tape 113, 631 and 0.0388 against the gated 110, 618 and 0.0389 — the unfiltered reading is the CHEAPER one, i.e. the optimistic direction, which is why it is not what the bar reads). The block also gains `minEntryCostPositiveShare`, the floor `entryCostPositiveShare` is compared against, beside the `minLaunches`/`minPairs` bars already there. |
+| 8 | no new candidate field, no new `entry` field and no new `entry.coverage` field: `PERSISTED_BY_SCHEMA[8]`, `ENTRY_KEYS_BY_SCHEMA[8]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[8]` all equal `[7]`. **What changed is the `spend` block: it now reports THREE budgets separately**, because the creation walk can take a keyed indexed route. It gains `rpcProvider` (`helius` or `public`), `rpcEndpoint`, `heliusCredits`, `heliusCreditCeilingPerCandidate` and `plannedWorstCaseHeliusCredits`. They are five new keys rather than additions to the existing totals because the three budgets have three units and no exchange rate between them: MadeOnSol is metered in **requests** against a shared daily allowance, Helius in **credits** against an unshared monthly one, and the keyless hosts in neither — a single "requests" total would hide which allowance a heavy run actually spent. `rpcEndpoint` holds the endpoint's **label** and never the composed URL, which on the keyed route carries the credential in a query parameter. On a schema-≤7 record all five are genuinely absent and must not be reconstructed: those runs predate the indexed route, so the walk was the keyless one and the record cannot say which host answered it. `heliusCredits: 0` beside `rpcProvider: "public"` is a keyless run that spent no credit; `heliusCreditCeilingPerCandidate: null` means the indexed walk did not run at all. |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -817,10 +899,12 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here, and it bounds a shared public resource rather than expressing our own caution, so the MadeOnSol relaxation does not touch it. The fill host is paced separately — see below. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does — but a 429, a 5xx or a timeout means the request was not served, so re-issuing it is nearer to one successful request than to two. Without it the caller re-runs the whole walk, which is worse for pump.fun too. A 4xx that is not a 429 is never retried: it is the endpoint's considered answer. |
-| Solana RPC ceiling | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. The creation-derived walk. Whichever bound bites is recorded per candidate. |
+| Solana RPC ceiling, keyless creation walk | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. Governs the creation-derived walk **when no Helius key is present**. Whichever bound bites is recorded per candidate. |
+| Helius credit ceiling, indexed creation walk | **5,200 credits per candidate**, 1,100,000 per run | `thresholds.json` → `creation_walk_helius`, and the unit is the point — this provider bills by transactions **returned**, so a request ceiling cannot bound it. 5,200 clears the largest complete history measured (49,367 succeeded transactions = 4,940 credits) **plus the per-page guard**, which demands 100 credits for the page and 11 more reserved for the curve-classification pass — at 5,000 that guard stopped the walk after 49 pages, truncating the very wallet the ceiling was sized against. The per-candidate median is 320. The run ceiling makes the default plan admissible at 195 × 5,200 = 1,014,000 and is 11% of the monthly allowance, so **nine worst-case full-cap runs fit in a month** and the expected cost of one is ~0.62%. **The two move together**: the run ceiling is checked before the first request, so raising the per-candidate one alone would refuse every default plan. A plan that does not fit is **refused before the first request**, exactly like the keyed and keyless plans. A page is only started when a whole page's worst case still fits, so the ceiling is exact and never overshot. |
+| Helius pacing | 200ms | Measured 2026-08-03 on this endpoint and plan: a ladder at 1000/500/250/100/0 ms (full mode) and 500/200/100/50/0 ms (signatures mode) shed **nothing at any rung, including 0 ms**, and 150 concurrent requests were all answered 200 at an observed 161 req/s. The walk is latency-bound rather than limit-bound — throughput was 3.98 req/s at 100 ms against 3.89 at 0 ms — so 200 ms is a courtesy floor with an order of magnitude of headroom under the documented 50 req/s, not a shed-avoidance figure. |
 | Solana RPC ceiling, cost leg | 400 requests **per candidate** | `thresholds.json` → `stage2_cost`. Measured on our own tape: the create-slot scope is p50 7 / p90 13 / max 20 transactions per launch and the whole-window scope over CLOSED create-slot outsiders is p50 18 / p90 35 / max 70, unioned so none is paid for twice — **and the union is what the walk pays for: p50 19, p90 36.6, max 74 distinct transactions per launch**, so ~152 requests per candidate at the median and ~293 at p90 over 8 launches (an earlier version of this row said ~200 / ~380, which is the same arithmetic with the union left out). Worst case 3 × 400 = 1,200 requests, about 50 minutes, which `--dry-run` prints. **It runs only on a candidate the free legs have not already refused**, so the realistic cost is far lower. |
 | Solana RPC pacing | 2.5s | Measured: the nominally faster 1.4s was *slower* in wall-clock once 429 backoff is counted. Rate limiting is global across `getSignaturesForAddress` and `getTransaction`. |
-| `getTransaction` batch size | **1** | Measured harmful above 1 — see [Which history the gate counts](#which-history-the-gate-counts). |
+| `getTransaction` batch size | **1** | Measured harmful above 1 on `api.mainnet-beta` — see [Which history the gate counts](#which-history-the-gate-counts). It does not arise on the indexed route, which issues one request per 1,000 transactions and so has nothing left to batch. |
 | RPC retries | 3 with exponential backoff, each attempt counted against the ceiling | Unlike the keyed client, a 429 here is load-shedding and not a verdict — but a 429 storm still cannot outlast the ceiling. |
 
 ### How long a run takes, and how to bound it
@@ -829,10 +913,16 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 and the creation walk is essentially all of it.** The arithmetic is `renderDryRun`'s, so `--dry-run`
 prints these same figures for whatever flags you actually pass:
 
+**With a Helius key that leg is ~46 minutes instead of ~13.5 hours**, and the run's worst case falls
+to roughly 3.2 hours end to end (21 + 46 + 26 + 50 + 50 minutes) — at which point Stage 2 and its
+cost leg, not the creation walk, are the largest terms. `--dry-run` prints whichever route your
+environment actually selects.
+
 | leg | worst case | at its pinned pacing |
 |---|---|---|
 | keyed MadeOnSol | 3 + 195 = 198 requests | 6.5s → **~21 min** |
-| **Solana RPC, the creation walk** | 195 × 100 = **19,500** requests | 2.5s → **~13.5 hours** |
+| **Solana RPC, the creation walk — keyless** | 195 × 100 = **19,500** requests | 2.5s → **~13.5 hours** |
+| **Solana RPC, the creation walk — indexed (Helius)** | 195 × 50 pages = 9,750 requests, 1,014,000 credits | 200ms floor, ~280ms measured cycle → **~46 min** |
 | keyless `frontend-api-v3`, the gate's ownership listing | 195 × 4 = 780 requests | 2.0s → ~26 min |
 | keyless `frontend-api-v3`, `--consistency` | 195 × 3 = 585 requests | 2.0s → ~19.5 min |
 | keyless `swap-api`, Stage 2 | 3 × 8 × 18 = 432 requests | 7.0s → ~50 min |
@@ -885,10 +975,12 @@ without fetching anything.
 The conditional in the instruction binds: ***"if it gets results"***. It licenses sizing a run by
 what the question needs. It does **not** license sweeping, idle retrying, or re-running to
 re-evidence a side observation — a run that cannot say in advance what it will answer does not get
-the allowance. And the relaxation is **MadeOnSol only**: the Helius / SolanaTracker / CoinGecko keys
+the allowance. And the relaxation is **MadeOnSol only**: the SolanaTracker / CoinGecko keys
 are shared with production and the standing *"do not waste the quota that is production quota too"*
 is unchanged, as is the keyless pump.fun pacing, which bounds a shared public resource for a
-different reason.
+different reason. **Helius is no longer in that list** (captain, 2026-08-03) — its key is unshared
+and belongs to this research lane alone, so it is budgeted against the whole monthly allowance and
+metered on its own terms, in credits, by `thresholds.json` → `creation_walk_helius`.
 
 Every run reports its spend **concretely**, not as one number: the record's `spend` block (schema 3)
 carries the ceiling, what went unspent, the planned worst case, and every endpoint called with its

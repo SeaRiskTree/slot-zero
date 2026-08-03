@@ -59,7 +59,7 @@ top of this file. Answering it means screening *other* deployers, present tense.
 | | |
 |---|---|
 | **Stage 0** — local validation, no network, no key | `tools/deployer-screen/stage0.mjs` |
-| **Stage 1** — the completion-rate **gate**: keyed MadeOnSol counts, over a launch history derived from the keyless on-chain **create** transactions rather than from who owns the tokens now | `tools/deployer-screen/screen.mjs` |
+| **Stage 1** — the completion-rate **gate**: keyed MadeOnSol counts, over a launch history derived from the on-chain **create** transactions rather than from who owns the tokens now (indexed via Helius when `HELIUS_API_KEY` is set, keyless otherwise) | `tools/deployer-screen/screen.mjs` |
 | **Stage 2** — the keyless **entry** score: room in the opening window, what the field there achieved, and **what it cost that field to land** | `tools/deployer-screen/stage2.mjs`, `entry.mjs` |
 | **The candidate discovery feed** — the scheduled lane that surfaces deployer wallets this project has not seen before and queues the gate-clearing ones for the screen; scope, quota bounds and the vendor-selection ceiling in `tools/deployer-screen/FEED.md` | `tools/deployer-screen/feed.mjs` |
 | **The window-population measurement** — how many profitable windows the tape contains, how long, how fast they close | `analysis/window-population/` |

@@ -35,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 
 import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
 import { coveredBoundMs, mergeHistories } from './creation.mjs';
-import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
+import { HELIUS_KEY_ENV_VAR, KEY_ENV_VAR, resolveKey, resolveSolanaRpcEndpoint } from './credential.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
 import {
   RECORD_SCHEMA_VERSION,
@@ -48,8 +48,10 @@ import {
 } from './record.mjs';
 import {
   KeylessClient,
+  RpcCredentialRejected,
   SolanaRpcClient,
   readCreatedHistory,
+  readCreatedHistoryIndexed,
   readCreatorHistory,
 } from './pumpfun.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
@@ -457,6 +459,35 @@ export async function main(opts, env, out, err) {
     return EXIT.usage;
   }
 
+  // **Which Solana RPC endpoint the creation walk reaches, decided once, here.** With
+  // `HELIUS_API_KEY` set it is the indexed route; with it unset the keyless signature scan, exactly
+  // as before this key existed. A key that is PRESENT but malformed falls back and says why —
+  // `endpoint.rejected` is printed below rather than swallowed, because a silent fallback would
+  // read as a keyed run in the record.
+  const rpcEndpoint = resolveSolanaRpcEndpoint(env);
+  const indexedWalk = T['creation_walk_helius'];
+  const usingIndexedWalk = rpcEndpoint.provider === 'helius' && !opts.ownershipOnly;
+
+  // **The same refusal again, in the unit this provider actually bills in.** Helius charges by
+  // transactions RETURNED, not by request, so a request ceiling cannot bound the spend — 195
+  // candidates at the worst measured per-candidate cost is 1,014,000 credits, near a ninth of the
+  // monthly allowance, and a plan that only discovered that half-way through would have spent it.
+  const worstCaseCredits = usingIndexedWalk ? maxCandidates * indexedWalk.maxCreditsPerCandidate : 0;
+  if (worstCaseCredits > indexedWalk.maxCreditsPerRun) {
+    err(
+      `Refusing to start: the plan's worst case is ${maxCandidates} candidate x ` +
+        `${indexedWalk.maxCreditsPerCandidate} Helius credits = ${worstCaseCredits}, above the pinned ` +
+        `per-run ceiling of ${indexedWalk.maxCreditsPerRun}.`,
+    );
+    err(
+      `  Lower --candidates to ${Math.floor(indexedWalk.maxCreditsPerRun / indexedWalk.maxCreditsPerCandidate)} ` +
+        `or fewer, pass --ownership-only to skip the walk entirely, or raise thresholds.json ` +
+        `creation_walk_helius.maxCreditsPerRun.`,
+    );
+    err('  Nothing was requested, so no credit and no quota was spent.');
+    return EXIT.usage;
+  }
+
   const resolution = resolveKey(env);
 
   if (opts.dryRun) {
@@ -475,6 +506,9 @@ export async function main(opts, env, out, err) {
         creationWalk: T['creation_walk'],
         costBounds,
         keyDescription: resolution.ok ? resolution.description : null,
+        rpcEndpoint,
+        indexedWalk,
+        worstCaseCredits,
       }),
     );
     return EXIT.ok;
@@ -541,6 +575,10 @@ export async function main(opts, env, out, err) {
   const walkBounds = T['creation_walk'];
   let rpcRequests = 0;
   let rpcLoadShedEvents = 0;
+  // Reported SEPARATELY from the request count and from the MadeOnSol allowance, because they are
+  // three different budgets against three different vendors. Only the indexed walk spends credits;
+  // the keyless fallback and Stage 2's cost leg spend requests against a free host and nothing else.
+  let heliusCredits = 0;
 
   /** @type {import('./rank.mjs').Candidate[]} */
   const candidates = [];
@@ -598,7 +636,20 @@ export async function main(opts, env, out, err) {
 
     if (!opts.json && !opts.ownershipOnly) {
       out('');
-      out('GATING — creation-derived history, from pump.fun create transactions (keyless RPC)');
+      out(
+        usingIndexedWalk
+          ? `GATING — creation-derived history, from pump.fun create transactions ` +
+              `(indexed RPC, ${rpcEndpoint.label})`
+          : 'GATING — creation-derived history, from pump.fun create transactions (keyless RPC)',
+      );
+      // A key that was present but unusable must not read as a deliberate keyless run.
+      if (rpcEndpoint.rejected !== null) out(`  !! ${rpcEndpoint.rejected}`);
+      else if (!usingIndexedWalk) {
+        out(
+          `  ${HELIUS_KEY_ENV_VAR} is not set, so this leg runs on the keyless public endpoint and ` +
+            `is SLOWER, not different.`,
+        );
+      }
     }
 
     for (const seed of worthARequest.slice(0, maxCandidates)) {
@@ -621,9 +672,18 @@ export async function main(opts, env, out, err) {
 
       if (!opts.ownershipOnly) {
         let rpcTicks = 0;
+        // ONE per-candidate ceiling either way, in whichever unit the endpoint bills in. The
+        // indexed route reads up to `maxPagesPerCandidate` pages and is bounded by CREDITS; the
+        // keyless one reads up to `maxRpcRequestsPerCandidate` requests and is bounded by those.
+        // Both are per-candidate, so one wallet's busy index cannot eat the next wallet's budget.
+        const ceilingForCandidate = usingIndexedWalk
+          ? indexedWalk.maxPagesPerCandidate + Math.ceil(indexedWalk.maxTransactionsPerCandidate / 100) + 1
+          : walkBounds.maxRpcRequestsPerCandidate;
         const rpc = new SolanaRpcClient({
-          maxRequests: walkBounds.maxRpcRequestsPerCandidate,
-          minIntervalMs: walkBounds.rpcMinIntervalMs,
+          maxRequests: ceilingForCandidate,
+          endpoint: rpcEndpoint,
+          minIntervalMs: usingIndexedWalk ? indexedWalk.rpcMinIntervalMs : walkBounds.rpcMinIntervalMs,
+          ...(usingIndexedWalk ? { maxCredits: indexedWalk.maxCreditsPerCandidate } : {}),
           // Same `!opts.json` guard as the other three clients, so --json stays machine-readable.
           ...(opts.json
             ? {}
@@ -633,19 +693,27 @@ export async function main(opts, env, out, err) {
                   rpcTicks += 1;
                   if (rpcTicks !== 1 && rpcTicks % RPC_HEARTBEAT_EVERY !== 0) return;
                   out(
-                    `    · ${seed.wallet}: ${rpcTicks}/${walkBounds.maxRpcRequestsPerCandidate} ` +
+                    `    · ${seed.wallet}: ${rpcTicks}/${ceilingForCandidate} ` +
                       `RPC request(s) — ${label}`,
                   );
                 },
               }),
         });
-        const walk = await readCreatedHistory(rpc, seed.wallet, {
-          maxSignaturePages: walkBounds.maxSignaturePages,
-          maxTransactions: walkBounds.maxTransactionsPerCandidate,
-          txBatchSize: walkBounds.txBatchSize,
-        });
+        const walk = usingIndexedWalk
+          ? await readCreatedHistoryIndexed(rpc, seed.wallet, {
+              maxPages: indexedWalk.maxPagesPerCandidate,
+              pageLimit: indexedWalk.pageLimit,
+              maxTransactions: indexedWalk.maxTransactionsPerCandidate,
+              maxCredits: indexedWalk.maxCreditsPerCandidate,
+            })
+          : await readCreatedHistory(rpc, seed.wallet, {
+              maxSignaturePages: walkBounds.maxSignaturePages,
+              maxTransactions: walkBounds.maxTransactionsPerCandidate,
+              txBatchSize: walkBounds.txBatchSize,
+            });
         rpcRequests += rpc.issued();
         rpcLoadShedEvents += rpc.loadShedEvents();
+        heliusCredits += usingIndexedWalk ? rpc.creditsSpent() : 0;
 
         // Guarded per candidate, exactly as the consistency pass is. A CeilingReached or a
         // transport failure on one wallet's listing used to reach the outer catch and abort a run
@@ -892,12 +960,29 @@ export async function main(opts, env, out, err) {
     err('');
     err(abortReason);
 
+    // A REFUSED RPC CREDENTIAL IS TERMINAL FOR THE RUN, not a reading on one wallet. It says
+    // nothing about the deployer being screened, so it may never produce a per-candidate reading —
+    // and if it did, every candidate after it would fall back to the ownership listing while the
+    // record still claimed `historySource: creation-derived`, one paid-for MadeOnSol profile at a
+    // time. Stopping on the first one leaves the rest of the shared daily allowance unspent.
+    if (cause instanceof RpcCredentialRejected) {
+      err('');
+      err('CREDENTIAL PROBLEM — the run STOPPED HERE, and this is NOT a negative result.');
+      err(
+        `  Every gate reading after this point would have silently fallen back to the ownership ` +
+          `listing while the record still said historySource "${historySource}", so the run stops ` +
+          `instead. The rest of the shared MadeOnSol daily allowance is unspent.`,
+      );
+    }
+
     const code =
-      cause instanceof VendorRefused
-        ? exitForRefusal(cause.kind)
-        : cause instanceof CeilingReached
-          ? EXIT.ceiling
-          : EXIT.upstream;
+      cause instanceof RpcCredentialRejected
+        ? EXIT.credentialRejected
+        : cause instanceof VendorRefused
+          ? exitForRefusal(cause.kind)
+          : cause instanceof CeilingReached
+            ? EXIT.ceiling
+            : EXIT.upstream;
 
     emit(code);
     return code;
@@ -969,6 +1054,17 @@ export async function main(opts, env, out, err) {
           // Per-seed yields are NOT repeated here: `coverage.seeds` already carries them, and two
           // projections of the same facts drift until whichever one a reader opens becomes the
           // truth. The spend block owes the endpoints and the per-call cost, which nothing else has.
+          //
+          // THE THREE BUDGETS ARE REPORTED SEPARATELY because they are three vendors with three
+          // units and no exchange rate between them: MadeOnSol is metered in requests against a
+          // shared daily allowance, Helius in CREDITS against an unshared monthly one, and the
+          // keyless hosts in neither. A single "requests" total would hide which allowance a heavy
+          // run actually spent. The endpoint carries NO credential — `label`, never `url`.
+          rpcProvider: rpcEndpoint.provider,
+          rpcEndpoint: rpcEndpoint.label,
+          heliusCredits,
+          heliusCreditCeilingPerCandidate: usingIndexedWalk ? indexedWalk.maxCreditsPerCandidate : null,
+          plannedWorstCaseHeliusCredits: worstCaseCredits,
         },
         rpcRequests,
         rpcLoadShedEvents,

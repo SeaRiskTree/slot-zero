@@ -36,12 +36,18 @@ export const FRONTEND_API = 'https://frontend-api-v3.pump.fun';
 export const SWAP_API = 'https://swap-api.pump.fun';
 
 /**
- * The only keyless Solana RPC endpoint that works for this client.
+ * The only keyless Solana RPC endpoint that works for this client, and the DEFAULT for
+ * {@link SolanaRpcClient} when no endpoint is passed.
  *
- * Pinned as a constant with no override on purpose. The alternative in the entity report's endpoint
- * list, `solana-rpc.publicnode.com`, 403s every request with or without a browser `User-Agent`, and
- * a job that sent it half its batches stalled for 40 minutes behind retry backoff before anyone
- * noticed the host was dead.
+ * The alternative in the entity report's endpoint list, `solana-rpc.publicnode.com`, 403s every
+ * request with or without a browser `User-Agent`, and a job that sent it half its batches stalled
+ * for 40 minutes behind retry backoff before anyone noticed the host was dead. So the keyless
+ * choice is still not a choice.
+ *
+ * It is no longer the ONLY endpoint, though: `credential.mjs` → `resolveSolanaRpcEndpoint` selects
+ * a keyed provider when one is configured and this host when none is, and hands the client a
+ * {@link SolanaRpcEndpointRef}. This constant stays the default so a client built with no endpoint
+ * — every existing caller and every existing test — reaches exactly the host it always did.
  */
 export const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
 
@@ -113,6 +119,34 @@ export class KeylessHttpError extends RequestFailed {
   constructor(status, url, retried = false) {
     super(`HTTP ${status} on ${url}`, { status, retried });
     this.name = 'KeylessHttpError';
+  }
+}
+
+/**
+ * An RPC endpoint that refused this client's credential — HTTP 401 or 403.
+ *
+ * Its own type because it is the one RPC failure that is **never** retried and **never** a
+ * measurement: the allowance is not what is wrong, the key is. Helius answers a bad or missing key
+ * with HTTP 401 and a plain-text `Unauthorized` body (measured 2026-08-03), which is otherwise
+ * indistinguishable from any other non-shed status.
+ *
+ * It carries the endpoint's **label**, never its URL: on a keyed endpoint the URL holds the key in
+ * a query parameter, and this message reaches a terminal and a run record.
+ */
+export class RpcCredentialRejected extends Error {
+  /**
+   * @param {number} status
+   * @param {string} endpointLabel The host with no credential in it.
+   * @param {string} label         The method or batch that was refused.
+   * @param {string} [remedy]      What to do about it, supplied by `credential.mjs`.
+   */
+  constructor(status, endpointLabel, label, remedy) {
+    super(
+      `HTTP ${status} from ${endpointLabel} on ${label} — the endpoint refused this client's credential.` +
+        (remedy === undefined || remedy === '' ? '' : ` ${remedy}`),
+    );
+    this.name = 'RpcCredentialRejected';
+    this.status = status;
   }
 }
 
@@ -807,10 +841,33 @@ export async function readCreatorHistory(client, creator, maxPages) {
  *   clears in seconds. It is retried with exponential backoff, and **every attempt counts against
  *   the ceiling**, so a 429 storm still cannot turn a bounded walk into an unbounded one.
  *
+ * @typedef {object} SolanaRpcEndpointRef
+ * Where to POST, and the only thing that may be said about it out loud.
+ *
+ * Two fields rather than one because on Helius the URL **carries the credential** in a query
+ * parameter. `url` is used for exactly one thing — the `fetch` call — and `label` is what every
+ * thrown error, every heartbeat line and every persisted field uses. Nothing in this module
+ * interpolates `url` into a string, and a test drives every failure path against a
+ * sentinel-bearing URL to assert the sentinel reaches none of them.
+ *
+ * @property {string} url   The address to POST to. May carry a credential. Never formatted.
+ * @property {string} label The same endpoint with no credential in it. Always safe to print.
+ * @property {string} [authRemedy] What to do when the endpoint rejects the credential. Supplied by
+ *   `credential.mjs`, because this module may not name a key's environment variable and so cannot
+ *   write the sentence itself.
+ *
  * @typedef {object} RpcOptions
  * @property {number} maxRequests
+ * @property {SolanaRpcEndpointRef} [endpoint] Default {@link SOLANA_RPC}, keyless — so a caller
+ *   that passes nothing reaches exactly the host it always did.
+ * @property {number} [maxCredits] A metered-spend ceiling **in vendor credits**, for an endpoint
+ *   that bills by returned rows rather than by request. Default `Infinity`, which is the truth on
+ *   the keyless endpoint: it bills nothing, so nothing is metered and the request ceiling is the
+ *   only bound. See {@link chargeCredits} for why the meter is driven by the caller.
  * @property {number} [minIntervalMs] Default 2500. See `thresholds.json` → `creation_walk`: the
- *   nominally faster 1400 was measured *slower* in wall-clock once backoff is counted.
+ *   nominally faster 1400 was measured *slower* in wall-clock once backoff is counted. A keyed
+ *   endpoint pins its own — `creation_walk_helius.rpcMinIntervalMs`, measured separately, because
+ *   this default is a property of the free host and not of the method.
  * @property {number} [timeoutMs]     Default 40000.
  * @property {number} [maxRetriesPerRequest] Default 3. Each attempt counts against the ceiling.
  * @property {number} [backoffMs]     Default 5000, doubling per attempt.
@@ -825,6 +882,8 @@ export class SolanaRpcClient {
       throw new TypeError('maxRequests must be a positive integer');
     }
     this.#ceiling = options.maxRequests;
+    this.#endpoint = options.endpoint ?? { url: SOLANA_RPC, label: SOLANA_RPC };
+    this.#creditCeiling = options.maxCredits ?? Number.POSITIVE_INFINITY;
     this.#minIntervalMs = options.minIntervalMs ?? 2_500;
     this.#timeoutMs = options.timeoutMs ?? 40_000;
     this.#maxRetries = options.maxRetriesPerRequest ?? 3;
@@ -834,6 +893,9 @@ export class SolanaRpcClient {
     this.#sleep = options.sleepImpl ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
+  /** @type {SolanaRpcEndpointRef} */ #endpoint;
+  /** @type {number} */ #creditCeiling;
+  /** @type {number} */ #creditsSpent = 0;
   /** @type {number} */ #ceiling;
   /** @type {number} */ #minIntervalMs;
   /** @type {number} */ #timeoutMs;
@@ -871,15 +933,91 @@ export class SolanaRpcClient {
   }
 
   /**
+   * The endpoint's name with no credential in it. The ONLY form any caller may print.
+   *
+   * @returns {string}
+   */
+  endpointLabel() {
+    return this.#endpoint.label;
+  }
+
+  /** @returns {number} Vendor credits charged so far, as reported by the caller. */
+  creditsSpent() {
+    return this.#creditsSpent;
+  }
+
+  /** @returns {number} Credits left under the ceiling, `Infinity` when none was set. */
+  creditsRemaining() {
+    return Math.max(0, this.#creditCeiling - this.#creditsSpent);
+  }
+
+  /**
+   * Charge vendor credits against this client's ceiling.
+   *
+   * **Driven by the caller rather than inferred here, because the price is a property of the ANSWER
+   * and not of the request.** Helius bills `getTransactionsForAddress` at 10 credits per 100
+   * transactions *returned*, so a page of 1,000 costs 100 and a page of 7 costs the 10-credit
+   * minimum, and no amount of inspecting the request tells you which. The walk therefore checks
+   * {@link creditsRemaining} against a page's WORST case before starting it and charges the ACTUAL
+   * cost after — which is how a ceiling stated in credits stays exact rather than approximate, the
+   * same discipline `readLaunchWindow` applies to its per-launch request cap.
+   *
+   * Charging cannot throw. The ceiling is enforced by refusing to START work that might exceed it;
+   * a charge that arrives afterwards is a fact, and a client that threw on a fact would discard the
+   * page it had already paid for.
+   *
+   * @param {number} credits
+   * @returns {void}
+   */
+  chargeCredits(credits) {
+    if (!Number.isFinite(credits) || credits <= 0) return;
+    this.#creditsSpent += credits;
+  }
+
+  /**
    * One RPC method call.
+   *
+   * A JSON-RPC `error` envelope reads as `null` here, exactly as an absent result does, and that
+   * conflation is deliberate on the keyless endpoint: it sheds load by returning nulls inside
+   * batches, so the caller's rule is **a null is a retry, never "absent"** and it has to hold for
+   * both. It does NOT hold on Helius, which answers a malformed request with HTTP 200 and an
+   * `error` envelope — a considered answer that retrying only repeats. {@link callDetailed} is the
+   * form that can tell them apart; this one is unchanged so every existing caller behaves exactly
+   * as it did.
    *
    * @param {string} method
    * @param {unknown[]} params
    * @returns {Promise<unknown>}
    */
   async call(method, params) {
-    const [result] = await this.#send([{ method, params }], method);
-    return result ?? null;
+    const [entry] = await this.#send([{ method, params }], method);
+    return entry?.result ?? null;
+  }
+
+  /**
+   * One RPC method call, with the JSON-RPC `error` envelope kept rather than flattened.
+   *
+   * The distinction this exists for is the one that decides whether a walk retries or stops, and
+   * **the two endpoints signal it differently**. Measured 2026-08-03:
+   *
+   * - The keyless public endpoint sheds load with a `null` result inside an otherwise fine
+   *   response. A null is a retry there, never "absent".
+   * - Helius answers a bad parameter with **HTTP 200 and `{"error":{"code":-32602,…}}`** — an
+   *   invalid address, a limit above 1,000 and a corrupt pagination token all take that shape. It
+   *   is the endpoint's considered answer; asking again spends the allowance to be told the same
+   *   thing, and a walk that read it as an exhausted index would record page 2 of 200 as a
+   *   wallet's whole history.
+   *
+   * So an error envelope is reported as an error and never as an empty answer, and the caller
+   * decides. A missing result with no error stays `null`, i.e. still a retry.
+   *
+   * @param {string} method
+   * @param {unknown[]} params
+   * @returns {Promise<{ result: unknown, error: { code: number, message: string } | null }>}
+   */
+  async callDetailed(method, params) {
+    const [entry] = await this.#send([{ method, params }], method);
+    return { result: entry?.result ?? null, error: entry?.error ?? null };
   }
 
   /**
@@ -898,7 +1036,7 @@ export class SolanaRpcClient {
     if (requests.length === 0) return [];
     if (requests.length > 8) throw new RangeError(`batch of ${requests.length} exceeds the measured cap of 8`);
 
-    let out = await this.#send(requests, `batch:${requests[0]?.method ?? '?'}`);
+    let out = (await this.#send(requests, `batch:${requests[0]?.method ?? '?'}`)).map((e) => e.result ?? null);
     // One retry for the nulls only. A null is load-shedding, so re-asking for the whole batch would
     // spend the ceiling re-fetching entries that already arrived.
     const missing = out.flatMap((v, i) => (v === null ? [i] : []));
@@ -913,16 +1051,20 @@ export class SolanaRpcClient {
       );
       out = [...out];
       missing.forEach((slot, k) => {
-        out[slot] = retried[k] ?? null;
+        out[slot] = retried[k]?.result ?? null;
       });
     }
     return out;
   }
 
   /**
+   * @typedef {{ result: unknown, error: { code: number, message: string } | null }} RpcEntry
+   */
+
+  /**
    * @param {readonly { method: string, params: unknown[] }[]} requests
    * @param {string} label
-   * @returns {Promise<(unknown | null)[]>}
+   * @returns {Promise<RpcEntry[]>}
    */
   async #send(requests, label) {
     const run = this.#queue.then(
@@ -936,7 +1078,7 @@ export class SolanaRpcClient {
   /**
    * @param {readonly { method: string, params: unknown[] }[]} requests
    * @param {string} label
-   * @returns {Promise<(unknown | null)[]>}
+   * @returns {Promise<RpcEntry[]>}
    */
   async #execute(requests, label) {
     const envelope = requests.map((r, i) => ({ jsonrpc: '2.0', id: i, method: r.method, params: r.params }));
@@ -963,7 +1105,10 @@ export class SolanaRpcClient {
       this.#onRequest?.(label);
 
       try {
-        const response = await this.#fetch(SOLANA_RPC, {
+        // `#endpoint.url` is used HERE and nowhere else in this module. On Helius it carries the
+        // key in a query parameter, so every message below names `#endpoint.label` instead —
+        // the same host with no credential in it.
+        const response = await this.#fetch(this.#endpoint.url, {
           method: 'POST',
           headers: { 'content-type': 'application/json', accept: 'application/json' },
           body,
@@ -972,29 +1117,52 @@ export class SolanaRpcClient {
 
         if (response.status === 429 || response.status >= 500) {
           this.#shedEvents += 1;
-          lastFailure = new Error(`HTTP ${response.status} from ${SOLANA_RPC} on ${label}`);
+          lastFailure = new Error(`HTTP ${response.status} from ${this.#endpoint.label} on ${label}`);
           if (attempt < this.#maxRetries) {
             await this.#sleep(this.#backoffMs * 2 ** attempt);
             continue;
           }
           throw lastFailure;
         }
-        if (!response.ok) throw new Error(`HTTP ${response.status} from ${SOLANA_RPC} on ${label}`);
+        // A 401 is the credential, not the query, and it is the one non-shed status worth its own
+        // sentence: Helius answers a bad or missing key with exactly this and a plain-text body,
+        // measured 2026-08-03. It is NOT retried — the allowance is not what is wrong — and the
+        // remedy travels with the endpoint because this module may not name a key variable.
+        if (response.status === 401 || response.status === 403) {
+          throw new RpcCredentialRejected(response.status, this.#endpoint.label, label, this.#endpoint.authRemedy);
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status} from ${this.#endpoint.label} on ${label}`);
 
         const parsed = await response.json();
         const rows = Array.isArray(parsed) ? parsed : [parsed];
-        /** @type {(unknown | null)[]} */
-        const out = new Array(requests.length).fill(null);
+        /** @type {RpcEntry[]} */
+        const out = Array.from({ length: requests.length }, () => ({ result: null, error: null }));
         for (const row of rows) {
           if (typeof row !== 'object' || row === null) continue;
           const r = /** @type {Record<string, unknown>} */ (row);
+          // `id: null` is what a JSON-RPC server sends when it could not even read the request —
+          // Helius returns it for an unknown method. Slot 0 is the only sane home for it in a
+          // single-request envelope, which is the only shape it can arrive in.
           const id = typeof r['id'] === 'number' ? r['id'] : 0;
           if (id < 0 || id >= out.length) continue;
-          out[id] = r['result'] ?? null;
+          const rawError = r['error'];
+          const error =
+            typeof rawError === 'object' && rawError !== null
+              ? {
+                  code: Number(/** @type {Record<string, unknown>} */ (rawError)['code'] ?? 0),
+                  message: String(/** @type {Record<string, unknown>} */ (rawError)['message'] ?? 'unspecified'),
+                }
+              : null;
+          out[id] = { result: r['result'] ?? null, error };
         }
         return out;
       } catch (cause) {
         if (cause instanceof CeilingReached) throw cause;
+        // A refused credential is the endpoint's considered answer about the KEY, not a transient
+        // fault, so it leaves immediately rather than being retried three times over ~35 seconds
+        // to be refused three more times. It cannot fire on the keyless endpoint — that host takes
+        // no credential — so this narrows the retry rule without changing the keyless walk.
+        if (cause instanceof RpcCredentialRejected) throw cause;
         lastFailure = cause;
         if (attempt >= this.#maxRetries) break;
         await this.#sleep(this.#backoffMs * 2 ** attempt);
@@ -1027,11 +1195,13 @@ export class SolanaRpcClient {
  *   bonded status falls back to the ownership listing's own `complete` flag in
  *   {@link import('./creation.mjs').mergeHistories}, and only where that has no row either is the
  *   launch undecidable — at which point the reading is UNMEASURED rather than a rejection.
- * @property {'index-exhausted' | 'page-cap' | 'transaction-cap' | 'request-ceiling' | 'upstream-error'} stopReason
+ * @property {'index-exhausted' | 'page-cap' | 'transaction-cap' | 'request-ceiling' | 'upstream-error' | 'credit-ceiling'} stopReason
  *   Why the walk stopped. `index-exhausted` is the only value for which `covered` spans the
  *   wallet's whole history; every other value means the window is a ceiling, and a caller that
  *   reads the create count as a lifetime figure under one of them is wrong in the same direction as
- *   the vendor's sliding "lifetime" window.
+ *   the vendor's sliding "lifetime" window. `credit-ceiling` reaches only
+ *   {@link readCreatedHistoryIndexed}, whose provider bills by rows returned rather than by
+ *   request; it is a ceiling like any other and carries no additional meaning.
  * @property {string | null} stopDetail The upstream message, when `stopReason` is `upstream-error`,
  *   or the ceiling's own message when `request-ceiling` threw. It is persisted verbatim in the run
  *   record, so it must describe THIS walk's ceiling — a per-candidate bound — and never claim the
@@ -1253,6 +1423,321 @@ export async function readCreatedHistory(rpc, wallet, bounds) {
     stopReason,
     stopDetail,
   };
+}
+
+// --- the indexed creation walk (Helius) --------------------------------------------------------
+
+/**
+ * What Helius charges for a page of `getTransactionsForAddress` in `full` mode: **10 credits per
+ * 100 transactions RETURNED, rounded up, with a 10-credit minimum** (their billing documentation,
+ * read 2026-08-03).
+ *
+ * Two consequences the walk is built around. The price is a property of the **answer**, so it
+ * cannot be known before the page arrives — which is why the walk reserves a full page's worth
+ * against the ceiling before starting one and charges the actual cost after. And a page of 1,000
+ * costs 100 credits flat, so the credit ceiling and the page ceiling are the same bound in two
+ * units; `thresholds.json` → `creation_walk_helius` states them that way rather than pretending
+ * they are independent.
+ *
+ * @param {number} transactions
+ * @returns {number}
+ */
+export function creditsForTransactions(transactions) {
+  return Math.max(10, Math.ceil(Math.max(0, transactions) / 100) * 10);
+}
+
+/**
+ * @typedef {object} IndexedWalkBounds
+ * @property {number} maxPages     Pages of `getTransactionsForAddress`, `pageLimit` each.
+ * @property {number} pageLimit    1..1000. The endpoint refuses more — measured: `limit: 5000`
+ *   returns HTTP 200 carrying `{"error":{"code":-32603,"message":"Bad request: Invalid limit…"}}`.
+ * @property {number} maxTransactions Transactions parsed, across all pages.
+ * @property {number} maxCredits   Vendor credits this candidate may spend. The binding bound.
+ */
+
+/**
+ * Recover a wallet's launch history from **create transactions**, through a provider that indexes
+ * transactions by address — the same measurement as {@link readCreatedHistory} over a cheaper
+ * index.
+ *
+ * ## Why this is not the same walk with a different host
+ *
+ * {@link readCreatedHistory} exists because the only *keyless* index reaching a create transaction
+ * is the wallet's own signature index, which for a pump.fun deployer is ~95% strangers' failed
+ * trades. It pages signatures, discards the failures for free, and then spends one `getTransaction`
+ * per survivor — so its cost is the wallet's SUCCEEDED signature count, one request each, and that
+ * ranged 170 to 127,000 requests across the twelve wallets of `runs/2026-07-29-elite.json`.
+ *
+ * `getTransactionsForAddress` collapses both halves into one call: `filters: { status: 'succeeded' }`
+ * applies the same filter server-side, and `transactionDetails: 'full'` returns the transaction
+ * bodies the other walk paid for one at a time. **Measured 2026-08-03 over those same twelve
+ * wallets, every one of them walked to exhaustion: 125,981 succeeded transactions in 136 full pages.**
+ * The subject deployer's whole history is 7,791 transactions in **9 pages, 793 credits and 12
+ * requests end to end** — 8 data pages at 780 credits, one further page that returns no rows and
+ * proves exhaustion by answering `paginationToken: null` at the 10-credit minimum, and 3
+ * `getMultipleAccounts` curve reads for its 247 creations at 1 credit each — against 7,166 requests
+ * and a measured ~287 minutes on the keyless route.
+ *
+ * **The parsers are untouched and that is checked rather than assumed.** `full` + `jsonParsed`
+ * returns `getTransaction`'s own envelope — `{ transaction: { signatures, message }, meta, blockTime }`
+ * — so {@link parseCreateTransaction} and {@link readCurveState} read it unchanged. Verified on the
+ * `maxxing` create transaction, where the two routes agree field for field on every value the
+ * parser reads (`CREATION-DERIVED.md` § "The indexed route").
+ *
+ * ## What bounds it, and in which unit
+ *
+ * Credits, not requests. The provider bills by transactions returned, so a busy wallet is expensive
+ * in a way a request count cannot see: 9 pages for the subject, 50 for the busiest wallet measured.
+ * `maxCredits` is therefore the real ceiling and `maxPages` is the same bound restated for the loop.
+ * A page is only STARTED when a whole page's worst-case price still fits, so the ceiling is exact
+ * and a page is never abandoned half-paid.
+ *
+ * ## The coverage rules, unchanged in substance and re-derived against this endpoint's shapes
+ *
+ * - **Only a well-formed result advances anything.** An `error` envelope (HTTP 200 on this
+ *   provider) is a considered answer, so the walk stops on `upstream-error` — it is never read as
+ *   an exhausted index. An absent result is load-shedding and is retried by the client.
+ * - **Exhaustion is proved by the provider, not inferred.** `paginationToken: null` on a successful
+ *   page is the only thing that sets `index-exhausted`. Verified: a query over an empty slot range
+ *   returns `{"data":[],"paginationToken":null}`, and a corrupt token returns an `error` envelope
+ *   rather than a quiet empty page.
+ * - **`covered.fromMs` is `null` until a page has been read whole**, and `null` means covered
+ *   NOTHING — never "since the epoch". `mergeHistories` treats an absent floor as an EMPTY window.
+ * - **The order is ascending**, so the covered window grows forwards from the wallet's genesis and
+ *   a truncated walk leaves the RECENT end to the ownership listing. That is the opposite end from
+ *   the keyless walk's window and it is the better one to lose: ownership is least wrong about
+ *   tokens the wallet has not yet had time to hand on.
+ *
+ * @param {SolanaRpcClient} rpc
+ * @param {string} wallet
+ * @param {IndexedWalkBounds} bounds
+ * @returns {Promise<CreationWalkResult>}
+ */
+export async function readCreatedHistoryIndexed(rpc, wallet, bounds) {
+  const pageLimit = Math.max(1, Math.min(1000, bounds.pageLimit));
+  const worstCasePageCredits = creditsForTransactions(pageLimit);
+
+  /** @type {import('./creation.mjs').CreateRecord[]} */
+  const creates = [];
+  /** @type {Map<string, import('./creation.mjs').CurveState>} */
+  const curves = new Map();
+
+  let pages = 0;
+  let transactionsInspected = 0;
+  let toMs = 0;
+  // NULL, not 0 — the same rule and the same reason as the keyless walk. `0` reads as 1970, i.e. as
+  // a window containing every timestamp, and that deleted 29 of one wallet's 30 launches in a live
+  // run. Only a page read WHOLE moves it.
+  /** @type {number | null} */
+  let fromMs = null;
+  /** @type {'index-exhausted' | 'page-cap' | 'transaction-cap' | 'request-ceiling' | 'upstream-error' | 'credit-ceiling'} */
+  let stopReason = 'index-exhausted';
+  /** @type {string | null} */
+  let stopDetail = null;
+  /** @type {string | undefined} */
+  let paginationToken;
+
+  try {
+    while (pages < bounds.maxPages) {
+      if (transactionsInspected >= bounds.maxTransactions) {
+        stopReason = 'transaction-cap';
+        break;
+      }
+      // Reserve a WHOLE page's worst-case price before starting one. Checking afterwards would let
+      // the last page overshoot the ceiling by up to a page, and a credit ceiling that can be
+      // exceeded is not a ceiling. Reserve the curve reads too — see the classification note below.
+      //
+      // Reserved against `creates.length + pageLimit`, i.e. the WORST CASE AFTER the page about to
+      // be started, not the count before it. Against the pre-fetch count a page whose rows are all
+      // creations under-reserves by up to `pageLimit / 100` reads, leaving those mints unclassified
+      // — and an unread curve counts as NOT bonded, which deflates the very rate this walk was
+      // widened to measure. `CREATION-DERIVED.md` §4 owns the invariant: a walk must never spend its
+      // last unit finding one more creation it then has to score as a failure.
+      const worstCaseCreates = creates.length + pageLimit;
+      if (rpc.creditsRemaining() < worstCasePageCredits + creditsForCurveReads(worstCaseCreates)) {
+        stopReason = 'credit-ceiling';
+        break;
+      }
+      // Same reservation in requests, so whichever ceiling is tighter still stops the walk cleanly
+      // rather than throwing part-way through a page.
+      if (rpc.remaining() <= curveReadRequests(worstCaseCreates)) {
+        stopReason = 'request-ceiling';
+        break;
+      }
+
+      const { result, error } = await rpc.callDetailed('getTransactionsForAddress', [
+        wallet,
+        {
+          transactionDetails: 'full',
+          encoding: 'jsonParsed',
+          maxSupportedTransactionVersion: 0,
+          sortOrder: 'asc',
+          limit: pageLimit,
+          filters: { status: 'succeeded' },
+          ...(paginationToken === undefined ? {} : { paginationToken }),
+        },
+      ]);
+
+      // An `error` envelope is the provider's considered answer and arrives on HTTP 200 here. It is
+      // NOT an exhausted index and it is not retried — asking again spends credits to be told the
+      // same thing. The walk stops and says which, so a bounded window can never be read as a
+      // history.
+      if (error !== null) {
+        stopReason = 'upstream-error';
+        stopDetail =
+          `getTransactionsForAddress answered with a JSON-RPC error (${error.code}): ${error.message}. ` +
+          'That is the endpoint\'s considered answer, not load-shedding, so the index is NOT known to ' +
+          'have ended here.';
+        break;
+      }
+      // A null result IS load-shedding — the client has already retried it under its own backoff —
+      // and it still does not mean the index ended. Same rule as the keyless walk.
+      if (typeof result !== 'object' || result === null) {
+        stopReason = 'upstream-error';
+        stopDetail =
+          'getTransactionsForAddress returned no result, and the client\'s retries returned none ' +
+          'either. An absent result is load-shedding, so the index is NOT known to have ended here.';
+        break;
+      }
+
+      const envelope = /** @type {Record<string, unknown>} */ (result);
+      const rows = envelope['data'];
+      if (!Array.isArray(rows)) {
+        stopReason = 'upstream-error';
+        stopDetail = 'getTransactionsForAddress served a result carrying no `data` array';
+        break;
+      }
+
+      // Charged from what actually came back, because that is what the provider bills.
+      rpc.chargeCredits(creditsForTransactions(rows.length));
+      pages += 1;
+
+      /** The provider's own statement that nothing is left. The ONLY thing that proves exhaustion. */
+      const rawNext = envelope['paginationToken'];
+      const next = typeof rawNext === 'string' && rawNext !== '' ? rawNext : null;
+
+      let pageOldestMs = 0;
+      let pageNewestMs = 0;
+      for (const tx of rows) {
+        transactionsInspected += 1;
+        const blockTime = typeof tx === 'object' && tx !== null
+          ? /** @type {Record<string, unknown>} */ (tx)['blockTime']
+          : undefined;
+        if (typeof blockTime === 'number' && Number.isFinite(blockTime) && blockTime > 0) {
+          const ms = blockTime * 1000;
+          if (pageOldestMs === 0 || ms < pageOldestMs) pageOldestMs = ms;
+          if (ms > pageNewestMs) pageNewestMs = ms;
+        }
+        const create = parseCreateTransaction(tx);
+        if (create !== null) creates.push(create);
+      }
+
+      // Ascending order, so the FLOOR is set once — by the first page read whole — and the CEILING
+      // advances with every page after it. Both only move on a page that was read entire, which is
+      // every page here: unlike the keyless walk there is no per-transaction request to abandon
+      // half-way, so a page either arrived or did not.
+      if (pageOldestMs > 0 && (fromMs === null || pageOldestMs < fromMs)) fromMs = pageOldestMs;
+      if (pageNewestMs > toMs) toMs = pageNewestMs;
+
+      if (next === null) break;
+      paginationToken = next;
+      if (pages >= bounds.maxPages) stopReason = 'page-cap';
+    }
+  } catch (cause) {
+    // A REFUSED CREDENTIAL IS NOT A PROPERTY OF THIS WALLET, so it must not become this wallet's
+    // reading. Degrading it here would give every remaining candidate a silent ownership-only
+    // history under a record still claiming `historySource: creation-derived`, while the keyed
+    // MadeOnSol allowance drained one profile at a time. It is rethrown so the run stops on the
+    // first one, with the allowance it has not yet spent still unspent.
+    if (cause instanceof RpcCredentialRejected) throw cause;
+    // Same rule as the keyless walk: keep what was paid for, label why it stopped, let the caller
+    // decide. What must never happen is a short window presented as a measured history.
+    stopReason = cause instanceof CeilingReached ? 'request-ceiling' : 'upstream-error';
+    stopDetail = cause instanceof Error ? cause.message : String(cause);
+  }
+
+  // Curve state for every creation found, 100 accounts per request — identical to the keyless walk,
+  // and reserved for above so a walk cannot spend its last credit finding a launch it then has to
+  // score as a failure.
+  try {
+    for (let i = 0; i < creates.length; i += 100) {
+      const slice = creates.slice(i, i + 100);
+      if (rpc.creditsRemaining() < 1 || rpc.remaining() < 1) break;
+      rpc.chargeCredits(1);
+      const accounts = await rpc.call('getMultipleAccounts', [
+        slice.map((c) => c.bondingCurve),
+        { encoding: 'base64' },
+      ]);
+      const value =
+        typeof accounts === 'object' && accounts !== null
+          ? /** @type {Record<string, unknown>} */ (accounts)['value']
+          : null;
+      if (!Array.isArray(value)) continue;
+      value.forEach((account, k) => {
+        const mint = slice[k]?.mint;
+        if (mint === undefined) return;
+        if (typeof account !== 'object' || account === null) return;
+        const data = /** @type {Record<string, unknown>} */ (account)['data'];
+        const encoded = Array.isArray(data) && typeof data[0] === 'string' ? data[0] : '';
+        const state = readCurveState(encoded);
+        if (state !== null) curves.set(mint, state);
+      });
+    }
+  } catch (cause) {
+    // Same exception as above and for the same reason: a credential the endpoint refuses says
+    // nothing about this wallet, so it may not be absorbed into `curvesUnread` — which would read
+    // as "these launches are not bonded" for every candidate after it.
+    if (cause instanceof RpcCredentialRejected) throw cause;
+    // Otherwise deliberately swallowed, exactly as in the keyless walk: `curvesUnread` reports what
+    // it cost, and it must be visible because an unread curve counts as NOT bonded.
+  }
+
+  return {
+    creates,
+    curves,
+    covered: { fromMs, toMs, exhausted: stopReason === 'index-exhausted' && pages > 0 },
+    pages,
+    // The provider applied `status: succeeded` server-side, so every transaction it returned is one
+    // the keyless walk would have SCANNED and then also FETCHED. Reporting the same number under
+    // both names is the truth about this route rather than a placeholder: nothing was scanned and
+    // discarded, so there is no third figure to report.
+    signaturesScanned: transactionsInspected,
+    signaturesSucceeded: transactionsInspected,
+    transactionsInspected,
+    // Structurally zero on this route, and that is a real claim rather than an omission: a page
+    // arrives whole or not at all, so there is no per-transaction request that can go unanswered
+    // while the walk carries on. It is what lets `mergeHistories` treat the covered window as
+    // exact — see `windowExact` there.
+    unresolvedTransactions: 0,
+    curvesUnread: creates.length - curves.size,
+    stopReason,
+    stopDetail,
+  };
+}
+
+/**
+ * Requests the curve-classification pass will need for `n` creations, at 100 accounts each.
+ *
+ * Reserved BEFORE the walk starts another page, for the reason `CREATION-DERIVED.md` §4 records: a
+ * walk that spends its last unit finding one more creation has bought a launch it must then score
+ * as not-bonded, which deflates the very rate the walk was widening.
+ *
+ * @param {number} n
+ * @returns {number}
+ */
+function curveReadRequests(n) {
+  return Math.ceil(n / 100) + 1;
+}
+
+/**
+ * Credits the curve-classification pass will need for `n` creations. `getMultipleAccounts` is a
+ * standard RPC method and costs 1 credit, so this is the request count.
+ *
+ * @param {number} n
+ * @returns {number}
+ */
+function creditsForCurveReads(n) {
+  return curveReadRequests(n);
 }
 
 /** Lamports in one SOL. Named so the conversion is never a bare literal in an arithmetic line. */

@@ -444,7 +444,8 @@ export function renderStage0(r, vendorReadings) {
   );
   L.push(
     `  entry cost: median ${num(r.costCheck.entryCostMedianSol, 4)} SOL, ` +
-      `${pct(r.costCheck.entryCostPositiveShare)} of entries above zero`,
+      `${pct(r.costCheck.entryCostPositiveShare)} of entries above zero ` +
+      `(needs ${pct(r.costCheck.minEntryCostPositiveShare)})`,
   );
   L.push(
     `  per SOL staked: ${num(r.costCheck.entryCostPerSolStakedMedianByLaunch, 4)} median PER LAUNCH ` +

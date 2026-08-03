@@ -466,6 +466,9 @@ export function readOnChainCosts(dataDir) {
  *   compares against** (captain decision 140a), so it is the one Stage 0 must report if Stage 0 is
  *   to regression-test the gate rather than a neighbouring quantity.
  * @property {number} entryCostPositiveShare Share of priced entries whose cost is above zero.
+ * @property {number} minEntryCostPositiveShare The floor that share is compared against, carried
+ *   beside it for the same reason `minLaunches`/`minPairs` are: a measured share with no stated bar
+ *   cannot be audited from a saved run.
  * @property {number} grossHitRate
  * @property {number} netHitRate
  * @property {number} grossMedianSol
@@ -562,15 +565,20 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
       perLaunchCostPerSolStakedIncludingUnproven.push(median(perEntryHere));
     }
 
-    // THE GATE'S OWN POPULATION. `scoreEntry` drops an unproven opening before it builds
-    // `entryCostPerSolStakedByLaunch`, so pricing one here would regression-test a quantity the bar
-    // never reads. `pricedPostBreak` is unaffected either way — `scoreEntry` applies the same rule
-    // to what it is handed — but it is filtered here too so the two halves share one population.
+    // The known-negative control gets the post-break regime WHOLE, unproven openings included,
+    // because `scoreEntry` applies `roomIsProven` itself: the scored set, the verdict, the room
+    // median and `launchesSampled` are identical either way, but `launchesRoomUnproven` keeps its
+    // real count and the `bundledTx`/`maxWalletsInOneTx` distributions keep their zeros — which is
+    // exactly what an auditor of a refusal is looking for. Filtering here would erase them.
+    if (l.dateIso.slice(0, 10) >= REGIME_BOUNDARY) pricedPostBreak.push(priced);
+
+    // THE GATE'S OWN POPULATION, and only the COST figures below are filtered to it. `scoreEntry`
+    // drops an unproven opening before it builds `entryCostPerSolStakedByLaunch`, so pricing one
+    // here would regression-test a quantity the bar never reads.
     if (!roomIsProven(l.createSlot)) continue;
     launchesPriced += 1;
     allEntries.push(...priced.field);
     if (perEntryHere.length > 0) perLaunchCostPerSolStaked.push(median(perEntryHere));
-    if (l.dateIso.slice(0, 10) >= REGIME_BOUNDARY) pricedPostBreak.push(priced);
   }
 
   const costed = allEntries.filter((e) => Number.isFinite(e.entryCostSol));
@@ -628,6 +636,7 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
     entryCostPerSolStakedMedianByEntry: median(costed.map((e) => e.entryCostPerSolStaked)),
     entryCostPerSolStakedMedianByLaunch: median(perLaunchCostPerSolStaked),
     entryCostPositiveShare: positive(costed.map((e) => e.entryCostSol)),
+    minEntryCostPositiveShare,
     grossHitRate,
     netHitRate,
     grossMedianSol,

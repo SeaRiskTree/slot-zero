@@ -2465,6 +2465,10 @@ describe('the keyless boundary holds in both directions', () => {
   // Schema 6 adds no candidate field either. The fee moved inside the entry window, so everything
   // it changed is inside `entry` and `entry.coverage`.
   PERSISTED_BY_SCHEMA[6] = PERSISTED_BY_SCHEMA[5]!;
+  // Schema 7 adds no candidate field either. It moves `stage0.onChainCostReproduction` to the GATED
+  // population under unchanged key names and carries the unfiltered reading beside it, so nothing
+  // about a candidate row, `entry` or `entry.coverage` moves.
+  PERSISTED_BY_SCHEMA[7] = PERSISTED_BY_SCHEMA[6]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -2519,6 +2523,8 @@ describe('the keyless boundary holds in both directions', () => {
     4: ENTRY_KEYS_3_AND_4,
     5: ENTRY_KEYS_5,
     6: ENTRY_KEYS_6,
+    // Schema 7 changes what a `stage0` block MEANS, not what `entry` carries.
+    7: ENTRY_KEYS_6,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -2534,20 +2540,34 @@ describe('the keyless boundary holds in both directions', () => {
     'requestsIssued',
     'stoppedForBudget',
   ];
+  const ENTRY_COVERAGE_KEYS_6 = [
+    ...ENTRY_COVERAGE_KEYS_3_TO_5,
+    'cost',
+    'launchesDroppedByCap',
+    'launchesEligible',
+    'launchesPlanned',
+    'launchesTooYoung',
+    'minAgeMs',
+    'youngestEligibleAgeMs',
+    'youngestRefAgeMs',
+  ];
   const ENTRY_COVERAGE_KEYS_BY_SCHEMA: Record<number, string[]> = {
     3: ENTRY_COVERAGE_KEYS_3_TO_5,
     4: ENTRY_COVERAGE_KEYS_3_TO_5,
     5: ENTRY_COVERAGE_KEYS_3_TO_5,
-    6: [
-      ...ENTRY_COVERAGE_KEYS_3_TO_5,
-      'cost',
-      'launchesDroppedByCap',
-      'launchesEligible',
-      'launchesPlanned',
-      'launchesTooYoung',
-      'minAgeMs',
-      'youngestEligibleAgeMs',
-      'youngestRefAgeMs',
+    6: ENTRY_COVERAGE_KEYS_6,
+    7: ENTRY_COVERAGE_KEYS_6,
+  };
+
+  // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
+  // `stage0` block. The three key sets above cannot see these, which is how schema 7 could have
+  // shipped a second meaning under version 6 with every existing assertion still green.
+  const RECORD_KEYS_ADDED_BY_SCHEMA: Record<number, string[]> = {
+    7: [
+      'includingUnprovenLaunchesPriced',
+      'includingUnprovenPairsPriced',
+      'includingUnprovenEntryCostPerSolStakedMedianByLaunch',
+      'minEntryCostPositiveShare',
     ],
   };
 
@@ -2759,8 +2779,20 @@ describe('the keyless boundary holds in both directions', () => {
     const added = ENTRY_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!.filter(
       (k) => !ENTRY_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION - 1]!.includes(k),
     );
-    expect(added.length).toBeGreaterThan(0);
     for (const key of added) expect(row, `the README row omits entry.${key}`).toContain(key);
+
+    // This used to demand `added.length > 0` — that every version add an `entry` key. That
+    // assumption is wrong and cost a version its bump: a version may instead change what existing
+    // keys MEAN (schema 7 moved `stage0.onChainCostReproduction` to the gated population under
+    // unchanged names) or add keys to a block other than `entry`. Do not reinstate it. What
+    // replaces it still catches a placeholder row and still pins the keys this build newly writes.
+    expect(row!.length, 'the README row for the current version is a placeholder').toBeGreaterThan(200);
+    const projection = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    const toRecordRow = projection.slice(projection.indexOf('function toRecordRow'));
+    for (const key of RECORD_KEYS_ADDED_BY_SCHEMA[RECORD_SCHEMA_VERSION] ?? []) {
+      expect(toRecordRow, `toRecordRow must emit ${key}`).toMatch(new RegExp(`\\b${key}:`));
+      expect(row, `the README row omits ${key}`).toContain(key);
+    }
   });
 
   it('the row this build writes matches the schema it declares', () => {

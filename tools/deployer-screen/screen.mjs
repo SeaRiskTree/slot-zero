@@ -1238,6 +1238,14 @@ function summariseStage0(s) {
         s.costCheck.entryCostPerSolStakedMedianByLaunch.toFixed(6),
       ),
       entryCostPositiveShare: Number(s.costCheck.entryCostPositiveShare.toFixed(4)),
+      minEntryCostPositiveShare: s.costCheck.minEntryCostPositiveShare,
+      // Schema 7: the same three figures over the UNFILTERED population, so the record says which
+      // population its identically named keys above mean rather than leaving it to context.
+      includingUnprovenLaunchesPriced: s.costCheck.includingUnprovenLaunchesPriced,
+      includingUnprovenPairsPriced: s.costCheck.includingUnprovenPairsPriced,
+      includingUnprovenEntryCostPerSolStakedMedianByLaunch: Number(
+        s.costCheck.includingUnprovenEntryCostPerSolStakedMedianByLaunch.toFixed(6),
+      ),
       grossHitRate: Number(s.costCheck.grossHitRate.toFixed(4)),
       netHitRate: Number(s.costCheck.netHitRate.toFixed(4)),
       grossMedianSol: Number(s.costCheck.grossMedianSol.toFixed(6)),

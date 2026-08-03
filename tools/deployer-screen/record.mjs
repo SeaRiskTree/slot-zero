@@ -107,12 +107,26 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   itself in `entry.caveats`, not only here. **The `stage0` block gains
  *   `onChainCostReproduction`** — the offline cost regression in full, so a saved run says by how
  *   much and over what netting the measured fees moved the field, not only that it passed; the
- *   README's schema table lists its fields. **Every figure in it is over the GATED population** —
- *   launches whose create-slot opening is proven, i.e. the ones the entry bar itself is computed
- *   from — which is what a record written by this build carries from the first one onwards; the
- *   rendered Stage 0 block prints the unfiltered reading beside it so the difference is visible.
+ *   README's schema table lists its fields. **Its figures are over the UNFILTERED population** —
+ *   every taped launch the committed table can price, proven opening or not. Schema 7 changes that
+ *   and keeps the same key names, so the version is the only thing that tells the two apart.
+ * - **7** — **`stage0.onChainCostReproduction`'s figures move to the GATED population**: launches
+ *   whose create-slot opening is proven (`measure.mjs` → `roomIsProven`), which is the population
+ *   `entry-cost-prohibitive` is itself computed from, so the regression guard now measures the
+ *   quantity the bar reads rather than a neighbouring one. **The key names did not change**, so a
+ *   schema-6 `launchesPriced: 113 / pairsPriced: 631` and a schema-7 `110 / 618` are the same keys
+ *   over different populations and must not be compared as one series. Three new keys carry the
+ *   unfiltered reading beside it — `includingUnprovenLaunchesPriced`, `includingUnprovenPairsPriced`
+ *   and `includingUnprovenEntryCostPerSolStakedMedianByLaunch` — so a schema-7 record is
+ *   self-describing rather than needing external context for which population it means; on the
+ *   committed tape they read 113, 631 and 0.0388 against the gated 110, 618 and 0.0389, i.e. the
+ *   unfiltered reading is the CHEAPER one, which is the optimistic direction. The block also gains
+ *   `minEntryCostPositiveShare`, the floor `entryCostPositiveShare` is compared against, beside the
+ *   `minLaunches`/`minPairs` bars already there — a saved figure with no stated bar cannot be
+ *   audited. No candidate row, `entry` or `entry.coverage` key changes, so `PERSISTED_BY_SCHEMA[7]`,
+ *   `ENTRY_KEYS_BY_SCHEMA[7]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[7]` all equal `[6]`.
  */
-export const RECORD_SCHEMA_VERSION = 6;
+export const RECORD_SCHEMA_VERSION = 7;
 
 /**
  * Completeness of a run, as the record can actually support.

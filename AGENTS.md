@@ -559,10 +559,16 @@ dev currently?"*, and the shape of the answer is the point:
 - **The run record is a VERSIONED CONTRACT: bump, never retro-edit.** Committed records are the
   grading lane's input; readers version-detect, and `test/deployer-screen.test.ts` asserts the exact
   key set PER version — for the candidate row, the `entry` block, (from schema 6) `entry.coverage`,
-  the run-level `spend` and (from schema 9) the run-level `dune` block — against the committed
-  records themselves, as well as against `buildRecord`'s own source literal. Adding a field means a
-  bump plus its assertions in **both** legs; the `dune` leg keys on the record's declared version
-  rather than on the block being present, so a schema-9 record with it stripped fails too.
+  the run-level `spend` and (from schema 9) the run-level `dune` block, its `dune.coverage`
+  sub-block and every row of `dune.coverage.tables` — against the committed records themselves, as
+  well as against `buildRecord`'s own source literal. Adding a field means a
+  bump plus its assertions in **both** legs. **Every per-schema block pin follows ONE rule: the
+  VERSION decides whether to assert, never the block's presence** — a `if (block !== undefined)`
+  guard catches a key changing and misses the whole block being stripped or renamed, so a record
+  whose version defines a key set must carry that block. The only licensed deviation is a value that
+  is legitimately `null` (`entry` on an unscored candidate, `dune.coverage` on a run that never
+  enumerated), and there the key's own presence is pinned one level up. The rule is stated in full
+  beside the `spend` pin in `test/deployer-screen.test.ts`.
   **`record.mjs` and the README's schema table are two prose copies of the same contract and have
   drifted twice**; a test now pins them together, so move both in one commit. Current version:
   `RECORD_SCHEMA_VERSION` in `record.mjs`.

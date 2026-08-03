@@ -28,7 +28,7 @@ import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
 import { KeylessClient, CeilingReached, DEFAULT_MIN_INTERVAL_MS } from './client.mjs';
-import { readLaunches, readWindowTape } from './launches.mjs';
+import { readLaunches, readWindowTape, parseCsv, csvField } from './launches.mjs';
 import { findGraduation } from './graduation.mjs';
 import { walkLife, POST_GRADUATION_MS, MAX_PAGES_PER_LAUNCH } from './walk.mjs';
 
@@ -50,6 +50,26 @@ export const GRADUATION_CEILING = 1_600;
  */
 export const LIFE_CEILING = 6_000;
 
+/**
+ * A count from the command line, refused rather than coerced.
+ *
+ * `Number('x')` is `NaN`, and every comparison this collector makes against these values fails
+ * *open*: `pages < NaN` ends a walk at zero pages, and `wait > NaN` removes the pacing floor
+ * entirely and hammers a shared public endpoint. A bound that silently becomes no bound is worse
+ * than no flag, so this rejects at parse time.
+ *
+ * @param {string} flag
+ * @param {string} raw
+ * @returns {number}
+ */
+function positiveNumber(flag, raw) {
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`${flag} needs a positive finite number, got ${JSON.stringify(raw)}`);
+  }
+  return value;
+}
+
 /** @param {readonly string[]} argv */
 export function parseArgs(argv) {
   /** @type {{ phase: string, out: string | null, limit: number | null, minIntervalMs: number, only: string[], maxPages: number }} */
@@ -70,14 +90,22 @@ export function parseArgs(argv) {
     };
     if (a === '--phase') args.phase = next();
     else if (a === '--out') args.out = next();
-    else if (a === '--limit') args.limit = Number(next());
-    else if (a === '--min-interval-ms') args.minIntervalMs = Number(next());
+    else if (a === '--limit') args.limit = positiveNumber('--limit', next());
+    else if (a === '--min-interval-ms') args.minIntervalMs = positiveNumber('--min-interval-ms', next());
     else if (a === '--only') args.only.push(next());
-    else if (a === '--max-pages') args.maxPages = Number(next());
+    else if (a === '--max-pages') args.maxPages = positiveNumber('--max-pages', next());
     else throw new Error(`unknown argument ${a}`);
   }
   if (args.phase !== 'graduation' && args.phase !== 'life') {
     throw new Error('--phase must be "graduation" or "life"');
+  }
+  // The 4 s floor is measured, not a preference: 2 s is refused outright by this endpoint. It is
+  // the one constraint the whole lane exists to honour, so the command line may raise it and may
+  // not undercut it.
+  if (args.minIntervalMs < DEFAULT_MIN_INTERVAL_MS) {
+    throw new Error(
+      `--min-interval-ms may not go below the measured ${DEFAULT_MIN_INTERVAL_MS}ms floor`,
+    );
   }
   if (args.out === null) throw new Error('--out is required: a run that leaves no record is not reproducible');
   return args;
@@ -138,13 +166,7 @@ export async function runGraduationPhase({ out, client, limit = null, only = [] 
     'mint,symbol,created_utc,mint_ms,graduated,grad_ms,grad_s_from_mint,lower_ms,bracket_ms,source,probes,last_trade_ms,note\n';
   if (!existsSync(path)) writeFileSync(path, header);
 
-  const done = new Set(
-    readFileSync(path, 'utf8')
-      .split('\n')
-      .slice(1)
-      .filter((l) => l !== '')
-      .map((l) => /** @type {string} */ (l.split(',')[0])),
-  );
+  const done = new Set(readGraduationCsv(path).keys());
 
   let launches = graduatedLaunches().filter((l) => !done.has(l.mint));
   if (only.length > 0) launches = launches.filter((l) => only.includes(l.mint));
@@ -335,17 +357,19 @@ export function toTapeRow(f) {
  * @returns {Map<string, { gradMs: number | null, bracketMs: number | null, source: string }>}
  */
 export function readGraduationCsv(path) {
-  const lines = readFileSync(path, 'utf8').split('\n');
-  const header = /** @type {string} */ (lines[0]).split(',');
+  // Quoting-aware, because the writer quotes: `symbol` and `note` both go through `csvField`, and a
+  // bare split on a comma would shift every later column of such a row. The column it shifts into
+  // `grad_ms` is another number, so the walk would be bounded by a plausible-looking nonsense
+  // instant rather than by an obvious error.
+  const rows = parseCsv(readFileSync(path, 'utf8'));
+  const header = /** @type {string[]} */ (rows[0]);
   const iMint = header.indexOf('mint');
   const iGrad = header.indexOf('grad_ms');
   const iBracket = header.indexOf('bracket_ms');
   const iSource = header.indexOf('source');
   /** @type {Map<string, { gradMs: number | null, bracketMs: number | null, source: string }>} */
   const out = new Map();
-  for (const line of lines.slice(1)) {
-    if (line === '') continue;
-    const cells = line.split(',');
+  for (const cells of rows.slice(1)) {
     const grad = cells[iGrad];
     out.set(/** @type {string} */ (cells[iMint]), {
       gradMs: grad === undefined || grad === '' ? null : Number(grad),
@@ -354,11 +378,6 @@ export function readGraduationCsv(path) {
     });
   }
   return out;
-}
-
-/** @param {string} value */
-function csvField(value) {
-  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
 }
 
 /* c8 ignore start -- the CLI shell; every part it calls is exercised directly by the tests. */

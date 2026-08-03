@@ -19,7 +19,8 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
@@ -46,8 +47,8 @@ import {
   graduatedByPage,
 } from '../tools/graduated-life-tape/graduation.mjs';
 import { MAX_PAGES_PER_LAUNCH, POST_GRADUATION_MS, walkLife } from '../tools/graduated-life-tape/walk.mjs';
-import { parseCsv, readLaunches, readWindowTape } from '../tools/graduated-life-tape/launches.mjs';
-import { readGraduationCsv, toTapeRow } from '../tools/graduated-life-tape/collect.mjs';
+import { parseCsv, readLaunches, readWindowMeta, readWindowTape } from '../tools/graduated-life-tape/launches.mjs';
+import { parseArgs, readGraduationCsv, toTapeRow } from '../tools/graduated-life-tape/collect.mjs';
 import { CLOSURE_TOLERANCE, closureAt, closureOfEarlyPairs, quantile } from '../tools/graduated-life-tape/summarise.mjs';
 import { CREDENTIAL_PATTERNS, KEY_SHAPED } from './offline-guard.js';
 
@@ -281,6 +282,24 @@ describe('the keyless client is paced, bounded and cannot carry a credential', (
     // lockout, so it is asserted rather than left to a default.
     expect(DEFAULT_MIN_INTERVAL_MS).toBeGreaterThanOrEqual(4_000);
     expect(BACKOFF.ceilingMs).toBeGreaterThanOrEqual(40_000);
+  });
+
+  it('refuses a command line that would defeat the floor or the page ceiling', () => {
+    const base = ['--phase', 'life', '--out', 'x'];
+    // `Number('x')` is NaN and every comparison against it fails OPEN: `wait > NaN` is false, so a
+    // NaN interval removes the pacing floor entirely against a shared public endpoint, and
+    // `pages < NaN` is false, so a NaN page ceiling walks zero pages and then writes an empty
+    // sidecar that the resume logic treats as a completed launch. Both must be refusals.
+    expect(() => parseArgs([...base, '--min-interval-ms', 'x'])).toThrow(/positive finite/);
+    expect(() => parseArgs([...base, '--max-pages', 'x'])).toThrow(/positive finite/);
+    expect(() => parseArgs([...base, '--limit', 'x'])).toThrow(/positive finite/);
+    expect(() => parseArgs([...base, '--max-pages', '0'])).toThrow(/positive finite/);
+    expect(() => parseArgs([...base, '--limit', '-1'])).toThrow(/positive finite/);
+
+    // The floor may be raised from the command line and may not be undercut.
+    expect(() => parseArgs([...base, '--min-interval-ms', '2000'])).toThrow(/floor/);
+    expect(parseArgs([...base, '--min-interval-ms', '8000']).minIntervalMs).toBe(8_000);
+    expect(parseArgs(base).minIntervalMs).toBe(DEFAULT_MIN_INTERVAL_MS);
   });
 
   it('reports a transport failure as its own thing and retries it', async () => {
@@ -556,6 +575,28 @@ describe('the committed tape is read the way the dataset requires', () => {
     expect(rows[2]).toEqual(['say "hi"', '5', '6']);
   });
 
+  it('reads back a graduation row whose symbol carries a comma, without shifting a column', () => {
+    // The writer quotes `symbol` and `note`; a reader that split on a bare comma would take
+    // `created_utc` for `grad_ms` and bound the whole life walk by a nonsense instant that still
+    // parses as a number. Latent on the committed file, which happens to hold no quoted field.
+    const dir = mkdtempSync(join(tmpdir(), 'grad-csv-'));
+    try {
+      const path = join(dir, 'graduation.csv');
+      writeFileSync(
+        path,
+        'mint,symbol,created_utc,mint_ms,graduated,grad_ms,grad_s_from_mint,lower_ms,bracket_ms,source,probes,last_trade_ms,note\n' +
+          'MINT,"Doge, Inc",2026-01-01T00:00:00Z,1000,1,9000,8.0,8000,1000,bisect,7,9500,"probed, twice"\n',
+      );
+      expect(readGraduationCsv(path).get('MINT')).toEqual({
+        gradMs: 9000,
+        bracketMs: 1000,
+        source: 'bisect',
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('finds exactly the 103 graduated launches the dataset publishes', () => {
     const launches = readLaunches();
     expect(launches).toHaveLength(239);
@@ -571,6 +612,20 @@ describe('the committed tape is read the way the dataset requires', () => {
     expect(tape!.reachedMint).toBe(true);
     expect(tape!.createSlot).toBe(Math.min(...tape!.fills.map((f) => f.slot)));
     expect(readWindowTape('not-a-mint')).toBeNull();
+  });
+
+  it('reports each launch\'s OWN committed window, because that window is not a constant', () => {
+    // The bug this pins: the committed tape's window is 60 s on most launches but 300 s on 17 of
+    // the graduated 103 and 120 s on 3. A baseline that hardcodes 60 s measures a window those 20
+    // launches were never collected over, and it flatters the widening by ~6 points.
+    const graduated = readLaunches().filter((l) => l.graduated);
+    const widths = new Map<number, number>();
+    for (const l of graduated) {
+      const w = readWindowMeta(l.mint).windowMs;
+      widths.set(w, (widths.get(w) ?? 0) + 1);
+    }
+    expect(Object.fromEntries(widths)).toEqual({ 60_000: 83, 120_000: 3, 300_000: 17 });
+    expect(readWindowTape(graduated[0]!.mint)!.windowMs).toBe(readWindowMeta(graduated[0]!.mint).windowMs);
   });
 
   it('leaves a create slot unclaimed when the committed window was truncated', () => {
@@ -712,10 +767,11 @@ describe('the collected tape says what it covers and what it does not', () => {
   });
 
   it('places every graduation after its own mint and before its own last trade', () => {
-    const lines = readFileSync(gradPath, 'utf8').trim().split('\n');
-    const header = lines[0]!.split(',');
-    for (const line of lines.slice(1)) {
-      const cells = line.split(',');
+    // Read through the quoting-aware parser, not a bare split: `symbol` and `note` are written
+    // through `csvField`, so a comma in either shifts every later column of that row.
+    const rows = parseCsv(readFileSync(gradPath, 'utf8'));
+    const header = rows[0]!;
+    for (const cells of rows.slice(1)) {
       const at = (name: string) => cells[header.indexOf(name)]!;
       const mintMs = Number(at('mint_ms'));
       const gradMs = Number(at('grad_ms'));
@@ -747,6 +803,35 @@ describe('the collected tape says what it covers and what it does not', () => {
         expect(meta.to_ms).toBeLessThanOrEqual(meta.end_ms);
       }
     }
+  });
+
+  it('evaluates the closure baseline at each launch\'s own committed window, not a flat 60 s', () => {
+    // A synthetic-fill test cannot catch this, which is why the bug survived one: the defect is
+    // that the production baseline ignored the committed tape's per-launch `window_ms`. So this
+    // reads the committed roll-up and demands the per-launch cut be visible in it.
+    const rows = parseCsv(readFileSync(join(OUT_DIR, 'coverage.csv'), 'utf8'));
+    const header = rows[0]!;
+    const iMint = header.indexOf('mint');
+    const iWindow = header.indexOf('committed_window_s');
+    expect(iWindow, 'coverage.csv must record the baseline cut it applied').toBeGreaterThanOrEqual(0);
+
+    const widths = new Set<string>();
+    for (const cells of rows.slice(1)) {
+      widths.add(cells[iWindow]!);
+      // Every row's cut is that launch's own recorded window, never a default.
+      expect(Number(cells[iWindow]), `${cells[iMint]} was cut at the wrong window`).toBe(
+        readWindowMeta(cells[iMint]!).windowMs / 1000,
+      );
+    }
+    expect(widths.size, 'a flat baseline would leave one distinct window in the roll-up').toBeGreaterThan(1);
+
+    // And the constant cannot come back: no cut-off in the summariser is a literal 60 s.
+    const source = readFileSync(
+      fileURLToPath(new URL('../tools/graduated-life-tape/summarise.mjs', import.meta.url)),
+      'utf8',
+    );
+    const executable = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(/60[_,]?000/.test(executable), 'the summariser must not hardcode a 60 s window').toBe(false);
   });
 
   it('publishes an exact request count that the ledger reproduces row for row', () => {

@@ -3,8 +3,9 @@
 <!-- requests:6539 -->
 
 Every fill of all **103 graduated launches**, from each one's **mint to one hour after it
-graduated**. It extends `data/population-tape-2026-07-29/`, whose window is the first **60 seconds**,
-and it is built from the same keyless endpoint in the same row schema so the two concatenate.
+graduated**. It extends `data/population-tape-2026-07-29/`, whose window is the launch's first
+**60 seconds on 83 of these 103, 120 s on 3 and 300 s on 17**, and it is built from the same
+keyless endpoint in the same row schema so the two concatenate.
 
 **Cost: EUR 0.** 6,539 keyless requests to `swap-api.pump.fun`, no account, no credential, no
 metered provider request of any kind. That is captain decision **112a** — decline MadeOnSol Pro at
@@ -16,20 +17,25 @@ the keyless property structurally rather than trusting it.
 
 ## Why the window moved
 
-In this population the median bond lands at **+17.2 minutes**. So the committed 60-second window
-ends at roughly **27% of the bond price**, and **it ends while most counterparties are still
-holding**. Their P&L in the existing tape is therefore an artefact of where the window stopped
-rather than of what they did.
+In this population the median bond lands at **+17.2 minutes**. So the committed window — 60 seconds
+on 83 of these 103 launches, 120 s on 3 and 300 s on 17 — ends at roughly **27% of the bond price**,
+and **it ends while most counterparties are still holding**. Their P&L in the existing tape is
+therefore an artefact of where the window stopped rather than of what they did.
 
-Measured on this tape, over the **21,313 (wallet, launch) pairs visible in the first 60 seconds** —
-the exact population the committed tape publishes P&L for:
+The baseline below is **each launch's own committed window**, read from that launch's
+`window/{mint}.meta.json` → `window_ms`, not a uniform 60-second cut. The distinction is not
+cosmetic: a flat 60 s baseline reports a window a fifth of this population was never collected over,
+and it overstates the uplift by ~6 points.
+
+Measured on this tape, over the **26,404 (wallet, launch) pairs visible inside each launch's own
+committed window** — the exact population the committed tape publishes P&L for:
 
 | cut at | complete round trips |
 |---|---:|
-| 60 seconds (the committed window) | 8,961 — **42.0%** |
-| graduation + 1 hour (this tape) | 20,405 — **95.7%** |
+| each launch's own committed window | 12,463 — **47.2%** |
+| graduation + 1 hour (this tape) | 24,922 — **94.4%** |
 
-**11,444 pairs — 53.7% of the published population — go from an incomplete position to a complete
+**12,459 pairs — 47.2% of the published population — go from an incomplete position to a complete
 round trip.** Those are the same wallets under the same closure rule; only the window end changed.
 
 Read the two numbers below with care, because they do **not** compare the same wallets: across the
@@ -46,7 +52,7 @@ one this tape supports.
 | `graduation.csv` | The graduation instant of all 103 launches, with the bracket and the method that produced each. |
 | `life/{mint}.jsonl.gz` | The fills, ascending by `sid`, in the population tape's row schema. |
 | `life/{mint}.meta.json` | Per-launch coverage: window bounds, page and request counts, the coverage **proof**, and the create-slot cross-check. |
-| `coverage.csv` | Roll-up of the sidecars plus per-launch closure counts. Regenerate with `summarise.mjs`. |
+| `coverage.csv` | Roll-up of the sidecars plus per-launch closure counts, with `committed_window_s` naming the baseline cut each launch was evaluated at. Regenerate with `summarise.mjs`. |
 | `requests.csv` | **One row per request attempt**, retries and refusals included. The run's exact cost. |
 
 Regenerate every derived number from the committed data:
@@ -57,7 +63,7 @@ node tools/graduated-life-tape/summarise.mjs data/graduated-life-tape-2026-08-02
 
 ### Row schema
 
-Identical to `data/population-tape-2026-07-29/window/*.jsonl.gz`, field for field, so a 60-second
+Identical to `data/population-tape-2026-07-29/window/*.jsonl.gz`, field for field, so a committed
 window file and a life file concatenate without translation:
 
 `slot` · `sid` · `tx` · `ts` · `u` (the swapping wallet) · `k` (`buy`/`sell`) · `p` (venue) ·
@@ -102,7 +108,7 @@ never goes back, so *"had it graduated by instant T"* is a monotone predicate ov
 
 | source | launches | what it means |
 |---|---:|---|
-| `tape` | 18 | Bracketed inside the committed 60-second window. **Zero requests.** |
+| `tape` | 18 | Bracketed inside the committed window. **Zero requests.** |
 | `page` | 60 | A fetched page held both venues, bracketing the migration between two adjacent fills. |
 | `bisect` | 25 | Converged bracket. |
 
@@ -141,7 +147,7 @@ Only two things establish it, and `reached_mint` in each sidecar is that proof, 
 
 **102 of 103 launches proved coverage to the mint.**
 
-**A second, independent check runs on every launch that has one.** The committed 60-second tape
+**A second, independent check runs on every launch that has one.** The committed window tape
 proved its own coverage of the create slot; a life walk claiming to have reached the mint must land
 on the same slot. **99 of 99 applicable launches agree. Zero disagreements.** The other 4
 (`Marciana`, `Leo`, `Fridge` and `69420`) have no covered window tape to check against — which for
@@ -172,7 +178,7 @@ fills, every one reaching the mint with the endpoint confirming nothing older ex
    the empty curve with under 0.1 SOL of reserves and a median 42 days since their last trade. Any
    population statistic computed over this directory alone is conditioned on graduation.
 4. **One hour past the bond is a choice, not a natural boundary.** It covers the median peak
-   (1.21× the bond) and closes 95.7% of the early pairs, and it leaves everything after it
+   (1.21× the bond) and closes 94.4% of the early pairs, and it leaves everything after it
    unmeasured. A position still open at graduation + 1 h is still open here.
 5. **Graduation is the first PumpSwap *trade*, not the migration instruction.** Those differ by 0–3
    seconds where both are visible — immaterial at a median bond of +17 minutes, and unusable by

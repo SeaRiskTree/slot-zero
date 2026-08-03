@@ -104,17 +104,22 @@ permanent limit of the evidence:
 
 ## The tape past the bond, and what it cost
 
-`data/graduated-life-tape-2026-08-02/` extends the population tape from its 60-second window to
+`data/graduated-life-tape-2026-08-02/` extends the population tape from its own per-launch window to
 **mint → graduation + 1 hour on all 103 graduated launches**. Collector, method and bounds in
 `tools/graduated-life-tape/README.md`; coverage proofs and limits in the dataset's own `README.md`.
-Four facts that bind any lane touching it:
+Five facts that bind any lane touching it:
 
-- **Closure, not P&L, is what it changes.** Over the 21,313 (wallet, launch) pairs the 60-second
-  window already shows, complete round trips go **42.0% → 95.7%**. Everything it adds is still
-  **gross of fees**, so it completes positions without making their P&L fee-inclusive. Do not
-  compare "42% of pairs at 60 s" with "78.5% of all pairs at graduation + 1 h" — different
-  denominators; the wider window holds far more wallets. `summarise.mjs` → `closureOfEarlyPairs` is
-  the like-for-like measure and the only one to quote.
+- **Closure, not P&L, is what it changes.** Over the 26,404 (wallet, launch) pairs each launch's own
+  committed window already shows, complete round trips go **47.2% → 94.4%**. Everything it adds is
+  still **gross of fees**, so it completes positions without making their P&L fee-inclusive. Do not
+  compare "47.2% of pairs at the committed window" with "78.5% of all pairs at graduation + 1 h" —
+  different denominators; the wider window holds far more wallets. `summarise.mjs` →
+  `closureOfEarlyPairs` is the like-for-like measure and the only one to quote.
+- **The committed window is NOT a constant, and a flat 60 s baseline is a published-number bug.**
+  On the graduated 103 it is 60 s on 83, 120 s on 3 and 300 s on 17 — `window_ms` in
+  `data/population-tape-2026-07-29/window/{mint}.meta.json`, exposed by `launches.mjs` →
+  `readWindowMeta`. Hardcoding 60 s overstated this uplift by ~6 points before it was caught, and
+  `coverage.csv` now carries `committed_window_s` per launch so a reader can see the cut applied.
 - **`69420` is truncated at its MINT end** — it bonded ~20 days after mint and the walk covered 1.5%
   of that window. **Do not treat its oldest fill as its create slot.** Every other launch proved
   coverage, and 99 of 99 applicable launches agree with the committed window tape's own create slot.

@@ -85,6 +85,21 @@ export function parseCsv(text) {
 }
 
 /**
+ * Escape one CSV field the way {@link parseCsv} reads it back.
+ *
+ * Lives beside the parser because the two are one contract: a writer that does not quote what the
+ * reader unquotes produces a file whose columns shift silently, which is the same corruption
+ * {@link parseCsv} exists to refuse on the way in.
+ *
+ * @param {string | number} value
+ * @returns {string}
+ */
+export function csvField(value) {
+  const text = String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/**
  * Every launch in the committed tape, in the file's own order.
  *
  * @param {string} [dir]
@@ -112,10 +127,45 @@ export function readLaunches(dir = TAPE_DIR) {
 }
 
 /**
+ * @typedef {object} WindowMeta
+ * @property {boolean} reachedMint Coverage, from the sidecar. **Not** file existence.
+ * @property {number | null} createdTimestamp The builder's own record of the mint instant, in ms.
+ * @property {number} windowMs The width of the window THIS launch was actually collected over.
+ */
+
+/**
+ * The committed sidecar of one window tape.
+ *
+ * `windowMs` is the field a caller reaches for most often and the one most easily assumed: the
+ * committed tape's window is **not** a constant. Across the 103 graduated launches it is 60 s on
+ * 83, 120 s on 3 and 300 s on 17, so a baseline that hardcodes 60 s is measuring a window 20 of
+ * those launches never had. There is no default to invent — every launch in the tape carries the
+ * sidecar, and a missing one is an error rather than an assumption.
+ *
+ * @param {string} mint
+ * @param {string} [dir]
+ * @returns {WindowMeta}
+ */
+export function readWindowMeta(mint, dir = TAPE_DIR) {
+  const path = join(dir, 'window', `${mint}.meta.json`);
+  if (!existsSync(path)) throw new Error(`${mint} has no committed window sidecar at ${path}`);
+  const meta = JSON.parse(readFileSync(path, 'utf8'));
+  if (typeof meta.window_ms !== 'number' || !Number.isFinite(meta.window_ms) || meta.window_ms <= 0) {
+    throw new Error(`${mint}'s window sidecar has no usable window_ms`);
+  }
+  return {
+    reachedMint: meta.reached_mint === true,
+    createdTimestamp: typeof meta.created_timestamp === 'number' ? meta.created_timestamp : null,
+    windowMs: meta.window_ms,
+  };
+}
+
+/**
  * @typedef {object} WindowTape
  * @property {import('./trades.mjs').Fill[]} fills Ascending by `sid`, as committed.
  * @property {boolean} reachedMint Coverage, from the sidecar. **Not** file existence.
  * @property {number | null} createdTimestamp The builder's own record of the mint instant, in ms.
+ * @property {number | null} windowMs This launch's own committed window width, from the sidecar.
  * @property {number | null} createSlot The oldest slot the covered window reaches.
  */
 
@@ -138,10 +188,13 @@ export function readWindowTape(mint, dir = TAPE_DIR) {
   let reachedMint = false;
   /** @type {number | null} */
   let createdTimestamp = null;
+  /** @type {number | null} */
+  let windowMs = null;
   if (existsSync(metaPath)) {
-    const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
-    reachedMint = meta.reached_mint === true;
-    if (typeof meta.created_timestamp === 'number') createdTimestamp = meta.created_timestamp;
+    const meta = readWindowMeta(mint, dir);
+    reachedMint = meta.reachedMint;
+    createdTimestamp = meta.createdTimestamp;
+    windowMs = meta.windowMs;
   }
 
   /** @type {import('./trades.mjs').Fill[]} */
@@ -174,5 +227,5 @@ export function readWindowTape(mint, dir = TAPE_DIR) {
     for (const f of fills) if (f.slot < createSlot) createSlot = f.slot;
   }
 
-  return { fills, reachedMint, createdTimestamp, createSlot };
+  return { fills, reachedMint, createdTimestamp, windowMs, createSlot };
 }

@@ -97,7 +97,7 @@ call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md
 | `test/reproduction.test.ts` | The published headline numbers, asserted against the loaded data. |
 | `test/type-guards.test-d.ts` | Compile-time proof that the **four** guards below bite. Type-checked, never executed. |
 | `tools/deployer-screen/` | The only keyed, network-capable area. The competence **gate** (stages 0–1, keyed) plus the keyless **entry score** (stage 2) — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |
-| `data/graduated-life-tape-2026-08-02/` | The same tape, **extended past the bond**: every fill of the 103 graduated launches from mint to graduation + 1 hour. 503,037 fills, 63% of them on PumpSwap. Closure over the wallets the 60-second window already shows rises from **42.0% to 95.7%**. 6,539 keyless requests, EUR 0. Method, coverage proofs and limits in its `README.md`. |
+| `data/graduated-life-tape-2026-08-02/` | The same tape, **extended past the bond**: every fill of the 103 graduated launches from mint to graduation + 1 hour. 503,037 fills, 63% of them on PumpSwap. Closure over the wallets each launch's own committed window already shows rises from **47.2% to 94.4%**. 6,539 keyless requests, EUR 0. Method, coverage proofs and limits in its `README.md`. |
 | `tools/graduated-life-tape/` | The collector behind it. Network-capable and **keyless throughout** — one file opens a socket, one host, and the list of files that may name a credential is empty. |
 | `analysis/window-population/` | How many profitable windows the tape contains, how long, and how fast they close. **One window**, 2026-03-12 → 2026-06-04, **83 days**, closed in a single launch over **24.7 hours** — and **n = 1**, so "are windows numerous?" is *unmeasured*. Offline like `src/`. Findings, definitions and limits in its `README.md`. |
 | `.github/workflows/ci.yml` | `npm ci` then `npm test` on Node 20, on PRs and pushes to `main`. The whole check set, on purpose. |
@@ -442,12 +442,14 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
   without changing its direction. The counterexample is on our own subject: 76.3% of post-break
   closed round trips are positive gross (351 / 460), and the same population is not worth trading
   fee-inclusive.
-- **P&L in the population tape is bounded by a 60-second window** (300 s on 21 launches, 120 s
-  on 4), and **on the 103 graduated launches that bound is now lifted**:
-  `data/graduated-life-tape-2026-08-02/` carries mint → graduation + 1 hour, taking closure over
-  the same early wallets from 42.0% to 95.7%. Two things it does **not** do — the 136
-  non-graduated launches are still 60-second only (by design; 98 of them are within 1% of the
-  empty curve), and **everything it adds is still gross of fees**, so it can complete a position
+- **P&L in the population tape is bounded by each launch's own collection window** — 60 s on most,
+  300 s on 21 launches and 120 s on 4 — and **on the 103 graduated launches that bound is now
+  lifted**: `data/graduated-life-tape-2026-08-02/` carries mint → graduation + 1 hour, taking
+  closure over the same early wallets from 47.2% to 94.4%. That baseline is each launch's own
+  committed window, never a flat 60 s; on the graduated 103 it is 60 s on 83, 120 s on 3 and 300 s
+  on 17. Two things it does **not** do — the 136
+  non-graduated launches are still bounded by their committed window (by design; 98 of them are
+  within 1% of the empty curve), and **everything it adds is still gross of fees**, so it can complete a position
   without making its P&L fee-inclusive.
 - **The launch universe is a lower bound, not the population.** `?creator=` lists by
   *current* creator, and creator records move. The one launch we know was missing was this

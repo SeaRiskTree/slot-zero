@@ -13,6 +13,37 @@ Both phases are **resumable**: every launch is written the moment its own work f
 phase skips launches already on disk. Interrupting a run costs the launch in flight and nothing
 else. Re-running the same command resumes.
 
+### Flags
+
+| flag | default | what it does |
+|---|---|---|
+| `--phase` | *required* | `graduation` or `life`. |
+| `--out` | *required* | Dataset directory. Required for a live run so no run happens without leaving `requests.csv`. |
+| `--only <mint>` | all | Restrict to these mints. Repeatable. |
+| `--limit <n>` | all | Take the first `n` launches of whatever survives the filters. |
+| `--max-pages <n>` | `MAX_PAGES_PER_LAUNCH` (100) | Per-launch page ceiling for the life walk. |
+| `--min-interval-ms <ms>` | `DEFAULT_MIN_INTERVAL_MS` (4,000) | Pacing floor. **May be raised, never lowered** — 4 s is measured and the parser refuses anything below it. |
+
+All three numeric flags are validated at parse time and **reject** a non-positive or non-finite
+value rather than coercing it. That is not defensiveness: `Number('x')` is `NaN`, and every
+comparison this collector makes against these values fails *open* — a `NaN` interval removes the
+pacing floor entirely against a shared public endpoint, and a `NaN` page ceiling walks zero pages
+and then writes an empty sidecar the resume logic treats as a finished launch.
+
+**The resume filter runs BEFORE `--only`, and that ordering is deliberate.** A mint that already
+has output is dropped from the work list first, so `--only <mint>` can narrow a run but can never
+re-do a launch that is already on disk. To re-walk one — the procedure used to complete the seven
+launches the default page ceiling truncated — **delete that launch's sidecar first**:
+
+```bash
+rm data/graduated-life-tape-2026-08-02/life/<mint>.meta.json
+node tools/graduated-life-tape/collect.mjs --phase life --out data/graduated-life-tape-2026-08-02 \
+  --only <mint> --max-pages 300
+```
+
+The skip-if-present behaviour is what makes a multi-hour walk resumable, so it stays; the deletion
+is the explicit, visible way to spend requests on a launch twice.
+
 ---
 
 ## What it collects, and why that shape

@@ -29,14 +29,11 @@ import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
-import { readLaunches } from './launches.mjs';
+import { readLaunches, readWindowMeta, csvField } from './launches.mjs';
 import { VENUE_AMM } from './trades.mjs';
 
 /** The dataset's own closure rule: residual within 0.1% of tokens bought. */
 export const CLOSURE_TOLERANCE = 0.001;
-
-/** The first 60 seconds — the window the committed population tape already covers. */
-export const EXISTING_WINDOW_MS = 60_000;
 
 /**
  * Closed and open (wallet, launch) pairs over a run of fills, at a cut-off.
@@ -76,11 +73,15 @@ export function closureAt(fills, untilMs) {
  * Closure **of the same wallets**, at two different window ends.
  *
  * The headline comparison has to be apples-to-apples and the obvious one is not: a longer window
- * contains far more wallets, so "42% of pairs closed at 60 s" against "78% of pairs closed at
- * graduation + 1 h" compares two different populations and flatters the widening for the wrong
- * reason. This restricts to the wallets **visible in the first 60 seconds** and asks what the wider
- * window did for *them*. That is the population whose P&L the committed tape already publishes, and
- * therefore the population whose numbers this tape can correct.
+ * contains far more wallets, so "47% of pairs closed at the committed window" against "78% of pairs
+ * closed at graduation + 1 h" compares two different populations and flatters the widening for the
+ * wrong reason. This restricts to the wallets **visible inside the launch's own committed window**
+ * and asks what the wider window did for *them*. That is the population whose P&L the committed tape
+ * already publishes, and therefore the population whose numbers this tape can correct.
+ *
+ * `earlyMs` is the caller's to supply per launch, and it must be that launch's own recorded cut —
+ * the committed tape's window is 60 s on 83 of the 103 graduated launches, 120 s on 3 and 300 s on
+ * 17, so a fixed 60 s baseline understates the "before" figure on a fifth of the population.
  *
  * @param {readonly {u: string, k: string, base: string, tsMs: number}[]} fills
  * @param {number} earlyMs Cut-off defining which wallets count.
@@ -113,7 +114,8 @@ export function quantile(xs, q) {
  * @property {number} reached
  * @property {number} truncated
  * @property {number} requests
- * @property {number} shed
+ * @property {number} shed Attempts the endpoint refused with 429 or 5xx.
+ * @property {number} transportFailures Attempts that never reached the endpoint at all.
  * @property {number} pagesTotal
  * @property {number} pagesMedian
  * @property {number} pagesP90
@@ -126,8 +128,8 @@ export function quantile(xs, q) {
  * @property {number} openOld
  * @property {number} closedNew
  * @property {number} openNew
- * @property {number} earlyPopulation Wallets visible in the first 60 s — the apples-to-apples base.
- * @property {number} earlyClosedAt60s
+ * @property {number} earlyPopulation Wallets visible inside each launch's own committed window.
+ * @property {number} earlyClosedAtCommitted
  * @property {number} earlyClosedAtFull
  */
 
@@ -150,7 +152,7 @@ export function summarise(out) {
   let closedOld = 0;
   let openOld = 0;
   let earlyPopulation = 0;
-  let earlyClosedAt60s = 0;
+  let earlyClosedAtCommitted = 0;
   let earlyClosedAtFull = 0;
   /** @type {number[]} */
   const gradS = [];
@@ -172,10 +174,15 @@ export function summarise(out) {
     }
 
     // The comparison that justifies the whole widening: the same launch, the same closure rule,
-    // cut at the window the committed tape already covers and at the one this tape adds.
-    const before = closureAt(launchFills, meta.floor_ms + EXISTING_WINDOW_MS);
+    // cut at the window the committed tape already covers and at the one this tape adds. The
+    // "before" cut is THIS launch's own recorded window, read from its committed sidecar — the
+    // committed tape's window is not a constant, and a fixed cut would report a window 20 of the
+    // 103 launches were never collected over.
+    const committedWindowMs = readWindowMeta(meta.mint).windowMs;
+    const committedEndMs = meta.floor_ms + committedWindowMs;
+    const before = closureAt(launchFills, committedEndMs);
     const after = closureAt(launchFills, meta.end_ms);
-    const early = closureOfEarlyPairs(launchFills, meta.floor_ms + EXISTING_WINDOW_MS, meta.end_ms);
+    const early = closureOfEarlyPairs(launchFills, committedEndMs, meta.end_ms);
 
     fills += launchFills.length;
     ammFills += launchFills.filter((f) => f.p === VENUE_AMM).length;
@@ -186,7 +193,7 @@ export function summarise(out) {
     closedNew += after.closed;
     openNew += after.open;
     earlyPopulation += early.population;
-    earlyClosedAt60s += early.closedEarly;
+    earlyClosedAtCommitted += early.closedEarly;
     earlyClosedAtFull += early.closedFull;
     gradS.push((meta.grad_ms - meta.created_timestamp) / 1000);
     bracketS.push((meta.grad_bracket_ms ?? 0) / 1000);
@@ -199,6 +206,7 @@ export function summarise(out) {
       grad_bracket_ms: meta.grad_bracket_ms ?? '',
       grad_source: meta.grad_source,
       window_s: Math.round(meta.window_ms / 1000),
+      committed_window_s: Math.round(committedWindowMs / 1000),
       n_fills: meta.n,
       n_amm_fills: meta.n_amm,
       pages: meta.pages,
@@ -206,12 +214,12 @@ export function summarise(out) {
       reached_mint: meta.reached_mint ? 1 : 0,
       truncated: meta.truncated ? 1 : 0,
       create_slot_agrees: meta.create_slot_agrees === null ? '' : meta.create_slot_agrees ? 1 : 0,
-      pairs_closed_60s: before.closed,
-      pairs_open_60s: before.open,
+      pairs_closed_committed: before.closed,
+      pairs_open_committed: before.open,
       pairs_closed_full: after.closed,
       pairs_open_full: after.open,
       early_pairs: early.population,
-      early_closed_60s: early.closedEarly,
+      early_closed_committed: early.closedEarly,
       early_closed_full: early.closedFull,
     });
   }
@@ -219,23 +227,19 @@ export function summarise(out) {
   const header = Object.keys(/** @type {Record<string, string | number>} */ (rows[0])).join(',');
   writeFileSync(
     join(out, 'coverage.csv'),
-    `${header}\n${rows.map((r) => Object.values(r).join(',')).join('\n')}\n`,
+    `${header}\n${rows.map((r) => Object.values(r).map(csvField).join(',')).join('\n')}\n`,
   );
 
+  // Shed and transport are two different facts and the client keeps them apart on purpose: a run
+  // that could not reach the endpoint at all must not be reportable as a busy endpoint refusing it.
   const ledgerPath = join(out, 'requests.csv');
-  const requests = existsSync(ledgerPath)
-    ? readFileSync(ledgerPath, 'utf8').trim().split('\n').length - 1
-    : 0;
-  const shed = existsSync(ledgerPath)
-    ? readFileSync(ledgerPath, 'utf8')
-        .trim()
-        .split('\n')
-        .slice(1)
-        .filter((l) => {
-          const status = l.split(',')[3];
-          return status === 'transport' || Number(status) >= 429;
-        }).length
-    : 0;
+  const ledgerRows = existsSync(ledgerPath)
+    ? readFileSync(ledgerPath, 'utf8').trim().split('\n').slice(1)
+    : [];
+  const statuses = ledgerRows.map((l) => l.split(',')[3]);
+  const requests = ledgerRows.length;
+  const shed = statuses.filter((s) => s !== 'transport' && Number(s) >= 429).length;
+  const transportFailures = statuses.filter((s) => s === 'transport').length;
 
   return {
     rows,
@@ -247,6 +251,7 @@ export function summarise(out) {
       truncated,
       requests,
       shed,
+      transportFailures,
       pagesTotal: pages.reduce((a, b) => a + b, 0),
       pagesMedian: quantile(pages, 0.5),
       pagesP90: quantile(pages, 0.9),
@@ -260,7 +265,7 @@ export function summarise(out) {
       closedNew,
       openNew,
       earlyPopulation,
-      earlyClosedAt60s,
+      earlyClosedAtCommitted,
       earlyClosedAtFull,
     },
   };
@@ -277,17 +282,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       `launches walked        ${totals.launches}`,
       `fills                  ${totals.fills} (${totals.ammFills} on PumpSwap)`,
       `pages                  ${totals.pagesTotal} (median ${totals.pagesMedian}, p90 ${totals.pagesP90})`,
-      `requests issued        ${totals.requests} (${totals.shed} shed)`,
+      `requests issued        ${totals.requests} (${totals.shed} shed, ${totals.transportFailures} transport failures)`,
       `reached the mint       ${totals.reached}/${totals.launches}`,
       `truncated              ${totals.truncated}`,
       `graduation from mint   p10 ${totals.gradP10S.toFixed(0)}s  median ${totals.gradMedianS.toFixed(0)}s  p90 ${totals.gradP90S.toFixed(0)}s`,
       `graduation bracket     median ${totals.bracketMedianS.toFixed(1)}s  p90 ${totals.bracketP90S.toFixed(0)}s`,
-      `all pairs closed at 60s     ${totals.closedOld}/${totals.closedOld + totals.openOld} (${pct(totals.closedOld, totals.closedOld + totals.openOld)}%)`,
-      `all pairs closed at grad+1h ${totals.closedNew}/${totals.closedNew + totals.openNew} (${pct(totals.closedNew, totals.closedNew + totals.openNew)}%)`,
+      `all pairs closed at the committed window ${totals.closedOld}/${totals.closedOld + totals.openOld} (${pct(totals.closedOld, totals.closedOld + totals.openOld)}%)`,
+      `all pairs closed at grad+1h              ${totals.closedNew}/${totals.closedNew + totals.openNew} (${pct(totals.closedNew, totals.closedNew + totals.openNew)}%)`,
       `  -- those two have DIFFERENT denominators; the like-for-like comparison is below --`,
-      `wallets seen in first 60s    ${totals.earlyPopulation}`,
-      `  of those, closed at 60s    ${totals.earlyClosedAt60s} (${pct(totals.earlyClosedAt60s, totals.earlyPopulation)}%)`,
-      `  of those, closed at grad+1h ${totals.earlyClosedAtFull} (${pct(totals.earlyClosedAtFull, totals.earlyPopulation)}%)`,
+      `wallets seen inside the committed window ${totals.earlyPopulation}`,
+      `  of those, closed at that window        ${totals.earlyClosedAtCommitted} (${pct(totals.earlyClosedAtCommitted, totals.earlyPopulation)}%)`,
+      `  of those, closed at grad+1h          ${totals.earlyClosedAtFull} (${pct(totals.earlyClosedAtFull, totals.earlyPopulation)}%)`,
       '',
     ].join('\n'),
   );

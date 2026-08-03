@@ -107,7 +107,10 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   itself in `entry.caveats`, not only here. **The `stage0` block gains
  *   `onChainCostReproduction`** — the offline cost regression in full, so a saved run says by how
  *   much and over what netting the measured fees moved the field, not only that it passed; the
- *   README's schema table lists its fields.
+ *   README's schema table lists its fields. **Every figure in it is over the GATED population** —
+ *   launches whose create-slot opening is proven, i.e. the ones the entry bar itself is computed
+ *   from — which is what a record written by this build carries from the first one onwards; the
+ *   rendered Stage 0 block prints the unfiltered reading beside it so the difference is visible.
  */
 export const RECORD_SCHEMA_VERSION = 6;
 

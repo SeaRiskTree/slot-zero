@@ -439,12 +439,24 @@ export function readOnChainCosts(dataDir) {
 
 /**
  * @typedef {object} CostReproduction
- * @property {number} launchesPriced       Launches the committed table can price at all.
+ * **EVERY FIGURE HERE IS OVER THE GATED POPULATION** — the launches whose create-slot opening is
+ * PROVEN (`measure.mjs` → `roomIsProven`), which is the population `entry.mjs` → `scoreEntry` builds
+ * `entryCostPerSolStakedByLaunch` from and therefore the population `entry-cost-prohibitive` is
+ * compared against. The unfiltered reading is carried beside it, under the `includingUnproven*`
+ * names, so a reader can see the size of the difference rather than take it on trust.
+ * @property {number} launchesPriced       Proven launches the committed table can price at all.
  * @property {number} minLaunches          Launches this check needs to mean anything.
  * @property {number} entriesPriced        Create-slot entries with a measured entry cost.
  * @property {number} entries              Create-slot entries in the priced launches.
  * @property {number} pairsPriced          Closed round trips priced across their whole window.
  * @property {number} minPairs             Pairs this check needs to mean anything.
+ * @property {number} includingUnprovenLaunchesPriced  The same count with unproven openings left in
+ *   — what this check measured before the population was matched to the gate's.
+ * @property {number} includingUnprovenPairsPriced
+ * @property {number} includingUnprovenEntryCostPerSolStakedMedianByLaunch  The per-launch median the
+ *   unfiltered population reads. Reported so the gap between the two populations is visible on every
+ *   run: on the committed tape it is 0.0388 against the gated 0.0389, i.e. the unfiltered reading is
+ *   the CHEAPER one, which is the optimistic direction and the reason it is not what the bar reads.
  * @property {number} entryCostMedianSol
  * @property {number} entryCostPerSolStakedMedianByEntry  Pooled over every priced create-slot
  *   ENTRY, matching `EntryScore.entryCostPerSolStaked`. The finer-grained evidence.
@@ -487,10 +499,19 @@ export function readOnChainCosts(dataDir) {
  * the gate and the field is only ever a veto. Asserting otherwise here would pin a property the
  * evidence does not support.
  *
+ * **IT PRICES THE POPULATION THE GATE ITSELF SEES, AND THAT WAS A CORRECTION.** This check used to
+ * price every taped launch the table could reach, while the live bar
+ * (`entry.mjs` → `entryCostPerSolStakedByLaunch`) is built over launches surviving `roomIsProven`.
+ * A regression guard measuring a neighbouring quantity is the shape of the defect decision 140
+ * caught, so the filter is applied here too and the unfiltered reading is reported beside it rather
+ * than discarded. On the committed tape the difference is small and in the OPTIMISTIC direction —
+ * per-launch median 0.0388 unfiltered against 0.0389 gated — which is exactly why it is the gated
+ * one the bar reads.
+ *
  * The coverage this runs over is a property of the committed table rather than of the method: it
- * priced 113 of the 235 covered launches, so `minLaunches`/`minPairs` exist for the same reason the
- * era buckets have a `minN` — an empty comparison passes vacuously, and a passing Stage 0 is what
- * authorises spending quota on strangers.
+ * prices 110 of the 235 covered launches (113 before the proven filter), so `minLaunches`/`minPairs`
+ * exist for the same reason the era buckets have a `minN` — an empty comparison passes vacuously,
+ * and a passing Stage 0 is what authorises spending quota on strangers.
  *
  * @param {string} dataDir
  * @param {readonly TapedLaunch[]} launches
@@ -507,6 +528,13 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
   /** @type {number[]} */
   const perLaunchCostPerSolStaked = [];
   let launchesPriced = 0;
+  // The unfiltered readings, kept only so the record can show the size of the gap. Nothing in `ok`
+  // reads them: an assertion on a population the gate never sees is the defect this pass removed.
+  /** @type {import('./entry.mjs').FieldEntrant[]} */
+  const allEntriesIncludingUnproven = [];
+  /** @type {number[]} */
+  const perLaunchCostPerSolStakedIncludingUnproven = [];
+  let launchesPricedIncludingUnproven = 0;
 
   for (const l of launches) {
     /** @type {import('./entry.mjs').LaunchEntry} */
@@ -523,12 +551,24 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
       if (costs !== undefined) available.set(target.tx, costs);
     }
     if (available.size === 0) continue;
-    launchesPriced += 1;
     const priced = priceLaunchEntry(entry, targets, available);
-    allEntries.push(...priced.field);
     const perEntryHere = priced.field
       .map((e) => e.entryCostPerSolStaked)
       .filter((v) => Number.isFinite(v));
+
+    launchesPricedIncludingUnproven += 1;
+    allEntriesIncludingUnproven.push(...priced.field);
+    if (perEntryHere.length > 0) {
+      perLaunchCostPerSolStakedIncludingUnproven.push(median(perEntryHere));
+    }
+
+    // THE GATE'S OWN POPULATION. `scoreEntry` drops an unproven opening before it builds
+    // `entryCostPerSolStakedByLaunch`, so pricing one here would regression-test a quantity the bar
+    // never reads. `pricedPostBreak` is unaffected either way — `scoreEntry` applies the same rule
+    // to what it is handed — but it is filtered here too so the two halves share one population.
+    if (!roomIsProven(l.createSlot)) continue;
+    launchesPriced += 1;
+    allEntries.push(...priced.field);
     if (perEntryHere.length > 0) perLaunchCostPerSolStaked.push(median(perEntryHere));
     if (l.dateIso.slice(0, 10) >= REGIME_BOUNDARY) pricedPostBreak.push(priced);
   }
@@ -543,8 +583,27 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
   const netOfPairs = pairs.map((e) => e.realisedSolNetOfMeasuredFees);
   const postBreakScore = scoreEntry(pricedPostBreak, t, { candidateWallet: SUBJECT_DEPLOYER });
 
+  // NEITHER OF THESE TWO IS A MEASUREMENT, AND SAYING SO IS THE POINT. They exist because an empty
+  // comparison passes vacuously, not because 40 launches or 200 pairs is the count at which any
+  // quantity below stabilises — nothing in this repo measures that. What fixes them is the coverage
+  // the committed table actually delivers, which is 110 proven launches and 618 priced pairs today:
+  // each bar sits at roughly a third of it, so a table that lost most of its rows to a future
+  // re-import would fail loudly instead of passing on a handful. Raising them towards the measured
+  // coverage would make Stage 0 fail on the tape it was built from, which is the wrong failure. The
+  // evidence that would justify a specific value is a sensitivity curve of `grossHitRate` and
+  // `entryCostPerSolStakedMedianByLaunch` against sample size, computable offline from this same
+  // table; it has not been run, so these stay declared floors rather than derived ones.
   const minLaunches = 40;
   const minPairs = 200;
+  // Same status: 0.9 is a declared floor, not a derived one. The claim it defends is only "the seat
+  // is not free" — a leg that priced most entries at zero would be reading the wrong field — and the
+  // measured share is 0.9974 over the gated population (0.9935 unfiltered), so the bar has ~10x the
+  // headroom of the gap it must not close. The residual negative tail is real and unexplained (min
+  // −15.02 SOL on one entry): a wallet whose create-slot transaction returned more lamports than the
+  // quote it committed, which is what an in-transaction rebate or a mis-attributed multi-leg route
+  // looks like. Explaining that tail is what would justify a specific number here; until then a bar
+  // near 1.0 would fail on the tape for a reason nobody has diagnosed.
+  const minEntryCostPositiveShare = 0.9;
   const grossHitRate = positive(grossOfPairs);
   const netHitRate = positive(netOfPairs);
   const grossMedianSol = median(grossOfPairs);
@@ -558,6 +617,13 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
     entries: allEntries.length,
     pairsPriced: pairs.length,
     minPairs,
+    includingUnprovenLaunchesPriced: launchesPricedIncludingUnproven,
+    includingUnprovenPairsPriced: allEntriesIncludingUnproven
+      .filter((e) => e.closedInWindow)
+      .filter((e) => Number.isFinite(e.realisedSolNetOfMeasuredFees)).length,
+    includingUnprovenEntryCostPerSolStakedMedianByLaunch: median(
+      perLaunchCostPerSolStakedIncludingUnproven,
+    ),
     entryCostMedianSol,
     entryCostPerSolStakedMedianByEntry: median(costed.map((e) => e.entryCostPerSolStaked)),
     entryCostPerSolStakedMedianByLaunch: median(perLaunchCostPerSolStaked),
@@ -574,7 +640,7 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
       launchesPriced >= minLaunches &&
       pairs.length >= minPairs &&
       entryCostMedianSol > 0 &&
-      positive(costed.map((e) => e.entryCostSol)) >= 0.9 &&
+      positive(costed.map((e) => e.entryCostSol)) >= minEntryCostPositiveShare &&
       netHitRate < grossHitRate &&
       netMedianSol < grossMedianSol &&
       postBreakScore.verdict !== 'entry-open-after-costs',
@@ -901,9 +967,22 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
   // Measured over the launches the screen would actually SCORE, which is the point of the check:
   // this reproduces the room primitive as a live run computes it, and a live run no longer computes
   // it on a launch whose create slot carried no bundled transaction. Era 1 is unaffected (all 45 of
-  // its launches bundled); era 2 loses the 3 that did not, leaving 86 and a median share of 0.769
-  // — the remaining 0.002 from 0.771 is the order statistic moving when three launches leave an
-  // 89-launch series, not a residual defect.
+  // its launches bundled); era 2 loses the 3 that did not, leaving 86 and a median share of 0.769.
+  //
+  // WHAT THE RESIDUAL 0.002 ACTUALLY IS, corrected 2026-08-02 — an earlier version of this comment
+  // called it "the order statistic moving when three launches leave an 89-launch series", and that
+  // is not what happened. The two figures are produced by two different estimators over the same
+  // launches, and dropping the three unproven ones moves this one UP, not down:
+  //
+  //   structural bundle rule, all 89 era-2 launches  → 0.759250
+  //   structural bundle rule, the 86 proven ones     → 0.769153   ← what this check computes
+  //   NAMED-COHORT rule,      all 89                 → 0.770796   ← what 0.771 is
+  //
+  // So the comparison is a structural-rule median against a cohort-derived constant, and the 0.010
+  // the proven filter adds is the operation's own stake coming back out of the outsider numerator on
+  // the launches where the rule could see it. The two estimators agree EXACTLY in era 1 (0.450771
+  // both ways), because the bundle rule recovered essentially the whole cohort in that period. All
+  // four figures are reproducible offline from the committed tape.
   const eraSplit = eras.map((e) => {
     const all = launches.filter((l) => {
       const d = l.dateIso.slice(0, 10);
@@ -1022,6 +1101,15 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
       );
       continue;
     }
+    // THE 0.02 ITSELF IS INHERITED AND UNMEASURED, and decision 135c's ruling ("never widen that
+    // tolerance instead") binds the direction it may move rather than deriving the number. What is
+    // measured is the slack under it: era 1 misses by 0.000229 and era 2 by 0.001847 as committed,
+    // so the bar is ~11x the largest live discrepancy — wide enough that it cannot be the thing
+    // reporting a pass, and it was already demonstrated too wide once, absorbing a real −0.0115
+    // defect until decision 134a removed it. What would justify a specific value is a bound on how
+    // far the two estimators above may legitimately disagree; nothing in this repo derives one, so
+    // this stays a declared tolerance. Tightening it towards the measured slack is the only safe
+    // direction, and it is a captain decision because it re-pins a published constant.
     if (Math.abs(e.operationShareMedian - e.publishedOperationShare) > 0.02) {
       failures.push(
         `era ${e.era}: operation share ${e.operationShareMedian.toFixed(3)} does not reproduce the ` +

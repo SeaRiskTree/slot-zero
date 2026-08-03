@@ -1333,10 +1333,37 @@ describe('the CLI contract', () => {
     }
     // Every threshold carries its anchor.
     expect(Object.keys(T['stage1_gate'].justification).sort()).toEqual([
+      'completionRateSource',
       'minCompletionRate',
       'minSpanDays',
       'minTokens',
     ]);
+  });
+
+  it('every pinned parameter carries a stated reason, and every stated reason has a parameter', () => {
+    // The file's own contract is "the anchor is named in `justification`", and the 2026-08-02
+    // provenance audit found eight keys carrying a value and no entry at all — a gap no reader can
+    // see without enumerating the file. Two of the three defect shapes it found need a human read
+    // (a justification naming a quantity the call site does not compute, or quoting a figure nobody
+    // re-derived); THIS one is mechanical, so it is asserted rather than reviewed for.
+    //
+    // An honest "no measurement backs this, and here is what would" satisfies it — see
+    // `creation_walk.maxTransactionsPerCandidate` and `consistency_over_time.minEpochs`, which say
+    // exactly that. What it refuses is silence.
+    const T = loadThresholds() as Record<string, Record<string, unknown>>;
+    for (const [block, body] of Object.entries(T)) {
+      if (typeof body !== 'object' || body === null || Array.isArray(body)) continue;
+      const justification = (body['justification'] ?? {}) as Record<string, unknown>;
+      const params = Object.keys(body).filter((k) => !k.startsWith('$') && k !== 'justification');
+      for (const key of params) {
+        expect(justification[key], `${block}.${key} has no justification entry`).toBeTruthy();
+      }
+      // And the other direction, so a deleted parameter cannot leave its reasoning behind to be
+      // read as live: an orphan anchor is a claim about a bound that no longer exists.
+      for (const key of Object.keys(justification)) {
+        expect(params, `${block}.justification.${key} names no parameter`).toContain(key);
+      }
+    }
   });
 
   it('never reports a malformed query as a rejected credential', () => {

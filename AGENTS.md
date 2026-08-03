@@ -273,6 +273,19 @@ dev currently?"*, and the shape of the answer is the point:
   cannot be read back apart.
 - **Stage 2 spends no keyed request.** It reuses the mint list from the profile Stage 1 already paid
   for (`measure.mjs` → `toLaunchRefs`), so the shared vendor allowance is untouched by it.
+- **A pinned value's `justification` must name the measurement the CALL SITE applies it to, and a
+  test now pins that every parameter has one** (`test/deployer-screen.test.ts` → "every pinned
+  parameter carries a stated reason"). The 2026-08-02 provenance audit found three justifications
+  naming a quantity the code does not compute, four quoting figures that did not reproduce, and eight
+  values with no stated reason at all; the round that fixed them is the standard. **"No measurement
+  backs this, and here is what would" is an acceptable justification** — `minEpochs`,
+  `minTokensPerEpoch`, `creation_walk.maxTransactionsPerCandidate` and Stage 0's `minLaunches` /
+  `minPairs` / positive-share / era-tolerance constants all say exactly that. Inventing an anchor is
+  not. **`minLaunchesSampled = 8` is the canonical case: it is a BUDGET bound** (3 × 8 × 18 = 432,
+  the Stage 2 request ceiling), not a statistical one, and the June report's smallest published
+  per-launch quartile bucket is 20 — so a verdict resting on 8 launches is weaker evidence and the
+  record's `launchesSampled` is how a reader sees it (captain decision 141a; the value does not move).
+  Do not quote `curve_last_tx_s` in any justification: it is a non-timing (see above).
 - **"Enterable" means enterable AFTER what it costs to enter, and `entry-room-present` no longer
   exists.** Fees are inside the entry window (captain, 2026-08-02) and the field's after-cost result
   ships with them (decision 136b). The strongest verdict is now `entry-open-after-costs`; two new
@@ -284,13 +297,15 @@ dev currently?"*, and the shape of the answer is the point:
   transactions to price with no discovery step; `pumpfun.mjs` → `parseTransactionCosts` reads
   `meta.fee` (base + priority, exact) and the pre/post balance delta. **The free legs — room and the
   gross field — run FIRST**, so a deployer failing either costs zero RPC requests; that ordering is
-  the cost model. Measured per launch on our tape: ~7 create-slot transactions and ~19 more for a
-  closed round trip's whole window, unioned. Pacing is `creation_walk`'s and the two legs are
+  the cost model. Measured per launch on our tape: **~19 DISTINCT transactions at the median — the
+  UNION** of the create-slot scope (p50 7) and the closed-round-trip window scope (p50 18), not
+  their sum; ×8 launches that is ~152 requests, not ~200. Pacing is `creation_walk`'s and the two legs are
   serialised — `api.mainnet-beta` rate-limits globally across methods. **`entry-cost-prohibitive`
   gates on the PER-LAUNCH median** (`entryCostPerSolStakedByLaunch`, decision 140a) — every launch
   counts once, so a busy launch cannot outvote the rest; the pooled per-entry distribution ships
   beside it as the finer-grained evidence and is not what the verdict reads. Re-derived from the
-  committed tape: per-launch median 0.0388 against a per-entry 0.0367, worst launch 0.3311, bar 0.12.
+  committed tape over the **gated** (proven-opening) population, which is what the bar reads:
+  per-launch median 0.0389 against a per-entry 0.0369, worst launch 0.3311, bar 0.12.
   **A launch the RPC ceiling cuts short is discarded whole**, because a truncated walk holds the
   earliest entrants by slot, which is a biased sample rather than a short one; and **a transport
   failure abandons the cost leg for that candidate only**, leaving `entry-cost-unmeasured` rather
@@ -303,8 +318,12 @@ dev currently?"*, and the shape of the answer is the point:
   doc**. Same for `WINNERS_ONLY_CAVEAT`: the tape only holds wallets that won the auction.
 - **Stage 0 check 8 regression-tests the cost leg offline** (`stage0.mjs` →
   `verifyOnChainCostReproduction`), running the production `priceLaunchEntry` over
-  `onchain_create_slot_pnl.csv`. On the current tape: 113 launches, 631 round trips priced end to
-  end, median entry cost 0.0308 SOL, field hit rate **0.7401 gross → 0.6070 net**, 87 sign flips. It
+  `onchain_create_slot_pnl.csv`. **It prices the GATED population — proven openings only, the same
+  launches `scoreEntry` scores** — because a regression guard over a neighbouring population is
+  decision 140's defect shape. On the current tape: 110 launches, 618 round trips priced end to end,
+  median entry cost 0.0308 SOL, field hit rate **0.7379 gross → 0.6117 net**, 81 sign flips; the
+  unfiltered reading (113 / 631 / 0.7401 → 0.6070 / 87 flips, per-launch cost 0.0388 against the
+  gated 0.0389 — i.e. *cheaper*, the optimistic direction) is printed beside it on every run. It
   asserts the *direction* — netting fees must move the field DOWN — because a sign error there would
   manufacture an edge silently. It deliberately does **not** assert that the net leg vetoes
   `7ufmve7Z…`: post-break its priced round trips are still 0.64 positive at +0.05 SOL net, so that

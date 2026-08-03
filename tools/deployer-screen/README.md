@@ -712,17 +712,26 @@ fills already in hand, so a deployer failing either is refused before one RPC re
 pricing it. Only a candidate still alive after both is walked.
 
 **Measured on the committed tape, 2026-08-02** (`data/population-tape-2026-07-29` →
-`onchain_create_slot_pnl.csv`, 113 launches, 775 create-slot entries, 631 closed round trips priced
-end to end):
+`onchain_create_slot_pnl.csv`), over the **gated population** — the launches whose create-slot
+opening is *proven*, which is the population `scoreEntry` builds the bar's own unit from: **110
+launches, 757 create-slot entries, 618 closed round trips priced end to end**.
 
 | | reading |
 |---|---|
-| entry cost, per create-slot entry | median **0.0308 SOL**, and **99.4%** of entries pay something |
-| entry cost, per SOL staked, pooled over **entries** | median **0.0367** (p75 0.0815, p90 0.1963; post-break 0.0292) |
-| entry cost, per SOL staked, one figure per **launch** — *the figure the bar is compared against* | median **0.0388** (p90 0.0983; post-break 0.0353) and the **worst launch on the tape is 0.3311** (post-break 0.1361) |
-| the field, hit rate | **0.7401 gross** against **0.6070 net of measured fees** |
-| the field, median round trip | **+0.109 SOL gross** against **+0.038 SOL net** |
-| round trips that flip sign | **87** positive-gross → negative-net |
+| entry cost, per create-slot entry | median **0.0308 SOL**, and **99.7%** of entries pay something |
+| entry cost, per SOL staked, pooled over **entries** | median **0.0369** (p75 0.0812, p90 0.1970; post-break 0.0292) |
+| entry cost, per SOL staked, one figure per **launch** — *the figure the bar is compared against* | median **0.0389** (p90 0.0985; post-break 0.0354) and the **worst launch on the tape is 0.3311** (post-break 0.1361) |
+| the field, hit rate | **0.7379 gross** against **0.6117 net of measured fees** |
+| the field, median round trip | **+0.105 SOL gross** against **+0.038 SOL net** |
+| round trips that flip sign | **81** positive-gross → negative-net |
+
+**Why "gated" is stated rather than assumed.** This check used to price *every* taped launch the
+table could reach — 113 launches, 775 entries, 631 pairs, per-launch median **0.0388** — while the
+live bar reads the proven-only population. The gap is 0.0001 of a figure compared against a 0.12 bar,
+but it runs in the *optimistic* direction (the unfiltered reading is the cheaper one), and a
+regression guard measuring a neighbouring quantity is the shape of the defect decision 140 caught. So
+the filter is applied here too and **both readings are printed on every run**, the unfiltered one on
+its own line, so the difference stays visible instead of being taken on trust.
 
 Whole-block reads (`getBlock(slot, transactionDetails='full')`) would collapse the create-slot scope
 from ~7 requests a launch to one. That route is **untested against this endpoint**, so it is probed
@@ -808,7 +817,7 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does — but a 429, a 5xx or a timeout means the request was not served, so re-issuing it is nearer to one successful request than to two. Without it the caller re-runs the whole walk, which is worse for pump.fun too. A 4xx that is not a 429 is never retried: it is the endpoint's considered answer. |
 | Solana RPC ceiling | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. The creation-derived walk. Whichever bound bites is recorded per candidate. |
-| Solana RPC ceiling, cost leg | 400 requests **per candidate** | `thresholds.json` → `stage2_cost`. Measured on our own tape: the create-slot scope is p50 7 / p90 13 / max 20 transactions per launch and the whole-window scope over CLOSED create-slot outsiders is p50 18 / p90 35 / max 70, unioned so none is paid for twice — so ~200 requests per candidate at the median and ~380 at p90 over 8 launches. Worst case 3 × 400 = 1,200 requests, about 50 minutes, which `--dry-run` prints. **It runs only on a candidate the free legs have not already refused**, so the realistic cost is far lower. |
+| Solana RPC ceiling, cost leg | 400 requests **per candidate** | `thresholds.json` → `stage2_cost`. Measured on our own tape: the create-slot scope is p50 7 / p90 13 / max 20 transactions per launch and the whole-window scope over CLOSED create-slot outsiders is p50 18 / p90 35 / max 70, unioned so none is paid for twice — **and the union is what the walk pays for: p50 19, p90 36.6, max 74 distinct transactions per launch**, so ~152 requests per candidate at the median and ~293 at p90 over 8 launches (an earlier version of this row said ~200 / ~380, which is the same arithmetic with the union left out). Worst case 3 × 400 = 1,200 requests, about 50 minutes, which `--dry-run` prints. **It runs only on a candidate the free legs have not already refused**, so the realistic cost is far lower. |
 | Solana RPC pacing | 2.5s | Measured: the nominally faster 1.4s was *slower* in wall-clock once 429 backoff is counted. Rate limiting is global across `getSignaturesForAddress` and `getTransaction`. |
 | `getTransaction` batch size | **1** | Measured harmful above 1 — see [Which history the gate counts](#which-history-the-gate-counts). |
 | RPC retries | 3 with exponential backoff, each attempt counted against the ceiling | Unlike the keyed client, a 429 here is load-shedding and not a verdict — but a 429 storm still cannot outlast the ceiling. |
@@ -934,8 +943,10 @@ readings of `swap-api` set 7s:
    degrades a verdict rather than announcing that the pacing is wrong.
 2. **The tape builder's own record against this same endpoint.** The committed
    `window/*.meta.json` `delay` field — the adaptive delay each build settled on — reads p50 4.92s,
-   p75 15s, p90 15.5s, max 40s, with only p10–p25 near 1.2s. Its shed share is ~24–25% **flat across
-   every delay bucket**, so backing off buys no immunity and there is no cheap corner to sit in.
+   p75 15s, p90 15.5s, max 40s, with only p10–p25 near 1.2s. Its shed share by delay quartile is
+   **24.2% / 24.8% / 28.5% / 23.8%** across the 238 builds carrying a `stats` block — 23.8–28.5%,
+   with the slowest quartile no better than the fastest — so backing off buys no immunity and there
+   is no cheap corner to sit in.
 
 7s therefore sits deliberately between that p50 and p75 rather than at the bottom of the range. The
 `--consistency` walk on `frontend-api-v3` stays at 2.0s: it has shed nothing in this tool's use of
@@ -1000,8 +1011,9 @@ it. Across the 235 covered launches:
 
 | quantity | measured |
 |---|---|
-| pages per launch | p50 **4**, p90 **8**, p95 **13**, max **24** |
-| fills per launch | p50 381, p90 736, p95 1,222, max 2,321 |
+| pages per launch, **pooled over all window lengths** | p50 **4**, p90 **8**, p95 **13**, max **24** |
+| pages per launch, **the 210 launches taped over a 60s window** — *the window a live walk reads* | p50 **4**, p90 **6**, p95 **6**, max **13** |
+| fills per launch | p50 381, p90 736, p95 1,222, max 2,321 (p50 **362** over the 60s launches) |
 | **HTTP 429 shed rate** | **16,960 of 68,675 requests — 24.7%** |
 | launches that shed at least once | **221 of 235** |
 
@@ -1013,8 +1025,14 @@ Two consequences, both of which corrected a first pass at this tool:
   died on one, three launches in. `KeylessClient` now retries twice, at 3s and 9s.
 - **A 10-request cap was too small and its stated justification was wrong.** It had been anchored on
   a single sampled window of 385 fills; the real distribution above shows 20 of 235 launches need 10
-  pages or more. The cap is 18 requests — about 13–14 successful pages at the measured shed rate,
-  covering roughly the 95th percentile. **The tail is dropped, not silently truncated:** a launch
+  pages or more. The cap is 18 requests — at the measured shed rate a page costs ~1.33 requests and
+  is only *started* while 3 requests of headroom remain, so 18 starts about **11–12** pages. Against
+  the population a live walk actually faces (the 60s launches) that is roughly double the p95 of 6
+  pages, and it does **not** reach that population's observed max of 13: the **2 launches in 210
+  (1.0%)** needing 13 pages would be dropped at the mean shed rate — reported, as below, never
+  silently truncated. An earlier version of this paragraph claimed 13–14 pages covering "roughly the
+  95th percentile", quoting the *pooled* p95 of 13; both halves came from a distribution inflated by
+  the 25 launches taped over 300s. **The tail is dropped, not silently truncated:** a launch
   that spends its cap without reaching the mint is reported `DROPPED` with its own note, and the
   sampling bias is stated, because the launches too busy to walk are exactly the interesting ones.
 
@@ -1184,7 +1202,7 @@ it five ways before a single request is issued:
 | the **field** measurement reproduces `wallet_launch_pnl.csv` | **1,502 create-slot outsider pairs, 0 closure mismatches, max realised error 5.0e-7 SOL** |
 | **the known-negative control**, at two points in time and once more with costs attached | see below |
 | **the rolling replay**, at every point in time | **228 trailing windows, 0 false positives and 0 false negatives**, 81 refused as unmeasured — see below |
-| **the cost leg**, against `onchain_create_slot_pnl.csv` | **113 launches, 775 create-slot entries, 631 round trips priced end to end**; median entry cost **0.0308 SOL**; hit rate **0.7401 gross → 0.6070 net**, **87** round trips flipping sign — see below |
+| **the cost leg**, against `onchain_create_slot_pnl.csv`, over the population the gate itself scores | **110 launches, 757 create-slot entries, 618 round trips priced end to end**; median entry cost **0.0308 SOL**; hit rate **0.7379 gross → 0.6117 net**, **81** round trips flipping sign; the unfiltered reading (113 / 775 / 631) is printed beside it — see below |
 
 #### The cost leg is regression-tested offline, using the live attach function
 

@@ -48,6 +48,7 @@ import {
 import type { Ledger } from '../tools/deployer-screen/ledger.mjs';
 import {
   FEED_LIMITATIONS,
+  FEED_RECORD_SCHEMA_VERSION,
   main,
   parseFeedArgs,
   planFeedRun,
@@ -805,6 +806,37 @@ describe('the feed end to end', () => {
       sleepImpl,
     });
     expect(armedLines.join('\n')).not.toMatch(/ALARM DISABLED/);
+  });
+
+  it('records whether the unreadable-profile alarm was armed, in BOTH states', async () => {
+    // --json and a saved --out record are what a scheduler reads, and the rendered warning never
+    // reaches either. Without this marker an `alarmed: false` from a batch below the floor is
+    // indistinguishable there from one that actually had the alarm armed.
+    const disarmedPath = join(dir, 'disarmed.json');
+    const one = vendor({ 'recent-bonds': ['Wa'] }, { Wa: profile(40, 20, 200) });
+    await main(opts({ gate: 1, out: disarmedPath, json: true }), env, () => {}, () => {}, {
+      fetchImpl: one.fetchImpl,
+      sleepImpl,
+    });
+
+    const armedPath = join(dir, 'armed.json');
+    const two = vendor({ 'recent-bonds': ['Wb', 'Wc'] }, { Wb: profile(40, 20, 200), Wc: profile(40, 20, 200) });
+    await main(opts({ gate: 2, out: armedPath, json: true }), env, () => {}, () => {}, {
+      fetchImpl: two.fetchImpl,
+      sleepImpl,
+    });
+
+    const read = (p: string) =>
+      JSON.parse(readFileSync(p, 'utf8')) as {
+        schemaVersion: number;
+        alarm: { alarmed: boolean; unmeasuredConditionArmed: boolean };
+        spend: { gateBatch: number };
+      };
+    expect(read(disarmedPath).alarm.unmeasuredConditionArmed).toBe(false);
+    expect(read(armedPath).alarm.unmeasuredConditionArmed).toBe(true);
+    // A reader with no version cannot tell a disarmed run from a record written before the field.
+    expect(read(disarmedPath).schemaVersion).toBe(FEED_RECORD_SCHEMA_VERSION);
+    expect(FEED_RECORD_SCHEMA_VERSION).toBeGreaterThanOrEqual(2);
   });
 
   it("the cadence filter's reported cost counts only wallets the gate could still have spent on", async () => {

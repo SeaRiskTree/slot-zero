@@ -95,8 +95,12 @@ const DEFAULT_RUNS_DIR = join(HERE, 'runs');
  * Feed record format version. Separate from the screen's `RECORD_SCHEMA_VERSION`: these are
  * different documents answering different questions, and one version number over both would make a
  * change to either read as a change to both.
+ *
+ * **2** adds `alarm.unmeasuredConditionArmed`. Bumped rather than added silently for the reason the
+ * field itself exists: in a schema-1 record the field's absence is indistinguishable from a run that
+ * had the alarm armed, so a reader with no version could not tell a disarmed run from an older one.
  */
-export const FEED_RECORD_SCHEMA_VERSION = 1;
+export const FEED_RECORD_SCHEMA_VERSION = 2;
 
 const EXIT = {
   ok: 0,
@@ -850,7 +854,13 @@ export async function main(opts, env, out, err, deps = {}) {
       },
       dryStreak: streak,
       dryStreakAlarm: feedT.dryStreakAlarm,
-      alarm: finalAlarm,
+      // `unmeasuredConditionArmed` is derived from the same constant the warning and the alarm
+      // condition read, so the three cannot disagree. It is in the record because `--json` is the
+      // shape a scheduler and any later reader of a saved `--out` record consume, and a text-only
+      // warning would leave the hole silent in exactly the place that acts on it: an `alarmed:
+      // false` from a batch below the floor is weaker evidence of health than one above it, and
+      // nothing else in the record says so.
+      alarm: { ...finalAlarm, unmeasuredConditionArmed: gateBatch >= ALL_UNMEASURED_MIN_GATED },
       ledger: summary,
       // The product. Wallet addresses are public on-chain data and ours to keep; nothing per-token
       // survives here, exactly as screen.mjs's own projection guarantees.

@@ -186,7 +186,10 @@ So every run reports, in this order — alarm first, then the new count, then th
    floor — a floor of 1 reinstates the sample-of-one assertion this decision exists to prevent — so
    `feed.mjs` instead prints a standing warning, on the **dry** path as well as the live one,
    whenever the resolved gate batch is below the floor, saying this alarm cannot fire at that
-   setting. Run `--gate 2` or higher if you want it armed.
+   setting. Run `--gate 2` or higher if you want it armed. The same fact is in the record as
+   **`alarm.unmeasuredConditionArmed`** (feed record **schema 2**), derived from the same constant,
+   because `--json` and a saved `--out` record are what a scheduler reads — and there `alarmed:
+   false` from a batch below the floor is weaker evidence of health than one above it.
 4. **A dry streak** — `feed.dryStreakAlarm` (3) consecutive *live, completed* runs with no new
    wallet. One dry run is ordinary; the vendor's pages overlap heavily between runs. Three is
    saturation, and the remedy is a wider source, not a longer wait. An **aborted** run is skipped

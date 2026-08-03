@@ -47,10 +47,11 @@ node tools/deployer-screen/screen.mjs --dry-run
 # A real run. Needs a key (see below). Stage 2 is ON by default. Leave --candidates unset: the
 # default grades everything enumeration surfaces, up to the budget. Passing a number below the
 # ceiling silently truncates coverage, which is exactly how the first elite run graded 12 of the
-# 22 wallets it seeded. Budget HOURS, not minutes — up to about 15 at the candidate cap: the
-# creation-derived history is walked from on-chain create transactions, and at the pinned bounds
-# that KEYLESS walk alone is ~13.5 hours worst case. With HELIUS_API_KEY set the same leg is the
-# indexed walk, ~46 minutes, bounded in credits instead of hours (see Bounds).
+# 22 wallets it seeded. With DUNE_API_KEY set the creation-derived history is ENUMERATED on Dune,
+# one execution for the whole batch, seconds rather than hours. Budget for the FALLBACK anyway,
+# because every candidate may take it: HOURS, not minutes — up to about 15 at the candidate cap,
+# since at the pinned bounds the KEYLESS walk alone is ~13.5 hours worst case. With HELIUS_API_KEY
+# set that fallback leg is the indexed walk, ~46 minutes, bounded in credits (see Bounds).
 # --dry-run prints the arithmetic for your own flags, on whichever route your key selects.
 node tools/deployer-screen/screen.mjs --tier elite \
   --consistency --out tools/deployer-screen/runs/$(date +%F).json
@@ -62,7 +63,8 @@ node tools/deployer-screen/screen.mjs --tier elite --candidates 12
 # The competence gate alone, which answers nothing about whether a window is enterable.
 node tools/deployer-screen/screen.mjs --no-stage2
 
-# The old, fast, BIASED reading — it skips the creation walk, so under an hour rather than ~15.
+# The old, fast, BIASED reading — it skips every creation-derived reading, Dune enumeration and
+# walk alike, so under an hour rather than ~15.
 # Stamped historySource: "ownership-only" in the record, because the bias must travel with it.
 node tools/deployer-screen/screen.mjs --tier elite --ownership-only
 
@@ -338,15 +340,20 @@ it is measured directly rather than inferred from `movedCreator`.
 
 ## The credentials
 
-Two, and they are unrelated to each other. Both are read from the environment. **Nothing in this
-repository holds a key and nothing here ever will**; neither value is printed, logged or written to
+Three, and they are unrelated to each other. All are read from the environment. **Nothing in this
+repository holds a key and nothing here ever will**; no value is printed, logged or written to
 disk, presence is verified by length and shape only, and `credential.mjs` is the only module
-permitted to name either variable — a test enforces that, the allow-list is exhaustive, and a
-committed file carrying either key's shape fails the build.
+permitted to name any of the three variables — a test enforces that, the allow-list is exhaustive
+and is asserted for ownership as well as exclusion, a committed file carrying a MadeOnSol or Helius
+key's shape fails the build, and a committed file that assigns a value to a credential variable or
+hard-codes the auth header fails it too. That second scan is what covers the Dune key, whose 32
+alphanumeric characters are structurally a Solana address and so cannot be shape-scanned without
+firing on every mint in the tree.
 
 ```bash
 export MADEONSOL_API_KEY="$(your-secret-manager read madeonsol)"
 export HELIUS_API_KEY="$(your-secret-manager read helius)"
+export DUNE_API_KEY="$(your-secret-manager read dune)"
 # or, from a dotenv file kept OUTSIDE this repo:
 set -a; . /path/to/your/.env; set +a
 ```
@@ -391,6 +398,18 @@ starved by a heavy run. Credits, not wall clock, are therefore what bounds this 
 **Nothing here tracks the month.** The tool holds no state between runs, so it can bound one run
 and no more. `--dry-run` prints that run's worst case and its share of a month; the monthly
 arithmetic is the operator's.
+
+### `DUNE_API_KEY` — optional, and it selects the PRIMARY creation-enumeration surface
+
+With it set, "which mints did this wallet create" is answered by Dune; with it unset the tool runs
+exactly as it did before decision 156a and every number is what it was. A key that is present but
+**malformed** — a pasted URL, or a length outside 16–128 — is refused on shape, falls back to the
+walk and says why, naming the shape and never the value. There is no exit code for its absence.
+
+The key is stored bare and sent as the `X-Dune-API-Key` **header**, never `Bearer` and never a query
+parameter, so no URL this client builds can carry a credential. Free tier, and the allowance is
+**shared**: what a run may spend, and what it refuses rather than publish, is
+[The PRIMARY surface](#the-primary-surface-dunes-decoded-creation-events) and [Bounds](#bounds).
 
 ## Why we never inherit their aggregate
 
@@ -577,6 +596,11 @@ are **not** like-for-like. Do not re-derive those figures here.
 - The wallet address is public on-chain data, not vendor data. The counts and the rate are our own
   computation from records we did not keep. Nothing persisted can reconstruct any part of their
   database.
+
+**The same posture covers Dune**, whose own terms were read before the first committed run and
+neither address caching nor derived data — its per-launch rows live in memory for one run, and the
+record keeps the coverage *bound* rather than the vendor's monthly counts.
+[CREATION-DERIVED.md §8.7](./CREATION-DERIVED.md) owns that reading.
 
 **§5a(b)** — internal research only. No publishing, no outbound feed, no shared surface, no
 third-party display. The output is a text report and an optional local JSON file in a private
@@ -983,7 +1007,9 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 ### How long a run takes, and how to bound it
 
 **A full default run at the 195-candidate cap is worst-cased in HOURS, not minutes — about 15 —
-and the creation walk is essentially all of it.** The arithmetic is `renderDryRun`'s, so `--dry-run`
+and the creation walk is essentially all of it.** With `DUNE_API_KEY` set the walk is the fallback
+and a typical run does not take it at all, finishing far inside this figure; the worst case does not
+move, because every candidate may still fall back. The arithmetic is `renderDryRun`'s, so `--dry-run`
 prints these same figures for whatever flags you actually pass:
 
 **With a Helius key that leg is ~46 minutes instead of ~13.5 hours**, and the run's worst case falls
@@ -1037,7 +1063,8 @@ Two levers already exist, and this is what they are for:
 
 - **`--candidates N`** bounds the whole run — the RPC leg is `N × 100 × 2.5s`, so `--candidates 12`
   is ~40 minutes of walking rather than ~13.5 hours. It truncates coverage, and the record says so.
-- **`--ownership-only`** skips the creation walk entirely, which is the ~13.5 hours, leaving a run
+- **`--ownership-only`** skips every creation-derived reading — Dune enumeration and walk alike, and
+  the walk is the ~13.5 hours — leaving a run
   of well under an hour. Its reading is **biased towards rejection** — that is the defect this whole
   lane exists to fix — and the record is stamped `historySource: "ownership-only"` so the bias
   travels with the numbers rather than being forgotten.
@@ -1528,10 +1555,16 @@ The boundary is the directory, and `test/deployer-screen.test.ts` asserts the ot
 - `src/` may not import from `tools/`, and `tools/` may not import from `src/`. The duplicated curve
   constants in `measure.mjs` are this boundary's cost, paid deliberately.
 - Only `client.mjs` and `pumpfun.mjs` may call `fetch`.
-- Only `credential.mjs` and `screen.mjs` may name `MADEONSOL_API_KEY`.
+- Only `credential.mjs` and `screen.mjs` may name `MADEONSOL_API_KEY`, `HELIUS_API_KEY` or
+  `DUNE_API_KEY`, and the allow-list is asserted for **ownership** too: those files must name them,
+  so the guard cannot pass by the variables quietly disappearing.
 - **No committed file under the tool may contain a key-shaped string** — every file, not only the
   sources. `runs/*.json`, `thresholds.json` and this README are where an accidental paste would most
   plausibly land, and a source-only filter never read any of them.
+- **No committed file may assign a value to a credential variable or hard-code the auth header.**
+  This is what covers the Dune key: 32 alphanumeric characters is structurally a Solana address, so
+  adding it to the shape scan would fire on every mint in the tree, while this scan catches the
+  realistic paste with no false positives.
 
 ## What the output does not claim
 

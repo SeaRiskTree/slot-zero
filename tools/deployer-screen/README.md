@@ -49,11 +49,13 @@ node tools/deployer-screen/screen.mjs --dry-run
 # ceiling silently truncates coverage, which is exactly how the first elite run graded 12 of the
 # 22 wallets it seeded. Budget HOURS, not minutes — up to about 15 at the candidate cap: the
 # creation-derived history is walked from on-chain create transactions, and at the pinned bounds
-# that walk alone is ~13.5 hours worst case. --dry-run prints the arithmetic for your own flags.
+# that KEYLESS walk alone is ~13.5 hours worst case. With HELIUS_API_KEY set the same leg is the
+# indexed walk, ~33 minutes, bounded in credits instead of hours (see Bounds).
+# --dry-run prints the arithmetic for your own flags, on whichever route your key selects.
 node tools/deployer-screen/screen.mjs --tier elite \
   --consistency --out tools/deployer-screen/runs/$(date +%F).json
 
-# Bound the run instead. The RPC walk is N x 100 x 2.5s, so this is ~40 minutes, not ~13.5 hours.
+# Bound the run instead. The keyless RPC walk is N x 100 x 2.5s, so this is ~40 minutes, not ~13.5 hours.
 # It truncates coverage, and the record says so.
 node tools/deployer-screen/screen.mjs --tier elite --candidates 12
 
@@ -972,10 +974,12 @@ without fetching anything.
 The conditional in the instruction binds: ***"if it gets results"***. It licenses sizing a run by
 what the question needs. It does **not** license sweeping, idle retrying, or re-running to
 re-evidence a side observation — a run that cannot say in advance what it will answer does not get
-the allowance. And the relaxation is **MadeOnSol only**: the Helius / SolanaTracker / CoinGecko keys
+the allowance. And the relaxation is **MadeOnSol only**: the SolanaTracker / CoinGecko keys
 are shared with production and the standing *"do not waste the quota that is production quota too"*
 is unchanged, as is the keyless pump.fun pacing, which bounds a shared public resource for a
-different reason.
+different reason. **Helius is no longer in that list** (captain, 2026-08-03) — its key is unshared
+and belongs to this research lane alone, so it is budgeted against the whole monthly allowance and
+metered on its own terms, in credits, by `thresholds.json` → `creation_walk_helius`.
 
 Every run reports its spend **concretely**, not as one number: the record's `spend` block (schema 3)
 carries the ceiling, what went unspent, the planned worst case, and every endpoint called with its

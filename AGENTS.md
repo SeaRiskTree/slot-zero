@@ -141,7 +141,7 @@ Learned at real cost; the citations are to
   `coins/list?dev=` silently ignores the filter rather than applying it. The only route is the
   create transaction — `tools/deployer-screen/creation.mjs` and its README section "Which history
   the gate counts" own this, including what the walk costs and how to read the record.
-  **The walk normally covers NO window at all** — 100 requests per candidate against 1,000-entry
+  **The KEYLESS walk normally covers NO window at all** — 100 requests per candidate against 1,000-entry
   signature pages means it usually stops inside page 1, and the floor only advances after a page is
   inspected whole. So `covered.fromMs` is `number | null` and **`null` means covered nothing, never
   "since the epoch"**: a `0` sentinel there read as a 56-year window and made the merge delete 29 of
@@ -441,7 +441,8 @@ supersedes the re-open monitor (captain, 2026-08-02: *a competent dev will not r
   median of ≥132.7 days (max ≥857, n=74) before this project first saw it.** That figure is a lower
   bound and it exists only for wallets the vendor profiled — cite it, do not let it read as coverage.
 - **The feed grades on the OWNERSHIP reading, so its failures are `held`, never `gate-failed`.** The
-  creation-derived walk is ~100 RPC per candidate and no schedule can carry it. Ownership is biased
+  creation-derived walk costs ~100 keyless RPC per candidate (or Helius credits when keyed) and this
+  lane's bounds carry neither — it spends no Solana RPC at all. Ownership is biased
   towards rejection, so `held` is a triage outcome and `screen.mjs` stays the authority; every run
   prints the standing held count and the one-leg near-misses inside it.
 - **Bounds are per-run and pinned in `thresholds.json` → `feed`: 3 enumeration + at most `--gate`

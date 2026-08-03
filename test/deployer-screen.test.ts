@@ -2498,6 +2498,12 @@ describe('percentiles match the convention the tape report used', () => {
 
 const DUNE_FAKE_KEY = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6';
 
+/**
+ * A base58-shaped wallet, because `enumerateCreations` refuses anything else BEFORE it can reach the
+ * query parameter — the wallets are vendor-supplied and land inside a single-quoted SQL literal.
+ */
+const DUNE_WALLET = '7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL';
+
 /** A coverage probe payload shaped like the real one, at whatever bounds a test needs. */
 function probeRows(
   spec: { table: string; first: string; last: string; total: number; months: string[] }[],
@@ -2881,6 +2887,50 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     expect(e.reasons.join(' ')).toMatch(/newer than/);
   });
 
+  it('REFUSES a wallet it returned no row for — absence of evidence is not evidence of absence', () => {
+    // The worst failure available here, and it is manufactured out of nothing: read as a launch
+    // history of zero, `covered.exhausted` would let mergeHistories reclassify this wallet's whole
+    // in-window ownership listing as acquired and gate it on nothing. That is exactly the invisible
+    // false rejection the creation-derived lane exists to remove.
+    const e = toWalletEnumeration({ wallet: 'W', launches: [], coverage: coverage() });
+    expect(e.usable).toBe(false);
+    expect(e.reasons.join(' ')).toMatch(/absence of evidence rather than evidence of absence/);
+    // And it must not carry a claim of exhaustive coverage into the merge either.
+    expect(e.covered.exhausted).toBe(false);
+
+    // Proof that the reading it refuses would have been destructive: with `exhausted` true over the
+    // probe's whole multi-year span, every listed token is reclassified as acquired and dropped.
+    const listedInWindow = [
+      { mint: 'L1', deployedAtMs: Date.parse('2026-01-01T00:00:00Z'), completed: true },
+      { mint: 'L2', deployedAtMs: Date.parse('2026-02-01T00:00:00Z'), completed: false },
+    ];
+    const asIfExhaustive = mergeHistories({
+      creates: [],
+      wallet: 'W',
+      curves: new Map(),
+      listed: listedInWindow,
+      covered: { fromMs: coverage().fromMs, toMs: coverage().toMs ?? 0, exhausted: true },
+      unresolvedTransactions: 0,
+    });
+    expect(asIfExhaustive.notCreatedByWallet).toBe(2);
+    expect(asIfExhaustive.records.length).toBe(0);
+  });
+
+  it('carries a batch-level refusal through as a whole sentence, and still reports the count', () => {
+    // Every refusal travels the same way: a sentence in `reasons`, `usable` false, and the count
+    // still carried so a record shows the SIZE of what was refused.
+    const e = toWalletEnumeration({
+      wallet: 'W',
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
+      coverage: coverage(),
+      priorReasons: ['3 row(s) of the Dune answer could not be read, so the whole batch is refused.'],
+    });
+    expect(e.usable).toBe(false);
+    expect(e.covered.exhausted).toBe(false);
+    expect(e.reasons[0]).toMatch(/whole batch is refused/);
+    expect(e.launches).toBe(1);
+  });
+
   it('dedupes by mint and counts what it could not read rather than dropping it silently', () => {
     const { byWallet, unreadableRows } = parseCreationRows([
       { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
@@ -2938,7 +2988,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       '/query/1': okJson({ query_sql: CREATION_SQL }),
       '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
       '/execution/e1/results': resultOf([
-        { deployer: 'W', mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
       ]),
     });
     const c = new DuneClient({
@@ -2950,7 +3000,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       sleepImpl: async () => {},
     });
     const e = await enumerateCreations(c, {
-      wallets: ['W'],
+      wallets: [DUNE_WALLET],
       creationQueryId: 1,
       coverageQueryId: 2,
       refreshProbe: false,
@@ -2958,7 +3008,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       bounds: DUNE_BOUNDS,
     });
     expect(e.coverage.ok).toBe(true);
-    expect(e.byWallet.get('W')?.launches).toBe(1);
+    expect(e.byWallet.get(DUNE_WALLET)?.launches).toBe(1);
     expect(e.probe.fromCache).toBe(true);
     // Exactly ONE execution for the whole batch, and none for the probe.
     expect(c.executions()).toBe(1);
@@ -2984,7 +3034,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       sleepImpl: async () => {},
     });
     const e = await enumerateCreations(c, {
-      wallets: ['W'],
+      wallets: [DUNE_WALLET],
       creationQueryId: 1,
       coverageQueryId: 2,
       refreshProbe: false,
@@ -2994,8 +3044,8 @@ describe('the enumeration spends nothing it does not have to', () => {
     expect(c.executions()).toBe(0);
     expect(e.coverage.ok).toBe(false);
     // Every wallet asked about gets an answer, and the answer is "fall back" — never "no launches".
-    expect(e.byWallet.get('W')?.usable).toBe(false);
-    expect(e.byWallet.get('W')?.reasons.join(' ')).toMatch(/refused/);
+    expect(e.byWallet.get(DUNE_WALLET)?.usable).toBe(false);
+    expect(e.byWallet.get(DUNE_WALLET)?.reasons.join(' ')).toMatch(/refused/);
   });
 
   it('re-executes a stale CACHED probe once rather than degrading the whole run to the walk', async () => {
@@ -3047,7 +3097,7 @@ describe('the enumeration spends nothing it does not have to', () => {
     });
     // Two days after the probe's newest row: stale, and stale ONLY.
     const e = await enumerateCreations(c, {
-      wallets: ['W'],
+      wallets: [DUNE_WALLET],
       creationQueryId: 1,
       coverageQueryId: 2,
       refreshProbe: false,
@@ -3079,7 +3129,7 @@ describe('the enumeration spends nothing it does not have to', () => {
     });
     await expect(
       enumerateCreations(c, {
-        wallets: ['W'],
+        wallets: [DUNE_WALLET],
         creationQueryId: 1,
         coverageQueryId: 2,
         refreshProbe: false,
@@ -3087,6 +3137,209 @@ describe('the enumeration spends nothing it does not have to', () => {
         bounds: DUNE_BOUNDS,
       }),
     ).rejects.toThrow(/above the pinned ceiling/);
+  });
+
+  it('refuses a read that cannot prove it is whole, rather than substituting the rows it got', async () => {
+    // The request carries `?limit=maxResultRows`, so `rows.length` is not a substitute for the
+    // declared total: a result cut at exactly the limit reads as a complete result of that size and
+    // sails through the ceiling check. Same complete-looking-but-short failure this module refuses
+    // everywhere else, and it is refused here too.
+    const noTotal = stub({
+      '/query/2/results': okJson({
+        result: { rows: HEALTHY_PROBE(), metadata: { total_result_set_bytes: 1 } },
+      }),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+    });
+    const client = (fetchImpl: ReturnType<typeof stub>) =>
+      new DuneClient({
+        key: DUNE_FAKE_KEY,
+        maxExecutions: 2,
+        maxRequests: 20,
+        minIntervalMs: 0,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        sleepImpl: async () => {},
+      });
+    const call = (c: DuneClient) =>
+      enumerateCreations(c, {
+        wallets: [DUNE_WALLET],
+        creationQueryId: 1,
+        coverageQueryId: 2,
+        refreshProbe: false,
+        nowMs: NOW_MS,
+        bounds: { ...DUNE_BOUNDS, maxResultRows: HEALTHY_PROBE().length },
+      });
+    await expect(call(client(noTotal))).rejects.toThrow(/no `total_row_count`/);
+
+    // And a read sitting exactly ON its own limit, with a total that agrees. It is indistinguishable
+    // from a truncated one, so it is refused rather than published.
+    const atLimit = stub({
+      '/query/2/results': okJson({
+        result: {
+          rows: HEALTHY_PROBE(),
+          metadata: { total_row_count: HEALTHY_PROBE().length, total_result_set_bytes: 1 },
+        },
+      }),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+    });
+    await expect(call(client(atLimit))).rejects.toThrow(/sits on its own limit/);
+  });
+
+  it('REFUSES THE WHOLE BATCH when any row went unread, and every candidate falls back', async () => {
+    // Not the wallet the bad row belonged to: a row that fails to parse commonly has no readable
+    // `deployer`, so the wallet whose history came back short is exactly the one that cannot be
+    // named. Partial attribution would leave it gated on what survived the parser.
+    const other = '32CdQdBUxbCsLy5AUHWmyidfwhgGUr9N573NBUrDpump';
+    const fetchImpl = stub({
+      '/query/2/results': resultOf(HEALTHY_PROBE()),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/query/1/execute': okJson({ execution_id: 'e1' }),
+      '/query/1': okJson({ query_sql: CREATION_SQL }),
+      '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      '/execution/e1/results': resultOf([
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
+        { deployer: other, mint: 'N', created_at: '2026-02-01 00:00:00.000 UTC', bonded: false },
+        // No readable deployer, which is the whole point: this row's wallet cannot be named.
+        { mint: 'X', created_at: 'not a timestamp', bonded: false },
+      ]),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET, other],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    expect(e.unreadableRows).toBe(1);
+    expect(e.coverage.ok).toBe(true);
+    for (const w of [DUNE_WALLET, other]) {
+      const r = e.byWallet.get(w);
+      expect(r?.usable, `${w} must fall back to the walk`).toBe(false);
+      expect(r?.reasons.join(' ')).toMatch(/whole batch is refused/);
+      expect(r?.covered.exhausted).toBe(false);
+      // What the refused answer WOULD have said is still carried, so a record shows its size.
+      expect(r?.launches).toBe(1);
+    }
+  });
+
+  it('REFUSES a wallet it got no row for instead of gating it on a zero-launch history', async () => {
+    const answered = '32CdQdBUxbCsLy5AUHWmyidfwhgGUr9N573NBUrDpump';
+    const fetchImpl = stub({
+      '/query/2/results': resultOf(HEALTHY_PROBE()),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/query/1/execute': okJson({ execution_id: 'e1' }),
+      '/query/1': okJson({ query_sql: CREATION_SQL }),
+      '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      '/execution/e1/results': resultOf([
+        { deployer: answered, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true },
+      ]),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET, answered],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    // The refusal is PER WALLET, so one batch legitimately carries both sources.
+    expect(e.byWallet.get(answered)?.usable).toBe(true);
+    const silent = e.byWallet.get(DUNE_WALLET);
+    expect(silent?.usable).toBe(false);
+    expect(silent?.reasons.join(' ')).toMatch(/absence of evidence rather than evidence of absence/);
+    expect(silent?.covered.exhausted).toBe(false);
+  });
+
+  it('never puts a wallet that is not base58-shaped in the query parameter', async () => {
+    // The first path in this repository where a vendor-supplied string reaches a query language:
+    // `{{deployers}}` lands inside the single-quoted literal `split('{{deployers}}', ',')`, and
+    // nothing upstream validates the shape — seed.mjs takes any non-empty string the vendor sends.
+    const injection = "x', 'y') -- ";
+    let executeBody: string | null = null;
+    const fetchImpl = vi.fn(async (url: unknown, init?: unknown) => {
+      const path = String(url).replace(DUNE_API_BASE, '');
+      if (path.startsWith('/query/2/results')) return resultOf(HEALTHY_PROBE())();
+      if (path.startsWith('/query/2')) return okJson({ query_sql: COVERAGE_SQL })();
+      if (path.startsWith('/query/1/execute')) {
+        executeBody = String((init as { body?: unknown } | undefined)?.body ?? '');
+        return okJson({ execution_id: 'e1' })();
+      }
+      if (path.startsWith('/query/1')) return okJson({ query_sql: CREATION_SQL })();
+      if (path.startsWith('/execution/e1/status')) return okJson({ state: 'QUERY_STATE_COMPLETED' })();
+      if (path.startsWith('/execution/e1/results')) {
+        return resultOf([{ deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true }])();
+      }
+      throw new Error(`unstubbed ${path}`);
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET, injection, 'too-short'],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    // The parameter carries the well-shaped wallet and NOTHING else.
+    expect(executeBody).not.toBeNull();
+    expect(JSON.parse(executeBody as unknown as string).query_parameters.deployers).toBe(DUNE_WALLET);
+    // The dropped ones do not vanish from the run — they fall back to the walk like any other
+    // unusable reading, and the count is on the record so a narrowed batch is visible.
+    expect(e.walletsRefusedByShape).toBe(2);
+    for (const w of [injection, 'too-short']) {
+      expect(e.byWallet.get(w)?.usable).toBe(false);
+      expect(e.byWallet.get(w)?.reasons.join(' ')).toMatch(/not the base58 shape/);
+    }
+    expect(e.byWallet.get(DUNE_WALLET)?.usable).toBe(true);
+  });
+
+  it('spends no execution at all when every candidate fails the wallet shape', async () => {
+    const fetchImpl = stub({
+      '/query/2/results': resultOf(HEALTHY_PROBE()),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: ['W', 'nope'],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+    });
+    expect(c.executions()).toBe(0);
+    expect(e.walletsRefusedByShape).toBe(2);
+    expect(e.byWallet.get('W')?.usable).toBe(false);
   });
 });
 

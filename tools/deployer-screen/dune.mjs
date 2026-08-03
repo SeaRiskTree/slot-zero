@@ -45,6 +45,27 @@
  * enumeration does NOT use, so the tool demonstrates the boundary that disqualifies it rather than
  * asserting it in prose.
  *
+ * ## The same rule applied past coverage: a reading that cannot vouch for itself falls back
+ *
+ * Coverage is one way a Dune answer stops being able to account for itself, and it is not the only
+ * one. Four more, each of which produces a complete-LOOKING answer that is short, and each of which
+ * therefore refuses rather than publishes:
+ *
+ * - **A row the parser could not read.** `unreadableRows > 0` refuses the WHOLE batch, not the
+ *   wallet the row belonged to — a row that fails to parse commonly has no readable `deployer`, so
+ *   the wallet whose history went short is exactly the wallet that cannot be named.
+ * - **A wallet the enumeration returned NO row for.** That is an absence of evidence, not evidence
+ *   of absence, and gating a wallet on a zero-launch history built from it is the invisible false
+ *   rejection this whole lane exists to remove. See {@link toWalletEnumeration}.
+ * - **A wallet whose address is not base58-shaped.** Every wallet here is vendor-supplied and lands
+ *   inside a single-quoted SQL literal, so {@link isEnumerableWallet} is checked before the batch is
+ *   sent and anything failing it is dropped from the parameter and counted.
+ * - **A result set that may have been truncated at the limit** — see {@link DuneResultSet}'s reader.
+ *
+ * Every one of them leaves `usable: false` with a whole-sentence reason, and the candidate takes the
+ * walk. Falling back costs wall clock; publishing a count the evidence does not support costs a
+ * verdict, and that is the expensive side of the trade.
+ *
  * ## Spend
  *
  * **A FAILED EXECUTION IS STILL BILLED AND IT IS TERMINAL** — `client.mjs` → {@link
@@ -167,6 +188,34 @@ export const ENUMERATION_TABLES = ['evt_createevent', 'call_create'];
  * The parameter name {@link CREATION_SQL} declares. Named once so a rename cannot half-happen.
  */
 export const DEPLOYERS_PARAM = 'deployers';
+
+/**
+ * The base58 wallet shape, and the ONLY strings {@link enumerateCreations} will put in a Dune query
+ * parameter.
+ *
+ * **This is the first path in this repository where a vendor-supplied string reaches a query
+ * language.** Every other consumer neutralises it — `encodeURIComponent` for the MadeOnSol URL, a
+ * JSON parameter for the RPC walk — but Dune substitutes text parameters into the query TEXT, and
+ * {@link CREATION_SQL} interpolates `{{deployers}}` inside the single-quoted literal
+ * `split('{{deployers}}', ',')`. A wallet carrying a quote would close that literal and alter a
+ * statement that is executed and billed on this account. Nothing upstream validates the shape:
+ * `seed.mjs` → `extractWallets` accepts any non-empty string a MadeOnSol payload puts in
+ * `wallet_address` / `wallet` / `address` / `deployer_wallet` / `creator`.
+ *
+ * A comma is excluded by the alphabet rather than by a separate rule, which matters because the
+ * parameter is comma-joined: a wallet containing one would silently become two filter entries.
+ */
+export const WALLET_SHAPE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
+/**
+ * Whether a candidate's address may be sent to Dune at all. See {@link WALLET_SHAPE}.
+ *
+ * @param {unknown} wallet
+ * @returns {boolean}
+ */
+export function isEnumerableWallet(wallet) {
+  return typeof wallet === 'string' && WALLET_SHAPE.test(wallet);
+}
 
 /**
  * Parse one of Dune's timestamps to epoch milliseconds.
@@ -419,6 +468,13 @@ export function assessCoverage(input) {
  * dropped silently: a partly-unreadable answer is not a shorter answer, and a wallet whose rows went
  * unread must fall back to the walk rather than be gated on what survived.
  *
+ * **`unreadableRows > 0` refuses the WHOLE batch**, in {@link enumerateCreations}, and the blast
+ * radius is deliberate rather than lazy. A row that fails to parse commonly has no readable
+ * `deployer` — that is one of the three ways it fails to parse — so the wallet whose history came
+ * back short is exactly the wallet that cannot be named. Attributing the damage per wallet would
+ * leave the affected one gated on a silently short history, which is the confident-wrong-answer
+ * shape this module exists to refuse, arriving through the parser instead of through coverage.
+ *
  * @param {readonly unknown[]} rows
  * @returns {{ byWallet: Map<string, DuneLaunch[]>, unreadableRows: number }}
  */
@@ -484,6 +540,18 @@ export function parseCreationRows(rows) {
  * from the other end, and it is reachable in practice — the probe defaults to a cached read, so an
  * enumeration executed after it can return a launch the probe never covered.
  *
+ * **A wallet the enumeration returned NO row for is refused too, and that is not a reading of "this
+ * wallet created nothing".** It is an absence of evidence, and treating it as evidence of absence is
+ * the worst failure available here: `mergeHistories` would read `covered.exhausted` over the probe's
+ * whole multi-year span, count every in-window row of that wallet's ownership listing
+ * `notCreatedByWallet`, drop them, and apply the gate to a history of zero created launches. That is
+ * precisely the invisible false rejection the creation-derived lane exists to remove, manufactured
+ * out of nothing. It falls back to the walk, which CAN tell the two apart.
+ *
+ * `covered.exhausted` therefore tracks THIS wallet's usability rather than the run-level probe: a
+ * refused reading must not carry a claim of exhaustive coverage into the merge even if nothing
+ * downstream reads it today.
+ *
  * `curves` carries `creator: null` on every entry, deliberately. Dune says who created a mint and
  * whether it completed; it does not say who the curve's creator is NOW, so
  * `mergeHistories.movedCreator` must not be allowed to report 0 as though it had measured one.
@@ -492,12 +560,15 @@ export function parseCreationRows(rows) {
  * @param {string} input.wallet
  * @param {readonly DuneLaunch[]} input.launches
  * @param {CoverageAssessment} input.coverage
+ * @param {readonly string[]} [input.priorReasons] Batch-level refusals already established for this
+ *   wallet — an unreadable row anywhere in the answer, or an address never sent. They are carried
+ *   here so every refusal reaches `reasons` by one route.
  * @returns {WalletEnumeration}
  */
 export function toWalletEnumeration(input) {
   const { wallet, launches, coverage } = input;
   /** @type {string[]} */
-  const reasons = [];
+  const reasons = [...(input.priorReasons ?? [])];
 
   const firstLaunchMs = launches.length === 0 ? null : Math.min(...launches.map((l) => l.createdAtMs));
   const lastLaunchMs = launches.length === 0 ? null : Math.max(...launches.map((l) => l.createdAtMs));
@@ -522,6 +593,15 @@ export function toWalletEnumeration(input) {
     }
   }
 
+  if (reasons.length === 0 && launches.length === 0) {
+    reasons.push(
+      `the enumeration returned no creation row at all for this wallet, which is an absence of ` +
+        `evidence rather than evidence of absence. Reading it as a launch history of zero would let ` +
+        `the merge reclassify this wallet's whole ownership listing as acquired and gate it on ` +
+        `nothing, so the creation walk answers for it instead.`,
+    );
+  }
+
   /** @type {import('./creation.mjs').CreateRecord[]} */
   const creates = [];
   /** @type {Map<string, import('./creation.mjs').CurveState>} */
@@ -542,8 +622,9 @@ export function toWalletEnumeration(input) {
     if (l.bonded) bonded += 1;
   }
 
+  const usable = reasons.length === 0;
   return {
-    usable: reasons.length === 0,
+    usable,
     reasons,
     creates,
     curves,
@@ -553,8 +634,9 @@ export function toWalletEnumeration(input) {
       // Inside probed coverage the enumeration is EXHAUSTIVE — it is an index of creation events,
       // not a window walked backwards until a budget bit. That is the whole difference from the
       // signature walk, and it is what lets the merge label a listed-but-not-created token
-      // "acquired" instead of carrying it over.
-      exhausted: coverage.ok,
+      // "acquired" instead of carrying it over. It is THIS WALLET's usability rather than the
+      // run-level probe: a refused reading claims no coverage it can be held to.
+      exhausted: usable,
     },
     launches: launches.length,
     bonded,
@@ -648,12 +730,33 @@ async function readResult(client, path, bounds) {
   const metadata = field(result, 'metadata');
   const bytes = Number(field(metadata, 'total_result_set_bytes') ?? field(metadata, 'result_set_bytes') ?? 0);
   client.noteResultBytes(bytes);
-  const total = Number(field(metadata, 'total_row_count') ?? rows.length);
-  if (Number.isFinite(total) && total > bounds.maxResultRows) {
+  // The request carries `?limit=maxResultRows`, so `rows.length` is NOT a substitute for the
+  // declared total: a result truncated at exactly the limit would read as a complete result of that
+  // size and sail through the ceiling check below. That is the same complete-looking-but-short
+  // failure this module refuses everywhere else, so a missing total refuses rather than guesses.
+  const declared = field(metadata, 'total_row_count');
+  const total = Number(declared);
+  if (declared === undefined || declared === null || !Number.isFinite(total)) {
+    throw new DuneRefused(
+      `Dune returned no \`total_row_count\` for ${path}, so this read cannot say whether it was ` +
+        `truncated at the \`?limit=${bounds.maxResultRows}\` it was issued with. A result cut at the ` +
+        `limit is indistinguishable from a complete one of that size, so it is refused rather than ` +
+        `read as a launch history.`,
+      { status: null, terminal: false },
+    );
+  }
+  if (total > bounds.maxResultRows) {
     throw new DuneRefused(
       `Dune returned ${total} rows for ${path}, above the pinned ceiling of ${bounds.maxResultRows}. ` +
         `Results are billed by bytes, so an unbounded read is an unbounded bill; the reading is ` +
         `refused rather than paged.`,
+      { status: null, terminal: false },
+    );
+  }
+  if (rows.length >= bounds.maxResultRows) {
+    throw new DuneRefused(
+      `Dune returned exactly the ${bounds.maxResultRows} rows requested for ${path}, so this read ` +
+        `sits on its own limit and cannot prove it is whole. It is refused rather than published.`,
       { status: null, terminal: false },
     );
   }
@@ -726,11 +829,15 @@ export async function readCoverageProbe(client, opts) {
  * @typedef {object} DuneEnumeration
  * @property {CoverageProbe} probe
  * @property {CoverageAssessment} coverage
- * @property {Map<string, WalletEnumeration>} byWallet Keyed on the wallet, for every wallet ASKED
- *   about — including ones the enumeration returned no row for, which is a real answer (a wallet
- *   with no creation event created nothing on these surfaces) and not a missing one.
- * @property {number} unreadableRows
+ * @property {Map<string, WalletEnumeration>} byWallet Keyed on the wallet, for every wallet the
+ *   caller asked about — including ones never sent because their address was not base58-shaped, and
+ *   ones the enumeration returned no row for. Neither is a reading of "this wallet created
+ *   nothing": both are `usable: false`, and the walk answers for them.
+ * @property {number} unreadableRows Rows the parser could not read. **Any non-zero value refuses the
+ *   whole batch** — see {@link parseCreationRows}.
  * @property {number} rowsReturned
+ * @property {number} walletsRefusedByShape How many candidates were dropped from the query parameter
+ *   for not matching {@link WALLET_SHAPE}. Counted rather than silently narrowing the batch.
  */
 
 /**
@@ -740,6 +847,11 @@ export async function readCoverageProbe(client, opts) {
  * many wallets are in the filter — measured, 5 wallets and 20 wallets cost the same table scan — so
  * the per-deployer price falls as the batch grows. What scales is the bytes returned, which is why
  * the SQL selects four columns.
+ *
+ * **Every wallet asked about comes back with an answer, and "fall back to the walk" is one of the
+ * answers.** A refused coverage probe, an unreadable row anywhere in the batch, an address that is
+ * not base58-shaped, or no row for that wallet at all each leave `usable: false` with a reason. None
+ * of them is ever reported as a launch history of zero.
  *
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} opts
@@ -773,28 +885,73 @@ export async function enumerateCreations(client, opts) {
     coverage = assessCoverage({ probe, nowMs: opts.nowMs, bounds: opts.bounds });
   }
 
+  // Shape-check BEFORE anything is spent. These addresses are vendor-supplied and land inside a
+  // single-quoted SQL literal; see WALLET_SHAPE. A wallet that fails is dropped from the parameter
+  // and refused like any other unusable reading — it does not vanish from the run, and it does not
+  // narrow the batch silently.
+  /** @type {string[]} */
+  const askable = [];
+  /** @type {Map<string, string[]>} */
+  const priorReasons = new Map();
+  for (const w of opts.wallets) {
+    if (isEnumerableWallet(w)) askable.push(w);
+    else {
+      priorReasons.set(w, [
+        `this candidate's address is not the base58 shape a Solana wallet has, so it was never put ` +
+          `in the Dune query parameter — a vendor-supplied string is not allowed to reach a query ` +
+          `language unchecked. The creation walk answers for it instead.`,
+      ]);
+    }
+  }
+  const walletsRefusedByShape = opts.wallets.length - askable.length;
+
   /** @type {Map<string, WalletEnumeration>} */
   const byWallet = new Map();
-  if (!coverage.ok) {
+  /** @type {(rowsByWallet: Map<string, DuneLaunch[]>, batchReasons: readonly string[]) => void} */
+  const fill = (rowsByWallet, batchReasons) => {
     for (const w of opts.wallets) {
-      byWallet.set(w, toWalletEnumeration({ wallet: w, launches: [], coverage }));
+      byWallet.set(
+        w,
+        toWalletEnumeration({
+          wallet: w,
+          launches: rowsByWallet.get(w) ?? [],
+          coverage,
+          priorReasons: [...(priorReasons.get(w) ?? []), ...batchReasons],
+        }),
+      );
     }
-    return { probe, coverage, byWallet, unreadableRows: 0, rowsReturned: 0 };
+  };
+
+  if (!coverage.ok || askable.length === 0) {
+    fill(new Map(), []);
+    return { probe, coverage, byWallet, unreadableRows: 0, rowsReturned: 0, walletsRefusedByShape };
   }
 
   await assertSavedQueryMatches(client, opts.creationQueryId, CREATION_SQL);
   const result = await executeAndRead(
     client,
     opts.creationQueryId,
-    { [DEPLOYERS_PARAM]: opts.wallets.join(',') },
+    { [DEPLOYERS_PARAM]: askable.join(',') },
     opts.bounds,
   );
   const { byWallet: rowsByWallet, unreadableRows } = parseCreationRows(result.rows);
 
-  for (const w of opts.wallets) {
-    byWallet.set(w, toWalletEnumeration({ wallet: w, launches: rowsByWallet.get(w) ?? [], coverage }));
-  }
-  return { probe, coverage, byWallet, unreadableRows, rowsReturned: result.rows.length };
+  // A row that would not parse refuses the WHOLE batch. Not the wallet it belonged to: a row that
+  // fails to parse commonly has no readable `deployer`, so the wallet whose history came back short
+  // is exactly the one that cannot be named, and partial attribution would leave it gated on a
+  // silently short history. See parseCreationRows.
+  const batchReasons =
+    unreadableRows === 0
+      ? []
+      : [
+          `${unreadableRows} row(s) of the Dune answer could not be read, and a row that fails to ` +
+            `parse commonly has no readable deployer — so the wallet whose history came back short ` +
+            `cannot be named and the whole batch is refused. Every candidate in it takes the ` +
+            `creation walk rather than being gated on what survived the parser.`,
+        ];
+
+  fill(rowsByWallet, batchReasons);
+  return { probe, coverage, byWallet, unreadableRows, rowsReturned: result.rows.length, walletsRefusedByShape };
 }
 
 /**

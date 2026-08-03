@@ -741,6 +741,18 @@ export async function main(opts, env, out, err) {
           );
           for (const r of cov.reasons) out(`  !! coverage REFUSED: ${r}`);
           out(`  ${duneEnumeration.rowsReturned} launch row(s) returned, ${duneEnumeration.unreadableRows} unreadable`);
+          // A row that would not parse commonly has no readable deployer, so the wallet whose
+          // history came back short cannot be named — the WHOLE batch falls back rather than being
+          // gated on what survived the parser.
+          if (duneEnumeration.unreadableRows > 0) {
+            out('  !! unreadable rows: the whole batch is REFUSED and every candidate takes the walk');
+          }
+          if (duneEnumeration.walletsRefusedByShape > 0) {
+            out(
+              `  !! ${duneEnumeration.walletsRefusedByShape} candidate(s) were never sent to Dune — ` +
+                `their address is not base58-shaped — and take the walk`,
+            );
+          }
         }
       } catch (cause) {
         // A Dune failure degrades this leg to the walk and NEVER aborts a run whose keyed MadeOnSol
@@ -1276,6 +1288,7 @@ export async function main(opts, env, out, err) {
             estimatedCredits: stats?.estimatedExportCredits ?? 0,
             rowsReturned: duneEnumeration?.rowsReturned ?? 0,
             unreadableRows: duneEnumeration?.unreadableRows ?? 0,
+            walletsRefusedByShape: duneEnumeration?.walletsRefusedByShape ?? 0,
             // The BOUND, not the vendor's data. `derive and discard`: the probe holds table-wide
             // monthly counts, and what survives a run is which tables, from when, to when, and
             // whether the span had holes — which is what says what the count was allowed to claim.

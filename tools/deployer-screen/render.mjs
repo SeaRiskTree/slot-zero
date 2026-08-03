@@ -1162,7 +1162,7 @@ export function renderDryRun(plan) {
           `(~97 bytes/row measured, so ~${((d.maxResultRows * 97) / 1_000_000).toFixed(2)} MB)`,
       );
       L.push(
-        `  EXPECTED                      about ${DUNE_EXPECTED_CREDITS_PER_CANDIDATE * plan.maxCandidates} credits at the candidate cap ` +
+        `  EXPECTED                      about ${(DUNE_EXPECTED_CREDITS_PER_CANDIDATE * plan.maxCandidates).toFixed(1)} credits at the candidate cap ` +
           `(~${DUNE_EXPECTED_CREDITS_PER_CANDIDATE} per deployer, measured 2026-08-03)`,
       );
       L.push(

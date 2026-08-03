@@ -274,6 +274,19 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   6 h, and per wallet a history reaching the probed floor or past the probed ceiling. A refused
   reading falls back to the walk — **per wallet**, so one run can carry both sources and every
   candidate's `enumerationSource` says which answered it.
+- **The refusal rule is general, not coverage-only: a reading that cannot vouch for itself falls back
+  to the walk rather than being gated on.** `CREATION-DERIVED.md` §8.2 lists all eight; four are not
+  the probe. A result read that cannot prove it is whole (missing `total_row_count`, a total over the
+  ceiling, or exactly the `?limit=` many rows) is refused. **One unreadable row refuses the WHOLE
+  batch** — a row that fails to parse commonly has no readable `deployer`, so the wallet whose history
+  came back short is the one you cannot name, and partial attribution would gate it on what survived
+  the parser. **A wallet the enumeration returned NO row for is refused, never read as zero
+  launches**: absence of evidence, not evidence of absence, and reading it the other way lets
+  `mergeHistories` reclassify that wallet's whole in-window ownership listing as acquired and gate it
+  on nothing — the invisible false rejection this lane exists to remove. **A candidate whose address
+  is not base58-shaped is never sent**: wallets are vendor-supplied and land inside a single-quoted
+  SQL literal, and this is the only path in the repo where such a string reaches a query language
+  (`dune.mjs` → `WALLET_SHAPE`; the record's `dune.walletsRefusedByShape` counts the drops).
 - **A FAILED EXECUTION IS STILL BILLED AND IS TERMINAL.** `DuneClient.execute` is the one call in
   this repository that is never retried, on any failure, for any reason; polling and result reads are
   retried because they return no bytes when they fail. **Budget from *billed* credits, not

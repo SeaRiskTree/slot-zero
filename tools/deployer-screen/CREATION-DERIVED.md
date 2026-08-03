@@ -434,7 +434,10 @@ this file asserting it. Read through the wired code, 2026-08-03:
 Union coverage **2024-01-14 → 2026-08-03, 0 months with no row**. `call_create_v2`'s five months is
 the trap, measured rather than quoted.
 
-Four refusals, and a refused reading **falls back to the walk** rather than being published:
+Eight refusals, and a refused reading **falls back to the walk** rather than being published. The
+rule behind all of them is one rule: *when the Dune reading cannot vouch for itself, the walk answers
+instead*. Falling back costs wall clock; publishing a count the evidence does not support costs a
+verdict.
 
 1. a read table the probe did not return, or that holds no rows;
 2. **any month inside the covered span where every read table is empty** — the `create_v2` defect
@@ -443,7 +446,22 @@ Four refusals, and a refused reading **falls back to the walk** rather than bein
    so a stale *cached* probe is re-executed once — the second of the two budgeted executions;
 4. **per wallet**: an earliest launch at or before the probed floor (its history may reach outside
    coverage), or a newest launch past the probed ceiling (reachable because the probe defaults to a
-   cached read). Both refuse **that wallet only**, so one run can carry both sources.
+   cached read). Both refuse **that wallet only**, so one run can carry both sources;
+5. **a result read that cannot prove it is whole** — a missing `total_row_count`, a declared total
+   above `dune.maxResultRows`, or exactly as many rows as the `?limit=` it was issued with. A result
+   cut at the limit is indistinguishable from a complete one of that size;
+6. **any unreadable row, which refuses the WHOLE batch.** A row that fails to parse commonly has no
+   readable `deployer` — that is one of the three ways it fails — so the wallet whose history came
+   back short is exactly the one that cannot be named. Partial attribution would leave it gated on a
+   silently short history, which is this module's own failure shape arriving through the parser;
+7. **a wallet the enumeration returned no row for.** That is an absence of evidence, not evidence of
+   absence. Read as a launch history of zero it would let `mergeHistories` reclassify that wallet's
+   whole in-window ownership listing as acquired and gate it on nothing — the invisible false
+   rejection this lane exists to remove, manufactured out of nothing;
+8. **a candidate whose address is not base58-shaped**, which is never put in the query parameter at
+   all. Wallets are vendor-supplied and land inside a single-quoted SQL literal; this is the first
+   path in the repo where such a string reaches a query language. The count of dropped candidates is
+   on the run record (`dune.walletsRefusedByShape`) so a narrowed batch is visible, not silent.
 
 ### 8.3 Reproduced against the 239-launch ground truth, through the production code path
 

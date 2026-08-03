@@ -156,7 +156,12 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   and `curvesUnread`; `stopReason` is `dune-enumerated`, which is not a stop at all. **A run may
  *   carry BOTH sources**: the coverage probe refuses a wallet at a time, so a wallet whose earliest
  *   launch sits at or before the probed surfaces' own first row falls back to the walk while the
- *   rest of the batch does not. `creation.coveredFrom/ToIso` on a Dune candidate is the PROBE's
+ *   rest of the batch does not. Coverage is not the only refusal `duneFallbackReasons` carries — an
+ *   unreadable row anywhere in the answer refuses the WHOLE batch, a wallet the enumeration returned
+ *   no row for is refused as an absence of evidence rather than read as zero launches, and a
+ *   candidate whose address is not base58-shaped is never sent to Dune at all, which the `dune`
+ *   block's `walletsRefusedByShape` counts.
+ *   `creation.coveredFrom/ToIso` on a Dune candidate is the PROBE's
  *   bound rather than a walk's window, and `wholeHistory` is true inside it because the enumeration
  *   is an index of creation events, not a window walked backwards until a budget bit.
  *   No candidate ROW key changes, so `PERSISTED_BY_SCHEMA[9]` equals `[8]`, and nothing about

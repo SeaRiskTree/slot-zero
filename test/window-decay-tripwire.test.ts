@@ -37,7 +37,7 @@ import {
 } from '../tools/window-decay-tripwire/detector.mjs';
 import {
   MAX_PAGES_PER_LAUNCH, PAGE_LIMIT, SEEK_PAD_MS, creatorLaunchesUrl, dedupeBySid, parseFill,
-  isReadableMint,
+  isReadableMint, parseRowTimestamp,
   parseLaunchListing, parseTradePage, readCreateSlot, reachedTheBeginning, seekCursor, slotOf,
   sortAscending, tradesUrl,
 } from '../tools/window-decay-tripwire/createslot.mjs';
@@ -513,28 +513,33 @@ describe('the trade endpoint is read, never assumed', () => {
     expect(walk.undecidedReason).toBe('unreadable');
   });
 
-  it('reaches its page bound on a page carrying no nextCursor, by seeking on the oldest row’s own instant', async () => {
-    // The bound is only real if the second page is reachable. The endpoint's cursor is
-    // `<slotIndexId>-<timestampMs>` and the TIMESTAMP half is the half that seeks, so a fallback
-    // built with a zero timestamp would ask for rows older than the epoch — one page, every time.
+  it('pages only on the endpoint’s own nextCursor, because a second-resolution seek cannot go backwards inside one second', async () => {
+    // There is no second paging route to fall back on. A cursor built from the oldest row seen
+    // carries that row's own second, so it re-requests the page just read — which on the exact case
+    // the page bound exists for (a create slot larger than one page) would spend all three pages on
+    // identical rows. Stopping at one page and reporting UNDECIDED is the honest outcome.
     const { client, urls } = scriptedClient([
       { trades: [rawRow({ slotIndexId: sid(300, 0), userAddress: 'sniper', timestamp: '2026-06-04T12:08:52.000Z' })] },
     ]);
     const walk = await readCreateSlot(client, MINT, { deployer: DEPLOYER, createdAtMs: null });
-    expect(walk.pages).toBe(MAX_PAGES_PER_LAUNCH);
-    expect(urls).toHaveLength(MAX_PAGES_PER_LAUNCH);
-    expect(urls[1]).toContain(encodeURIComponent(seekCursor(Date.parse('2026-06-04T12:08:52.000Z'))));
-    expect(walk.undecidedReason).toBe('pages');
-  });
-
-  it('stops rather than guessing when there is no cursor and no timestamp to seek from', async () => {
-    const { client, urls } = scriptedClient([
-      { trades: [rawRow({ slotIndexId: sid(300, 0), userAddress: 'sniper', timestamp: 'not-a-time' })] },
-    ]);
-    const walk = await readCreateSlot(client, MINT, { deployer: DEPLOYER, createdAtMs: null });
     expect(urls).toHaveLength(1);
+    expect(walk.pages).toBe(1);
     expect(walk.decided).toBe(false);
     expect(walk.undecidedReason).toBe('no-cursor');
+  });
+
+  it('walks on while the endpoint keeps supplying cursors, and stops when it stops', async () => {
+    const { client, urls } = scriptedClient([
+      page([rawRow({ slotIndexId: sid(302, 0), userAddress: 'sniper' })], true, 'older-1'),
+      page([rawRow({ slotIndexId: sid(301, 0), userAddress: 'sniper' })], true, 'older-2'),
+      page([rawRow({ slotIndexId: sid(300, 0), userAddress: DEPLOYER })], true, 'older-3'),
+    ]);
+    const walk = await readCreateSlot(client, MINT, { deployer: DEPLOYER, createdAtMs: null });
+    expect(urls).toHaveLength(3);
+    expect(urls[1]).toContain('cursor=older-1');
+    expect(urls[2]).toContain('cursor=older-2');
+    expect(walk.proven).toBe(true);
+    expect(walk.decided).toBe(true);
   });
 
   it('settles a launch the endpoint itself says there is nothing older for', async () => {
@@ -544,6 +549,37 @@ describe('the trade endpoint is read, never assumed', () => {
     expect(walk.proven).toBe(false);
     expect(walk.decided).toBe(true);
     expect(walk.undecidedReason).toBeNull();
+  });
+
+  it('does not read an empty CURSORED page as silence — a wrong seek looks exactly the same', async () => {
+    // A seek that landed in the wrong place and a token with no such fills return the identical
+    // body. The walk cannot tell them apart, so it does not get to settle the launch on it.
+    const { client } = scriptedClient([page([], false, null)]);
+    const walk = await readCreateSlot(client, MINT, { deployer: DEPLOYER, createdAtMs: 1_780_000_000_000 });
+    expect(walk.decided).toBe(false);
+    expect(walk.undecidedReason).toBe('empty-page');
+  });
+
+  it('does settle an empty UNCURSORED page the endpoint says there is nothing more after', async () => {
+    // The other half of that rule: without a cursor there is no seek to be wrong, so `hasMore:
+    // false` on the newest-fills-of-all page IS the endpoint stating the token has nothing. Left
+    // undecided, a launch that genuinely never traded would be re-read on every run forever.
+    const { client } = scriptedClient([page([], false, null)]);
+    const walk = await readCreateSlot(client, MINT, { deployer: DEPLOYER, createdAtMs: null });
+    expect(walk.decided).toBe(true);
+    expect(walk.undecidedReason).toBeNull();
+  });
+
+  it('reads a seconds-resolution created_timestamp the same way it reads a row’s, so no seek lands in 1970', () => {
+    // Two parsers in one file disagreeing about the unit of the same vendor field is how a launch's
+    // seek aims at the epoch and comes back empty.
+    expect(parseRowTimestamp(1_780_000_000)).toBe(1_780_000_000_000);
+    expect(parseRowTimestamp(1_780_000_000_000)).toBe(1_780_000_000_000);
+    expect(parseRowTimestamp('nope')).toBeNull();
+    const listing = parseLaunchListing({ coins: [{ mint: MINT, created_timestamp: 1_780_000_000 }] });
+    expect(listing.launches[0]?.createdAtMs).toBe(1_780_000_000_000);
+    // And a row whose timestamp cannot be read is dropped, not seeked from as zero.
+    expect(parseLaunchListing({ coins: [{ mint: MINT, created_timestamp: 'nope' }] }).launches).toEqual([]);
   });
 
   it('refuses a mint that is not base58-shaped before it reaches a URL, and encodes the ones that are', () => {
@@ -711,6 +747,29 @@ describe('every provider call is bounded, and a dry run spends nothing', () => {
         log: () => undefined,
         fetchImpl: (() => { throw new Error('a refused plan must not fetch'); }) as unknown as typeof fetch,
       })).rejects.toThrow(/does not fit/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('sizes the plan from the mints it was given, not from the bound, when the queue is already known', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tripwire-'));
+    try {
+      const path = join(dir, 's.json');
+      // One mint can cost at most 3 pages x 4 attempts = 12, so this run demonstrably fits inside 20
+      // and must not be refused on the strength of a bound it cannot reach.
+      const result = await run(parseArgs([
+        '--wallet', 'W', '--cohort', 'cohort-a', '--mints', MINT, '--state', path, '--live', '--max-requests', '20',
+      ]), {
+        log: () => undefined, sleepImpl: async () => undefined, nowImpl: () => 0,
+        fetchImpl: (async () => ({ ok: true, status: 200, json: async () => page([
+          rawRow({ slotIndexId: sid(100, 2), userAddress: 'out-1', amountSol: '1' }),
+          rawRow({ slotIndexId: sid(100, 1), userAddress: 'cohort-a', tx: 'bundle', amountSol: '9' }),
+          rawRow({ slotIndexId: sid(100, 0), userAddress: 'W', amountSol: '10' }),
+        ], false, null) } as unknown as Response)) as unknown as typeof fetch,
+      });
+      expect(result.read).toBe(1);
+      expect(result.state.readMints).toEqual([MINT]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

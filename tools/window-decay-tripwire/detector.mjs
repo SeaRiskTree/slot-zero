@@ -85,9 +85,6 @@ export const CONFIRM_LAUNCHES = 2;
  * @property {string} u     The swapping wallet.
  * @property {'buy' | 'sell'} k
  * @property {number} sol   Absolute SOL moved on this fill.
- * @property {number | null} [atMs] The row's own instant, when the feed carried one. Nothing in
- *   this module reads it — it exists so a backwards walk can build the seek cursor the trade
- *   endpoint pages on. Never a substitute for `sid`, which is the only key that orders one slot.
  */
 
 /**

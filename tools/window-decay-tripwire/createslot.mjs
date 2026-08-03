@@ -123,13 +123,14 @@ export function creatorLaunchesUrl(creator, limit) {
 export const slotOf = (sid) => Number(sid.slice(0, 12));
 
 /**
- * A row's own instant in unix ms, or `null` when the endpoint sent none this module can read.
+ * A vendor timestamp in unix ms, or `null` when it is not one this module can read.
  *
- * It is kept because the cursor's **timestamp** half is the half that seeks: without it, a page the
- * endpoint sends no `nextCursor` on cannot be paged past at all, and the page bound is nominal
- * rather than real. A seconds-resolution epoch is widened to ms; anything else is `null`, and a
- * `null` stops the walk rather than being seeked from, because a cursor built out of a guess would
- * page to the wrong place silently.
+ * **The one place this file decides what unit a vendor timestamp is in.** Both feeds it reads — the
+ * trade endpoint's rows and the launch listing's `created_timestamp` — are the same kind of field
+ * from the same vendor, and two parsers in this file disagreeing about seconds against milliseconds
+ * is how a launch's seek lands in 1970. A seconds-resolution epoch is therefore widened here and
+ * nowhere else; anything unreadable is `null`, which callers must treat as "no timestamp", never as
+ * zero — a launch seeked from the epoch returns an empty page that looks exactly like silence.
  *
  * @param {unknown} raw
  * @returns {number | null}
@@ -169,7 +170,7 @@ export function parseFill(row) {
   // A fill whose size will not parse cannot be summed, and summing it as zero would understate the
   // denominator — i.e. push the share UP, towards a stop. Dropped instead, and counted.
   if (!Number.isFinite(sol) || sol < 0) return null;
-  return { slot, sid, tx, u, k, sol, atMs: parseRowTimestamp(r['timestamp'] ?? r['timestampMs']) };
+  return { slot, sid, tx, u, k, sol };
 }
 
 /**
@@ -242,10 +243,15 @@ export function reachedTheBeginning(fills, deployer) {
  * - `pages` — the per-launch page bound ran out before coverage was proved.
  * - `unreadable` — a body this module could not read rows out of, or a page whose rows all failed
  *   to parse.
- * - `no-cursor` — the endpoint sent no `nextCursor` and no row carried a timestamp to seek from,
- *   so there is no way to ask for the page before this one.
+ * - `no-cursor` — the walk had not reached the beginning and the endpoint sent no `nextCursor`.
+ *   There is no second way to ask: the cursor's seeking half is a **second-resolution** timestamp,
+ *   so it cannot page backwards inside the one second a create slot lives in — a seek built from
+ *   the oldest row's own instant re-requests the page it just read.
+ * - `empty-page` — a **cursored** request came back with nothing. That is equally consistent with
+ *   a token that has no such fills and with a seek that landed in the wrong place, and the walk
+ *   cannot tell which, so it does not get to call it silence.
  *
- * @typedef {'ceiling' | 'pages' | 'unreadable' | 'no-cursor'} UndecidedReason
+ * @typedef {'ceiling' | 'pages' | 'unreadable' | 'no-cursor' | 'empty-page'} UndecidedReason
  */
 
 /**
@@ -294,19 +300,28 @@ export async function readCreateSlot(client, mint, options) {
     // An unrecognised body is not an empty one. Stopping here leaves the walk UNDECIDED, which the
     // caller reads as "come back to this launch" rather than as a create slot or as a settled silence.
     if (!page.recognised) { undecided = 'unreadable'; break; }
+    const cursored = cursor !== null;
     fills = dedupeBySid([...fills, ...page.fills]);
     if (reachedTheBeginning(fills, deployer)) { undecided = null; break; }
+    if (page.fills.length === 0) {
+      // Rows arrived and none of them parsed: a gap in what we can read, not a gap in the token.
+      if (page.rawRows > 0) { undecided = 'unreadable'; break; }
+      // The ONE empty page that settles anything: the uncursored first page, with the endpoint
+      // itself saying there is nothing more. A cursored empty page is silence of unknown origin —
+      // a token with no such fills and a seek that landed in the wrong place look identical — so it
+      // is left undecided and the launch is read again next run.
+      undecided = !cursored && page.hasMore === false ? null : 'empty-page';
+      break;
+    }
     // The endpoint's own statement that there is nothing older. That settles the launch: there is
     // genuinely nothing to read, which is a finding rather than a gap.
     if (page.hasMore === false) { undecided = null; break; }
-    const oldest = sortAscending(page.fills)[0];
-    if (oldest === undefined) { undecided = page.rawRows > 0 ? 'unreadable' : null; break; }
-    // The endpoint's own cursor when it sent one; otherwise a seek built from the oldest row's own
-    // instant, which is the half of the cursor that seeks. Rows at that instant come back again and
-    // are deduped by `sid`.
-    const next = page.nextCursor ?? (oldest.atMs == null ? null : seekCursor(oldest.atMs));
-    if (next === null) { undecided = 'no-cursor'; break; }
-    cursor = next;
+    // Paging is the endpoint's own `nextCursor` and nothing else. There is no second route: the
+    // cursor's seeking half is a second-resolution timestamp, so a cursor built from the oldest row
+    // seen asks for the same second again and the walk would spend its remaining pages re-reading
+    // rows it already has.
+    if (page.nextCursor === null) { undecided = 'no-cursor'; break; }
+    cursor = page.nextCursor;
   }
 
   return {
@@ -364,9 +379,11 @@ export function parseLaunchListing(body) {
     const mint = r['mint'] ?? r['address'] ?? r['coinMint'];
     const created = r['created_timestamp'] ?? r['createdTimestamp'] ?? r['creationTime'];
     if (typeof mint !== 'string' || mint === '') continue;
-    const createdAtMs = typeof created === 'number' ? created
-      : typeof created === 'string' ? Date.parse(created) : NaN;
-    if (!Number.isFinite(createdAtMs)) continue;
+    // The same reader the trade rows go through. This value becomes the walk's seek cursor, so
+    // reading a seconds-resolution epoch as milliseconds would aim it at 1970 and return an empty
+    // page — silence this module would otherwise have to tell apart from a token with no fills.
+    const createdAtMs = parseRowTimestamp(created);
+    if (createdAtMs === null) continue;
     const symbol = r['symbol'];
     launches.push({ mint, createdAtMs, symbol: typeof symbol === 'string' ? symbol : '' });
   }

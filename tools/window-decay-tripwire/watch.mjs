@@ -253,12 +253,16 @@ export async function run(args, seams = {}) {
     nowImpl: seams.nowImpl,
   });
 
-  const worstCase = planCost(args.maxLaunches, needsListing, client.attemptsPerRequest());
+  // With `--mints` the number of launches is known before the first request, so the worst case is
+  // that number rather than the bound. On the listing path the count genuinely is not known in
+  // advance and the bound is the only honest worst case.
+  const plannedLaunches = needsListing ? args.maxLaunches : Math.min(args.mints.length, args.maxLaunches);
+  const worstCase = planCost(plannedLaunches, needsListing, client.attemptsPerRequest());
 
   if (!args.live) {
     const worst = worstCase;
     log('DRY RUN — nothing was requested.');
-    log(`  plan: ${needsListing ? '1 launch listing + ' : ''}up to ${args.maxLaunches} launches x ` +
+    log(`  plan: ${needsListing ? '1 launch listing + ' : ''}up to ${plannedLaunches} launches x ` +
       `${THRESHOLDS.bounds['maxPagesPerLaunch']} pages = ${worst.requests} requests, ` +
       `${worst.attempts} attempts worst case against a ceiling of ${args.maxRequests}` +
       `  — ${worst.attempts <= args.maxRequests ? 'FITS' : 'DOES NOT FIT'}`);
@@ -273,7 +277,7 @@ export async function run(args, seams = {}) {
   // ceiling that is only enforced once it has been breached is a nominal one.
   if (worstCase.attempts > args.maxRequests) {
     throw new Error(
-      `this plan does not fit: ${args.maxLaunches} launches x ${THRESHOLDS.bounds['maxPagesPerLaunch']} pages` +
+      `this plan does not fit: ${plannedLaunches} launches x ${THRESHOLDS.bounds['maxPagesPerLaunch']} pages` +
       `${needsListing ? ' + 1 listing' : ''} is ${worstCase.attempts} attempts worst case against a ceiling of ` +
       `${args.maxRequests}. Lower --max-launches or raise --max-requests; do not start a run that cannot finish.`,
     );

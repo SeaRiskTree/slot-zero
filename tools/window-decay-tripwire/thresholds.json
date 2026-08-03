@@ -1,0 +1,54 @@
+{
+  "$comment": [
+    "PINNED TRIPWIRE PARAMETERS. Every number is anchored to a measurement that already exists in",
+    "this repository or in a committed scout report, and the anchor is named in `justification`.",
+    "Do not move a value to fit an output: `backtest.mjs` replays the one close on record through",
+    "the production detector, and a tripwire that no longer reproduces the answer we already know",
+    "is not one to point at live money.",
+    "SCOPE: this tool answers ONE question — has the window we are currently trading closed? It",
+    "does not find candidates (that is tools/deployer-screen/feed.mjs), does not score entry (that",
+    "is the screen's Stage 2), and never re-polls a wallet it has stopped on."
+  ],
+  "version": "1.0.0",
+  "pinnedAt": "2026-08-03",
+
+  "detector": {
+    "$comment": [
+      "The decision boundary. `shareBar` is the June report's own T1 threshold read the other way;",
+      "`confirmLaunches` is the whole design, and the asymmetry it buys is measured in README.md →",
+      "'The asymmetry that decides the design'."
+    ],
+    "shareBar": 0.55,
+    "confirmLaunches": 2,
+    "justification": {
+      "shareBar": "INHERITED, NOT FITTED. `slot-zero-june-regime-change` §10.2 (firstmate's records, not this repo) publishes T1 — (dev buy + cohort create-slot stake) / (dev buy + all create-slot stake) — with the re-open condition `T1 < 0.55 sustained over 10 consecutive launches`, written before anyone looked at where the closing launch sat. 0.55 here is that same bar read as the close condition. Re-derived over the committed tape by `backtest.mjs`, on launches an outsider actually bid into: the open window's T1 runs p50 0.392 / p75 0.433 / p95 0.529, the closed regime's p5 0.644 / p50 0.758, and only 3 of 104 open-window launches reach 0.55. STATE THE THIN PART: the first launch of the closed regime reads 0.5527, i.e. it clears this bar by 0.003, so the zero-launch latency that single reading would give is NOT robust — which is exactly why the verdict needs `confirmLaunches` and why the headline latency is quoted from the confirmed alarm, not from that reading. Bars of 0.60 and 0.65 give the same false-alarm count and cost one further launch of latency (README.md's sensitivity table).",
+      "confirmLaunches": "2, and the second reading is the design. Measured on the committed tape over the open window's 104 launches with an outsider in the create slot: one reading at or above the bar is wrong 3 times, two consecutive readings are wrong 0 times, and the three single-launch false alarms are isolated — none has a neighbour. The cost of the extra launch is one launch of latency (+24.1 h instead of +0.0 h). The cost of getting it wrong the other way is measured: a one-way false stop at a uniformly random open-window launch forfeits a median of 389.9 SOL of the window's remaining population prize, against the 1.02 SOL the entire outsider population lost gross across the two launches this detector eats at the real close — an asymmetry of about 380 to 1. It is also the mitigation for the second of T1's two recorded caveats (`analysis/window-population/README.md` §9): a high reading caused by outsiders happening not to turn up is a per-launch accident that does not repeat, while a parameter change is a level that does.",
+      "$unread": "NOT A THRESHOLD, and load-bearing: a create slot with no outsider stake yields NO reading, and an unread launch neither advances nor resets the streak. Reading those launches as a share of 1.0 instead takes the single-launch false-alarm count from 3 to 28 over the same 129 open-window launches, because 25 of them had no outsider in the create slot at all. `detector.mjs` → `classifyCreateSlot` owns it; it is T1's first recorded caveat in code."
+    }
+  },
+
+  "bounds": {
+    "$comment": [
+      "EVERY PROVIDER CALL IS BOUNDED HERE AND NOWHERE ELSE. Both hosts are keyless — swap-api and",
+      "frontend-api-v3, the complete list is `HOSTS` in client.mjs — so the operating path is",
+      "zero-token by construction, not by policy. These bounds exist to keep it a good citizen of a",
+      "shared public endpoint, not to protect an allowance.",
+      "Worst case per run is (1 + maxLaunchesPerRun x maxPagesPerLaunch) requests x 4 attempts each",
+      "= (1 + 8 x 3) x 4 = 100 = maxRequestsPerRun, so the ceiling is exact rather than nominal.",
+      "`watch.mjs` refuses to start a run whose plan does not fit inside it, and plans before it",
+      "spends: --dry-run is the default and issues nothing."
+    ],
+    "maxRequestsPerRun": 100,
+    "maxLaunchesPerRun": 8,
+    "maxPagesPerLaunch": 3,
+    "listingLimit": 50,
+    "minIntervalMs": 4000,
+    "justification": {
+      "maxRequestsPerRun": "The exact worst case of the two bounds below plus the one listing request, at the client's four attempts per request: (1 + 8 x 3) x 4 = 100. It is a ceiling, not a budget — a typical run inside an open window reads one listing page and one page per new launch, so at the open window's measured cadence of 1.56 launches a day a four-hourly poll issues about 3 requests and finishes in under 15 seconds.",
+      "maxLaunchesPerRun": "8 launches is more than five days of backlog at the open window's measured cadence — 129 launches over 82.7 days, gap p90 1.19 days and maximum 4.04 days (`analysis/window-population/README.md` §7.3). A run that finds more than 8 unread launches has been down long enough that a human should look at it, so `watch.mjs` reports the overflow rather than silently reading the newest 8 and calling the series covered.",
+      "maxPagesPerLaunch": "With the launch's mint instant known the walk is normally ONE page: the cursor's timestamp component seeks (`data/population-tape-2026-07-29/report.md` §9.2), so the seek lands one second past the mint and the create slot is the oldest thing there is. 3 is headroom for a launch whose first second carried more than the endpoint's 100-row page. NO MEASUREMENT BACKS THE SPECIFIC VALUE 3 and here is what would: the distribution of fills in the first second across the committed tape's 235 window files. It is a ceiling on a walk that fails SAFE — a walk that cannot prove it reached the create slot returns `proven: false`, which reads as no observation, never as a create slot it happened to stop at.",
+      "listingLimit": "50 newest launches per listing request, which at the open window's cadence is about a month of history — far more than the 8 this tool will read, so the listing is never the reason a launch is missed. The launch listing is `frontend-api-v3.pump.fun/coins?creator=`, which lists by CURRENT creator and therefore under-reports (`AGENTS.md`); for this tool that bias is one-directional and cannot manufacture a stop, and `--mints` avoids it entirely.",
+      "minIntervalMs": "4000 ms between request starts, with adaptive backoff on top. Measured: the graduated-life collection issued 6,539 requests against this host at a 4 s floor with ZERO HTTP 429 (2026-08-03), while the population tape's own build metadata records 16,960 429s against 51,715 OK at a `delay` that went as low as 0.75 s. 2 s is refused outright and 8 s is clean; 4 s with backoff sustains indefinitely. This tool's whole daily traffic is two orders of magnitude below that collection, so pacing is not its binding constraint — it is here so a watcher left running for weeks stays a good citizen."
+    }
+  }
+}

@@ -25,8 +25,9 @@ stage. **There is no strategy, backtest, signal or trading logic here.**
 `test/window-population.test.ts`. Every source behind the dataset is keyless and public, and the
 dataset was built with **zero metered provider requests**, and so was its extension past the bond.
 The network-capable area is `tools/`, and the boundary is the directory: `tools/deployer-screen/`
-is the only **keyed** one, `tools/graduated-life-tape/` and `tools/arrival-rate-walk/` are keyless
-throughout. None of them is imported by `src/` and none imports from it. See each one's `README.md`.
+is the only **keyed** one; `tools/graduated-life-tape/`, `tools/arrival-rate-walk/` and
+`tools/window-decay-tripwire/` are keyless throughout. None of them is imported by `src/` and none
+imports from it. See each one's `README.md`.
 
 ```bash
 npm ci
@@ -63,6 +64,7 @@ top of this file. Answering it means screening *other* deployers, present tense.
 | **Stage 2** — the keyless **entry** score: room in the opening window, what the field there achieved, and **what it cost that field to land** | `tools/deployer-screen/stage2.mjs`, `entry.mjs` |
 | **The candidate discovery feed** — the scheduled lane that surfaces deployer wallets this project has not seen before and queues the gate-clearing ones for the screen; scope, quota bounds and the vendor-selection ceiling in `tools/deployer-screen/FEED.md` | `tools/deployer-screen/feed.mjs` |
 | **The window-population measurement** — how many profitable windows the tape contains, how long, how fast they close | `analysis/window-population/` |
+| **The window-decay tripwire** — watches the wallet currently being traded and raises **STOP AND ROTATE** when its window closes. Detects the one close on record **24.1 h** after the regime changed, against a close that took **24.7 h**, with **0** false stops in the 83-day window; keyless, zero token | `tools/window-decay-tripwire/` |
 | **CI** — `npm test` on the Node 20 engines floor | `.github/workflows/ci.yml` |
 
 **Stage 2 scores entry and deliberately does not score exit.** Room to enter is not room to leave,
@@ -99,6 +101,7 @@ call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md
 | `tools/deployer-screen/` | The only keyed, network-capable area. The competence **gate** (stages 0–1, keyed) plus the keyless **entry score** (stage 2) — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |
 | `data/graduated-life-tape-2026-08-02/` | The same tape, **extended past the bond**: every fill of the 103 graduated launches from mint to graduation + 1 hour. 503,037 fills, 63% of them on PumpSwap. Closure over the wallets each launch's own committed window already shows rises from **47.2% to 94.4%**. 6,539 keyless requests, EUR 0. Method, coverage proofs and limits in its `README.md`. |
 | `tools/graduated-life-tape/` | The collector behind it. Network-capable and **keyless throughout** — one file opens a socket, one host, and the list of files that may name a credential is empty. |
+| `tools/window-decay-tripwire/` | The decay tripwire. Watches one wallet's create slots — the operation's share of the bottom of its own curve — and latches **STOP AND ROTATE** on two consecutive readings at or above 0.55. **+24.1 h** on the one close on record against a **24.7 h** close, **0** false stops in 104 open-window launches; keyless, two hosts, an empty credential allow-list. The ceiling is on the false-alarm rate rather than the latency, and its `README.md` §4 states it. |
 | `analysis/window-population/` | How many profitable windows the tape contains, how long, and how fast they close. **One window**, 2026-03-12 → 2026-06-04, **83 days**, closed in a single launch over **24.7 hours** — and **n = 1**, so "are windows numerous?" is *unmeasured*. Offline like `src/`. Findings, definitions and limits in its `README.md`. |
 | `tools/arrival-rate-walk/` | The collector that would answer that `n = 1` — the same per-launch series for a **cohort** of deployers, seeded from history rather than from success. **Keyless throughout**; the tool is built and proven on a bounded sample, the multi-day collection is a separate step and has not run. Scope, bounds, the undeployed cohort query and the limits in its `README.md`. |
 | `.github/workflows/ci.yml` | `npm ci` then `npm test` on Node 20, on PRs and pushes to `main`. The whole check set, on purpose. |

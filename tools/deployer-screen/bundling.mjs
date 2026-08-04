@@ -825,8 +825,9 @@ export function renderSubjectEraTrend(t) {
   L.push('  NOTHING and the union proves EVERYTHING: the shared-transaction half was reading a rule\'s');
   L.push('  blind spot as a deployer\'s habit. That is the same confusion the live census re-run removes.');
   L.push('');
-  L.push('  THE HEADLINE NUMBER REPLAYED: would the trailing 8 launches ALL have been proven —');
-  L.push('  i.e. would Stage 2 have reached a verdict on this wallet that day?');
+  L.push('  THE HEADLINE NUMBER REPLAYED: would the trailing 8 launches ALL have been proven?');
+  L.push('  Its span is pinned at 8 and is now STRICTER than the live rule (decision 190a: 8 proven');
+  L.push('  of 10 planned), so it understates scoreability — the safe direction.');
   L.push(
     `    union: ${t.trailingAllProven} of ${t.trailingWindows} trailing windows (${t.trailingProvenRate}); ` +
       `shared-tx half alone: ${t.trailingAllBundled} (${t.trailingRate}).`,
@@ -864,7 +865,7 @@ OPTIONS
   --dry-run           Print exactly what a real run would fetch, and fetch nothing.
   --subject-era       Print the OFFLINE era trend over the committed population tape and stop.
                       One deployer, 235 taped launches, zero requests. The live census walks only
-                      the most recent 8 launches per candidate, which cannot carry a trend.
+                      the most recent 10 launches per candidate, which cannot carry a trend.
   --candidates <n>    Max gate survivors to survey. Cannot exceed the pinned cap.
   --cohort <n>        Max cohort wallets to gate. Cannot exceed the pinned cap.
   --out <path>        Write the census record as JSON. Default: nothing is written. Write it under
@@ -1220,7 +1221,9 @@ export async function main(opts, out, err) {
         out(
           `    → ${result.provenLaunches}/${result.launchesUsable} window(s) PROVEN ` +
             `(${result.bundledLaunches} by shared transaction)` +
-            (result.allProven === true ? ', ALL OF A FULL 8-SAMPLE' : '') +
+            (result.allProven === true
+              ? `, ALL OF A FULL ${entry.maxLaunchesPerCandidate}-SAMPLE`
+              : '') +
             (result.neverProven ? ', NEVER PROVEN — permanently unscoreable' : '') +
             (result.neverBundles && result.provenLaunches > 0
               ? ', never bundles but the union proves it'

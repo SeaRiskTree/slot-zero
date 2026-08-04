@@ -2767,6 +2767,26 @@ const HEALTHY_PROBE = () =>
 const NOW_MS = Date.parse('2026-08-03T10:00:00Z');
 const DUNE_BOUNDS = { pollIntervalMs: 0, maxPollAttempts: 5, maxResultRows: 20_000, maxCoverageLagMs: 21_600_000 };
 
+// A cleared monthly credit allowance, so these fixtures exercise the enumeration rather than the
+// guard in front of it. `enumerateCreations` refuses outright without one — see
+// test/dune-credit-ceiling.test.ts, which owns the guard's own behaviour.
+const DUNE_ALLOWANCE_CLEARED = {
+  verdict: 'sufficient' as const,
+  ok: true,
+  worstCaseCredits: 1,
+  creditsUsed: 0,
+  creditsIncluded: 2500,
+  creditsRemaining: 2500,
+  reserveCredits: 25,
+  spendableCredits: 2475,
+  shortfallCredits: 0,
+  periodStart: '2026-07-29',
+  periodEnd: '2026-08-29',
+  readAtUtc: '2026-08-04T00:00:00.000Z',
+  reasons: [],
+  caveats: ['test fixture'],
+};
+
 describe('the Dune credential, and why its absence is a configuration', () => {
   it('treats an unset or blank key as "not configured", never as a fault', () => {
     // The walk is still there. A missing Dune key must not stop a run, or the decision that made
@@ -2944,6 +2964,7 @@ describe('the SQL is the surface, and the two traps are pinned in it', () => {
         refreshProbe: false,
         nowMs: NOW_MS,
         bounds: DUNE_BOUNDS,
+        allowance: DUNE_ALLOWANCE_CLEARED,
       }),
     ).rejects.toThrow(/no longer matches the SQL committed/);
     expect(c.executions()).toBe(0);
@@ -3397,6 +3418,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       refreshProbe: false,
       nowMs: NOW_MS,
       bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
     });
     expect(e.coverage.ok).toBe(true);
     expect(e.byWallet.get(DUNE_WALLET)?.launches).toBe(1);
@@ -3431,6 +3453,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       refreshProbe: false,
       nowMs: NOW_MS,
       bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
     });
     expect(c.executions()).toBe(0);
     expect(e.coverage.ok).toBe(false);
@@ -3497,6 +3520,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       refreshProbe: false,
       nowMs: NOW_MS + 48 * 3_600_000,
       bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
     });
     expect(e.coverage.ok).toBe(true);
     expect(e.probe.fromCache).toBe(false);
@@ -3529,6 +3553,7 @@ describe('the enumeration spends nothing it does not have to', () => {
         refreshProbe: false,
         nowMs: NOW_MS,
         bounds: DUNE_BOUNDS,
+        allowance: DUNE_ALLOWANCE_CLEARED,
       }),
     ).rejects.toThrow(/above the pinned ceiling/);
   });
@@ -3561,6 +3586,7 @@ describe('the enumeration spends nothing it does not have to', () => {
         refreshProbe: false,
         nowMs: NOW_MS,
         bounds: { ...DUNE_BOUNDS, maxResultRows: HEALTHY_PROBE().length },
+        allowance: DUNE_ALLOWANCE_CLEARED,
       });
     await expect(call(client(noTotal))).rejects.toThrow(/no `total_row_count`/);
 
@@ -3604,6 +3630,7 @@ describe('the enumeration spends nothing it does not have to', () => {
         refreshProbe: false,
         nowMs: NOW_MS,
         bounds: DUNE_BOUNDS,
+        allowance: DUNE_ALLOWANCE_CLEARED,
       }),
     ).rejects.toThrow(/is a PAGE rather than the whole result/);
     // And nothing was executed on the strength of it.
@@ -3644,6 +3671,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       refreshProbe: false,
       nowMs: NOW_MS,
       bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
     });
     expect(e.coverage.ok).toBe(true);
     expect(e.unreadableRows).toBe(2);
@@ -3681,6 +3709,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       refreshProbe: false,
       nowMs: NOW_MS,
       bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
     });
     expect(ok.unreadableRows).toBe(0);
     expect(ok.byWallet.get(DUNE_WALLET)?.usable).toBe(true);
@@ -3721,6 +3750,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       refreshProbe: false,
       nowMs: NOW_MS,
       bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
     });
     expect(e.unreadableRows).toBe(1);
     expect(e.coverage.ok).toBe(true);
@@ -3761,6 +3791,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       refreshProbe: false,
       nowMs: NOW_MS,
       bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
     });
     // The refusal is PER WALLET, so one batch legitimately carries both sources.
     expect(e.byWallet.get(answered)?.usable).toBe(true);
@@ -3806,6 +3837,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       refreshProbe: false,
       nowMs: NOW_MS,
       bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
     });
     // The parameter carries the well-shaped wallet and NOTHING else.
     expect(executeBody).not.toBeNull();
@@ -3879,6 +3911,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       refreshProbe: false,
       nowMs: NOW_MS,
       bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
     });
 
     // Every OTHER candidate is enumerated from Dune, which is the whole acceptance test.
@@ -3928,6 +3961,7 @@ describe('the enumeration spends nothing it does not have to', () => {
       refreshProbe: false,
       nowMs: NOW_MS,
       bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
     });
     expect(c.executions()).toBe(0);
     expect(e.walletsRefusedByShape).toBe(2);
@@ -4028,6 +4062,8 @@ describe('the keyless boundary holds in both directions', () => {
   // contain rather than what a record carries. The version is the only thing that tells a consumer
   // the domain grew, which is why it moved for a change no key-set assertion can see.
   PERSISTED_BY_SCHEMA[12] = PERSISTED_BY_SCHEMA[11]!;
+  // Schema 13's two new keys sit inside the run-level `dune` block — DUNE_KEYS_BY_SCHEMA below.
+  PERSISTED_BY_SCHEMA[13] = PERSISTED_BY_SCHEMA[12]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -4112,6 +4148,9 @@ describe('the keyless boundary holds in both directions', () => {
     11: ENTRY_KEYS_11,
     // Schema 12 adds a seventh unmeasured CAUSE, not a key.
     12: ENTRY_KEYS_11,
+    // Schema 13 is a vendor-allowance guard and no Dune value may reach a Stage 2 entry number,
+    // which is the same boundary schema 9 drew.
+    13: ENTRY_KEYS_11,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -4173,6 +4212,9 @@ describe('the keyless boundary holds in both directions', () => {
     11: CREATION_KEYS_9,
     // Schema 12 is a Stage 2 refusal. Enumeration is untouched again.
     12: CREATION_KEYS_9,
+    // Schema 13 gates whether the enumeration runs at all; it does not change what a run that DID
+    // enumerate records per candidate.
+    13: CREATION_KEYS_9,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -4213,6 +4255,8 @@ describe('the keyless boundary holds in both directions', () => {
     11: ENTRY_COVERAGE_KEYS_6,
     // Schema 12's guard READS this block's `launchesPlanned` accounting and adds nothing to it.
     12: ENTRY_COVERAGE_KEYS_6,
+    // Schema 13 is about a vendor allowance and touches no per-launch accounting.
+    13: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -4260,6 +4304,9 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 12 leaves it alone too, and for a stronger reason: the guard runs BEFORE the room bar,
     // so a candidate it refuses never reaches the cost leg and never spends an RPC request.
     12: SPEND_KEYS_8,
+    // Schema 13 leaves it alone because Dune is not in this block and never was: it is a fourth
+    // vendor in a fourth unit, and the credit ceiling lands where the rest of that unit lives.
+    13: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -4286,12 +4333,20 @@ describe('the keyless boundary holds in both directions', () => {
     'walletsRefusedByShape',
     'coverage',
   ];
+  // Schema 13: the monthly credit ceiling. `allowance` is what POST /usage said BEFORE the leg's
+  // first billed request — the coverage probe included, since a result read is billed by bytes —
+  // and `localEstimate` is what the run believes it added afterwards, from its own counters, because
+  // the vendor's counter lags by longer than a run lasts. `allowance: null` means the run never
+  // reached Dune, NOT that the check passed, which is why the key's presence is pinned here rather
+  // than its value being asserted non-null.
+  const DUNE_KEYS_13 = [...DUNE_KEYS_9, 'allowance', 'localEstimate'];
   const DUNE_KEYS_BY_SCHEMA: Record<number, string[]> = {
     9: DUNE_KEYS_9,
     // Schema 10 leaves the Dune block alone — a separate lane owns that surface.
     10: DUNE_KEYS_9,
     11: DUNE_KEYS_9,
     12: DUNE_KEYS_9,
+    13: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -4315,6 +4370,8 @@ describe('the keyless boundary holds in both directions', () => {
     10: DUNE_COVERAGE_KEYS_9,
     11: DUNE_COVERAGE_KEYS_9,
     12: DUNE_COVERAGE_KEYS_9,
+    // Schema 13 adds two SIBLINGS of `coverage`, not fields inside it.
+    13: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -4330,6 +4387,7 @@ describe('the keyless boundary holds in both directions', () => {
     10: DUNE_COVERAGE_TABLE_KEYS_9,
     11: DUNE_COVERAGE_TABLE_KEYS_9,
     12: DUNE_COVERAGE_TABLE_KEYS_9,
+    13: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the

@@ -682,6 +682,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 10 | no new candidate ROW field, no new `entry.coverage` field, no new `spend` field, no new `dune` field and no new `creation` field: `PERSISTED_BY_SCHEMA[10]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[10]`, `SPEND_KEYS_BY_SCHEMA[10]`, `DUNE_KEYS_BY_SCHEMA[10]` and `CREATION_KEYS_BY_SCHEMA[10]` all equal `[9]`. **What changed is that an UNMEASURED verdict now says which of its six producers reached it, and whose fact that is** (captain decision 174b). `entry` gains `unmeasuredCause` (one of `entry.mjs` → `UNMEASURED_CAUSES`, or `null` on a measured verdict), `unmeasuredCauseAttribution` (`our-coverage` | `deployer` | `null`) and `unmeasuredContributingCauses` (every producer that applied, primary first — the three sample-size causes can co-occur). **The verdict vocabulary is UNCHANGED**, so unlike the schema-6 boundary a schema-9 verdict and a schema-10 verdict are the same six values and are directly comparable; what an older record cannot do is say WHY an unmeasured one was reached. **The one that will bite:** all six producers are facts about OUR coverage — the walk was never offered `minLaunchesSampled` windows, windows were dropped, windows were REFUSED as unproven openings (decision 134a), the field closed too few round trips inside a window whose tail our own walk truncates, too little of the field priced, too few round trips priced end to end. So `verdict !== 'entry-unmeasured'` is a filter on our own budget and evidence wearing a measurement's clothes, and a later stage may filter only on a MEASURED verdict at any schema version. On a schema-≤9 record the cause is genuinely absent and **must not be reconstructed**: `entry.mjs` → `isDeployerAttributable` answers `false` for the whole unmeasured family there, which is the safe direction. See “What a later stage may filter on” below. |
 | 11 | no new candidate ROW field, no new `entry.coverage` field, no new `spend` field and no new `dune` field: `PERSISTED_BY_SCHEMA[11]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[11]`, `SPEND_KEYS_BY_SCHEMA[11]` and `DUNE_KEYS_BY_SCHEMA[11]` all equal `[10]`. **What changed is the CO-ORDINATION RULE: it became a UNION** (captain decision 182a) of the existing shared-transaction rule, unchanged, and the deployer-anchored contiguous block-index run at step 1. `entry` gains `runTx` (transactions in that run, anchor included) and `adjacencyMarks` (wallets the run marked that the shared-transaction rule did not) beside `bundledTx` and `maxWalletsInOneTx`. It costs no request, no host and no vendor quota — `sid` is already on every fill the walk fetched. **THE ONE THAT WILL BITE: a schema-≤10 `entry.roomLeft` is not comparable with a schema-11 one, and the older figure is the HIGHER of the two.** A wallet that rode the deployer's bundle without ever sharing a transaction used to be counted as an outsider, so its stake sat in `independentSol` and inflated `roomLeft`; `sharedTx ⊆ union` by construction, so the correction can only move a room reading DOWN. `adjacencyMarks` is the size of what the union added per launch, and therefore the measure of what an older record's room figure was carrying. On the committed tape it removes **180 create-slot wallet-instances from the field** (1,502 → 1,322) and **every one of the 180 is a NAMED cohort wallet** — so a schema-≤10 record's field figures, `outsidersPerLaunch`, `fieldEntrants` and every P&L distribution built on them were partly measuring the operation's own wallets as competitors. `launchesRoomUnproven` changes meaning the same way — it counts launches NEITHER half marked anything in, and on the committed tape the refusal falls from 60 of 235 launches to 0. **No bar was relaxed**: decision 134a's refusal is untouched and `minLaunchesSampled`/`maxLaunchesPerCandidate` are unmoved (decision 141a stands); the rule sees more, so it refuses less. **The `stage0` block is not comparable across the boundary either, and a published constant moved**: `stage2SeamReproduction`'s era-2 entry reads `n: 89, nRoomUnproven: 0` at a measured share of **0.770796** where a schema-5..10 record reads `n: 86, nRoomUnproven: 3` at **0.769153** — the published `0.771` it is compared against is UNCHANGED and the measured figure moved towards it, the structural and named-cohort estimators becoming the same number to six decimals over the full 89. `rollingRoom` goes from `unmeasured: 81, present: 53, absent: 94` to `unmeasured: 0, present: 88, absent: 140`, `falsePositives: 0` on both sides. The block gains `adjacencyRuns`, the tripwire on the `sid` block-index signal, persisted because that signal fails SILENTLY and towards refusal. The correction is recorded in `data/population-tape-2026-07-29/IMPORT.md` → "Corrections"; `report.md` and the dataset README are a primary record and are not edited. |
 | 12 | no new key ANYWHERE: `PERSISTED_BY_SCHEMA[12]`, `ENTRY_KEYS_BY_SCHEMA[12]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[12]`, `SPEND_KEYS_BY_SCHEMA[12]`, `DUNE_KEYS_BY_SCHEMA[12]` and `CREATION_KEYS_BY_SCHEMA[12]` all equal `[11]`. **What changed is the DOMAIN of an existing field: `entry.unmeasuredCause` gains a seventh value, `room-verdict-not-robust-to-missing-launches`** (captain decision 198b). The version is bumped precisely because no key-set assertion can see this — a consumer that enumerated the six causes would otherwise meet a seventh with nothing saying so, which is the same hole schema 10 exists to close one level up. **What it means.** Decision 190a decoupled `maxLaunchesPerCandidate` (10) from `minLaunchesSampled` (8), so a candidate keeps its verdict after losing up to two launches — and the missing ones are chosen by DROP CAUSE, not at random: the request cap takes the busiest windows and `roomIsProven` takes the ones with no co-ordination evidence. `entry.mjs` → `roomBarRobustness` now refuses a room verdict whenever completing that hole could have put the median on the other side of `minRoomLeft`, in EITHER direction, because the direction of the bias is unmeasured. **No `thresholds.json` value moved and no new one was pinned** — the interval is the sample's own reachable median range under `measure.mjs` → `ROOM_LEFT_RANGE`, which is algebraic. **Two ways to misread it.** (1) It is NOT a sample-size cause: `entry.launchesSampled` on such a record is at or ABOVE `minLaunchesSampled`, where every `too-few-*` record sits below it — the candidate had enough windows and was refused anyway. (2) A schema-≤11 record's *absence* of this cause is not evidence its sample was robust; the guard did not exist, so a schema-11 `entry-room-absent` or `entry-open-after-costs` reached over 8 of 10 launches is exactly the shape 198b refuses today and is not comparable with a schema-12 one. Committed records are never retro-edited, so the older reading stays legal — what it cannot do is stand in for a guarded one. |
+| 13 | no new candidate ROW field, no new `entry` field, no new `entry.coverage` field, no new `spend` field and no new `creation` field: `PERSISTED_BY_SCHEMA[13]`, `ENTRY_KEYS_BY_SCHEMA[13]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[13]`, `SPEND_KEYS_BY_SCHEMA[13]` and `CREATION_KEYS_BY_SCHEMA[13]` all equal `[12]`. **What changed is that the Dune MONTHLY CREDIT CEILING is now something a run checks before it spends, rather than something it discovers by hitting.** The run-level `dune` block gains two keys. `allowance` is the verdict of `dune.mjs` → `checkDuneAllowance`, read from `POST /usage` **before the leg's first billed request** — the coverage probe included, because a result read is billed by bytes — and it carries the plan's worst case in credits, the period's `credits_used`/`credits_included` and dates, what remained, the reserve held back for the counter's lag, the verdict (`sufficient` | `tight` | `insufficient` | `unreadable`) and the reasons. `localEstimate` is what the run believes it spent, from its OWN counters at the pinned worst case per execution, and it carries a caveat string saying it is not the bill. **`allowance: null` means the run never reached Dune at all** (no key, `--no-dune`, `--ownership-only`, or nothing to gate) — it does NOT mean the check passed. **The one that will bite:** on a schema-≤12 record the absence of this block is not evidence a run had headroom; nothing checked, and a run reporting two executions may have been the one that emptied the period. That gap is what this version closes, not a defect in the older records, which are never retro-edited. |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -1392,6 +1393,7 @@ result bytes against a shared monthly one.
 
 | endpoint | cost | role |
 |---|---|---|
+| `POST /usage` | 1 request, **no execution, no credits** | **the monthly credit ceiling** — read before every other Dune call of the run |
 | `GET /query/{id}` | 1 request, **no execution** | verify the saved SQL against the text committed in `dune.mjs`, before anything is spent |
 | `GET /query/{coverageQueryId}/results` | 1 request, **no execution** | the coverage probe, from Dune's cache — the default |
 | `POST /query/{creationQueryId}/execute` | 1 request, **1 EXECUTION** | the enumeration, once for the whole candidate batch |
@@ -1399,9 +1401,55 @@ result bytes against a shared monthly one.
 | `GET /execution/{id}/results` | 1 request, **billed by bytes** | ~20 credits/MB, ~71% of the bill |
 
 Authentication is the `X-Dune-API-Key` **header**, never `Bearer` and never a query parameter, so no
-URL this client builds can carry a credential. `POST /api/v1/usage` is free and reports
-`credits_used` / `credits_included`, but it lags minutes and lands in whole-credit jumps — it is a
-post-hoc ledger, not a pre-flight guard, and **nothing in this tool reads it**.
+URL this client builds can carry a credential.
+
+### The monthly credit ceiling — what it is, and what it cannot see
+
+**The ceiling is credits per BILLING PERIOD, and the period is not a calendar month.** Free tier:
+2,500 credits, and this account's period was measured running **2026-07-29 → 2026-08-29**, i.e. it
+resets on a subscription anniversary. Three units are involved and they are not interchangeable:
+credits are the allowance, **executions** are billed whether or not they succeed, and result
+**bytes** are billed separately at ~20 credits/MB (~71% of a typical bill).
+
+**Consumption is read from `POST /api/v1/usage`** — free, consumes no credits, and it reports
+`credits_used` / `credits_included` per billing period. `client.mjs` → `readUsage` is the call and
+`parseUsageResponse` is the reader; `dune.mjs` → `checkDuneAllowance` is the decision, and it runs
+**before the coverage probe**, because the probe is itself a billed read.
+
+**What a run does when the allowance is insufficient.** `dune.mjs` → `duneSpendPlan` prices the
+CEILINGS this leg admits — `maxExecutionsPerRun` executions at
+`worstCaseCreditsPerExecution`, plus one result read each and one of headroom, every read at
+`?limit=maxResultRows` rows of at most `resultBytesPerRowCeiling` bytes. Four outcomes:
+
+| verdict | when | what happens |
+|---|---|---|
+| `sufficient` | the worst case fits at least `allowanceTightMultiple` times over | the leg runs |
+| `tight` | it fits once but not twice | **the leg runs and says so** — this run may be the last one the period can afford |
+| `insufficient` | `remaining − reserve` is below the worst case | **refused before the first request**; creation enumeration falls back to the Solana RPC walk |
+| `unreadable` | `POST /usage` failed or returned something this will not read | **refused** — an unreadable balance is not headroom |
+
+A refusal here is the ordinary Dune fallback: slower, never wrong. `--dry-run` prints the worst case
+and the balance below which the leg refuses, and needs no credential to do it.
+
+**What the guard cannot see, and both caveats travel on every verdict including the passing ones:**
+
+- **The counter LAGS.** Measured on this account: `credits_used` rose **+6.0 while completely idle**,
+  and it lands in whole-credit jumps. A reading is therefore a *floor* on spend and a *ceiling* on
+  what remains. `allowanceReserveCredits` is held back before any comparison; no measurement fixes
+  the multiple, and its justification says so.
+- **The key is SHARED.** The allowance belongs to the account, so another holder can spend the whole
+  remainder between our reading and our execution. *A sufficient reading is evidence, never a
+  reservation.*
+- **Execution compute is not predictable from the vendor.** Dune publishes no price table for it, so
+  `worstCaseCreditsPerExecution` is pinned per lane against measured executions of *these* queries.
+  A statement that grew a `dex_solana.trades` join would be ~9× the pin with nothing else failing.
+- **Nothing tracks the period across runs.** The tool is stateless; what a run carries is the
+  reading it took plus `dune.localEstimate`, an estimate of its own spend from its own counters,
+  labelled as one. Re-reading `/usage` after a run would report the balance from *before* it.
+- **ONE FIELD NAME IS AN ASSUMPTION.** Dune's docs contradict themselves — the response schema names
+  the array `billing_periods`, the example beside it names it `billingPeriods` — and no live
+  response has been seen from this repository. Both spellings are accepted. If a live response ever
+  settles it, narrow the reader; do not widen it further.
 
 ### Stage 2's own bounds — and it spends no vendor quota at all
 

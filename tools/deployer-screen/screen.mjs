@@ -33,7 +33,14 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { BoundedClient, CeilingReached, DuneClient, VendorRefused } from './client.mjs';
+import {
+  BoundedClient,
+  CeilingReached,
+  DuneClient,
+  VendorRefused,
+  describeAllowanceDecision,
+  localCreditEstimate,
+} from './client.mjs';
 import { coveredBoundMs, mergeHistories } from './creation.mjs';
 import {
   DUNE_KEY_ENV_VAR,
@@ -43,7 +50,7 @@ import {
   resolveKey,
   resolveSolanaRpcEndpoint,
 } from './credential.mjs';
-import { coverageRecordRow, enumerateCreations } from './dune.mjs';
+import { checkDuneAllowance, coverageRecordRow, enumerateCreations } from './dune.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
 import {
   RECORD_SCHEMA_VERSION,
@@ -642,6 +649,8 @@ export async function main(opts, env, out, err) {
     : null;
   /** @type {import('./dune.mjs').DuneEnumeration | null} */
   let duneEnumeration = null;
+  /** @type {import('./client.mjs').AllowanceDecision | null} */
+  let duneAllowance = null;
   /** @type {string | null} */
   let duneUnusableNote = null;
 
@@ -722,6 +731,15 @@ export async function main(opts, env, out, err) {
         );
       }
       try {
+        // ---- THE MONTHLY CREDIT CEILING, BEFORE THE FIRST DUNE REQUEST OF THE RUN. ------------
+        // Dune bills a SHARED monthly allowance and a FAILED execution is billed like a successful
+        // one, so the failure worth preventing is a leg that starts, dies partway and leaves
+        // neither a result nor the credits to retry. The reading is free and it happens before the
+        // coverage probe, which is itself a billed read. A refusal degrades this leg to the RPC
+        // walk exactly as any other Dune failure does — slower rather than wrong.
+        const checked = await checkDuneAllowance(duneClient, { bounds: duneBounds, nowMs: Date.now() });
+        duneAllowance = checked.decision;
+        if (!opts.json) for (const line of describeAllowanceDecision(checked.decision)) out(`  ${line}`);
         duneEnumeration = await enumerateCreations(duneClient, {
           wallets: gating.map((s) => s.wallet),
           creationQueryId: duneBounds.creationQueryId,
@@ -729,6 +747,7 @@ export async function main(opts, env, out, err) {
           refreshProbe: opts.duneRefreshProbe,
           nowMs: Date.now(),
           bounds: duneBounds,
+          allowance: checked.decision,
         });
         if (!opts.json) {
           const cov = duneEnumeration.coverage;
@@ -1297,6 +1316,16 @@ export async function main(opts, env, out, err) {
             requests: stats?.requests ?? 0,
             resultBytes: stats?.resultBytes ?? 0,
             estimatedCredits: stats?.estimatedExportCredits ?? 0,
+            // The two halves of the monthly credit ceiling. `allowance` is what the guard saw
+            // BEFORE the leg spent anything — `null` on a run that never reached Dune — and
+            // `localEstimate` is what this run believes it took, computed from its own counters
+            // because the vendor's counter lags by longer than a run lasts. Neither is the bill.
+            allowance: duneAllowance,
+            localEstimate: localCreditEstimate({
+              executions: stats?.executions ?? 0,
+              creditsPerExecution: duneBounds.worstCaseCreditsPerExecution,
+              resultBytes: stats?.resultBytes ?? 0,
+            }),
             rowsReturned: duneEnumeration?.rowsReturned ?? 0,
             unreadableRows: duneEnumeration?.unreadableRows ?? 0,
             walletsRefusedByShape: duneEnumeration?.walletsRefusedByShape ?? 0,

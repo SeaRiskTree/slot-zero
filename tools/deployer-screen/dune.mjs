@@ -103,7 +103,12 @@
  * derived counts are ever written, and only with `--out`. Nothing here caches a result between runs.
  */
 
-import { DuneRefused } from './client.mjs';
+import {
+  DuneRefused,
+  decideAllowance,
+  estimatePlanCredits,
+  parseUsageResponse,
+} from './client.mjs';
 
 /**
  * The row ceiling {@link CREATION_SQL} divides between the batch's deployers, written as a literal
@@ -1366,6 +1371,141 @@ export async function readCoverageProbe(client, opts) {
  */
 
 /**
+ * A whole batch refused before a single request, in the shape a caller already knows how to read.
+ *
+ * Every wallet comes back `usable: false` with the reason, because "fall back to the walk" is one of
+ * this module's answers and a wallet must never be reported as having created nothing. The synthetic
+ * probe says what it is: nothing was probed, so `fromMs`/`toMs` are `null` — which means covered
+ * NOTHING, never "since the epoch".
+ *
+ * @param {readonly string[]} wallets
+ * @param {readonly string[]} reasons
+ * @returns {DuneEnumeration}
+ */
+function refusedEnumeration(wallets, reasons) {
+  /** @type {CoverageProbe} */
+  const probe = { tables: [], probedAtMs: null, fromCache: false };
+  /** @type {CoverageAssessment} */
+  const coverage = { ok: false, fromMs: null, toMs: null, reasons: [...reasons], holes: [], staleOnly: false };
+  /** @type {Map<string, WalletEnumeration>} */
+  const byWallet = new Map();
+  for (const wallet of wallets) {
+    byWallet.set(
+      wallet,
+      toWalletEnumeration({
+        wallet,
+        launches: [],
+        declaredLaunches: null,
+        launchCap: null,
+        batchWallets: 0,
+        coverage,
+        priorReasons: [...reasons],
+      }),
+    );
+  }
+  return {
+    probe,
+    coverage,
+    byWallet,
+    unreadableRows: 0,
+    rowsReturned: 0,
+    walletsRefusedByShape: 0,
+    launchCap: 0,
+    walletsRefusedByLaunchCap: 0,
+    oversizedSplit: {
+      attempted: false,
+      executions: 0,
+      rowsReturned: 0,
+      resultBytes: 0,
+      walletsTruncated: 0,
+      walletsRecovered: 0,
+      walletsStillRefused: 0,
+      unplaced: [],
+      groups: [],
+      stopped: null,
+      note: OVERSIZED_SPLIT,
+    },
+  };
+}
+
+/**
+ * This leg's spend, stated in the unit the monthly credit ceiling is denominated in.
+ *
+ * It prices the CEILINGS, not the expected run — `dune.maxExecutionsPerRun` executions at the pinned
+ * worst case, plus one result read each and one of headroom, every read at `?limit=maxResultRows`
+ * rows of at most `resultBytesPerRowCeiling` bytes. Expected and worst case differ by more than an
+ * order of magnitude here (a measured run is ~20 credits against a worst case near 200), and pricing
+ * the worst case is the same discipline the Helius leg already applies: a plan is admissible when
+ * its worst case fits, so the ceiling is exact rather than usually-right. Refusing a run that would
+ * have cost 20 credits because it COULD have cost 200 falls back to the RPC walk, which is slower
+ * rather than wrong; the alternative is dying at the second execution with the month gone.
+ *
+ * @param {{ maxExecutionsPerRun: number, maxResultRows: number, worstCaseCreditsPerExecution: number,
+ *   resultBytesPerRowCeiling: number }} bounds
+ * @returns {import('./client.mjs').DuneSpendPlan}
+ */
+export function duneSpendPlan(bounds) {
+  return {
+    lane: 'tools/deployer-screen',
+    executions: bounds.maxExecutionsPerRun,
+    creditsPerExecution: bounds.worstCaseCreditsPerExecution,
+    // One result read per execution plus the cached coverage probe, which is a read and no execution.
+    resultReads: bounds.maxExecutionsPerRun + 1,
+    rowsPerRead: bounds.maxResultRows,
+    bytesPerRow: bounds.resultBytesPerRowCeiling,
+  };
+}
+
+/**
+ * Read the account's credit allowance and decide whether this leg may spend — **before the coverage
+ * probe, which is itself a billed read**, and long before the execution.
+ *
+ * **Every failure yields no allowance rather than an optimistic one.** A transport failure, a vendor
+ * refusal, a body this cannot parse: each means the balance is unknown, and {@link decideAllowance}
+ * refuses an unknown balance while `dune.allowanceRequired` is true. The reading is free (Dune
+ * documents `/usage` as a metadata endpoint consuming no credits) and is retried once inside the
+ * client, so one hiccup does not decide a run cannot afford itself.
+ *
+ * @param {import('./client.mjs').DuneClient} client
+ * @param {object} input
+ * @param {{ maxExecutionsPerRun: number, maxResultRows: number, worstCaseCreditsPerExecution: number,
+ *   resultBytesPerRowCeiling: number, allowanceReserveCredits: number, allowanceTightMultiple: number,
+ *   allowanceRequired: boolean }} input.bounds
+ * @param {number} input.nowMs
+ * @returns {Promise<{ plan: import('./client.mjs').DuneSpendPlan,
+ *   estimate: import('./client.mjs').DuneSpendEstimate,
+ *   allowance: import('./client.mjs').DuneAllowance | null,
+ *   decision: import('./client.mjs').AllowanceDecision }>}
+ */
+export async function checkDuneAllowance(client, input) {
+  const plan = duneSpendPlan(input.bounds);
+  const estimate = estimatePlanCredits(plan);
+  /** @type {import('./client.mjs').UsageReading} */
+  let reading = { ok: false, allowance: null, reasons: [] };
+  try {
+    reading = parseUsageResponse(await client.readUsage(), input.nowMs);
+  } catch (cause) {
+    // The message carries a path and a body excerpt and never a credential — the key is a HEADER,
+    // interpolated in exactly one place, so no URL or message this client builds can hold it.
+    reading = {
+      ok: false,
+      allowance: null,
+      reasons: [`POST /usage could not be read: ${cause instanceof Error ? cause.message : String(cause)}`],
+    };
+  }
+  const decision = decideAllowance({
+    plan,
+    estimate,
+    allowance: reading.allowance,
+    unreadableReasons: reading.reasons,
+    reserveCredits: input.bounds.allowanceReserveCredits,
+    tightMultiple: input.bounds.allowanceTightMultiple,
+    allowanceRequired: input.bounds.allowanceRequired,
+  });
+  return { plan, estimate, allowance: reading.allowance, decision };
+}
+
+/**
  * Enumerate a whole candidate batch's creation histories in ONE execution.
  *
  * Batching is the cost model rather than a convenience: the scan cost is nearly independent of how
@@ -1386,6 +1526,12 @@ export async function readCoverageProbe(client, opts) {
  * @param {number} opts.coverageQueryId
  * @param {boolean} opts.refreshProbe
  * @param {number} opts.nowMs
+ * @param {import('./client.mjs').AllowanceDecision | null} [opts.allowance] The monthly credit
+ *   ceiling's verdict from {@link checkDuneAllowance}. **A missing or refusing decision stops this
+ *   function before its first request**, coverage probe included — the probe is a billed read, so
+ *   "check the balance first" has to bind here and not only at the call site. `undefined` is treated
+ *   exactly like a refusal: a caller that forgot to check has not established that it can afford
+ *   this, which is the same evidence as an empty allowance.
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number,
  *   maxCoverageLagMs: number, maxOversizedExecutions?: number, maxOversizedRowsPerExecution?: number }} opts.bounds
  * @param {boolean} [opts.splitOversized] **Opt-IN, and deliberately so.** Captain decision 196a
@@ -1397,6 +1543,24 @@ export async function readCoverageProbe(client, opts) {
  * @returns {Promise<DuneEnumeration>}
  */
 export async function enumerateCreations(client, opts) {
+  // ---- THE MONTHLY CREDIT CEILING, AHEAD OF EVERY REQUEST THIS FUNCTION MAKES. ----------------
+  // Before the probe, because the probe is a billed READ — results are ~71% of the bill at ~20
+  // credits/MB — and a run that cannot afford its execution should not pay for the evidence that it
+  // was allowed to try. `undefined` refuses exactly like a refusal does: not having checked is not
+  // the same as having checked and been cleared, and the failure this whole guard exists to prevent
+  // is a billed leg that dies partway with neither an answer nor the credits to retry.
+  if (opts.allowance == null || !opts.allowance.ok) {
+    const reasons =
+      opts.allowance == null
+        ? [
+            'the Dune monthly credit allowance was never checked for this run, so this leg refused ' +
+              'to spend. dune.mjs -> checkDuneAllowance is the check, and it runs before the ' +
+              'coverage probe because the probe is itself a billed read.',
+          ]
+        : opts.allowance.reasons;
+    return refusedEnumeration(opts.wallets, reasons);
+  }
+
   // The probe FIRST, and its cost is a cached read. An enumeration executed against surfaces nobody
   // has bounded is the thing this module exists to refuse, so it is not spent before the bound is in
   // hand — and if the probe refuses, the execution is never issued at all.

@@ -47,6 +47,26 @@ const BOUNDS = {
   maxCoverageLagMs: 6 * 3_600_000,
 };
 
+// A cleared monthly credit allowance, so these fixtures exercise the split rather than the credit
+// guard in front of it. `enumerateCreations` refuses outright without one; test/dune-credit-ceiling
+// .test.ts owns that behaviour.
+const ALLOWANCE_CLEARED = {
+  verdict: 'sufficient' as const,
+  ok: true,
+  worstCaseCredits: 1,
+  creditsUsed: 0,
+  creditsIncluded: 2500,
+  creditsRemaining: 2500,
+  reserveCredits: 25,
+  spendableCredits: 2475,
+  shortfallCredits: 0,
+  periodStart: '2026-07-29',
+  periodEnd: '2026-08-29',
+  readAtUtc: '2026-08-04T00:00:00.000Z',
+  reasons: [],
+  caveats: ['test fixture'],
+};
+
 /**
  * A base58-shaped address, so nothing is dropped by `WALLET_SHAPE` before it can be measured. The
  * alphabet excludes `0`, `O`, `I` and `l`, which is why this is built rather than templated from a
@@ -284,6 +304,7 @@ describe('the split inside enumerateCreations', () => {
       refreshProbe: false,
       nowMs: NOW_MS,
       bounds: BOUNDS,
+      allowance: ALLOWANCE_CLEARED,
     });
     expect(c.executions()).toBe(1);
     expect(e.walletsRefusedByLaunchCap).toBe(1);
@@ -303,6 +324,7 @@ describe('the split inside enumerateCreations', () => {
       nowMs: NOW_MS,
       bounds: BOUNDS,
       splitOversized: true,
+      allowance: ALLOWANCE_CLEARED,
     });
 
     // The wallet that was a 500-row prefix is now a 1,200-launch history that may be gated on.
@@ -350,6 +372,7 @@ describe('the split inside enumerateCreations', () => {
       nowMs: NOW_MS,
       bounds: BOUNDS,
       splitOversized: true,
+      allowance: ALLOWANCE_CLEARED,
     });
     expect(e.byWallet.get(big)?.launches).toBe(1200);
     expect(e.byWallet.get(big)?.usable).toBe(false);
@@ -375,6 +398,7 @@ describe('the split inside enumerateCreations', () => {
       nowMs: NOW_MS,
       bounds: BOUNDS,
       splitOversized: true,
+      allowance: ALLOWANCE_CLEARED,
     });
     expect(c.executions()).toBe(1);
     expect(e.oversizedSplit.attempted).toBe(true);
@@ -395,6 +419,7 @@ describe('the split inside enumerateCreations', () => {
       nowMs: NOW_MS,
       bounds: { ...BOUNDS, maxOversizedExecutions: 0 },
       splitOversized: true,
+      allowance: ALLOWANCE_CLEARED,
     });
     expect(c.executions()).toBe(1);
     expect(e.oversizedSplit.executions).toBe(0);
@@ -413,6 +438,7 @@ describe('the split inside enumerateCreations', () => {
       nowMs: NOW_MS,
       bounds: BOUNDS,
       splitOversized: true,
+      allowance: ALLOWANCE_CLEARED,
     });
     expect(c.executions()).toBe(2);
     expect(e.oversizedSplit.stopped).toMatch(/stopped after 1 follow-up execution/);
@@ -443,6 +469,7 @@ describe('the split inside enumerateCreations', () => {
       nowMs: NOW_MS,
       bounds: BOUNDS,
       splitOversized: true,
+      allowance: ALLOWANCE_CLEARED,
     });
     expect(e.oversizedSplit.groups).toHaveLength(1);
     expect(c.executions()).toBe(2);
@@ -477,6 +504,7 @@ describe('the split inside enumerateCreations', () => {
       nowMs: NOW_MS,
       bounds: BOUNDS,
       splitOversized: true,
+      allowance: ALLOWANCE_CLEARED,
     });
     expect(e.unreadableRows).toBe(1);
     expect(c.executions()).toBe(1);
@@ -495,6 +523,7 @@ describe('the split inside enumerateCreations', () => {
       nowMs: NOW_MS,
       bounds: BOUNDS,
       splitOversized: true,
+      allowance: ALLOWANCE_CLEARED,
     });
     expect(e.byWallet.get(big)?.usable).toBe(false);
     expect(e.byWallet.get(big)?.reasons.join(' ')).toMatch(/follow-up \(oversized-split\) Dune answer could not be read/);

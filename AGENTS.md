@@ -476,6 +476,26 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   five-column cap SQL reads ~115 against a pinned 121 ceiling — `CREATION-DERIVED.md` §8.2b owns both
   figures and the caveat on the second), one execution for the whole batch,
   and a **cached** probe read by default.
+- **THE MONTHLY CEILING IS NOW CHECKED BEFORE A RUN SPENDS, NOT DISCOVERED BY HITTING IT — and the
+  period is NOT a calendar month.** `POST /api/v1/usage` is free (a metadata endpoint that consumes
+  no credits), reports `credits_used`/`credits_included` per **billing period**, and this account's
+  period was measured running **2026-07-29 → 2026-08-29**, i.e. it resets on a subscription
+  anniversary. Both keyed lanes read it before their first billed request — the coverage probe
+  included, since a result read is billed by bytes — price their own CEILINGS in credits, and
+  **refuse rather than half-run**: the screen falls back to the RPC walk, the census defers.
+  An unreadable balance refuses too; it is not headroom. **The guard is one text duplicated byte for
+  byte in both `client.mjs` files** (neither keyed tool may import the other) and
+  `test/dune-credit-ceiling.test.ts` pins the copies together and owns the refusal regression —
+  read it, and each tool's README section "The monthly credit ceiling", rather than restating the
+  numbers. **Three things it cannot see, and they are on every verdict:** the counter LAGS (measured
+  +6.0 credits while idle, whole-credit jumps, so a reading over-states what remains — hence a pinned
+  reserve); the key is SHARED, so a sufficient reading is evidence and never a reservation; and Dune
+  publishes NO price table for execution compute, so `worstCaseCreditsPerExecution` is a per-lane pin
+  against measured executions of *these* statements — **a query that grows a `dex_solana.trades` join
+  is ~9x it with nothing else failing** (measured: 0.75–0.92 credits for the creation queries against
+  81.74 and 221.51 for two trade-tape joins). **One field name is an ASSUMPTION**: Dune's docs say
+  `billing_periods` in the schema and `billingPeriods` in the example, no live response has been seen
+  from here, and both are accepted — narrow it if one is ever settled, do not widen it.
 - **Free tier: 2,500 credits/month, SHARED, and only 10 PRIVATE QUERIES — but the account is NOT at
   that cap, and "the slots are full" is a stale claim that once blocked a lane on nothing.**
   **Never take a saved-query count on trust; re-checking it is free of credits, not of the key:**

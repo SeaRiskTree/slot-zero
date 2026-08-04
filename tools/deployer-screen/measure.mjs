@@ -406,7 +406,9 @@ export function blockTxIndex(sid) {
  * ## The co-ordination rule is a UNION of two structural tests (captain decision 182a)
  *
  * **(a) Shared transaction.** A create-slot transaction carrying 2+ distinct swapping wallets marks
- * all of them. Independent traders cannot share a transaction. Unchanged, and never relaxed.
+ * all of them. Traders acting alone do not arrange to share a transaction; a third party can put two
+ * strangers in one, which is rare and biases towards refusal — {@link roomIsProven} owns that
+ * qualification and its measurement. Unchanged, and never relaxed.
  *
  * **(b) The deployer-anchored contiguous block-index run.** Sort the create slot's transactions by
  * {@link blockTxIndex}; start at the one carrying the deployer's own curve buy and walk outwards in

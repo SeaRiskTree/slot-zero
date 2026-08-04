@@ -885,13 +885,19 @@ stake as outsider capital, and on the affected launches of our own tape that is 
 launch** moved out of the numerator and into `independentSol`. It lowers the operation's share and
 raises room twice over, once in each term.
 
-**The rule's errors therefore run in exactly one direction: every one of them makes a deployer look
-more enterable than it is.** The opposite error — marking a wallet that is not the operation's —
-stands differently on each half of the union, and conflating the two is the mistake to avoid:
+**The rule's errors therefore run, in the direction that matters, exactly one way: a mark it misses
+makes a deployer look more enterable than it is.** The opposite error — marking a wallet that is not
+the operation's — stands differently on each half of the union, and conflating the two is the mistake
+to avoid:
 
-- **Half (a) — structurally impossible.** Independent traders cannot share a transaction, so only
-  wallets that *provably* shared one are ever marked here. A false mark is not merely unlikely; it
-  cannot happen.
+- **Half (a) — rare and era-dependent, not impossible.** Only wallets that *provably* shared a
+  create-slot transaction are ever marked here, and traders acting alone do not arrange that for
+  themselves — but a third party can put two strangers in one transaction, and on this tape one
+  bundling-shaped wallet does: **11 non-cohort marks over 3 era-1 launches**, the settled outsiders
+  among them. `measure.mjs` → `roomIsProven` owns the claim and
+  [`census/2026-08-04-proof-coverage-probe.md`](./census/2026-08-04-proof-coverage-probe.md) →
+  "Incidental finding" owns the figures. The direction is the safe one: a mis-marked outsider raises
+  `operationShare` and lowers `roomLeft`.
 - **Half (b) — empirically bounded, not structural.** The deployer-anchored block-index run is an
   **inference**: whether an adjacent transaction is a true Jito bundle or merely the leader's packing
   order is not observable, because nothing keyless exposes a bundle id. What bounds it is

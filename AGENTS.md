@@ -770,8 +770,9 @@ dev currently?"*, and the shape of the answer is the point:
   recovers is the *operator's submission habit on the day*, not a property of the rule: 0% of our
   subject's known cohort in Dec 2025–Feb 2026, 41.6% in March, 97–100% from May. Finding nothing is
   indistinguishable from there being nothing, and reading it as the second books ~9.6–10.0 SOL of the
-  operation's own stake as outsider capital, which **inflates room — the only direction the rule can
-  err**. Captain decision 134a: refuse to score them (`measure.mjs` → `roomIsProven`), which on our
+  operation's own stake as outsider capital, which **inflates room — the direction that manufactures
+  an edge** (the opposite error is rare, era-dependent and biases towards refusal; `measure.mjs` →
+  `roomIsProven` owns it). Captain decision 134a: refuse to score them (`measure.mjs` → `roomIsProven`), which on our
   tape removes 24 of 24 false-positive rolling windows for 0 true positives and 81 unmeasured ones.
   Stage 0's **rolling replay** (`stage0.mjs` → `replayRollingRoom`) is the control and fails loudly
   if it reopens; the two slice checks structurally cannot catch it. `bundledTx` /

@@ -1257,18 +1257,17 @@ only forbade mint-shaped *keys*, so a mint inside a sentence passed it. Two chan
   stripping URLs and base58 address runs, so containment for those fields does not rest on every
   future note-writer remembering. **Covered today, and only these:** the entry half's `rationale`,
   `caveats` and `dropNotes` (`stage2.mjs` → `toEntryRecordRow`); the gate half's `rationale`,
-  `gateReasons` and `consistency.note` (`screen.mjs` → `toRecordRow`); and the run-level
-  `truncationReason`.
+  `gateReasons` and `consistency.note` (`screen.mjs` → `toRecordRow`); the run-level
+  `truncationReason`; the creation half's `stopDetail` and `listingUnmeasuredNote` (`screen.mjs` →
+  `toRecordRow`, via `record.mjs` → `redactCreationNotes`); and every run-level `unmeasured[]`
+  entry's `detail`, redacted at construction inside `unmeasuredBecause` / `unmeasuredNoSource`
+  because that is where a caller's exception becomes record text.
 
-  **Not covered, and the enumeration above is not full coverage of the record.** Three error-derived
-  paths still reach `--out` verbatim: `creation.listingUnmeasuredNote` (`screen.mjs` →
-  `describeUnmeasured`, whose `summary` is a raw `Error.message`), `creation.stopDetail`
-  (`pumpfun.mjs`, a raw `cause.message` under `upstream-error`; under `request-ceiling` it is that
-  client's own fixed ceiling wording, which names no vendor data), and the run-level `unmeasured[]` array, whose `detail`
-  field `record.mjs` itself documents as embedding a per-wallet URL — so a keyless listing failure
-  can persist a URL containing the wallet, which is the exact leak class this boundary exists for.
-  That is a known open gap, deliberately left to a separate lane rather than an oversight; do not
-  read the covered list as the whole record.
+  The three error-derived paths that used to reach `--out` verbatim — `creation.stopDetail` (a raw
+  `cause.message` under `upstream-error`), `creation.listingUnmeasuredNote` (built from one) and
+  `unmeasured[].detail` (documented as embedding a per-wallet URL) — are the ones the last two
+  entries close. The enumeration is still a list of NAMED fields, not a property of the record: a
+  new free-text field is uncovered until it is routed and listed here.
 
   It is applied **field by field and never as a sweep of the record**, because `wallet` is a 44-char
   base58 string that is deliberately kept — public on-chain data, and the one identifier a record

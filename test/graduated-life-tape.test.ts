@@ -751,6 +751,20 @@ describe('the summary counts closure, and deliberately never counts money', () =
 
 const OUT_DIR = fileURLToPath(new URL('../data/graduated-life-tape-2026-08-02/', import.meta.url));
 
+/**
+ * Every string literal in `source` — single-quoted, double-quoted or template — that names a
+ * window AND carries a digit, i.e. that would write a fixed window width into a note. Comments
+ * are tokenised alongside the literals and discarded, so a duration stated in prose is fine and a
+ * `//` inside a literal cannot desynchronise the scan.
+ */
+function fixedWindowWidthLiterals(source: string): string[] {
+  const tokens =
+    source.match(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g) ?? [];
+  return tokens.filter(
+    (t) => /^['"`]/.test(t) && /window/i.test(t) && /\d/.test(t),
+  );
+}
+
 describe('the collected tape says what it covers and what it does not', () => {
   const gradPath = join(OUT_DIR, 'graduation.csv');
 
@@ -836,12 +850,26 @@ describe('the collected tape says what it covers and what it does not', () => {
       fileURLToPath(new URL('../tools/graduated-life-tape/graduation.mjs', import.meta.url)),
       'utf8',
     );
-    const noteLiterals = source.match(/note: '[^']*'/g) ?? [];
-    expect(noteLiterals.length).toBeGreaterThan(0);
-    for (const literal of noteLiterals) {
-      if (!/window/i.test(literal)) continue;
-      expect(/\d/.test(literal), `the collector would write a fixed width: ${literal}`).toBe(false);
-    }
+    // Every quote form, not just the single quotes the notes happened to use when this was
+    // written: two of the five note sites in `graduation.mjs` are already template literals, so a
+    // single-quote-only pattern would let a backtick-written width straight through and the
+    // committed-data half above would only catch it after a collection had run.
+    const offenders = fixedWindowWidthLiterals(source);
+    expect(offenders, `the collector would write a fixed width: ${offenders.join(', ')}`).toEqual([]);
+  });
+
+  it('fails the source-side guard on a fixed width written as a template or double-quoted note', () => {
+    // The discriminating case. Each of these is the same defect in a different quote form, and the
+    // single-quoted pattern this guard used to carry saw only the first of them.
+    expect(fixedWindowWidthLiterals("note: 'collected over the 60 s window',")).toHaveLength(1);
+    expect(fixedWindowWidthLiterals('note: "collected over the 60 s window",')).toHaveLength(1);
+    expect(fixedWindowWidthLiterals('note: `collected over the 60 s window`,')).toHaveLength(1);
+    expect(fixedWindowWidthLiterals('note: `a ${windowMs / 1000} s window`,')).toHaveLength(1);
+    // And what it must not flag: a note naming an instant rather than a window width, the notes
+    // the collector actually writes, and a duration living in a comment.
+    expect(fixedWindowWidthLiterals('note: `a probe page at +${n}s straddled the migration`,')).toEqual([]);
+    expect(fixedWindowWidthLiterals("note: 'bracketed inside the committed window tape; zero requests',")).toEqual([]);
+    expect(fixedWindowWidthLiterals('// the window was 60 s on 83 launches\n')).toEqual([]);
   });
 
   it('evaluates the closure baseline at each launch\'s own committed window, not a flat 60 s', () => {

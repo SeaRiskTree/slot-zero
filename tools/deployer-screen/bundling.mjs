@@ -46,7 +46,8 @@
  * therefore can never be scored, however often it is screened. Two of two is a signal and it is not
  * a rate. This pass turns it into one.
  *
- * The Stage 2 scoring cap is 3 (`maxCandidatesScored`), which is why the reverification could not
+ * The Stage 2 scoring cap was 3 (`maxCandidatesScored`) when this pass ran — it is 7 since
+ * 2026-08-04 — which is why the reverification could not
  * answer this itself. **This pass does not raise that cap and does not touch it**: it is not
  * Stage 2. It runs no entry scoring, computes no room figure, prices no entry cost, reaches no
  * verdict and produces no number that could be read as one. It walks the same windows Stage 2 would

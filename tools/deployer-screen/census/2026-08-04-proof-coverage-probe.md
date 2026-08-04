@@ -1,6 +1,7 @@
 # Proof-coverage probe — can a STRANGER's create slot be made provable? Measured 2026-08-04
 
-**Captain decision 203a.** The 2026-08-04 full-day default run (`runs/2026-08-04.json`) returned
+**Captain decision 203a.** The 2026-08-04 full-day default screen run record — produced by a
+separate lane and **not committed in this repo** — returned
 `entry-unmeasured` on all three scored candidates, and **18 of the 22 windows that walked cleanly
 were refused by `measure.mjs` → `roomIsProven`** against 8 walk drops over 30 planned. 198b's
 near-bar guard fired zero times. The decision read that as *the screen is missing the evidence that

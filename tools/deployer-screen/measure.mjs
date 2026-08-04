@@ -136,8 +136,10 @@ export function parseFill(raw) {
  * > run at step 1 through the deployer's own are one submission, and every wallet in that run is
  * > co-ordinated.
  *
- * Independent traders cannot share a transaction, and no outsider can insert a transaction into an
- * atomically-landed bundle. So this identifies a deployer's own book structurally, from nothing but
+ * Sharing a transaction or an atomically-landed run is something traders acting alone do not
+ * arrange for themselves — a third party has to do it for them — and no outsider can insert a
+ * transaction into a bundle already landed. So this identifies a deployer's own book structurally,
+ * from nothing but
  * the fills, with no wallet list and no prior knowledge — which is what makes the method applicable
  * to a stranger at all. {@link createSlotGroups} owns both halves and the evidence behind (b).
  *
@@ -156,10 +158,21 @@ export function parseFill(raw) {
  *
  * **The rule's errors run in one direction, and it is the direction that manufactures an edge.**
  * A co-ordinated wallet the rule misses moves out of the numerator and into `independentSol`, so it
- * lowers the operation's share and raises `roomLeft` — twice over, once in each term. The opposite
- * error is structurally impossible: only wallets that *provably* shared a transaction are marked,
- * and independent traders cannot do that (`nonCohortMarkedCoord = 0` on every era-2 launch).
- * So **every error this rule makes makes a deployer look more enterable than it is**, and the
+ * lowers the operation's share and raises `roomLeft` — twice over, once in each term. **The opposite
+ * error is RARE AND ERA-DEPENDENT rather than impossible, and an earlier version of this note said
+ * impossible.** Half (a) marks a wallet on nothing but a shared transaction, and a third party can
+ * put two strangers in one: measured over the 123 launches of
+ * `data/population-tape-2026-07-29/onchain_create_slot_pnl.csv`, half (a) marks 11 non-cohort
+ * wallet-instances across 3 era-1 launches, including both wallets `src/cohort.ts` names as settled
+ * unaffiliated outsiders, and all 11 run through one wallet that shares create-slot transactions
+ * with cohort members and with those outsiders alike — a shared bundling service is the reading
+ * that fits, but it is an INFERENCE from the fills and not something this evidence establishes.
+ * `census/2026-08-04-proof-coverage-probe.md` → "Incidental finding" owns the figures. The
+ * era-2 reading is unaffected and stands (`nonCohortMarkedCoord = 0` on every era-2 launch).
+ * **The DIRECTION is what decision 134a rests on and it is unchanged**: a mis-marked outsider moves
+ * stake INTO the numerator, so it raises `operationShare` and lowers `roomLeft` — it makes a
+ * deployer look LESS enterable, never more. So **every error this rule makes in the direction that
+ * matters makes a deployer look more enterable than it is**, and the
  * earlier note here — that its conservatisms make a positive verdict "harder to earn, not easier" —
  * had the sign backwards. The two under-recovering cases are:
  *

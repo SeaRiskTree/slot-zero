@@ -1289,14 +1289,14 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 
 ### How long a run takes, and how to bound it
 
-**A full default run at the 195-candidate cap is worst-cased in HOURS, not minutes — about 16.4 —
+**A full default run at the 195-candidate cap is worst-cased in HOURS, not minutes — about 19.2 —
 and the creation walk is essentially all of it.** With `DUNE_API_KEY` set the walk is the fallback
 and a typical run does not take it at all, finishing far inside this figure; the worst case does not
 move, because every candidate may still fall back. The arithmetic is `renderDryRun`'s, so `--dry-run`
 prints these same figures for whatever flags you actually pass:
 
 **With a Helius key that leg is ~46 minutes instead of ~13.5 hours**, and the run's worst case falls
-to roughly 3.6 hours end to end (21 + 46 + 26 + 63 + 62.5 minutes) — at which point Stage 2 and its
+to roughly 6.4 hours end to end (21 + 46 + 26 + 147 + 146 minutes) — at which point Stage 2 and its
 cost leg, not the creation walk, are the largest terms. `--dry-run` prints whichever route your
 environment actually selects.
 
@@ -1310,10 +1310,11 @@ environment actually selects.
 | keyless `swap-api`, Stage 2 | 7 × 10 × 18 = 1,260 requests | 7.0s → ~147 min |
 | **Solana RPC, Stage 2's cost leg** | 7 × 500 = **3,500** requests | 2.5s → **~146 min** |
 
-So: **~16.4 hours** for a default run, **~16.75** with `--consistency`. The cost leg's ~62.5 minutes
-is a worst case over three survivors; it runs only on candidates the free legs have not already
-refused, so on the committed live run's shape — one survivor of three — it is nearer ~8 minutes at
-the measured median (~190 requests at 2.5s over 10 launches; it was ~6 at the ~152 a launch cap of 8
+So: **~19.2 hours** for a default run, **~19.5** with `--consistency`. The cost leg's ~146 minutes is
+a worst case at the scoring cap of 7 (7 × 500 = 3,500 requests); it runs only on candidates the free
+legs have not already refused, so a run in which few candidates survive both free legs costs a
+fraction of it — nearer ~8 minutes **per surviving candidate** at the measured median (~190 requests
+at 2.5s over 10 launches; it was ~6 at the ~152 a launch cap of 8
 cost, and an earlier version of this sentence said ~8 for the wrong reason — the un-unioned 200). It shares the creation walk's limiter and is serialised after it, never beside it. The earlier "about 47 minutes"
 predated the creation walk and counted only the keyed and `frontend-api-v3` legs; it is wrong by a
 factor of twenty and is withdrawn. **Do not kill a default run because it is still going after an

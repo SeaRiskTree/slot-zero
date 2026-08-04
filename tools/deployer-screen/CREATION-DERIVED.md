@@ -646,8 +646,10 @@ Two spend rules that are not negotiable, both from the vendor's own billing mode
   enumeration cost 1.75 billed against 0.92 of compute (48 kB of result).
 
 The Free tier is **2,500 credits/month and SHARED** with whatever else holds the key, only 10
-private queries exist, and **nothing in this tool tracks the month** — it is stateless between runs,
-so the monthly arithmetic is the operator's. The same limit `creation_walk_helius` states.
+private queries exist, and the allowance is now **read and priced against before a run spends** —
+`README.md` → *"The monthly credit ceiling — what it is, and what it cannot see"* owns that guard,
+its four verdicts and the three things it cannot see. What is still the operator's is the arithmetic
+*across* runs: the tool holds no state between them, the same limit `creation_walk_helius` states.
 
 ### 8.5 What the Dune route does NOT measure, and where that shows
 

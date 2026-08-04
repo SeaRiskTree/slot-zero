@@ -517,7 +517,8 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   `tools/deployer-screen/README.md` →
   "Deploying a change to the committed SQL" owns the step for the screen's two and names which id
   goes with which text; `tools/creation-census/README.md` owns it for `8214953`.
-  **Nothing tracks the month** — the tool is stateless between runs. Auth is the `X-Dune-API-Key`
+  **Nothing tracks the month ACROSS runs** — each run checks the ceiling itself (bullet above) and
+  then forgets; the tools are stateless between runs. Auth is the `X-Dune-API-Key`
   **header**, never `Bearer`.
 - **Measured cost, 2026-08-03:** five deployers' whole histories = **8 requests, 1 execution, 1.75
   billed credits**; a 195-candidate run ≈ 20 credits, i.e. ~125 full-cap runs a month. Against 793

@@ -676,12 +676,12 @@ dev currently?"*, and the shape of the answer is the point:
   transactions to price with no discovery step; `pumpfun.mjs` → `parseTransactionCosts` reads
   `meta.fee` (base + priority, exact) and the pre/post balance delta. **The free legs — room and the
   gross field — run FIRST**, so a deployer failing either costs zero RPC requests; that ordering is
-  the cost model. Measured per launch on our tape: **~20 DISTINCT transactions at the median — the
-  UNION** of the create-slot scope (p50 7) and the closed-round-trip window scope (p50 19), not
-  their sum. Over the cap of launches a candidate is walked, that is **~190 requests at the median
-  and ~366 at p90** — re-derived at captain decision 190a's cap of 10, and still inside
-  `stage2_cost.maxRpcRequestsPerCandidate`'s unchanged 400, which is why that ceiling did not have to
-  move with the cap. Pacing is `creation_walk`'s and the two legs are
+  the cost model. Measured per launch on our tape: **~19 DISTINCT transactions at the median — the
+  UNION** of the create-slot scope (p50 7) and the closed-round-trip window scope (p50 18), not
+  their sum (`render.mjs` publishes that pair and the union). Over the cap of launches a candidate is
+  walked, that is **~190 requests at the median** — re-derived at captain decision 190a's cap of 10,
+  and still inside `stage2_cost.maxRpcRequestsPerCandidate`'s unchanged 400, which is why that
+  ceiling did not have to move with the cap. Pacing is `creation_walk`'s and the two legs are
   serialised — `api.mainnet-beta` rate-limits globally across methods. **`entry-cost-prohibitive`
   gates on the PER-LAUNCH median** (`entryCostPerSolStakedByLaunch`, decision 140a) — every launch
   counts once, so a busy launch cannot outvote the rest; the pooled per-entry distribution ships

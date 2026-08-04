@@ -141,11 +141,13 @@
  * walk never fetched are all NEWER than the create slot.
  *
  * **WHAT IT DID CHANGE IS WHAT A RE-RUN COSTS, AND WHOEVER RE-RUNS THIS MUST SIZE FOR IT.** The
- * wider reach buys about a fifth more pages per launch; `pumpfun.mjs` → {@link windowReachMs} owns
- * that distribution, the population it was measured over and the drop rate it implies, and this file
- * quotes it rather than keeping a copy. Two consequences land here. (1) `census/2026-08-03-bundling-census.md`
+ * wider reach buys about a fifth more pages per launch **on the population that figure was measured
+ * over** — the committed launches whose tape outlives the reach, which is NOT the live 60 s windows
+ * this census walks; `pumpfun.mjs` → {@link windowReachMs} owns that distribution, its population
+ * and the drop rate it implies, and this file quotes it rather than keeping a copy. Two consequences land here. (1) `census/2026-08-03-bundling-census.md`
  * was walked at the superseded 65,000 ms reach, so its recorded SPEND is an underestimate of what
- * re-running the same census costs — its measures are unaffected, per the paragraph above. (2) The
+ * re-running the same census costs — a DIRECTION, not that fifth, which belongs to the other
+ * population; its measures are unaffected, per the paragraph above. (2) The
  * `maxRequestsPerLaunch` cap this pass reuses from Stage 2 did not move, so the busiest launches now
  * exhaust it and arrive as `request-cap` drops. Here that is {@link DROPPED_WINDOW_CAVEAT} rather
  * than a wrong number — counted, denominator-shrinking, never read as an unbundled window — but it
@@ -164,7 +166,13 @@ import { measureCompletion, measureCreateSlot, median, percentile, roomIsProven 
 // drifts from the walk. Captain decision 144a moved the reach and left both operator-facing plans
 // quoting the old walk — `render.mjs`, caught in PR #38's own review, and this one. See
 // {@link MEASURED_PAGE_COST}.
-import { KeylessClient, readCreatorHistory, readLaunchWindow, windowReachMs } from './pumpfun.mjs';
+import {
+  KeylessClient,
+  MAX_MS_PER_SLOT,
+  readCreatorHistory,
+  readLaunchWindow,
+  windowReachMs,
+} from './pumpfun.mjs';
 import { applyGate, verdictFor } from './rank.mjs';
 import { measureSubjectLaunches } from './stage0.mjs';
 import { describeTransportFailure } from './stage2.mjs';
@@ -264,10 +272,19 @@ export const MINT_TIME_BACKDATE_CAVEAT =
  * carries is the reach that distribution belongs to, so {@link renderDryRun} can CHECK the figure
  * against the walk it is about to authorise rather than assert it: if the reach ever moves off
  * `atReachMs`, the plan says the cost is unknown instead of printing a number measured somewhere
- * else. A quoted figure that cannot invalidate itself is exactly what went stale here — this plan
+ * else.
+ *
+ * **WHICH POPULATION THESE FIELDS ARE MEASURED OVER, because it is not this census's.** Every page
+ * figure here belongs to {@link windowReachMs}'s own population — the **127** committed launches
+ * whose tape outlives the reach, i.e. the long-window launches that can show the effect at all. The
+ * live 60 s windows this census walks have their own, separately pinned page cost
+ * (`thresholds.json` → `stage2_entry.justification.maxRequestsPerLaunch`), and that justification is
+ * explicit that the two must not be read as the same number. So these fields size a walk of THIS
+ * shape and bound the DIRECTION of the rise; they are not what the 2026-08-03 census paid.
+ *
+ * A quoted figure that cannot invalidate itself is exactly what went stale here — this plan
  * went on printing `p50 4 / p90 8 pages` after captain decision 144a widened the reach from
  * `supersededReachMs` to `atReachMs`, and a dry run is what an operator reads to authorise a run.
- *
  * `p50Requests` is `p50Pages` at the ~1.33 requests a page costs against this host's measured ~25%
  * shed rate (`thresholds.json` → `stage2_entry.justification.maxRequestsPerLaunch`), because the
  * pacing this plan multiplies by is per REQUEST and quoting pages there under-reads the wall clock
@@ -1039,6 +1056,11 @@ export function renderDryRun(plan) {
   // this is the function it calls to decide that. See {@link MEASURED_PAGE_COST} for why the page
   // cost beside it is checked against the reach rather than simply printed.
   const reachMs = windowReachMs(plan.entry);
+  const spanReachMs = Math.ceil(plan.entry.windowSlotSpan * MAX_MS_PER_SLOT);
+  const reachBase = spanReachMs >= plan.entry.windowMs
+    ? `${plan.entry.windowSlotSpan} slots at a measured worst-case slot rate (${spanReachMs / 1000}s)`
+    : `the ${plan.entry.windowMs / 1000}s windowMs FLOOR, which is wider than the ` +
+      `${spanReachMs / 1000}s its ${plan.entry.windowSlotSpan}-slot span is worth`;
   const pageCostIsCurrent = reachMs === MEASURED_PAGE_COST.atReachMs;
   const pageCostRisePct = Math.round(
     (MEASURED_PAGE_COST.p50Pages / MEASURED_PAGE_COST.supersededP50Pages - 1) * 100,
@@ -1077,8 +1099,7 @@ export function renderDryRun(plan) {
       `${plan.census.maxKeylessRequests}, about ${fillMin} minute(s) worst case.`,
   );
   L.push(
-    `    The walk seeks ${reachMs / 1000}s past each mint: ${plan.entry.windowSlotSpan} slots at a measured worst-case slot ` +
-      `rate, plus`,
+    `    The walk seeks ${reachMs / 1000}s past each mint: ${reachBase}, plus`,
   );
   L.push(
     `    ${plan.entry.seekMarginMs / 1000}s of clock slack. pumpfun.mjs -> windowReachMs derives that reach AND owns the ` +
@@ -1092,15 +1113,19 @@ export function renderDryRun(plan) {
     );
     L.push(`    paid — the EXPECTED cost is nearer ${expectedMin} minute(s) than the worst case above.`);
     L.push(
-      `    THAT IS ~${pageCostRisePct}% MORE PAGES PER LAUNCH than the 2026-08-03 census paid ` +
-        `(p50 ${MEASURED_PAGE_COST.supersededP50Pages} -> ${MEASURED_PAGE_COST.p50Pages} on`,
+      `    THAT p50 ROSE ~${pageCostRisePct}% (${MEASURED_PAGE_COST.supersededP50Pages} -> ${MEASURED_PAGE_COST.p50Pages} pages) when captain decision 144a widened the`,
     );
     L.push(
-      `    that owner's population), because captain decision 144a widened the reach from ` +
-        `${MEASURED_PAGE_COST.supersededReachMs / 1000}s to ${reachMs / 1000}s.`,
+      `    reach from ${MEASURED_PAGE_COST.supersededReachMs / 1000}s to ${reachMs / 1000}s — measured over windowReachMs's OWN population, the`,
     );
-    L.push('    THAT RECORD\'S SPEND UNDERSTATES A RE-RUN by roughly this share; its measures are');
-    L.push('    unaffected. The per-launch cap did not move with the reach, so the busiest launches now');
+    L.push('    127 committed launches whose tape outlives the reach, and NOT over the live 60s windows');
+    L.push('    this census walks. Those have their own pinned page cost (thresholds.json ->');
+    L.push('    stage2_entry.justification.maxRequestsPerLaunch), which says in terms that the two are');
+    L.push('    not the same number, so the share above sizes THIS estimate and is not a re-run factor.');
+    L.push('    THE 2026-08-03 CENSUS RECORD\'S SPEND STILL UNDERSTATES A RE-RUN — it was paid at the');
+    L.push('    narrower reach and every launch now costs more — but by how much is unmeasured on its');
+    L.push('    own population; its measures are unaffected either way.');
+    L.push('    The per-launch cap did not move with the reach, so the busiest launches now');
     L.push('    exhaust it and are dropped as request-cap — counted, and shrinking the denominator');
     L.push('    towards the quieter launches.');
   } else {

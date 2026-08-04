@@ -67,16 +67,25 @@ December 2025 — never forwards.** Forward observation time is the scarcer reso
 ## The cursor has ONE bound, in ONE unit
 
 `tools/deployer-screen/pumpfun.mjs` → `readLaunchWindow` reaches forward from the mint with **two**
-bounds in **two units**: a seek cursor at `createdAtMs + windowMs + seekMarginMs` (milliseconds) and
-a membership filter at `createSlot + windowSlotSpan` (slots). Nothing reconciles them but a hardcoded
-nominal 400 ms/slot with about a second of headroom — and the chain has been slowing all year, p50
-389.0 ms/slot in 2025-12 against 418.0 in 2026-07, max observed 441.3. At that maximum the declared
-160-slot window is 70.6 s wide against a 65 s reach. The walk reports `usable: true`,
-`reachedCreateSlot: true` and a note true in every clause, and never fetched the last 5.6 s.
+bounds in **two units**: a seek cursor in milliseconds and a membership filter at
+`createSlot + windowSlotSpan` (slots). Until captain decision 144a nothing reconciled them but a
+hardcoded nominal 400 ms/slot with about a second of headroom — and the chain has been slowing all
+year, p50 389.0 ms/slot in 2025-12 against 418.0 in 2026-07, max observed 446.55. At that maximum the
+declared 160-slot window is 71.4 s wide against the 65 s reach that cursor then had. The walk
+reported `usable: true`, `reachedCreateSlot: true` and a note true in every clause, and never fetched
+the tail.
+
+**That instance is fixed and this section is not retired by the fix.** The cursor is now
+`pumpfun.mjs` → `windowReachMs`, which converts the span in the span's own unit at a measured
+worst-case slot rate (85,000 ms at the pinned values) and is re-derived from the committed tapes by a
+test on every run. It owns the reach, the pages the wider reach costs and the launches it drops —
+cite it rather than repeating any of those numbers here. But it is still a **conversion between two
+units**, so it still has to hold each time the chain's slot rate moves.
 
 `walk.mjs` copies `tools/graduated-life-tape/walk.mjs` instead: **`seekCursor(endMs)` is the seek and
 `tsMs <= endMs` is the membership test.** One number, one unit, nothing for a drifting slot rate to
-invalidate. This was free — the walk is new code in a new directory either way.
+invalidate and nothing to re-check when it does. This was free — the walk is new code in a new
+directory either way.
 
 The other end carries **5,000 ms of floor slack**, because the declared mint instant is a different
 clock from the fills' timestamps. See the pre-flight.

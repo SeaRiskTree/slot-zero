@@ -184,10 +184,13 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   windows), `windows-dropped`, `too-few-proven-windows` (REFUSED as unproven openings, decision
  *   134a), `too-few-closed-round-trips`, `too-little-of-the-field-priced` and
  *   `too-few-priced-round-trips`. **`too-few-closed-round-trips` is the one that reads like a fact
- *   about the deployer and is not**: `readLaunchWindow` seeks 65,000 ms but counts 160 slots, so the
- *   window's tail goes unfetched by an amount that moves with slot drift and the lost fills are
- *   disproportionately late sells — making `closed.length` partly a function of WHEN a candidate's
- *   launches happened, a time-varying limit of ours. So a consumer filtering on
+ *   about the deployer and is not**: the walk that produces `closed` is bounded by our own
+ *   `maxRequestsPerLaunch`, which drops the busiest launches, so `closed.length` is read off a
+ *   sample our budget selected. **The evidence for that classification lives in ONE place and this
+ *   is a pointer to it** — `tools/deployer-screen/README.md` → "Why `too-few-closed-round-trips` is
+ *   `our-coverage` and not the deployer's", which has already been swapped once (captain decision
+ *   144a superseded the two-bound-cursor argument it originally rested on) without the
+ *   classification moving. So a consumer filtering on
  *   `verdict !== 'entry-unmeasured'` against
  *   an older record is filtering on its own budget and evidence while believing it is filtering on a
  *   measurement — and the rule at ANY schema version is that a later stage filters only on a

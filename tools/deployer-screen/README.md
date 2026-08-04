@@ -1154,21 +1154,41 @@ wallet identity, and Stage 3's questions are per-launch and per-wallet
 recognise answers `false`, a record older than schema 10 has no `unmeasuredCause` and answers
 `false` for the whole unmeasured family, and an unrecognised cause answers `false` too.
 
-**Why `too-few-closed-round-trips` is `our-coverage` and not the deployer's.** It was the one row
-attributed to the deployer, on the ground that closure is read inside the pinned entry window and
-that window is the same for every candidate. It is not a fixed instrument: `pumpfun.mjs` →
-`readLaunchWindow` seeks in **milliseconds** (65,000) but decides membership in **slots** (160), so
-at 2026-07 slot drift 160 slots reach up to 70.6 s and the window's tail is never fetched. The fills
-it loses are disproportionately late **sells** — 354 in-window fills, 161 of them sells, across 102
-launches — and dropping one flips a wallet from closed to open, which is exactly what
-`thresholds.json` → `stage2_entry.windowSlotSpan` warns silently changes gate outcomes at
-`minFieldRoundTrips`. Slot drift moves with the calendar, so `closed.length` is partly a function of
-*when* a candidate's launches happened: a time-varying limit of ours. The honest note beside it is
-that this defect moved our own create-slot series by **nothing** (identical to seven significant
-figures) because create-slot outsiders close early — but that is n = 1 deployer on our own tape and
-establishes no bound for a stranger, which is precisely why the conservative attribution is the
-captain's call. The field, the type and the table all stay: a future producer **can** be
-deployer-attributable, and it has to come to the table on purpose to become one.
+**Why `too-few-closed-round-trips` is `our-coverage` and not the deployer's.** *(This paragraph is
+the OWNER of the evidence for that classification. `entry.mjs` → `UNMEASURED_CAUSE_ATTRIBUTION` and
+`record.mjs`'s schema-10 note both point here rather than carrying their own copy — three parallel
+copies of one argument is how the last version of it went stale.)*
+
+It was the one row attributed to the deployer, on the ground that closure is read inside the pinned
+entry window and that window is the same for every candidate. **It is not a fixed instrument, and the
+evidence for that has been REPLACED rather than withdrawn — the classification is unchanged and is
+the captain's** (decision 174b). The original evidence was `readLaunchWindow`'s two-bound cursor:
+it sought in milliseconds and decided membership in slots, so slot drift left the window's tail
+unfetched and the fills it lost were disproportionately late **sells**, each one flipping a wallet
+from closed to open. Captain decision 144a closed that defect — the seek is now derived from the span
+at a measured worst-case slot rate (`pumpfun.mjs` → `windowReachMs`), so the tail is requested.
+
+What replaced it is the **price** of that fix, and it points the same way:
+
+- The walk that produces `closed` is bounded by `maxRequestsPerLaunch`, and **what that cap affords
+  moved under the launches without anything about any deployer moving.** At the wider reach the same
+  pinned cap drops **4 of the 127 committed launches** as `request-cap`, where it dropped **0 of
+  127**. `pumpfun.mjs` → `windowReachMs` owns those figures and the population.
+- **The drops fall on the busiest launches**, so the sample that survives to the field gate is
+  censored towards the *quieter* ones — and quieter launches carry fewer round trips of every kind.
+  `closed.length` is therefore read off a sample our own budget selected.
+- **Whether a candidate reaches this gate at all is decided by our sampling rule**, not by the
+  deployer. Those two thresholds were the same value, 8, so ONE drop left 7 sampled and voided the
+  **whole candidate**; captain decision 190a raised the cap to 10 against the same floor of 8
+  precisely because that equality made our own cap fatal, so a candidate now absorbs two drops and
+  loses its verdict on the third. Both the old rate and the new one are properties of our request
+  budget and our luck against an endpoint that sheds ~25% of what it is asked for on the day.
+
+The honest note beside it: that 4-in-127 rate is measured on one deployer's long-window launches,
+which are also the busiest on the tape, so it is the right order of magnitude and not a bound for a
+stranger — which is precisely why the conservative attribution is the captain's call. The field, the
+type and the table all stay: a future producer **can** be deployer-attributable, and it has to come
+to the table on purpose to become one.
 
 Two things this does **not** do. It does not retune anything — `minPricedFraction`, decision 134a's
 refusal and every other bar are untouched, and #17's asymmetry (false rejections possible, false
@@ -2001,9 +2021,11 @@ habit. Whole tape: **235 of 235 proven, 175 bundled**; trailing-8 replay **228 o
 That replay's span is pinned at 8 and so asks all-of-8 where the live rule now asks 8 proven of 10 —
 the stricter question, which understates scoreability; `bundling.mjs` owns why it is left that way.
 
-**The `readLaunchWindow` two-bound cursor cannot reach this number.** That walk can fail to fetch
-the **tail** of a window (`CLAUDE.md`); the census reads the **create slot**, which is the oldest
-end, reached last and proved by the coverage obligation.
+**The `readLaunchWindow` two-bound cursor never reached this number, and captain decision 144a has
+since closed it anyway** — but the wider reach it installed does reach what a **re-run costs**, and
+it adds a sampling caveat to any rate this pass publishes. `bundling.mjs`'s header section "The
+`readLaunchWindow` bound-mismatch is CLOSED — and this pass inherited its PRICE" owns both halves;
+`pumpfun.mjs` → `windowReachMs` owns the reach and the page cost itself.
 
 **The mint instant is BACKDATED by `mintTimeBackdateMs`, and that is a measurement rather than a
 habit.** `frontend-api-v3`'s `created_timestamp` is millisecond-precision on older listing rows

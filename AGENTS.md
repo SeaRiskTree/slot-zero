@@ -205,27 +205,38 @@ per-launch series for a cohort of deployers instead of one. Scope, bounds and li
 held outside this repo (see "Citing a report this repo does not hold").
 Five things bind anything that touches it or copies from it:
 
-- **A WINDOW WALK GETS ONE BOUND, IN ONE UNIT — copy `walk.mjs`, never `readLaunchWindow`.**
-  `tools/deployer-screen/pumpfun.mjs` seeks in **milliseconds** (`createdAtMs + windowMs +
-  seekMarginMs` = 65,000) and decides membership in **slots** (`createSlot + windowSlotSpan` = 160),
+- **A WINDOW WALK GETS ONE BOUND, IN ONE UNIT — copy `walk.mjs`, never `readLaunchWindow`.** The rule
+  stands; the instance behind it is now **FIXED, and the fix is what a copier must not undo.**
+  `tools/deployer-screen/pumpfun.mjs` used to seek in **milliseconds** (`createdAtMs + windowMs +
+  seekMarginMs` = 65,000) and decide membership in **slots** (`createSlot + windowSlotSpan` = 160),
   reconciled only by a nominal 400 ms/slot with ~1 s of headroom. The chain drifted past it: p50
-  389.0 ms/slot in 2025-12 against **418.0 in 2026-07, max 441.3**, so 160 slots is up to 70.6 s
-  against a 65 s reach and the walk never fetches the tail — while reporting `usable: true`,
+  389.0 ms/slot in 2025-12 against **418.0 in 2026-07, max 446.55**, so 160 slots ran up to 71.4 s
+  against that 65 s reach and the walk never fetched the tail — while reporting `usable: true`,
   `reachedCreateSlot: true` and a note true in every clause. Measured cost: **354 in-window fills,
   161 of them sells, across 102 launches**. It moves §2.1's create-slot series by *nothing* (identical
   to seven significant figures) because create-slot outsiders close early; it moves an all-entrant
-  reading by 69 pairs / 17.1 SOL. `tools/graduated-life-tape/walk.mjs` and
-  `tools/arrival-rate-walk/walk.mjs` both use `seekCursor(endMs)` + `tsMs <= endMs` and cannot have it.
-  **KNOWN CAVEAT, DO NOT RE-DERIVE: the `windowSlotSpan` justification's "~63.5 s" is stale.** It
-  converts 160 slots at the tape's old ~397 ms/slot; on the rates
-  `tools/arrival-rate-walk/README.md` owns, 160 slots is **~66.9 s** at the p50 418.0 ms/slot of
-  2026-07 and **~70.6 s** at the max 441.3, both against the fixed 65 s reach. **Read the bound, not
-  the median**: a reach bound has to hold at the maximum observed slot rate, and that is where the
-  160-slot span exceeds the 65 s reach. The prose in
-  `thresholds.json` → `stage2_entry.justification.windowSlotSpan` **and**
-  `stage2_entry.justification.windowMs`, and `tools/deployer-screen/stage2.mjs`, all still say
-  63.5 s; a separate consolidation lane owns fixing all three, so read the number as an underestimate
-  and do not patch it in passing.
+  reading by 69 pairs / 17.1 SOL. **Captain decision 144a closed it** (PR #38): the seek is now
+  `pumpfun.mjs` → `windowReachMs`, derived from `windowSlotSpan` in the span's own unit at
+  `MAX_MS_PER_SLOT` 500 (`MEASURED_MAX_MS_PER_SLOT` 446.55 × a stated 1.1 margin), with `windowMs`
+  surviving only as a floor — **85,000 ms at the pinned values**, and re-derived from both committed
+  tapes by a test on every run rather than pinned in prose. **That function's doc is the OWNER** of
+  the reach, the page cost it buys (p50 5→6, p95 8→9, max 14→17 pages over the 127 committed launches
+  that can show it, and 4 of them now dropped as `request-cap` where it was 0) and the drop's
+  consequence; cite it rather than restating any of those figures. The one-bound design is still the
+  thing to copy, because it removes the class instead of bounding it:
+  `tools/graduated-life-tape/walk.mjs` and `tools/arrival-rate-walk/walk.mjs` both use
+  `seekCursor(endMs)` + `tsMs <= endMs` and can never acquire a second unit to reconcile.
+  **KNOWN CAVEAT, DO NOT RE-DERIVE: the `windowSlotSpan` justification's "~63.5 s" is history, not a
+  live bound.** It converts 160 slots at the tape's old ~397 ms/slot. `thresholds.json` →
+  `stage2_entry.justification.windowSlotSpan` and `…windowMs` and `tools/deployer-screen/stage2.mjs`
+  now all say so in place and point at the 71,448 ms the same span is worth at the measured
+  446.55 ms/slot maximum — **read the bound, not the median.** What is still open is only the
+  re-derivation: the ~63.5 s figure and the "~3.5 s wider than the tape's 60 s windows" claim resting
+  on it belong to a separate consolidation lane, so read them as an underestimate and do not patch
+  them in passing. **Two bounds still reach forward from the mint and they are NOT the same number:**
+  the seek reach is 85,000 ms while `stage2.mjs`'s eligibility gate is still `windowMs +
+  seekMarginMs` = 65,000 ms, 6,448 ms short of the span. That shortfall is a knowingly shipped
+  residual, pinned by a test, and closing it is another lane's decision.
 - **The two clocks agree, and this was measured rather than assumed.** Dune's `created_at` is the
   chain's block time; every fill's `ts` is the vendor's. `getBlockTime(createSlot)` equals the window
   sidecar's `created_timestamp` on **12 of 12** launches spread over 2025-12 → 2026-07 — skew 0 ms,
@@ -632,10 +643,14 @@ dev currently?"*, and the shape of the answer is the point:
   backs this, and here is what would" is an acceptable justification** — `minEpochs`,
   `minTokensPerEpoch`, `creation_walk.maxTransactionsPerCandidate` and Stage 0's `minLaunches` /
   `minPairs` / positive-share / era-tolerance constants all say exactly that. Inventing an anchor is
-  not. **`minLaunchesSampled = 8` is the canonical case: it is a BUDGET bound** (3 × 8 × 18 = 432,
-  the Stage 2 request ceiling), not a statistical one, and the June report's smallest published
-  per-launch quartile bucket is 20 — so a verdict resting on 8 launches is weaker evidence and the
-  record's `launchesSampled` is how a reader sees it (captain decision 141a; the value does not move).
+  not. **`minLaunchesSampled = 8` is the canonical case: it is a BUDGET bound** — the Stage 2 request
+  ceiling is `maxCandidatesScored × maxLaunchesPerCandidate × maxRequestsPerLaunch` and the ceiling
+  and the declared worst case are kept the same number (3 × 10 × 18 = 540 since captain decision
+  190a raised the CAP to 10; it was 3 × 8 × 18 = 432 when cap and floor were equal). It is not a
+  statistical bound, and the June report's smallest published per-launch quartile bucket is 20 — so a
+  verdict resting on 8 launches is weaker evidence and the record's `launchesSampled` is how a reader
+  sees it (captain decision 141a; **the FLOOR does not move — 190a raises the cap instead, and a
+  future lane may not close the gap from the floor's side**).
   Do not quote `curve_last_tx_s` in any justification: it is a non-timing (see above).
 - **"Enterable" means enterable AFTER what it costs to enter, and `entry-room-present` no longer
   exists.** Fees are inside the entry window (captain, 2026-08-02) and the field's after-cost result
@@ -661,9 +676,21 @@ dev currently?"*, and the shape of the answer is the point:
   transactions to price with no discovery step; `pumpfun.mjs` → `parseTransactionCosts` reads
   `meta.fee` (base + priority, exact) and the pre/post balance delta. **The free legs — room and the
   gross field — run FIRST**, so a deployer failing either costs zero RPC requests; that ordering is
-  the cost model. Measured per launch on our tape: **~20 DISTINCT transactions at the median — the
-  UNION** of the create-slot scope (p50 7) and the closed-round-trip window scope (p50 19), not
-  their sum; ×8 launches that is ~160 requests, not ~200. Pacing is `creation_walk`'s and the two legs are
+  the cost model. Measured per launch on our tape: **~19 DISTINCT transactions at the median — the
+  UNION** of the create-slot scope (p50 7) and the closed-round-trip window scope (p50 18), not
+  their sum (`render.mjs` publishes that pair and the union). Over the cap of launches a candidate is
+  walked, that is **~190 requests at the median, ~350 at p90 and ~740 at the observed worst** at
+  captain decision 190a's cap of 10. **`stage2_cost.maxRpcRequestsPerCandidate` HAD TO MOVE WITH THAT
+  CAP and is 500, not 400** (captain decision 197b) — sized to hold the PER-PLANNED-LAUNCH headroom
+  constant, `500 / 10 = 400 / 8 = 50` requests a launch, which is why 500 and not another number.
+  **The median fitting is not the test**, and that is the trap the raise closed: `stage2.mjs` skips a
+  WHOLE launch when the remaining ceiling cannot cover its target list — a launch is never priced
+  half-way — and `minPricedFraction` is a hit rate over field ENTRANTS, not over launches, so a
+  skipped launch is by construction one of the heaviest and removes a disproportionate share of the
+  numerator while every one of its entrants stays in the denominator.
+  `thresholds.json` → `stage2_cost.justification.maxRpcRequestsPerCandidate` owns the arithmetic,
+  including the breach point (`500 / 8 = 62.5` transactions a launch) and why all of it is an upper
+  bound. Pacing is `creation_walk`'s and the two legs are
   serialised — `api.mainnet-beta` rate-limits globally across methods. **`entry-cost-prohibitive`
   gates on the PER-LAUNCH median** (`entryCostPerSolStakedByLaunch`, decision 140a) — every launch
   counts once, so a busy launch cannot outvote the rest; the pooled per-entry distribution ships
@@ -723,9 +750,15 @@ dev currently?"*, and the shape of the answer is the point:
   no tighter one exists: a deployer-in-bundle reading matches 0 of 235 launches because this deployer
   never shares its own create-slot transaction (decision 139a, `measure.mjs` → `roomIsProven`).
 - **HOW OFTEN THAT REFUSAL FIRES IS MEASURED UNDER BOTH HALVES NOW, AND THE HEADLINE DID NOT MOVE:
-  1 candidate in 14, and that one is our own control.** `maxLaunchesPerCandidate` and
-  `minLaunchesSampled` are both 8, so Stage 2 reaches a verdict only for a candidate whose most
-  recent 8 eligible launches were *every one* proven. Captain decision 173a sized that with
+  1 candidate in 14, and that one is our own control.** **READ THE CENSUS'S RULE AND THE LIVE RULE
+  APART.** When it ran, `maxLaunchesPerCandidate` and `minLaunchesSampled` were both 8, so Stage 2
+  reached a verdict only for a candidate whose most recent 8 eligible launches were *every one*
+  proven, and that all-of-8 is what every figure below counts. **Captain decision 190a then raised
+  the cap to 10 against the same floor of 8** — the floor never moves — so the live rule is 8 proven
+  of 10 planned and a candidate absorbs two drops before losing its verdict. The census has NOT been
+  re-run under it and its record is never retro-edited: its all-of-8 headline is now *stricter* than
+  the live rule, which understates scoreability, the safe direction for a finding of this shape.
+  Captain decision 173a sized that with
   `tools/deployer-screen/bundling.mjs`, a **windows-only** pass spending **zero keyed requests**;
   decision 183a re-ran it under 182a's union (record **schema 2**), and `bundling.mjs` now **calls**
   `measure.mjs` → `roomIsProven` instead of copying it, so the census cannot drift from the screen it
@@ -733,11 +766,13 @@ dev currently?"*, and the shape of the answer is the point:
   **44 of 112 = 0.3929** under the union against **18 = 0.1607** under the superseded
   shared-transaction half; **1 of 14 proven on all eight**, so among the 13 strangers it is **0 of
   13**. **6 of the 14 are permanently unscoreable** — neither half marks anything on any of their
-  windows, down from 11 — and **3 now sit one window short at 7 of 8**. So the binding constraint has
-  changed hands: it is the all-or-nothing sampling rule (decision 141a), no longer the predicate.
-  `census/2026-08-03-bundling-census.md` owns the numbers, the cross-checks that make the zeros
-  believable, and what they do and do not imply for the pinning; **the pinning itself is unmoved and
-  is the captain's.** `--subject-era` answers the era question offline at n = 1 under both halves:
+  windows, down from 11 — and **3 now sit one window short at 7 of 8**. So the binding constraint had
+  changed hands: it was the sampling rule (decision 141a), no longer the predicate — and 190a is the
+  captain answering that finding by giving the rule two launches of headroom rather than by lowering
+  the floor. `census/2026-08-03-bundling-census.md` owns the numbers, the cross-checks that make the
+  zeros believable, and what they do and do not imply for the pinning; **the pinning is the
+  captain's, and the three that sat at 7 of 8 are exactly the population 190a's headroom addresses —
+  re-measuring them is a separate decision, not an inference from this record.** `--subject-era` answers the era question offline at n = 1 under both halves:
   our subject is **proven 235/235** while it *bundles* 0% (Dec–Feb) → 58.5% (Apr) → 98.1% (Jul),
   175/235 overall — so the bundling rate is not stationary *for an operator that changes its habit*,
   and a shared-transaction-only reading takes the rule's blind spot for the deployer's habit.

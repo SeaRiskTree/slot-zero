@@ -72,8 +72,10 @@ ownership listing loses. Its block time still lands on the vendor's instant to t
   node tools/arrival-rate-walk/collect.mjs --phase preflight --out <dir> --launch-list <export>
   ```
 
-  Leg B could not run here because the launch-list export does not exist yet — the cohort stage is
-  blocked on a Dune saved-query slot (`README.md` → "The one thing that is not deployed").
+  Leg B could not run here because the launch-list export does not exist yet — as recorded on this
+  date, the cohort stage was believed blocked on a Dune saved-query slot. **That blocker was not
+  real** and `COHORT_SQL` was deployed on 2026-08-04 as saved query `8214953`; the cohort stage is
+  runnable now and leg B is still to run (`README.md` → "The census that runs this statement").
 - **Both clocks are second-resolution, so 0 ms means "within one second", never "identical".** That
   is exactly why the verdict's arithmetic carries `SECOND_RESOLUTION_MS` rather than reading a
   measured zero as a proved zero.

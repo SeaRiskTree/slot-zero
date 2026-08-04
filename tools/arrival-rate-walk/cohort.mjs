@@ -27,12 +27,17 @@
  * A Dune execution is **billed whether or not it succeeds and is never retried**, and this tool runs
  * for days. Keeping the key out of this directory makes "the collector cannot spend money" a
  * property of the tree — the credential allow-list for `tools/arrival-rate-walk/` is empty and a
- * test enforces it. The two statements are committed here byte for byte; the operator executes them
- * and exports the results, and this module validates what comes back.
+ * test enforces it. The two statements are committed here byte for byte; something else executes
+ * them and exports the results, and this module validates what comes back. For {@link COHORT_SQL}
+ * that something else is now `tools/creation-census/`, which holds the key, compares the saved
+ * query against this text before every execution, and writes a result file
+ * {@link readDuneResultFile} reads unchanged.
  *
  * **Expected spend for a whole run: two executions.**
  *
- * 1. {@link COHORT_SQL} — one execution, a few hundred rows at most. New saved query required.
+ * 1. {@link COHORT_SQL} — one execution, a few hundred rows at most, as saved query `8214953`
+ *    (deployed 2026-08-04; see the constant for the deploy step and for the stale blocker it
+ *    replaced).
  * 2. `tools/deployer-screen/dune.mjs` → `CREATION_SQL`, **unchanged and already deployed** as saved
  *    query `8204672`, with `{{deployers}}` set to the chosen cohort. At 20 deployers its
  *    per-deployer cap is `max(500, floor(19999/20)) = 999` rows, comfortably above any measured
@@ -75,12 +80,27 @@ export const WALLET_SHAPE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 /**
  * The cohort query's SQL, committed byte for byte.
  *
- * **DEPLOY STEP: this text needs a saved Dune query of its own, and the free tier's ten private
- * query slots are full.** It is not deployed, and the lane's cohort stage cannot execute until a
- * slot is freed or the account is changed — a captain decision, recorded rather than worked around.
- * `README.md` → "The one thing that is not deployed" owns the step. Nothing in this repository will
- * silently substitute a different statement for it: whatever runs it must compare its text against
- * this constant first, exactly as `dune.mjs` → `assertSavedQueryMatches` does for the screen's two.
+ * **DEPLOYED, 2026-08-04, as saved query `8214953`** — captain decision 187a. It is executed by
+ * `tools/creation-census/`, which is this statement's keyed half: this directory is keyless
+ * throughout (its credential allow-list is empty and a test enforces it), so it commits the text and
+ * validates what comes back while another directory spends. `README.md` → "The census that runs
+ * this statement" owns the step.
+ *
+ * **THIS CONSTANT PREVIOUSLY RECORDED ITSELF AS UNDEPLOYABLE, AND THAT WAS FALSE.** It said the free
+ * tier's ten private query slots were full and the account held ten; the account held **eight**, six
+ * of them retired scratch probes, and that one stale sentence is why the census sat unbuilt for a
+ * month (`data/slot-zero-discovery-widen-operations/report.md` §2.1). Do not replace one unverifiable
+ * count with another: **the slot usage is re-checkable at any time** with a keyed `GET
+ * /api/v1/queries?limit=100` on Dune's API, whose `total` field is the figure, and
+ * `tools/creation-census/run.mjs` → `readSavedQueries` reads it live immediately before creating
+ * anything and refuses rather than asserting. A number in a comment is a claim; that call is the
+ * enforcement. (The full command is in that tool's `README.md` — this directory reaches exactly two
+ * keyless hosts and a test asserts the URL set, so it may not spell a third one even in prose.)
+ *
+ * Nothing in this repository will silently substitute a different statement for it: whatever runs it
+ * must compare its text against this constant first, exactly as `dune.mjs` →
+ * `assertSavedQueryMatches` does for the screen's two, and `run.mjs` does for this one before every
+ * execution.
  *
  * Five columns and no more, because retrieving results is ~71% of the Dune bill at ~20 credits/MB.
  * The coverage evidence rides in the same result as `kind = 'coverage'` rows rather than repeating

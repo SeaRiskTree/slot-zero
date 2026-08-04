@@ -1325,8 +1325,16 @@ describe('the keyless boundary holds around this tool', () => {
     const readme = readFileSync(join(TOOL_DIR, 'README.md'), 'utf8');
     expect(readme).toMatch(/gross of fees/i);
     expect(readme).toMatch(/## What this tool cannot answer/);
-    // The one blocking dependency must be in the README, not only in a status line somewhere.
+    // The saved-query dependency must be in the README, not only in a status line somewhere. It
+    // was recorded here for a month as a BLOCKER — "the free tier's ten private query slots are
+    // full" — and it was false: the account held eight. `COHORT_SQL` is deployed now, so what the
+    // README owes a reader is where the statement runs and how the slot count is re-checked, not a
+    // replacement number to take on faith.
     expect(readme).toMatch(/saved quer/i);
+    expect(readme).toContain('tools/creation-census/');
+    expect(readme, 'the README must not restate the stale slot-exhaustion claim').not.toMatch(
+      /ten private query slots are\s+full/,
+    );
   });
 
   it('keeps the zero-closed-pair caveat to ONE claim, scoped to the population it was measured over', () => {

@@ -27,12 +27,16 @@ what is established and what is open.
   scans `src/` **recursively** for sockets, `process.env` and key-shaped strings. Keep it that
   way; the entire dataset was built keyless and its value depends on staying reproducible offline.
 - **The one network-capable area is `tools/`, and the boundary is the directory.** Each tool there is
-  governed by its own test, and there are four. `tools/deployer-screen/` holds the keyed MadeOnSol and
+  governed by its own test, and there are five — two of them keyed. `tools/deployer-screen/` holds the
+  keyed MadeOnSol and
   Dune clients; `test/deployer-screen.test.ts` asserts no imports across `src/`↔`tools/`, only
   `client.mjs`/`pumpfun.mjs` may call `fetch` (**a third vendor goes into `client.mjs`, not a new
   file — keeping that allow-list at two is what makes the ceilings auditable by reading two files**),
   only `credential.mjs`/`screen.mjs` may name `MADEONSOL_API_KEY` / `HELIUS_API_KEY` / `DUNE_API_KEY`,
   and no file there may contain a key-shaped string or assign a value to a credential variable.
+  `tools/creation-census/` is the **second keyed** tool — it holds `DUNE_API_KEY` for the creation
+  census, and `test/creation-census.test.ts` holds it to the same shape with `DUNE_API_KEY` alone
+  allow-listed, to `credential.mjs` alone.
   `tools/graduated-life-tape/`, `tools/arrival-rate-walk/` and `tools/window-decay-tripwire/` are
   **keyless throughout** — `test/graduated-life-tape.test.ts`, `test/arrival-rate-walk.test.ts` and
   `test/window-decay-tripwire.test.ts` hold them to the same shape with the credential allow-list
@@ -41,7 +45,9 @@ what is established and what is open.
   rather than as a ban-list: `swap-api.pump.fun` and `api.mainnet-beta.solana.com` for the walk,
   `swap-api.pump.fun` and `frontend-api-v3.pump.fun` for the tripwire, which its client refuses to go
   outside. Duplicated curve constants between `src/index.ts` and `tools/deployer-screen/measure.mjs`, the
-  duplicated keyless client across the four tools, and the duplicated segmentation between
+  duplicated client across all five tools — keyless in four, and a **keyed Dune** copy in
+  `tools/creation-census/`, which also copies `COHORT_SQL` and its readers verbatim rather than
+  importing them — and the duplicated segmentation between
   `analysis/window-population/measure.mjs` and `tools/arrival-rate-walk/arrival.mjs`, are this
   boundary's deliberate cost — do not "fix" any of them by importing across it. The segmentation copy
   is held together by a **reproduction test**, not by discipline: the tool's own code must return the
@@ -203,10 +209,12 @@ Five things bind anything that touches it or copies from it:
   inside a bounded window and the loss falls on late entrants. `ALL_ENTRANT_FLOOR_CAVEAT` reaches the
   row, the CSV column name and the record. Persisting fills preserves the option; it does not repair
   the data.
-- **The lane is keyless and its cohort SQL is NOT DEPLOYED — but NOT for want of a query slot.**
-  `cohort.mjs` → `COHORT_SQL` needs a saved Dune query of its own, and `bounds.json` →
-  `dune.cohortQueryId` is `null`, so the cohort stage cannot execute until one is created. **The
-  slot-exhaustion reason previously recorded here was false** — see the Dune section's "10 PRIVATE
+- **The lane is still keyless, and its cohort SQL is now DEPLOYED — executed from OUTSIDE this
+  directory.** `cohort.mjs` → `COHORT_SQL` is saved Dune query `8214953` (captain decision 187a) and
+  `bounds.json` → `dune.cohortQueryId` pins it, but this directory's credential allow-list is empty
+  and a test enforces that, so it cannot execute its own statement: `tools/creation-census/` is the
+  keyed half that does — see `tools/creation-census/README.md`. **The slot-exhaustion reason once
+  recorded here was false** — see the Dune section's "10 PRIVATE
   QUERIES" entry for how to re-check the count. The launch-list leg reuses the screen's existing
   `8204672` **unchanged**. Everything else is proven on a bounded sample: 5/5 create slots and exact
   fill counts against the committed tape (25 requests, 0 shed), and `arrival.mjs` reproduces §4.1's
@@ -424,15 +432,22 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   **Never take a saved-query count on trust; re-checking it is free of credits, not of the key:**
   `GET /api/v1/queries?limit=100` with the `X-Dune-API-Key` header lists them, and creating a
   throwaway with `POST /api/v1/query` then archiving it proves a slot is free without spending an
-  execution. Measured that way 2026-08-04 by the discovery-widen investigation: **8 saved queries,
-  2 production and 6 retired scratch probes, at least one slot free.** Retiring the six scratch ids
-  is queued work, so the number will move — re-list rather than quote it. The two production queries
-  were upgraded in place (`8204672` enumeration, `8204603` coverage). Their SQL is committed in
-  `dune.mjs` and `assertSavedQueryMatches` compares it before spending an execution, because a saved
-  query is editable from a browser and its answer is a gate input. **EDITING EITHER SQL IN THIS
+  execution. Measured that way 2026-08-04 by the discovery-widen investigation, then moved the same
+  day by decision 187a taking one of the free slots: **9 saved queries, 3 production and 6 retired
+  scratch probes.** Retiring the six scratch ids is queued work, so the number will move — re-list
+  rather than quote it; this correction is an instance of exactly why. The three production queries
+  are deployed in place: `8204672` enumeration and `8204603` coverage, whose SQL is committed in
+  `dune.mjs`, and `8214953` creation census, whose SQL is committed in
+  `tools/arrival-rate-walk/cohort.mjs` → `COHORT_SQL` and whose runner is
+  `tools/creation-census/run.mjs`. Each lane's `assertSavedQueryMatches` compares the committed text
+  before spending an execution, because a saved
+  query is editable from a browser and its answer is a gate input. **EDITING ANY OF THE THREE SQL
+  TEXTS IN THIS
   REPO IS HALF THE CHANGE: the saved query must be updated IN PLACE or the next real run refuses
-  the whole Dune leg terminally** — the comparison happens before the execution. `README.md` →
-  "Deploying a change to the committed SQL" owns the step and names which id goes with which text.
+  the whole Dune leg terminally** — the comparison happens before the execution.
+  `tools/deployer-screen/README.md` →
+  "Deploying a change to the committed SQL" owns the step for the screen's two and names which id
+  goes with which text; `tools/creation-census/README.md` owns it for `8214953`.
   **Nothing tracks the month** — the tool is stateless between runs. Auth is the `X-Dune-API-Key`
   **header**, never `Bearer`.
 - **Measured cost, 2026-08-03:** five deployers' whole histories = **8 requests, 1 execution, 1.75

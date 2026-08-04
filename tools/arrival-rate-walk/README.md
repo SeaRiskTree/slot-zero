@@ -108,9 +108,11 @@ The CLI exits **2** on a failing pre-flight. A collection is days long and this 
 ## Running it
 
 ```bash
-# 1. Two Dune executions, by hand. cohort.mjs commits both statements.
-#    COHORT_SQL              -> the January cohort            (NOT DEPLOYED — see below)
+# 1. Two Dune executions. cohort.mjs commits both statements; neither runs from this directory.
+#    COHORT_SQL -> the January cohort, saved query 8214953, run by the census tool (see below):
+node tools/creation-census/run.mjs --month 2026-01 --min-launches 20 --max-rows 2000 --live
 #    deployer-screen's CREATION_SQL, saved query 8204672, unchanged, with {{deployers}} = the cohort
+#    (still by hand — no tool in this repository drives it yet)
 
 # 2. Cost the run. Issues NOTHING.
 node tools/arrival-rate-walk/collect.mjs --phase plan --cohort <file> --launch-list <file>
@@ -154,12 +156,30 @@ permanently marking it unmeasured — and the loss would not have been random, s
 issues more requests and busy launches are the high-prize tail. The failed attempt's own evidence
 (`stop_reason`, `requests`, `pages`) is carried forward in the sidecar's `previous_attempts`.
 
-### The one thing that is not deployed
+### The census that runs this statement
 
-**`COHORT_SQL` needs a saved Dune query of its own, and the free tier's ten private query slots are
-full — the account holds ten.** `bounds.json` → `dune.cohortQueryId` is therefore `null`, so nothing
-can execute the wrong statement under its name, and the cohort stage cannot run until a slot is freed
-or the account changes. That is a captain decision, recorded rather than worked around.
+**`COHORT_SQL` is deployed as saved Dune query `8214953`** (2026-08-04, captain decision 187a) and
+`bounds.json` → `dune.cohortQueryId` pins it. This directory still executes nothing — it is keyless
+throughout and a test keeps it that way — so the statement's keyed half is
+**`tools/creation-census/`**, which verifies the saved query against the committed text before every
+execution and writes a result `cohort.mjs` → `readDuneResultFile` reads unchanged:
+
+```bash
+node tools/creation-census/run.mjs --month 2026-01 --min-launches 20 --max-rows 2000 --live
+```
+
+**This section used to say the opposite, and the opposite was false.** It recorded the cohort stage
+as blocked because the free tier's ten private query slots were full and the account held ten. The
+account held **eight**, six of them retired scratch probes, and that sentence is why the stage sat
+blocked for a month (`data/slot-zero-discovery-widen-operations/report.md` §2.1). Do not take the
+replacement on faith either: the slot usage is **re-checkable** with a keyed
+`GET https://api.dune.com/api/v1/queries?limit=100` (header `X-Dune-API-Key`), whose `total` field is
+the figure, and `tools/creation-census/run.mjs` → `readSavedQueries` reads it live immediately before
+creating anything rather than asserting a count a reader has to trust.
+
+The census tool's **default month is 2026-07, not this lane's 2026-01** — discovery wants deployers
+that are screenable today, a walk wants forward observation time — so this lane's month is passed
+explicitly, as above. One census month is one execution.
 
 Everything else in the lane is deployed and exercised: the launch-list leg reuses the screen's
 existing saved query `8204672` **unchanged**, and the walk, the series and the arrival measurement are

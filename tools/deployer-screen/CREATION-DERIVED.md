@@ -532,13 +532,19 @@ wallet on a truncated count reported as a total.
 **Bytes, which is the billed unit, stay bounded and the bound is stated.** Reads are still issued
 with `?limit=dune.maxResultRows`, so no read can exceed it whatever the query does. The measured
 **~97 bytes/row was taken at four columns**; the fifth is bounded by arithmetic at <=24 bytes, so
-<=121 bytes/row and <=~2.42 MB (~48 credits) for a read that fills the ceiling. **121 is a ceiling
-nobody has observed** — replace it with a measurement from the next real run rather than quoting it
-as one. A median-shaped full-cap run is unchanged at ~9,750 rows and ~20 credits.
+<=121 bytes/row and <=~2.42 MB (~48 credits) for a read that fills the ceiling. **The five-column
+shape has now been read once: 28,699 bytes over 250 rows, i.e. ~115 bytes/row** (§8.3b, the deploy
+proof run — one deployer, so the per-response overhead is amortised over far fewer rows than the
+four-column measurement). It is inside the arithmetic bound, which stays pinned at 121 as the
+ceiling; one single-wallet read is not a batch-shaped measurement, so widen it from a real
+multi-wallet run rather than from this one. A median-shaped full-cap run is unchanged at ~9,750 rows
+and ~20 credits.
 
-**DEPLOY STEP.** This changed `CREATION_SQL`, so **saved query `8204672` must be updated in place**
-to the committed text. `README.md` → *"Deploying a change to the committed SQL"* owns the procedure
-and what a mismatch costs; §8.6 owns the custody rule behind it.
+**DEPLOY STEP — taken 2026-08-03.** This changed `CREATION_SQL`, so saved query `8204672` **was
+updated in place** to the committed text; §8.3b records the deploy and the proof the leg is live.
+Any *future* change to either committed text is the same deploy step: `README.md` → *"Deploying a
+change to the committed SQL"* owns the procedure and what a mismatch costs; §8.6 owns the custody
+rule behind it.
 
 ### 8.3 Reproduced against the 239-launch ground truth, through the production code path
 
@@ -561,6 +567,43 @@ Helius walk produced in §7.5, from an independent surface. Bonded status came f
 a curve read.
 
 **No measured value moved and no verdict changed.**
+
+### 8.3b The deploy of the cap SQL, and the proof the leg is live — 2026-08-03
+
+**Saved query `8204672` was updated in place**, via the Dune API, to the committed five-column
+`CREATION_SQL` (the §8.2b cap text), then **re-fetched and compared under the repo's own
+`normaliseSql` rules** rather than by eye. Saved query `8204603` was checked in the same pass and
+**already matched `COVERAGE_SQL` byte for byte, so it was not touched**. **No saved query was
+created, renamed or deleted** — the free tier's ten private slots are full and stay full (§8.6).
+
+The leg was then driven end to end through the production code path — `DuneClient` +
+`enumerateCreations`, bounds read from `thresholds.json` → `dune` — for the subject deployer
+`7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL`:
+
+| | reading |
+|---|---|
+| coverage | `coverageOk: true`, 2024-01-14 → 2026-08-04 |
+| rows | `rowsReturned` 250, `unreadableRows` 0, `usable: true` |
+| history | `launches` 250, **`declaredLaunches` 250**, `bonded` 109 |
+| cap | `truncatedByLaunchCap: false`, `launchCap` 19999 |
+| spend | 7 requests, 1 execution, 28,699 bytes |
+
+**`declaredLaunches` being POPULATED is the decisive evidence, not the string comparison.** That
+field exists only on the fifth column the cap SQL adds, so a populated value proves the *deployed*
+query is the new text and that the leg executed — a matching `normaliseSql` comparison alone proves
+neither.
+
+**Both legs were re-confirmed against the live vendor on 2026-08-03**, independently of the deploy
+run: `8204672` vs `CREATION_SQL` and `8204603` vs `COVERAGE_SQL` both match under `normaliseSql` (the
+live `8204672` text carries `launches_total` and the cap/ranked CTEs, so it is the five-column text),
+and one further bounded execution of the same code path reproduced the readings above exactly
+(12 requests, 1 execution). **The saved-query comparison leg costs no execution and no credits** — a
+saved-query read is not billed — so checking either query for drift is free, and an execution is only
+needed to prove the leg still *executes*.
+
+**250/109 is consistent with §8.3's ground truth, not a correction to it.** §8.3 owns the 239-tape
+and 247 figures; the excess here is post-tape creations by a still-active deployer, so this number
+is expected to keep drifting upward. Do not read it as a restated ground truth.
 
 ### 8.4 What it costs, against the walk it replaces
 
@@ -639,11 +682,7 @@ where the traps above are written down.
 **So a change to either committed text is a DEPLOY STEP against its saved query**, and until the
 step is taken the run refuses that leg rather than answering differently — which is the safe
 direction, and still a run with no Dune answer for anybody. `README.md` → *"Deploying a change to the
-committed SQL"* holds the procedure and the id-to-text table. **Outstanding right now: `8204672`
-carries the pre-cap four-column SQL and must be updated in place to the five-column text of §8.2b.**
-**Delete that sentence (and the matching paragraph in `README.md`) as part of that update**: it is a
-point-in-time deployment status, and once `8204672` matches, nothing fails to make it stale — left in
-place it reads as a live warning forever.
+committed SQL"* holds the procedure and the id-to-text table.
 
 ### 8.7 Terms of service
 

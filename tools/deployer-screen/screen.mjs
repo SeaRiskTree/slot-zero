@@ -50,6 +50,7 @@ import {
   deriveTruncation,
   describeUnmeasured,
   redactAll,
+  redactCreationNotes,
   redactVendorIdentifiers,
   unmeasuredBecause,
   unmeasuredNoSource,
@@ -1465,7 +1466,10 @@ function toRecordRow(c) {
     // changed verdict would put it into the very gap-tracking figure this record exists to keep
     // honest. The `verdict` field carries the state; this flag stays a comparison of two results.
     verdictChanged: c.verdict !== 'gate-unmeasured' && c.verdict !== c.vendorVerdict,
-    creation: c.creation,
+    // Structured throughout EXCEPT `stopDetail` (a raw upstream `Error.message`) and
+    // `listingUnmeasuredNote` (built from one), so those two — and only those two — are routed
+    // through the redaction boundary. See `record.mjs` → `redactCreationNotes`.
+    creation: redactCreationNotes(c.creation),
     verdict: c.verdict,
     // FREE TEXT, so it goes through the redaction boundary — the same one `toEntryRecordRow`
     // applies to its half. These three are all template-generated from counts and rates today

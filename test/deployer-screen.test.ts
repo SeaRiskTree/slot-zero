@@ -111,6 +111,7 @@ import {
 } from '../tools/deployer-screen/seed.mjs';
 import {
   KeylessClient,
+  KeylessHttpError,
   LAMPORTS_PER_SOL,
   RpcCredentialRejected,
   SOLANA_RPC,
@@ -153,6 +154,7 @@ import {
   describeUnmeasured,
   groupUnmeasured,
   partitionUnmeasured,
+  redactCreationNotes,
   redactVendorIdentifiers,
   schemaVersionOf,
   unmeasuredBecause,
@@ -1930,9 +1932,13 @@ describe('a ceiling hit is never recordable as a measured result', () => {
     expect(u.summary).toMatch(/rerun may well succeed/);
     // Must not borrow the wall's advice to go and change a threshold.
     expect(u.summary).not.toMatch(/maxKeylessRequests/);
-    // The per-wallet URL is detail, never the stable summary.
-    expect(u.detail).toMatch(/WalletBbb/);
+    // The per-wallet URL reaches NEITHER: the summary is built from the status and never repeats
+    // the message, and `detail` — a raw `Error.message` — is redacted at construction. Which wallet
+    // it was is carried by `subject`, a structured field, which is why it does not need the URL.
+    expect(u.detail).not.toMatch(/WalletBbb/);
+    expect(u.detail).toMatch(/\[url redacted\]/);
     expect(u.summary).not.toMatch(/WalletBbb/);
+    expect(u.subject).toBe('WalletBbb');
   });
 
   it('does NOT claim a retry for a 4xx, which is the endpoint\'s considered answer', () => {
@@ -2080,8 +2086,10 @@ describe('a ceiling hit is never recordable as a measured result', () => {
     const grouped = groupUnmeasured(many);
     expect(grouped.size).toBe(1);
     expect([...grouped.values()]).toEqual([60]);
-    // The per-wallet detail is not lost, it just is not the key.
-    expect(many[0]?.detail).toMatch(/creator=W0/);
+    // The URL is not the key AND no longer reaches the record at all — `detail` is redacted at
+    // construction, and `subject` is what says which wallet each entry was.
+    expect(many[0]?.detail).toBe('HTTP 503 on [url redacted]');
+    expect(many[0]?.subject).toBe('W0');
   });
 
   it('agrees with UNMEASURED_KINDS about which kind truncates', () => {
@@ -8105,6 +8113,100 @@ describe('what a Stage 2 run record may persist', () => {
     // strikes, and it is the one identifier the record exists to carry.
     expect(row).toMatch(/\bwallet: c\.wallet,/);
     expect(redactVendorIdentifiers('7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL')).toBe('[address redacted]');
+  });
+
+  it('a transport error carrying a URL cannot reach the record by any of the three note routes', () => {
+    // The three free-text fields that used to reach `--out` verbatim, driven from the exact shape
+    // that leaks: `KeylessHttpError` formats `HTTP <status> on <url>`, and the keyless listing URL
+    // carries the candidate's own wallet. All three are now routed at a boundary, and this drives
+    // each of them end to end rather than asserting the call sites exist.
+    const WALLET = '7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL';
+    const url = `https://frontend-api-v3.pump.fun/coins/user-created-coins/${WALLET}?limit=50`;
+    const cause = new KeylessHttpError(400, url, true);
+
+    // Route 1 — the run-level `unmeasured[]` entry, whose `detail` is the raw message.
+    const entry = unmeasuredBecause('the ownership listing the creation window merges with', WALLET, cause, {
+      budget: 'keyless pump.fun',
+      ceiling: 500,
+      setting: 'thresholds.json budget.maxKeylessRequests',
+    });
+    expect(entry.detail).not.toMatch(/frontend-api-v3/);
+    expect(entry.detail).not.toMatch(new RegExp(WALLET));
+    expect(entry.detail).toMatch(/HTTP 400/);
+
+    // Route 2 — `creation.listingUnmeasuredNote`, built from that entry one hop later.
+    const note = describeUnmeasured(entry);
+
+    // Route 3 — `creation.stopDetail`, the raw `cause.message` a walk stores under `upstream-error`.
+    const creation = redactCreationNotes({
+      stopReason: 'upstream-error',
+      stopDetail: cause.message,
+      listingUnmeasuredNote: note,
+      rpcRequests: 12,
+    });
+
+    // The FREE-TEXT halves only. `subject` — like the candidate row's `wallet` — is the structured,
+    // deliberately-kept identifier this boundary must never strike.
+    const json = JSON.stringify([entry.detail, entry.summary, creation!.stopDetail, creation!.listingUnmeasuredNote]);
+    expect(json).not.toMatch(/frontend-api-v3/);
+    expect(json).not.toMatch(/https?:/);
+    expect(json).not.toMatch(new RegExp(WALLET));
+    expect(entry.subject).toBe(WALLET);
+    // The status survives — it is what identifies the failure and is the only part that cannot be
+    // carrying an identifier.
+    expect(creation!.stopDetail).toMatch(/HTTP 400/);
+    // And `listingUnmeasuredNote` pinned INDEPENDENTLY: the note above arrives already redacted by
+    // `unmeasuredBecause`, so it would pass even with that branch deleted. This one is raw.
+    const rawNote = redactCreationNotes({
+      stopReason: 'upstream-error',
+      stopDetail: null,
+      listingUnmeasuredNote: `the ownership listing was not read: HTTP 400 on ${url}`,
+      rpcRequests: 12,
+    });
+    expect(rawNote!.listingUnmeasuredNote).not.toMatch(/frontend-api-v3/);
+    expect(rawNote!.listingUnmeasuredNote).not.toMatch(new RegExp(WALLET));
+    expect(rawNote!.listingUnmeasuredNote).toMatch(/HTTP 400/);
+
+    // A `no-source` detail is caller-supplied free text and goes through the same boundary.
+    expect(JSON.stringify(unmeasuredNoSource('m', WALLET, 'nothing answered', `read ${url}`))).not.toMatch(
+      /frontend-api-v3/,
+    );
+
+    // And the call site, so a later refactor cannot quietly unroute the creation block.
+    const projection = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    const row = projection.slice(projection.indexOf('function toRecordRow'));
+    expect(row).toMatch(/creation: redactCreationNotes\(c\.creation\)/);
+  });
+
+  it('keeps the record\'s own wallet, which a blanket sweep would have struck', () => {
+    // The hard constraint on the whole redaction boundary: `wallet` is a 44-character base58 string
+    // of exactly the shape the redactor strikes, and it is the one identifier a record exists to
+    // carry. `redactCreationNotes` names its two fields for this reason, and every committed record
+    // must still be able to say who it graded.
+    const WALLET = '7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL';
+    const creation = redactCreationNotes({
+      stopDetail: null,
+      listingUnmeasuredNote: null,
+      // Structured neighbours are untouched — only the two named free-text fields are routed.
+      createdInWindow: 7,
+      stopReason: 'index-exhausted',
+    });
+    expect(creation).toEqual({
+      stopDetail: null,
+      listingUnmeasuredNote: null,
+      createdInWindow: 7,
+      stopReason: 'index-exhausted',
+    });
+
+    for (const [name, text] of readAll(join(TOOL_DIR, 'runs'), '', /\.json$/)) {
+      const rows = (JSON.parse(text) as { candidates?: { wallet?: string }[] }).candidates ?? [];
+      expect(rows.length, name).toBeGreaterThan(0);
+      for (const c of rows) {
+        expect(c.wallet, name).toMatch(/^[1-9A-HJ-NP-Za-km-z]{32,44}$/);
+        expect(c.wallet, name).not.toMatch(/redacted/);
+      }
+    }
+    expect(redactVendorIdentifiers(WALLET)).toBe('[address redacted]');
   });
 });
 

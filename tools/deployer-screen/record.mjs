@@ -258,11 +258,13 @@ const BASE58_SHAPED = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/g;
  * **Applied to named fields, not to every free-text field a record persists.** Covered today: the
  * entry half's `rationale`, `caveats` and `dropNotes` (`stage2.mjs` → `toEntryRecordRow`); the gate
  * half's `rationale`, `gateReasons` and `consistency.note` (`screen.mjs` → `toRecordRow`); and the
- * run-level `truncationReason`. NOT covered: `creation.listingUnmeasuredNote`, `creation.stopDetail`
- * and the run-level `unmeasured[]` array — whose `detail` this same file documents below as
- * embedding a per-wallet URL. That is a known pre-existing gap left to a separate containment lane,
- * not an oversight; `README.md` → "Nothing vendor-derived survives in a note, either" owns the long
- * form, so read it before adding a note field. Structured fields are not passed through it —
+ * run-level `truncationReason`; the creation half's `stopDetail` and `listingUnmeasuredNote`
+ * (`screen.mjs` → `toRecordRow`, via {@link redactCreationNotes}); and every run-level
+ * `unmeasured[]` entry's `detail`, redacted at construction in {@link unmeasuredBecause} and
+ * {@link unmeasuredNoSource} because that is where a raw `Error.message` — the shape that carries
+ * `HTTP <status> on <url>` out of a client — enters the record. `README.md` → "Nothing
+ * vendor-derived survives in a note, either" owns the long form, so read it before adding a note
+ * field. Structured fields are not passed through it —
  * a candidate's own `wallet` is public on-chain data we deliberately keep, and it is stored as a
  * field precisely so it is never confused with an incidental one.
  *
@@ -281,6 +283,37 @@ export function redactVendorIdentifiers(text) {
  */
 export function redactAll(lines) {
   return lines.map((l) => redactVendorIdentifiers(l));
+}
+
+/**
+ * {@link redactVendorIdentifiers} over the creation block's two FREE-TEXT fields, on the way into a
+ * record.
+ *
+ * `stopDetail` is a raw upstream `Error.message` and is therefore the dangerous one: it carries
+ * whatever the transport put in it, and `pumpfun.mjs` → `KeylessHttpError` formats
+ * `HTTP <status> on <url>` — which is precisely how a per-wallet URL reached a committed record.
+ * `listingUnmeasuredNote` is built from an {@link Unmeasured} entry's summary and detail, so it
+ * inherits the same exposure one hop further along.
+ *
+ * **NOT A BLANKET SWEEP over the block.** Every other field here is structured — counts, ISO
+ * timestamps, an enum `stopReason` — and the record's `wallet` one level up is a 44-character
+ * base58 string this record deliberately keeps, of exactly the shape
+ * {@link redactVendorIdentifiers} strikes. Only the two free-text fields are routed, by name.
+ *
+ * @template {{ stopDetail: string | null, listingUnmeasuredNote: string | null }} T
+ * @param {T | null} creation
+ * @returns {T | null}
+ */
+export function redactCreationNotes(creation) {
+  if (creation === null) return null;
+  return {
+    ...creation,
+    stopDetail: creation.stopDetail == null ? null : redactVendorIdentifiers(creation.stopDetail),
+    listingUnmeasuredNote:
+      creation.listingUnmeasuredNote == null
+        ? null
+        : redactVendorIdentifiers(creation.listingUnmeasuredNote),
+  };
 }
 
 /**
@@ -386,15 +419,18 @@ export function kindMetaOf(kind) {
  *
  * `summary` and `detail` are split on purpose. The summary is **wallet-independent** — it names the
  * kind, the measurement and the status class and nothing else — so it is safe to group on. The
- * detail is the raw message, which carries the per-wallet URL, and must never become a grouping key:
- * keying on it gives every wallet its own line and buries the one sentence that matters.
+ * detail is the cause's own message, routed through {@link redactVendorIdentifiers} at construction
+ * in {@link unmeasuredBecause} / {@link unmeasuredNoSource}, so the URL that used to sit in it is
+ * struck. It still varies with the cause rather than with the kind, so it must never become a
+ * grouping key: keying on it gives near-identical failures their own lines and buries the one
+ * sentence that matters.
  *
  * @typedef {object} Unmeasured
  * @property {string} measurement       What was not measured, named as the record names it.
  * @property {string} subject           The wallet it was not measured for.
  * @property {UnmeasuredKind} kind      What actually happened.
  * @property {string} summary           Stable across wallets. The grouping key.
- * @property {string | null} detail     The raw cause. Per-wallet; never a grouping key.
+ * @property {string | null} detail     The redacted cause. Varies per failure; never a grouping key.
  */
 
 /**
@@ -443,7 +479,11 @@ export function unmeasuredBecause(measurement, subject, cause, spent) {
   const kind = classifyUnmeasured(cause);
   const status =
     cause instanceof RequestFailed || cause instanceof UnparseableResponse ? cause.status : null;
-  const detail = cause instanceof Error ? cause.message : String(cause);
+  // A RAW `Error.message`, and therefore the one field here that can be carrying anything at all:
+  // `pumpfun.mjs` → `KeylessHttpError` formats `HTTP <status> on <url>`, and this client's URLs
+  // embed a wallet or a mint. Redacted at construction rather than at each persisting call site,
+  // because this is the only place a caller-supplied exception becomes record text.
+  const detail = redactVendorIdentifiers(cause instanceof Error ? cause.message : String(cause));
 
   let summary;
   switch (kind) {
@@ -519,7 +559,10 @@ export function unmeasuredNoSource(measurement, subject, sources, detail = null)
       `${measurement} could not be established: every request was served, and ${sources}. This is ` +
       `a limit of the evidence rather than of the run — no budget was reached and nothing failed, ` +
       `so a plain rerun reaches the same silence. It is NOT a negative result about this wallet`,
-    detail,
+    // Free text supplied by a caller, so it goes through the same boundary `unmeasuredBecause`
+    // applies to its own detail — the callers build it from counts today, and containment must not
+    // depend on every future one remembering that.
+    detail: detail === null ? null : redactVendorIdentifiers(detail),
   };
 }
 
@@ -537,9 +580,11 @@ export function describeUnmeasured(u) {
  * Collapse unmeasured entries onto their distinct summaries, preserving first-seen order.
  *
  * Grouped rather than listed per wallet because sixty identical lines bury the one sentence that
- * matters. The key is the wallet-independent {@link Unmeasured.summary} and never the detail, which
- * embeds a per-wallet URL and would give every wallet a group of its own — grouping that groups
- * nothing is just a longer list.
+ * matters. The key is the wallet-independent {@link Unmeasured.summary} and never the detail. The
+ * detail is redacted at construction, so it no longer embeds the per-wallet URL — but it still
+ * carries whatever else the cause's message held, so it remains per-failure and keying on it would
+ * still give near-identical failures a group each. Grouping that groups nothing is just a longer
+ * list.
  *
  * @param {readonly Unmeasured[]} unmeasured
  * @returns {Map<string, number>}

@@ -24,9 +24,10 @@
  *
  * One property is new here, and it is about the account rather than the bill: {@link
  * DuneClient.postJson} — the call that CREATES a saved query — is never retried either. The Free
- * tier allows ten private queries and the account holds eight; a retried create would spend a second
- * irreplaceable slot on the same statement, which is the slot-exhaustion failure this lane exists
- * downstream of.
+ * tier allows ten private queries and a retried create would spend a second irreplaceable slot on
+ * the same statement, which is the slot-exhaustion failure this lane exists downstream of. How many
+ * are in use is never quoted here — a count in a comment is the claim that blocked this lane for a
+ * month; `run.mjs` → `readSavedQueries` reads it live before every deploy.
  */
 
 /** Dune's SQL API. The only host this tool reaches. */

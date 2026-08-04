@@ -25,8 +25,8 @@ stage. **There is no strategy, backtest, signal or trading logic here.**
 `test/window-population.test.ts`. Every source behind the dataset is keyless and public, and the
 dataset was built with **zero metered provider requests**, and so was its extension past the bond.
 The network-capable area is `tools/`, and the boundary is the directory: `tools/deployer-screen/`
-is the only **keyed** one; `tools/graduated-life-tape/`, `tools/arrival-rate-walk/` and
-`tools/window-decay-tripwire/` are keyless throughout. None of them is imported by `src/` and none
+and `tools/creation-census/` are the **keyed** ones; `tools/graduated-life-tape/`,
+`tools/arrival-rate-walk/` and `tools/window-decay-tripwire/` are keyless throughout. None of them is imported by `src/` and none
 imports from it. See each one's `README.md`.
 
 ```bash
@@ -63,6 +63,7 @@ top of this file. Answering it means screening *other* deployers, present tense.
 | **Stage 1** — the completion-rate **gate**: keyed MadeOnSol counts, over a launch history derived from the **create** transactions rather than from who owns the tokens now (enumerated on Dune when `DUNE_API_KEY` is set, with the on-chain walk — indexed via Helius when `HELIUS_API_KEY` is set, keyless otherwise — as the fallback) | `tools/deployer-screen/screen.mjs` |
 | **Stage 2** — the keyless **entry** score: room in the opening window, what the field there achieved, and **what it cost that field to land** | `tools/deployer-screen/stage2.mjs`, `entry.mjs` |
 | **The candidate discovery feed** — the scheduled lane that surfaces deployer wallets this project has not seen before and queues the gate-clearing ones for the screen; scope, quota bounds and the vendor-selection ceiling in `tools/deployer-screen/FEED.md` | `tools/deployer-screen/feed.mjs` |
+| **The creation census** — the answer to that ceiling: every deployer creating in one past month, taken whole above a stated count, one keyed Dune execution per month. **3,036** for 2026-07 at ≥30 launches against the feed's 5 | `tools/creation-census/` |
 | **The window-population measurement** — how many profitable windows the tape contains, how long, how fast they close | `analysis/window-population/` |
 | **The window-decay tripwire** — watches the wallet currently being traded and raises **STOP AND ROTATE** when its window closes. Detects the one close on record **24.1 h** after the regime changed, against a close that took **24.7 h**, with **0** false stops in the 83-day window; keyless, zero token | `tools/window-decay-tripwire/` |
 | **CI** — `npm test` on the Node 20 engines floor | `.github/workflows/ci.yml` |
@@ -99,12 +100,13 @@ call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md
 | `src/` | The loader. Per-launch, per-wallet and per-(wallet, launch) views, plus the raw per-fill tape. No runtime dependencies. |
 | `test/reproduction.test.ts` | The published headline numbers, asserted against the loaded data. |
 | `test/type-guards.test-d.ts` | Compile-time proof that the **four** guards below bite. Type-checked, never executed. |
-| `tools/deployer-screen/` | The only keyed, network-capable area. The competence **gate** (stages 0–1, keyed) plus the keyless **entry score** (stage 2) — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |
+| `tools/deployer-screen/` | One of the two keyed, network-capable areas. The competence **gate** (stages 0–1, keyed) plus the keyless **entry score** (stage 2) — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |
 | `data/graduated-life-tape-2026-08-02/` | The same tape, **extended past the bond**: every fill of the 103 graduated launches from mint to graduation + 1 hour. 503,037 fills, 63% of them on PumpSwap. Closure over the wallets each launch's own committed window already shows rises from **47.2% to 94.4%**. 6,539 keyless requests, EUR 0. Method, coverage proofs and limits in its `README.md`. |
 | `tools/graduated-life-tape/` | The collector behind it. Network-capable and **keyless throughout** — one file opens a socket, one host, and the list of files that may name a credential is empty. |
 | `tools/window-decay-tripwire/` | The decay tripwire. Watches one wallet's create slots — the operation's share of the bottom of its own curve — and latches **STOP AND ROTATE** on two consecutive readings at or above 0.55. **+24.1 h** on the one close on record against a **24.7 h** close, **0** false stops in 104 open-window launches; keyless, two hosts, an empty credential allow-list. The ceiling is on the false-alarm rate rather than the latency, and its `README.md` §4 states it. |
 | `analysis/window-population/` | How many profitable windows the tape contains, how long, and how fast they close. **One window**, 2026-03-12 → 2026-06-04, **83 days**, closed in a single launch over **24.7 hours** — and **n = 1**, so "are windows numerous?" is *unmeasured*. Offline like `src/`. Findings, definitions and limits in its `README.md`. |
-| `tools/arrival-rate-walk/` | The collector that would answer that `n = 1` — the same per-launch series for a **cohort** of deployers, seeded from history rather than from success. **Keyless throughout**; the tool is built and proven on a bounded sample, the multi-day collection is a separate step and has not run. Scope, bounds, the undeployed cohort query and the limits in its `README.md`. |
+| `tools/arrival-rate-walk/` | The collector that would answer that `n = 1` — the same per-launch series for a **cohort** of deployers, seeded from history rather than from success. **Keyless throughout**; the tool is built and proven on a bounded sample, the multi-day collection is a separate step and has not run. Its cohort query is deployed and is executed by `tools/creation-census/`, which holds the key this directory deliberately does not. Scope, bounds and the limits in its `README.md`. |
+| `tools/creation-census/` | The keyed half of that statement, and the answer to the discovery ceiling: **every deployer that created in one past month, taken whole above a stated count**, one Dune execution per month. The committed 2026-07 run reaches **3,036** deployers at ≥30 launches where the vendor feed sees 5. The floor is a **prolific-ness** cut and not a competence one, and the census says so in its own output. Scope, bounds and both named biases in its `README.md`. |
 | `.github/workflows/ci.yml` | `npm ci` then `npm test` on Node 20, on PRs and pushes to `main`. The whole check set, on purpose. |
 | `AGENTS.md` | Provider facts that cost real time to learn. Read before touching pump.fun or Solana RPC. |
 
@@ -434,8 +436,8 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
   unmeasured.** The tape holds one deployer and therefore one window: **n = 1**. Answering it needs
   per-launch create-slot series for 10–20 other prolific deployers over 6+ months each — keyless,
   and days of paced fetching. **The collector for it now exists** (`tools/arrival-rate-walk/`,
-  proven on a bounded sample), but the collection is a separate operational step that has not run,
-  and its cohort query is not deployed. Until it does, no arrival rate, no concurrency, and no
+  proven on a bounded sample) and its cohort query is now deployed, but the collection is a separate
+  operational step that has not run. Until it does, no arrival rate, no concurrency, and no
   idle-time estimate exists here.
 - **Exit is not measured at all.** Stage 2 scores room to enter. Whether a position can be left —
   when the dev sells relative to mint and to outsider inflow, whether the trigger is a **size**

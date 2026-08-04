@@ -383,8 +383,9 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   retried because they return no bytes when they fail. **Budget from *billed* credits, not
   `execution_cost_credits`, which understates by ~3.5×** — retrieving results is ~71% of the bill at
   ~20 credits/MB. Hence: aggregate server-side, select only the columns the tool reads (dropping the
-  create tx and graduation timestamp halved the payload to **~97 bytes/row**, measured at FOUR
-  columns — the fifth is bounded by arithmetic, not measured), one execution for the whole batch,
+  create tx and graduation timestamp halved the payload to **~97 bytes/row** at FOUR columns, and the
+  five-column cap SQL reads ~115 against a pinned 121 ceiling — `CREATION-DERIVED.md` §8.2b owns both
+  figures and the caveat on the second), one execution for the whole batch,
   and a **cached** probe read by default.
 - **Free tier: 2,500 credits/month, SHARED, and only 10 PRIVATE QUERIES — the account holds 10, so a
   new query cannot be created.** The two production queries were upgraded in place (`8204672`

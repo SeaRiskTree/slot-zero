@@ -532,9 +532,13 @@ wallet on a truncated count reported as a total.
 **Bytes, which is the billed unit, stay bounded and the bound is stated.** Reads are still issued
 with `?limit=dune.maxResultRows`, so no read can exceed it whatever the query does. The measured
 **~97 bytes/row was taken at four columns**; the fifth is bounded by arithmetic at <=24 bytes, so
-<=121 bytes/row and <=~2.42 MB (~48 credits) for a read that fills the ceiling. **121 is a ceiling
-nobody has observed** — replace it with a measurement from the next real run rather than quoting it
-as one. A median-shaped full-cap run is unchanged at ~9,750 rows and ~20 credits.
+<=121 bytes/row and <=~2.42 MB (~48 credits) for a read that fills the ceiling. **The five-column
+shape has now been read once: 28,699 bytes over 250 rows, i.e. ~115 bytes/row** (§8.3b, the deploy
+proof run — one deployer, so the per-response overhead is amortised over far fewer rows than the
+four-column measurement). It is inside the arithmetic bound, which stays pinned at 121 as the
+ceiling; one single-wallet read is not a batch-shaped measurement, so widen it from a real
+multi-wallet run rather than from this one. A median-shaped full-cap run is unchanged at ~9,750 rows
+and ~20 credits.
 
 **DEPLOY STEP — taken 2026-08-03.** This changed `CREATION_SQL`, so saved query `8204672` **was
 updated in place** to the committed text; §8.3b records the deploy and the proof the leg is live.

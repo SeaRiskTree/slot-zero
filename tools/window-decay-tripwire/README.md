@@ -316,9 +316,13 @@ up is one further launch of latency. The result is not balanced on the exact pin
 
 The share needs to know which create-slot wallets belong to the operation. For the deployer this
 repo has studied, they are known. For a stranger they are not, so `--cohort` may be omitted and the
-detector falls back to the repo's **co-ordination rule** — any create-slot transaction carrying two
-or more distinct wallets is one submission, so every wallet in it is one operation
-(`tools/deployer-screen/measure.mjs` → `roomIsProven`).
+detector falls back to the **shared-transaction co-ordination rule** — any create-slot transaction
+carrying two or more distinct wallets is one submission, so every wallet in it is one operation
+(`detector.mjs` → `bundledWallets`, this lane's own copy). **That is now only half of the screen's
+rule**: captain decision 182a widened `tools/deployer-screen/measure.mjs` → `roomIsProven` to the
+union of it and a deployer-anchored contiguous block-index run, and this lane deliberately did not
+follow, because every figure backtested in this document rests on the narrower predicate. The
+reasoning is at `detector.mjs` → `bundledWallets`; widening it here is a decision of its own.
 
 Replayed that way, the tripwire **fires at the same launch, `PvE`, +24.1 h, with 0 false stops**, and
 reads 156 launches instead of 184.

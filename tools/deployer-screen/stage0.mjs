@@ -456,8 +456,10 @@ export function readOnChainCosts(dataDir) {
  * @property {number} includingUnprovenPairsPriced
  * @property {number} includingUnprovenEntryCostPerSolStakedMedianByLaunch  The per-launch median the
  *   unfiltered population reads. Reported so the gap between the two populations is visible on every
- *   run: on the committed tape it is 0.0388 against the gated 0.0389, i.e. the unfiltered reading is
- *   the CHEAPER one, which is the optimistic direction and the reason it is not what the bar reads.
+ *   run. Under the union co-ordination rule nothing on the committed tape is unproven, so the two
+ *   populations coincide (0.0391 either way); under the shared-transaction rule alone the unfiltered
+ *   reading was 0.0388 against a gated 0.0389, i.e. the CHEAPER one, which is the optimistic
+ *   direction and the reason it is not what the bar reads.
  * @property {number} entryCostMedianSol
  * @property {number} entryCostPerSolStakedMedianByEntry  Pooled over every priced create-slot
  *   ENTRY, matching `EntryScore.entryCostPerSolStaked`. The finer-grained evidence.
@@ -508,12 +510,14 @@ export function readOnChainCosts(dataDir) {
  * (`entry.mjs` → `entryCostPerSolStakedByLaunch`) is built over launches surviving `roomIsProven`.
  * A regression guard measuring a neighbouring quantity is the shape of the defect decision 140
  * caught, so the filter is applied here too and the unfiltered reading is reported beside it rather
- * than discarded. On the committed tape the difference is small and in the OPTIMISTIC direction —
- * per-launch median 0.0388 unfiltered against 0.0389 gated — which is exactly why it is the gated
- * one the bar reads.
+ * than discarded. On the committed tape under the union co-ordination rule nothing is unproven, so
+ * the two populations coincide; under the shared-transaction rule alone the difference was small and
+ * in the OPTIMISTIC direction — per-launch median 0.0388 unfiltered against 0.0389 gated — which is
+ * exactly why it is the gated one the bar reads.
  *
  * The coverage this runs over is a property of the committed table rather than of the method: it
- * prices 110 of the 235 covered launches (113 before the proven filter), so `minLaunches`/`minPairs`
+ * prices 112 of the 235 covered launches (110 before decision 182a widened the rule), so
+ * `minLaunches`/`minPairs`
  * exist for the same reason the era buckets have a `minN` — an empty comparison passes vacuously,
  * and a passing Stage 0 is what authorises spending quota on strangers.
  *
@@ -595,7 +599,7 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
   // NEITHER OF THESE TWO IS A MEASUREMENT, AND SAYING SO IS THE POINT. They exist because an empty
   // comparison passes vacuously, not because 40 launches or 200 pairs is the count at which any
   // quantity below stabilises — nothing in this repo measures that. What fixes them is the coverage
-  // the committed table actually delivers, which is 110 proven launches and 618 priced pairs today:
+  // the committed table actually delivers, which is 112 proven launches and 627 priced pairs today:
   // each bar sits at roughly a third of it, so a table that lost most of its rows to a future
   // re-import would fail loudly instead of passing on a handful. Raising them towards the measured
   // coverage would make Stage 0 fail on the tape it was built from, which is the wrong failure. The

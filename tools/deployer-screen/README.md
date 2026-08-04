@@ -1010,25 +1010,29 @@ pricing it. Only a candidate still alive after both is walked.
 
 **Measured on the committed tape, 2026-08-02** (`data/population-tape-2026-07-29` →
 `onchain_create_slot_pnl.csv`), over the **gated population** — the launches whose create-slot
-opening is *proven*, which is the population `scoreEntry` builds the bar's own unit from: **110
-launches, 757 create-slot entries, 618 closed round trips priced end to end**.
+opening is *proven*, which is the population `scoreEntry` builds the bar's own unit from: **112
+launches, 766 create-slot entries, 627 closed round trips priced end to end** (re-measured under the
+union co-ordination rule of decision 182a; under the shared-transaction rule alone it read 110 / 757
+/ 618).
 
 | | reading |
 |---|---|
 | entry cost, per create-slot entry | median **0.0308 SOL**, and **99.7%** of entries pay something |
-| entry cost, per SOL staked, pooled over **entries** | median **0.0369** (p75 0.0812, p90 0.1970; post-break 0.0292) |
-| entry cost, per SOL staked, one figure per **launch** — *the figure the bar is compared against* | median **0.0389** (p90 0.0985; post-break 0.0354) and the **worst launch on the tape is 0.3311** (post-break 0.1361) |
-| the field, hit rate | **0.7379 gross** against **0.6117 net of measured fees** |
-| the field, median round trip | **+0.105 SOL gross** against **+0.038 SOL net** |
-| round trips that flip sign | **81** positive-gross → negative-net |
+| entry cost, per SOL staked, pooled over **entries** | median **0.0371** (p75 0.0818, p90 0.1972; post-break 0.0292) |
+| entry cost, per SOL staked, one figure per **launch** — *the figure the bar is compared against* | median **0.0391** (p90 0.0983; post-break 0.0361) and the **worst launch on the tape is 0.3311** (post-break 0.1361) |
+| the field, hit rate | **0.7384 gross** against **0.6045 net of measured fees** |
+| the field, median round trip | **+0.107 SOL gross** against **+0.036 SOL net** |
+| round trips that flip sign | **87** positive-gross → negative-net |
 
 **Why "gated" is stated rather than assumed.** This check used to price *every* taped launch the
-table could reach — 113 launches, 775 entries, 631 pairs, per-launch median **0.0388** — while the
-live bar reads the proven-only population. The gap is 0.0001 of a figure compared against a 0.12 bar,
-but it runs in the *optimistic* direction (the unfiltered reading is the cheaper one), and a
-regression guard measuring a neighbouring quantity is the shape of the defect decision 140 caught. So
-the filter is applied here too and **both readings are printed on every run**, the unfiltered one on
-its own line, so the difference stays visible instead of being taken on trust.
+table could reach, while the live bar reads the proven-only population, and a regression guard
+measuring a neighbouring quantity is the shape of the defect decision 140 caught. So the filter is
+applied here too and **both readings are printed on every run**, the unfiltered one on its own line,
+so the difference stays visible instead of being taken on trust. Under half (a) alone the two
+populations differed — 113 launches, 775 entries, 631 pairs, per-launch median **0.0388** against the
+gated 0.0389, i.e. *cheaper*, the optimistic direction. Under the union nothing on this tape is
+unproven, so the two coincide (112 / 627 / 0.0391 either way); they will separate again on any tape
+carrying a launch neither half of the rule marks, which is the case the keys exist for.
 
 Whole-block reads (`getBlock(slot, transactionDetails='full')`) would collapse the create-slot scope
 from ~7 requests a launch to one. That route is **untested against this endpoint**, so it is probed
@@ -1189,7 +1193,7 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | Solana RPC ceiling, keyless creation walk | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. Governs the creation-derived walk **when no Helius key is present**. Whichever bound bites is recorded per candidate. |
 | Helius credit ceiling, indexed creation walk | **5,200 credits per candidate**, 1,100,000 per run | `thresholds.json` → `creation_walk_helius`, and the unit is the point — this provider bills by transactions **returned**, so a request ceiling cannot bound it. 5,200 clears the largest complete history measured (49,367 succeeded transactions = 4,940 credits) **plus the per-page guard**, which demands 100 credits for the page and 11 more reserved for the curve-classification pass — at 5,000 that guard stopped the walk after 49 pages, truncating the very wallet the ceiling was sized against. The per-candidate median is 320. The run ceiling makes the default plan admissible at 195 × 5,200 = 1,014,000 and is 11% of the monthly allowance, so **nine worst-case full-cap runs fit in a month** and the expected cost of one is ~0.62%. **The two move together**: the run ceiling is checked before the first request, so raising the per-candidate one alone would refuse every default plan. A plan that does not fit is **refused before the first request**, exactly like the keyed and keyless plans. A page is only started when a whole page's worst case still fits, so the ceiling is exact and never overshot. |
 | Helius pacing | 200ms | Measured 2026-08-03 on this endpoint and plan: a ladder at 1000/500/250/100/0 ms (full mode) and 500/200/100/50/0 ms (signatures mode) shed **nothing at any rung, including 0 ms**, and 150 concurrent requests were all answered 200 at an observed 161 req/s. The walk is latency-bound rather than limit-bound — throughput was 3.98 req/s at 100 ms against 3.89 at 0 ms — so 200 ms is a courtesy floor with an order of magnitude of headroom under the documented 50 req/s, not a shed-avoidance figure. |
-| Solana RPC ceiling, cost leg | 400 requests **per candidate** | `thresholds.json` → `stage2_cost`. Measured on our own tape: the create-slot scope is p50 7 / p90 13 / max 20 transactions per launch and the whole-window scope over CLOSED create-slot outsiders is p50 18 / p90 35 / max 70, unioned so none is paid for twice — **and the union is what the walk pays for: p50 19, p90 36.6, max 74 distinct transactions per launch**, so ~152 requests per candidate at the median and ~293 at p90 over 8 launches (an earlier version of this row said ~200 / ~380, which is the same arithmetic with the union left out). Worst case 3 × 400 = 1,200 requests, about 50 minutes, which `--dry-run` prints. **It runs only on a candidate the free legs have not already refused**, so the realistic cost is far lower. |
+| Solana RPC ceiling, cost leg | 400 requests **per candidate** | `thresholds.json` → `stage2_cost`. Measured on our own tape: the create-slot scope is p50 7 / p90 13 / max 20 transactions per launch and the whole-window scope over CLOSED create-slot outsiders is p50 19 / p90 34 / max 70, unioned so none is paid for twice — **and the union is what the walk pays for: p50 20, p90 36.2, max 74 distinct transactions per launch**, so ~160 requests per candidate at the median and ~290 at p90 over 8 launches (an earlier version of this row said ~200 / ~380, which is the same arithmetic with the union left out). Worst case 3 × 400 = 1,200 requests, about 50 minutes, which `--dry-run` prints. **It runs only on a candidate the free legs have not already refused**, so the realistic cost is far lower. |
 | Solana RPC pacing | 2.5s | Measured: the nominally faster 1.4s was *slower* in wall-clock once 429 backoff is counted. Rate limiting is global across `getSignaturesForAddress` and `getTransaction`. |
 | `getTransaction` batch size | **1** | Measured harmful above 1 on `api.mainnet-beta` — see [Which history the gate counts](#which-history-the-gate-counts). It does not arise on the indexed route, which issues one request per 1,000 transactions and so has nothing left to batch. |
 | RPC retries | 3 with exponential backoff, each attempt counted against the ceiling | Unlike the keyed client, a 429 here is load-shedding and not a verdict — but a 429 storm still cannot outlast the ceiling. |
@@ -1723,10 +1727,11 @@ ever stops doing so — including if a future lane quietly loosens `minRoomLeft`
 
 **The two slices above could not have caught the unproven-opening defect, and that is a fact about
 where they sample, not about how they are written.** Both sit inside the months where the
-co-ordination rule happens to recover 97–100% of our subject's cohort. Over December 2025 –
-February 2026 it recovered **0%**, and across that stretch the screen reported median room 0.62–0.66
-against a true 0.20–0.33 — in a regime whose measured per-launch prize to outsiders was ≈0
-(`analysis/window-population/`).
+co-ordination rule's half (a) happens to recover 97–100% of our subject's cohort. Over December 2025
+– February 2026 half (a) recovered **0%**, and across that stretch the screen reported median room
+0.62–0.66 against a true 0.20–0.33 — in a regime whose measured per-launch prize to outsiders was ≈0
+(`analysis/window-population/`). That stretch is what half (b) now carries, and the adjacency
+tripwire above exists because it carries it alone.
 
 So Stage 0 asks the same question at **all 228 trailing windows** instead of two. The recipe is the
 live one, not an approximation of it: median `roomLeft` over the trailing
@@ -1735,12 +1740,15 @@ live one, not an approximation of it: median `roomLeft` over the trailing
 window's verdict is compared with the one the **named** six-wallet cohort gives — ground truth we
 hold only because this is our own subject, which is the whole reason the structural rule exists.
 
-| | before decision 134a | with it |
-|---|---:|---:|
-| windows evaluated | 228 | 228 |
-| **false positives** — screen says room, the named cohort says none | **24** | **0** |
-| false negatives — screen MEASURED the window and said none, the named cohort says room | 0 | 0 |
-| windows reported unmeasured — refused, so the screen gave no verdict at all | 0 | 81 |
+| | before decision 134a | with it, half (a) only | with it, under the union (decision 182a) |
+|---|---:|---:|---:|
+| windows evaluated | 228 | 228 | 228 |
+| **false positives** — screen says room, the named cohort says none | **24** | **0** | **0** |
+| false negatives — screen MEASURED the window and said none, the named cohort says room | 0 | 0 | 0 |
+| windows reported unmeasured — refused, so the screen gave no verdict at all | 0 | 81 | **0** |
+
+The last column is what the screen prints today: the refusal is untouched and the rule simply sees
+more, so on this tape it never fires (88 windows room-present, 140 room-absent).
 
 **A refused window is counted as `unmeasured`, never as a false negative.** The two are exactly the
 distinction the ruling exists to keep apart: a window with too few proven launches carries no
@@ -1780,12 +1788,20 @@ file's header; the pinned bounds are `thresholds.json` → `bundling_census`; th
 directory is the screen's own versioned contract, asserted per schema version, and `buildCohort`
 reads it back as a cohort source.
 
+**Its predicate is FROZEN at the shared-transaction half, so every figure below is a LOWER bound.**
+`bundling.mjs` → `proven` is `bundledTx >= 1` and is no longer what `measure.mjs` → `roomIsProven`
+returns, because decision 182a widened that to the union. The committed record was measured under
+the older half, and re-defining the field silently would make the record and the code that wrote it
+disagree; the union re-run is a separate queued lane. That file's `proven` doc block owns the
+reasoning.
+
 **The problem it measures, which is arithmetic before it is observation.** `stage2_entry` pins
 `maxLaunchesPerCandidate: 8` and `minLaunchesSampled: 8`, deliberately equal, and since #17 a launch
-whose create slot carried no bundled transaction is refused as unproven (`measure.mjs` →
+whose create slot the co-ordination rule marks nothing in is refused as unproven (`measure.mjs` →
 `roomIsProven`, captain decision 134a). Multiplied out: **Stage 2 can only reach a verdict for a
-candidate whose most recent 8 eligible launches were every one bundled, and one unbundled launch in
-eight silences the whole candidate.** The live evidence for how large a population that silences was
+candidate whose most recent 8 eligible launches were every one marked, and one unmarked launch in
+eight silences the whole candidate.** The census measured that under half (a) alone, which is the
+condition as it stood when the run was taken. The live evidence for how large a population that silences was
 **two strangers**, because `maxCandidatesScored` is 3 and one of the three was our own control.
 
 **What the pass does, and what it deliberately does not.** It walks create-slot windows with Stage

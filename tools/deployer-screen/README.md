@@ -1020,7 +1020,7 @@ so the exit question is worth asking** — and nothing more.
 |---|---|---|
 | `entry-room-absent` | median room below the bar. The enquiry ends before anything is priced. | no |
 | `entry-field-loss-making` | the field loses money — **before** costs (conclusive on its own), or **net of measured fees** (the leg the gross reading cannot see). | only the second |
-| `entry-cost-unmeasured` | the free legs passed and the cost leg could not price enough of the field. **Terminal for that candidate in that run, and never a pass.** | yes, and it ran out |
+| `entry-cost-unmeasured` | the free legs passed and the cost leg could not price enough of the field. **Terminal for that candidate in that run, and never a pass. Two distinct producers — see below.** | yes, and it ran out |
 | `entry-cost-prohibitive` | room present and priced, and the price of the seat consumes the opening. | yes |
 | `entry-open-after-costs` | all three legs allow it. | yes |
 | `entry-unmeasured` | too few usable launches for any distribution, or too few closed round trips to read the field. **Four distinct producers — see below.** | no |

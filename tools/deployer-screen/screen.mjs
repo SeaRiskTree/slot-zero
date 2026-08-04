@@ -1539,8 +1539,8 @@ function summariseStage0(s) {
       // From schema 5 on, `n` counts only the SCORED launches in the era — those whose create slot
       // the co-ordination rule marked something in. `nRoomUnproven` is the refused remainder,
       // persisted so a reader can add them back and see why an era's `n` differs from a schema-4
-      // record's. From schema 10 the rule is the UNION, so era 2 reads n 89 / nRoomUnproven 0 where
-      // a schema-5..9 record reads 86 / 3 over the same tape.
+      // record's. From schema 11 the rule is the UNION, so era 2 reads n 89 / nRoomUnproven 0 where
+      // a schema-5..10 record reads 86 / 3 over the same tape.
       n: e.n,
       nRoomUnproven: e.nRoomUnproven,
       // Persisted so a reader can see the comparison was not vacuous: an empty bucket yields a NaN
@@ -1560,7 +1560,7 @@ function summariseStage0(s) {
       falseNegatives: s.rollingRoom.falseNegatives,
       ok: s.rollingRoom.ok,
     },
-    // Schema 10. The tripwire on the block-index signal half (b) of the co-ordination rule reads.
+    // Schema 11. The tripwire on the block-index signal half (b) of the co-ordination rule reads.
     // Persisted because its failure mode is SILENT and towards refusal: a moved `sid` format makes
     // every anchored run collapse to length 1, and a saved run with `withRun` short of `launches`
     // is the only durable evidence of when that started.

@@ -998,7 +998,7 @@ export function verifyCurveInversion(controls) {
  * @property {number} nRoomUnproven Launches in the era excluded because the co-ordination rule
  *   marked nothing in their create slot. Reported so the era's population can be reconciled with
  *   the published one, and so a reader can see that under the union rule it is 0 in both eras
- *   where a schema-≤9 record's era 2 read 3.
+ *   where a schema-≤10 record's era 2 read 3.
  * @property {number} minN Launches this bucket must hold for the comparison to mean anything.
  * @property {number} devSolMedian
  * @property {number} coordinatedSolMedian

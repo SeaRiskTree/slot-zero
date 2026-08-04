@@ -212,9 +212,10 @@ export function hitRate(values, predicate) {
  * @typedef {object} LaunchEntry
  * @property {import('./measure.mjs').CreateSlotMeasurement} createSlot
  * @property {FieldEntrant[]} field  Every competing wallet in the create slot. May be empty, which
- *   is itself a finding: eight of our subject's 86 proven post-break launches had no outsider at
- *   all. Refusing the unproven openings did not move that count — it is eight over all 89 too,
- *   because none of the three refused launches was outsider-free.
+ *   is itself a finding: eight of our subject's 89 post-break launches had no outsider at all, and
+ *   under the union rule all 89 of them are proven. Refusing unproven openings never moved that
+ *   count — under the shared-transaction rule alone it was eight over the 86 that rule could prove,
+ *   because none of the three launches it refused was outsider-free.
  */
 
 /**
@@ -639,7 +640,7 @@ export function isDeployerAttributable(finding) {
  * @property {Distribution} adjacencyMarks   Wallets the adjacency half marked that the
  *   shared-transaction half did not, over every launch handed in. **This is the size of what the
  *   union added**, per launch, and it is what makes a saved `roomLeft` auditable against a
- *   schema-≤9 one: a schema-≤9 record's room reading was taken with these wallets counted as
+ *   schema-≤10 one: a schema-≤10 record's room reading was taken with these wallets counted as
  *   outsiders.
  * @property {number} launchesWithNoOutsider Launches whose create slot the operation took entirely.
  * @property {Distribution} roomLeft         Across scored launches.

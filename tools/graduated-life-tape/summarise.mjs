@@ -21,7 +21,7 @@
  *
  * Closure uses the dataset's own rule: a pair is closed when the residual is within 0.1% of the
  * tokens bought. `wallet_launch_pnl.csv` was reproduced from raw fills under that rule with zero
- * closure mismatches on 1,502 create-slot outsider pairs, so it is the population tape's rule, not
+ * closure mismatches on 1,322 create-slot outsider pairs, so it is the population tape's rule, not
  * a new one invented here.
  */
 

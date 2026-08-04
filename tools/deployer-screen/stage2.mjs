@@ -626,7 +626,7 @@ export function toEntryRecordRow(s, coverage) {
     launchesRoomUnproven: s.launchesRoomUnproven,
     bundledTx: dist(s.bundledTx),
     maxWalletsInOneTx: dist(s.maxWalletsInOneTx),
-    // Schema 10. The co-ordination rule became the UNION of the shared-transaction rule and the
+    // Schema 11. The co-ordination rule became the UNION of the shared-transaction rule and the
     // deployer-anchored block-index run (captain decision 182a), so `bundledTx` alone no longer
     // says which half proved a launch — or how much of the operation the older rule was booking as
     // outsider capital. These two carry the adjacency half, per launch, over the same population.

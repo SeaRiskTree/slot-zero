@@ -881,9 +881,26 @@ launch** moved out of the numerator and into `independentSol`. It lowers the ope
 raises room twice over, once in each term.
 
 **The rule's errors therefore run in exactly one direction: every one of them makes a deployer look
-more enterable than it is.** The opposite error is structurally impossible — only wallets that
-*provably* shared a transaction, or that provably sat inside the deployer's own contiguous run, are
-ever marked.
+more enterable than it is.** The opposite error — marking a wallet that is not the operation's —
+stands differently on each half of the union, and conflating the two is the mistake to avoid:
+
+- **Half (a) — structurally impossible.** Independent traders cannot share a transaction, so only
+  wallets that *provably* shared one are ever marked here. A false mark is not merely unlikely; it
+  cannot happen.
+- **Half (b) — empirically bounded, not structural.** The deployer-anchored block-index run is an
+  **inference**: whether an adjacent transaction is a true Jito bundle or merely the leader's packing
+  order is not observable, because nothing keyless exposes a bundle id. What bounds it is
+  measurement, quoted here at the point of the claim rather than only in the section above:
+  coincidental adjacency among create-slot transactions *outside* the run runs at **12.35%**, which
+  predicts ~25 of the tape's 201 runs-with-a-boundary should have swept an outsider in; exactly
+  **one** did, and half (a) already marks those same two wallets for sharing a transaction with each
+  other.
+
+**The direction of error stays structural, and that is why an empirically-bounded half is acceptable
+inside this union.** (a)'s marked set is a subset of the union's by construction, so `operationShare`
+can only rise and `roomLeft` can only fall — pinned as a property test over all 235 committed
+launches. A false mark from half (b) therefore costs a launch its room reading in the
+**conservative** direction only: it can lower room, never raise it.
 
 Captain **decision 134a**: do not score those launches. Call the opening **unproven** rather than
 measured. A launch neither half marks anything in contributes **no room figure, no

@@ -752,17 +752,24 @@ describe('the summary counts closure, and deliberately never counts money', () =
 const OUT_DIR = fileURLToPath(new URL('../data/graduated-life-tape-2026-08-02/', import.meta.url));
 
 /**
- * Every string literal in `source` — single-quoted, double-quoted or template — that names a
- * window AND carries a digit, i.e. that would write a fixed window width into a note. Comments
- * are tokenised alongside the literals and discarded, so a duration stated in prose is fine and a
- * `//` inside a literal cannot desynchronise the scan.
+ * Every string literal in `source` — single-quoted, double-quoted or template — with comments
+ * tokenised alongside and discarded, so a `//` inside a literal cannot desynchronise the scan.
+ * Two constructs would still desync it and neither exists in the scanned file: a nested template
+ * inside an interpolation, and a regex literal containing a quote character.
  */
-function fixedWindowWidthLiterals(source: string): string[] {
+function stringLiterals(source: string): string[] {
   const tokens =
     source.match(/\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g) ?? [];
-  return tokens.filter(
-    (t) => /^['"`]/.test(t) && /window/i.test(t) && /\d/.test(t),
-  );
+  return tokens.filter((t) => /^['"`]/.test(t));
+}
+
+/**
+ * Every string literal in `source` that names a window AND carries a digit, i.e. that would write
+ * a fixed window width into a note. A duration stated in a comment is fine — prose is not what a
+ * collection writes into a row.
+ */
+function fixedWindowWidthLiterals(source: string): string[] {
+  return stringLiterals(source).filter((t) => /window/i.test(t) && /\d/.test(t));
 }
 
 describe('the collected tape says what it covers and what it does not', () => {
@@ -854,6 +861,13 @@ describe('the collected tape says what it covers and what it does not', () => {
     // written: two of the five note sites in `graduation.mjs` are already template literals, so a
     // single-quote-only pattern would let a backtick-written width straight through and the
     // committed-data half above would only catch it after a collection had run.
+    // Anchor: an empty `offenders` is only evidence if the scan is still pointed at live note
+    // sites. If the notes move out of `graduation.mjs` or are restructured, this fails rather than
+    // letting a guard that now scans nothing report a clean file.
+    expect(
+      stringLiterals(source),
+      'the scan no longer sees the collector\'s notes — has the note construction moved?',
+    ).toContain("'bracketed inside the committed window tape; zero requests'");
     const offenders = fixedWindowWidthLiterals(source);
     expect(offenders, `the collector would write a fixed width: ${offenders.join(', ')}`).toEqual([]);
   });
@@ -864,6 +878,14 @@ describe('the collected tape says what it covers and what it does not', () => {
     expect(fixedWindowWidthLiterals("note: 'collected over the 60 s window',")).toHaveLength(1);
     expect(fixedWindowWidthLiterals('note: "collected over the 60 s window",')).toHaveLength(1);
     expect(fixedWindowWidthLiterals('note: `collected over the 60 s window`,')).toHaveLength(1);
+    // Deliberate OVER-REFUSAL, pinned so the next author meets the reason rather than the trap:
+    // the guard flags any literal that names a window and carries a digit, so a *correct* dynamic
+    // note — this one writes the launch's own committed width, and trips only because the divisor
+    // `1000` is a digit — is refused alongside a flat one. The contract is that a note may name an
+    // instant but never a duration; a collector that genuinely needs to report the real per-launch
+    // width must compute the divisor OUTSIDE the literal. Over-refusal is the safe direction here:
+    // it is what keeps the guard strong against a backtick-written fixed width, and the cost is a
+    // trivial hoist. An unexplained refusal, on the other hand, is a trap.
     expect(fixedWindowWidthLiterals('note: `a ${windowMs / 1000} s window`,')).toHaveLength(1);
     // And what it must not flag: a note naming an instant rather than a window width, the notes
     // the collector actually writes, and a duration living in a comment.

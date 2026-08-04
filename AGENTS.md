@@ -203,12 +203,14 @@ Five things bind anything that touches it or copies from it:
   inside a bounded window and the loss falls on late entrants. `ALL_ENTRANT_FLOOR_CAVEAT` reaches the
   row, the CSV column name and the record. Persisting fills preserves the option; it does not repair
   the data.
-- **The lane is keyless and its cohort SQL is NOT DEPLOYED.** `cohort.mjs` → `COHORT_SQL` needs a
-  saved Dune query of its own and the free tier's ten private slots are full, so
-  `bounds.json` → `dune.cohortQueryId` is `null` and the cohort stage cannot execute. The launch-list
-  leg reuses the screen's existing `8204672` **unchanged**. Everything else is proven on a bounded
-  sample: 5/5 create slots and exact fill counts against the committed tape (25 requests, 0 shed), and
-  `arrival.mjs` reproduces §4.1's break dates, §4.3's three regimes and §5's 82.7-day window offline.
+- **The lane is keyless and its cohort SQL is NOT DEPLOYED — but NOT for want of a query slot.**
+  `cohort.mjs` → `COHORT_SQL` needs a saved Dune query of its own, and `bounds.json` →
+  `dune.cohortQueryId` is `null`, so the cohort stage cannot execute until one is created. **The
+  slot-exhaustion reason previously recorded here was false** — see the Dune section's "10 PRIVATE
+  QUERIES" entry for how to re-check the count. The launch-list leg reuses the screen's existing
+  `8204672` **unchanged**. Everything else is proven on a bounded sample: 5/5 create slots and exact
+  fill counts against the committed tape (25 requests, 0 shed), and `arrival.mjs` reproduces §4.1's
+  break dates, §4.3's three regimes and §5's 82.7-day window offline.
 
 ## pump.fun / Solana provider facts
 
@@ -417,15 +419,22 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   five-column cap SQL reads ~115 against a pinned 121 ceiling — `CREATION-DERIVED.md` §8.2b owns both
   figures and the caveat on the second), one execution for the whole batch,
   and a **cached** probe read by default.
-- **Free tier: 2,500 credits/month, SHARED, and only 10 PRIVATE QUERIES — the account holds 10, so a
-  new query cannot be created.** The two production queries were upgraded in place (`8204672`
-  enumeration, `8204603` coverage). Their SQL is committed in `dune.mjs` and
-  `assertSavedQueryMatches` compares it before spending an execution, because a saved query is
-  editable from a browser and its answer is a gate input. **EDITING EITHER SQL IN THIS REPO IS HALF
-  THE CHANGE: the saved query must be updated IN PLACE or the next real run refuses the whole Dune
-  leg terminally** — the comparison happens before the execution. `README.md` → "Deploying a change
-  to the committed SQL" owns the step and names which id goes with which text. **Nothing tracks the
-  month** — the tool is stateless between runs. Auth is the `X-Dune-API-Key` **header**, never `Bearer`.
+- **Free tier: 2,500 credits/month, SHARED, and only 10 PRIVATE QUERIES — but the account is NOT at
+  that cap, and "the slots are full" is a stale claim that once blocked a lane on nothing.**
+  **Never take a saved-query count on trust; re-checking it is free of credits, not of the key:**
+  `GET /api/v1/queries?limit=100` with the `X-Dune-API-Key` header lists them, and creating a
+  throwaway with `POST /api/v1/query` then archiving it proves a slot is free without spending an
+  execution. Measured that way 2026-08-04 by the discovery-widen investigation: **8 saved queries,
+  2 production and 6 retired scratch probes, at least one slot free.** Retiring the six scratch ids
+  is queued work, so the number will move — re-list rather than quote it. The two production queries
+  were upgraded in place (`8204672` enumeration, `8204603` coverage). Their SQL is committed in
+  `dune.mjs` and `assertSavedQueryMatches` compares it before spending an execution, because a saved
+  query is editable from a browser and its answer is a gate input. **EDITING EITHER SQL IN THIS
+  REPO IS HALF THE CHANGE: the saved query must be updated IN PLACE or the next real run refuses
+  the whole Dune leg terminally** — the comparison happens before the execution. `README.md` →
+  "Deploying a change to the committed SQL" owns the step and names which id goes with which text.
+  **Nothing tracks the month** — the tool is stateless between runs. Auth is the `X-Dune-API-Key`
+  **header**, never `Bearer`.
 - **Measured cost, 2026-08-03:** five deployers' whole histories = **8 requests, 1 execution, 1.75
   billed credits**; a 195-candidate run ≈ 20 credits, i.e. ~125 full-cap runs a month. Against 793
   Helius credits and 12 requests for ONE deployer, or 7,166 keyless requests and ~287 min.

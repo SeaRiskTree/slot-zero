@@ -27,22 +27,25 @@ what is established and what is open.
   scans `src/` **recursively** for sockets, `process.env` and key-shaped strings. Keep it that
   way; the entire dataset was built keyless and its value depends on staying reproducible offline.
 - **The one network-capable area is `tools/`, and the boundary is the directory.** Each tool there is
-  governed by its own test, and there are three. `tools/deployer-screen/` holds the keyed MadeOnSol and
+  governed by its own test, and there are four. `tools/deployer-screen/` holds the keyed MadeOnSol and
   Dune clients; `test/deployer-screen.test.ts` asserts no imports across `src/`↔`tools/`, only
   `client.mjs`/`pumpfun.mjs` may call `fetch` (**a third vendor goes into `client.mjs`, not a new
   file — keeping that allow-list at two is what makes the ceilings auditable by reading two files**),
   only `credential.mjs`/`screen.mjs` may name `MADEONSOL_API_KEY` / `HELIUS_API_KEY` / `DUNE_API_KEY`,
-  and no file there may contain a key-shaped string or assign a value to a credential variable. `tools/graduated-life-tape/`
-  is **keyless throughout** — `test/graduated-life-tape.test.ts` holds it to the same shape with the
-  credential allow-list **empty**, which is what makes captain decision 112a's "EUR 0" a property of
-  the tree. `tools/arrival-rate-walk/` is keyless too and `test/arrival-rate-walk.test.ts` holds it
-  the same way, plus a **host allow-list**: exactly `swap-api.pump.fun` and `api.mainnet-beta.solana.com`
-  appear in its code, asserted as a set rather than as a ban-list. Duplicated curve constants between
-  `src/index.ts` and `tools/deployer-screen/measure.mjs`, the duplicated keyless client across the
-  tools, and the duplicated segmentation between `analysis/window-population/measure.mjs` and
-  `tools/arrival-rate-walk/arrival.mjs`, are this boundary's deliberate cost — do not "fix" any of
-  them by importing across it. The segmentation copy is held together by a **reproduction test**, not
-  by discipline: the tool's own code must return the published break dates over the committed tape.
+  and no file there may contain a key-shaped string or assign a value to a credential variable.
+  `tools/graduated-life-tape/`, `tools/arrival-rate-walk/` and `tools/window-decay-tripwire/` are
+  **keyless throughout** — `test/graduated-life-tape.test.ts`, `test/arrival-rate-walk.test.ts` and
+  `test/window-decay-tripwire.test.ts` hold them to the same shape with the credential allow-list
+  **empty**, which is what makes captain decision 112a's "EUR 0" a property of the tree. The walk and
+  the tripwire each additionally pin a **host allow-list** of two keyless hosts, asserted as a set
+  rather than as a ban-list: `swap-api.pump.fun` and `api.mainnet-beta.solana.com` for the walk,
+  `swap-api.pump.fun` and `frontend-api-v3.pump.fun` for the tripwire, which its client refuses to go
+  outside. Duplicated curve constants between `src/index.ts` and `tools/deployer-screen/measure.mjs`, the
+  duplicated keyless client across the four tools, and the duplicated segmentation between
+  `analysis/window-population/measure.mjs` and `tools/arrival-rate-walk/arrival.mjs`, are this
+  boundary's deliberate cost — do not "fix" any of them by importing across it. The segmentation copy
+  is held together by a **reproduction test**, not by discipline: the tool's own code must return the
+  published break dates over the committed tape.
 - **`analysis/` is a third area and it is offline like `src/`.** One-off measurements over the
   local tape that are neither library nor tool. `test/window-population.test.ts` scans it for
   sockets, `process.env` and key-shaped strings, and asserts no imports across `analysis/`↔`tools/`.
@@ -626,6 +629,49 @@ dev currently?"*, and the shape of the answer is the point:
   **`record.mjs` and the README's schema table are two prose copies of the same contract and have
   drifted twice**; a test now pins them together, so move both in one commit. Current version:
   `RECORD_SCHEMA_VERSION` in `record.mjs`.
+
+## The window-decay tripwire — when to STOP AND ROTATE
+
+`tools/window-decay-tripwire/` — the instrument that answers *has the window we are currently
+trading closed?* Keyless, zero token, two hosts. Full method, both error costs and the ceiling in
+its `README.md`; every number reproduces from `node tools/window-decay-tripwire/backtest.mjs`.
+
+- **It watches the DEPLOYER'S OWN TAKE, not the outsiders' P&L, and that is why it is fast.** The
+  series is the June report's **T1** — (dev buy + the operation's create-slot stake) ÷ (that plus
+  every other wallet's) — read straight off each launch's create slot, one Solana slot after the
+  mint. **Achieved latency +24.1 h against a close that took 24.7 h**, with the first launch not
+  entered at +26.0 h. The P&L variance route on the same close takes **+48.3 h** *and* false-alarms
+  more: watching the consequence is strictly worse than watching the cause when the cause is
+  observable. Do not rebuild this on realised P&L.
+- **The bar is 0.55 because the June report published it, not because it fits.** `T1 < 0.55
+  sustained` was that report's *re-open* condition, written before anyone looked at the closing
+  launch. Note the thin part: `Peque` reads 0.5527 and clears it by 0.003, so the single-launch
+  reading is not robust and the headline is quoted from the confirmed alarm.
+- **TWO CONSECUTIVE READINGS, and the second one is the whole design.** One reading is wrong 3 times
+  in 104 open-window launches; two are wrong 0 times, and the three singles are all isolated.
+  Measured asymmetry: **a false stop costs ~380x a launch of latency** (median 389.9 SOL of forfeited
+  remaining window against −1.37 SOL fee-inclusive for the two launches eaten at the real close),
+  because a stop is one-way. Never trade latency for that ratio.
+- **A create slot with NO outsider stake yields NO reading — never a share of 1.0** — and an unread
+  launch neither advances nor resets the streak. That is T1's first recorded caveat
+  (`analysis/window-population/README.md` §9) in code, it covers **25 of the open window's 129
+  launches**, and removing it costs 7 false stops.
+- **THE CEILING IS ON THE FALSE-ALARM RATE, NOT THE LATENCY, and it is material.** 0 stops in 104 is
+  not a rate of zero: the 95% upper bound is 2.84%, at which a window of this length is 95% likely to
+  be stopped early at a mean cost of 347.8 SOL — **more than half the 591.7 SOL the whole window was
+  worth**. One window cannot distinguish that from zero. Also, **this is a step detector**: it would
+  miss a gradual close entirely, and no data here says whether that shape exists.
+- **The cohort is load-bearing and a dev-buy-only variant does NOT work.** The deployer's own buy is
+  the most exogenous signal available and alone it costs **5–6 false alarms** — the operation raised
+  its own stake repeatedly while the window stayed open (the tool's `README.md` §6). Without a
+  supplied cohort the detector falls back to the repo's co-ordination rule and reaches the same
+  verdict at the same latency with 0 false stops — but that rule recovers **nothing** on this
+  deployer before 2026-04, so a create slot with no bundled transaction is silence, never an empty
+  cohort (decision 134a's shape).
+- **`--dry-run` is the default, `--live` needs `--state`.** The stop needs two consecutive readings
+  and a run sees one launch, so without the state file the tool would silently become the
+  single-launch alarm this lane rejected — the CLI refuses rather than degrade. The verdict latches:
+  this lane never un-stops and never re-polls a wallet it has stopped on.
 
 ## Where candidate wallets come from, and the ceiling on that
 

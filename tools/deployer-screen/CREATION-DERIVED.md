@@ -536,9 +536,11 @@ with `?limit=dune.maxResultRows`, so no read can exceed it whatever the query do
 nobody has observed** — replace it with a measurement from the next real run rather than quoting it
 as one. A median-shaped full-cap run is unchanged at ~9,750 rows and ~20 credits.
 
-**DEPLOY STEP.** This changed `CREATION_SQL`, so **saved query `8204672` must be updated in place**
-to the committed text. `README.md` → *"Deploying a change to the committed SQL"* owns the procedure
-and what a mismatch costs; §8.6 owns the custody rule behind it.
+**DEPLOY STEP — taken 2026-08-03.** This changed `CREATION_SQL`, so saved query `8204672` **was
+updated in place** to the committed text; §8.3b records the deploy and the proof the leg is live.
+Any *future* change to either committed text is the same deploy step: `README.md` → *"Deploying a
+change to the committed SQL"* owns the procedure and what a mismatch costs; §8.6 owns the custody
+rule behind it.
 
 ### 8.3 Reproduced against the 239-launch ground truth, through the production code path
 
@@ -561,6 +563,35 @@ Helius walk produced in §7.5, from an independent surface. Bonded status came f
 a curve read.
 
 **No measured value moved and no verdict changed.**
+
+### 8.3b The deploy of the cap SQL, and the proof the leg is live — 2026-08-03
+
+**Saved query `8204672` was updated in place**, via the Dune API, to the committed five-column
+`CREATION_SQL` (the §8.2b cap text), then **re-fetched and compared under the repo's own
+`normaliseSql` rules** rather than by eye. Saved query `8204603` was checked in the same pass and
+**already matched `COVERAGE_SQL` byte for byte, so it was not touched**. **No saved query was
+created, renamed or deleted** — the free tier's ten private slots are full and stay full (§8.6).
+
+The leg was then driven end to end through the production code path — `DuneClient` +
+`enumerateCreations`, bounds read from `thresholds.json` → `dune` — for the subject deployer
+`7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL`:
+
+| | reading |
+|---|---|
+| coverage | `coverageOk: true`, 2024-01-14 → 2026-08-04 |
+| rows | `rowsReturned` 250, `unreadableRows` 0, `usable: true` |
+| history | `launches` 250, **`declaredLaunches` 250**, `bonded` 109 |
+| cap | `truncatedByLaunchCap: false`, `launchCap` 19999 |
+| spend | 7 requests, 1 execution, 28,699 bytes |
+
+**`declaredLaunches` being POPULATED is the decisive evidence, not the string comparison.** That
+field exists only on the fifth column the cap SQL adds, so a populated value proves the *deployed*
+query is the new text and that the leg executed — a matching `normaliseSql` comparison alone proves
+neither.
+
+**250/109 is consistent with §8.3's ground truth, not a correction to it.** §8.3 owns the 239-tape
+and 247 figures; the excess here is post-tape creations by a still-active deployer, so this number
+is expected to keep drifting upward. Do not read it as a restated ground truth.
 
 ### 8.4 What it costs, against the walk it replaces
 

@@ -1,8 +1,8 @@
 # The oversized split — reading the largest census deployers instead of refusing them
 
 **Captain decision 196a, 2026-08-04.** Record:
-`data/slot-zero-census-wallet-gate-validation/decision-196a-oversized-split.md`. It answers that
-study's finding 2 and its §8 item 1.
+`slot-zero-census-wallet-gate-validation` → `decision-196a-oversized-split.md` (held in firstmate's
+records, not in this repo). It answers that study's finding 2 and its §8 item 1.
 
 Measured live on the census population. Evidence: `runs/2026-08-04-oversized-split.json`. The code
 is `tools/deployer-screen/dune.mjs` → `planOversizedSplit` and `enumerateCreations`.

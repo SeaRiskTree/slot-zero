@@ -221,7 +221,8 @@ export const OVERSIZED_SPLIT =
  * **Why this is a split rather than a bigger cap.** {@link LAUNCH_CAP_FLOOR} is sized against the
  * histories this repo had measured (8/10/65/152/247) and refuses **604 of the 3,036 wallets in the
  * 2026-07 creation census — 19.9%**, biased towards the largest histories, which are the wallets
- * most worth finding (`data/slot-zero-census-wallet-gate-validation/report.md` finding 2). Raising
+ * most worth finding (`slot-zero-census-wallet-gate-validation` → `report.md` finding 2, held in
+ * firstmate's records, not in this repo). Raising
  * the floor moves that boundary without removing the bias. Splitting removes it at its cause: the
  * cap is `max(500, floor(19999 / <deployers in the batch>))`, so the SAME committed SQL hands a
  * two-wallet batch 9,999 rows per deployer and a one-wallet batch 19,999. **No SQL changes, so saved

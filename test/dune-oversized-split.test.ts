@@ -3,7 +3,8 @@
  *
  * `CREATION_SQL`'s per-deployer cap refuses **604 of the 3,036 wallets in the 2026-07 creation
  * census (19.9%)**, and the refusal is biased towards the LARGEST histories — the wallets most worth
- * finding (`data/slot-zero-census-wallet-gate-validation/report.md`, finding 2). The captain chose a
+ * finding (`slot-zero-census-wallet-gate-validation` → `report.md`, finding 2, held in firstmate's
+ * records, not in this repo). The captain chose a
  * split over a bigger cap: raising the cap trades one arbitrary bound for another and leaves the bias
  * where it was, while re-asking for the truncated wallets in their own, smaller execution removes it
  * at its cause — the cap is a function of BATCH SIZE.

@@ -448,6 +448,141 @@ export const ENTRY_VERDICTS = [
 ];
 
 /**
+ * The two verdicts that report an ABSENCE of a finding rather than a finding. Everything else in
+ * {@link ENTRY_VERDICTS} is a statement about the deployer.
+ *
+ * @type {readonly EntryVerdict[]}
+ */
+export const UNMEASURED_VERDICTS = ['entry-unmeasured', 'entry-cost-unmeasured'];
+
+/**
+ * WHY a run reached one of {@link UNMEASURED_VERDICTS} — one code per distinct producer in
+ * {@link scoreEntry}, and the whole point of captain decision 174b.
+ *
+ * **The defect this exists to remove.** Before it, six unrelated code paths collapsed onto two
+ * labels, every one of which describes OUR evidence rather than the DEPLOYER. A consumer writing
+ * `verdict !== 'entry-unmeasured'` was therefore filtering on our own coverage while believing it
+ * was filtering on a measurement — the invisible false rejection this whole screen exists to
+ * remove, one layer down. Enumerated from the code rather than from intent, in the order
+ * `scoreEntry` can reach them:
+ *
+ * | code | where | it says |
+ * |---|---|---|
+ * | `too-few-windows-available` | sample-size gate | the walk was never offered `minLaunchesSampled` windows — a short or too-young history, or our own `maxLaunchesPerCandidate` cap. |
+ * | `windows-dropped` | sample-size gate | windows were reached and could not be walked back to the mint, so they were dropped (`Stage2Coverage.dropsByReason` says which). |
+ * | `too-few-proven-windows` | sample-size gate | windows were measured perfectly well and REFUSED, because their create slot carried no bundled transaction (`measure.mjs` → `roomIsProven`, captain decision 134a). |
+ * | `too-few-closed-round-trips` | field gate | room was measured on a full sample and clears the bar, and the field around those launches produced fewer than `minFieldRoundTrips` complete round trips. |
+ * | `too-little-of-the-field-priced` | cost gate | below `minPricedFraction` of the create-slot field could be priced on-chain — or the cost leg never ran at all. |
+ * | `too-few-priced-round-trips` | cost gate | entries priced, but fewer than `minFieldRoundTrips` round trips priced across their WHOLE window, so what the field cleared after costs is unknown. |
+ *
+ * The first three share one code site and are the aggregate the decision was really about: a
+ * candidate silenced because it never had eight launches, one silenced because pump.fun shed our
+ * walk, and one silenced by the co-ordination rule are three different states of the world.
+ *
+ * @typedef {'too-few-windows-available' | 'windows-dropped' | 'too-few-proven-windows'
+ *   | 'too-few-closed-round-trips' | 'too-little-of-the-field-priced'
+ *   | 'too-few-priced-round-trips'} UnmeasuredCause
+ */
+
+/** @type {readonly UnmeasuredCause[]} */
+export const UNMEASURED_CAUSES = [
+  'too-few-windows-available',
+  'windows-dropped',
+  'too-few-proven-windows',
+  'too-few-closed-round-trips',
+  'too-little-of-the-field-priced',
+  'too-few-priced-round-trips',
+];
+
+/**
+ * WHOSE fact each cause is — and therefore whether a consumer may filter on it.
+ *
+ * `'our-coverage'` is a limit of this reading: our budget, our luck against a shedding endpoint, or
+ * evidence the co-ordination rule could not recover. `'deployer'` is a property of the launches
+ * themselves, measured on a full sample by an instrument that does not vary between candidates.
+ *
+ * **NO cause is `'deployer'`, and that is the finding rather than a redundancy** (captain decision
+ * 174b, revised). All six producers describe us, so a later stage may filter ONLY on the four
+ * MEASURED verdicts — `entry-open-after-costs`, `entry-room-absent`, `entry-cost-prohibitive`,
+ * `entry-field-loss-making` — and must carry EVERY unmeasured outcome forward as no answer. The
+ * field, the type and this table stay: a future producer CAN be deployer-attributable, and it has to
+ * come here on purpose to become one.
+ *
+ * `too-few-closed-round-trips` was the one row attributed to the deployer, on the ground that
+ * closure is read inside the pinned `windowMs` and that is the same window for every candidate. It
+ * is not: `pumpfun.mjs` → `readLaunchWindow` seeks in MILLISECONDS (65,000) and decides membership
+ * in SLOTS (160), so at 2026-07 slot drift 160 slots reach up to 70.6 s and the window's tail is
+ * never fetched. The truncated fills are disproportionately late SELLS — 354 in-window fills, 161 of
+ * them sells, across 102 launches — and dropping one flips a wallet from closed to open. So
+ * `closed.length` is partly a function of WHEN a candidate's launches happened, which is a
+ * time-varying limit of ours; `thresholds.json` → `stage2_entry.windowSlotSpan` already states that
+ * a too-narrow span silently changes gate outcomes at `minFieldRoundTrips`. The honest note beside
+ * it: that defect moved our own create-slot series by nothing to seven significant figures, because
+ * create-slot outsiders close early — but that is n = 1 deployer on our own tape and establishes no
+ * bound for a stranger, which is exactly why the conservative attribution is the captain's call.
+ *
+ * @type {Readonly<Record<UnmeasuredCause, 'our-coverage' | 'deployer'>>}
+ */
+export const UNMEASURED_CAUSE_ATTRIBUTION = Object.freeze({
+  'too-few-windows-available': 'our-coverage',
+  'windows-dropped': 'our-coverage',
+  'too-few-proven-windows': 'our-coverage',
+  'too-few-closed-round-trips': 'our-coverage',
+  'too-little-of-the-field-priced': 'our-coverage',
+  'too-few-priced-round-trips': 'our-coverage',
+});
+
+/**
+ * THE FILTER RULE, on the score itself rather than only in a document — the same discipline
+ * {@link LANDING_TIP_CAVEAT} follows. It reaches `caveats`, the rendered block and the run record,
+ * so a consumer that never opens the README still meets it.
+ */
+export const COVERAGE_ATTRIBUTION_CAVEAT =
+  'THIS IS A LIMIT OF OUR READING, NOT A FINDING ABOUT THIS DEPLOYER. `unmeasuredCause` names ' +
+  'which of our own limits produced it and `unmeasuredCauseAttribution` reads `our-coverage`. A ' +
+  'later stage MUST NOT drop this candidate on that basis: filtering it out silently filters on ' +
+  'our budget and our evidence, which is the invisible false rejection this screen exists to ' +
+  'remove. Carry it forward as NO ANSWER, counted and reported. `entry.mjs` → ' +
+  '`isDeployerAttributable` is the predicate; captain decision 174b is the rule.';
+
+/**
+ * **May a later stage filter this candidate out?** Captain decision 174b, as a predicate.
+ *
+ * `true` when the outcome is a statement about the deployer — today that is every MEASURED verdict
+ * and nothing else, because {@link UNMEASURED_CAUSE_ATTRIBUTION} attributes all six producers to our
+ * own coverage. `false` when it is a statement about our own coverage, which a consumer must carry
+ * forward as *no answer* rather than drop.
+ *
+ * Three properties are deliberate and all three fail SAFE:
+ *
+ * - **A verdict this module does not recognise returns `false`.** A typo, a value from a future
+ *   schema or a hand-edited record is carried forward exactly like an unknown cause, rather than
+ *   waved through as a measurement.
+ * - **A record older than schema 10 carries no `unmeasuredCause`,** so every unmeasured verdict on
+ *   it returns `false` — not filterable. That is correct: those records genuinely cannot say which
+ *   producer fired, and guessing would reintroduce exactly the collapse this removes.
+ * - **An unrecognised cause returns `false`.** A future producer added without coming here is
+ *   treated as our coverage until someone says otherwise, so the error lands on over-reporting
+ *   rather than on a silent drop.
+ *
+ * Takes the in-process {@link EntryScore} and the persisted record row alike — Stage 3 is a second
+ * consumer of Stage 2's fill walk rather than a reader of `runs/*.json`, so the in-process shape is
+ * the one that matters and both must answer the same.
+ *
+ * @param {{ verdict: string, unmeasuredCause?: string | null }} finding
+ * @returns {boolean}
+ */
+export function isDeployerAttributable(finding) {
+  if (!(/** @type {readonly string[]} */ (ENTRY_VERDICTS).includes(finding.verdict))) return false;
+  if (!(/** @type {readonly string[]} */ (UNMEASURED_VERDICTS).includes(finding.verdict))) return true;
+  const cause = finding.unmeasuredCause ?? null;
+  if (cause === null) return false;
+  return (
+    /** @type {Record<string, string | undefined>} */ (UNMEASURED_CAUSE_ATTRIBUTION)[cause] === 'deployer'
+  );
+}
+
+/**
  * @typedef {object} EntryThresholds
  * @property {number} minRoomLeft            Median room a launch set must leave.
  * @property {number} minLaunchesSampled     Launches below which no distribution is reported.
@@ -467,6 +602,20 @@ export const ENTRY_VERDICTS = [
 /**
  * @typedef {object} EntryScore
  * @property {EntryVerdict} verdict
+ * @property {UnmeasuredCause | null} unmeasuredCause  Which producer reached this verdict, when it
+ *   is one of {@link UNMEASURED_VERDICTS}; `null` on every measured verdict. **Never `null` on an
+ *   unmeasured one** — a consumer that cannot tell the causes apart is back where decision 174b
+ *   started. The PRIMARY cause when several apply; see {@link EntryScore.unmeasuredContributingCauses}.
+ * @property {'our-coverage' | 'deployer' | null} unmeasuredCauseAttribution  Whose fact
+ *   {@link EntryScore.unmeasuredCause} is, carried explicitly so a consumer never re-derives it
+ *   from a table of its own. `null` alongside a `null` cause.
+ *   {@link UNMEASURED_CAUSE_ATTRIBUTION} is the mapping and a test pins the two agree.
+ * @property {readonly UnmeasuredCause[]} unmeasuredContributingCauses  EVERY producer that applied,
+ *   in the documented precedence order, primary first. Empty on a measured verdict. The three
+ *   sample-size causes can co-occur — four windows refused as unproven and two dropped is a
+ *   different state from either alone — and a single label would throw that away. All three are
+ *   `our-coverage`, so the precedence never changes the filter answer; it only decides which
+ *   sentence leads.
  * @property {string} rationale
  * @property {number} launchesSampled        Launches actually SCORED. Every distribution and count
  *   below except {@link EntryScore.bundledTx} and {@link EntryScore.maxWalletsInOneTx} is over
@@ -574,7 +723,11 @@ export const ENTRY_VERDICTS = [
  *
  * The consequence is deliberate and it is the safe one. A candidate whose proven launches fall
  * below `minLaunchesSampled` scores `entry-unmeasured` — never `entry-open-after-costs`, and never
- * folded in with a refusal. On our own tape, replaying the live recipe at every index, that removes
+ * folded in with a refusal. **It is `too-few-proven-windows` specifically**, and it is
+ * `our-coverage`: the score says so on its own face rather than leaving a consumer to infer it from
+ * `launchesRoomUnproven`. See {@link UNMEASURED_CAUSE_ATTRIBUTION} and
+ * {@link isDeployerAttributable} — a later stage may not drop a candidate on this.
+ * On our own tape, replaying the live recipe at every index, that removes
  * **24 of 24 false-positive windows and leaves none at any bar from 0.1 to 0.8**; it costs 81 of
  * 228 windows, which become unmeasured rather than wrong. Stage 0's rolling replay asserts it.
  *
@@ -651,6 +804,13 @@ export function scoreEntry(launches, t, context = {}) {
   /** @type {EntryScore} */
   const score = {
     verdict: 'entry-unmeasured',
+    // Set by {@link attributeUnmeasured} on every path that keeps or reaches an unmeasured verdict,
+    // and left null on every measured one. The initial verdict above is unmeasured, so a branch
+    // that returns without calling it would ship the collapsed label decision 174b removed — which
+    // is why the contract is asserted rather than reviewed for.
+    unmeasuredCause: null,
+    unmeasuredCauseAttribution: null,
+    unmeasuredContributingCauses: [],
     rationale: '',
     launchesSampled: scored.length,
     launchesRoomUnproven: roomUnproven,
@@ -756,6 +916,24 @@ export function scoreEntry(launches, t, context = {}) {
   );
 
   if (scored.length < t.minLaunchesSampled) {
+    // THE AGGREGATE DECISION 174b SPLIT. One code site, three states of the world, and they are
+    // separated here rather than left for a consumer to guess at from counts it may not read.
+    //
+    // Precedence, most binding first: a walk that was never offered enough windows could not have
+    // been rescued by either of the other two, a drop is a window we reached and lost, and a
+    // refusal is a window we measured and declined to score. All three are `our-coverage`, so the
+    // order decides which sentence leads and never whether the candidate may be filtered.
+    /** @type {UnmeasuredCause[]} */
+    const causes = [];
+    if (launches.length + dropped < t.minLaunchesSampled) causes.push('too-few-windows-available');
+    if (dropped > 0) causes.push('windows-dropped');
+    if (roomUnproven > 0) causes.push('too-few-proven-windows');
+    // Exhaustive by arithmetic — `scored = launches.length - roomUnproven`, so with no refusals and
+    // no drops `scored < floor` IS `launches.length + dropped < floor`. Kept as the contract guard:
+    // an unmeasured verdict must never reach a consumer with no cause on it, whatever a later edit
+    // does to the partition above.
+    if (causes.length === 0) causes.push('too-few-windows-available');
+    attributeUnmeasured(score, causes);
     score.rationale =
       `only ${scored.length} scoreable launch window(s), below the ${t.minLaunchesSampled} this ` +
       `measurement needs. A distribution over fewer is not a distribution.` +
@@ -781,6 +959,13 @@ export function scoreEntry(launches, t, context = {}) {
   }
 
   if (closed.length < t.minFieldRoundTrips) {
+    // Room was read on a full sample and clears the bar, so outsiders did reach these create slots
+    // — and then too few of them completed a round trip to build a hit rate from. This reads like a
+    // fact about the deployer and is NOT one: `readLaunchWindow` reaches 65,000 ms but counts 160
+    // slots, so the window's tail goes unfetched by an amount that varies with slot drift, and the
+    // fills it loses are disproportionately late SELLS — each one flipping a wallet from closed to
+    // open. `our-coverage`, per {@link UNMEASURED_CAUSE_ATTRIBUTION}.
+    attributeUnmeasured(score, ['too-few-closed-round-trips']);
     score.rationale =
       `the opening window leaves room (median ${fmt(roomLeft.median)}), but only ${closed.length} ` +
       `closed round trip(s) across ${scored.length} scored launches — below the ${t.minFieldRoundTrips} a ` +
@@ -807,6 +992,10 @@ export function scoreEntry(launches, t, context = {}) {
   // the two must not share a verdict. This is terminal for the candidate in this run.
   if (!(entryCostPriced.rate >= t.minPricedFraction)) {
     score.verdict = 'entry-cost-unmeasured';
+    // Our budget and our coverage, in every one of its forms: the leg disabled (no RPC client), the
+    // leg abandoned on a transport failure, or the leg run and short. `entry.coverage.cost.ran`
+    // separates those three; none of them is a fact about the deployer.
+    attributeUnmeasured(score, ['too-little-of-the-field-priced']);
     score.rationale =
       `the opening window leaves room (median ${fmt(roomLeft.median)}) and the field is not ` +
       `loss-making before costs, but only ${entryCostPriced.hits} of ${entryCostPriced.n} ` +
@@ -835,6 +1024,9 @@ export function scoreEntry(launches, t, context = {}) {
 
   if (closedPriced.length < t.minFieldRoundTrips) {
     score.verdict = 'entry-cost-unmeasured';
+    // Distinct from the gate above and from the gross one at the top: the field DID close enough
+    // round trips, and it is our pricing that could not follow them across their whole window.
+    attributeUnmeasured(score, ['too-few-priced-round-trips']);
     score.rationale =
       `the opening window leaves room (median ${fmt(roomLeft.median)}) and entry costs a median ` +
       `${fmt(entryCostPerSolStakedByLaunch.median)} SOL per SOL staked per launch, but only ${closedPriced.length} ` +
@@ -874,6 +1066,26 @@ export function scoreEntry(launches, t, context = {}) {
     `NOT a recommendation and NOT a profit claim: ${LANDING_TIP_CAVEAT} Exit feasibility is ` +
     `unmeasured entirely. This means the exit question is worth asking, and nothing more.`;
   return score;
+}
+
+/**
+ * Stamp an unmeasured verdict with WHY, and put the filter rule on the score itself.
+ *
+ * The caveat is not decoration. Captain decision 174b's whole content is that a coverage limit must
+ * not be readable as a judgement, and a rule that lives only in a document is a rule every future
+ * consumer has to go and find. This is the same discipline {@link LANDING_TIP_CAVEAT} follows: the
+ * limit travels with the number, into `caveats`, the rendered block and the run record.
+ *
+ * @param {EntryScore} score  Mutated in place — `scoreEntry` owns it and returns it directly below.
+ * @param {readonly UnmeasuredCause[]} causes  Primary first, in the documented precedence order.
+ * @returns {void}
+ */
+function attributeUnmeasured(score, causes) {
+  const primary = /** @type {UnmeasuredCause} */ (causes[0]);
+  score.unmeasuredCause = primary;
+  score.unmeasuredCauseAttribution = UNMEASURED_CAUSE_ATTRIBUTION[primary];
+  score.unmeasuredContributingCauses = [...causes];
+  score.caveats.push(COVERAGE_ATTRIBUTION_CAVEAT);
 }
 
 /** @param {number} n @returns {string} */

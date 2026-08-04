@@ -77,16 +77,21 @@ import {
 } from '../tools/deployer-screen/measure.mjs';
 import type { Fill } from '../tools/deployer-screen/measure.mjs';
 import {
+  COVERAGE_ATTRIBUTION_CAVEAT,
   ENTRY_VERDICTS,
   LANDING_TIP_CAVEAT,
+  UNMEASURED_CAUSES,
+  UNMEASURED_CAUSE_ATTRIBUTION,
+  UNMEASURED_VERDICTS,
   distribution,
   entryCostTargets,
   hitRate,
+  isDeployerAttributable,
   measureLaunchEntry,
   priceLaunchEntry,
   scoreEntry,
 } from '../tools/deployer-screen/entry.mjs';
-import type { EntryScore, EntryThresholds } from '../tools/deployer-screen/entry.mjs';
+import type { EntryScore, EntryThresholds, UnmeasuredCause } from '../tools/deployer-screen/entry.mjs';
 import {
   emptyCostCoverage,
   emptyDropReasons,
@@ -3810,6 +3815,10 @@ describe('the keyless boundary holds in both directions', () => {
   // that block would imply an exchange rate between requests, Helius credits and Dune executions
   // that does not exist.
   PERSISTED_BY_SCHEMA[9] = PERSISTED_BY_SCHEMA[8]!;
+  // Schema 10 adds no candidate ROW field either. An unmeasured verdict now names WHICH of its six
+  // producers reached it and WHOSE fact that is (captain decision 174b), and all three new keys are
+  // inside `entry` — ENTRY_KEYS_BY_SCHEMA below.
+  PERSISTED_BY_SCHEMA[10] = PERSISTED_BY_SCHEMA[9]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -3859,6 +3868,17 @@ describe('the keyless boundary holds in both directions', () => {
     'fieldHitRateNetOfMeasuredFees',
     'fieldClosedRoundTripsPriced',
   ];
+  // Schema 10: WHY an unmeasured verdict was reached, and WHOSE fact that is. Six producers had
+  // collapsed onto two labels, every one of them describing our own coverage — so a consumer writing
+  // `verdict !== 'entry-unmeasured'` was filtering on our budget while believing it was filtering on
+  // a measurement. The verdict vocabulary itself is UNCHANGED, which is what makes a schema-9 and a
+  // schema-10 verdict directly comparable, unlike the schema-6 boundary.
+  const ENTRY_KEYS_10 = [
+    ...ENTRY_KEYS_6,
+    'unmeasuredCause',
+    'unmeasuredCauseAttribution',
+    'unmeasuredContributingCauses',
+  ];
   const ENTRY_KEYS_BY_SCHEMA: Record<number, string[]> = {
     3: ENTRY_KEYS_3_AND_4,
     4: ENTRY_KEYS_3_AND_4,
@@ -3871,6 +3891,8 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 9 changes `creation` and adds a run-level `dune` block. `entry` is untouched, which is
     // the boundary the decision draws: NO Dune value may reach a Stage 2 entry number.
     9: ENTRY_KEYS_6,
+    // Schema 10 splits the unmeasured verdicts by CAUSE — the three keys above.
+    10: ENTRY_KEYS_10,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -3925,6 +3947,8 @@ describe('the keyless boundary holds in both directions', () => {
     7: CREATION_KEYS_4_TO_8,
     8: CREATION_KEYS_4_TO_8,
     9: CREATION_KEYS_9,
+    // Schema 10 changes `entry`, not `creation`.
+    10: CREATION_KEYS_9,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -3959,6 +3983,8 @@ describe('the keyless boundary holds in both directions', () => {
     7: ENTRY_COVERAGE_KEYS_6,
     8: ENTRY_COVERAGE_KEYS_6,
     9: ENTRY_COVERAGE_KEYS_6,
+    // Schema 10's three new keys sit on `entry` itself, not in its coverage block.
+    10: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -3997,6 +4023,8 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 9 deliberately leaves `spend` alone. Dune is a fourth vendor in a fourth unit, and it
     // gets its own run-level block rather than five more keys here — see the `dune` block.
     9: SPEND_KEYS_8,
+    // Schema 10 spends nothing new and touches no budget.
+    10: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -4025,6 +4053,8 @@ describe('the keyless boundary holds in both directions', () => {
   ];
   const DUNE_KEYS_BY_SCHEMA: Record<number, string[]> = {
     9: DUNE_KEYS_9,
+    // Schema 10 leaves the Dune block alone — a separate lane owns that surface.
+    10: DUNE_KEYS_9,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -4045,6 +4075,7 @@ describe('the keyless boundary holds in both directions', () => {
   ];
   const DUNE_COVERAGE_KEYS_BY_SCHEMA: Record<number, string[]> = {
     9: DUNE_COVERAGE_KEYS_9,
+    10: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -4057,6 +4088,7 @@ describe('the keyless boundary holds in both directions', () => {
   const DUNE_COVERAGE_TABLE_KEYS_9 = ['table', 'read', 'firstRowIso', 'lastRowIso', 'rowsTotal', 'months'];
   const DUNE_COVERAGE_TABLE_KEYS_BY_SCHEMA: Record<number, string[]> = {
     9: DUNE_COVERAGE_TABLE_KEYS_9,
+    10: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -6512,6 +6544,304 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     expect(s.rationale).toMatch(/2 window\(s\) were dropped/);
     expect(s.rationale).toMatch(/8 further window\(s\) were measured but NOT SCORED/);
   });
+
+  // ---------------------------------------------------------------------------------------------
+  // CAPTAIN DECISION 174b — the unmeasured verdicts, split by cause.
+  //
+  // `entry-unmeasured` and `entry-cost-unmeasured` had SIX distinct producers between them, every
+  // one of which describes our own coverage. A consumer writing
+  // `verdict !== 'entry-unmeasured'` was therefore filtering on our budget and our evidence while
+  // believing it was filtering on a measurement — the same invisible false rejection this screen
+  // exists to remove, one layer down. These tests pin each producer separately and pin that a
+  // consumer applying the safe filter absorbs none of them: only a MEASURED verdict is filterable.
+
+  /**
+   * A launch whose CREATE SLOT priced completely and whose later window did not — the shape that
+   * separates `too-few-priced-round-trips` from `too-little-of-the-field-priced`. `priceLaunchEntry`
+   * decides the two scopes apart, so entry cost resolves for every entrant while no round trip
+   * carries a net figure.
+   */
+  const entryOnlyPricedLaunch = (room: number, outcomes: number[], costPerTx = 0.01) => {
+    const fills = windowFills(room, outcomes);
+    const entry = measureLaunchEntry(fills)!;
+    const targets = entryCostTargets(fills, entry);
+    const priced = new Map(
+      targets
+        .filter((t) => t.slot === entry.createSlot.slot)
+        .map((t) => [
+          t.tx,
+          {
+            signature: t.tx,
+            feeSol: costPerTx / 2,
+            feePayer: t.wallets[0]!.wallet,
+            solOutByWallet: new Map(t.wallets.map((w) => [w.wallet, w.quotedSol + costPerTx])),
+          },
+        ]),
+    );
+    return priceLaunchEntry(entry, targets, priced);
+  };
+
+  it('CAUSE 1 — the walk was never offered enough windows: too-few-windows-available', () => {
+    // Three launches, every one proven, nothing dropped. Nothing about this candidate was refused
+    // or lost; the history simply did not reach `minLaunchesSampled`. That is our sampling reach.
+    const s = scoreEntry(many(3, 0.9, [1, 1, 1]), ENTRY_T);
+    expect(s.verdict).toBe('entry-unmeasured');
+    expect(s.unmeasuredCause).toBe('too-few-windows-available');
+    expect(s.unmeasuredCauseAttribution).toBe('our-coverage');
+    expect(s.unmeasuredContributingCauses).toEqual(['too-few-windows-available']);
+    expect(isDeployerAttributable(s)).toBe(false);
+  });
+
+  it('CAUSE 2 — windows reached and lost: windows-dropped, and it is not cause 1', () => {
+    // Four measured plus four dropped IS eight windows offered, so the deficit is the drop and
+    // nothing else. Collapsing this into "short history" would blame the deployer for pump.fun
+    // shedding our walk.
+    const s = scoreEntry(many(4, 0.7, [1, 1]), ENTRY_T, { launchesDropped: 4 });
+    expect(s.verdict).toBe('entry-unmeasured');
+    expect(s.unmeasuredCause).toBe('windows-dropped');
+    expect(s.unmeasuredCauseAttribution).toBe('our-coverage');
+    expect(s.unmeasuredContributingCauses).toEqual(['windows-dropped']);
+    expect(isDeployerAttributable(s)).toBe(false);
+  });
+
+  it('CAUSE 3 — pull request 17 refusing an unproven opening: too-few-proven-windows', () => {
+    // Eight windows walked, eight measured, eight REFUSED because their create slot carried no
+    // bundled transaction (decision 134a). The live evidence for why this needs its own label:
+    // `GeBJSHK4…` reads `maxWalletsInOneTx == 1` on every window and can never be scored, and the
+    // report's two stranger candidates lost 50% and 100% of their windows this way.
+    const s = scoreEntry(manyUnbundled(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    expect(s.verdict).toBe('entry-unmeasured');
+    expect(s.unmeasuredCause).toBe('too-few-proven-windows');
+    expect(s.unmeasuredCauseAttribution).toBe('our-coverage');
+    expect(s.launchesRoomUnproven).toBe(8);
+    expect(isDeployerAttributable(s)).toBe(false);
+    // And the refusal itself is untouched: this remains a refusal to score, never a room figure.
+    expect(s.launchesSampled).toBe(0);
+    expect(s.roomLeft.median).toBeNaN();
+  });
+
+  it('the three sample-size causes co-occur, and the contributing list keeps all of them', () => {
+    // A single label would throw this away. Eight windows offered, two dropped, six measured of
+    // which four were refused: two of our three limits fired, and neither alone explains the
+    // silence. All three are `our-coverage`, so the precedence decides which sentence leads and
+    // never whether the candidate may be filtered — which is why the order is safe to pin.
+    const s = scoreEntry([...many(2, 0.7, [1, 1]), ...manyUnbundled(4, 0.7, [1, 1])], ENTRY_T, {
+      launchesDropped: 2,
+    });
+    expect(s.unmeasuredContributingCauses).toEqual(['windows-dropped', 'too-few-proven-windows']);
+    expect(s.unmeasuredCause).toBe('windows-dropped');
+    expect(isDeployerAttributable(s)).toBe(false);
+  });
+
+  it('CAUSE 4 — its own producer, reached on a FULL proven sample: too-few-closed-round-trips', () => {
+    // A full sample of eight PROVEN windows, room measured and clearing the bar, and the field
+    // around those launches produced eight closed round trips against a bar of ten. That makes it a
+    // separately identifiable producer from the five others — and it is still `our-coverage`, because
+    // closure is read inside a window whose tail `readLaunchWindow` truncates by an amount that
+    // moves with slot drift, losing late SELLS that flip a wallet from closed to open.
+    const s = scoreEntry(many(8, 0.9, [1]), ENTRY_T);
+    expect(s.verdict).toBe('entry-unmeasured');
+    expect(s.launchesSampled).toBe(8);
+    expect(s.launchesRoomUnproven).toBe(0);
+    expect(s.fieldClosedRoundTrips).toBe(8);
+    expect(s.unmeasuredCause).toBe('too-few-closed-round-trips');
+    expect(s.unmeasuredCauseAttribution).toBe('our-coverage');
+    expect(isDeployerAttributable(s)).toBe(false);
+  });
+
+  it('CAUSE 5 — our budget, not the deployer: too-little-of-the-field-priced', () => {
+    // The identical launches that earn `entry-open-after-costs` when priced. Unpriced, the coverage
+    // floor refuses them — and it is OUR floor, whether the leg was disabled, abandoned or short.
+    const s = scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    expect(s.verdict).toBe('entry-cost-unmeasured');
+    expect(s.unmeasuredCause).toBe('too-little-of-the-field-priced');
+    expect(s.unmeasuredCauseAttribution).toBe('our-coverage');
+    expect(isDeployerAttributable(s)).toBe(false);
+    // The control: priced, the same launches are a measurement with no cause at all.
+    const priced = scoreEntry(manyPriced(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    expect(priced.verdict).toBe('entry-open-after-costs');
+    expect(priced.unmeasuredCause).toBeNull();
+    expect(isDeployerAttributable(priced)).toBe(true);
+  });
+
+  it('CAUSE 6 — priced entries, unpriced round trips: too-few-priced-round-trips', () => {
+    // Distinct from cause 5 and it has to be: the coverage floor is CLEARED — every create-slot
+    // entry priced — and what could not be followed is the round trip across its whole window. A
+    // consumer told only "cost unmeasured" cannot tell a run that priced nothing from one that
+    // priced every seat and could not price a single exit.
+    const s = scoreEntry(
+      Array.from({ length: 8 }, () => entryOnlyPricedLaunch(0.7, [1, 1, -0.2])),
+      ENTRY_T,
+    );
+    expect(s.verdict).toBe('entry-cost-unmeasured');
+    expect(s.entryCostPriced.rate).toBe(1);
+    expect(s.fieldClosedRoundTrips).toBeGreaterThanOrEqual(ENTRY_T.minFieldRoundTrips);
+    expect(s.fieldClosedRoundTripsPriced).toBe(0);
+    expect(s.unmeasuredCause).toBe('too-few-priced-round-trips');
+    expect(s.unmeasuredCauseAttribution).toBe('our-coverage');
+    expect(isDeployerAttributable(s)).toBe(false);
+  });
+
+  it('EVERY producer is reachable and EVERY unmeasured verdict carries a cause', () => {
+    // The exhaustiveness half of the contract, and the half that catches a SEVENTH producer added
+    // later without coming here — an unlabelled cause hiding inside the aggregate is the same
+    // defect one layer down, which is the brief's own warning.
+    const cases: EntryScore[] = [
+      scoreEntry(many(3, 0.9, [1, 1, 1]), ENTRY_T),
+      scoreEntry(many(4, 0.7, [1, 1]), ENTRY_T, { launchesDropped: 4 }),
+      scoreEntry(manyUnbundled(8, 0.7, [1, 1, -0.2]), ENTRY_T),
+      scoreEntry(many(8, 0.9, [1]), ENTRY_T),
+      scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T),
+      scoreEntry(Array.from({ length: 8 }, () => entryOnlyPricedLaunch(0.7, [1, 1, -0.2])), ENTRY_T),
+      // And the measured verdicts, which must carry NO cause — a cause beside a measurement would
+      // invite a consumer to filter on one.
+      scoreEntry(manyPriced(8, 0.7, [1, 1, -0.2]), ENTRY_T),
+      scoreEntry(many(8, 0.24, [1, 1, 1, 1, -0.1]), ENTRY_T),
+      scoreEntry(many(8, 0.7, [-1, -1, 0.2]), ENTRY_T),
+      scoreEntry(manyPriced(8, 0.7, [1, 1, -0.2], 0.5), ENTRY_T),
+      scoreEntry([], ENTRY_T),
+    ];
+    const seen = new Set<string>();
+    for (const s of cases) {
+      const unmeasured = (UNMEASURED_VERDICTS as readonly string[]).includes(s.verdict);
+      if (unmeasured) {
+        expect(s.unmeasuredCause, `${s.verdict} reached with no cause`).not.toBeNull();
+        expect(UNMEASURED_CAUSES).toContain(s.unmeasuredCause);
+        expect(s.unmeasuredContributingCauses[0]).toBe(s.unmeasuredCause);
+        expect(s.unmeasuredCauseAttribution).toBe(
+          UNMEASURED_CAUSE_ATTRIBUTION[s.unmeasuredCause as UnmeasuredCause],
+        );
+        seen.add(s.unmeasuredCause!);
+      } else {
+        expect(s.unmeasuredCause, `${s.verdict} carries a cause it should not`).toBeNull();
+        expect(s.unmeasuredCauseAttribution).toBeNull();
+        expect(s.unmeasuredContributingCauses).toEqual([]);
+      }
+    }
+    // Every declared producer is reached by a fixture above, so the vocabulary is not aspirational.
+    expect([...seen].sort()).toEqual([...UNMEASURED_CAUSES].sort());
+  });
+
+  it('the attribution table is total, and NO cause is the deployer\'s — captain decision 174b', () => {
+    // The finding, not a redundancy: none of the six producers says anything whatever about a
+    // deployer, so the only legitimate filter is on a MEASURED verdict. The table, the field and the
+    // type all stay so that a later round making a cause deployer-attributable has to come here on
+    // purpose rather than have a table quietly grow.
+    expect(Object.keys(UNMEASURED_CAUSE_ATTRIBUTION).sort()).toEqual([...UNMEASURED_CAUSES].sort());
+    const deployerCaused = UNMEASURED_CAUSES.filter(
+      (c) => UNMEASURED_CAUSE_ATTRIBUTION[c] === 'deployer',
+    );
+    expect(deployerCaused).toEqual([]);
+    for (const c of UNMEASURED_CAUSES) {
+      expect(['our-coverage', 'deployer']).toContain(UNMEASURED_CAUSE_ATTRIBUTION[c]);
+    }
+  });
+
+  it('THE SAFE FILTER does not absorb the coverage-caused verdicts — the naive one does', () => {
+    // The decision, stated as one assertion. Six candidates, one silenced by each of our six limits,
+    // and not one of them a finding about the deployer.
+    const population = [
+      { label: 'short history', s: scoreEntry(many(3, 0.9, [1, 1, 1]), ENTRY_T) },
+      { label: 'dropped', s: scoreEntry(many(4, 0.7, [1, 1]), ENTRY_T, { launchesDropped: 4 }) },
+      { label: 'unproven', s: scoreEntry(manyUnbundled(8, 0.7, [1, 1, -0.2]), ENTRY_T) },
+      { label: 'unpriced', s: scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T) },
+      {
+        label: 'exits unpriced',
+        s: scoreEntry(Array.from({ length: 8 }, () => entryOnlyPricedLaunch(0.7, [1, 1, -0.2])), ENTRY_T),
+      },
+      { label: 'thin field', s: scoreEntry(many(8, 0.9, [1]), ENTRY_T) },
+    ];
+
+    // THE NAIVE FILTER, which is what a Stage 3 would have written before this lane. It drops five
+    // candidates on our own coverage and cannot say that it did.
+    const naiveDropped = population.filter((c) => c.s.verdict === 'entry-unmeasured' || c.s.verdict === 'entry-cost-unmeasured');
+    expect(naiveDropped.map((c) => c.label).sort()).toEqual(
+      ['dropped', 'exits unpriced', 'short history', 'thin field', 'unproven', 'unpriced'].sort(),
+    );
+
+    // THE RULE. NONE of them is legitimate to filter on: every one is NO ANSWER and must be carried
+    // forward, counted and reported. Only a MEASURED verdict is filterable.
+    const filterable = population.filter((c) => isDeployerAttributable(c.s));
+    expect(filterable.map((c) => c.label)).toEqual([]);
+    const carriedForward = population.filter((c) => !isDeployerAttributable(c.s));
+    expect(carriedForward).toHaveLength(6);
+    for (const c of carriedForward) expect(c.s.unmeasuredCauseAttribution).toBe('our-coverage');
+
+    // And the predicate is not vacuously false: a MEASURED verdict over the same shape of launches
+    // IS filterable, which is the only kind of refusal a later stage may act on.
+    const measured = scoreEntry(manyPriced(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    expect(measured.verdict).toBe('entry-open-after-costs');
+    expect(isDeployerAttributable(measured)).toBe(true);
+  });
+
+  it('the filter rule travels ON the score, not only in a document', () => {
+    // Same discipline as LANDING_TIP_CAVEAT: a rule that lives only in a README is a rule every
+    // future consumer has to go and find.
+    const coverageCaused = scoreEntry(manyUnbundled(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    expect(coverageCaused.caveats).toContain(COVERAGE_ATTRIBUTION_CAVEAT);
+    expect(COVERAGE_ATTRIBUTION_CAVEAT).toMatch(/MUST NOT drop this candidate/);
+    expect(COVERAGE_ATTRIBUTION_CAVEAT).toMatch(/isDeployerAttributable/);
+
+    // EVERY unmeasured score carries it, including the thin-field one that used to be the
+    // deployer's — there is no second caveat and no exception.
+    const thinField = scoreEntry(many(8, 0.9, [1]), ENTRY_T);
+    expect(thinField.caveats).toContain(COVERAGE_ATTRIBUTION_CAVEAT);
+
+    // A measured verdict carries none of it — there is nothing to attribute.
+    const measured = scoreEntry(manyPriced(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    expect(measured.caveats).not.toContain(COVERAGE_ATTRIBUTION_CAVEAT);
+
+    // And it reaches the operator's screen, not only the record.
+    const rendered = renderEntry(coverageCaused, null).join('\n');
+    expect(rendered).toMatch(/CAUSE: TOO-FEW-PROVEN-WINDOWS/);
+    expect(rendered).toMatch(/never filter on it/);
+  });
+
+  it('a record older than schema 10 is never guessed at — the predicate fails SAFE', () => {
+    // Committed records are never retro-edited, so a schema-≤9 `entry-unmeasured` genuinely cannot
+    // say which producer fired. Reading it as filterable would reintroduce exactly the collapse
+    // this removes, so the absent field answers `false` and the candidate is carried forward.
+    expect(isDeployerAttributable({ verdict: 'entry-unmeasured' })).toBe(false);
+    expect(isDeployerAttributable({ verdict: 'entry-cost-unmeasured', unmeasuredCause: null })).toBe(false);
+    // An unrecognised cause — a future producer added without coming to the table — is also treated
+    // as our coverage. The error lands on over-reporting rather than on a silent drop.
+    expect(isDeployerAttributable({ verdict: 'entry-unmeasured', unmeasuredCause: 'invented' })).toBe(false);
+    // And a verdict this module does not recognise — a typo, a future schema's value, a hand-edited
+    // record — is carried forward exactly like an unknown cause rather than waved through as a
+    // measurement. That is the third fail-safe direction.
+    expect(isDeployerAttributable({ verdict: 'entry-invented' })).toBe(false);
+    expect(isDeployerAttributable({ verdict: '', unmeasuredCause: null })).toBe(false);
+    // Every MEASURED verdict is a statement about the deployer at any schema version.
+    for (const v of ENTRY_VERDICTS.filter((x) => !(UNMEASURED_VERDICTS as readonly string[]).includes(x))) {
+      expect(isDeployerAttributable({ verdict: v }), v).toBe(true);
+    }
+  });
+
+  it('the cause survives into the run record, and it is aggregate-safe', () => {
+    // Stage 3 is a second consumer of Stage 2's fill walk rather than a reader of `runs/*.json`, so
+    // the in-process shape is what matters — but a saved run has to stay auditable for the same
+    // question, and the record's retention boundary is absolute.
+    const s = scoreEntry(manyUnbundled(8, 0.7, [1, 1, -0.2]), ENTRY_T);
+    const row = toEntryRecordRow(s, emptyEntryCoverage());
+    expect(row.unmeasuredCause).toBe('too-few-proven-windows');
+    expect(row.unmeasuredCauseAttribution).toBe('our-coverage');
+    expect(row.unmeasuredContributingCauses).toEqual(['too-few-proven-windows']);
+    // The persisted row answers the predicate identically to the in-process score, which is the
+    // whole reason `isDeployerAttributable` takes the two shapes.
+    expect(isDeployerAttributable(row)).toBe(isDeployerAttributable(s));
+
+    // RETENTION. All three values are codes from a closed set, so no launch, wallet or mint can
+    // reach them however the walk went.
+    expect(UNMEASURED_CAUSES).toContain(row.unmeasuredCause);
+    for (const c of row.unmeasuredContributingCauses) expect(UNMEASURED_CAUSES).toContain(c);
+    expect(row.unmeasuredCauseAttribution === null || ['our-coverage', 'deployer'].includes(row.unmeasuredCauseAttribution)).toBe(true);
+
+    // And a measured verdict persists nulls rather than an empty string a consumer would misread.
+    const measured = toEntryRecordRow(scoreEntry(manyPriced(8, 0.7, [1, 1, -0.2]), ENTRY_T), emptyEntryCoverage());
+    expect(measured.unmeasuredCause).toBeNull();
+    expect(measured.unmeasuredCauseAttribution).toBeNull();
+    expect(measured.unmeasuredContributingCauses).toEqual([]);
+  });
 });
 
 describe('the rolling replay — the control that would have caught the unproven opening', () => {
@@ -8345,6 +8675,24 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
     // Competence and entry room are separate claims with separate vocabularies, and this wallet is
     // the proof that they come apart.
     expect(result.subjectVerdict.verdict).toBe('gate-passed');
+  });
+
+  it('and the refusal is a MEASUREMENT, not our coverage running out — decision 174b', () => {
+    // The control has to survive the split, and this is the assertion that says it did. Splitting
+    // the unmeasured verdicts by cause would be worth nothing if the known negative were reached by
+    // one of them: a candidate silenced because our walk fell short is not a refusal, and a Stage 3
+    // applying the new rule must still see this wallet excluded.
+    for (const score of [result.subjectEntryRecent, result.subjectEntryPostBreak]) {
+      expect(score.verdict).toBe('entry-room-absent');
+      // A measured verdict carries no cause at all — there is nothing to attribute.
+      expect(score.unmeasuredCause).toBeNull();
+      expect(score.unmeasuredCauseAttribution).toBeNull();
+      expect(score.unmeasuredContributingCauses).toEqual([]);
+      // So it is filterable, and it is refused by room and only room.
+      expect(isDeployerAttributable(score)).toBe(true);
+      expect(score.caveats).not.toContain(COVERAGE_ATTRIBUTION_CAVEAT);
+      expect(score.roomLeft.median).toBeLessThan(T['stage2_entry'].minRoomLeft);
+    }
   });
 
   it('and the field leg, followed alone, WOULD have called it beatable', () => {

@@ -607,6 +607,17 @@ export function toEntryRecordRow(s, coverage) {
 
   return {
     verdict: s.verdict,
+    // Schema 10. WHICH producer reached an unmeasured verdict, and WHOSE fact it is — captain
+    // decision 174b. Six code paths collapsed onto two labels before this, every one of them
+    // describing our own coverage, so `verdict !== 'entry-unmeasured'` was a filter on our budget
+    // wearing a measurement's clothes. Hence the rule these fields exist to serve: a later stage may
+    // filter on a MEASURED verdict, and never on an unmeasured one whatever its cause. All three
+    // values are codes from a closed set (`entry.mjs` → `UNMEASURED_CAUSES`), so they are aggregate
+    // by construction and the retention boundary is untouched: no launch, no wallet, no mint can
+    // reach them.
+    unmeasuredCause: s.unmeasuredCause,
+    unmeasuredCauseAttribution: s.unmeasuredCauseAttribution,
+    unmeasuredContributingCauses: [...s.unmeasuredContributingCauses],
     rationale: redactVendorIdentifiers(s.rationale),
     launchesSampled: s.launchesSampled,
     // Schema 5. Without these three a saved run cannot be audited for the unproven-opening

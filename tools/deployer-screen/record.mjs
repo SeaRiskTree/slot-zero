@@ -171,8 +171,35 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   No candidate ROW key changes, so `PERSISTED_BY_SCHEMA[9]` equals `[8]`, and nothing about
  *   `entry`, `entry.coverage` or `spend` moves — Dune is metered in its own units in its own block,
  *   because a fourth budget folded into `spend` would imply an exchange rate that does not exist.
+ * - **10** — **the unmeasured verdicts say WHICH producer reached them and WHOSE fact it is**
+ *   (captain decision 174b). No candidate ROW key changes and no `entry.coverage`, `spend`, `dune`
+ *   or `creation` key changes; `entry` gains `unmeasuredCause`, `unmeasuredCauseAttribution` and
+ *   `unmeasuredContributingCauses`. **The verdict vocabulary is UNCHANGED** — this is a split of the
+ *   cause, not of the label, so a schema-9 verdict and a schema-10 verdict are the same six values
+ *   and directly comparable.
+ *   **What a reader of an older record must not do: infer the cause.** `entry-unmeasured` and
+ *   `entry-cost-unmeasured` have six distinct producers between them (`entry.mjs` →
+ *   `UNMEASURED_CAUSES`), and on a schema-≤9 record the label cannot say which fired. **All six are
+ *   facts about OUR coverage** — `too-few-windows-available` (the walk was never offered enough
+ *   windows), `windows-dropped`, `too-few-proven-windows` (REFUSED as unproven openings, decision
+ *   134a), `too-few-closed-round-trips`, `too-little-of-the-field-priced` and
+ *   `too-few-priced-round-trips`. **`too-few-closed-round-trips` is the one that reads like a fact
+ *   about the deployer and is not**: `readLaunchWindow` seeks 65,000 ms but counts 160 slots, so the
+ *   window's tail goes unfetched by an amount that moves with slot drift and the lost fills are
+ *   disproportionately late sells — making `closed.length` partly a function of WHEN a candidate's
+ *   launches happened, a time-varying limit of ours. So a consumer filtering on
+ *   `verdict !== 'entry-unmeasured'` against
+ *   an older record is filtering on its own budget and evidence while believing it is filtering on a
+ *   measurement — and the rule at ANY schema version is that a later stage filters only on a
+ *   MEASURED verdict, never on an unmeasured one whatever its cause. That attribution was settled
+ *   during review, after the split had been committed; `tools/deployer-screen/README.md` → "What a
+ *   later stage may filter on" is the authoritative record. `entry.mjs` →
+ *   `isDeployerAttributable` is the predicate that owns this rule, and on a schema-≤9 record it
+ *   answers `false` for the whole unmeasured family — the safe direction, and the reason the field
+ *   must not be reconstructed. Every such score also carries the rule in `entry.caveats`
+ *   (`COVERAGE_ATTRIBUTION_CAVEAT`), so the limit travels with the number.
  */
-export const RECORD_SCHEMA_VERSION = 9;
+export const RECORD_SCHEMA_VERSION = 10;
 
 /**
  * Completeness of a run, as the record can actually support.

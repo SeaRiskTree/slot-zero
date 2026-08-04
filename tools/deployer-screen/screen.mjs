@@ -1528,8 +1528,9 @@ function summariseStage0(s) {
       wallet: SUBJECT_DEPLOYER,
       meaning:
         'Stage 2 must NOT score this wallet as having entry room. It is competent (the gate passes ' +
-        'it) and it is not beatable — measured in data/slot-zero-june-regime-change/report.md, not ' +
-        'assumed. Note that the field leg, gross of fees, says the opposite: a verdict that follows ' +
+        'it) and it is not beatable — measured in analysis/window-population/README.md §4.1 and ' +
+        '§4.3 over the committed tape, and asserted by test/window-population.test.ts, not assumed. ' +
+        'Note that the field leg, gross of fees, says the opposite: a verdict that follows ' +
         'it would be wrong, which is why the field can only veto and never pass.',
       recentLaunches: control(s.subjectEntryRecent),
       postBreakRegime: control(s.subjectEntryPostBreak),

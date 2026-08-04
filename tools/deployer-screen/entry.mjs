@@ -212,9 +212,10 @@ export function hitRate(values, predicate) {
  * @typedef {object} LaunchEntry
  * @property {import('./measure.mjs').CreateSlotMeasurement} createSlot
  * @property {FieldEntrant[]} field  Every competing wallet in the create slot. May be empty, which
- *   is itself a finding: eight of our subject's 86 proven post-break launches had no outsider at
- *   all. Refusing the unproven openings did not move that count — it is eight over all 89 too,
- *   because none of the three refused launches was outsider-free.
+ *   is itself a finding: eight of our subject's 89 post-break launches had no outsider at all, and
+ *   under the union rule all 89 of them are proven. Refusing unproven openings never moved that
+ *   count — under the shared-transaction rule alone it was eight over the 86 that rule could prove,
+ *   because none of the three launches it refused was outsider-free.
  */
 
 /**
@@ -622,16 +623,25 @@ export function isDeployerAttributable(finding) {
  *   exactly this population. Launches handed in but refused are {@link
  *   EntryScore.launchesRoomUnproven}, so `launchesSampled + launchesRoomUnproven` is what the walk
  *   delivered.
- * @property {number} launchesRoomUnproven   Launches whose create slot carried NO bundled
- *   transaction and which are therefore **not scored at all** — see `measure.mjs` →
- *   `roomIsProven`. Not a drop and not a refusal: the opening is unproven, which is a different
- *   finding from an opening that was measured and found closed.
- * @property {Distribution} bundledTx        Create-slot transactions carrying 2+ wallets, over
- *   **every launch handed in**, refused ones included. The zeros are the whole point: this and
- *   `maxWalletsInOneTx` are the only observable that exposes the unproven condition, so a saved run
- *   can be audited for it after the fact.
+ * @property {number} launchesRoomUnproven   Launches whose create slot the co-ordination rule
+ *   marked NOTHING in — neither half — and which are therefore **not scored at all**; see
+ *   `measure.mjs` → `roomIsProven`. Not a drop and not a refusal: the opening is unproven, which is
+ *   a different finding from an opening that was measured and found closed.
+ * @property {Distribution} bundledTx        Create-slot transactions carrying 2+ wallets — the
+ *   SHARED-TRANSACTION half on its own — over **every launch handed in**, refused ones included.
+ *   The zeros are the whole point: these four distributions are the only observable that exposes
+ *   the unproven condition, so a saved run can be audited for it after the fact.
  * @property {Distribution} maxWalletsInOneTx Largest wallet count in one create-slot transaction,
  *   over every launch handed in.
+ * @property {Distribution} runTx            Transactions in the deployer-anchored contiguous
+ *   block-index run, anchor included — the ADJACENCY half on its own — over every launch handed in.
+ *   A launch reading `bundledTx: 0` beside `runTx: 3` is one only the union can score, and a run of
+ *   `0` everywhere is what a moved `sid` format looks like.
+ * @property {Distribution} adjacencyMarks   Wallets the adjacency half marked that the
+ *   shared-transaction half did not, over every launch handed in. **This is the size of what the
+ *   union added**, per launch, and it is what makes a saved `roomLeft` auditable against a
+ *   schema-≤10 one: a schema-≤10 record's room reading was taken with these wallets counted as
+ *   outsiders.
  * @property {number} launchesWithNoOutsider Launches whose create slot the operation took entirely.
  * @property {Distribution} roomLeft         Across scored launches.
  * @property {HitRate} roomHitRate           Launches whose room clears `minRoomLeft`.
@@ -715,11 +725,11 @@ export function isDeployerAttributable(finding) {
  *
  * ## Launches whose opening is UNPROVEN are not scored at all
  *
- * `measure.mjs` → `roomIsProven` owns the reasoning. A create slot carrying no bundled transaction
- * gives the co-ordination rule nothing to find, which is indistinguishable from there being nothing
- * to find — and the difference is worth ~9.6–10.0 SOL of the operation's own stake booked as
- * outsider capital. Those launches are removed from **both** legs before anything is computed:
- * they contribute no room figure, no field entrant and no round trip. Captain decision 134a.
+ * `measure.mjs` → `roomIsProven` owns the reasoning. A create slot the co-ordination rule marks
+ * nothing in gives it nothing to find, which is indistinguishable from there being nothing to find
+ * — and the difference is worth ~9.6–10.0 SOL of the operation's own stake booked as outsider
+ * capital. Those launches are removed from **both** legs before anything is computed: they
+ * contribute no room figure, no field entrant and no round trip. Captain decision 134a.
  *
  * The consequence is deliberate and it is the safe one. A candidate whose proven launches fall
  * below `minLaunchesSampled` scores `entry-unmeasured` — never `entry-open-after-costs`, and never
@@ -728,8 +738,13 @@ export function isDeployerAttributable(finding) {
  * `launchesRoomUnproven`. See {@link UNMEASURED_CAUSE_ATTRIBUTION} and
  * {@link isDeployerAttributable} — a later stage may not drop a candidate on this.
  * On our own tape, replaying the live recipe at every index, that removes
- * **24 of 24 false-positive windows and leaves none at any bar from 0.1 to 0.8**; it costs 81 of
- * 228 windows, which become unmeasured rather than wrong. Stage 0's rolling replay asserts it.
+ * **24 of 24 false-positive windows and leaves none at any bar from 0.1 to 0.8**.
+ *
+ * **What it costs is what captain decision 182a bought back.** Under the shared-transaction rule
+ * alone the refusal cost 81 of 228 rolling windows, which became unmeasured rather than wrong;
+ * under the UNION rule it costs **0 of 228**, with false positives still 0. The refusal is
+ * unchanged and no bar was relaxed — the rule simply sees more, so it refuses less. Stage 0's
+ * rolling replay asserts both halves of that.
  *
  * The asymmetry is not caution for its own sake. Our own subject deployer's post-break field reads
  * **76.3% of closed round trips positive** on this exact measurement, while the fee-inclusive record
@@ -758,9 +773,9 @@ export function isDeployerAttributable(finding) {
  * @returns {EntryScore}
  */
 export function scoreEntry(launches, t, context = {}) {
-  // THE PARTITION, and it comes first because nothing below may see the refused half. A launch
-  // whose create slot carried no bundled transaction contributes no room figure, no field entrant
-  // and no round trip — see the module header and `measure.mjs` → `roomIsProven`.
+  // THE PARTITION, and it comes first because nothing below may see the refused half. A launch the
+  // co-ordination rule marked nothing in contributes no room figure, no field entrant and no round
+  // trip — see the module header and `measure.mjs` → `roomIsProven`.
   const scored = launches.filter((l) => roomIsProven(l.createSlot));
   const roomUnproven = launches.length - scored.length;
 
@@ -818,6 +833,12 @@ export function scoreEntry(launches, t, context = {}) {
     // could never contain a zero, and the zeros are exactly what an auditor is looking for.
     bundledTx: distribution(launches.map((l) => l.createSlot.bundledTx)),
     maxWalletsInOneTx: distribution(launches.map((l) => l.createSlot.maxWalletsInOneTx)),
+    // The two halves of the co-ordination rule are reported APART, over the same population, so a
+    // saved run says which one carried each launch. Neither is a verdict input on its own — the
+    // predicate reads the union — but a reader who cannot tell them apart cannot audit a room
+    // figure against an older record's.
+    runTx: distribution(launches.map((l) => l.createSlot.runTx)),
+    adjacencyMarks: distribution(launches.map((l) => l.createSlot.adjacencyMarks)),
     launchesWithNoOutsider: scored.filter((l) => l.field.length === 0).length,
     roomLeft,
     roomHitRate: hitRate(room, (v) => v >= t.minRoomLeft),
@@ -852,11 +873,12 @@ export function scoreEntry(launches, t, context = {}) {
   const clockDrops = context.mintTimeDisagreements ?? 0;
   if (roomUnproven > 0) {
     score.caveats.push(
-      `${roomUnproven} of ${launches.length} measured launch(es) had NO bundled transaction in the ` +
-        `create slot, so the co-ordination rule recovered nothing there and the opening is UNPROVEN ` +
-        `rather than open. Those launches are NOT SCORED — not their room, not their field. Scoring ` +
+      `${roomUnproven} of ${launches.length} measured launch(es) had NO co-ordination evidence in ` +
+        `the create slot — no shared transaction and no deployer-anchored block-index run — so the ` +
+        `co-ordination rule recovered nothing there and the opening is UNPROVEN rather than open. ` +
+        `Those launches are NOT SCORED — not their room, not their field. Scoring ` +
         `them would book the operation's own stake as outsider capital and inflate room, which is ` +
-        `the one direction that manufactures an edge (captain decision 134a).`,
+        `the one direction that manufactures an edge (captain decisions 134a and 182a).`,
     );
   }
   if (dropped > 0) {
@@ -939,9 +961,10 @@ export function scoreEntry(launches, t, context = {}) {
       `measurement needs. A distribution over fewer is not a distribution.` +
       (roomUnproven > 0
         ? ` ${roomUnproven} further window(s) were measured but NOT SCORED: their create slot ` +
-          `carried no bundled transaction, so the co-ordination rule found nothing and cannot tell ` +
-          `an operation that did not bundle from a create slot full of genuine outsiders. That is ` +
-          `UNPROVEN, not closed and not open — read it as no answer about this wallet.`
+          `carried neither a shared transaction nor a deployer-anchored block-index run, so the ` +
+          `co-ordination rule found nothing and cannot tell an operation that did not co-ordinate ` +
+          `from a create slot full of genuine outsiders. That is UNPROVEN, not closed and not ` +
+          `open — read it as no answer about this wallet.`
         : '') +
       (dropped > 0 ? ` ${dropped} window(s) were dropped for incomplete coverage.` : '');
     return score;

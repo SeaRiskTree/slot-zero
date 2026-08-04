@@ -198,8 +198,44 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   answers `false` for the whole unmeasured family — the safe direction, and the reason the field
  *   must not be reconstructed. Every such score also carries the rule in `entry.caveats`
  *   (`COVERAGE_ATTRIBUTION_CAVEAT`), so the limit travels with the number.
+ * - **11** — **the co-ordination rule became a UNION** (captain decision 182a): the existing
+ *   shared-transaction rule, unchanged, OR the deployer-anchored contiguous block-index run at
+ *   step 1. `entry` gains `runTx` and `adjacencyMarks` beside `bundledTx` and `maxWalletsInOneTx`;
+ *   `PERSISTED_BY_SCHEMA[11]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[11]` equal `[10]`, and nothing
+ *   about `spend`, `creation` or `dune` moves — the signal is already in every fill the walk
+ *   fetched, so the change costs no request, no host and no vendor quota.
+ *
+ *   **THE ONE THAT WILL BITE A READER: a schema-≤10 `entry.roomLeft` IS NOT COMPARABLE WITH A
+ *   SCHEMA-11 ONE, and the older figure is the higher of the two.** Under the older rule a wallet
+ *   that co-ordinated with the deployer by riding its bundle — without ever sharing a transaction —
+ *   was counted as an OUTSIDER, so its stake sat in `independentSol` and inflated `roomLeft`. The
+ *   union moves it into the operation's numerator. `sharedTx ⊆ union` by construction, so the
+ *   correction can only ever move a room reading DOWN, never up; `adjacencyMarks` is how much the
+ *   union added on each launch and is therefore the measure of what an older record's room figure
+ *   was carrying. On the committed tape this removes **180 create-slot wallet-instances from the
+ *   field** (1,502 → 1,322), and every one of the 180 is a NAMED cohort wallet — so a schema-≤10
+ *   `entry`'s field figures, `outsidersPerLaunch`, `fieldEntrants` and every P&L distribution
+ *   built on them were partly measuring the operation's own wallets as competitors.
+ *
+ *   **`launchesRoomUnproven` changes meaning in the same way** — it now counts launches NEITHER
+ *   half marked anything in, where a schema-5..10 record counted launches with no bundled
+ *   transaction. It falls sharply as a result: on the committed tape the refusal goes from 60 of
+ *   235 launches to 0. No bar was relaxed and the refusal itself is untouched (decision 134a
+ *   stands); the rule simply sees more, so it refuses less.
+ *
+ *   **The `stage0` block is not comparable across the boundary either, and this is a PUBLISHED
+ *   CONSTANT MOVING.** `stage2SeamReproduction`'s era-2 entry reads `n: 89, nRoomUnproven: 0` and a
+ *   measured share of **0.770796** where a schema-5..10 record reads `n: 86, nRoomUnproven: 3` and
+ *   **0.769153**; the published `0.771` it is compared against is UNCHANGED, and the measured
+ *   figure moved towards it — under the union the structural estimator and the named-cohort
+ *   estimator become the same number to six decimals over the full 89. `rollingRoom` moves from
+ *   `unmeasured: 81, present: 53, absent: 94` to `unmeasured: 0, present: 88, absent: 140`, with
+ *   `falsePositives: 0` on both sides. The block also gains `adjacencyRuns`, the tripwire on the
+ *   `sid` block-index signal, which is persisted because that signal's failure mode is silent.
+ *   The correction is recorded in `data/population-tape-2026-07-29/IMPORT.md` → "Corrections";
+ *   the report and the dataset README are a primary record and are not edited.
  */
-export const RECORD_SCHEMA_VERSION = 10;
+export const RECORD_SCHEMA_VERSION = 11;
 
 /**
  * Completeness of a run, as the record can actually support.

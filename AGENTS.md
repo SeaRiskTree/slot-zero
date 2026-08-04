@@ -45,7 +45,13 @@ what is established and what is open.
   `analysis/window-population/measure.mjs` and `tools/arrival-rate-walk/arrival.mjs`, are this
   boundary's deliberate cost — do not "fix" any of them by importing across it. The segmentation copy
   is held together by a **reproduction test**, not by discipline: the tool's own code must return the
-  published break dates over the committed tape.
+  published break dates over the committed tape. **The copies have now DIVERGED in the RULE, not
+  only in the code**: captain decision 182a widened the screen's co-ordination rule to a union, and
+  `tools/arrival-rate-walk/series.mjs` → `roomIsProven` and `tools/window-decay-tripwire/` both
+  deliberately keep the narrower shared-transaction predicate, because 182a's room readings were
+  verified against the one deployer whose cohort is named and those two lanes run on strangers and
+  on published backtest constants respectively. Each file says so at its own `roomIsProven`; do not
+  reconcile them without a decision.
 - **`analysis/` is a third area and it is offline like `src/`.** One-off measurements over the
   local tape that are neither library nor tool. `test/window-population.test.ts` scans it for
   sockets, `process.env` and key-shaped strings, and asserts no imports across `analysis/`↔`tools/`.
@@ -568,15 +574,15 @@ dev currently?"*, and the shape of the answer is the point:
   transactions to price with no discovery step; `pumpfun.mjs` → `parseTransactionCosts` reads
   `meta.fee` (base + priority, exact) and the pre/post balance delta. **The free legs — room and the
   gross field — run FIRST**, so a deployer failing either costs zero RPC requests; that ordering is
-  the cost model. Measured per launch on our tape: **~19 DISTINCT transactions at the median — the
-  UNION** of the create-slot scope (p50 7) and the closed-round-trip window scope (p50 18), not
-  their sum; ×8 launches that is ~152 requests, not ~200. Pacing is `creation_walk`'s and the two legs are
+  the cost model. Measured per launch on our tape: **~20 DISTINCT transactions at the median — the
+  UNION** of the create-slot scope (p50 7) and the closed-round-trip window scope (p50 19), not
+  their sum; ×8 launches that is ~160 requests, not ~200. Pacing is `creation_walk`'s and the two legs are
   serialised — `api.mainnet-beta` rate-limits globally across methods. **`entry-cost-prohibitive`
   gates on the PER-LAUNCH median** (`entryCostPerSolStakedByLaunch`, decision 140a) — every launch
   counts once, so a busy launch cannot outvote the rest; the pooled per-entry distribution ships
   beside it as the finer-grained evidence and is not what the verdict reads. Re-derived from the
   committed tape over the **gated** (proven-opening) population, which is what the bar reads:
-  per-launch median 0.0389 against a per-entry 0.0369, worst launch 0.3311, bar 0.12.
+  per-launch median 0.0391 against a per-entry 0.0371, worst launch 0.3311, bar 0.12.
   **A launch the RPC ceiling cuts short is discarded whole**, because a truncated walk holds the
   earliest entrants by slot, which is a biased sample rather than a short one; and **a transport
   failure abandons the cost leg for that candidate only**, leaving `entry-cost-unmeasured` rather
@@ -591,11 +597,11 @@ dev currently?"*, and the shape of the answer is the point:
   `verifyOnChainCostReproduction`), running the production `priceLaunchEntry` over
   `onchain_create_slot_pnl.csv`. **It prices the GATED population — proven openings only, the same
   launches `scoreEntry` scores** — because a regression guard over a neighbouring population is
-  decision 140's defect shape. On the current tape: 110 launches, 618 round trips priced end to end,
-  median entry cost 0.0308 SOL, field hit rate **0.7379 gross → 0.6117 net**, 81 sign flips; the
-  unfiltered reading (113 / 631 / 0.7401 → 0.6070 / 87 flips, per-launch cost 0.0388 against the
-  gated 0.0389 — i.e. *cheaper*, the optimistic direction) is printed beside it on every run. It
-  asserts the *direction* — netting fees must move the field DOWN — because a sign error there would
+  decision 140's defect shape. On the current tape: 112 launches, 627 round trips priced end to end,
+  median entry cost 0.0308 SOL, field hit rate **0.7384 gross → 0.6045 net**, 87 sign flips; the
+  unfiltered reading is printed beside it on every run and under the union rule coincides with the
+  gated one (nothing on this tape is unproven), which is exactly what the two key sets exist to make
+  visible on a tape where it does not. It asserts the *direction* — netting fees must move the field DOWN — because a sign error there would
   manufacture an edge silently. It deliberately does **not** assert that the net leg vetoes
   `7ufmve7Z…`: post-break its priced round trips are still 0.64 positive at +0.05 SOL net, so that
   wallet is refused by ROOM and only room.
@@ -604,7 +610,7 @@ dev currently?"*, and the shape of the answer is the point:
   measured, `data/slot-zero-june-regime-change/report.md`). Any design that scores it as beatable is
   wrong; `runStage0` fails loudly, including if a later lane loosens `minRoomLeft` to fit an output.
 - **Everything derived from the fill tape ALONE is GROSS OF FEES and is an upper bound.** The trap is
-  concrete, not theoretical: gross, `7ufmve7Z…`'s post-break field reads **351/460 closed round trips
+  concrete, not theoretical: gross, `7ufmve7Z…`'s post-break field reads **358/469 closed round trips
   positive**; fee-inclusive, that same regime made **+0.54 SOL per launch with 51 of 106 wallets
   negative**. So the field leg can only ever **veto** a verdict, never earn one — netting the
   measured cost sharpens the veto without changing its direction, because measured cost is itself a
@@ -627,7 +633,10 @@ dev currently?"*, and the shape of the answer is the point:
   The predicate is **create-slot-scoped, not operation-scoped** — it is a floor on the evidence, and
   no tighter one exists: a deployer-in-bundle reading matches 0 of 235 launches because this deployer
   never shares its own create-slot transaction (decision 139a, `measure.mjs` → `roomIsProven`).
-- **HOW OFTEN THAT REFUSAL FIRES IS MEASURED NOW, AND IT IS THE COMMON CASE: 1 candidate in 14.**
+- **HOW OFTEN THAT REFUSAL FIRES WAS MEASURED UNDER HALF (a) ALONE: 1 candidate in 14 — and that
+  census PREDATES the union, so read every figure in it as a LOWER bound.** Re-running it under the
+  union is a queued lane, sequenced after 182a; `bundling.mjs` → `proven` is frozen at
+  `bundledTx >= 1` on purpose so the committed record and the code that wrote it still agree.
   `maxLaunchesPerCandidate` and `minLaunchesSampled` are both 8, so Stage 2 reaches a verdict only
   for a candidate whose most recent 8 eligible launches were *every one* bundled. Captain decision
   173a sized that with `tools/deployer-screen/bundling.mjs`, a **windows-only** pass that reports
@@ -648,14 +657,19 @@ dev currently?"*, and the shape of the answer is the point:
   rank-43/44 order statistic of an 89-launch series whose median is `0.7708`; three recipes agree,
   including `analysis/window-population/measure.mjs`. **Never widen that tolerance instead** — it was
   absorbing a real −0.0115 defect and a +0.0028 documentation error that partially cancelled, so the
-  check passed for the wrong reason. Correction recorded in the tape's `IMPORT.md` → "Corrections",
-  never in the primary record itself.
+  check passed for the wrong reason. **Decision 182a closed the residual entirely**: the union rule
+  reproduces era 2 at **0.770796 over all 89** where the shared-transaction rule read 0.769153 over
+  the 86 it could prove, so the structural and named-cohort estimators are now the same number to
+  six decimals. `0.771` and the ±0.02 tolerance are unchanged. Corrections 8 and 10 in the tape's
+  `IMPORT.md` own both notes, never the primary record itself.
 - **Distributions plus a hit rate, never a mean** — a standing captain bar for this class of claim.
   Sniper outcomes are heavy-tailed on both sides, so a mean is a wrong answer rather than a rough one.
   A test asserts `entry.mjs` contains no mean in its executable half.
 - **Only closed round trips have a P&L**, by the dataset's own rule (residual within 0.1% of tokens
-  bought). Reproducing it from raw fills agrees with `wallet_launch_pnl.csv` on **1,502 create-slot
-  outsider pairs, 0 closure mismatches, max error 5e-7 SOL** — checked in Stage 0 every run.
+  bought). Reproducing it from raw fills agrees with `wallet_launch_pnl.csv` on **1,322 create-slot
+  outsider pairs, 0 closure mismatches, max error 5e-7 SOL** — checked in Stage 0 every run. It read
+  1,502 until decision 182a, and **every one of the 180 pairs the union removes is a NAMED cohort
+  wallet**: the field was reporting the operation's own best-priced wallets as independent snipers.
 - **The run record is a VERSIONED CONTRACT: bump, never retro-edit.** Committed records are the
   grading lane's input; readers version-detect, and `test/deployer-screen.test.ts` asserts the exact
   key set PER version — for the candidate row, the `entry` block, (from schema 6) `entry.coverage`,

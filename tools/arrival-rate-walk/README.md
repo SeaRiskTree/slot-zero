@@ -215,7 +215,8 @@ The honest list, in the order that matters.
   and **0.540 of that** once priced. A window that is marginal gross is not a window net.
 - **`roomIsProven` has a steep time gradient, so the OLD end of every series is less measurable.** A
   launch whose create slot carries no 2+ wallet transaction is **unmeasured, never zero** (decision
-  134a). On the graduated 102 the proven rate runs 0.000 in 2025-12, 0.375 in 2026-03 and 1.000 from
+  134a). This lane keeps that shared-transaction predicate on purpose where the screen's has since
+  widened to a union (decision 182a); `series.mjs` → `roomIsProven` owns why. On the graduated 102 the proven rate runs 0.000 in 2025-12, 0.375 in 2026-03 and 1.000 from
   2026-05. If that gradient is venue-wide rather than one operator's submission habit, **a window that
   opened early is systematically less visible than one that opened late** — which is a bias on
   exactly the quantity this lane measures, and this lane does not measure the gradient.

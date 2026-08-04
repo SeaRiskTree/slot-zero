@@ -257,8 +257,18 @@ export function buildCohort(toolDir = HERE) {
  * @property {number} maxWalletsInOneTx Largest wallet count in a single create-slot transaction.
  * @property {number} createSlotWallets Distinct wallets in the create slot at all — the context that
  *   separates "a quiet create slot" from "a busy one that nobody bundled in".
- * @property {boolean} proven          `bundledTx >= 1`, i.e. what `measure.mjs` → `roomIsProven`
- *   returns. Recomputed here from the same field rather than imported as a verdict.
+ * @property {boolean} proven          `bundledTx >= 1` — the SHARED-TRANSACTION half of the
+ *   co-ordination rule, and **no longer what `measure.mjs` → `roomIsProven` returns.** Captain
+ *   decision 182a widened that predicate to the UNION of the shared-transaction rule and the
+ *   deployer-anchored block-index run; this census deliberately still reports the older half.
+ *
+ *   **That is a freeze, not an oversight.** `census/2026-08-03-bundling-census.md` is a committed
+ *   measurement taken under the older predicate, and silently re-defining this field would make the
+ *   record and the code that wrote it disagree about what "proven" meant. Re-running the census
+ *   under the union — the same keyless windows-only pass at the same cost, reporting `runTx`
+ *   alongside `bundledTx` — is a separate queued lane, sequenced after 182a on purpose. Until it
+ *   runs, read every `proven` and `neverBundles` figure in that record as a statement about the
+ *   shared-transaction half ALONE, which is a LOWER bound on what the screen can now score.
  */
 
 /**
@@ -423,6 +433,9 @@ export async function censusCandidate(client, input) {
       bundledTx: measurement.bundledTx,
       maxWalletsInOneTx: measurement.maxWalletsInOneTx,
       createSlotWallets,
+      // Frozen at the shared-transaction half on purpose — NOT `roomIsProven`, which decision 182a
+      // widened to the union. See the `proven` field's own doc block: the committed census record
+      // was measured under this predicate, and the union re-run is a separate queued lane.
       proven: measurement.bundledTx >= 1,
     });
     input.log?.(

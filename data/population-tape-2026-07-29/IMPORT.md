@@ -37,7 +37,7 @@ for size other than the two directories named above.
 
 ## Corrections
 
-Later evidence has contradicted the imported prose nine times. **The originals stay unmodified** —
+Later evidence has contradicted the imported prose ten times. **The originals stay unmodified** —
 that is what makes this directory a primary record — so the corrections live here, and this
 is the file to add to when it happens again. The first two come from
 `kol-cohort-vs-outsider-funding/report.md` (2026-07-29, read-only, keyless, zero metered
@@ -202,6 +202,60 @@ across, and what is re-derivable in this repo is asserted in `test/reproduction.
    correct description of *this* directory's contents, and the new tape lives beside it rather than
    in it; that dataset's `README.md` → "Three launches that previously had no trade tape at all"
    owns the coverage proof, and everything it adds is still gross of fees.
+
+10. **The screen's era-2 reproduction now lands on `0.770796` over all 89 launches, and two figures
+   published in `slot-zero-bundling-predicate-question/report.md` are artifacts of that report's own
+   evidence scripts.** Two separate things, recorded together because one change produced both.
+
+   **(a) The constant the screen checks against did not move; what it measures with did.** Captain
+   decision 182a widened `tools/deployer-screen/measure.mjs`'s co-ordination rule to the UNION of the
+   existing shared-transaction rule and a deployer-anchored contiguous block-index run, read from the
+   `sid` field already present on every fill in `window/*.jsonl.gz`. Correction 8 above stands
+   unchanged and `0.771` is still the pin. What moved is the reproduction beneath it:
+
+   | estimator | population | share |
+   |---|---|---|
+   | shared-transaction rule | all 89 era-2 launches | 0.759250 |
+   | shared-transaction rule | the 86 it could prove | 0.769153 — what Stage 0 printed under decision 134a |
+   | **union rule** | **all 89, all provable** | **0.770796** |
+   | named-cohort rule | all 89 | 0.770796 |
+
+   The **−0.0115 defect correction 8 names is now fully removed rather than reduced**: the three
+   era-2 launches that carried no bundled create-slot transaction all carry a block-index run, so
+   the structural estimator and the named-cohort estimator become the same number to six decimals
+   over the full 89. The ±0.02 tolerance was not touched, in either direction.
+
+   **No figure in this directory changes.** Two derived figures published elsewhere in this repo do:
+   `stage0.stage2SeamReproduction` era 2 goes from `n: 86, nRoomUnproven: 3` to `n: 89,
+   nRoomUnproven: 0`, and the count of create-slot outsider (wallet, launch) pairs the field
+   measurement reproduces `wallet_launch_pnl.csv` over goes from **1,502 to 1,322** — the 180 pairs
+   it drops are every one a *named cohort wallet*, i.e. the operation's own wallets that were being
+   read as independent snipers. The dataset's own rows are unchanged and `wallet_launch_pnl.csv`
+   still carries all of them; what changed is which of them the screen calls an outsider.
+
+   **(b) Two figures in `slot-zero-bundling-predicate-question/report.md` do not reproduce, and the
+   mechanism is named here so nobody re-derives them.** That report's `evidence/probe.mjs` reads
+   `launches.csv` with `r.split(',')`. **Two rows of this directory's `launches.csv` carry a comma
+   inside a quoted `name` field** — `4FEphC5X…` (`"even in the darkness, we glow"`) and `EsPnd3XR…`
+   (`"i play to win"`) — so their `created_utc` parsed as a fragment of the token name. A leading
+   space sorts before a digit, so both April launches were ordered to the FRONT of the series, and
+   the two orderings differ at 57 of 235 positions. Consequently:
+
+   - the report's rolling trailing-8 replay under the union, **`present: 84, absent: 144`**, is
+     **`present: 88, absent: 140`** in the shipped code, which orders launches by
+     `window/{mint}.meta.json` → `created_timestamp`. `windows: 228`, `unmeasured: 0` and
+     `falsePositives: 0` are identical under both orderings, so nothing about the decision turns on
+     it. The shipped figures are the ones `tools/deployer-screen/stage0.mjs` produces and pins.
+   - the report's pre-March slice, **"17 launches, 51 cohort wallet-instances"**, is **15 launches
+     and 45 instances**; the other two are the April launches above. The finding itself is
+     unaffected — adjacency alone recovers **45 of 45** with **zero** false marks, and the room
+     reading equals ground truth to four decimals on **15 of 15**.
+
+   The marking rule is not in question: run against that report's own `evidence/exp4.mjs`
+   implementation over all 235 launches, the shipped rule produces an identical marked set and an
+   identical per-launch `adjacencyMarks` on every one — **0 differences** — and feeding the report's
+   own launch ordering into the identical replay reproduces its 84/144 exactly. `report.md` and that
+   report are primary records and are not edited; this entry is the correction.
 
 The funding investigation also settles `report.md` §10.3 — **both `5brv79eF…` and `EgQX9R3Q…` are
 genuine outsiders, confidence high** — and strengthens §7's "the six create-slot wallets are

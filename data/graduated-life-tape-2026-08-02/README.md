@@ -165,7 +165,7 @@ fills, every one reaching the mint with the endpoint confirming nothing older ex
 
 1. **Every P&L derivable from it is GROSS OF FEES and is an upper bound.** This is a fill tape; only
    `onchain_*.csv` in the population tape is fee-inclusive. The trap is concrete: on this deployer's
-   own post-break field, gross reads 362/473 closed round trips positive, while fee-inclusive the
+   own post-break field over all 89 launches, gross reads 358/469 closed round trips positive, while fee-inclusive the
    same population made +0.54 SOL per launch with **51 of 106 wallets negative**. A verdict resting
    on a gross figure from this tape can have the wrong sign. Nothing here publishes a SOL quantity,
    and `summarise.mjs` is asserted by test to contain none.

@@ -219,6 +219,19 @@ Learned at real cost; the citations are to
   or the endpoint saying nothing is older, establishes it. Same distinction as the dataset's
   `meta.reached_mint`. Also **sort by `sid`/`slotIndexId` before reading the queue** — the stored
   tape is ascending and the live endpoint is descending.
+- **THE TWO PUMP.FUN SURFACES DO NOT AGREE ON A MINT INSTANT, and the disagreement runs in exactly
+  the direction that deletes a create slot.** `frontend-api-v3`'s `coins?creator=` rows carry
+  **millisecond-precision** `created_timestamp` on older launches while `swap-api`'s fill `ts` is
+  **whole seconds, floored** — so the declared mint lands *after* the launch's own first fill.
+  Measured 2026-08-03 over 6 launches of one cohort wallet: **0 ms on the 3 whose
+  `created_timestamp` ends in `000`, and +1,313 / +1,813 / +2,014 ms on the 3 that carry
+  milliseconds.** `readLaunchWindow`'s pre-mint tripwire compares with **zero slack**, so those
+  launches are dropped whole and silently — measured live at **5 of 8 launches on the first
+  candidate walked**. Anything driving `readLaunchWindow` from a `frontend-api-v3` creation time
+  must backdate it; `tools/deployer-screen/bundling.mjs` and `tools/arrival-rate-walk/` both pin
+  **5,000 ms** and both count what still trips. The tape's own `created_timestamp` does not have
+  this problem (0 disagreements on 235 launches), so it is a property of the vendor pair, not of
+  the walk.
 - **Per-launch request budgets: p50 4 pages, p90 8, p95 13, max 24** (same metadata; fills p50
   381, max 2,321). Bound a walk by **requests, not pages**, or the shed rate makes the true cost
   ~3x the plan.
@@ -601,6 +614,23 @@ dev currently?"*, and the shape of the answer is the point:
   The predicate is **create-slot-scoped, not operation-scoped** — it is a floor on the evidence, and
   no tighter one exists: a deployer-in-bundle reading matches 0 of 235 launches because this deployer
   never shares its own create-slot transaction (decision 139a, `measure.mjs` → `roomIsProven`).
+- **HOW OFTEN THAT REFUSAL FIRES IS MEASURED NOW, AND IT IS THE COMMON CASE: 1 candidate in 14.**
+  `maxLaunchesPerCandidate` and `minLaunchesSampled` are both 8, so Stage 2 reaches a verdict only
+  for a candidate whose most recent 8 eligible launches were *every one* bundled. Captain decision
+  173a sized that with `tools/deployer-screen/bundling.mjs`, a **windows-only** pass that reports
+  only `bundledTx` / `maxWalletsInOneTx` and spends **zero keyed requests**. Run 2026-08-03, **14
+  gate survivors / 112 windows / 0 dropped**: per-launch bundling **18 of 112 = 0.1607**; **1 of 14
+  bundles on all eight — and that one is our own control**, so among the 13 strangers it is **0 of
+  13**. **11 of the 14 never bundle at all** (`maxWalletsInOneTx <= 1` on every window) and are
+  therefore *permanently* unscoreable — counted apart from the 2 near-misses, because no
+  `minLaunchesSampled` can reach them. Their own create slots are **not** quiet: over those 11
+  candidates' 88 windows, median 4.0 wallets, max 26, and 72 of 88 held 2+ (over all 14 candidates'
+  112 windows it is median 5.5, max 35, 96 of 112). So the rule's blind spot — co-ordination via separate transactions
+  in one bundle — is most of what it meets. `census/2026-08-03-bundling-census.md` owns the numbers,
+  the three cross-checks that make the zeros believable, and what they do and do not imply for the
+  pinning; **the pinning itself is unmoved and is the captain's.** `--subject-era` answers the era
+  question offline at n = 1: our subject went 0% (Dec–Feb) → 58.5% (Apr) → 98.1% (Jul), 175/235
+  overall, so the rate is not stationary *for an operator that changes its habit*.
 - **Stage 0's era-2 constant is `0.771`, not the published `0.768`** (decision 135c). `0.768` is the
   rank-43/44 order statistic of an 89-launch series whose median is `0.7708`; three recipes agree,
   including `analysis/window-population/measure.mjs`. **Never widen that tolerance instead** — it was

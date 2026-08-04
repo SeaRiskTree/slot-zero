@@ -1,0 +1,1619 @@
+{
+  "tool": "deployer-screen/bundling-census",
+  "schemaVersion": 1,
+  "scope": "WINDOWS ONLY. Walks create-slot windows with Stage 2's pinned window parameters and reports ONLY bundledTx and maxWalletsInOneTx per launch. No entry score, no room figure, no field, no entry cost, no verdict, and no threshold is moved by it. Captain decision 173a.",
+  "thresholdsVersion": "5.1.0",
+  "startedAtIso": "2026-08-03T21:10:36.711Z",
+  "finishedAtIso": "2026-08-03T22:10:19.358Z",
+  "completed": true,
+  "abortReason": null,
+  "spend": {
+    "keyedRequests": 0,
+    "keyedCeilingDeclared": 0,
+    "listingRequests": 101,
+    "listingShed": 0,
+    "listingCeiling": 480,
+    "fillRequests": 484,
+    "fillShed": 0,
+    "fillCeiling": 4320,
+    "solanaRpcRequests": 0,
+    "heliusCredits": 0,
+    "duneExecutions": 0
+  },
+  "cohort": {
+    "source": "tools/deployer-screen/feed/ledger.json + tools/deployer-screen/runs/*.json",
+    "found": 82,
+    "gated": 82,
+    "gatePassed": 14,
+    "surveyed": 14,
+    "leftUnsurveyedByCap": 0,
+    "notSurveyed": [
+      {
+        "wallet": "2PkPfbNytC8wiiAS8XLmNTPqHwgfqJe3yu3euVZTj9qv",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 14 tokens < 25 required"
+      },
+      {
+        "wallet": "2fjnasKeqKS63myiKHqeVjaCKGEN75U4iPv6ZjsoJ8xa",
+        "verdict": "gate-failed",
+        "reason": "completion rate 0.1346 < 0.25 required"
+      },
+      {
+        "wallet": "2mWsxN9AqCDybfHbmy7gv4y6y5NcN7a2Kfm9AgJNsXhz",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 18 tokens < 25 required; history spans 0.2 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "2snLHXhkP3rrvxnRK3nXrmGxwqH462eEWqRAo7ny4HM7",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 19 tokens < 25 required; history spans 2.9 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "3YpQRAGDCpraoXG9c9ntVaax9jRKPRSQQRXm7mg8YMiF",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 10 tokens < 25 required"
+      },
+      {
+        "wallet": "3bUNy4GnZpZqECHvEoQEQwTyeAoRJgcSSMJ95d7ZGLDv",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 17 tokens < 25 required"
+      },
+      {
+        "wallet": "3p2458ekGpicxPTAduGwa9JMvugTWDtpvodcTnufmaAE",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 17 tokens < 25 required"
+      },
+      {
+        "wallet": "3vU5HSbmB4k29ezFPYeLxLtmzG2Z5Fqph1FtegMcptYd",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 13 tokens < 25 required"
+      },
+      {
+        "wallet": "44V2DZpFkoXSfiXTSFESiLpdXdG6Nm3jMCpMNexN11TB",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 6 tokens < 25 required"
+      },
+      {
+        "wallet": "4q4GKBpVmXGhXYNaR4DetQjf5WjHEHhbJ9Wgybt7F8Yu",
+        "verdict": "gate-failed",
+        "reason": "history spans 6.2 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "4v7nGvhrYgHxwkeVAUijm3HPaFLBA133Z3SBrxsFWjzD",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 12 tokens < 25 required"
+      },
+      {
+        "wallet": "5YRgrP3mjGzrzirYYN5HAQH19cTYREYwGxW6XRJQUzij",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 8 tokens < 25 required"
+      },
+      {
+        "wallet": "5YuKHN997GPHySap8tDn57HZsgzp5aVngsk5RnNDvrhv",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 13 tokens < 25 required"
+      },
+      {
+        "wallet": "5dg4URWnaJHzcinhADG21FAcsuvi32TXEekiJW6yMVo5",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 18 tokens < 25 required"
+      },
+      {
+        "wallet": "5pYk7CGc3ExfhfTQRSvPSVM8yHNdyeaYwKgNeWeKwiGw",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 3 tokens < 25 required; history spans 0.4 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "5wg1KsGRW8PixReBszaDeCrfMYVg9SsHhyDfeydvm2tt",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 12 tokens < 25 required"
+      },
+      {
+        "wallet": "643pwUUZwCeP68Lai21Hq9ara2nYmcw5pBRDtbP5xDUt",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 18 tokens < 25 required"
+      },
+      {
+        "wallet": "6Wg4aeZ29WRKDsM695c7tTT8oYAcbvFq7DYn8416BPBg",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 18 tokens < 25 required; history spans 6.8 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "6ocxhLEqU55DGEdS8NT362FpRJpfQuUAiK3K8Dvxnp1S",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 19 tokens < 25 required; history spans 12.0 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "6vxobdjQLxEUP8dvzPEvjuDCKT2UHtXFVbeDuq3M5UhE",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 13 tokens < 25 required"
+      },
+      {
+        "wallet": "7ZCwMre2ir7tAViA9f9qWu3BBe4jtrMJq1FrNBtntq3T",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 12 tokens < 25 required; history spans 6.0 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "9GJXZzdLc3qF2hdvikcVjCYmmG5mERbykzZAu66iZ1Xr",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 3 tokens < 25 required; history spans 0.1 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "9LUgfzet43ZdwdAzbvV5msQjGzx9g6sqvtgLaQyQAEog",
+        "verdict": "gate-failed",
+        "reason": "completion rate 0.2292 < 0.25 required"
+      },
+      {
+        "wallet": "9R6PV5KTFW94ZhfPg6BF3xKeGkBNSKAGgQtSeLmyxN2R",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 10 tokens < 25 required"
+      },
+      {
+        "wallet": "9g6A9S8rvwEiRwhezK19genZhEqhGcd834XF24FxfGmx",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 10 tokens < 25 required"
+      },
+      {
+        "wallet": "AKtRfNN7anBbCiPMr5CwHxAuCiqKgpWem9DhZpu27maR",
+        "verdict": "gate-failed",
+        "reason": "completion rate 0.2292 < 0.25 required"
+      },
+      {
+        "wallet": "AYJSaJiDbxZjPjTKWdLjpFfoqMBvivp8uHEHqvabPFvb",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 12 tokens < 25 required; history spans 1.4 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "AacCtWWCMRJTmWCXDZxwoaeXVVcFftGpZtZjYTe3r3id",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 7 tokens < 25 required; history spans 1.1 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "ArfVe1K5gt5zsxzRCWSQeWc1rJSJjZzuuYxmvRh71mMQ",
+        "verdict": "gate-failed",
+        "reason": "completion rate 0.0500 < 0.25 required"
+      },
+      {
+        "wallet": "Aw9SEwyyVdtKiL97bHPrRzDYXcdj87BSApL3eZ8BMGrU",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 9 tokens < 25 required"
+      },
+      {
+        "wallet": "B3ZNdoxQB5zSro19P97nGyQM8b7roReprRw3EiFX3SvC",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 17 tokens < 25 required; history spans 0.2 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "B6Q3VmDnYWwUbSujtsZ9sY9Pk4Vgu31D7DbMNNR1iWR2",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 0 tokens < 25 required (the vendor listed no tokens with a usable deploy time); completion rate is undefined (no usable token records); history spans 0.0 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "BK2ciybp5WEeWUpPzPACUDfwcNFHeDQSrQsdKyT3Wdkb",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 23 tokens < 25 required"
+      },
+      {
+        "wallet": "CXnxRV24ywNw3NyTmfgu7upN7VNAfRqjkdmAwNv6c1Pv",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 13 tokens < 25 required"
+      },
+      {
+        "wallet": "DCWjW618t6x8djYrrCFDFLXYT6MHDDnjMbBK4CknWzdp",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 11 tokens < 25 required"
+      },
+      {
+        "wallet": "DFrfDB7vsQRNQYFWyQwtihMWGEfD8vAPPHFEW6krXytc",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 11 tokens < 25 required"
+      },
+      {
+        "wallet": "DMB4e5ajAukCtQpKyKut9vBEbjfQVZZpmePGWhSXNKHe",
+        "verdict": "gate-failed",
+        "reason": "history spans 0.1 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "DeiACb3M5VXwXzwbgUzZUaAhatRfgzd7tYxWtEFwYv7D",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 24 tokens < 25 required"
+      },
+      {
+        "wallet": "DfVJPcKxX1RXGf9szMQt9MNSyULCmjJoxidSWAd66SHx",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 10 tokens < 25 required"
+      },
+      {
+        "wallet": "DrZhh8Uz9ahWYEXyv1zWNgemN3BRAi42aSZVV2vsKsVy",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 14 tokens < 25 required; history spans 3.3 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "EDQPidE8fqqpPtnLi6fQmU4krwc7S6ppEpm4qLXKcTro",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 19 tokens < 25 required"
+      },
+      {
+        "wallet": "EFENbNBq1HXt69GGZMW6igtZqD42pz2sqDJRnmG4cxfD",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 5 tokens < 25 required"
+      },
+      {
+        "wallet": "ELcFk5c9pTiHcjMUoGgT2afHvvp6hmLhuJnhisgV6bXh",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 8 tokens < 25 required"
+      },
+      {
+        "wallet": "EQtWSB9HexxkHPYBNHiz9XQzwGpeH21kMkbkVCpoaQFm",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 3 tokens < 25 required; history spans 7.0 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "EeLjBXRELqrcWAXbnj8T4jQPS9Qh7UGWiKxovsJ36pZY",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 18 tokens < 25 required"
+      },
+      {
+        "wallet": "EeSxnqdQSkrqAwH79pfeiANoG6UqUcr1Ccb89g4HQBjb",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 7 tokens < 25 required"
+      },
+      {
+        "wallet": "Eh3q5AXnopCFULMLGv6QeVqpZhRvPgkWHBMKqNGQvQTX",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 12 tokens < 25 required"
+      },
+      {
+        "wallet": "EzeE6S6NnYKf7h4VdoTBvs4fmTR7E4prub2XhqKhi7zG",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 4 tokens < 25 required; history spans 1.9 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "F5ExBJxM7zJhowwSBYGMTQVesxWvNzsPJhJTuXxLHiyZ",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 10 tokens < 25 required"
+      },
+      {
+        "wallet": "FHDnZeKo62gCtUKSKCKbLYJLCq6yUTWzYZPiEwSLorzw",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 22 tokens < 25 required"
+      },
+      {
+        "wallet": "FXXsfWJCz3WnQ9VD2uhz8ZHp8zxVf696mQJ95S9rJawM",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 13 tokens < 25 required"
+      },
+      {
+        "wallet": "FePSGRavtQty99PFUty5WnaK6M7eibcEEpZRcrmZ6Xi1",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 21 tokens < 25 required"
+      },
+      {
+        "wallet": "FmrWE54cwDtH5vwkde6epWACqojmK5P4eKq53GwYBR2C",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 12 tokens < 25 required"
+      },
+      {
+        "wallet": "FnNQkCL2a1uwf65wzP9ujztZ4WfKcu5aMGdmWf1KYBBK",
+        "verdict": "gate-failed",
+        "reason": "completion rate 0.2222 < 0.25 required"
+      },
+      {
+        "wallet": "Fs4nhRXo6ZJbREEbzShb447zj8Dr6Mn3jB6BqjhPsfto",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 14 tokens < 25 required"
+      },
+      {
+        "wallet": "GCc5qzbbN8xjARVJPovDxfKTCyeqXeeRzhwPH5csKwY6",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 9 tokens < 25 required; history spans 11.9 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "GKVhR9BuJUTDkV6KC2i6QGujJ1PZjVn9KR66fsi1jwBp",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 16 tokens < 25 required"
+      },
+      {
+        "wallet": "GeyhK3eoPg9HoKbYqpnK9D5tZ3hR5vKwLRShZX8LRdF5",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 3 tokens < 25 required; history spans 0.1 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "HAANcpC18zv5eVdZvSVTTMDygUmFjbYg5G8mx9jmxCh9",
+        "verdict": "gate-failed",
+        "reason": "completion rate 0.2000 < 0.25 required"
+      },
+      {
+        "wallet": "HHEYhNexb6m7hrzkKhzKWuD328GF1xs9gVqAZiniVmbG",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 8 tokens < 25 required"
+      },
+      {
+        "wallet": "HM83ZrK2UdfHzUHDZKoD79gb7NxpyzdGcX1RPiReCrJW",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 18 tokens < 25 required; history spans 6.9 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "HdNUXNqPRP6WhnHNQwKGGvGqPGHSk5okoV17RZAkW43r",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 15 tokens < 25 required"
+      },
+      {
+        "wallet": "HieXn5GgdKtXKa92WR3JuJPGyuR7pSMJTZw2KszQEPtJ",
+        "verdict": "gate-failed",
+        "reason": "history spans 11.4 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "HoKiWhcU3YBN9f5Uxj1bBLkcWkw5iDEQbPiiU6EnYCwQ",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 16 tokens < 25 required"
+      },
+      {
+        "wallet": "Hssk6qusiviYGKqnYG3iexuSUHG3eksq5XiiqyBRRWfm",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 15 tokens < 25 required"
+      },
+      {
+        "wallet": "J9zWFYtRN2g7ZCqz73MvP5SVowUvYNxpYYsoUvyZ1QXw",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 5 tokens < 25 required; history spans 0.1 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "UVXV1BHPQFBfDS1tSVb48kXFMkeZ7ojfFkfsVFEAgyE",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 0 tokens < 25 required (the vendor listed no tokens with a usable deploy time); completion rate is undefined (no usable token records); history spans 0.0 days < 14 required (a rate earned inside a burst is not a record)"
+      },
+      {
+        "wallet": "uH9FY1StsAHWbDQaHNu2ZcHtBtWXqkNtwzi83MSFgmC",
+        "verdict": "gate-failed",
+        "reason": "sample too small: 16 tokens < 25 required; history spans 1.3 days < 14 required (a rate earned inside a burst is not a record)"
+      }
+    ]
+  },
+  "windowParameters": {
+    "sourceBlock": "stage2_entry",
+    "windowMs": 60000,
+    "seekMarginMs": 5000,
+    "windowSlotSpan": 160,
+    "tradePageLimit": 100,
+    "maxLaunchesPerCandidate": 8,
+    "maxRequestsPerLaunch": 18,
+    "minLaunchesSampled": 8,
+    "mintTimeBackdateMs": 5000
+  },
+  "summary": {
+    "perLaunch": {
+      "launchesMeasured": 112,
+      "bundled": 18,
+      "rate": 0.1607,
+      "candidatesContributing": 14
+    },
+    "perCandidate": {
+      "candidatesWithAnyWindow": 14,
+      "bundledTxPerLaunch": {
+        "n": 112,
+        "min": 0,
+        "p25": 0,
+        "median": 0,
+        "p75": 0,
+        "max": 3
+      },
+      "maxWalletsInOneTxPerLaunch": {
+        "n": 112,
+        "min": 1,
+        "p25": 1,
+        "median": 1,
+        "p75": 1,
+        "max": 3
+      },
+      "medianBundledTxByCandidate": {
+        "n": 14,
+        "min": 0,
+        "p25": 0,
+        "median": 0,
+        "p75": 0,
+        "max": 2
+      },
+      "medianMaxWalletsByCandidate": {
+        "n": 14,
+        "min": 1,
+        "p25": 1,
+        "median": 1,
+        "p75": 1,
+        "max": 3
+      },
+      "bundledShareByCandidate": {
+        "n": 14,
+        "min": 0,
+        "p25": 0,
+        "median": 0,
+        "p75": 0,
+        "max": 1
+      }
+    },
+    "headline": {
+      "candidatesWithFullSample": 14,
+      "candidatesBundlingOnAllOfThem": 1,
+      "fraction": 0.0714,
+      "silencedByOneUnbundledLaunch": 13,
+      "note": "DEFINED ONLY OVER CANDIDATES THAT PRODUCED THE FULL SAMPLE. `minLaunchesSampled` is 8 and `maxLaunchesPerCandidate` is 8, so a candidate with fewer usable windows is already UNMEASURED for a reason that is not bundling, and folding it in either way would answer a different question. `candidatesShortOfAFullSample` counts those separately.",
+      "candidatesShortOfAFullSample": 0
+    },
+    "unscoreable": {
+      "neverBundles": 11,
+      "neverBundlesWithFullSample": 11,
+      "shortOfAFullSampleButAllBundled": 0,
+      "note": "A `neverBundles` candidate has `maxWalletsInOneTx <= 1` on every window it produced: the co-ordination rule can never see a bundle there, so re-screening it produces the same silence forever. That is a different finding from a candidate that merely fell short of 8 of 8 on this reading, and the two are never summed."
+    }
+  },
+  "candidates": [
+    {
+      "wallet": "2N7qg9a3N6DXgDBXvgZ5JGnXvxUnX1YhBEC5Y7waqxmi",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-08-02-good.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 61,
+      "listingPageCapped": false,
+      "gateTokens": 61,
+      "gateCompletionRate": 0.541,
+      "gateSpanDays": 581.59,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 61,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 0,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": true,
+      "launches": [
+        {
+          "ageDays": 61.116,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 84.895,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 99.899,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 10,
+          "proven": false
+        },
+        {
+          "ageDays": 423.331,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 425.904,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 2,
+          "proven": false
+        },
+        {
+          "ageDays": 445.916,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 445.919,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 464.911,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 7,
+          "proven": false
+        }
+      ]
+    },
+    {
+      "wallet": "3FiWnNDTZrKPbjPeMiTe2r5m5zygxSu57ePck5LUQp7d",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-07-29-elite.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 65,
+      "listingPageCapped": false,
+      "gateTokens": 65,
+      "gateCompletionRate": 0.3846,
+      "gateSpanDays": 38.46,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 65,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 0,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": true,
+      "launches": [
+        {
+          "ageDays": 4.021,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 2,
+          "proven": false
+        },
+        {
+          "ageDays": 4.102,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 10,
+          "proven": false
+        },
+        {
+          "ageDays": 4.933,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 6,
+          "proven": false
+        },
+        {
+          "ageDays": 5.128,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 13,
+          "proven": false
+        },
+        {
+          "ageDays": 5.199,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 11,
+          "proven": false
+        },
+        {
+          "ageDays": 6.121,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 10,
+          "proven": false
+        },
+        {
+          "ageDays": 6.155,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 12,
+          "proven": false
+        },
+        {
+          "ageDays": 6.35,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 11,
+          "proven": false
+        }
+      ]
+    },
+    {
+      "wallet": "3jBzE4c92T5F9qYok9KjoiaLr1oALJmCwoxGSXBJhAfg",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-08-02-good.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 56,
+      "listingPageCapped": false,
+      "gateTokens": 56,
+      "gateCompletionRate": 0.2679,
+      "gateSpanDays": 297.02,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 56,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 0,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": true,
+      "launches": [
+        {
+          "ageDays": 34.592,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 8,
+          "proven": false
+        },
+        {
+          "ageDays": 45.131,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 47.422,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 9,
+          "proven": false
+        },
+        {
+          "ageDays": 49.313,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 26,
+          "proven": false
+        },
+        {
+          "ageDays": 50.474,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 2,
+          "proven": false
+        },
+        {
+          "ageDays": 56.326,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 2,
+          "proven": false
+        },
+        {
+          "ageDays": 58.234,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 13,
+          "proven": false
+        },
+        {
+          "ageDays": 60.405,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 9,
+          "proven": false
+        }
+      ]
+    },
+    {
+      "wallet": "3yKebvkagP4iokHryqnE5KnTQUSqdExvS3iFkGPXykLP",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-08-02-good.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 29,
+      "listingPageCapped": false,
+      "gateTokens": 29,
+      "gateCompletionRate": 0.3448,
+      "gateSpanDays": 116.96,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 29,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 0,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": true,
+      "launches": [
+        {
+          "ageDays": 6.191,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 5,
+          "proven": false
+        },
+        {
+          "ageDays": 6.304,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 3,
+          "proven": false
+        },
+        {
+          "ageDays": 10.203,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 3,
+          "proven": false
+        },
+        {
+          "ageDays": 13.223,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 9,
+          "proven": false
+        },
+        {
+          "ageDays": 19.204,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 4,
+          "proven": false
+        },
+        {
+          "ageDays": 24.215,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 10,
+          "proven": false
+        },
+        {
+          "ageDays": 27.071,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 12,
+          "proven": false
+        },
+        {
+          "ageDays": 28.132,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 11,
+          "proven": false
+        }
+      ]
+    },
+    {
+      "wallet": "4J54atPc5YU48PXBTfjhQRV9bhkL4eYA8ocBmMkERoNq",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-08-02-good.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 26,
+      "listingPageCapped": false,
+      "gateTokens": 26,
+      "gateCompletionRate": 0.3077,
+      "gateSpanDays": 216.35,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 26,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 0,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": true,
+      "launches": [
+        {
+          "ageDays": 417.498,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 6,
+          "proven": false
+        },
+        {
+          "ageDays": 422.795,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 7,
+          "proven": false
+        },
+        {
+          "ageDays": 433.385,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 10,
+          "proven": false
+        },
+        {
+          "ageDays": 433.482,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 433.965,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 435.908,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 444.211,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 4,
+          "proven": false
+        },
+        {
+          "ageDays": 463.365,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 4,
+          "proven": false
+        }
+      ]
+    },
+    {
+      "wallet": "5KTX7LZyoewhQ2keNCNQ6qQCXW9uermzr8r5K6uss4PY",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-07-29-elite.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 32,
+      "listingPageCapped": false,
+      "gateTokens": 32,
+      "gateCompletionRate": 0.6563,
+      "gateSpanDays": 42.06,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 32,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 0,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": true,
+      "launches": [
+        {
+          "ageDays": 0.024,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 5,
+          "proven": false
+        },
+        {
+          "ageDays": 1.051,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 4,
+          "proven": false
+        },
+        {
+          "ageDays": 1.063,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 11,
+          "proven": false
+        },
+        {
+          "ageDays": 1.106,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 3,
+          "proven": false
+        },
+        {
+          "ageDays": 1.29,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 10,
+          "proven": false
+        },
+        {
+          "ageDays": 5.105,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 4,
+          "proven": false
+        },
+        {
+          "ageDays": 5.275,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 10,
+          "proven": false
+        },
+        {
+          "ageDays": 6.064,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 14,
+          "proven": false
+        }
+      ]
+    },
+    {
+      "wallet": "7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-07-29-elite.json",
+        "run:2026-08-02-good.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 249,
+      "listingPageCapped": false,
+      "gateTokens": 249,
+      "gateCompletionRate": 0.4337,
+      "gateSpanDays": 243.97,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 249,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 8,
+      "fullSample": true,
+      "allBundled": true,
+      "neverBundles": false,
+      "launches": [
+        {
+          "ageDays": 0.143,
+          "bundledTx": 2,
+          "maxWalletsInOneTx": 3,
+          "createSlotWallets": 13,
+          "proven": true
+        },
+        {
+          "ageDays": 0.29,
+          "bundledTx": 2,
+          "maxWalletsInOneTx": 3,
+          "createSlotWallets": 16,
+          "proven": true
+        },
+        {
+          "ageDays": 0.352,
+          "bundledTx": 2,
+          "maxWalletsInOneTx": 3,
+          "createSlotWallets": 15,
+          "proven": true
+        },
+        {
+          "ageDays": 1.237,
+          "bundledTx": 2,
+          "maxWalletsInOneTx": 3,
+          "createSlotWallets": 8,
+          "proven": true
+        },
+        {
+          "ageDays": 1.313,
+          "bundledTx": 2,
+          "maxWalletsInOneTx": 3,
+          "createSlotWallets": 13,
+          "proven": true
+        },
+        {
+          "ageDays": 3.195,
+          "bundledTx": 2,
+          "maxWalletsInOneTx": 3,
+          "createSlotWallets": 11,
+          "proven": true
+        },
+        {
+          "ageDays": 4.177,
+          "bundledTx": 2,
+          "maxWalletsInOneTx": 3,
+          "createSlotWallets": 15,
+          "proven": true
+        },
+        {
+          "ageDays": 4.266,
+          "bundledTx": 2,
+          "maxWalletsInOneTx": 3,
+          "createSlotWallets": 14,
+          "proven": true
+        }
+      ]
+    },
+    {
+      "wallet": "8KYMfXzpbB6atKguR1q3rK8wFX72fjWMknGMXDhHnLrg",
+      "cohortSources": [
+        "ledger:held",
+        "run:2026-08-02-good.json"
+      ],
+      "recordedGateVerdict": "gate-failed",
+      "listingRows": 82,
+      "listingPageCapped": false,
+      "gateTokens": 82,
+      "gateCompletionRate": 0.2927,
+      "gateSpanDays": 120.48,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 82,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 0,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": true,
+      "launches": [
+        {
+          "ageDays": 29.291,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 3,
+          "proven": false
+        },
+        {
+          "ageDays": 29.296,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 3,
+          "proven": false
+        },
+        {
+          "ageDays": 29.582,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 32.875,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 2,
+          "proven": false
+        },
+        {
+          "ageDays": 32.894,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 3,
+          "proven": false
+        },
+        {
+          "ageDays": 34.438,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 34.691,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 2,
+          "proven": false
+        },
+        {
+          "ageDays": 35.773,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        }
+      ]
+    },
+    {
+      "wallet": "ALJ4P5QNyHeLEjpKGmA1eUfJHSEGQMjY8HLnDkSgjczb",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-08-02-good.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 162,
+      "listingPageCapped": false,
+      "gateTokens": 162,
+      "gateCompletionRate": 0.3395,
+      "gateSpanDays": 290.2,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 162,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 0,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": true,
+      "launches": [
+        {
+          "ageDays": 2.752,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 3,
+          "proven": false
+        },
+        {
+          "ageDays": 4.342,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 6,
+          "proven": false
+        },
+        {
+          "ageDays": 6.255,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 4,
+          "proven": false
+        },
+        {
+          "ageDays": 7.914,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 5,
+          "proven": false
+        },
+        {
+          "ageDays": 7.95,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 5,
+          "proven": false
+        },
+        {
+          "ageDays": 10.427,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 8,
+          "proven": false
+        },
+        {
+          "ageDays": 12.18,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 12.989,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        }
+      ]
+    },
+    {
+      "wallet": "AQdBYZNy3BZ1vouGUjA1w9Ay7aq7kH5UQSuh4LQWKotY",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-08-02-good.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 90,
+      "listingPageCapped": false,
+      "gateTokens": 90,
+      "gateCompletionRate": 0.3667,
+      "gateSpanDays": 780.57,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 90,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 0,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": true,
+      "launches": [
+        {
+          "ageDays": 1.039,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 3,
+          "proven": false
+        },
+        {
+          "ageDays": 5.262,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 2,
+          "proven": false
+        },
+        {
+          "ageDays": 5.883,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 3,
+          "proven": false
+        },
+        {
+          "ageDays": 8.056,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 4,
+          "proven": false
+        },
+        {
+          "ageDays": 10.879,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 18.272,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 4,
+          "proven": false
+        },
+        {
+          "ageDays": 19.202,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 2,
+          "proven": false
+        },
+        {
+          "ageDays": 28.223,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 2,
+          "proven": false
+        }
+      ]
+    },
+    {
+      "wallet": "AbVkRUfynaEo6PMWyBCihRcirKbu3GkiyEoH5vny8aT9",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-08-02-good.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 73,
+      "listingPageCapped": false,
+      "gateTokens": 73,
+      "gateCompletionRate": 0.3288,
+      "gateSpanDays": 706.87,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 73,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 6,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": false,
+      "launches": [
+        {
+          "ageDays": 18.959,
+          "bundledTx": 1,
+          "maxWalletsInOneTx": 2,
+          "createSlotWallets": 12,
+          "proven": true
+        },
+        {
+          "ageDays": 29.982,
+          "bundledTx": 1,
+          "maxWalletsInOneTx": 2,
+          "createSlotWallets": 13,
+          "proven": true
+        },
+        {
+          "ageDays": 31.006,
+          "bundledTx": 1,
+          "maxWalletsInOneTx": 2,
+          "createSlotWallets": 14,
+          "proven": true
+        },
+        {
+          "ageDays": 31.145,
+          "bundledTx": 2,
+          "maxWalletsInOneTx": 2,
+          "createSlotWallets": 6,
+          "proven": true
+        },
+        {
+          "ageDays": 32.047,
+          "bundledTx": 1,
+          "maxWalletsInOneTx": 2,
+          "createSlotWallets": 9,
+          "proven": true
+        },
+        {
+          "ageDays": 34.996,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 10,
+          "proven": false
+        },
+        {
+          "ageDays": 36.854,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 7,
+          "proven": false
+        },
+        {
+          "ageDays": 37.964,
+          "bundledTx": 1,
+          "maxWalletsInOneTx": 2,
+          "createSlotWallets": 11,
+          "proven": true
+        }
+      ]
+    },
+    {
+      "wallet": "B6QvkTWSqJZv5tK4AxFnJRy54Skrk4S1VH4QG2qqs66N",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-08-02-good.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 39,
+      "listingPageCapped": false,
+      "gateTokens": 39,
+      "gateCompletionRate": 0.3077,
+      "gateSpanDays": 789.91,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 39,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 0,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": true,
+      "launches": [
+        {
+          "ageDays": 2.04,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 7,
+          "proven": false
+        },
+        {
+          "ageDays": 9.903,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 2,
+          "proven": false
+        },
+        {
+          "ageDays": 9.94,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 6,
+          "proven": false
+        },
+        {
+          "ageDays": 26.218,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 5,
+          "proven": false
+        },
+        {
+          "ageDays": 31.607,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 1,
+          "proven": false
+        },
+        {
+          "ageDays": 48.038,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 12,
+          "proven": false
+        },
+        {
+          "ageDays": 70.949,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 8,
+          "proven": false
+        },
+        {
+          "ageDays": 75.793,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 3,
+          "proven": false
+        }
+      ]
+    },
+    {
+      "wallet": "GeBJSHK4WsGrz2HRvTbqvWGx4JRMpHfJG2ikzrYBDuwR",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-07-29-elite.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 280,
+      "listingPageCapped": true,
+      "gateTokens": 280,
+      "gateCompletionRate": 0.375,
+      "gateSpanDays": 77.78,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 280,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 0,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": true,
+      "launches": [
+        {
+          "ageDays": 0.889,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 23,
+          "proven": false
+        },
+        {
+          "ageDays": 2.943,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 5,
+          "proven": false
+        },
+        {
+          "ageDays": 3.797,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 4,
+          "proven": false
+        },
+        {
+          "ageDays": 6.253,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 6,
+          "proven": false
+        },
+        {
+          "ageDays": 7.117,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 5,
+          "proven": false
+        },
+        {
+          "ageDays": 7.445,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 4,
+          "proven": false
+        },
+        {
+          "ageDays": 8.052,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 4,
+          "proven": false
+        },
+        {
+          "ageDays": 8.378,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 4,
+          "proven": false
+        }
+      ]
+    },
+    {
+      "wallet": "yHCxHBEaJW5tbndqC8JciSThr7U1cqLpdcsvHcx6PRe",
+      "cohortSources": [
+        "ledger:queued",
+        "run:2026-07-29-elite.json"
+      ],
+      "recordedGateVerdict": "gate-passed",
+      "listingRows": 280,
+      "listingPageCapped": true,
+      "gateTokens": 280,
+      "gateCompletionRate": 0.6679,
+      "gateSpanDays": 51.94,
+      "gateVerdict": "gate-passed",
+      "launchesEligible": 280,
+      "launchesPlanned": 8,
+      "launchesAttempted": 8,
+      "launchesUsable": 8,
+      "launchesDropped": 0,
+      "dropsByReason": {},
+      "dropNotes": [],
+      "bundledLaunches": 4,
+      "fullSample": true,
+      "allBundled": false,
+      "neverBundles": false,
+      "launches": [
+        {
+          "ageDays": 0.123,
+          "bundledTx": 3,
+          "maxWalletsInOneTx": 3,
+          "createSlotWallets": 18,
+          "proven": true
+        },
+        {
+          "ageDays": 0.292,
+          "bundledTx": 3,
+          "maxWalletsInOneTx": 3,
+          "createSlotWallets": 19,
+          "proven": true
+        },
+        {
+          "ageDays": 1.269,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 6,
+          "proven": false
+        },
+        {
+          "ageDays": 1.316,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 5,
+          "proven": false
+        },
+        {
+          "ageDays": 3.338,
+          "bundledTx": 3,
+          "maxWalletsInOneTx": 3,
+          "createSlotWallets": 21,
+          "proven": true
+        },
+        {
+          "ageDays": 3.827,
+          "bundledTx": 3,
+          "maxWalletsInOneTx": 3,
+          "createSlotWallets": 35,
+          "proven": true
+        },
+        {
+          "ageDays": 4.216,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 15,
+          "proven": false
+        },
+        {
+          "ageDays": 5.303,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "createSlotWallets": 10,
+          "proven": false
+        }
+      ]
+    }
+  ],
+  "caveats": [
+    "THE LAUNCH LIST IS THE OWNERSHIP READING, not a creation-derived one: a listed token may have been acquired rather than created by this wallet (its create slot is then somebody else's bundling habit), and a token handed on is missing entirely — and the ones handed on are the winners. The measured size of that gap on the five wallets holding both readings is nil (four gaps of exactly zero, one of 1 launch in 239; CREATION-DERIVED.md), which bounds it without removing it.",
+    "A window that could not be walked back past the mint is DROPPED, never counted as unbundled. Counting an unreachable create slot as \"no bundle\" would manufacture the very finding this pass is measuring, so the denominator is windows PROVED to reach their create slot.",
+    "THE MINT INSTANT IS BACKDATED BY A PINNED MARGIN before the window is walked, because the two vendors disagree: frontend-api-v3 gives millisecond-precision creation times on older rows while swap-api gives whole-second fill times, floored, so the declared mint lands up to ~2s AFTER the launch's own first fill and the zero-slack pre-mint tripwire would delete the whole launch. A disagreement LARGER than the margin still drops the launch and is still counted; one SMALLER than it is no longer detected."
+  ]
+}

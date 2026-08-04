@@ -69,10 +69,17 @@ node tools/deployer-screen/screen.mjs --no-stage2
 node tools/deployer-screen/screen.mjs --tier elite --ownership-only
 
 node tools/deployer-screen/screen.mjs --help
+
+# A separate, KEYLESS measurement pass: how often does a deployer bundle its create-slot
+# transaction? It scores nothing and reaches no verdict — see "The bundling census" below.
+# --subject-era needs no network at all; --dry-run prints the whole keyless exposure.
+node tools/deployer-screen/bundling.mjs --dry-run
+node tools/deployer-screen/bundling.mjs --out tools/deployer-screen/census/$(date +%F)-bundling-census.json
+node tools/deployer-screen/bundling.mjs --help
 ```
 
-Exit codes are distinct because the worst failure mode for a screen is an empty result that reads
-like a real negative: `0` ran (possibly with zero survivors — a measured outcome), `2` usage,
+`screen.mjs`'s exit codes are distinct because the worst failure mode for a screen is an empty
+result that reads like a real negative (`bundling.mjs` has its own smaller set — `--help`): `0` ran (possibly with zero survivors — a measured outcome), `2` usage,
 `3` no credential, `4` credential rejected (401/403), `5` quota (429), `6` ceiling reached,
 `7` upstream, `8` Stage 0 failed.
 
@@ -859,7 +866,8 @@ of 24 false-positive windows and creates none in the other direction**, at a pri
 that become unmeasured** rather than wrong. Per launch rather than per window, the same refusal
 takes **60 of the 235 covered launches (25.5%)** out of every score — that is the coverage it costs,
 and it is the intended trade rather than a regression. On a stranger the same trade applies and cannot be
-priced, because there is no ground truth to price it against. `bundledTx` and `maxWalletsInOneTx`
+priced, because there is no ground truth to price it against. **How often it fires on strangers is
+measured, though** — 1 candidate in 14 survives it, see "The bundling census" below. `bundledTx` and `maxWalletsInOneTx`
 reach the score, the record and the rendered line for exactly that reason: they are the only
 observable that exposes the condition, so a saved run can be audited for it after the fact.
 
@@ -1402,10 +1410,17 @@ reader of that record had no way to know.
 **Every run reports its drops per cause, per wallet and in total**, in the record (`entry.coverage.dropsByReason`
 and the run-level `entryDrops`) and in the rendered output. A non-zero
 `mintTimeDisagreement` is treated as a **reportable event, not a footnote**: all 235 clock
-observations come from our own tape and this lane has never held a vendor key, so whether the two
-clocks agree on *stranger* wallets is untested. If they routinely disagree, the tripwire stops being
-free and starts discarding real launches at scale — and a visible per-run count is what stops that
-happening silently.
+observations come from our own tape and this lane has never held a vendor key, so whether MadeOnSol's
+clock agrees with the fill tape on *stranger* wallets is untested. If they routinely disagree, the
+tripwire stops being free and starts discarding real launches at scale — and a visible per-run count
+is what stops that happening silently.
+
+**On the other vendor pair that has now been walked, they routinely DO disagree.** Driven from
+`frontend-api-v3`'s millisecond-precision `created_timestamp` instead of MadeOnSol's, the tripwire
+dropped 5 of 8 launches on the first candidate the bundling census walked — which is why that pass
+backdates the declared mint by `bundling_census.mintTimeBackdateMs` before calling this walk. The
+measurement, what the backdate costs and why it cannot reach a create slot are in
+"The bundling census" below; nothing about this tripwire changed.
 
 
 
@@ -1591,6 +1606,102 @@ that verdict as its schema means it**: room was present and the price of the sea
 measured, which is not what a schema-6 `entry-open-after-costs` says. It is committed evidence and
 is never retro-edited, so the reader is what has to be correct. The `--dry-run` output
 and the live-vs-tape check above remain the keyless evidence that the walk is the same code path.
+
+## The bundling census — a windows-only pass, and what it is sizing
+
+`node tools/deployer-screen/bundling.mjs` (captain decision 173a, 2026-08-03). Full method in that
+file's header; the pinned bounds are `thresholds.json` → `bundling_census`; the committed run is
+`census/2026-08-03-bundling-census.json` and its report is
+`census/2026-08-03-bundling-census.md`. **The census writes to `census/`, never to `runs/`**: that
+directory is the screen's own versioned contract, asserted per schema version, and `buildCohort`
+reads it back as a cohort source.
+
+**The problem it measures, which is arithmetic before it is observation.** `stage2_entry` pins
+`maxLaunchesPerCandidate: 8` and `minLaunchesSampled: 8`, deliberately equal, and since #17 a launch
+whose create slot carried no bundled transaction is refused as unproven (`measure.mjs` →
+`roomIsProven`, captain decision 134a). Multiplied out: **Stage 2 can only reach a verdict for a
+candidate whose most recent 8 eligible launches were every one bundled, and one unbundled launch in
+eight silences the whole candidate.** The live evidence for how large a population that silences was
+**two strangers**, because `maxCandidatesScored` is 3 and one of the three was our own control.
+
+**What the pass does, and what it deliberately does not.** It walks create-slot windows with Stage
+2's own pinned window parameters and reports only `bundledTx` and `maxWalletsInOneTx` per launch. No
+entry score, no room figure, no field, no entry cost, no verdict — a test asserts that
+`measureLaunchEntry`, `scoreEntry` and the cost leg do not appear in its executable half. **It
+measures and it does not tune:** no threshold moves on the strength of what it finds, and the
+pinning decision returns to the captain with the number.
+
+**It re-pins no window parameter.** `windowMs`, `seekMarginMs`, `windowSlotSpan`, `tradePageLimit`,
+`maxLaunchesPerCandidate`, `maxRequestsPerLaunch` and the swap-api pacing are read from
+`stage2_entry` unchanged, because the number only means something if the census measures the same
+launches Stage 2 would have refused. A test asserts the census block carries none of them.
+
+**It spends no keyed request, and that is structural.** There is no keyed client in the file — a
+test asserts `BoundedClient`, `DuneClient`, `SolanaRpcClient`, `credential.mjs` and `process.env`
+are all absent. Its two inputs are keyless: the cohort is read off disk from `feed/ledger.json` and
+`runs/*.json` (wallets whose keyed cost was already paid), and each candidate's launch list comes
+from `readCreatorHistory` on `frontend-api-v3.pump.fun`. So the MadeOnSol, Helius and Dune
+allowances are untouched by it and the bound it declares in advance is a zero.
+
+**The gate it applies is the OWNERSHIP reading, which is biased towards rejection** — the same bias
+`FEED.md` states for the feed, and the same reason it does not carry the creation-derived walk
+(~100 keyless RPC per candidate). So a census survivor is a survivor on the harder of the two
+readings, and the surveyed population is a subset of what a keyed Stage 1 would have passed rather
+than a superset. Every cohort member is re-gated by the pass; the verdict this repository's own
+keyed runs recorded travels beside it for comparison and decides nothing.
+
+**Two caveats travel with every number**, into the dry-run plan, the record and the rendered
+summary — the requirement `LANDING_TIP_CAVEAT` set, for the same reason:
+
+- `OWNERSHIP_LIST_CAVEAT` — a listed token may have been **acquired** rather than created (its
+  create slot is then somebody else's bundling habit), and a token **handed on is missing**, and the
+  ones handed on are the winners. Measured size of that gap on the five wallets holding both
+  readings: nil (`CREATION-DERIVED.md`).
+- `DROPPED_WINDOW_CAVEAT` — a window that could not be walked back past the mint is **dropped, never
+  counted as unbundled**. Counting an unreachable create slot as "no bundle" would manufacture the
+  very finding the pass is measuring.
+
+**`--subject-era` answers the era question where it can be answered, and refuses it where it
+cannot.** The live census walks each candidate's most recent 8 launches, which span days to weeks
+and cannot carry a trend. The committed population tape can: 235 launches of **one** deployer over
+2025-12 → 2026-07, bucketed offline with no request of any kind. That table is a **within-deployer**
+trend at n = 1 and the rendered output says so three times, because a within-deployer trend read as
+a population one is the "n = 2, a signal not a rate" failure one level up.
+
+**The `readLaunchWindow` two-bound cursor cannot reach this number.** That walk can fail to fetch
+the **tail** of a window (`CLAUDE.md`); the census reads the **create slot**, which is the oldest
+end, reached last and proved by the coverage obligation.
+
+**The mint instant is BACKDATED by `mintTimeBackdateMs`, and that is a measurement rather than a
+habit.** `frontend-api-v3`'s `created_timestamp` is millisecond-precision on older listing rows
+while `swap-api`'s fill `ts` is whole seconds, floored, so the declared mint lands up to ~2 s
+*after* the launch's own first fill and the zero-slack pre-mint tripwire deletes it — measured live
+at 5 of 8 launches on the first candidate walked. `MINT_TIME_BACKDATE_CAVEAT` states what the fix
+costs. See the run report §5 and `thresholds.json` for the six-launch skew sample.
+
+### What the first run measured, 2026-08-03
+
+Full report: `census/2026-08-03-bundling-census.md`. **14 gate survivors, 112 windows, 0 dropped,
+0 keyed requests, 585 keyless, 0 shed, 59.7 minutes.**
+
+- **Per-launch bundling rate: 18 of 112 = 0.1607** (n = 112 windows over 14 candidates).
+- **Headline — candidates bundling on all 8 of their most recent eligible launches: 1 of 14 =
+  0.0714**, and **the one is our own control**. Among the 13 strangers it is **0 of 13**.
+- **11 of 14 never bundle at all** (`maxWalletsInOneTx <= 1` on every window) — permanently
+  unscoreable, counted apart from the **2** near-misses.
+- **The create slots are not empty**: median 5.5 distinct wallets, p75 10.25, max 35, and 96 of the
+  112 held 2+. Only 18 of those 96 carried a two-wallet transaction.
+
+**14 is the whole gate-survivor population this repository can reach, not a truncated 20–30** —
+the census cap is 30 and nothing was left unsurveyed. Reaching more needs fresh keyed discovery.
+
+**Three cross-checks make the zeros believable**: our own subject reads 8 of 8 with `bundledTx 2` /
+`maxWalletsInOneTx 3` on every window, matching its tape; and `yHCxHBEa…` (4 of 8) and `GeBJSHK4…`
+(0 of 8) reproduce `data/slot-zero-stage2-reverify/report.md` §2a exactly, from a *different*
+launch-list surface.
+
+**No threshold moved on the strength of any of it.** The pinning decision is the captain's; §7 of
+the report states what the number implies and stops there.
 
 ## The keyless boundary
 

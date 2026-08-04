@@ -1544,10 +1544,11 @@ describe('the CLI contract', () => {
     // And the WALL CLOCK, derived from the pinned pacing rather than written down once. An estimate
     // stale in the optimistic direction gets a run killed by an operator who thinks it has hung.
     // Both derived from the pinned pacing and the pinned caps, so captain decision 190a's launch
-    // cap of 10 shows up here as wall clock: 3 x 10 x 6 = 180 requests typical and 3 x 10 x 18 =
-    // 540 worst case, at 7s apiece. At the cap of 8 these read 17 and 50.
-    expect(text).toMatch(/about 21 min typical/);
-    expect(text).toMatch(/about 63 min worst case/);
+    // cap of 10 and the proof-coverage lane's scoring cap of 7 show up here as wall clock:
+    // 7 x 10 x 6 = 420 requests typical and 7 x 10 x 18 = 1,260 worst case, at 7s apiece. At a
+    // scoring cap of 3 these read 21 and 63, and at a launch cap of 8 they read 17 and 50.
+    expect(text).toMatch(/about 49 min typical/);
+    expect(text).toMatch(/about 147 min worst case/);
     expect(text).toMatch(/7s between requests, swap-api ONLY/);
     // The cost leg's own exposure, on the same surface and in the same units. It is a SEPARATE
     // budget on a different host, so a reader who only saw the swap-api arithmetic would under-read
@@ -1709,11 +1710,13 @@ describe('the CLI contract', () => {
     expect(T['budget'].keylessMinIntervalMs).toBe(2_000);
     expect(T['stage2_entry'].keylessMinIntervalMs).toBeGreaterThan(T['budget'].keylessMinIntervalMs);
     // Pacing moves the wall clock, never the exposure: the stage arithmetic is untouched by THIS
-    // pin. The arithmetic itself is 3 x 10 x 18 since captain decision 190a raised the launch cap
-    // for sampling headroom; it was 3 x 8 x 18 = 432 before, and the ceiling moved with it.
+    // pin. The arithmetic itself is 7 x 10 x 18 since captain decision 190a raised the launch cap
+    // for sampling headroom and the proof-coverage lane raised the scoring cap so a gate survivor
+    // stops going unscored for cap reasons alone; it was 3 x 10 x 18 = 540 and 3 x 8 x 18 = 432
+    // before those two, and the ceiling moved with each of them.
     const s2 = T['stage2_entry'];
-    expect(s2.maxCandidatesScored * s2.maxLaunchesPerCandidate * s2.maxRequestsPerLaunch).toBe(540);
-    expect(s2.maxKeylessRequests).toBe(540);
+    expect(s2.maxCandidatesScored * s2.maxLaunchesPerCandidate * s2.maxRequestsPerLaunch).toBe(1_260);
+    expect(s2.maxKeylessRequests).toBe(1_260);
     // Each justification must name the host it governs, or the next reader re-inherits the
     // misattribution this pin exists to correct.
     expect(s2.justification.keylessMinIntervalMs).toMatch(/swap-api/);
@@ -8150,8 +8153,8 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     // declared worst case, so the dry run stays the whole exposure. `maxRequestsPerLaunch` is NOT
     // touched by any of this — it is under open captain decision 193c — and this cap multiplies it
     // rather than colliding with it.
-    expect(T.maxCandidatesScored * cap * T.maxRequestsPerLaunch).toBe(540);
-    expect(T.maxKeylessRequests).toBe(540);
+    expect(T.maxCandidatesScored * cap * T.maxRequestsPerLaunch).toBe(1_260);
+    expect(T.maxKeylessRequests).toBe(1_260);
     expect(T.maxRequestsPerLaunch).toBe(18);
 
     // The justification must say what the GAP absorbs, not merely restate the number — the whole

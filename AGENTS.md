@@ -645,13 +645,25 @@ dev currently?"*, and the shape of the answer is the point:
   `minPairs` / positive-share / era-tolerance constants all say exactly that. Inventing an anchor is
   not. **`minLaunchesSampled = 8` is the canonical case: it is a BUDGET bound** — the Stage 2 request
   ceiling is `maxCandidatesScored × maxLaunchesPerCandidate × maxRequestsPerLaunch` and the ceiling
-  and the declared worst case are kept the same number (3 × 10 × 18 = 540 since captain decision
-  190a raised the CAP to 10; it was 3 × 8 × 18 = 432 when cap and floor were equal). It is not a
+  and the declared worst case are kept the same number (**7 × 10 × 18 = 1,260** since the scoring
+  cap went 3 → 7 on 2026-08-04; it was 3 × 10 × 18 = 540 after captain decision 190a raised the
+  LAUNCH cap to 10, and 3 × 8 × 18 = 432 when cap and floor were equal). It is not a
   statistical bound, and the June report's smallest published per-launch quartile bucket is 20 — so a
   verdict resting on 8 launches is weaker evidence and the record's `launchesSampled` is how a reader
   sees it (captain decision 141a; **the FLOOR does not move — 190a raises the cap instead, and a
   future lane may not close the gap from the floor's side**).
   Do not quote `curve_last_tx_s` in any justification: it is a non-timing (see above).
+- **`maxCandidatesScored` is 7, and it is a BUDGET bound too — the survivor count cannot fix it.**
+  The 2026-08-04 full-day run left a gate-passed wallet unscored for cap reasons alone
+  (`scoringCap: {max: 3, survivorsUnscored: 1}`), which is a cap and not a refusal and is invisible
+  unless a reader opens that block. 7 is the **largest** cap that fits the ceilings already pinned
+  without moving a second threshold: `7 × 10 × 18 = 1,260` stays under `budget.maxKeylessRequests`
+  of 1,400, where 8 would be 1,440. **Do not derive it from a gate-pass rate** — the two committed
+  runs disagree by nearly an order of magnitude (4 of 82 against 5 of 12), so at the 195-candidate
+  cap the survivor count spans ~10 to ~81. It costs wall clock and nothing else: Stage 2 goes ~21/63
+  min to ~49/147 min typical/worst, the cost leg's run-level RPC worst case goes 1,500 to 3,500
+  requests, and a full default run's worst case goes ~16.4 h to ~19.2 h.
+  `thresholds.json` → `stage2_entry.justification.maxCandidatesScored` owns all of it.
 - **"Enterable" means enterable AFTER what it costs to enter, and `entry-room-present` no longer
   exists.** Fees are inside the entry window (captain, 2026-08-02) and the field's after-cost result
   ships with them (decision 136b). The strongest verdict is now `entry-open-after-costs`; two new
@@ -796,6 +808,23 @@ dev currently?"*, and the shape of the answer is the point:
   our subject is **proven 235/235** while it *bundles* 0% (Dec–Feb) → 58.5% (Apr) → 98.1% (Jul),
   175/235 overall — so the bundling rate is not stationary *for an operator that changes its habit*,
   and a shared-transaction-only reading takes the rule's blind spot for the deployer's habit.
+- **THE EVIDENCE THAT WOULD MAKE A STRANGER'S CREATE SLOT PROVABLE HAS BEEN LOOKED FOR AND IS NOT
+  THERE — DO NOT RE-DERIVE THIS** (decision 203a; `census/2026-08-04-proof-coverage-probe.md` owns
+  every figure). Two sources were measured to exhaustion. **Shared fee payer**, which the cost leg
+  already reads: **0 marks** half (a) does not already make, over 123 tape launches — fully
+  subsumed. **Jito bundle membership** (`bundles.jito.wtf`, keyless, no account), anchored on the
+  deployer's own create-slot transaction: precise (**779 cohort marks, 0 non-cohort, over 235
+  launches, 366 requests, 0 shed**, history reaching Dec 2025) and **a STRICT SUBSET of the shipped
+  union — 0 launches where it marks anything (a)∪(b) misses**. Applied to the full-day run's refused
+  stranger windows it converts **0 of 18**. **The reason is occupancy, not evidence**: those create
+  slots hold 1–10 buy transactions, and where priced the whole non-deployer stake is 0.067 SOL or
+  nothing against a ~85 SOL dev buy, so `coordinatedWallets = 0` is TRUE there rather than blind.
+  One deployer's own create transaction is in **no Jito bundle on 9 of 9** windows. **A funding
+  graph** is out of budget by two orders of magnitude and **a recurrence rule** is already refused
+  (`roomIsProven` names it). What is left is the CONSEQUENCE of refusing them — the refusal drops
+  near-zero room readings and moves the median UP toward enterable — and that question belongs to
+  `slot-zero-guard-unproven-upper-bound`, because every answer to it has the shape of the 203d the
+  captain declined.
 - **Stage 0's era-2 constant is `0.771`, not the published `0.768`** (decision 135c). `0.768` is the
   rank-43/44 order statistic of an 89-launch series whose median is `0.7708`; three recipes agree,
   including `analysis/window-population/measure.mjs`. **Never widen that tolerance instead** — it was

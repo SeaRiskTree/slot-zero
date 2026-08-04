@@ -1282,7 +1282,7 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | Solana RPC ceiling, keyless creation walk | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. Governs the creation-derived walk **when no Helius key is present**. Whichever bound bites is recorded per candidate. |
 | Helius credit ceiling, indexed creation walk | **5,200 credits per candidate**, 1,100,000 per run | `thresholds.json` → `creation_walk_helius`, and the unit is the point — this provider bills by transactions **returned**, so a request ceiling cannot bound it. 5,200 clears the largest complete history measured (49,367 succeeded transactions = 4,940 credits) **plus the per-page guard**, which demands 100 credits for the page and 11 more reserved for the curve-classification pass — at 5,000 that guard stopped the walk after 49 pages, truncating the very wallet the ceiling was sized against. The per-candidate median is 320. The run ceiling makes the default plan admissible at 195 × 5,200 = 1,014,000 and is 11% of the monthly allowance, so **nine worst-case full-cap runs fit in a month** and the expected cost of one is ~0.62%. **The two move together**: the run ceiling is checked before the first request, so raising the per-candidate one alone would refuse every default plan. A plan that does not fit is **refused before the first request**, exactly like the keyed and keyless plans. A page is only started when a whole page's worst case still fits, so the ceiling is exact and never overshot. |
 | Helius pacing | 200ms | Measured 2026-08-03 on this endpoint and plan: a ladder at 1000/500/250/100/0 ms (full mode) and 500/200/100/50/0 ms (signatures mode) shed **nothing at any rung, including 0 ms**, and 150 concurrent requests were all answered 200 at an observed 161 req/s. The walk is latency-bound rather than limit-bound — throughput was 3.98 req/s at 100 ms against 3.89 at 0 ms — so 200 ms is a courtesy floor with an order of magnitude of headroom under the documented 50 req/s, not a shed-avoidance figure. |
-| Solana RPC ceiling, cost leg | 500 requests **per candidate** | `thresholds.json` → `stage2_cost`, which owns this measurement. Measured on our own tape: the create-slot scope is p50 7 / p90 13 / max 20 transactions per launch and the whole-window scope over CLOSED create-slot outsiders is p50 18 / p90 35 / max 70, unioned so none is paid for twice — **and the union is what the walk pays for: p50 19, p90 35, p95 41, max 74 distinct transactions per launch**, so ~190 requests per candidate at the median and ~350 at p90 over 10 launches (an earlier version of this row said ~200 / ~380, which is the same arithmetic with the union left out). It was **400** until captain decision 197b: 400 covered the median and the p90 at a launch cap of 10 too, but what decision 190a's cap consumed is the **per-launch headroom** above them — 50 union transactions a launch at 400/8, only 40 at 400/10 — and a launch the ceiling cannot cover is skipped **whole**, which drags `minPricedFraction` 0.8 (a hit rate over field *entrants*) into `entry-cost-unmeasured` on exactly the busiest candidates. 500/10 = 400/8 holds that headroom constant. Worst case 3 × 500 = 1,500 requests, about 62.5 minutes, which `--dry-run` prints. **It runs only on a candidate the free legs have not already refused**, so the realistic cost is far lower. |
+| Solana RPC ceiling, cost leg | 500 requests **per candidate** | `thresholds.json` → `stage2_cost`, which owns this measurement. Measured on our own tape: the create-slot scope is p50 7 / p90 13 / max 20 transactions per launch and the whole-window scope over CLOSED create-slot outsiders is p50 18 / p90 35 / max 70, unioned so none is paid for twice — **and the union is what the walk pays for: p50 19, p90 35, p95 41, max 74 distinct transactions per launch**, so ~190 requests per candidate at the median and ~350 at p90 over 10 launches (an earlier version of this row said ~200 / ~380, which is the same arithmetic with the union left out). It was **400** until captain decision 197b: 400 covered the median and the p90 at a launch cap of 10 too, but what decision 190a's cap consumed is the **per-launch headroom** above them — 50 union transactions a launch at 400/8, only 40 at 400/10 — and a launch the ceiling cannot cover is skipped **whole**, which drags `minPricedFraction` 0.8 (a hit rate over field *entrants*) into `entry-cost-unmeasured` on exactly the busiest candidates. 500/10 = 400/8 holds that headroom constant. Worst case 7 × 500 = 3,500 requests, about 146 minutes at the scoring cap of 7 (it was 3 × 500 = 1,500 and about 62.5 minutes at the cap of 3), which `--dry-run` prints. **It runs only on a candidate the free legs have not already refused**, so the realistic cost is far lower. |
 | Solana RPC pacing | 2.5s | Measured: the nominally faster 1.4s was *slower* in wall-clock once 429 backoff is counted. Rate limiting is global across `getSignaturesForAddress` and `getTransaction`. |
 | `getTransaction` batch size | **1** | Measured harmful above 1 on `api.mainnet-beta` — see [Which history the gate counts](#which-history-the-gate-counts). It does not arise on the indexed route, which issues one request per 1,000 transactions and so has nothing left to batch. |
 | RPC retries | 3 with exponential backoff, each attempt counted against the ceiling | Unlike the keyed client, a 429 here is load-shedding and not a verdict — but a 429 storm still cannot outlast the ceiling. |
@@ -1307,8 +1307,8 @@ environment actually selects.
 | **Solana RPC, the creation walk — indexed (Helius)** | 195 × 50 pages = 9,750 requests, 1,014,000 credits | 200ms floor, ~280ms measured cycle → **~46 min** |
 | keyless `frontend-api-v3`, the gate's ownership listing | 195 × 4 = 780 requests | 2.0s → ~26 min |
 | keyless `frontend-api-v3`, `--consistency` | 195 × 3 = 585 requests | 2.0s → ~19.5 min |
-| keyless `swap-api`, Stage 2 | 3 × 10 × 18 = 540 requests | 7.0s → ~63 min |
-| **Solana RPC, Stage 2's cost leg** | 3 × 500 = **1,500** requests | 2.5s → **~62.5 min** |
+| keyless `swap-api`, Stage 2 | 7 × 10 × 18 = 1,260 requests | 7.0s → ~147 min |
+| **Solana RPC, Stage 2's cost leg** | 7 × 500 = **3,500** requests | 2.5s → **~146 min** |
 
 So: **~16.4 hours** for a default run, **~16.75** with `--consistency`. The cost leg's ~62.5 minutes
 is a worst case over three survivors; it runs only on candidates the free legs have not already
@@ -1411,11 +1411,11 @@ profile Stage 1 has already paid for, so the shared vendor allowance — which p
 
 | bound | value |
 |---|---|
-| gate survivors scored | 3 (`--score` can lower it, never raise it) |
+| gate survivors scored | 7 (`--score` can lower it, never raise it) |
 | launches per survivor, PLANNED | 10 |
 | launches that must be SCORED (`minLaunchesSampled`) | 8 |
 | **requests per launch, retries included** | 18 |
-| stage ceiling, on its own client | **540** |
+| stage ceiling, on its own client | **1,260** |
 | pacing, `swap-api` only | **7.0s** |
 
 The two launch bounds are **deliberately unequal** — captain decision 190a, 2026-08-04. The stage
@@ -1423,12 +1423,24 @@ plans 10 launches and needs 8 of them scored, so a candidate absorbs **two** dro
 it loses its verdict outright; at the 8-and-8 that preceded it, one drop cost the whole candidate.
 See “What a dropped launch costs” below.
 
-`3 × 10 × 18 = 540` — **the declared worst case and the ceiling are the same number**, so the plan
+`7 × 10 × 18 = 1,260` — **the declared worst case and the ceiling are the same number**, so the plan
 `--dry-run` prints is the whole exposure and no plan-level truncation is possible. A launch is only
 started when a full per-launch cap of headroom remains, so a run never abandons one half-walked.
 Typical cost is far lower: at the measured median of 4 pages plus shedding, about 6 requests a launch
-and ~180 for a full run. **In wall-clock terms that is about 21 minutes typical and about 63 minutes
+and ~420 for a full run. **In wall-clock terms that is about 49 minutes typical and about 147 minutes
 worst case**, and `--dry-run` prints both — a run this long must not be mistaken for a hang.
+
+**The survivor cap was 3 until 2026-08-04.** The full-day default run of that day recorded
+`scoringCap: {max: 3, survivorsUnscored: 1}` — a gate-passed wallet with 37 tokens over an 874-day
+span was never scored for cap reasons alone, which is a cap and not a refusal and is invisible in the
+verdict counts unless a reader opens `scoringCap`. 7 is the **largest** cap that fits the ceilings
+already pinned without moving a second threshold: `7 × 10 × 18 = 1,260` stays under `budget`'s 1,400,
+where 8 would be 1,440. It is a **budget bound and not a statistical one** — the two committed runs
+disagree about the gate-pass rate by nearly an order of magnitude (4 of 82 on the full-day run
+against 5 of 12 on the elite run), so no cap derived from a survivor count would mean anything.
+`thresholds.json` → `stage2_entry.justification.maxCandidatesScored` owns the arithmetic and the
+cost; it does **not** guarantee every survivor is scored, and `scoringCap.survivorsUnscored` stays
+the reader's recourse.
 
 ### Why the fill host is paced at 7s and the other keyless host is not
 
@@ -1458,12 +1470,12 @@ below. A cap on successful pages would have let a launch cost three times the pr
 The bound is **exact, not approximate**. One page can cost up to three requests (one attempt plus two
 backoffs), so the walk reserves the whole per-page cost *before* starting a page. Checking the cap
 only between pages would let a walk sitting at 17 spent requests start a page that sheds twice and
-finish at 20, and `3 × 10 × 20 = 600` overruns the 540 ceiling the dry run prints as the entire
+finish at 20, and `7 × 10 × 20 = 1,400` overruns the 1,260 ceiling the dry run prints as the entire
 exposure — surfacing as a mid-walk ceiling error and a dropped launch.
 
 Note also that the **1,400 keyless ceiling in `budget` is a per-client ceiling, not a run total**:
-`screen.mjs` builds two independent keyless clients, and Stage 2's 540 sits on its own. The enforced
-combined worst case is 1,940. The 1,400 is **derived from the candidate cap**, not chosen, and it is
+`screen.mjs` builds two independent keyless clients, and Stage 2's 1,260 sits on its own. The
+enforced combined worst case is 2,660. The 1,400 is **derived from the candidate cap**, not chosen, and it is
 derived over both passes that share the `frontend-api-v3` client: the gate's ownership listing at 4
 pages per candidate (780) plus `--consistency` at 3 pages per gate survivor (585) is 1,365 worst
 case. The previous 600 counted only the consistency pass, so gating at the default candidate cap
@@ -1690,7 +1702,8 @@ depend on them.
 The floor was **not** the adjustable half: closing the gap by lowering `minLaunchesSampled` would
 weaken the evidence a verdict rests on rather than give it headroom, and 190a names the direction.
 **No bar moved** — every scored launch clears exactly what it cleared before; two more are offered.
-The cost is requests: the stage arithmetic went `3 × 8 × 18 = 432` to `3 × 10 × 18 = 540`, and the
+The cost is requests: the stage arithmetic went `3 × 8 × 18 = 432` to `3 × 10 × 18 = 540` (and to
+`7 × 10 × 18 = 1,260` when the survivor cap rose on 2026-08-04), and the
 ceiling moved with it so the dry run is still the whole exposure. An unmeasured verdict remains *no
 answer* and never a rejection, and a drop is counted and reported where the truncated tail was
 silent. `thresholds.json` → `stage2_entry.justification.maxLaunchesPerCandidate` owns the arithmetic
@@ -2004,7 +2017,7 @@ equal, and since #17 a launch whose create slot the co-ordination rule marks not
 unproven (`measure.mjs` → `roomIsProven`, captain decision 134a). Multiplied out: **Stage 2 could
 only reach a verdict for a candidate whose most recent 8 eligible launches were every one marked, and
 one unmarked launch in eight silenced the whole candidate.** The live evidence for how large a
-population that silences was **two strangers**, because `maxCandidatesScored` is 3 and one of the
+population that silences was **two strangers**, because `maxCandidatesScored` was 3 at the time and one of the
 three was our own control.
 
 **That premise has since moved and this pass has not been re-run under it.** Captain decision 190a

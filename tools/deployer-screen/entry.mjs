@@ -68,7 +68,15 @@
  * entry looks cheaper, and the field more profitable, than either was.
  */
 
-import { createSlotGroups, median, percentile, roomIsProven, tallyCreateSlot, walletTransactions } from './measure.mjs';
+import {
+  ROOM_LEFT_RANGE,
+  createSlotGroups,
+  median,
+  percentile,
+  roomIsProven,
+  tallyCreateSlot,
+  walletTransactions,
+} from './measure.mjs';
 
 /**
  * The one limit that must travel with every cost and every after-cost figure this module produces.
@@ -472,6 +480,7 @@ export const UNMEASURED_VERDICTS = ['entry-unmeasured', 'entry-cost-unmeasured']
  * | `too-few-windows-available` | sample-size gate | the walk was never offered `minLaunchesSampled` windows — a short or too-young history, or our own `maxLaunchesPerCandidate` cap. |
  * | `windows-dropped` | sample-size gate | windows were reached and could not be walked back to the mint, so they were dropped (`Stage2Coverage.dropsByReason` says which). |
  * | `too-few-proven-windows` | sample-size gate | windows were measured perfectly well and REFUSED, because their create slot carried no bundled transaction (`measure.mjs` → `roomIsProven`, captain decision 134a). |
+ * | `room-verdict-not-robust-to-missing-launches` | near-bar guard | ENOUGH windows scored, and the launches that went missing could have moved the median across `minRoomLeft` either way, so the bar is not decided by the evidence (captain decision 198b, {@link roomBarRobustness}). |
  * | `too-few-closed-round-trips` | field gate | room was measured on a full sample and clears the bar, and the field around those launches produced fewer than `minFieldRoundTrips` complete round trips. |
  * | `too-little-of-the-field-priced` | cost gate | below `minPricedFraction` of the create-slot field could be priced on-chain — or the cost leg never ran at all. |
  * | `too-few-priced-round-trips` | cost gate | entries priced, but fewer than `minFieldRoundTrips` round trips priced across their WHOLE window, so what the field cleared after costs is unknown. |
@@ -480,9 +489,17 @@ export const UNMEASURED_VERDICTS = ['entry-unmeasured', 'entry-cost-unmeasured']
  * candidate silenced because it never had eight launches, one silenced because pump.fun shed our
  * walk, and one silenced by the co-ordination rule are three different states of the world.
  *
+ * **The near-bar guard's cause is not a variant of any of the first three and must not be read as
+ * one.** Those
+ * three say the sample was too SMALL. This one says the sample was large enough and is INCOMPLETE
+ * in a way that leaves the answer undetermined — the candidate cleared `minLaunchesSampled` and was
+ * refused anyway. A run record where an operator cannot tell those apart is a run record that reads
+ * a 198b refusal as a short history.
+ *
  * @typedef {'too-few-windows-available' | 'windows-dropped' | 'too-few-proven-windows'
  *   | 'too-few-closed-round-trips' | 'too-little-of-the-field-priced'
- *   | 'too-few-priced-round-trips'} UnmeasuredCause
+ *   | 'too-few-priced-round-trips'
+ *   | 'room-verdict-not-robust-to-missing-launches'} UnmeasuredCause
  */
 
 /** @type {readonly UnmeasuredCause[]} */
@@ -490,6 +507,7 @@ export const UNMEASURED_CAUSES = [
   'too-few-windows-available',
   'windows-dropped',
   'too-few-proven-windows',
+  'room-verdict-not-robust-to-missing-launches',
   'too-few-closed-round-trips',
   'too-little-of-the-field-priced',
   'too-few-priced-round-trips',
@@ -503,11 +521,18 @@ export const UNMEASURED_CAUSES = [
  * themselves, measured on a full sample by an instrument that does not vary between candidates.
  *
  * **NO cause is `'deployer'`, and that is the finding rather than a redundancy** (captain decision
- * 174b, revised). All six producers describe us, so a later stage may filter ONLY on the four
+ * 174b, revised). All seven producers describe us, so a later stage may filter ONLY on the four
  * MEASURED verdicts — `entry-open-after-costs`, `entry-room-absent`, `entry-cost-prohibitive`,
  * `entry-field-loss-making` — and must carry EVERY unmeasured outcome forward as no answer. The
  * field, the type and this table stay: a future producer CAN be deployer-attributable, and it has to
  * come here on purpose to become one.
+ *
+ * `room-verdict-not-robust-to-missing-launches` (captain decision 198b) is `our-coverage` for the
+ * same reason as the three above it, and the point is load-bearing rather than bookkeeping: what
+ * went missing was a launch OUR walk could not finish or OUR co-ordination rule could not prove, and
+ * the guard fires on the width of that hole rather than on anything the deployer did. Attributing it
+ * to the deployer would let a later stage drop exactly the candidates the guard was built to protect
+ * — the ones sitting near the bar.
  *
  * `too-few-closed-round-trips` was the one row attributed to the deployer, on the ground that
  * closure is read inside the pinned `windowMs` and that is the same window for every candidate. It
@@ -531,6 +556,7 @@ export const UNMEASURED_CAUSE_ATTRIBUTION = Object.freeze({
   'too-few-windows-available': 'our-coverage',
   'windows-dropped': 'our-coverage',
   'too-few-proven-windows': 'our-coverage',
+  'room-verdict-not-robust-to-missing-launches': 'our-coverage',
   'too-few-closed-round-trips': 'our-coverage',
   'too-little-of-the-field-priced': 'our-coverage',
   'too-few-priced-round-trips': 'our-coverage',
@@ -553,9 +579,9 @@ export const COVERAGE_ATTRIBUTION_CAVEAT =
  * **May a later stage filter this candidate out?** Captain decision 174b, as a predicate.
  *
  * `true` when the outcome is a statement about the deployer — today that is every MEASURED verdict
- * and nothing else, because {@link UNMEASURED_CAUSE_ATTRIBUTION} attributes all six producers to our
- * own coverage. `false` when it is a statement about our own coverage, which a consumer must carry
- * forward as *no answer* rather than drop.
+ * and nothing else, because {@link UNMEASURED_CAUSE_ATTRIBUTION} attributes all seven producers to
+ * our own coverage. `false` when it is a statement about our own coverage, which a consumer must
+ * carry forward as *no answer* rather than drop.
  *
  * Three properties are deliberate and all three fail SAFE:
  *
@@ -584,6 +610,111 @@ export function isDeployerAttributable(finding) {
   return (
     /** @type {Record<string, string | undefined>} */ (UNMEASURED_CAUSE_ATTRIBUTION)[cause] === 'deployer'
   );
+}
+
+/**
+ * @typedef {object} RoomBarRobustness
+ * @property {number} lo       Lowest median the completed sample could have had — every missing
+ *   launch at {@link import('./measure.mjs').ROOM_LEFT_RANGE}`.min`.
+ * @property {number} hi       Highest it could have had — every missing launch at `.max`.
+ * @property {boolean} decided Whether `minRoomLeft` falls OUTSIDE `[lo, hi]`, i.e. whether the
+ *   launches that went missing could not have changed which side of the bar the median lands on.
+ */
+
+/**
+ * **THE NEAR-BAR GUARD — refuse a room verdict the missing launches could have flipped.**
+ * Captain decision 198b.
+ *
+ * ## The verdict shape it exists to refuse
+ *
+ * Captain decision 190a decoupled `maxLaunchesPerCandidate` (10) from `minLaunchesSampled` (8), so a
+ * candidate keeps its verdict after losing up to two launches. That bought a real thing — the
+ * request-cap no-verdict rate — and it introduced a shape that was **structurally impossible at
+ * 8-and-8**: a candidate scored on 8 of 10 launches where the two missing ones were **selected by
+ * drop cause, not at random.** `request-cap` drops fall on the BUSIEST launches — `thresholds.json`
+ * → `stage2_entry.justification` says so in as many words — and {@link roomIsProven} refusals fall
+ * on launches with no co-ordination evidence. Neither is a coin toss over the deployer's history.
+ *
+ * This repository already discards WHOLE for exactly that shape, twice: the cost leg's truncated
+ * walk (`stage2.mjs` — *"a truncated walk holds the earliest entrants by slot, which is a biased
+ * sample rather than a short one"*) and `minPricedFraction`. This is the same rule at the room gate,
+ * applied only where the incompleteness can actually change the answer.
+ *
+ * ## WHAT THE MARGIN IS ANCHORED TO — and what it is NOT
+ *
+ * **It is not anchored to the direction of the bias, and it is built so that it does not need one.**
+ * The direction is UNMEASURED and the attempt to measure it is on record as having failed. Over the
+ * committed tape, busyness against `roomLeft`: rank correlation **0.0250** (negligible);
+ * busiest-quartile median room **0.3032** against the quietest quartile's **0.2771**, i.e. busy
+ * reads HIGHER; and dropping the busiest 3.1% moves the median **0.3146 → 0.3314**, i.e. **0.0168**
+ * TOWARDS enterable. Two statistics opposite in sign, on **n = 1 deployer**. Nothing may be pinned
+ * from that, and a margin invented to look derived from it would be the anchor-fabrication this
+ * repo's own justification bar exists to catch.
+ *
+ * **It is anchored to one ALGEBRAIC fact plus the candidate's own order statistics, and there is
+ * therefore NO new pinned number in `thresholds.json`.** The fact is
+ * {@link import('./measure.mjs').ROOM_LEFT_RANGE}: `roomLeft` is a share of non-negative create-slot
+ * buy SOL, so it lies in `[0, 1]` by construction and not by observation. A launch nobody walked has
+ * an UNKNOWN room, but a BOUNDED one. The median is monotone non-decreasing in every observation, so
+ * putting all the missing launches at the bottom of that range yields the lowest median the complete
+ * sample could have had and putting them all at the top yields the highest — exactly, with no search
+ * and no distributional assumption. If `minRoomLeft` falls inside `[lo, hi]` the evidence does not
+ * decide the bar, and the verdict is refused.
+ *
+ * So the effective margin is **the sample's own dispersion around the bar**, recomputed per candidate
+ * with the same {@link median} the reported figure uses. It is narrow for a candidate whose launches
+ * agree with each other and wide for one whose do not, which is the behaviour a fixed margin could
+ * only approximate. At the live 10-and-8 it is at most one order statistic wide in each direction,
+ * because at most two launches can be missing from a candidate that scores at all.
+ *
+ * ## Five properties, all deliberate
+ *
+ * - **It is SYMMETRIC**, and that follows from the direction being unmeasured rather than from
+ *   taste. It refuses a would-be `entry-open-after-costs` and a would-be `entry-room-absent` alike.
+ *   The second half matters as much as the first: `entry-room-absent` is a MEASURED verdict a later
+ *   stage may filter on ({@link isDeployerAttributable}), so shipping one off a subsample that could
+ *   equally have cleared the bar is the invisible false rejection this screen exists to remove.
+ * - **It is a WORST CASE, not an estimate**, and it is therefore wider than any displacement anyone
+ *   has measured — the only magnitude on record is the 0.0168 above. It will refuse candidates whose
+ *   true median would not in fact have moved. That is the accepted direction: the standing bar is
+ *   that a false positive is not an acceptable result, and a refusal is.
+ * - **Over-refusal is cheap BECAUSE of how the refusal is labelled.** It is `our-coverage`, so a
+ *   later stage must carry the candidate forward as no answer rather than drop it (decision 174b).
+ *   The candidate is not lost, it is unanswered — and re-walking it later can answer it.
+ * - **A complete sample is untouched.** With nothing missing, `lo` and `hi` are both the reported
+ *   median, so `decided` is true for any bar and this cannot fire. No 10-of-10 candidate's behaviour
+ *   changes, and nothing before decision 190a is retro-graded.
+ * - **An empty sample is NOT decided.** `lo`/`hi` are `NaN` and both comparisons are false, so the
+ *   caller refuses. {@link scoreEntry} cannot reach that (the sample-size gate returns first), but
+ *   the exported function fails safe for anyone who can.
+ *
+ * ## What it does NOT cover, stated so nobody reads it as broader than it is
+ *
+ * **Only the room bar.** The field legs (`minFieldHitRateGross`, `minFieldHitRateNet`) and the cost
+ * leg (`maxEntryCostPerSolStaked`) run over the same incomplete set of launches and are NOT guarded
+ * here. The room bar is the one this guard was authorised for, it is the first gate, and its
+ * statistic is one observation per launch — which is what makes this bound exact. The pooled field
+ * statistics would need a different construction and their own decision.
+ *
+ * **The committed tape cannot exercise it, and that is a limit of the evidence rather than a passing
+ * check.** Our subject deployer is proven 235/235 under the union co-ordination rule and its tape
+ * carries no walk drops, so `missing` is 0 at every point of Stage 0's replay and the guard is
+ * silent there by construction. Stage 0's verdicts — including both halves of the known-negative
+ * control — are unchanged for that reason, and not because the guard was checked against them.
+ *
+ * @param {readonly number[]} roomLeft Room figures for the launches that WERE scored.
+ * @param {number} missing             Launches planned for this candidate that produced no room
+ *   figure: dropped by the walk, refused as unproven, or never started. Never negative.
+ * @param {number} minRoomLeft         The bar, `thresholds.json` → `stage2_entry.minRoomLeft`.
+ * @returns {RoomBarRobustness}
+ */
+export function roomBarRobustness(roomLeft, missing, minRoomLeft) {
+  const absent = Math.max(0, Math.trunc(missing));
+  const lo = median([...roomLeft, ...Array.from({ length: absent }, () => ROOM_LEFT_RANGE.min)]);
+  const hi = median([...roomLeft, ...Array.from({ length: absent }, () => ROOM_LEFT_RANGE.max)]);
+  // Written as two positive comparisons rather than `!(lo < bar && hi >= bar)` so that a NaN from an
+  // empty sample makes both false and leaves the bar UNDECIDED, which is the safe answer.
+  return { lo, hi, decided: hi < minRoomLeft || lo >= minRoomLeft };
 }
 
 /**
@@ -734,6 +865,15 @@ export function isDeployerAttributable(finding) {
  * capital. Those launches are removed from **both** legs before anything is computed: they
  * contribute no room figure, no field entrant and no round trip. Captain decision 134a.
  *
+ * ## And a sample that is COMPLETE ENOUGH can still fail to decide the room bar
+ *
+ * Passing `minLaunchesSampled` says the sample is big enough. It does not say the launches that went
+ * missing were harmless, and since captain decision 190a a candidate can be scored with two of them
+ * gone — chosen by drop cause rather than at random. {@link roomBarRobustness} is the guard on that
+ * and owns the whole argument, including what its margin is and is not anchored to. It runs between
+ * the sample-size gate and the room bar, refuses in BOTH directions, and costs nothing on a complete
+ * sample.
+ *
  * The consequence is deliberate and it is the safe one. A candidate whose proven launches fall
  * below `minLaunchesSampled` scores `entry-unmeasured` — never `entry-open-after-costs`, and never
  * folded in with a refusal. **It is `too-few-proven-windows` specifically**, and it is
@@ -775,6 +915,12 @@ export function isDeployerAttributable(finding) {
  * @param {number} [context.mintTimeDisagreements] Of those, the ones dropped because the vendor's
  *   mint time and the fill tape disagreed. Called out separately because it is the one drop cause
  *   that says the method's own assumption has broken rather than that a launch was awkward.
+ * @param {number} [context.launchesPlanned] Launches the walk SET OUT to measure for this candidate
+ *   — `stage2.mjs`'s `planned.length`. {@link roomBarRobustness} needs the size of the hole, and
+ *   this is the only accounting that closes over every way a launch can fail to produce a room
+ *   figure: dropped mid-walk, refused as unproven, or never started because the stage ceiling ran
+ *   out before its turn. Absent, the hole falls back to `launches.length + launchesDropped`, which
+ *   misses only that last case — so a caller that can supply this should.
  * @returns {EntryScore}
  */
 export function scoreEntry(launches, t, context = {}) {
@@ -972,6 +1118,41 @@ export function scoreEntry(launches, t, context = {}) {
           `open — read it as no answer about this wallet.`
         : '') +
       (dropped > 0 ? ` ${dropped} window(s) were dropped for incomplete coverage.` : '');
+    return score;
+  }
+
+  // THE NEAR-BAR GUARD, captain decision 198b. It sits here — after the sample-size gate and before
+  // the first bar — because a sample that is too SMALL is already answered above, and because a
+  // candidate refused here must not go on to spend Solana RPC requests pricing a field whose room
+  // reading was never decided. `scoreCandidateEntry` starts the cost leg only on
+  // `entry-cost-unmeasured`, so returning an unmeasured verdict from this point is also what makes
+  // the guard free.
+  //
+  // The hole is measured against what the walk PLANNED, not against what it brought back, so every
+  // way a launch can go missing is counted once: dropped mid-walk, refused as unproven, or never
+  // started. The `Math.max` is belt and braces — `launchesPlanned` is always at least
+  // `launches.length + dropped` in a real run — and it means a caller that supplies neither, or a
+  // stale one that supplies too small a plan, can never make the hole look smaller than the two
+  // causes `scoreEntry` can see for itself.
+  const missingLaunches = Math.max(
+    roomUnproven + dropped,
+    (context.launchesPlanned ?? 0) - scored.length,
+  );
+  const robustness = roomBarRobustness(room, missingLaunches, t.minRoomLeft);
+  if (!robustness.decided) {
+    attributeUnmeasured(score, ['room-verdict-not-robust-to-missing-launches']);
+    score.rationale =
+      `${scored.length} launch window(s) scored — enough — but ${missingLaunches} of the ` +
+      `${scored.length + missingLaunches} planned produced NO room figure, and they did not go ` +
+      `missing at random: a walk drops the BUSIEST windows at the request cap, and the ` +
+      `co-ordination rule refuses the ones with no evidence in them. Median room over what ` +
+      `survived is ${fmt(roomLeft.median)}, but completing the sample puts it anywhere in ` +
+      `[${fmt(robustness.lo)}, ${fmt(robustness.hi)}] — an interval that CONTAINS the ` +
+      `${t.minRoomLeft} bar, so this sample does not decide which side of it this deployer is on. ` +
+      `The bounds are exact: room is a share and lies in [${ROOM_LEFT_RANGE.min}, ` +
+      `${ROOM_LEFT_RANGE.max}] by construction. WHICH WAY the missing launches lean is UNMEASURED ` +
+      `— which is why this refuses in both directions rather than correcting in one. Read it as no ` +
+      `answer about this wallet, not as a room finding (captain decision 198b).`;
     return score;
   }
 

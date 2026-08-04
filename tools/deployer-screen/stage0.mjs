@@ -707,6 +707,14 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
  * `maxLaunchesPerCandidate` launches against `minRoomLeft`, and a window with fewer than
  * `minLaunchesSampled` scoreable launches is UNMEASURED, exactly as `scoreEntry` would have it.
  *
+ * **ONE live rule is deliberately NOT replayed: captain decision 198b's near-bar guard** (`entry.mjs`
+ * → `roomBarRobustness`), and leaving it out makes this control STRICTER rather than staler. The
+ * guard can only turn a measured window into an unmeasured one, so its false-positive count is a
+ * subset of the count below — asserting 0 here asserts 0 under the live rule too. It would also be
+ * dead code here: this tape's launches are proven 235/235 under the union rule and carry no walk
+ * drops, so the guard's hole is 0 at every window and it could never fire. That is a limit of the
+ * one tape this repository holds, not a check the guard passed.
+ *
  * **Only false positives fail.** A false negative is the accepted price of decision 134a — refusing
  * to score an unproven opening costs real coverage, and on this tape it turns windows that truly
  * had room into `unmeasured`. A null result is acceptable; a false positive is not. `unmeasured`

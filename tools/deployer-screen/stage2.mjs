@@ -418,6 +418,11 @@ export async function scoreCandidateEntry(client, input) {
     candidateWallet: input.wallet,
     launchesDropped: dropped,
     mintTimeDisagreements: dropsByReason.mintTimeDisagreement,
+    // What the walk SET OUT to measure, which is the denominator `entry.mjs` → `roomBarRobustness`
+    // needs (captain decision 198b). `launchesDropped` alone would miss the launches the stage
+    // ceiling left unattempted after the `break` above: they were planned, they produced no room
+    // figure, and they are the OLDEST of the plan rather than a random pick of it.
+    launchesPlanned: planned.length,
   };
   let score = scoreEntry(
     measured.map((m) => m.entry),

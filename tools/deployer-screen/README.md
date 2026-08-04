@@ -681,6 +681,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 9 | no new candidate ROW field, no new `entry` field, no new `entry.coverage` field and no new `spend` field: `PERSISTED_BY_SCHEMA[9]`, `ENTRY_KEYS_BY_SCHEMA[9]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[9]` and `SPEND_KEYS_BY_SCHEMA[9]` all equal `[8]`. **What changed is where the launch history comes from: creation ENUMERATION is primary on Dune** (captain decision 156a). A new run-level `dune` block carries the coverage probe's own bounds and the Dune spend in its own units — `used`, `reason`, `rejected`, `unusableNote`, `endpoint`, `creationQueryId`, `coverageQueryId`, `executions`, `executionCeiling`, `requests`, `resultBytes`, `estimatedCredits`, `rowsReturned`, `unreadableRows`, `walletsRefusedByShape` and `coverage` (which tables were probed, from when to when, which are READ by the enumeration, months with no row, and why a probe refused). It is a block of its own rather than five more `spend` keys because Dune is a fourth vendor in a fourth unit — executions plus bytes against a SHARED monthly allowance, where a FAILED execution is billed exactly like a successful one — and `estimatedCredits` is an **estimate**, the published 20 credits/MB applied to the bytes the vendor's own metadata declared, with compute billed on top. Each candidate's `creation` block gains `enumerationSource` (`dune` | `helius` | `keyless-rpc`), `duneLaunches`, `duneFallbackReasons` and `creatorMovementUnmeasured`. **The one that will bite: on a schema-≤8 record `creation.movedCreator: 0` means the walk read every curve and none had moved. On a schema-9 record whose `enumerationSource` is `dune` it means nothing was looked at** — Dune says who created a mint and whether it completed, and nothing about who owns the curve today — and `creatorMovementUnmeasured` is the size of what went unmeasured. Do not add the two, and do not read a Dune-sourced 0 as the walk's 0. On a Dune-sourced candidate `rpcRequests`, `loadShedEvents`, `signaturesScanned`, `signaturesSucceeded`, `transactionsInspected` and `curvesUnread` all read 0 because no walk happened, and `stopReason` is `dune-enumerated`, which is not a stop at all; `coveredFromIso`/`coveredToIso` are the PROBE's bound rather than a walk's window and `wholeHistory` is true inside it. **A single run may carry both sources**: the coverage probe refuses a wallet at a time, so a wallet whose earliest launch sits at or before the probed surfaces' own first row falls back to the walk while the rest of the batch does not. `duneFallbackReasons` is why a candidate fell back, and it is not only coverage — an unreadable row anywhere in the answer refuses the whole batch, a wallet the enumeration returned no row for is refused as an absence of evidence rather than read as zero launches, and a candidate whose address is not base58-shaped is never sent at all (`walletsRefusedByShape` counts those). |
 | 10 | no new candidate ROW field, no new `entry.coverage` field, no new `spend` field, no new `dune` field and no new `creation` field: `PERSISTED_BY_SCHEMA[10]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[10]`, `SPEND_KEYS_BY_SCHEMA[10]`, `DUNE_KEYS_BY_SCHEMA[10]` and `CREATION_KEYS_BY_SCHEMA[10]` all equal `[9]`. **What changed is that an UNMEASURED verdict now says which of its six producers reached it, and whose fact that is** (captain decision 174b). `entry` gains `unmeasuredCause` (one of `entry.mjs` → `UNMEASURED_CAUSES`, or `null` on a measured verdict), `unmeasuredCauseAttribution` (`our-coverage` | `deployer` | `null`) and `unmeasuredContributingCauses` (every producer that applied, primary first — the three sample-size causes can co-occur). **The verdict vocabulary is UNCHANGED**, so unlike the schema-6 boundary a schema-9 verdict and a schema-10 verdict are the same six values and are directly comparable; what an older record cannot do is say WHY an unmeasured one was reached. **The one that will bite:** all six producers are facts about OUR coverage — the walk was never offered `minLaunchesSampled` windows, windows were dropped, windows were REFUSED as unproven openings (decision 134a), the field closed too few round trips inside a window whose tail our own walk truncates, too little of the field priced, too few round trips priced end to end. So `verdict !== 'entry-unmeasured'` is a filter on our own budget and evidence wearing a measurement's clothes, and a later stage may filter only on a MEASURED verdict at any schema version. On a schema-≤9 record the cause is genuinely absent and **must not be reconstructed**: `entry.mjs` → `isDeployerAttributable` answers `false` for the whole unmeasured family there, which is the safe direction. See “What a later stage may filter on” below. |
 | 11 | no new candidate ROW field, no new `entry.coverage` field, no new `spend` field and no new `dune` field: `PERSISTED_BY_SCHEMA[11]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[11]`, `SPEND_KEYS_BY_SCHEMA[11]` and `DUNE_KEYS_BY_SCHEMA[11]` all equal `[10]`. **What changed is the CO-ORDINATION RULE: it became a UNION** (captain decision 182a) of the existing shared-transaction rule, unchanged, and the deployer-anchored contiguous block-index run at step 1. `entry` gains `runTx` (transactions in that run, anchor included) and `adjacencyMarks` (wallets the run marked that the shared-transaction rule did not) beside `bundledTx` and `maxWalletsInOneTx`. It costs no request, no host and no vendor quota — `sid` is already on every fill the walk fetched. **THE ONE THAT WILL BITE: a schema-≤10 `entry.roomLeft` is not comparable with a schema-11 one, and the older figure is the HIGHER of the two.** A wallet that rode the deployer's bundle without ever sharing a transaction used to be counted as an outsider, so its stake sat in `independentSol` and inflated `roomLeft`; `sharedTx ⊆ union` by construction, so the correction can only move a room reading DOWN. `adjacencyMarks` is the size of what the union added per launch, and therefore the measure of what an older record's room figure was carrying. On the committed tape it removes **180 create-slot wallet-instances from the field** (1,502 → 1,322) and **every one of the 180 is a NAMED cohort wallet** — so a schema-≤10 record's field figures, `outsidersPerLaunch`, `fieldEntrants` and every P&L distribution built on them were partly measuring the operation's own wallets as competitors. `launchesRoomUnproven` changes meaning the same way — it counts launches NEITHER half marked anything in, and on the committed tape the refusal falls from 60 of 235 launches to 0. **No bar was relaxed**: decision 134a's refusal is untouched and `minLaunchesSampled`/`maxLaunchesPerCandidate` are unmoved (decision 141a stands); the rule sees more, so it refuses less. **The `stage0` block is not comparable across the boundary either, and a published constant moved**: `stage2SeamReproduction`'s era-2 entry reads `n: 89, nRoomUnproven: 0` at a measured share of **0.770796** where a schema-5..10 record reads `n: 86, nRoomUnproven: 3` at **0.769153** — the published `0.771` it is compared against is UNCHANGED and the measured figure moved towards it, the structural and named-cohort estimators becoming the same number to six decimals over the full 89. `rollingRoom` goes from `unmeasured: 81, present: 53, absent: 94` to `unmeasured: 0, present: 88, absent: 140`, `falsePositives: 0` on both sides. The block gains `adjacencyRuns`, the tripwire on the `sid` block-index signal, persisted because that signal fails SILENTLY and towards refusal. The correction is recorded in `data/population-tape-2026-07-29/IMPORT.md` → "Corrections"; `report.md` and the dataset README are a primary record and are not edited. |
+| 12 | no new key ANYWHERE: `PERSISTED_BY_SCHEMA[12]`, `ENTRY_KEYS_BY_SCHEMA[12]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[12]`, `SPEND_KEYS_BY_SCHEMA[12]`, `DUNE_KEYS_BY_SCHEMA[12]` and `CREATION_KEYS_BY_SCHEMA[12]` all equal `[11]`. **What changed is the DOMAIN of an existing field: `entry.unmeasuredCause` gains a seventh value, `room-verdict-not-robust-to-missing-launches`** (captain decision 198b). The version is bumped precisely because no key-set assertion can see this — a consumer that enumerated the six causes would otherwise meet a seventh with nothing saying so, which is the same hole schema 10 exists to close one level up. **What it means.** Decision 190a decoupled `maxLaunchesPerCandidate` (10) from `minLaunchesSampled` (8), so a candidate keeps its verdict after losing up to two launches — and the missing ones are chosen by DROP CAUSE, not at random: the request cap takes the busiest windows and `roomIsProven` takes the ones with no co-ordination evidence. `entry.mjs` → `roomBarRobustness` now refuses a room verdict whenever completing that hole could have put the median on the other side of `minRoomLeft`, in EITHER direction, because the direction of the bias is unmeasured. **No `thresholds.json` value moved and no new one was pinned** — the interval is the sample's own reachable median range under `measure.mjs` → `ROOM_LEFT_RANGE`, which is algebraic. **Two ways to misread it.** (1) It is NOT a sample-size cause: `entry.launchesSampled` on such a record is at or ABOVE `minLaunchesSampled`, where every `too-few-*` record sits below it — the candidate had enough windows and was refused anyway. (2) A schema-≤11 record's *absence* of this cause is not evidence its sample was robust; the guard did not exist, so a schema-11 `entry-room-absent` or `entry-open-after-costs` reached over 8 of 10 launches is exactly the shape 198b refuses today and is not comparable with a schema-12 one. Committed records are never retro-edited, so the older reading stays legal — what it cannot do is stand in for a guarded one. |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -957,6 +958,57 @@ instances and falsely marked 4 outsiders; it is behavioural inference where ever
 a structural fact, and it is contaminated by general-purpose snipers who turn up across many
 unrelated deployers, which separating needs a cross-deployer denominator the screen does not build.
 
+#### A sample two launches short does not get to decide a bar it cannot reach
+
+Captain **decision 190a** decoupled `maxLaunchesPerCandidate` (10) from `minLaunchesSampled` (8), so
+a candidate keeps its verdict after losing up to two launches. That bought a real thing — the
+no-verdict rate on request-cap drops — and it made reachable a verdict shape that was **structurally
+impossible at 8-and-8**: a candidate scored on 8 of 10 launches where **the two missing ones were
+selected by drop cause, not at random.** Request-cap drops fall on the busiest launches;
+`roomIsProven` refusals fall on launches with no co-ordination evidence. Neither is a coin toss over
+the deployer's history, and this repository already discards *whole* for exactly that shape twice —
+the cost leg's truncated walk ("a truncated walk holds the earliest entrants by slot, which is a
+biased sample rather than a short one") and `minPricedFraction`.
+
+Captain **decision 198b** answers it with a guard rather than a revert: `entry.mjs` →
+`roomBarRobustness`, which **refuses to score a candidate when a launch went missing AND completing
+the sample could have put the median on the other side of `minRoomLeft`.** The headroom is kept
+wherever it is safe and declined where it is not.
+
+**The argument for the margin — and the statistics behind it — live with the code.** `entry.mjs` →
+`roomBarRobustness`'s doc is the owner: what the band is anchored to, why the direction of the bias
+is **UNMEASURED** (the attempt is on record as having failed, two statistics opposite in sign on
+**n = 1 deployer**), and why **no number is pinned for it in `thresholds.json`** — the band is the
+candidate's own reachable median range, derived from `measure.mjs` → `ROOM_LEFT_RANGE` and the
+candidate's own order statistics. Read it there rather than here; the consequences are below.
+
+**Five consequences, all deliberate.**
+
+- **It refuses in BOTH directions**, which follows from the direction being unmeasured rather than
+  from taste. `entry-room-absent` is a *measured* verdict a later stage may filter on, so shipping
+  one off a subsample that could equally have cleared the bar is the invisible false rejection this
+  screen exists to remove — the same harm as a false pass, pointing the other way.
+- **It is a worst case, not an estimate**, and therefore wider than the only displacement magnitude
+  anyone has measured (that figure is with the argument, in `roomBarRobustness`). It will refuse
+  candidates whose true median would not in fact have moved. That is the accepted direction: the
+  standing bar is that a false positive is not an acceptable result, and a refusal is.
+- **Over-refusing is cheap because of how the refusal is labelled.** It is
+  `room-verdict-not-robust-to-missing-launches`, attribution `our-coverage`, so a later stage must
+  carry the candidate forward as *no answer* rather than drop it. The candidate is unanswered, not
+  lost, and a later walk can answer it.
+- **A complete sample is untouched.** With nothing missing the interval collapses to the reported
+  median, so a 10-of-10 candidate cannot trip it and nothing before 190a is retro-graded.
+- **It covers the ROOM bar only.** The field legs and the cost leg run over the same incomplete set
+  of launches and are *not* guarded here. That is the scope 198b authorised; a pooled statistic would
+  need a different construction and its own decision.
+
+**What the committed tape can and cannot say about it.** Our subject deployer is proven 235/235 under
+the union rule and its tape carries no walk drops, so the hole is 0 at every window and **this tape
+cannot exercise the guard at all**. Stage 0 staying green — both halves of the known-negative control
+included — is a consequence of that, not evidence the guard was checked against it. The behaviour is
+pinned by unit fixtures instead, and the limit is asserted rather than left to be assumed
+(`test/deployer-screen.test.ts` → *"the committed tape CANNOT exercise this guard"*).
+
 ### 2. The field
 
 What every **other** sniping wallet on those same launches achieved: what it was filled for, how much
@@ -1096,7 +1148,7 @@ so the exit question is worth asking** — and nothing more.
 | `entry-cost-unmeasured` | the free legs passed and the cost leg could not price enough of the field. **Terminal for that candidate in that run, and never a pass. Two distinct producers — see below.** | yes, and it ran out |
 | `entry-cost-prohibitive` | room present and priced, and the price of the seat consumes the opening. | yes |
 | `entry-open-after-costs` | all three legs allow it. | yes |
-| `entry-unmeasured` | too few usable launches for any distribution, or too few closed round trips to read the field. **Four distinct producers — see below.** | no |
+| `entry-unmeasured` | too few usable launches for any distribution, too few closed round trips to read the field, or **enough** launches with a hole in them the room bar sits inside (decision 198b). **Five distinct producers — see below.** | no |
 
 **`entry-room-present` was removed, not renamed.** Under the captain's ruling of 2026-08-02 fees are
 part of the entry window and "enterable" means enterable *after what it costs to enter*, so a verdict
@@ -1122,7 +1174,7 @@ which `too-few-closed-round-trips` was attributed to the deployer and was the on
 stage could filter an unmeasured candidate on. That rule is superseded — history is not rewritten,
 so a reader who finds only the old message must be led here. What follows is what the code does.
 
-The two unmeasured verdicts are not one finding each. Between them they have **six distinct
+The two unmeasured verdicts are not one finding each. Between them they have **seven distinct
 producers**, enumerated from `entry.mjs` → `scoreEntry` rather than from intent, and they do not
 describe the same kind of thing:
 
@@ -1131,11 +1183,12 @@ describe the same kind of thing:
 | `too-few-windows-available` | `entry-unmeasured` | **our-coverage** | the walk was never offered `minLaunchesSampled` windows — a short or too-young history, or our own `maxLaunchesPerCandidate` cap. |
 | `windows-dropped` | `entry-unmeasured` | **our-coverage** | windows were reached and could not be walked back to the mint. `entry.coverage.dropsByReason` says which. |
 | `too-few-proven-windows` | `entry-unmeasured` | **our-coverage** | windows were measured perfectly well and **refused**: no bundled transaction in the create slot, so the co-ordination rule recovered nothing (decision 134a). |
+| `room-verdict-not-robust-to-missing-launches` | `entry-unmeasured` | **our-coverage** | **enough** windows scored, and the launches that went missing — dropped, refused as unproven, or never started — could have moved the median across `minRoomLeft` either way, so the bar is not decided by the evidence (captain decision 198b, `entry.mjs` → `roomBarRobustness`). Read it beside `entry.launchesSampled`: this one is at or above the floor, the three above it are below it. |
 | `too-few-closed-round-trips` | `entry-unmeasured` | **our-coverage** | room was measured on a full sample and clears the bar, and the field around those launches produced fewer than `minFieldRoundTrips` complete round trips — read inside a window whose tail our own walk truncates (see below). |
 | `too-little-of-the-field-priced` | `entry-cost-unmeasured` | **our-coverage** | below `minPricedFraction` of the create-slot field priced on-chain, or the cost leg never ran. |
 | `too-few-priced-round-trips` | `entry-cost-unmeasured` | **our-coverage** | entries priced, but too few round trips priced across their **whole** window. |
 
-**All six are facts about us. None is a fact about the deployer.** So:
+**All seven are facts about us. None is a fact about the deployer.** So:
 
 > **A later stage may filter on a MEASURED verdict — `entry-open-after-costs`, `entry-room-absent`,
 > `entry-cost-prohibitive`, `entry-field-loss-making` — and never on an unmeasured one, whatever

@@ -244,11 +244,11 @@ export function renderEntry(e, coverage) {
   const L = [];
   L.push(`      ENTRY: ${e.verdict.toUpperCase()}`);
   // Captain decision 174b, on the face of the run rather than only in the record. An unmeasured
-  // verdict is six unrelated producers and the operator has to be able to see which fired. All six
-  // are OUR COVERAGE today — a limit of this reading, never grounds for dropping the wallet — but
-  // the attribution is printed from the score rather than assumed, so a future deployer-attributed
-  // producer says so here without a second edit. The check is nullish: a schema-≤9 `entry` row
-  // carries no field at all and must not fall into this branch.
+  // verdict is seven unrelated producers and the operator has to be able to see which fired. All
+  // seven are OUR COVERAGE today — a limit of this reading, never grounds for dropping the wallet
+  // — but the attribution is printed from the score rather than assumed, so a future
+  // deployer-attributed producer says so here without a second edit. The check is nullish: a
+  // schema-≤9 `entry` row carries no field at all and must not fall into this branch.
   if (e.unmeasuredCause != null) {
     L.push(
       `      CAUSE: ${e.unmeasuredCause.toUpperCase()} — ` +
@@ -945,9 +945,9 @@ export function renderStage1(run) {
     L.push('  the absence of a finding rather than a finding of absence: the seat went unpriced, which');
     L.push('  is never evidence that it was cheap.');
     // Captain decision 174b. The legend is where a reader learns what a verdict is worth, so it is
-    // where the filter rule belongs too — an unmeasured verdict is six producers and every one of
+    // where the filter rule belongs too — an unmeasured verdict is seven producers and every one of
     // them is ours.
-    L.push('  EVERY unmeasured verdict prints a CAUSE line saying WHOSE fact it is, and all six');
+    L.push('  EVERY unmeasured verdict prints a CAUSE line saying WHOSE fact it is, and all seven');
     L.push('  producers are OUR COVERAGE. A later stage may filter ONLY on a MEASURED verdict, and');
     L.push('  never on an unmeasured one whatever its cause: an unmeasured outcome is no answer and');
     L.push('  must be carried forward, counted, never dropped. Filtering on the verdict alone');

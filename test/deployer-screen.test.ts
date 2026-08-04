@@ -3861,7 +3861,7 @@ describe('the keyless boundary holds in both directions', () => {
     'fieldClosedRoundTripsPriced',
   ];
   // Schema 10: WHY an unmeasured verdict was reached, and WHOSE fact that is. Six producers had
-  // collapsed onto two labels, five of them describing our own coverage — so a consumer writing
+  // collapsed onto two labels, every one of them describing our own coverage — so a consumer writing
   // `verdict !== 'entry-unmeasured'` was filtering on our budget while believing it was filtering on
   // a measurement. The verdict vocabulary itself is UNCHANGED, which is what makes a schema-9 and a
   // schema-10 verdict directly comparable, unlike the schema-6 boundary.
@@ -6540,12 +6540,12 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
   // ---------------------------------------------------------------------------------------------
   // CAPTAIN DECISION 174b — the unmeasured verdicts, split by cause.
   //
-  // `entry-unmeasured` and `entry-cost-unmeasured` had SIX distinct producers between them, five of
-  // which describe our own coverage and one of which describes the deployer. A consumer writing
+  // `entry-unmeasured` and `entry-cost-unmeasured` had SIX distinct producers between them, every
+  // one of which describes our own coverage. A consumer writing
   // `verdict !== 'entry-unmeasured'` was therefore filtering on our budget and our evidence while
   // believing it was filtering on a measurement — the same invisible false rejection this screen
   // exists to remove, one layer down. These tests pin each producer separately and pin that a
-  // consumer applying the safe filter does not absorb the coverage-caused ones.
+  // consumer applying the safe filter absorbs none of them: only a MEASURED verdict is filterable.
 
   /**
    * A launch whose CREATE SLOT priced completely and whose later window did not — the shape that

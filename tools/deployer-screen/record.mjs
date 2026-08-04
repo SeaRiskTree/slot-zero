@@ -180,14 +180,15 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   **What a reader of an older record must not do: infer the cause.** `entry-unmeasured` and
  *   `entry-cost-unmeasured` have six distinct producers between them (`entry.mjs` →
  *   `UNMEASURED_CAUSES`), and on a schema-≤9 record the label cannot say which fired. **All six are
- *   facts about OUR coverage** — the walk was never offered enough windows, windows were dropped,
- *   windows were REFUSED as unproven openings (decision 134a), the field closed too few round trips
- *   inside a window whose tail our own walk truncates, too little of the field priced, too few round
- *   trips priced end to end. The last of those is the one that reads like a fact about the deployer
- *   and is not: `readLaunchWindow` seeks 65,000 ms but counts 160 slots, so the window's tail goes
- *   unfetched by an amount that moves with slot drift and the lost fills are disproportionately late
- *   sells — making `closed.length` partly a function of WHEN a candidate's launches happened, a
- *   time-varying limit of ours. So a consumer filtering on `verdict !== 'entry-unmeasured'` against
+ *   facts about OUR coverage** — `too-few-windows-available` (the walk was never offered enough
+ *   windows), `windows-dropped`, `too-few-proven-windows` (REFUSED as unproven openings, decision
+ *   134a), `too-few-closed-round-trips`, `too-little-of-the-field-priced` and
+ *   `too-few-priced-round-trips`. **`too-few-closed-round-trips` is the one that reads like a fact
+ *   about the deployer and is not**: `readLaunchWindow` seeks 65,000 ms but counts 160 slots, so the
+ *   window's tail goes unfetched by an amount that moves with slot drift and the lost fills are
+ *   disproportionately late sells — making `closed.length` partly a function of WHEN a candidate's
+ *   launches happened, a time-varying limit of ours. So a consumer filtering on
+ *   `verdict !== 'entry-unmeasured'` against
  *   an older record is filtering on its own budget and evidence while believing it is filtering on a
  *   measurement — and the rule at ANY schema version is that a later stage filters only on a
  *   MEASURED verdict, never on an unmeasured one whatever its cause. That attribution was settled

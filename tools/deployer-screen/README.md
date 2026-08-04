@@ -867,7 +867,8 @@ rather than argued for in prose.
 
 **What it does NOT do.** It does not rescue a deployer that co-ordinates without Jito, or one that
 accumulates in the slots after the create slot — 6 of the census's 11 never-bundling candidates stay
-correctly unproven. And whether an adjacent transaction is a true bundle or merely the leader's
+correctly unproven, which the union re-run has since measured rather than projected: `runTx` 1 on
+48 of 48 of their windows. And whether an adjacent transaction is a true bundle or merely the leader's
 packing order is an **inference**: nothing keyless exposes a bundle id. The arithmetic is unaffected
 either way, but this marks adjacency, not a decoded bundle.
 
@@ -918,9 +919,10 @@ union it costs **0 windows and 0 launches**, with false positives still **0**. N
 get there — decision 134a's refusal is untouched, and `minLaunchesSampled` / `maxLaunchesPerCandidate`
 are unmoved (decision 141a) — the rule simply sees more, so it refuses less. On a stranger the trade
 still applies and still cannot be priced, because there is no ground truth to price it against.
-**How often it fired on strangers under half (a) alone is measured** — 1 candidate in 14 survived it,
-see "The bundling census" below; that census predates the union and re-running it under the union is
-a separate queued lane. `bundledTx`, `maxWalletsInOneTx`, `runTx` and `adjacencyMarks` reach the
+**How often it fires on strangers is measured under BOTH halves** — the census was re-run under the
+union on captain decision 183a, and **1 candidate in 14 survives it either way**: per-launch proof
+went 0.1607 → 0.3929 while the 8-of-8 headline did not move. See "The bundling census" below.
+`bundledTx`, `maxWalletsInOneTx`, `runTx` and `adjacencyMarks` reach the
 score, the record and the rendered line for exactly that reason: they are the only observable that
 exposes the condition and says which half carried each launch, so a saved run can be audited after
 the fact.
@@ -1168,7 +1170,8 @@ refusal and every other bar are untouched, and #17's asymmetry (false rejections
 accepts impossible) is deliberate and unchanged. And it does not build any part of Stage 3.
 
 How often the `our-coverage` half fires is measured, not assumed: `too-few-proven-windows` alone
-silences **1 candidate in 14** on the current gate population — see
+silences **13 candidates in 14** on the current gate population, under the union predicate as well
+as under the superseded one — see
 [`census/2026-08-03-bundling-census.md`](./census/2026-08-03-bundling-census.md), and `--subject-era`
 in [`bundling.mjs`](./bundling.mjs) for the same question on our own subject.
 
@@ -1788,28 +1791,29 @@ file's header; the pinned bounds are `thresholds.json` → `bundling_census`; th
 directory is the screen's own versioned contract, asserted per schema version, and `buildCohort`
 reads it back as a cohort source.
 
-**Its predicate is FROZEN at the shared-transaction half, so every figure below is a LOWER bound.**
-`bundling.mjs` → `proven` is `bundledTx >= 1` and is no longer what `measure.mjs` → `roomIsProven`
-returns, because decision 182a widened that to the union. The committed record was measured under
-the older half, and re-defining the field silently would make the record and the code that wrote it
-disagree; the union re-run is a separate queued lane. That file's `proven` doc block owns the
-reasoning.
+**Its predicate is `measure.mjs` → `roomIsProven` — the UNION — and it CALLS that function rather
+than copying it.** Captain decision 183a re-ran the census under decision 182a's widened rule, which
+is what schema 2 of the record is. The first run (173a, schema 1) measured the **shared-transaction
+half alone** and froze a local copy of that predicate, and the freeze is exactly how the record came
+to need a caveat: a census carrying its own copy of the rule can drift from the screen it is a
+finding about. Both halves are now reported per launch — `bundledTx` and `runTx` — so **the
+superseded reading is recoverable from the new record without re-walking a window**, and
+`PREDICATE_CAVEAT` puts the rule beside the rate everywhere the rate goes.
 
 **The problem it measures, which is arithmetic before it is observation.** `stage2_entry` pins
 `maxLaunchesPerCandidate: 8` and `minLaunchesSampled: 8`, deliberately equal, and since #17 a launch
 whose create slot the co-ordination rule marks nothing in is refused as unproven (`measure.mjs` →
 `roomIsProven`, captain decision 134a). Multiplied out: **Stage 2 can only reach a verdict for a
 candidate whose most recent 8 eligible launches were every one marked, and one unmarked launch in
-eight silences the whole candidate.** The census measured that under half (a) alone, which is the
-condition as it stood when the run was taken. The live evidence for how large a population that silences was
+eight silences the whole candidate.** The live evidence for how large a population that silences was
 **two strangers**, because `maxCandidatesScored` is 3 and one of the three was our own control.
 
 **What the pass does, and what it deliberately does not.** It walks create-slot windows with Stage
-2's own pinned window parameters and reports only `bundledTx` and `maxWalletsInOneTx` per launch. No
-entry score, no room figure, no field, no entry cost, no verdict — a test asserts that
-`measureLaunchEntry`, `scoreEntry` and the cost leg do not appear in its executable half. **It
-measures and it does not tune:** no threshold moves on the strength of what it finds, and the
-pinning decision returns to the captain with the number.
+2's own pinned window parameters and reports only `bundledTx`, `runTx`, `maxWalletsInOneTx`,
+`adjacencyMarks` and the union's mark count per launch. No entry score, no room figure, no field, no
+entry cost, no verdict — a test asserts that `measureLaunchEntry`, `scoreEntry` and the cost leg do
+not appear in its executable half. **It measures and it does not tune:** no threshold moves on the
+strength of what it finds, and the pinning decision returns to the captain with the number.
 
 **It re-pins no window parameter.** `windowMs`, `seekMarginMs`, `windowSlotSpan`, `tradePageLimit`,
 `maxLaunchesPerCandidate`, `maxRequestsPerLaunch` and the swap-api pacing are read from
@@ -1830,9 +1834,13 @@ readings, and the surveyed population is a subset of what a keyed Stage 1 would 
 than a superset. Every cohort member is re-gated by the pass; the verdict this repository's own
 keyed runs recorded travels beside it for comparison and decides nothing.
 
-**Two caveats travel with every number**, into the dry-run plan, the record and the rendered
+**Four caveats travel with every number**, into the dry-run plan, the record and the rendered
 summary — the requirement `LANDING_TIP_CAVEAT` set, for the same reason:
 
+- `PREDICATE_CAVEAT` — **which co-ordination rule produced the number.** This census has now been
+  taken under two, and a rate quoted without its rule is the same failure as a fraction quoted
+  without its denominator. It also states the direction: half (a)'s marked set is a subset of the
+  union's, so every schema-1 figure is a **lower bound** on what the screen can now prove.
 - `OWNERSHIP_LIST_CAVEAT` — a listed token may have been **acquired** rather than created (its
   create slot is then somebody else's bundling habit), and a token **handed on is missing**, and the
   ones handed on are the winners. Measured size of that gap on the five wallets holding both
@@ -1846,7 +1854,10 @@ cannot.** The live census walks each candidate's most recent 8 launches, which s
 and cannot carry a trend. The committed population tape can: 235 launches of **one** deployer over
 2025-12 → 2026-07, bucketed offline with no request of any kind. That table is a **within-deployer**
 trend at n = 1 and the rendered output says so three times, because a within-deployer trend read as
-a population one is the "n = 2, a signal not a rate" failure one level up.
+a population one is the "n = 2, a signal not a rate" failure one level up. **It buckets both halves,
+and the gap between the columns is the point**: pre-March this operator bundles 0 of 15 while the
+union proves 15 of 15, so a shared-transaction-only column reads a rule's blind spot as a deployer's
+habit. Whole tape: **235 of 235 proven, 175 bundled**; trailing-8 replay **228 of 228 against 147**.
 
 **The `readLaunchWindow` two-bound cursor cannot reach this number.** That walk can fail to fetch
 the **tail** of a window (`CLAUDE.md`); the census reads the **create slot**, which is the oldest
@@ -1859,28 +1870,42 @@ while `swap-api`'s fill `ts` is whole seconds, floored, so the declared mint lan
 at 5 of 8 launches on the first candidate walked. `MINT_TIME_BACKDATE_CAVEAT` states what the fix
 costs. See the run report §5 and `thresholds.json` for the six-launch skew sample.
 
-### What the first run measured, 2026-08-03
+### What the union re-run measured, 2026-08-04 (captain decision 183a)
 
-Full report: `census/2026-08-03-bundling-census.md`. **14 gate survivors, 112 windows, 0 dropped,
-0 keyed requests, 585 keyless, 0 shed, 59.7 minutes.**
+Full report: `census/2026-08-03-bundling-census.md`, record schema 2. **14 gate survivors — the same
+14 — 112 windows, 0 dropped, 0 keyed requests, 591 keyless, 0 shed, 60.4 minutes.** The first run
+spent 585 keyless over the same shape, so this is the same cost profile, as the decision required.
 
-- **Per-launch bundling rate: 18 of 112 = 0.1607** (n = 112 windows over 14 candidates).
-- **Headline — candidates bundling on all 8 of their most recent eligible launches: 1 of 14 =
-  0.0714**, and **the one is our own control**. Among the 13 strangers it is **0 of 13**.
-- **11 of 14 never bundle at all** (`maxWalletsInOneTx <= 1` on every window) — permanently
-  unscoreable, counted apart from the **2** near-misses.
-- **The create slots are not empty**: median 5.5 distinct wallets, p75 10.25, max 35, and 96 of the
-  112 held 2+. Only 18 of those 96 carried a two-wallet transaction.
+- **Per-launch proven rate: 44 of 112 = 0.3929** under the union, against **18 = 0.1607** under the
+  superseded shared-transaction half. The union added **26 windows by adjacency alone**.
+- **Headline — candidates proven on all 8 of their most recent eligible launches: 1 of 14 = 0.0714,
+  UNCHANGED**, and **the one is still our own control**. Among the 13 strangers it is **0 of 13**.
+- **6 of 14 are permanently unscoreable** — `runTx` 1 and `maxWalletsInOneTx` 1 on all 48 of their
+  windows, so **neither** half can ever mark anything. That is down from the first run's 11.
+- **5 of those 11 are rescued on at least one window, and they are exactly the five the bounded live
+  probe named** (`data/slot-zero-bundling-predicate-question/report.md` §4.1) — an 8-launch sample
+  reproducing a 3-launch one wallet for wallet.
+- **3 candidates are now one window short** (7 of 8): `3FiWnNDT…`, `5KTX7LZy…`, `AbVkRUfy…`.
+
+**A smaller number than the expected ceiling is the result, not a broken run.** Decision 183a sized
+this at "about 1-in-14 to about 3-in-14" from a 3-launch probe and said in the same breath that an
+8-of-8 requirement is **harsher** than a 3-of-3 proxy. It measured 1 in 14.
+
+**The binding constraint has changed hands.** Per-launch evidence went 0.1607 → 0.3929 while the
+headline went 0.0714 → 0.0714: everything the union bought was absorbed by the all-or-nothing
+sampling rule. The predicate is no longer what silences this population — `minLaunchesSampled ==
+maxLaunchesPerCandidate == 8` is. **That question is decision 141a's and nothing here re-opens it.**
 
 **14 is the whole gate-survivor population this repository can reach, not a truncated 20–30** —
 the census cap is 30 and nothing was left unsurveyed. Reaching more needs fresh keyed discovery.
 
-**Three cross-checks make the zeros believable**: our own subject reads 8 of 8 with `bundledTx 2` /
-`maxWalletsInOneTx 3` on every window, matching its tape; and `yHCxHBEa…` (4 of 8) and `GeBJSHK4…`
-(0 of 8) reproduce `data/slot-zero-stage2-reverify/report.md` §2a exactly, from a *different*
-launch-list surface.
+**Three cross-checks make the zeros believable**: our own subject reads 8 of 8 with
+`maxWalletsInOneTx 3` on every window, matching its tape; the probe partition reproduced wallet for
+wallet from an independent sample; and `blockTxIndex` fails **safe** — a `sid` format change or a
+duplicated index removes adjacency entirely and falls back to the pre-182a reading, so it can only
+ever collapse this number towards the old one.
 
-**No threshold moved on the strength of any of it.** The pinning decision is the captain's; §7 of
+**No threshold moved on the strength of any of it.** The pinning decision is the captain's; §6 of
 the report states what the number implies and stops there.
 
 ## The keyless boundary

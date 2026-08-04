@@ -1775,10 +1775,14 @@ reader of that record had no way to know.
 **Every run reports its drops per cause, per wallet and in total**, in the record (`entry.coverage.dropsByReason`
 and the run-level `entryDrops`) and in the rendered output. A non-zero
 `mintTimeDisagreement` is treated as a **reportable event, not a footnote**: all 235 clock
-observations come from our own tape and this lane has never held a vendor key, so whether MadeOnSol's
-clock agrees with the fill tape on *stranger* wallets is untested. If they routinely disagree, the
+observations come from our own tape, where the gap is exactly 0, so whether MadeOnSol's
+clock agrees with the fill tape on *stranger* wallets was an open question. If they routinely disagree, the
 tripwire stops being free and starts discarding real launches at scale — and a visible per-run count
-is what stops that happening silently.
+is what stops that happening silently. **The first full-day default run fired it: 6 windows on one
+stranger candidate, the drops that took it from 10 planned windows to 3 walked.**
+`runs/2026-08-04-full-day-default.md` → *"Two things that went wrong in the plumbing"* owns that
+observation, what it does and does not prove about the cause, and the open question of whether
+Stage 2 should backdate as the census does. Nothing about this tripwire changed.
 
 **On the other vendor pair that has now been walked, they routinely DO disagree.** Driven from
 `frontend-api-v3`'s millisecond-precision `created_timestamp` instead of MadeOnSol's, the tripwire
@@ -2015,6 +2019,9 @@ that verdict as its schema means it**: room was present and the price of the sea
 measured, which is not what a schema-6 `entry-open-after-costs` says. It is committed evidence and
 is never retro-edited, so the reader is what has to be correct. The `--dry-run` output
 and the live-vs-tape check above remain the keyless evidence that the walk is the same code path.
+**A second Stage 2 record is committed and it carries no verdict at all**: `runs/2026-08-04.json`
+(schema 12) returned `entry-unmeasured` on all three candidates it scored — see *"The third
+committed run"* above and `runs/2026-08-04-full-day-default.md`.
 
 ## The bundling census — a windows-only pass, and what it is sizing
 

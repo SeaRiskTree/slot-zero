@@ -402,8 +402,8 @@ const DROP_LABELS = /** @type {const} */ ([
  * The tripwire count gets its own line rather than a share of one, because a non-zero
  * `mintTimeDisagreement` is a **reportable event**: it says the vendor's clock and pump.fun's fill
  * tape have come apart, which is the assumption the whole walk rests on. On the committed tape that
- * gap is exactly zero across all 235 covered launches — but this lane has never held a vendor key,
- * so the stranger case is untested and only a visible per-run count can keep it from staying that way.
+ * gap is exactly zero across all 235 covered launches — on strangers it has now been seen to break,
+ * and this per-run count is what surfaced it (`runs/2026-08-04-full-day-default.md` owns the reading).
  *
  * @param {number} total
  * @param {import('./stage2.mjs').Stage2DropReasons} by

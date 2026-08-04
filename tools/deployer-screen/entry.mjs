@@ -1040,8 +1040,8 @@ export function scoreEntry(launches, t, context = {}) {
   }
   if (clockDrops > 0) {
     // A REPORTABLE EVENT, not a footnote. The zero-gap agreement between the vendor's mint time and
-    // the first fill was measured on our OWN tape, and this lane has never held a vendor key — so
-    // whether it holds for strangers is untested, and this count is the test.
+    // the first fill was measured on our OWN tape; on strangers it has now been seen to break, and
+    // this count is what made it visible (`runs/2026-08-04-full-day-default.md` owns the reading).
     score.caveats.push(
       `REPORTABLE: ${clockDrops} of those ${dropped} were dropped because the vendor's mint time and ` +
         `pump.fun's fill tape DISAGREED (fills older than the recorded creation). On the committed ` +

@@ -687,9 +687,10 @@ dev currently?"*, and the shape of the answer is the point:
   (`roomLeft` is a share of non-negative buy SOL), which makes the effective margin the sample's own
   dispersion around the bar. **The committed tape cannot exercise it** — our subject is proven
   235/235 with no walk drops, so the hole is 0 at every window and Stage 0 is byte-identical either
-  way; that is a limit of the one tape here, not a check the guard passed. That function's doc and
-  `tools/deployer-screen/README.md` → "A sample two launches short does not get to decide a bar it
-  cannot reach" own the argument; cite them rather than restating the figures.
+  way; that is a limit of the one tape here, not a check the guard passed. **That function's doc owns
+  the argument and its figures**; `tools/deployer-screen/README.md` → "A sample two launches short
+  does not get to decide a bar it cannot reach" carries the consequences. Cite them rather than
+  restating the figures.
 - **Entry cost is recovered from the chain, and the signatures are free.** Every `Fill` carries its
   transaction, so `measure.mjs` → `walletTransactions` and `entry.mjs` → `entryCostTargets` name the
   transactions to price with no discovery step; `pumpfun.mjs` → `parseTransactionCosts` reads

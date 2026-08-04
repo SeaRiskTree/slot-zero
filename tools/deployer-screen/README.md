@@ -975,28 +975,12 @@ Captain **decision 198b** answers it with a guard rather than a revert: `entry.m
 the sample could have put the median on the other side of `minRoomLeft`.** The headroom is kept
 wherever it is safe and declined where it is not.
 
-**What the margin is anchored to — and what it is not.** It is *not* anchored to the direction of the
-bias, because that is **UNMEASURED**. The attempt is on record and it failed: over the committed tape,
-busyness against `roomLeft` gives a rank correlation of **0.0250** (negligible), a busiest-quartile
-median of **0.3032** against the quietest quartile's **0.2771** (busy reads *higher*), and dropping
-the busiest 3.1% moves the median **0.3146 → 0.3314** — **0.0168**, *towards* enterable. Two
-statistics opposite in sign, on **n = 1 deployer**. Nothing may be pinned from that.
-
-So the guard is built not to need it. **There is no new pinned number in `thresholds.json`**; the
-margin is derived per candidate from two things:
-
-1. **One algebraic fact.** `measure.mjs` → `ROOM_LEFT_RANGE`: `roomLeft` is `1 − operationShare` over
-   non-negative create-slot *buy* amounts, so it lies in `[0, 1]` by construction, not by
-   observation. A launch nobody walked has an unknown room, but a **bounded** one.
-2. **The candidate's own order statistics.** The median is monotone in every observation, so putting
-   all the missing launches at 0 gives the lowest median the completed sample could have had and
-   putting them all at 1 gives the highest — **exactly**, with no search and no distributional
-   assumption. If `minRoomLeft` falls inside that interval, the evidence does not decide the bar.
-
-The effective margin is therefore **the sample's own dispersion around the bar**: narrow for a
-candidate whose launches agree with each other, wide for one whose do not. At the live 10-and-8 it is
-at most one order statistic wide either way, because at most two launches can be missing from a
-candidate that scores at all.
+**The argument for the margin — and the statistics behind it — live with the code.** `entry.mjs` →
+`roomBarRobustness`'s doc is the owner: what the band is anchored to, why the direction of the bias
+is **UNMEASURED** (the attempt is on record as having failed, two statistics opposite in sign on
+**n = 1 deployer**), and why **no number is pinned for it in `thresholds.json`** — the band is the
+candidate's own reachable median range, derived from `measure.mjs` → `ROOM_LEFT_RANGE` and the
+candidate's own order statistics. Read it there rather than here; the consequences are below.
 
 **Five consequences, all deliberate.**
 
@@ -1004,10 +988,10 @@ candidate that scores at all.
   from taste. `entry-room-absent` is a *measured* verdict a later stage may filter on, so shipping
   one off a subsample that could equally have cleared the bar is the invisible false rejection this
   screen exists to remove — the same harm as a false pass, pointing the other way.
-- **It is a worst case, not an estimate**, and therefore wider than any displacement anyone has
-  measured (the only figure on record is the 0.0168 above). It will refuse candidates whose true
-  median would not in fact have moved. That is the accepted direction: the standing bar is that a
-  false positive is not an acceptable result, and a refusal is.
+- **It is a worst case, not an estimate**, and therefore wider than the only displacement magnitude
+  anyone has measured (that figure is with the argument, in `roomBarRobustness`). It will refuse
+  candidates whose true median would not in fact have moved. That is the accepted direction: the
+  standing bar is that a false positive is not an acceptable result, and a refusal is.
 - **Over-refusing is cheap because of how the refusal is labelled.** It is
   `room-verdict-not-robust-to-missing-launches`, attribution `our-coverage`, so a later stage must
   carry the candidate forward as *no answer* rather than drop it. The candidate is unanswered, not

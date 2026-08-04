@@ -155,9 +155,11 @@ already know.
 The two are never summed. 11 of the 13 silenced candidates are silenced *permanently*; only 2 are
 silenced by luck.
 
-**The 11 are not quiet launches.** Their create slots hold a median of 4.5 wallets and up to 35.
-`3FiWnNDT…` averages 10.5 wallets in the create slot and never once has two of them in one
-transaction.
+**The 11 are not quiet launches.** Pooled over their own 88 windows — not the whole sample's 112 —
+their create slots hold a median of 4.0 wallets, up to 26, and 72 of the 88 held 2+. (The
+whole-sample median 5.5 / max 35 of §2.1 is over all 14 candidates' 112 windows, and the 35 belongs
+to `yHCxHBEa…`, a near-miss that bundles 4 of 8 and is not in this group.) `3FiWnNDT…` has a median
+of 10.5 wallets in the create slot — mean 9.375 — and never once has two of them in one transaction.
 
 ---
 

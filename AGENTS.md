@@ -620,8 +620,9 @@ dev currently?"*, and the shape of the answer is the point:
   bundles on all eight — and that one is our own control**, so among the 13 strangers it is **0 of
   13**. **11 of the 14 never bundle at all** (`maxWalletsInOneTx <= 1` on every window) and are
   therefore *permanently* unscoreable — counted apart from the 2 near-misses, because no
-  `minLaunchesSampled` can reach them. Their create slots are **not** quiet: median 5.5 wallets,
-  max 35, and 96 of 112 held 2+. So the rule's blind spot — co-ordination via separate transactions
+  `minLaunchesSampled` can reach them. Their own create slots are **not** quiet: over those 11
+  candidates' 88 windows, median 4.0 wallets, max 26, and 72 of 88 held 2+ (over all 14 candidates'
+  112 windows it is median 5.5, max 35, 96 of 112). So the rule's blind spot — co-ordination via separate transactions
   in one bundle — is most of what it meets. `census/2026-08-03-bundling-census.md` owns the numbers,
   the three cross-checks that make the zeros believable, and what they do and do not imply for the
   pinning; **the pinning itself is unmoved and is the captain's.** `--subject-era` answers the era

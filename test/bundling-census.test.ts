@@ -306,7 +306,6 @@ describe('it measures bundling and nothing else', () => {
   it('reads bundledTx and maxWalletsInOneTx off a walked window', async () => {
     const { client } = scriptedClient([page({ createSlot: 500, bundles: 2, loneWallets: 3 })]);
     const result = await censusCandidate(client, {
-      wallet: 'W',
       refs: refs(1),
       nowMs: NOW,
       entry: ENTRY,
@@ -328,7 +327,7 @@ describe('it measures bundling and nothing else', () => {
     // nothing, which is observationally identical to there being nothing — `measure.mjs` →
     // `roomIsProven` is the refusal, and this pass reports the input to it rather than the verdict.
     const { client } = scriptedClient([page({ createSlot: 700, bundles: 0, loneWallets: 9 })]);
-    const result = await censusCandidate(client, { wallet: 'W', refs: refs(1), nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
+    const result = await censusCandidate(client, { refs: refs(1), nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
     expect(result.launches[0]).toMatchObject({ bundledTx: 0, maxWalletsInOneTx: 1, proven: false });
     expect(result.bundledLaunches).toBe(0);
     expect(result.neverBundles).toBe(true);
@@ -340,7 +339,7 @@ describe('it measures bundling and nothing else', () => {
   it('applies Stage 2\'s own eligibility floor, so a launch too young to have finished is skipped', async () => {
     const { client, urls } = scriptedClient([page({ createSlot: 500, bundles: 1, loneWallets: 1 })]);
     const tooYoung = [{ mint: 'YOUNG', deployedAtMs: NOW - (ENTRY.windowMs + ENTRY.seekMarginMs - 1) }];
-    const result = await censusCandidate(client, { wallet: 'W', refs: tooYoung, nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
+    const result = await censusCandidate(client, { refs: tooYoung, nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
     expect(result.launchesEligible).toBe(0);
     expect(result.launchesAttempted).toBe(0);
     expect(urls).toEqual([]);
@@ -349,7 +348,6 @@ describe('it measures bundling and nothing else', () => {
   it('caps the sample at Stage 2\'s own per-candidate launch cap', async () => {
     const { client } = scriptedClient([page({ createSlot: 500, bundles: 1, loneWallets: 1 })]);
     const result = await censusCandidate(client, {
-      wallet: 'W',
       refs: refs(ENTRY.maxLaunchesPerCandidate + 5),
       nowMs: NOW,
       entry: ENTRY,
@@ -372,7 +370,6 @@ describe('it measures bundling and nothing else', () => {
       windowPage({ createSlot: 900, bundles: 1, loneWallets: 2, tsMs: fillsAt }),
     ]);
     const result = await censusCandidate(client, {
-      wallet: 'W',
       refs: [{ mint: 'SKEWED', deployedAtMs: declaredMintMs }],
       nowMs: NOW,
       entry: ENTRY,
@@ -388,7 +385,6 @@ describe('it measures bundling and nothing else', () => {
       windowPage({ createSlot: 900, bundles: 1, loneWallets: 2, tsMs: OLDEST_MINT_MS - BACKDATE - 5_000 }),
     ]);
     const dropped = await censusCandidate(far, {
-      wallet: 'W',
       refs: [{ mint: 'SKEWED', deployedAtMs: OLDEST_MINT_MS }],
       nowMs: NOW,
       entry: ENTRY,
@@ -418,7 +414,7 @@ describe('it measures bundling and nothing else', () => {
         };
       }) as unknown as typeof fetch,
     });
-    const result = await censusCandidate(client, { wallet: 'W', refs: refs(1), nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
+    const result = await censusCandidate(client, { refs: refs(1), nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
     expect(calls).toBeGreaterThan(0);
     expect(result.launchesUsable).toBe(0);
     expect(result.launchesDropped).toBe(1);
@@ -438,7 +434,7 @@ describe('it measures bundling and nothing else', () => {
       [page({ createSlot: 500, bundles: 1, loneWallets: 1 })],
       ENTRY.maxRequestsPerLaunch,
     );
-    const result = await censusCandidate(client, { wallet: 'W', refs: refs(4), nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
+    const result = await censusCandidate(client, { refs: refs(4), nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
     expect(result.launchesAttempted).toBe(1);
     expect(result.dropNotes.some((n) => n.includes('census ceiling'))).toBe(true);
     expect(client.issued()).toBeLessThanOrEqual(ENTRY.maxRequestsPerLaunch);

@@ -161,6 +161,13 @@ export const DROPPED_WINDOW_CAVEAT =
  * Backdating cannot reach the number: the create slot is the OLDEST end of the walk, so a wider
  * floor admits more of this launch and nothing of any other — a token has no fill before its own
  * create transaction. What it costs is that a genuine disagreement under 5 s is no longer seen.
+ *
+ * IT IS NOT A ONE-ENDED WIDENING, AND ANYTHING COPYING IT MUST KNOW THAT. `readLaunchWindow` seeks
+ * at `createdAtMs + windowMs + seekMarginMs`, so a backdated `createdAtMs` also pulls the NEWEST
+ * instant the walk reaches 5 s earlier — exactly cancelling the pinned `seekMarginMs` of 5,000 and
+ * reinstating the tail truncation that margin exists to prevent (`CLAUDE.md`, "the two-bound
+ * cursor"). It is safe in THIS pass because the tail is not read here; in a full-window walk it
+ * would silently lose fills.
  */
 export const MINT_TIME_BACKDATE_CAVEAT =
   'THE MINT INSTANT IS BACKDATED BY A PINNED MARGIN before the window is walked, because the two ' +
@@ -315,7 +322,6 @@ export function buildCohort(toolDir = HERE) {
  *
  * @param {KeylessClient} client
  * @param {object} input
- * @param {string} input.wallet
  * @param {readonly { mint: string, deployedAtMs: number }[]} input.refs Newest first.
  * @param {number} input.nowMs
  * @param {import('./stage2.mjs').Stage2Thresholds} input.entry
@@ -360,9 +366,15 @@ export async function censusCandidate(client, input) {
     try {
       window = await readLaunchWindow(client, {
         mint: ref.mint,
-        // BACKDATED. Not the declared instant — see `MINT_TIME_BACKDATE_CAVEAT`. It widens the walk
-        // at the OLD end only, which is the end the create slot sits at, so it can only admit more
-        // of this launch's own opening and never any of another token's.
+        // BACKDATED. Not the declared instant — see `MINT_TIME_BACKDATE_CAVEAT`. At the OLD end it
+        // widens the walk, which is the end the create slot sits at, so it can only admit more of
+        // this launch's own opening and never any of another token's — a token has no fill before
+        // its own create transaction. BUT IT MOVES THE NEW END TOO, AND A COPY OF THIS LINE INTO A
+        // FULL-WINDOW WALK IS A BUG: `readLaunchWindow` seeks at `createdAtMs + windowMs +
+        // seekMarginMs`, so backdating by 5,000 ms pulls the newest instant reached 5 s earlier and
+        // exactly cancels the pinned `seekMarginMs` of 5,000 — reinstating the tail truncation that
+        // margin exists to prevent. Harmless HERE only because this pass reads the create slot and
+        // nothing else.
         createdAtMs: ref.deployedAtMs - input.mintTimeBackdateMs,
         windowMs: t.windowMs,
         seekMarginMs: t.seekMarginMs,
@@ -1011,7 +1023,6 @@ export async function main(opts, out, err) {
     for (const s of toSurvey) {
       if (!opts.json) out(`  ${s.member.wallet}`);
       const result = await censusCandidate(fillClient, {
-        wallet: s.member.wallet,
         refs: s.refs,
         nowMs: Date.now(),
         entry,

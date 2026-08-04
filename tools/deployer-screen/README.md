@@ -1510,12 +1510,27 @@ detectable after the fact: launches routinely stop trading before the nominal wi
 p50 span 151 against a 160-slot window), so any tail detector fires on nearly every launch and
 carries no information at all.
 
-So it is designed out rather than reported. The walk seeks from `createdAtMs + windowMs +
-seekMarginMs`, with the margin pinned at **5s**, so an early skew smaller than that cannot cut the
-tail off before the slot trim ever sees it. The cost is bounded: the walk still pages *backwards* to
-the mint and still trims by slot afterwards, so the margin only adds rows at the newest end — about
-5s of trading, roughly 32 fills at the tape's p50 of 381 fills per 60s, i.e. at most one extra page.
-That fits inside the 18-request per-launch cap and the `3 × 8 × 18 = 432` arithmetic is unchanged.
+So it is designed out rather than reported. The walk seeks from `createdAtMs + windowReachMs(...)` —
+`max(windowMs, ceil(windowSlotSpan × MAX_MS_PER_SLOT)) + seekMarginMs`, **85,000ms** at the pinned
+values — i.e. a reach derived from the SPAN at a measured worst-case slot rate
+(`MEASURED_MAX_MS_PER_SLOT` 446.55 × `SLOT_RATE_MARGIN` 1.1 → `MAX_MS_PER_SLOT` 500), with `windowMs`
+surviving there only as a floor. **This margin is added on top of that reach and it no longer places
+the cursor**; its own job is unchanged, clock slack of **5s** against a vendor mint time running
+early, so an early skew smaller than that cannot cut the tail off before the slot trim ever sees it.
+
+The cost is bounded and it is no longer one page. Reaching 85,000ms rather than 65,000ms moves the
+page cost measured over the 127 committed launches that can show the effect from p50 6 / p90 8 /
+p95 8 / max 15 to p50 7 / p90 9 / p95 10 / max 18, so **5 of 127 = 3.9%** now exceed the ~16 pages
+the cap affords and are dropped as `request-cap`, where it was **0 of 127**. And the consequence is
+the candidate's, not the launch's: `minLaunchesSampled` and `maxLaunchesPerCandidate` are the same
+pinned value (8), so there is no slack — one such drop among a candidate's 8 planned launches leaves
+7 sampled and `scoreEntry` returns `entry-unmeasured` for the **whole candidate**. Naive
+independent-launches **estimate**, not a measurement: `1 − (1 − 5/127)^8` ≈ **27.5%** of candidates,
+assuming independent draws at the tape's cap-hit rate and taking that base rate from one deployer's
+long-window launches, which are also the busiest on the tape. An unmeasured verdict is *no answer*
+and never a rejection, and the drop is counted and reported where the truncated tail was silent. The
+zero-slack coupling between the sample floor and the launch cap is a **separate filed lane** and is
+not fixed here. No threshold moved: the `3 × 8 × 18 = 432` arithmetic is unchanged.
 
 **The margin is a cursor hint and never a proof tolerance.** The pre-mint tripwire still compares
 `ts < createdAtMs` with zero slack, and coverage is still discharged only by an explicit

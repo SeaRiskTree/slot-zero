@@ -19,6 +19,26 @@ Captain decision 187a, 2026-08-04. The measurement behind it is
 | deployers creating in 2026-07 at ≥8 launches (scout) | 25 | 10,280 |
 | …**clearing the Stage 1 competence gate**, one seed month (scout) | **8** | **35** |
 
+### 3,036 and 10,280 are ONE census at two floors
+
+The figure that authorised this lane is **10,280** and the committed run reports **3,036**. They do
+not disagree: the investigation's own ladder for 2026-07 reads 176,200 at ≥1, 22,620 at ≥4, **10,280
+at ≥8**, 5,416 at ≥15 and **3,036 at ≥30**, and this run used a floor of **30**. Same month, same two
+surfaces, same signer attribution, same dedup by mint — **the only difference is `min_launches`**.
+
+That reconciliation is not left to a reader. `PUBLISHED_LADDER` carries the investigation's whole
+ladder, every record carries a `reconciliation` block naming the cut in full and comparing the count
+against the published figure **at the same floor**, and the committed run reconciles at 3,036 = 3,036
+— the same number, not a close one. A future run of a closed month that disagrees at the same floor
+says `agrees: false` and names the two things that could have changed, instead of shipping a
+different number under the same name.
+
+One limit the block states rather than implies: **the record's own ladder starts at the floor the run
+used, so it cannot re-derive the lower rungs.** Reproducing 10,280 costs another execution.
+
+A second, independent cross-check from the same execution: the probe's in-month `evt_createevent` row
+count is **857,288**, identical to the investigation's "total mints created" for 2026-07.
+
 The third row is the one that decides it. It is not "more wallets" — it is about **27 named wallets
 that pass this repository's own competence bar and that the project structurally could not see**.
 Under the run committed here, **3,031 of the 3,036 are absent from the committed ledger**, and the

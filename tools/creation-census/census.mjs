@@ -86,6 +86,93 @@ export const PROLIFIC_CUT_CAVEAT =
 /** The census result's own schema version. Bump, never retro-edit — committed runs are evidence. */
 export const RECORD_SCHEMA_VERSION = 1;
 
+/**
+ * The census ladder this repository has already published, by seed month and prolific-ness floor.
+ *
+ * Source: `data/slot-zero-discovery-widen-operations/report.md` §2.1, measured 2026-08-04 by the
+ * scout that produced captain decision 187a, over the same two decoded surfaces this statement
+ * reads.
+ *
+ * **It is here so a run reconciles against it rather than beside it.** The headline number
+ * authorising this lane is *10,280 deployers creating in 2026-07*, and a run at the pinned floor
+ * returns *3,036*. Those are the SAME census at two different floors — but a figure that looks
+ * measured while measuring something else is this repository's characteristic defect, so the
+ * comparison is computed into every record instead of being left for a reader to make. A future run
+ * of a month in this table that disagrees at the SAME floor is saying that one of the two statements
+ * changed, and {@link reconcileWithPublished} makes that visible instead of quietly shipping a
+ * different number under the same name.
+ */
+export const PUBLISHED_LADDER = {
+  '2026-01': { 1: 227083, 4: 26977, 8: 13298, 15: 6645, 30: 3290 },
+  '2026-07': { 1: 176200, 4: 22620, 8: 10280, 15: 5416, 30: 3036 },
+};
+
+/** Where {@link PUBLISHED_LADDER} comes from. Quoted into every record. */
+export const PUBLISHED_LADDER_SOURCE =
+  'data/slot-zero-discovery-widen-operations/report.md section 2.1, measured 2026-08-04';
+
+/**
+ * State exactly which cut produced a count, and reconcile it against the published ladder.
+ *
+ * @param {object} input
+ * @param {string} input.month
+ * @param {number} input.minLaunches
+ * @param {number | null} input.declaredTotal The qualifying deployers BEFORE the row cap.
+ * @returns {{ cut: string, source: string, floor: number, publishedAtThisFloor: number | null,
+ *   measured: number | null, agrees: boolean | null, publishedAtOtherFloors: { floor: number,
+ *   deployers: number }[], note: string }}
+ */
+export function reconcileWithPublished({ month, minLaunches, declaredTotal }) {
+  const cut =
+    `Wallets that SIGNED at least ${minLaunches} distinct mint creations whose block time falls in ` +
+    `[${month}-01, the first instant of the next month), over pumpdotfun_solana.pump_evt_createevent ` +
+    `UNION pump_call_create deduped by mint. Attribution is "user" / account_user, the SIGNER — not ` +
+    `\`creator\`, a settable CreateV2 argument. No bonding, completion, recency or "still active" ` +
+    `term enters it, so the ONLY difference between this count and a larger one over the same month ` +
+    `is the prolific-ness floor.`;
+  const published = /** @type {Record<string, Record<string, number>> } */ (PUBLISHED_LADDER)[month];
+  const others = published === undefined ? [] : Object.entries(published).map(([f, n]) => ({ floor: Number(f), deployers: n }));
+  const atThisFloor = published?.[String(minLaunches)] ?? null;
+  const agrees = atThisFloor === null || declaredTotal === null ? null : atThisFloor === declaredTotal;
+  let note;
+  if (published === undefined) {
+    note = `No published ladder exists for ${month}, so this count reconciles against nothing and stands on its own probe.`;
+  } else if (agrees === true) {
+    const bigger = others.filter((o) => o.floor < minLaunches).sort((a, b) => a.floor - b.floor);
+    note =
+      `MEASURED ${declaredTotal} at a floor of ${minLaunches}; the published ladder reads ` +
+      `${atThisFloor} at the same floor over the same month and the same two surfaces — the same ` +
+      `number, not a close one. The larger published figures for this month are the SAME census at ` +
+      `LOWER floors (` +
+      bigger.map((o) => `${o.deployers} at >=${o.floor}`).join(', ') +
+      `), so a reader meeting both is meeting one measurement at two cuts rather than two ` +
+      `measurements. NOTE the record's own ladder starts at the floor this run used and therefore ` +
+      `CANNOT re-derive the lower rungs: reproducing them costs another execution.`;
+  } else if (agrees === false) {
+    note =
+      `DISAGREES: this run measured ${declaredTotal} at a floor of ${minLaunches} where the published ` +
+      `ladder reads ${atThisFloor} for the same month and floor. A closed past month should not move, ` +
+      `so one of two things changed — the decoded tables were backfilled or reprocessed, or the saved ` +
+      `statement is no longer the one that produced the published figure. Establish which before ` +
+      `quoting either number.`;
+  } else {
+    note =
+      `The published ladder for ${month} carries no rung at a floor of ${minLaunches}, so this count ` +
+      `reconciles against no published figure. Its neighbours are listed for scale only and are NOT ` +
+      `a check on it.`;
+  }
+  return {
+    cut,
+    source: PUBLISHED_LADDER_SOURCE,
+    floor: minLaunches,
+    publishedAtThisFloor: atThisFloor,
+    measured: declaredTotal,
+    agrees,
+    publishedAtOtherFloors: others,
+    note,
+  };
+}
+
 export const CENSUS_SQL = `-- slot-zero: HISTORICAL DEPLOYER COHORT for the arrival-rate walk. ONE execution.
 --
 -- Committed byte for byte as COHORT_SQL in tools/arrival-rate-walk/cohort.mjs. Whatever executes
@@ -548,6 +635,14 @@ export function buildCensusRecord(input) {
         input.census.declaredTotal > input.census.deployers.length + input.census.refusedByShape,
       launchesInMonth: summariseLaunches(input.census.deployers),
     },
+    // WHICH CUT PRODUCED THE COUNT, and how it relates to every other census figure this
+    // repository has published for the same month. A count without its cut is the defect this
+    // whole module is arranged against, one level up from the coverage probe.
+    reconciliation: reconcileWithPublished({
+      month: input.bounds.month,
+      minLaunches: input.parameters.minLaunches,
+      declaredTotal: input.census.declaredTotal,
+    }),
     cohortFile: input.cohortFile,
     caveats: [PROLIFIC_CUT_CAVEAT],
   };

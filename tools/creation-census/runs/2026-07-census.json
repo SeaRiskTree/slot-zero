@@ -95,6 +95,37 @@
       ]
     }
   },
+  "reconciliation": {
+    "cut": "Wallets that SIGNED at least 30 distinct mint creations whose block time falls in [2026-07-01, the first instant of the next month), over pumpdotfun_solana.pump_evt_createevent UNION pump_call_create deduped by mint. Attribution is \"user\" / account_user, the SIGNER — not `creator`, a settable CreateV2 argument. No bonding, completion, recency or \"still active\" term enters it, so the ONLY difference between this count and a larger one over the same month is the prolific-ness floor.",
+    "source": "data/slot-zero-discovery-widen-operations/report.md section 2.1, measured 2026-08-04",
+    "floor": 30,
+    "publishedAtThisFloor": 3036,
+    "measured": 3036,
+    "agrees": true,
+    "publishedAtOtherFloors": [
+      {
+        "floor": 1,
+        "deployers": 176200
+      },
+      {
+        "floor": 4,
+        "deployers": 22620
+      },
+      {
+        "floor": 8,
+        "deployers": 10280
+      },
+      {
+        "floor": 15,
+        "deployers": 5416
+      },
+      {
+        "floor": 30,
+        "deployers": 3036
+      }
+    ],
+    "note": "MEASURED 3036 at a floor of 30; the published ladder reads 3036 at the same floor over the same month and the same two surfaces — the same number, not a close one. The larger published figures for this month are the SAME census at LOWER floors (176200 at >=1, 22620 at >=4, 10280 at >=8, 5416 at >=15), so a reader meeting both is meeting one measurement at two cuts rather than two measurements. NOTE the record's own ladder starts at the floor this run used and therefore CANNOT re-derive the lower rungs: reproducing them costs another execution."
+  },
   "cohortFile": "tools/creation-census/runs/2026-07-cohort.json",
   "caveats": [
     "THE min_launches FLOOR IS A PROLIFIC-NESS CUT, NOT A COMPETENCE ONE. It selects deployers by how much they created in the seed month and by nothing else — no bonding rate, no completion, no \"still active\" term — so it is the same species of filter as the vendor feed's, which looked like quality and was tempo. It is weaker in three ways that matter (historical rather than trailing, per calendar month rather than per 7.5 days, and conditioning on volume rather than on success) and it introduces no survivorship bias at all. What it DOES miss is the low-cadence deployer: a wallet launching three times a month for two years is absent at any floor above three, and nothing in the output reveals that. Raising this floor narrows the census on prolific-ness alone; whoever raises it must say so here."

@@ -532,6 +532,9 @@ export async function main(argv, env, say) {
     }
     say(`  qualifying deployers declared ${census.declaredTotal}, returned ${census.deployers.length}` +
       `${census.refusedByShape > 0 ? `, ${census.refusedByShape} refused by shape` : ''}`);
+    const reconciliation = /** @type {any} */ (record).reconciliation;
+    say(`  cut: ${reconciliation.cut}`);
+    say(`  reconciliation (${reconciliation.source}): ${reconciliation.note}`);
     say(`  launches in month: min ${summary.min} p50 ${summary.p50} p90 ${summary.p90} max ${summary.max}`);
     for (const rung of summary.ladder) {
       say(`    threshold >=${String(rung.threshold).padStart(4)} -> ${rung.deployers} deployer(s)`);

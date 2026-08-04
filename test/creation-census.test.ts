@@ -46,7 +46,10 @@ import {
   normaliseSql,
   parseCensusRows,
   parseDuneTimestamp,
+  PUBLISHED_LADDER,
+  PUBLISHED_LADDER_SOURCE,
   readCount,
+  reconcileWithPublished,
   serialiseCohortFile,
   summariseLaunches,
 } from '../tools/creation-census/census.mjs';
@@ -676,9 +679,22 @@ describe('the committed run is evidence, and it still agrees with itself', () =>
         'monthEndUtc',
         'monthStartUtc',
         'parameters',
+        'reconciliation',
         'runAtUtc',
         'schemaVersion',
         'tool',
+      ].sort(),
+    );
+    expect(Object.keys(record.reconciliation).sort()).toEqual(
+      [
+        'agrees',
+        'cut',
+        'floor',
+        'measured',
+        'note',
+        'publishedAtOtherFloors',
+        'publishedAtThisFloor',
+        'source',
       ].sort(),
     );
     expect(Object.keys(record.coverage).sort()).toEqual(['ok', 'reasons', 'tables']);
@@ -747,6 +763,64 @@ describe('the committed run is evidence, and it still agrees with itself', () =>
     expect(known.has(WALLET_B)).toBe(false);
     const unseen = [...wallets.keys()].filter((w) => !known.has(w)).length;
     expect(unseen).toBeGreaterThan(wallets.size * 0.9);
+  });
+});
+
+describe('every count states which cut produced it', () => {
+  // The headline authorising this lane is 10,280 deployers creating in 2026-07; a run at the pinned
+  // floor returns 3,036. Both are right and they are ONE census at two floors — but a figure that
+  // looks measured while measuring something else is this repository's characteristic defect, so
+  // the comparison is computed into the record rather than left for a reader to make.
+  it('reconciles a run against the published ladder at the SAME floor', () => {
+    const r = reconcileWithPublished({ month: '2026-07', minLaunches: 30, declaredTotal: 3036 });
+    expect(r.agrees).toBe(true);
+    expect(r.publishedAtThisFloor).toBe(3036);
+    expect(r.note).toMatch(/SAME census at LOWER floors/);
+    // The larger figure must be named as the same census at a lower floor, not as a rival number.
+    expect(r.note).toContain('10280 at >=8');
+    // And the record's own ladder cannot re-derive it, which the note has to say rather than imply.
+    expect(r.note).toMatch(/CANNOT re-derive the lower rungs/);
+  });
+
+  it('says DISAGREES when a closed past month moves at the same floor', () => {
+    const r = reconcileWithPublished({ month: '2026-07', minLaunches: 30, declaredTotal: 2900 });
+    expect(r.agrees).toBe(false);
+    expect(r.note).toMatch(/DISAGREES/);
+    expect(r.note).toMatch(/backfilled or reprocessed|no longer the one that produced/);
+  });
+
+  it('claims no check it cannot make', () => {
+    // A floor with no published rung, and a month with no ladder at all, both reconcile against
+    // NOTHING — stated as `null`, never as agreement.
+    const noRung = reconcileWithPublished({ month: '2026-07', minLaunches: 25, declaredTotal: 4000 });
+    expect(noRung.agrees).toBeNull();
+    expect(noRung.note).toMatch(/NOT\s+a check on it/);
+    const noMonth = reconcileWithPublished({ month: '2025-05', minLaunches: 30, declaredTotal: 10 });
+    expect(noMonth.agrees).toBeNull();
+    expect(noMonth.publishedAtOtherFloors).toEqual([]);
+    expect(PUBLISHED_LADDER_SOURCE).toContain('slot-zero-discovery-widen-operations');
+  });
+
+  it('states the cut in full, including what does NOT enter it', () => {
+    const r = reconcileWithPublished({ month: '2026-07', minLaunches: 30, declaredTotal: 3036 });
+    expect(r.cut).toContain('SIGNED');
+    expect(r.cut).toContain('deduped by mint');
+    expect(r.cut).toMatch(/No bonding, completion, recency or "still active" term/);
+    expect(r.cut).toContain('30');
+  });
+
+  it('carries the investigation\'s whole ladder, so the headline is re-findable', () => {
+    expect(PUBLISHED_LADDER['2026-07'][8]).toBe(10280);
+    expect(PUBLISHED_LADDER['2026-07'][30]).toBe(3036);
+    expect(PUBLISHED_LADDER['2026-01'][8]).toBe(13298);
+  });
+
+  it('is stated in the committed record and reconciles clean there', () => {
+    const record = JSON.parse(readFileSync(join(TOOL_DIR, 'runs', '2026-07-census.json'), 'utf8'));
+    expect(record.reconciliation.agrees).toBe(true);
+    expect(record.reconciliation.measured).toBe(record.census.declaredTotal);
+    expect(record.reconciliation.floor).toBe(record.parameters.min_launches);
+    expect(record.reconciliation.publishedAtOtherFloors).toContainEqual({ floor: 8, deployers: 10280 });
   });
 });
 

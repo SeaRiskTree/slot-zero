@@ -103,9 +103,12 @@ deployers; this is an observation, not a rate.
 Both PRs landed before this run and both are visible in it.
 
 - **PR 45 / decision 190a (cap 10 against a floor of 8) did work, on one candidate.** `yHCxHBEa…`
-  reached 4 proven of 10 planned. At the old 8-and-8 it would have reached 4 of 8 — refused either
-  way, but the headroom is what let a tenth window be attempted at all. On the other two it changed
-  nothing: at 0 proven, no headroom is enough.
+  reached 4 proven of 10 planned — short of the floor of 8, so refused. **How many of those 4 an
+  8-cap would have reached is not derivable from this record**: it persists distributions and
+  counts, with no per-launch ordering, so which of the 10 planned windows the proven ones were is
+  unknown. Refused either way — 4 is below 8 and any subset of it is too — but the headroom is what
+  let a tenth window be attempted at all. On the other two it changed nothing: at 0 proven, no
+  headroom is enough.
 - **PR 46 / decision 198b (the near-bar guard) fired zero times.** It is a guard on candidates that
   *clear* `minLaunchesSampled`, and no candidate in this run did.
 
@@ -154,9 +157,15 @@ So the concrete recommendation this run supports, stated at the strength the evi
    here. If the upper-bound argument is to buy coverage, it has to reach the place unproven windows
    are excluded from the *sample*, not only the place missing launches are padded. That is a wider
    change than the follow-up as filed, and it is a captain decision, not an inference from this run.
-2. **The direction is safe either way.** Substituting a measured upper bound for `ROOM_LEFT_RANGE.max`
-   can only narrow `hi`, and narrowing `hi` can only ever produce `entry-room-absent` — a refusal to
-   enter — never a pass. It cannot manufacture an `entry-open-after-costs`.
+2. **The substitution is NOT direction-safe, and an earlier draft of this section said it was.**
+   Substituting a measured upper bound for `ROOM_LEFT_RANGE.max` can only narrow `hi` — but
+   **deciding is separate from the verdict**. `roomBarRobustness` returns
+   `decided = hi < minRoomLeft || lo >= minRoomLeft`, and once decided the verdict is taken from
+   `roomLeft.median` over the **scored** launches alone (`entry.mjs`, the
+   `!(roomLeft.median >= t.minRoomLeft)` branch), never from `hi`. So a narrowed `hi` can flip an
+   undecided candidate to decided while its scored median still clears `minRoomLeft` — carrying it
+   onward toward `entry-open-after-costs`, a pass the shipped guard refuses today. The change can
+   therefore admit as well as refuse, and any decision on it must be argued on both directions.
 3. **Persist the unproven windows' `roomLeft` before deciding.** The evaluation above is blocked on
    exactly one missing field. A schema bump carrying the unproven launches' own room readings costs
    no request and no quota (the fills are already walked and parsed) and would let the next run

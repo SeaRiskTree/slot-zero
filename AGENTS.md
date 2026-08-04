@@ -322,8 +322,9 @@ Learned at real cost; the citations are to
   this problem (0 disagreements on 235 launches), so it is a property of the vendor pair, not of
   the walk. **A THIRD vendor pair shows the same shape and the screen does NOT backdate against
   it**: Stage 2's mint times come from **MadeOnSol**'s `profile.pump_tokens[].created_timestamp`
-  (`measure.mjs` → `toLaunchRefs`), and the first full-day default run dropped **6 of 10 windows on
-  one candidate** to the pre-mint tripwire — enough to take it from 10 planned windows to 3 walked.
+  (`measure.mjs` → `toLaunchRefs`), and the first full-day default run dropped **6 windows on one
+  candidate** to the pre-mint tripwire — 6 of the 7 drops that took it from 10 planned windows to 3
+  walked.
   Whether `screen.mjs` should pin the same 5,000 ms is open and is a decision, not a passing fix;
   `runs/2026-08-04-full-day-default.md` → "Two things that went wrong in the plumbing" owns the
   observation and states what is and is not proven about the cause.

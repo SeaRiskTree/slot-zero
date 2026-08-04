@@ -658,9 +658,10 @@ dev currently?"*, and the shape of the answer is the point:
   ones — `entry-cost-unmeasured` and `entry-cost-prohibitive` — have no older equivalent, and
   **unmeasured cost is never a pass**. A schema-≤5 `entry-room-present` is NOT the same finding;
   `tools/deployer-screen/README.md` → "The run-record schema" owns the boundary.
-- **AN UNMEASURED VERDICT IS SIX PRODUCERS AND EVERY ONE OF THEM IS OUR OWN COVERAGE — a later stage
-  may filter ONLY on a MEASURED verdict, never on an unmeasured one whatever its cause** (captain
-  decision 174b, schema 10). The four filterable verdicts are `entry-open-after-costs`,
+- **AN UNMEASURED VERDICT IS SEVEN PRODUCERS AND EVERY ONE OF THEM IS OUR OWN COVERAGE — a later
+  stage may filter ONLY on a MEASURED verdict, never on an unmeasured one whatever its cause**
+  (captain decision 174b, schema 10; the seventh arrived with 198b at schema 12). The four
+  filterable verdicts are `entry-open-after-costs`,
   `entry-room-absent`, `entry-cost-prohibitive` and `entry-field-loss-making`; every unmeasured
   outcome is **no answer** and must be carried forward, surfaced and counted, never dropped.
   `verdict !== 'entry-unmeasured'` is a filter on our own budget and evidence wearing a
@@ -668,9 +669,27 @@ dev currently?"*, and the shape of the answer is the point:
   down. **`entry.mjs` → `isDeployerAttributable` is the predicate; do not rebuild the attribution
   table in a consumer**, and note that **Stage 3 is a second consumer of Stage 2's fill walk, not a
   reader of `runs/*.json`**. `tools/deployer-screen/README.md` → "What a later stage may filter on"
-  owns the six-row table, the attribution rationale, the predicate's fail-safe behaviours and the
+  owns the seven-row table, the attribution rationale, the predicate's fail-safe behaviours and the
   superseded-rule note; the evidence is `slot-zero-stage2-reverify` → `report.md` §5, held outside
   this repo (see "Citing a report this repo does not hold").
+- **A SAMPLE TWO LAUNCHES SHORT DOES NOT GET TO DECIDE THE ROOM BAR, AND THE GUARD PINS NO NUMBER**
+  (captain decision 198b, schema 12). 190a's headroom made a verdict shape reachable that was
+  structurally impossible at 8-and-8: a candidate scored on 8 of 10 where the two missing launches
+  were selected by DROP CAUSE — the request cap takes the busiest windows, `roomIsProven` takes the
+  ones with no co-ordination evidence — rather than at random. `entry.mjs` → `roomBarRobustness`
+  refuses to score whenever completing that hole could have put the median on the other side of
+  `minRoomLeft`, in **BOTH** directions, and the cause `room-verdict-not-robust-to-missing-launches`
+  is how a run record says so. **The DIRECTION of the bias is UNMEASURED and the guard is built not
+  to need it** — the attempt failed (rank correlation 0.0250; busiest-quartile median room 0.3032
+  against the quietest 0.2771; dropping the busiest 3.1% moves the median 0.3146 → 0.3314, i.e. the
+  two statistics disagree in sign, on n = 1). So **no margin is pinned**: the interval is the
+  candidate's own reachable median range under `measure.mjs` → `ROOM_LEFT_RANGE`, which is algebraic
+  (`roomLeft` is a share of non-negative buy SOL), which makes the effective margin the sample's own
+  dispersion around the bar. **The committed tape cannot exercise it** — our subject is proven
+  235/235 with no walk drops, so the hole is 0 at every window and Stage 0 is byte-identical either
+  way; that is a limit of the one tape here, not a check the guard passed. That function's doc and
+  `tools/deployer-screen/README.md` → "A sample two launches short does not get to decide a bar it
+  cannot reach" own the argument; cite them rather than restating the figures.
 - **Entry cost is recovered from the chain, and the signatures are free.** Every `Fill` carries its
   transaction, so `measure.mjs` → `walletTransactions` and `entry.mjs` → `entryCostTargets` name the
   transactions to price with no discovery step; `pumpfun.mjs` → `parseTransactionCosts` reads

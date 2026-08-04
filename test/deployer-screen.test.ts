@@ -68,6 +68,7 @@ import {
   createSlotGroups,
   measureCompletion,
   measureCreateSlot,
+  ROOM_LEFT_RANGE,
   median,
   parseFill,
   percentile,
@@ -92,6 +93,7 @@ import {
   isDeployerAttributable,
   measureLaunchEntry,
   priceLaunchEntry,
+  roomBarRobustness,
   scoreEntry,
 } from '../tools/deployer-screen/entry.mjs';
 import type { EntryScore, EntryThresholds, UnmeasuredCause } from '../tools/deployer-screen/entry.mjs';
@@ -4022,6 +4024,10 @@ describe('the keyless boundary holds in both directions', () => {
   // Schema 11 adds no candidate ROW field either. The co-ordination rule became a UNION, and
   // everything it changed is inside `entry` (ENTRY_KEYS_BY_SCHEMA below) plus the `stage0` block.
   PERSISTED_BY_SCHEMA[11] = PERSISTED_BY_SCHEMA[10]!;
+  // Schema 12 adds no key ANYWHERE — captain decision 198b widens what `entry.unmeasuredCause` may
+  // contain rather than what a record carries. The version is the only thing that tells a consumer
+  // the domain grew, which is why it moved for a change no key-set assertion can see.
+  PERSISTED_BY_SCHEMA[12] = PERSISTED_BY_SCHEMA[11]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -4104,6 +4110,8 @@ describe('the keyless boundary holds in both directions', () => {
     10: ENTRY_KEYS_10,
     // Schema 11 persists the two halves of the co-ordination rule apart.
     11: ENTRY_KEYS_11,
+    // Schema 12 adds a seventh unmeasured CAUSE, not a key.
+    12: ENTRY_KEYS_11,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -4163,6 +4171,8 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 11 changes the co-ordination rule, which is a Stage 2 measurement. Enumeration is
     // untouched.
     11: CREATION_KEYS_9,
+    // Schema 12 is a Stage 2 refusal. Enumeration is untouched again.
+    12: CREATION_KEYS_9,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -4201,6 +4211,8 @@ describe('the keyless boundary holds in both directions', () => {
     10: ENTRY_COVERAGE_KEYS_6,
     // Schema 11 changes the co-ordination rule, not the eligibility filter.
     11: ENTRY_COVERAGE_KEYS_6,
+    // Schema 12's guard READS this block's `launchesPlanned` accounting and adds nothing to it.
+    12: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -4245,6 +4257,9 @@ describe('the keyless boundary holds in both directions', () => {
     // second signal is already inside every fill the walk fetched, so it buys no request, no host
     // and no vendor quota. A widening that cost something would show up HERE.
     11: SPEND_KEYS_8,
+    // Schema 12 leaves it alone too, and for a stronger reason: the guard runs BEFORE the room bar,
+    // so a candidate it refuses never reaches the cost leg and never spends an RPC request.
+    12: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -4276,6 +4291,7 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 10 leaves the Dune block alone — a separate lane owns that surface.
     10: DUNE_KEYS_9,
     11: DUNE_KEYS_9,
+    12: DUNE_KEYS_9,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -4298,6 +4314,7 @@ describe('the keyless boundary holds in both directions', () => {
     9: DUNE_COVERAGE_KEYS_9,
     10: DUNE_COVERAGE_KEYS_9,
     11: DUNE_COVERAGE_KEYS_9,
+    12: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -4312,6 +4329,7 @@ describe('the keyless boundary holds in both directions', () => {
     9: DUNE_COVERAGE_TABLE_KEYS_9,
     10: DUNE_COVERAGE_TABLE_KEYS_9,
     11: DUNE_COVERAGE_TABLE_KEYS_9,
+    12: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -6518,6 +6536,20 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
   const manyUnbundled = (n: number, room: number, outcomes: number[]) =>
     Array.from({ length: n }, () => launch(room, outcomes, false));
 
+  /**
+   * Eight priced launches whose median room lands exactly ON the 0.55 bar, with real dispersion
+   * around it: four at 0.45 and four at 0.65.
+   *
+   * Every other fixture here is UNIFORM, and a uniform sample can never exercise the near-bar guard
+   * — its median does not move however many launches go missing, which is the guard being correct
+   * rather than the guard being absent. Dispersion around the bar is the only shape that can show
+   * captain decision 198b doing anything at all.
+   */
+  const straddlingTheBar = (outcomes: number[] = [1, 1, -0.2]) => [
+    ...manyPriced(4, 0.45, outcomes),
+    ...manyPriced(4, 0.65, outcomes),
+  ];
+
   it('says entry-open-after-costs only when ALL THREE legs allow it', () => {
     const s = scoreEntry(manyPriced(8, 0.7, [1, 1, -0.2]), ENTRY_T);
     expect(s.verdict).toBe('entry-open-after-costs');
@@ -6718,15 +6750,32 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
   it('scores the proven half and refuses the rest — never a blend of the two', () => {
     const s = scoreEntry([...many(8, 0.2, [1, 1, -0.2]), ...manyUnbundled(8, 0.9, [1, 1, -0.2])], ENTRY_T);
     // The unproven launches are the roomy ones. A score that let them in would read 0.55+ and pass;
-    // the honest reading is the 0.2 the proven half actually shows.
+    // the honest reading is the 0.2 the proven half actually shows. THE PARTITION IS WHAT THIS TEST
+    // IS ABOUT and it is untouched — every count below is over the scored population alone.
     expect(s.launchesSampled).toBe(8);
     expect(s.launchesRoomUnproven).toBe(8);
     expect(s.roomLeft.median).toBeCloseTo(0.2, 6);
     expect(s.roomLeft.p90).toBeCloseTo(0.2, 6);
-    expect(s.verdict).toBe('entry-room-absent');
-    // Every count that describes the scored population is over the scored population.
     expect(s.roomHitRate.n).toBe(8);
     expect(s.outsidersPerLaunch.n).toBe(8);
+    // The blend never happens, which is the finding.
+    expect(s.verdict).not.toBe('entry-open-after-costs');
+    // But the VERDICT here is `entry-unmeasured`, not `entry-room-absent`, and the change is captain
+    // decision 198b rather than anything about the partition. Eight of the sixteen launches produced
+    // no room figure, and eight missing launches can move the median of a completed sixteen from 0.1
+    // to 0.6 — an interval containing the 0.55 bar. `entry-room-absent` is a MEASURED verdict a
+    // later stage may filter on, so declaring one off a half-missing sample is the false rejection
+    // this screen exists to remove. See `roomBarRobustness`.
+    expect(s.verdict).toBe('entry-unmeasured');
+    expect(s.unmeasuredCause).toBe('room-verdict-not-robust-to-missing-launches');
+    // And with the hole down to the live headroom — two launches of ten — the same partition DOES
+    // reach `entry-room-absent`, which is what says the guard fired on the size of the hole and not
+    // on the refusal itself.
+    const live = scoreEntry([...many(8, 0.2, [1, 1, -0.2]), ...manyUnbundled(2, 0.9, [1, 1, -0.2])], ENTRY_T);
+    expect(live.launchesSampled).toBe(8);
+    expect(live.launchesRoomUnproven).toBe(2);
+    expect(live.roomLeft.median).toBeCloseTo(0.2, 6);
+    expect(live.verdict).toBe('entry-room-absent');
   });
 
   it('says out loud how many launches it refused, and why, on every score that has one', () => {
@@ -6918,13 +6967,15 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
   });
 
   it('EVERY producer is reachable and EVERY unmeasured verdict carries a cause', () => {
-    // The exhaustiveness half of the contract, and the half that catches a SEVENTH producer added
+    // The exhaustiveness half of the contract, and the half that catches an EIGHTH producer added
     // later without coming here — an unlabelled cause hiding inside the aggregate is the same
-    // defect one layer down, which is the brief's own warning.
+    // defect one layer down, which is the brief's own warning. It caught the seventh:
+    // `room-verdict-not-robust-to-missing-launches` had to come here to ship.
     const cases: EntryScore[] = [
       scoreEntry(many(3, 0.9, [1, 1, 1]), ENTRY_T),
       scoreEntry(many(4, 0.7, [1, 1]), ENTRY_T, { launchesDropped: 4 }),
       scoreEntry(manyUnbundled(8, 0.7, [1, 1, -0.2]), ENTRY_T),
+      scoreEntry(straddlingTheBar(), ENTRY_T, { launchesDropped: 2 }),
       scoreEntry(many(8, 0.9, [1]), ENTRY_T),
       scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T),
       scoreEntry(Array.from({ length: 8 }, () => entryOnlyPricedLaunch(0.7, [1, 1, -0.2])), ENTRY_T),
@@ -6958,7 +7009,7 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
   });
 
   it('the attribution table is total, and NO cause is the deployer\'s — captain decision 174b', () => {
-    // The finding, not a redundancy: none of the six producers says anything whatever about a
+    // The finding, not a redundancy: none of the seven producers says anything whatever about a
     // deployer, so the only legitimate filter is on a MEASURED verdict. The table, the field and the
     // type all stay so that a later round making a cause deployer-attributable has to come here on
     // purpose rather than have a table quietly grow.
@@ -6973,12 +7024,15 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
   });
 
   it('THE SAFE FILTER does not absorb the coverage-caused verdicts — the naive one does', () => {
-    // The decision, stated as one assertion. Six candidates, one silenced by each of our six limits,
-    // and not one of them a finding about the deployer.
+    // The decision, stated as one assertion. Seven candidates, one silenced by each of our seven
+    // limits, and not one of them a finding about the deployer.
     const population = [
       { label: 'short history', s: scoreEntry(many(3, 0.9, [1, 1, 1]), ENTRY_T) },
       { label: 'dropped', s: scoreEntry(many(4, 0.7, [1, 1]), ENTRY_T, { launchesDropped: 4 }) },
       { label: 'unproven', s: scoreEntry(manyUnbundled(8, 0.7, [1, 1, -0.2]), ENTRY_T) },
+      // Captain decision 198b's refusal belongs in this population for the same reason as the three
+      // above it: the launches that went missing were OURS to walk and OURS to prove.
+      { label: 'near the bar', s: scoreEntry(straddlingTheBar(), ENTRY_T, { launchesDropped: 2 }) },
       { label: 'unpriced', s: scoreEntry(many(8, 0.7, [1, 1, -0.2]), ENTRY_T) },
       {
         label: 'exits unpriced',
@@ -6987,11 +7041,11 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
       { label: 'thin field', s: scoreEntry(many(8, 0.9, [1]), ENTRY_T) },
     ];
 
-    // THE NAIVE FILTER, which is what a Stage 3 would have written before this lane. It drops five
-    // candidates on our own coverage and cannot say that it did.
+    // THE NAIVE FILTER, which is what a Stage 3 would have written before this lane. It drops every
+    // one of these candidates on our own coverage and cannot say that it did.
     const naiveDropped = population.filter((c) => c.s.verdict === 'entry-unmeasured' || c.s.verdict === 'entry-cost-unmeasured');
     expect(naiveDropped.map((c) => c.label).sort()).toEqual(
-      ['dropped', 'exits unpriced', 'short history', 'thin field', 'unproven', 'unpriced'].sort(),
+      ['dropped', 'exits unpriced', 'near the bar', 'short history', 'thin field', 'unproven', 'unpriced'].sort(),
     );
 
     // THE RULE. NONE of them is legitimate to filter on: every one is NO ANSWER and must be carried
@@ -6999,7 +7053,7 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     const filterable = population.filter((c) => isDeployerAttributable(c.s));
     expect(filterable.map((c) => c.label)).toEqual([]);
     const carriedForward = population.filter((c) => !isDeployerAttributable(c.s));
-    expect(carriedForward).toHaveLength(6);
+    expect(carriedForward).toHaveLength(7);
     for (const c of carriedForward) expect(c.s.unmeasuredCauseAttribution).toBe('our-coverage');
 
     // And the predicate is not vacuously false: a MEASURED verdict over the same shape of launches
@@ -7076,6 +7130,201 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     expect(measured.unmeasuredCause).toBeNull();
     expect(measured.unmeasuredCauseAttribution).toBeNull();
     expect(measured.unmeasuredContributingCauses).toEqual([]);
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // CAPTAIN DECISION 198b — the near-bar guard on the non-random subsample decision 190a created.
+  //
+  // 190a decoupled `maxLaunchesPerCandidate` (10) from `minLaunchesSampled` (8), which made a
+  // verdict shape reachable that was STRUCTURALLY IMPOSSIBLE at 8-and-8: a candidate scored on 8 of
+  // 10 launches where the 2 missing ones were selected by DROP CAUSE — the request cap takes the
+  // busiest windows, `roomIsProven` takes the ones with no co-ordination evidence — rather than at
+  // random. These pin the three behaviours the decision asked for (near the bar refuses, far from
+  // it still scores, a complete sample is untouched) plus the two that make the refusal honest: it
+  // is SYMMETRIC because the bias direction is unmeasured, and it is `our-coverage` so it is carried
+  // forward rather than filtered. `entry.mjs` → `roomBarRobustness` owns the argument.
+
+  it('NEAR THE BAR with a launch dropped: refuses, where the same sample whole would have PASSED', () => {
+    // Median room lands exactly on the 0.55 bar with dispersion around it. Complete, this is a pass.
+    const whole = scoreEntry(straddlingTheBar(), ENTRY_T);
+    expect(whole.roomLeft.median).toBeCloseTo(0.55, 6);
+    expect(whole.verdict).toBe('entry-open-after-costs');
+
+    // Two of the ten planned launches produced no room figure. The eight that survived still read a
+    // median of 0.55 — but two unknown launches move the completed median anywhere in [0.45, 0.65],
+    // and the bar is inside it. So the sample does not decide the question and no verdict is given.
+    const guarded = scoreEntry(straddlingTheBar(), ENTRY_T, { launchesDropped: 2 });
+    expect(guarded.launchesSampled).toBe(8);
+    expect(guarded.roomLeft.median).toBeCloseTo(0.55, 6);
+    expect(guarded.verdict).toBe('entry-unmeasured');
+    expect(guarded.unmeasuredCause).toBe('room-verdict-not-robust-to-missing-launches');
+    expect(guarded.unmeasuredCauseAttribution).toBe('our-coverage');
+    expect(guarded.unmeasuredContributingCauses).toEqual(['room-verdict-not-robust-to-missing-launches']);
+    // A false positive is not an acceptable result; a refusal is. And the refusal is OURS, so a
+    // later stage carries the candidate forward instead of dropping it (decision 174b).
+    expect(isDeployerAttributable(guarded)).toBe(false);
+    expect(guarded.caveats).toContain(COVERAGE_ATTRIBUTION_CAVEAT);
+    // The rationale states the interval, the bar, and that the DIRECTION is unmeasured — which is
+    // the whole reason the refusal is two-sided rather than a correction one way.
+    expect(guarded.rationale).toMatch(/\[0\.450, 0\.650\]/);
+    expect(guarded.rationale).toMatch(/UNMEASURED/);
+    expect(guarded.rationale).toMatch(/did not go missing at random/);
+  });
+
+  it('the same guard fires on an UNPROVEN launch, not only on a dropped one', () => {
+    // `roomIsProven` refusals are the other half of the non-random hole and the dominant one for a
+    // stranger — the census measures per-launch proven at 44/112. A guard that only saw walk drops
+    // would miss the cause that actually fires most.
+    const s = scoreEntry([...straddlingTheBar(), ...manyUnbundled(2, 0.9, [1, 1, -0.2])], ENTRY_T);
+    expect(s.launchesSampled).toBe(8);
+    expect(s.launchesRoomUnproven).toBe(2);
+    expect(s.verdict).toBe('entry-unmeasured');
+    expect(s.unmeasuredCause).toBe('room-verdict-not-robust-to-missing-launches');
+  });
+
+  it('and on a launch the stage ceiling never STARTED, which only `launchesPlanned` can see', () => {
+    // A launch the budget left unattempted is planned, produces no room figure, and is counted by
+    // neither `launchesDropped` nor `launchesRoomUnproven`. It is also the OLDEST of the plan, so it
+    // is no more random than the other two causes.
+    const blind = scoreEntry(straddlingTheBar(), ENTRY_T);
+    expect(blind.verdict).toBe('entry-open-after-costs');
+    const seen = scoreEntry(straddlingTheBar(), ENTRY_T, { launchesPlanned: 10 });
+    expect(seen.verdict).toBe('entry-unmeasured');
+    expect(seen.unmeasuredCause).toBe('room-verdict-not-robust-to-missing-launches');
+    // And the accounting can never shrink the hole: a plan smaller than what the walk actually lost
+    // falls back to the two causes `scoreEntry` can see for itself.
+    const understated = scoreEntry(straddlingTheBar(), ENTRY_T, { launchesPlanned: 1, launchesDropped: 2 });
+    expect(understated.unmeasuredCause).toBe('room-verdict-not-robust-to-missing-launches');
+  });
+
+  it('FAR FROM THE BAR with a launch dropped: still scores — the 190a headroom is kept', () => {
+    // This is the half the guard must NOT take. Two launches missing from a sample whose median sits
+    // well clear of the bar cannot move it across, so the verdict stands and decision 190a keeps
+    // what it bought. Both sides of the bar, because the guard is symmetric.
+    const open = scoreEntry(manyPriced(8, 0.7, [1, 1, -0.2]), ENTRY_T, { launchesDropped: 2 });
+    expect(open.verdict).toBe('entry-open-after-costs');
+    expect(open.unmeasuredCause).toBeNull();
+
+    const absent = scoreEntry(many(8, 0.2, [1, 1, -0.2]), ENTRY_T, { launchesDropped: 2 });
+    expect(absent.verdict).toBe('entry-room-absent');
+
+    // "Far" is the sample's own dispersion, not a distance in room units: a TIGHT sample two
+    // launches short is decided even sitting a hundredth above the bar, because a median of ten
+    // cannot be moved by two observations however extreme they are.
+    const tightAndClose = scoreEntry(manyPriced(8, 0.56, [1, 1, -0.2]), ENTRY_T, { launchesDropped: 2 });
+    expect(tightAndClose.roomLeft.median).toBeCloseTo(0.56, 6);
+    expect(tightAndClose.verdict).toBe('entry-open-after-costs');
+  });
+
+  it('A COMPLETE SAMPLE IS UNTOUCHED, however close to the bar and however dispersed', () => {
+    // Nothing before decision 198b is retro-graded and no 10-of-10 candidate changes behaviour: with
+    // no launch missing, `lo` and `hi` are both the reported median and the bar cannot be inside the
+    // interval. The fixture is deliberately the worst case for the guard — dispersed AND exactly on
+    // the bar — so this cannot pass by sitting somewhere safe.
+    const ten = [...manyPriced(5, 0.45, [1, 1, -0.2]), ...manyPriced(5, 0.65, [1, 1, -0.2])];
+    const s = scoreEntry(ten, ENTRY_T, { launchesPlanned: 10, launchesDropped: 0 });
+    expect(s.launchesSampled).toBe(10);
+    expect(s.roomLeft.median).toBeCloseTo(0.55, 6);
+    expect(s.verdict).toBe('entry-open-after-costs');
+    expect(s.unmeasuredCause).toBeNull();
+  });
+
+  it('IT REFUSES IN BOTH DIRECTIONS, because the direction of the bias is unmeasured', () => {
+    // The half that is easy to forget. `entry-room-absent` is a MEASURED verdict a later stage MAY
+    // filter on, so shipping one off a subsample that could equally have cleared the bar is an
+    // invisible false REJECTION — the thing this screen exists to remove. The guard has no measured
+    // lean to correct for, so it cannot pick a side and does not try.
+    const wouldRefuse = [...manyPriced(4, 0.4, [1, 1, -0.2]), ...manyPriced(4, 0.6, [1, 1, -0.2])];
+    const whole = scoreEntry(wouldRefuse, ENTRY_T);
+    expect(whole.roomLeft.median).toBeCloseTo(0.5, 6);
+    expect(whole.verdict).toBe('entry-room-absent');
+    expect(isDeployerAttributable(whole)).toBe(true);
+
+    const guarded = scoreEntry(wouldRefuse, ENTRY_T, { launchesDropped: 2 });
+    expect(guarded.verdict).toBe('entry-unmeasured');
+    expect(guarded.unmeasuredCause).toBe('room-verdict-not-robust-to-missing-launches');
+    expect(isDeployerAttributable(guarded)).toBe(false);
+  });
+
+  it('the refusal is DISTINGUISHABLE from the older ones in a run record and on the screen', () => {
+    // A new refusal reason that reads like an old one is worse than no guard: an operator reading a
+    // run must be able to tell "the sample was too small" from "the sample was big enough and the
+    // hole in it leaves the bar undecided". These are different states of the world.
+    const nearBar = scoreEntry(straddlingTheBar(), ENTRY_T, { launchesDropped: 2 });
+    const tooSmall = scoreEntry(many(4, 0.7, [1, 1]), ENTRY_T, { launchesDropped: 4 });
+    expect(nearBar.unmeasuredCause).not.toBe(tooSmall.unmeasuredCause);
+    // The one that would be easiest to confuse: BOTH have dropped launches, and only one of them is
+    // about the drop count.
+    expect(tooSmall.unmeasuredCause).toBe('windows-dropped');
+    expect(nearBar.launchesSampled).toBeGreaterThanOrEqual(ENTRY_T.minLaunchesSampled);
+    expect(tooSmall.launchesSampled).toBeLessThan(ENTRY_T.minLaunchesSampled);
+
+    const row = toEntryRecordRow(nearBar, emptyEntryCoverage());
+    expect(row.unmeasuredCause).toBe('room-verdict-not-robust-to-missing-launches');
+    expect(UNMEASURED_CAUSES).toContain(row.unmeasuredCause);
+    expect(isDeployerAttributable(row)).toBe(isDeployerAttributable(nearBar));
+    // And it reaches the operator's screen under its own name, not folded into a neighbour.
+    const rendered = renderEntry(nearBar, null).join('\n');
+    expect(rendered).toMatch(/CAUSE: ROOM-VERDICT-NOT-ROBUST-TO-MISSING-LAUNCHES/);
+    expect(rendered).toMatch(/never filter on it/);
+  });
+
+  it('roomBarRobustness: the bound is EXACT, algebraic, and fails safe on an empty sample', () => {
+    // NO PINNED MARGIN EXISTS, and this is why one is not needed. The interval is the completed
+    // sample's own reachable median range under the only thing anyone may assume about a launch
+    // nobody walked: that `roomLeft` is a share and lies in its algebraic support.
+    expect(ROOM_LEFT_RANGE.min).toBe(0);
+    expect(ROOM_LEFT_RANGE.max).toBe(1);
+
+    // With nothing missing the interval collapses to the reported median, so the bar is decided for
+    // ANY bar. That is the "a complete sample is untouched" property, at the unit.
+    const eight = [0.45, 0.45, 0.45, 0.45, 0.65, 0.65, 0.65, 0.65];
+    const complete = roomBarRobustness(eight, 0, 0.55);
+    expect(complete.lo).toBeCloseTo(0.55, 12);
+    expect(complete.hi).toBeCloseTo(0.55, 12);
+    expect(complete.decided).toBe(true);
+
+    // Two missing out of ten moves the median by exactly one order statistic in each direction —
+    // no more, and no less. Both numbers are computed, not asserted from a table.
+    const two = roomBarRobustness(eight, 2, 0.55);
+    expect(two.lo).toBeCloseTo(0.45, 12);
+    expect(two.hi).toBeCloseTo(0.65, 12);
+    expect(two.decided).toBe(false);
+
+    // The same hole against a bar outside the interval IS decided, in both directions.
+    expect(roomBarRobustness(eight, 2, 0.7).decided).toBe(true);
+    expect(roomBarRobustness(eight, 2, 0.4).decided).toBe(true);
+    // Boundary: `lo >= bar` is a pass that survives the worst case, `hi < bar` a refusal that does.
+    expect(roomBarRobustness(eight, 2, 0.45).decided).toBe(true);
+    expect(roomBarRobustness(eight, 2, 0.65).decided).toBe(false);
+
+    // Fail-safe: an empty sample decides nothing. `scoreEntry` returns at the sample-size gate long
+    // before this, but the exported function must not answer "decided" to a caller that can.
+    const empty = roomBarRobustness([], 2, 0.55);
+    expect(empty.decided).toBe(false);
+    // And a negative or fractional hole cannot widen or invert the interval.
+    expect(roomBarRobustness(eight, -3, 0.55).decided).toBe(true);
+  });
+
+  it('the committed tape CANNOT exercise this guard, and the doc says so rather than claiming a pass', () => {
+    // The honest limit, pinned so it cannot rot into a claim of coverage. Our subject deployer is
+    // proven on every launch under the union rule and its tape carries no walk drops, so the hole is
+    // 0 at every window of Stage 0's replay and the guard is silent there BY CONSTRUCTION. Stage 0
+    // staying green — both halves of the known-negative control included — is therefore not evidence
+    // that the guard was checked against it.
+    const launches = measureSubjectLaunches(
+      join(TOOL_DIR, '..', '..', 'data', 'population-tape-2026-07-29'),
+    );
+    expect(launches.filter((l) => !roomIsProven(l.createSlot))).toHaveLength(0);
+    const room = launches.map((l) => l.createSlot.roomLeft);
+    expect(roomBarRobustness(room, 0, 0.55).decided).toBe(true);
+
+    // And the algebraic support is not an empirical claim about this tape — but if it were ever
+    // false here, `roomLeft` would have stopped being a share and this is what would say so.
+    for (const r of room) {
+      expect(r).toBeGreaterThanOrEqual(ROOM_LEFT_RANGE.min);
+      expect(r).toBeLessThanOrEqual(ROOM_LEFT_RANGE.max);
+    }
   });
 });
 

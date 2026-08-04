@@ -256,6 +256,27 @@ export function roomIsProven(m) {
 }
 
 /**
+ * The support of {@link CreateSlotMeasurement.roomLeft}, and it is ALGEBRAIC rather than measured.
+ *
+ * {@link tallyCreateSlot} builds `operationShare` as `(devSol + coordinatedSol) / (devSol +
+ * coordinatedSol + independentSol)` over {@link createSlotGroups}' `inSlot`, which is filtered to
+ * `side === 'buy'` — so every term is a non-negative amount of SOL paid, the ratio is in [0, 1], and
+ * `roomLeft = 1 - operationShare` is too. The empty create slot takes the `denominator > 0` fallback
+ * and lands at `operationShare = 1`, `roomLeft = 0`, inside the same interval.
+ *
+ * **Why this is exported rather than left implicit.** `entry.mjs` → `roomBarRobustness` bounds what
+ * an UNMEASURED launch's room could have been, and the only thing it may assume about a launch
+ * nobody walked is the arithmetic range of the quantity. A bound taken from the committed tape's
+ * observed spread would be an n = 1 empirical claim wearing an algebraic one's clothes; this is not
+ * that. Widening these numbers is not a tuning knob — it would mean `roomLeft` had stopped being a
+ * share, and the assertion `every roomLeft on the committed tape lies inside its algebraic support`
+ * in `test/deployer-screen.test.ts` is what would say so.
+ *
+ * @type {Readonly<{ min: number, max: number }>}
+ */
+export const ROOM_LEFT_RANGE = Object.freeze({ min: 0, max: 1 });
+
+/**
  * @typedef {object} CreateSlotTally
  * @property {CreateSlotMeasurement} measurement
  * @property {Set<string>} outsiders Create-slot wallets left unattributed to the operation — the

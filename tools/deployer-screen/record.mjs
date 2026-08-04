@@ -237,8 +237,33 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `sid` block-index signal, which is persisted because that signal's failure mode is silent.
  *   The correction is recorded in `data/population-tape-2026-07-29/IMPORT.md` → "Corrections";
  *   the report and the dataset README are a primary record and are not edited.
+ * - **12** — **the unmeasured CAUSE VOCABULARY gains a seventh value** (captain decision 198b). No
+ *   key moves anywhere: `PERSISTED_BY_SCHEMA[12]`, `ENTRY_KEYS_BY_SCHEMA[12]`,
+ *   `ENTRY_COVERAGE_KEYS_BY_SCHEMA[12]`, `SPEND_KEYS_BY_SCHEMA[12]`, `DUNE_KEYS_BY_SCHEMA[12]` and
+ *   `CREATION_KEYS_BY_SCHEMA[12]` all equal `[11]`. What changes is what `entry.unmeasuredCause` may
+ *   contain: `room-verdict-not-robust-to-missing-launches`, which no schema-≤11 record can carry
+ *   because the producer did not exist. **The version is what tells a consumer the domain widened**
+ *   — the field's own shape did not — and it is bumped for the same reason schema 10 exists: a
+ *   reader that enumerated the six causes would otherwise meet a seventh with nothing saying so.
+ *
+ *   **What it means.** Captain decision 190a decoupled `maxLaunchesPerCandidate` (10) from
+ *   `minLaunchesSampled` (8), so a candidate keeps its verdict after losing up to two launches — and
+ *   the missing ones are selected by DROP CAUSE, not at random (the request cap takes the busiest
+ *   windows, `roomIsProven` takes the ones with no co-ordination evidence). `entry.mjs` →
+ *   `roomBarRobustness` now refuses a room verdict whenever completing that hole could have put the
+ *   median on the other side of `minRoomLeft`. It refuses in BOTH directions, because the direction
+ *   of the bias is UNMEASURED; the interval is exact rather than tuned, and **no `thresholds.json`
+ *   value moved for it — there is no new pinned number**.
+ *
+ *   **The two ways to misread it.** (1) It is NOT one of the three sample-size causes: the candidate
+ *   cleared `minLaunchesSampled` and was refused anyway, so `launchesSampled` on such a record is at
+ *   or above the floor while `too-few-*` records sit below it. (2) A schema-≤11 record's absence of
+ *   this cause is NOT evidence its sample was robust — the guard did not exist, so a schema-11
+ *   `entry-room-absent` or `entry-open-after-costs` reached over 8 of 10 launches is exactly the
+ *   shape 198b refuses today and is not comparable with a schema-12 one. Committed records are never
+ *   retro-edited, so the older reading stays legal; what it cannot do is stand in for a guarded one.
  */
-export const RECORD_SCHEMA_VERSION = 11;
+export const RECORD_SCHEMA_VERSION = 12;
 
 /**
  * Completeness of a run, as the record can actually support.

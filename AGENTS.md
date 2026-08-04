@@ -74,6 +74,17 @@ RPC signature cache) and a superseded `tape/` probe were excluded; everything el
 verbatim. When later evidence contradicts the imported prose, add to `IMPORT.md`
 → "Corrections"; do not edit `report.md` or the dataset `README.md`.
 
+**WHICH DATASETS THAT NEVER-EDIT RULE PROTECTS** (captain ruling 186a; full record
+`data/slot-zero-bundling-predicate-question/decision-182a-gradtape-figure.md`). The protection
+attaches to an **imported primary record**, marked by an `IMPORT.md` plus explicit
+primary-record / never-reformat-a-row language — `data/population-tape-2026-07-29/` is the
+example. A dataset **produced by this repo** carries no `IMPORT.md`, and its prose is ordinary
+documentation and editable; `data/graduated-life-tape-2026-08-02/` is one, and 186a authorised
+editing its cross-reference sentence. Either way the scope limit is the same: **a data row and
+its formatting are never touched.** And the rule's last clause is first-class, not a footnote —
+**if you are unsure which kind you are facing, stop and ask.** The cost of asking is one round;
+the cost of editing an imported primary record is the record.
+
 **THE TAPE'S WINDOW IS NOT A FLAT 60 s — it is per launch, and assuming otherwise has already
 produced wrong published statements more than once.** Read each launch's own
 `window/{mint}.meta.json` → `window_ms` before any per-launch rate, uplift or page-count aggregate;

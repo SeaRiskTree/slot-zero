@@ -783,9 +783,11 @@ looked at, so an unidentifiable cause is reported as unidentified rather than ro
 likeliest story. `record.mjs` → `UNMEASURED_KINDS` is the authority on which kinds truncate, and
 `classifyUnmeasured` reads the client's evidence rather than guessing from the exception type alone.
 
-Each entry carries a wallet-independent `summary` and a per-wallet `detail`. **The summary is the
-grouping key**: keying on the detail would give every wallet its own line, since the client's message
-embeds the request URL, and a grouping that groups nothing is just a longer list.
+Each entry carries a wallet-independent `summary` and a per-failure `detail` — the cause's own
+message, with vendor identifiers struck at construction (see "Nothing vendor-derived survives in a
+note, either" below), so the request URL the client's message embeds no longer reaches the record.
+**The summary is the grouping key**: the detail still varies with the cause, so keying on it would
+give near-identical failures a group each, and a grouping that groups nothing is just a longer list.
 
 The split is what keeps the flag worth reading. A keyless walk issues up to 585 requests against the
 flakiest surface in the tool; if one retried-and-failed page set `truncated: true`, the flag would be

@@ -61,6 +61,7 @@ import {
   buildPlan,
   deploySavedQuery,
   executeAndRead,
+  evidencePointer,
   main,
   parseArgs,
   readBounds,
@@ -486,7 +487,9 @@ describe('a read that cannot prove it is whole is refused, never published', () 
 describe('the saved query is verified before an execution is spent', () => {
   it('passes when the deployed text matches byte for byte', async () => {
     const { c, calls } = client(() => json({ query_sql: CENSUS_SQL }));
-    await expect(assertSavedQueryMatches(c, 8214953)).resolves.toBeUndefined();
+    // It returns its verdict rather than only throwing, because the run record carries that verdict
+    // as a field and a field asserting a verification must be wired to the verification.
+    await expect(assertSavedQueryMatches(c, 8214953)).resolves.toBe(true);
     expect(calls).toEqual(['/query/8214953']);
     expect(c.executions()).toBe(0);
   });
@@ -517,6 +520,47 @@ describe('the deploy step counts the slots it is about to spend', () => {
   it('falls back to counting the rows when the vendor declares no total', async () => {
     const { c } = client(() => json({ queries: [{ id: 1, name: 'a' }, { id: 2, name: 'b' }] }));
     expect((await readSavedQueries(c)).total).toBe(2);
+  });
+
+  it('counts the PRIVATE population the cap governs, not every query the account owns', async () => {
+    // The Free-tier allowance is on private queries; `total` counts public and archived ones too.
+    // A guard measuring a different population than the cap it enforces is the same take-it-on-faith
+    // defect this step exists to remove.
+    const { c } = client(() =>
+      json({
+        total: 5,
+        queries: [
+          { id: 1, name: 'private', is_private: true },
+          { id: 2, name: 'public', is_private: false },
+          { id: 3, name: 'archived', is_private: true, is_archived: true },
+          { id: 4, name: 'archived the other spelling', is_private: true, archived: true },
+          { id: 5, name: 'private again', is_private: true },
+        ],
+      }),
+    );
+    const saved = await readSavedQueries(c);
+    expect(saved.total).toBe(5);
+    expect(saved.privateInUse).toBe(2);
+  });
+
+  it('COUNTS a row that declares nothing, because under-counting is what over-spends', async () => {
+    // `/queries?limit=100` rows carry neither `is_private` nor `is_archived` (verified against the
+    // live account 2026-08-04) while `GET /query/{id}` does. Dropping a silent row would under-count
+    // and let the deploy spend a slot it has no evidence is free — the one direction that must not
+    // happen. Rows the vendor declares but does not list are counted the same way.
+    const { c } = client(() => json({ total: 4, queries: [{ id: 1, name: 'a' }, { id: 2, name: 'b', is_private: false }] }));
+    const saved = await readSavedQueries(c);
+    expect(saved.total).toBe(4);
+    expect(saved.privateInUse).toBe(3); // one silent row + two declared-but-unlisted
+  });
+
+  it('gates the deploy on the FILTERED count and reports both figures', () => {
+    // Both numbers reach the operator so the guard is auditable: the vendor's declared total beside
+    // the filtered count, and the message says which one was compared against the cap.
+    const source = readFileSync(join(TOOL_DIR, 'run.mjs'), 'utf8');
+    expect(source).toContain('saved.privateInUse >= bounds.dune.privateQuerySlots');
+    expect(source).not.toContain('saved.total >= bounds.dune.privateQuerySlots');
+    expect(source).toContain('FILTERED count');
   });
 
   it('refuses when it cannot establish the count', async () => {
@@ -578,6 +622,20 @@ describe('the CLI plans before it spends', () => {
     expect(huge.refusals.join(' ')).toMatch(/above the pinned ceiling/);
   });
 
+  it('never writes a truncated pointer to the record\'s own evidence', () => {
+    // The record is a versioned evidence contract and this string is its ONE link to the raw rows.
+    // A `--out` outside the checkout is a legitimate invocation; the earlier derivation sliced at
+    // `indexOf('tools/')` and wrote a single character for it, with nothing failing.
+    expect(evidencePointer(join(TOOL_DIR, 'runs', '2026-07-cohort.json'))).toBe(
+      'tools/creation-census/runs/2026-07-cohort.json',
+    );
+    for (const outside of ['/tmp/census/2026-07-cohort.json', '/2026-07-cohort.json']) {
+      const pointer = evidencePointer(outside);
+      expect(pointer).toBe(outside);
+      expect(pointer.length).toBeGreaterThan(1);
+    }
+  });
+
   it('issues nothing at all without --live, and says the caveat anyway', async () => {
     const lines: string[] = [];
     const code = await main([], {}, (l) => lines.push(l));
@@ -620,8 +678,19 @@ describe('the caveat travels with the number', () => {
       coverage: { ok: true, reasons: [] },
       spend: { requests: 5, executions: 1, executionCeiling: 1, resultBytes: 1, estimatedExportCredits: 0 },
       cohortFile: 'x',
+      savedQueryMatchedCommittedSql: true,
     });
     expect(record['caveats']).toContain(PROLIFIC_CUT_CAVEAT);
+  });
+
+  it('leaves the request ceiling able to COVER a whole successful run', () => {
+    // At 40 the request ceiling bound before `maxPollAttempts` did, so an execution finishing on a
+    // late poll exhausted the budget BEFORE the result read: a billed, unrecoverable execution
+    // spent and its answer thrown away. The ceiling must cover 1 verify + 1 execute +
+    // maxPollAttempts polls + 1 read, plus one retry of headroom.
+    const bounds = readBounds();
+    expect(bounds.dune.maxRequestsPerRun).toBeGreaterThanOrEqual(bounds.dune.maxPollAttempts + 4);
+    expect(String(bounds.justification['dune.maxRequestsPerRun'])).toMatch(/maxPollAttempts \+ 4/);
   });
 
   it('gives every pinned parameter a stated reason', () => {

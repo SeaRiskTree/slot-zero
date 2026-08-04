@@ -579,6 +579,10 @@ export function normaliseSql(sql) {
  *   estimatedExportCredits: number }} spend
  * @property {string} cohortFile Path, relative to the repository root, of the raw result this record
  *   describes. The rows are the evidence; this record is the reading of them.
+ * @property {boolean} savedQueryMatchedCommittedSql The OUTCOME of the pre-execution comparison
+ *   between the saved Dune query and the committed SQL, threaded in rather than written as a
+ *   literal. This record is evidence, and a field asserting a verification result that is not wired
+ *   to the verification keeps reading `true` on a path that never ran it.
  */
 
 /**
@@ -617,7 +621,7 @@ export function buildCensusRecord(input) {
     parameters: { min_launches: input.parameters.minLaunches, max_rows: input.parameters.maxRows },
     dune: {
       queryId: input.queryId,
-      savedQueryMatchedCommittedSql: true,
+      savedQueryMatchedCommittedSql: input.savedQueryMatchedCommittedSql,
       requests: input.spend.requests,
       executions: input.spend.executions,
       executionCeiling: input.spend.executionCeiling,

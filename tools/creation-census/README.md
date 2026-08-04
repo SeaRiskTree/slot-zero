@@ -120,7 +120,7 @@ not).
 | | |
 |---|---|
 | executions | **1 per run**, which is one census month. The coverage probe rides in the same result. |
-| requests | **40**, covering the verification, the execution, the polls and the one read |
+| requests | **48**, covering the verification, the execution, up to 40 polls and the one read, plus one retry of headroom. It is `maxPollAttempts + 4` and must stay there: below it the request ceiling binds first, and a run that exhausts its budget between the execution and the read has burned a billed, unrecoverable execution and thrown its answer away. |
 | result rows | **5,000** deployer rows, ceiling 20,000; read at `?limit=` rows + 64 |
 | pacing | **250 ms** between request starts |
 | measured cost | **1 execution, 5 requests, 188,232 result bytes, ~3.8 export credits** (estimate) |

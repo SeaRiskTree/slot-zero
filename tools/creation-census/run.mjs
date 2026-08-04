@@ -31,7 +31,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, relative, isAbsolute, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveDuneCredential } from './credential.mjs';
@@ -49,6 +49,25 @@ import {
 } from './census.mjs';
 
 const TOOL_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = dirname(dirname(TOOL_DIR));
+
+/**
+ * The record's pointer to the raw rows it is a reading of, as a repository-relative path.
+ *
+ * **A pointer that cannot be made relative falls back to the absolute path, never to a truncated
+ * one.** The record is a versioned evidence contract whose one link to its own rows is this string,
+ * so it must be whole or plainly absolute — an `--out` outside the checkout is a legitimate
+ * invocation, not a licence to write something shorter than the path.
+ *
+ * @param {string} path
+ * @returns {string}
+ */
+export function evidencePointer(path) {
+  const abs = resolve(path);
+  const rel = relative(REPO_ROOT, abs);
+  if (rel === '' || isAbsolute(rel) || rel === '..' || rel.startsWith(`..${sep}`)) return abs;
+  return rel.split(sep).join('/');
+}
 
 /** Pinned bounds, every value with a stated reason. @returns {any} */
 export function readBounds() {
@@ -140,7 +159,7 @@ const HELP = `slot-zero creation census — every pump.fun deployer creating in 
 `;
 
 /**
- * Count the account's saved queries.
+ * Count the account's saved queries, and separately the PRIVATE ones the Free-tier cap governs.
  *
  * **This is the re-checkable form of a claim that was wrong for months.** `cohort.mjs` and this
  * lane's README recorded the census as blocked because the Free tier's ten private query slots were
@@ -148,8 +167,22 @@ const HELP = `slot-zero creation census — every pump.fun deployer creating in 
  * reader, so the deploy step counts them itself, immediately before creating anything, and refuses
  * rather than asserting a figure that has to be taken on faith.
  *
+ * **The count must measure the population the cap actually governs.** `total` is every query the
+ * account owns, public and archived included, while the allowance is on PRIVATE queries — and a
+ * guard measuring a different population than the cap it enforces is exactly the take-it-on-faith
+ * defect this lane exists to remove. Over-refusing is not good enough here, because the whole point
+ * is that the refusal was wrong. So both figures are reported: `total` as the vendor declared it and
+ * `privateInUse` as the filtered one the deploy compares against the cap.
+ *
+ * The filter is deliberately asymmetric, because under-counting is the one direction that lets a
+ * deploy over-spend. `/queries?limit=100` rows do NOT carry `is_private` or `is_archived` at all
+ * (verified against the live account 2026-08-04) while `GET /query/{id}` does, so a row that says
+ * nothing is COUNTED as possibly private. Only a row explicitly saying `is_private === false`, or
+ * explicitly saying it is archived, is excluded — as are no rows at all when the list is short of
+ * the declared total, whose unseen remainder is counted the same way.
+ *
  * @param {DuneClient} client
- * @returns {Promise<{ total: number, names: string[] }>}
+ * @returns {Promise<{ total: number, privateInUse: number, names: string[] }>}
  */
 export async function readSavedQueries(client) {
   const body = await client.getJson('/queries?limit=100');
@@ -164,7 +197,11 @@ export async function readSavedQueries(client) {
     );
   }
   const total = typeof declared === 'number' && Number.isFinite(declared) ? declared : queries.length;
-  return { total, names: queries.map((q) => String(q?.name ?? '')) };
+  const countsAgainstCap = (/** @type {any} */ q) =>
+    q?.is_private !== false && q?.is_archived !== true && q?.archived !== true;
+  const unlisted = Math.max(0, total - queries.length);
+  const privateInUse = queries.filter(countsAgainstCap).length + unlisted;
+  return { total, privateInUse, names: queries.map((q) => String(q?.name ?? '')) };
 }
 
 /**
@@ -199,9 +236,13 @@ export async function deploySavedQuery(client, opts) {
  * One request, NO execution, and it runs before the execution rather than after: the point is to not
  * spend a billed, unrecoverable execution on a query that no longer asks what this module documents.
  *
+ * It RETURNS its verdict rather than only throwing, because the run record carries that verdict as
+ * a field. A field asserting a verification result must be wired to the verification: a literal
+ * `true` written beside the number would keep reading `true` on any path that never checked.
+ *
  * @param {DuneClient} client
  * @param {number} queryId
- * @returns {Promise<void>}
+ * @returns {Promise<true>}
  */
 export async function assertSavedQueryMatches(client, queryId) {
   const body = await client.getJson(`/query/${queryId}`);
@@ -223,6 +264,7 @@ export async function assertSavedQueryMatches(client, queryId) {
       { status: null, terminal: true },
     );
   }
+  return true;
 }
 
 /**
@@ -446,13 +488,16 @@ export async function main(argv, env, say) {
   try {
     if (args.deploy) {
       const saved = await readSavedQueries(client);
-      say(`  account holds ${saved.total} saved quer${saved.total === 1 ? 'y' : 'ies'} of ` +
-        `${bounds.dune.privateQuerySlots} private slots.`);
-      if (saved.total >= bounds.dune.privateQuerySlots) {
+      say(`  account declares ${saved.total} saved quer${saved.total === 1 ? 'y' : 'ies'} in all; ` +
+        `${saved.privateInUse} of them count against the ${bounds.dune.privateQuerySlots} private slots ` +
+        '(a row that does not say it is public or archived is counted as private). The FILTERED count ' +
+        'is what is compared against the cap.');
+      if (saved.privateInUse >= bounds.dune.privateQuerySlots) {
         say(
-          `refused: all ${bounds.dune.privateQuerySlots} private query slots are in use, so a new saved ` +
-            'query cannot be created. Nothing here will delete or overwrite an existing one — which of ' +
-            'them is retired is not this tool\'s call. Re-check with GET /api/v1/queries?limit=100.',
+          `refused: ${saved.privateInUse} of the ${bounds.dune.privateQuerySlots} private query slots are ` +
+            `in use (of ${saved.total} saved queries in all), so a new saved query cannot be created. ` +
+            'Nothing here will delete or overwrite an existing one — which of them is retired is not ' +
+            'this tool\'s call. Re-check with GET /api/v1/queries?limit=100.',
         );
         return EXIT.refused;
       }
@@ -474,7 +519,7 @@ export async function main(argv, env, say) {
 
     if (plan.queryId === null) return EXIT.refused; // unreachable; buildPlan refused above.
 
-    await assertSavedQueryMatches(client, plan.queryId);
+    const savedQueryMatchedCommittedSql = await assertSavedQueryMatches(client, plan.queryId);
     say(`  saved query ${plan.queryId} matches the committed COHORT_SQL byte for byte.`);
     if (args.verify) {
       say('VERIFIED. No execution was spent.');
@@ -517,7 +562,8 @@ export async function main(argv, env, say) {
       census,
       coverage,
       spend: client.stats(),
-      cohortFile: cohortPath.slice(cohortPath.indexOf('tools/')),
+      cohortFile: evidencePointer(cohortPath),
+      savedQueryMatchedCommittedSql,
     });
     writeFileSync(recordPath, `${JSON.stringify(record, null, 2)}\n`);
 

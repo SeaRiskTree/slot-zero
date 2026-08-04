@@ -108,9 +108,14 @@ export const CONFIRM_LAUNCHES = 2;
  * create-slot transaction carrying **two or more distinct wallets** is one submission, so every
  * wallet in it is part of one operation.
  *
- * This is `tools/deployer-screen/measure.mjs` → `roomIsProven`'s predicate, and it inherits that
- * rule's limit exactly: how much of an operation it recovers is the operator's submission habit on
- * the day, not a property of the rule. On this deployer it recovers **nothing** before 2026-04 and
+ * This was `tools/deployer-screen/measure.mjs` → `roomIsProven`'s predicate, and **since captain
+ * decision 182a it is only HALF of it** — that rule now also marks the deployer-anchored contiguous
+ * block-index run, and this lane deliberately still does not. Widening it here would move every
+ * figure in this tool's backtest, including the published +24.1 h latency and the 0-false-stops-in-104
+ * result, and the tripwire's own README is what those numbers are pinned in. That is a separate
+ * decision, not a side effect of the screen's. Until it is taken, this lane inherits the
+ * shared-transaction rule's limit exactly: how much of an operation it recovers is the operator's
+ * submission habit on the day, not a property of the rule. On this deployer it recovers **nothing** before 2026-04 and
  * the whole cohort stake from 2026-04 on (`README.md` → "Deriving the cohort at runtime"). A create
  * slot with no bundled transaction therefore yields `no-cohort-evidence`, never an empty cohort —
  * captain decision 134a's shape, for the same reason: finding nothing is indistinguishable from

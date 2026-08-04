@@ -191,6 +191,18 @@ export function createSlotGroups(fills, declaredDeployer = null) {
  * so a window that opened early is less visible than one that opened late. Unproven launches are
  * counted as **unmeasured**, never as zero.
  *
+ * **THIS IS THE SHARED-TRANSACTION HALF ONLY, AND IT HAS DIVERGED FROM THE SCREEN'S.** Captain
+ * decision 182a widened `tools/deployer-screen/measure.mjs` → `roomIsProven` to the UNION of that
+ * rule and a deployer-anchored contiguous block-index run, which on the committed tape takes the
+ * refusal from 60 of 235 launches to 0. This lane keeps the narrower predicate on purpose: 182a's
+ * room readings were verified against the ONE deployer whose cohort is named, and this tool's whole
+ * point is a cohort of strangers for whom no answer key exists — so adopting it here would change
+ * every published series with nothing to check the change against. Widening it is a decision of its
+ * own, and the time gradient above is exactly the thing it would move. The duplication with
+ * `measure.mjs` is this directory boundary's deliberate cost (see the repo `CLAUDE.md`); the
+ * divergence in the RULE is now a second, separate cost and is recorded here so nobody reconciles
+ * the two by accident.
+ *
  * @param {Pick<CreateSlotGroups, 'bundledTx'>} groups
  * @returns {boolean}
  */

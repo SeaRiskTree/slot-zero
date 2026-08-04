@@ -1537,8 +1537,10 @@ function summariseStage0(s) {
     stage2SeamReproduction: s.eraSplit.map((e) => ({
       era: e.era,
       // From schema 5 on, `n` counts only the SCORED launches in the era — those whose create slot
-      // carried a bundled transaction. `nRoomUnproven` is the refused remainder, persisted so a
-      // reader can add them back and see why an era's `n` differs from a schema-4 record's.
+      // the co-ordination rule marked something in. `nRoomUnproven` is the refused remainder,
+      // persisted so a reader can add them back and see why an era's `n` differs from a schema-4
+      // record's. From schema 10 the rule is the UNION, so era 2 reads n 89 / nRoomUnproven 0 where
+      // a schema-5..9 record reads 86 / 3 over the same tape.
       n: e.n,
       nRoomUnproven: e.nRoomUnproven,
       // Persisted so a reader can see the comparison was not vacuous: an empty bucket yields a NaN
@@ -1557,6 +1559,25 @@ function summariseStage0(s) {
       falsePositives: s.rollingRoom.falsePositives,
       falseNegatives: s.rollingRoom.falseNegatives,
       ok: s.rollingRoom.ok,
+    },
+    // Schema 10. The tripwire on the block-index signal half (b) of the co-ordination rule reads.
+    // Persisted because its failure mode is SILENT and towards refusal: a moved `sid` format makes
+    // every anchored run collapse to length 1, and a saved run with `withRun` short of `launches`
+    // is the only durable evidence of when that started.
+    adjacencyRuns: {
+      era: s.adjacencyRuns.era,
+      launches: s.adjacencyRuns.launches,
+      minLaunches: s.adjacencyRuns.minLaunches,
+      withRun: s.adjacencyRuns.withRun,
+      minRunTx: s.adjacencyRuns.minRunTx,
+      createSlotFills: s.adjacencyRuns.createSlotFills,
+      unreadableIndexes: s.adjacencyRuns.unreadableIndexes,
+      slotPrefixMismatches: s.adjacencyRuns.slotPrefixMismatches,
+      txWithTwoIndexes: s.adjacencyRuns.txWithTwoIndexes,
+      cohortInstances: s.adjacencyRuns.cohortInstances,
+      cohortRecovered: s.adjacencyRuns.cohortRecovered,
+      falseMarks: s.adjacencyRuns.falseMarks,
+      ok: s.adjacencyRuns.ok,
     },
     // The cost leg's own regression, persisted for the same reason: it is the ONE control that
     // establishes the direction of the whole fee correction — netting measured fees must move the

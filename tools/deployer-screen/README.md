@@ -680,6 +680,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 8 | no new candidate field, no new `entry` field and no new `entry.coverage` field: `PERSISTED_BY_SCHEMA[8]`, `ENTRY_KEYS_BY_SCHEMA[8]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[8]` all equal `[7]`. **What changed is the `spend` block: it now reports THREE budgets separately**, because the creation walk can take a keyed indexed route. It gains `rpcProvider` (`helius` or `public`), `rpcEndpoint`, `heliusCredits`, `heliusCreditCeilingPerCandidate` and `plannedWorstCaseHeliusCredits`. They are five new keys rather than additions to the existing totals because the three budgets have three units and no exchange rate between them: MadeOnSol is metered in **requests** against a shared daily allowance, Helius in **credits** against an unshared monthly one, and the keyless hosts in neither — a single "requests" total would hide which allowance a heavy run actually spent. `rpcEndpoint` holds the endpoint's **label** and never the composed URL, which on the keyed route carries the credential in a query parameter. On a schema-≤7 record all five are genuinely absent and must not be reconstructed: those runs predate the indexed route, so the walk was the keyless one and the record cannot say which host answered it. `heliusCredits: 0` beside `rpcProvider: "public"` is a keyless run that spent no credit; `heliusCreditCeilingPerCandidate: null` means the indexed walk did not run at all. |
 | 9 | no new candidate ROW field, no new `entry` field, no new `entry.coverage` field and no new `spend` field: `PERSISTED_BY_SCHEMA[9]`, `ENTRY_KEYS_BY_SCHEMA[9]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[9]` and `SPEND_KEYS_BY_SCHEMA[9]` all equal `[8]`. **What changed is where the launch history comes from: creation ENUMERATION is primary on Dune** (captain decision 156a). A new run-level `dune` block carries the coverage probe's own bounds and the Dune spend in its own units — `used`, `reason`, `rejected`, `unusableNote`, `endpoint`, `creationQueryId`, `coverageQueryId`, `executions`, `executionCeiling`, `requests`, `resultBytes`, `estimatedCredits`, `rowsReturned`, `unreadableRows`, `walletsRefusedByShape` and `coverage` (which tables were probed, from when to when, which are READ by the enumeration, months with no row, and why a probe refused). It is a block of its own rather than five more `spend` keys because Dune is a fourth vendor in a fourth unit — executions plus bytes against a SHARED monthly allowance, where a FAILED execution is billed exactly like a successful one — and `estimatedCredits` is an **estimate**, the published 20 credits/MB applied to the bytes the vendor's own metadata declared, with compute billed on top. Each candidate's `creation` block gains `enumerationSource` (`dune` | `helius` | `keyless-rpc`), `duneLaunches`, `duneFallbackReasons` and `creatorMovementUnmeasured`. **The one that will bite: on a schema-≤8 record `creation.movedCreator: 0` means the walk read every curve and none had moved. On a schema-9 record whose `enumerationSource` is `dune` it means nothing was looked at** — Dune says who created a mint and whether it completed, and nothing about who owns the curve today — and `creatorMovementUnmeasured` is the size of what went unmeasured. Do not add the two, and do not read a Dune-sourced 0 as the walk's 0. On a Dune-sourced candidate `rpcRequests`, `loadShedEvents`, `signaturesScanned`, `signaturesSucceeded`, `transactionsInspected` and `curvesUnread` all read 0 because no walk happened, and `stopReason` is `dune-enumerated`, which is not a stop at all; `coveredFromIso`/`coveredToIso` are the PROBE's bound rather than a walk's window and `wholeHistory` is true inside it. **A single run may carry both sources**: the coverage probe refuses a wallet at a time, so a wallet whose earliest launch sits at or before the probed surfaces' own first row falls back to the walk while the rest of the batch does not. `duneFallbackReasons` is why a candidate fell back, and it is not only coverage — an unreadable row anywhere in the answer refuses the whole batch, a wallet the enumeration returned no row for is refused as an absence of evidence rather than read as zero launches, and a candidate whose address is not base58-shaped is never sent at all (`walletsRefusedByShape` counts those). |
 | 10 | no new candidate ROW field, no new `entry.coverage` field, no new `spend` field, no new `dune` field and no new `creation` field: `PERSISTED_BY_SCHEMA[10]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[10]`, `SPEND_KEYS_BY_SCHEMA[10]`, `DUNE_KEYS_BY_SCHEMA[10]` and `CREATION_KEYS_BY_SCHEMA[10]` all equal `[9]`. **What changed is that an UNMEASURED verdict now says which of its six producers reached it, and whose fact that is** (captain decision 174b). `entry` gains `unmeasuredCause` (one of `entry.mjs` → `UNMEASURED_CAUSES`, or `null` on a measured verdict), `unmeasuredCauseAttribution` (`our-coverage` | `deployer` | `null`) and `unmeasuredContributingCauses` (every producer that applied, primary first — the three sample-size causes can co-occur). **The verdict vocabulary is UNCHANGED**, so unlike the schema-6 boundary a schema-9 verdict and a schema-10 verdict are the same six values and are directly comparable; what an older record cannot do is say WHY an unmeasured one was reached. **The one that will bite:** all six producers are facts about OUR coverage — the walk was never offered `minLaunchesSampled` windows, windows were dropped, windows were REFUSED as unproven openings (decision 134a), the field closed too few round trips inside a window whose tail our own walk truncates, too little of the field priced, too few round trips priced end to end. So `verdict !== 'entry-unmeasured'` is a filter on our own budget and evidence wearing a measurement's clothes, and a later stage may filter only on a MEASURED verdict at any schema version. On a schema-≤9 record the cause is genuinely absent and **must not be reconstructed**: `entry.mjs` → `isDeployerAttributable` answers `false` for the whole unmeasured family there, which is the safe direction. See “What a later stage may filter on” below. |
+| 11 | no new candidate ROW field, no new `entry.coverage` field, no new `spend` field and no new `dune` field: `PERSISTED_BY_SCHEMA[11]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[11]`, `SPEND_KEYS_BY_SCHEMA[11]` and `DUNE_KEYS_BY_SCHEMA[11]` all equal `[10]`. **What changed is the CO-ORDINATION RULE: it became a UNION** (captain decision 182a) of the existing shared-transaction rule, unchanged, and the deployer-anchored contiguous block-index run at step 1. `entry` gains `runTx` (transactions in that run, anchor included) and `adjacencyMarks` (wallets the run marked that the shared-transaction rule did not) beside `bundledTx` and `maxWalletsInOneTx`. It costs no request, no host and no vendor quota — `sid` is already on every fill the walk fetched. **THE ONE THAT WILL BITE: a schema-≤10 `entry.roomLeft` is not comparable with a schema-11 one, and the older figure is the HIGHER of the two.** A wallet that rode the deployer's bundle without ever sharing a transaction used to be counted as an outsider, so its stake sat in `independentSol` and inflated `roomLeft`; `sharedTx ⊆ union` by construction, so the correction can only move a room reading DOWN. `adjacencyMarks` is the size of what the union added per launch, and therefore the measure of what an older record's room figure was carrying. On the committed tape it removes **180 create-slot wallet-instances from the field** (1,502 → 1,322) and **every one of the 180 is a NAMED cohort wallet** — so a schema-≤10 record's field figures, `outsidersPerLaunch`, `fieldEntrants` and every P&L distribution built on them were partly measuring the operation's own wallets as competitors. `launchesRoomUnproven` changes meaning the same way — it counts launches NEITHER half marked anything in, and on the committed tape the refusal falls from 60 of 235 launches to 0. **No bar was relaxed**: decision 134a's refusal is untouched and `minLaunchesSampled`/`maxLaunchesPerCandidate` are unmoved (decision 141a stands); the rule sees more, so it refuses less. **The `stage0` block is not comparable across the boundary either, and a published constant moved**: `stage2SeamReproduction`'s era-2 entry reads `n: 89, nRoomUnproven: 0` at a measured share of **0.770796** where a schema-5..10 record reads `n: 86, nRoomUnproven: 3` at **0.769153** — the published `0.771` it is compared against is UNCHANGED and the measured figure moved towards it, the structural and named-cohort estimators becoming the same number to six decimals over the full 89. `rollingRoom` goes from `unmeasured: 81, present: 53, absent: 94` to `unmeasured: 0, present: 88, absent: 140`, `falsePositives: 0` on both sides. The block gains `adjacencyRuns`, the tripwire on the `sid` block-index signal, persisted because that signal fails SILENTLY and towards refusal. The correction is recorded in `data/population-tape-2026-07-29/IMPORT.md` → "Corrections"; `report.md` and the dataset README are a primary record and are not edited. |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -826,54 +827,97 @@ strangers is a bot with room in it. A bot that takes it all has won the race bef
 had a chance to run it, and there is nothing to enter.
 
 Who counts as "the operation" is derived **structurally, with no wallet list and no prior
-knowledge**: a create-slot transaction carrying two or more distinct swapping wallets is a bundle,
-and every wallet in it is co-ordinated — independent traders cannot share a transaction. Needing no
-wallet list is what makes the method applicable to a stranger at all.
+knowledge**, by the **union of two tests** (captain **decision 182a**):
 
-**How much of the operation it recovers is the operator's submission habit on the day, not a
-property of the rule.** Measured against the known six-wallet cohort on our own subject, by month:
-**0% in December 2025 – February 2026, 41.6% in March, 69.9% in April, 97–100% from May onwards.**
-The earlier claim here — that the rule recovers the cohort, full stop — is true of the May–July
-slice it was written against and false of the tape as a whole.
+- **(a) shared transaction** — a create-slot transaction carrying two or more distinct swapping
+  wallets is a bundle, and every wallet in it is co-ordinated. Independent traders cannot share a
+  transaction.
+- **(b) the deployer-anchored contiguous block-index run** — sorted by the block transaction index
+  pump.fun's `sid` encodes, the transactions forming a run at step exactly 1 through the deployer's
+  own curve buy are one submission, and every wallet in that run is co-ordinated. A Jito bundle
+  lands as an atomic contiguous sequence and no outsider can insert a transaction into it.
 
-#### An unbundled create slot is UNPROVEN, and unproven launches are not scored
+Needing no wallet list is what makes the method applicable to a stranger at all. **Half (b) costs
+nothing** — `sid` is already on every fill the walk parses, so there is no request, no host and no
+vendor quota behind it.
 
-**A create slot carrying no bundled transaction is observationally identical to a create slot with
-no co-ordination.** The rule found nothing either way, and nothing in the fill tape separates the
-two. Reading it as the second — which the screen used to do implicitly — books the operation's own
+**How much of the operation half (a) recovers on its own is the operator's submission habit on the
+day, not a property of the rule.** Measured against the known six-wallet cohort on our own subject,
+by month: **0% in December 2025 – February 2026, 41.6% in March, 69.9% in April, 97–100% from May
+onwards.** The earlier claim here — that the rule recovers the cohort, full stop — is true of the
+May–July slice it was written against and false of the tape as a whole. **That range is what half
+(b) closes**: over the whole tape the union recovers **1,140 of 1,140** cohort wallet-instances,
+against 960 for (a) alone and 1,083 for (b) alone. The two are **complementary, not nested** —
+(a) catches a second bundle sent later in the same block that an anchored run cannot reach (57
+instances over 14 launches), (b) catches the months when the operation co-ordinated by adjacency
+and never shared a transaction.
+
+**Half (b) was disconfirmed before it was believed.** Adjacency between create-slot transactions
+*outside* the run runs at **12.35%**, which predicts ~25 of the tape's 201 runs-with-a-boundary
+should have swept in an outsider; **one did**, and half (a) already marks the same two wallets for
+sharing a transaction with each other. The run does not end at an arbitrary cut either — the gap to
+the next create-slot transaction is a median of **108** indices. Widening the step to ≤ 2 or ≤ 3 buys
+9 and 15 more marks and doubles the false marks, so strict contiguity is what ships.
+
+**UNION, NEVER REPLACEMENT — and that is the safety property, not a preference.** (a)'s marked set
+is a subset of the union's by construction, so `operationShare` can only rise and `roomLeft` can only
+fall against the older reading. A wider rule cannot manufacture a false accept on a launch that was
+already being scored. The direction is pinned as a property test over the whole committed tape
+rather than argued for in prose.
+
+**What it does NOT do.** It does not rescue a deployer that co-ordinates without Jito, or one that
+accumulates in the slots after the create slot — 6 of the census's 11 never-bundling candidates stay
+correctly unproven. And whether an adjacent transaction is a true bundle or merely the leader's
+packing order is an **inference**: nothing keyless exposes a bundle id. The arithmetic is unaffected
+either way, but this marks adjacency, not a decoded bundle.
+
+#### A create slot NEITHER half marks is UNPROVEN, and unproven launches are not scored
+
+**A create slot the co-ordination rule marks nothing in is observationally identical to a create slot
+with no co-ordination.** The rule found nothing either way, and nothing in the fill tape separates
+the two. Reading it as the second — which the screen used to do implicitly — books the operation's own
 stake as outsider capital, and on the affected launches of our own tape that is **9.6–10.0 SOL per
 launch** moved out of the numerator and into `independentSol`. It lowers the operation's share and
 raises room twice over, once in each term.
 
 **The rule's errors therefore run in exactly one direction: every one of them makes a deployer look
 more enterable than it is.** The opposite error is structurally impossible — only wallets that
-*provably* shared a transaction are ever marked, and independent traders cannot do that.
+*provably* shared a transaction, or that provably sat inside the deployer's own contiguous run, are
+ever marked.
 
 Captain **decision 134a**: do not score those launches. Call the opening **unproven** rather than
-measured. A launch whose create slot carried no bundled transaction contributes **no room figure, no
+measured. A launch neither half marks anything in contributes **no room figure, no
 field entrant and no round trip**; `measure.mjs` → `roomIsProven` is the predicate and
 `entry.mjs` → `scoreEntry` applies it before anything is computed. A candidate left with fewer
 proven launches than `minLaunchesSampled` scores `entry-unmeasured` — never `entry-open-after-costs`,
 and never folded in with a refusal, which are different findings.
 
-**The cost is real and it is accepted.** Replaying the live recipe — median room over the trailing 8
-launches against the 0.55 bar — at all 228 points of our own tape's history: refusing removes **24
-of 24 false-positive windows and creates none in the other direction**, at a price of **81 windows
-that become unmeasured** rather than wrong. Per launch rather than per window, the same refusal
-takes **60 of the 235 covered launches (25.5%)** out of every score — that is the coverage it costs,
-and it is the intended trade rather than a regression. On a stranger the same trade applies and cannot be
-priced, because there is no ground truth to price it against. **How often it fires on strangers is
-measured, though** — 1 candidate in 14 survives it, see "The bundling census" below. `bundledTx` and `maxWalletsInOneTx`
-reach the score, the record and the rendered line for exactly that reason: they are the only
-observable that exposes the condition, so a saved run can be audited for it after the fact.
+**What the refusal cost, and what decision 182a bought back.** Replaying the live recipe — median
+room over the trailing 8 launches against the 0.55 bar — at all 228 points of our own tape's
+history: refusing removes **24 of 24 false-positive windows and creates none in the other
+direction**. Under half (a) alone that cost **81 windows that became unmeasured** rather than wrong,
+and per launch it took **60 of the 235 covered launches (25.5%)** out of every score. Under the
+union it costs **0 windows and 0 launches**, with false positives still **0**. Nothing was relaxed to
+get there — decision 134a's refusal is untouched, and `minLaunchesSampled` / `maxLaunchesPerCandidate`
+are unmoved (decision 141a) — the rule simply sees more, so it refuses less. On a stranger the trade
+still applies and still cannot be priced, because there is no ground truth to price it against.
+**How often it fired on strangers under half (a) alone is measured** — 1 candidate in 14 survived it,
+see "The bundling census" below; that census predates the union and re-running it under the union is
+a separate queued lane. `bundledTx`, `maxWalletsInOneTx`, `runTx` and `adjacencyMarks` reach the
+score, the record and the rendered line for exactly that reason: they are the only observable that
+exposes the condition and says which half carried each launch, so a saved run can be audited after
+the fact.
 
-A proven room figure is **still an upper bound**, and one bundled transaction is not evidence of
-complete recovery: on our own tape a launch that bundles can still miss three cohort wallets that
-bought alone. `roomIsProven` is the floor of the evidence, not a threshold on its quality.
+A proven room figure is **still an upper bound**, and one mark is not evidence of complete recovery.
+The union happens to recover every cohort wallet-instance on our own tape, but that is a measurement
+on the one deployer whose cohort is named, not a property of the rule: a wallet that neither shares
+a transaction nor rides the deployer's run is still counted as independent, and a book that
+accumulates in the slots after the create slot is still invisible. `roomIsProven` is the floor of the
+evidence, not a threshold on its quality.
 
-**The predicate is create-slot-scoped, not operation-scoped, and no tighter one is available.** It
-asks only whether *some* create-slot transaction carried 2+ distinct wallets — so a create slot in
-which the deployer buys entirely alone while two unrelated wallets share one transaction (a shared
+**The predicate is create-slot-scoped, not operation-scoped, and no tighter one is available.** Half
+(a) asks only whether *some* create-slot transaction carried 2+ distinct wallets — so a create slot
+in which the deployer buys entirely alone while two unrelated wallets share one transaction (a shared
 aggregator or copy-trade route) qualifies, and on that launch the operation's stake is still booked
 outside the numerator. The obvious tightening — require a bundle containing the deployer — was
 measured against the committed tape and matches **0 of 235** launches: this deployer never shares its
@@ -881,8 +925,13 @@ own create-slot transaction, the dev buy is a 1-wallet transaction every time, a
 among *itself* (typically two 3-wallet transactions). Adopting it would refuse every launch, leave
 Stage 2 scoring nothing for any wallet, and hard-fail Stage 0 twice — the era buckets go to `n = 0`
 and trip their own `minN` vacuity guard, and the known-negative control becomes `entry-unmeasured`.
-`coordinated.size >= 1` is the same predicate in practice (identical 175/235). Captain **decision
-139a**: `bundledTx >= 1` stands, and `measure.mjs` → `roomIsProven` owns the reasoning.
+Captain **decision 139a** settled that, and it is untouched.
+
+**The widening that was measured and REFUSED**, so nobody re-proposes it: a *recurrence* rule marking
+a wallet appearing in k of the candidate's trailing 8 create slots. At k = 8 it missed 112 cohort
+instances and falsely marked 4 outsiders; it is behavioural inference where every other rule here is
+a structural fact, and it is contaminated by general-purpose snipers who turn up across many
+unrelated deployers, which separating needs a cross-deployer denominator the screen does not build.
 
 ### 2. The field
 
@@ -1428,7 +1477,7 @@ figures above, which name theirs. 160 was chosen on measurement, so no change is
 
 **Stage 0 deliberately does not use the span**, and the two paths must not be reconciled: it measures
 each committed launch over that launch's own stored window, because `wallet_launch_pnl.csv` — the
-1,502-pair reproduction that licenses believing the live recipe at all — is computed that way. The
+1,322-pair reproduction that licenses believing the live recipe at all — is computed that way. The
 comment at `stage0.mjs` → `measureSubjectLaunches` says so at the point of divergence.
 
 ### The mirror case: a mint time that seeks EARLY
@@ -1526,9 +1575,10 @@ That last check now asserts a **minimum n per era and a finite median** before c
 launches used to record no failure and report **PASSED** — and a passing Stage 0 is what authorises
 spending keyed quota on strangers. Anything that empties the filter (renamed window files, every
 `reached_mint` false, a `--data-dir` pointing at a differently dated tape, a shifted date range) hit
-exactly that case. The buckets hold 45 and 86 launches as committed — 86 rather than 89 because the
-split is filtered on `roomIsProven` and three era-2 launches carry no bundled create-slot
-transaction; the floor is 20.
+exactly that case. The buckets hold 45 and 89 launches as committed. Era 2 read 86 until captain decision 182a,
+because the split is filtered on `roomIsProven` and three era-2 launches carried no bundled
+create-slot transaction; the union rule marks all three by the deployer-anchored block-index run, so
+the era is whole again. The floor is 20.
 
 **Built — Stage 1**, the keyed gate: enumerate, compute the rate ourselves, apply pinned thresholds.
 
@@ -1538,11 +1588,34 @@ it five ways before a single request is issued:
 
 | check | result on the committed tape |
 |---|---|
-| the create-slot primitive reproduces the published §5.1 era split | operation share 0.451 → 0.769 against a published 0.451 → **0.771** (see below) |
-| the **field** measurement reproduces `wallet_launch_pnl.csv` | **1,502 create-slot outsider pairs, 0 closure mismatches, max realised error 5.0e-7 SOL** |
+| the create-slot primitive reproduces the published §5.1 era split | operation share 0.4508 → **0.7708** against a published 0.451 → **0.771** (see below) |
+| the **field** measurement reproduces `wallet_launch_pnl.csv` | **1,322 create-slot outsider pairs, 0 closure mismatches, max realised error 5.0e-7 SOL** (1,502 before decision 182a — the 180 it drops are the operation's own wallets) |
 | **the known-negative control**, at two points in time and once more with costs attached | see below |
-| **the rolling replay**, at every point in time | **228 trailing windows, 0 false positives and 0 false negatives**, 81 refused as unmeasured — see below |
-| **the cost leg**, against `onchain_create_slot_pnl.csv`, over the population the gate itself scores | **110 launches, 757 create-slot entries, 618 round trips priced end to end**; median entry cost **0.0308 SOL**; hit rate **0.7379 gross → 0.6117 net**, **81** round trips flipping sign; the unfiltered reading (113 / 775 / 631) is printed beside it — see below |
+| **the rolling replay**, at every point in time | **228 trailing windows, 0 false positives and 0 false negatives**, **0** refused as unmeasured (81 before decision 182a) — see below |
+| **the adjacency tripwire**, on the `sid` block-index signal | **15 pre-March launches, all 15 producing a run of 2+ transactions** (shortest 4), 122 create-slot fills decomposed with 0 unreadable indices and 0 prefix mismatches, **45/45 cohort wallet-instances recovered, 0 non-cohort marked** — see below |
+| **the cost leg**, against `onchain_create_slot_pnl.csv`, over the population the gate itself scores | **112 launches, 766 create-slot entries, 627 round trips priced end to end**; median entry cost **0.0308 SOL**; hit rate **0.7384 gross → 0.6045 net**, **87** round trips flipping sign — see below |
+
+Note one consequence of the union for that last row: on **this** tape nothing is unproven, so the
+gated and unfiltered readings coincide (`includingUnprovenLaunchesPriced` 112 = `launchesPriced` 112).
+The keys stay, and they will separate again on any tape carrying a launch neither half of the rule
+marks — which is the case they exist for.
+
+#### The adjacency tripwire, and why Stage 0 needs one
+
+Half (b) of the co-ordination rule reads a block transaction index out of pump.fun's `sid`. **If that
+format moves, the signal does not error — it evaporates**: every deployer-anchored run collapses to
+length 1 and every launch that depended on adjacency silently goes back to UNPROVEN. That is the safe
+direction, which is exactly the problem, because nothing else in the screen would report it and
+Stage 2 would just start answering less often for a reason no output names.
+
+The population is the subject's **pre-2026-03** launches, and that choice is load-bearing: over that
+stretch the shared-transaction rule recovers **0 of 45** cohort wallet-instances, so adjacency is the
+only thing carrying the result and a collapse cannot hide behind half (a). `stage0.mjs` →
+`verifyAdjacencyRuns` asserts four things — every launch still produces a run of 2+ transactions; the
+`sid` decomposition still holds (its leading field is the fill's own slot, no transaction carries two
+indices); the recovery is still 45 of 45; and it still marks **nobody else**. The last one is the
+opposite failure — indexes colliding rather than vanishing would sweep the whole create slot into the
+run — and that one is *not* in the safe direction.
 
 #### The cost leg is regression-tested offline, using the live attach function
 
@@ -1584,13 +1657,23 @@ published                                              0.768
 net                                                     -0.0087  =  the gap that used to be observed
 ```
 
-So the check was passing for the wrong reason. Refusing to score an unproven opening removes the
-first term; re-pinning removes the second. Era 2 now reproduces at **0.769 over its 86 proven
-launches** against `0.771`, and the residual **0.002 is two different estimators, not a series
-shrinking**: the structural bundle rule reads 0.769153 over the 86 proven launches (0.759250 over all
-89 — the proven filter moves it *up*), while `0.771` is the named-cohort rule's 0.770796. The
-decomposition and the era-1 agreement that confirms it are in `stage0.mjs` beside the check itself.
-**Widening the tolerance would have hidden both.**
+So the check was passing for the wrong reason. Refusing to score an unproven opening removed the
+first term; re-pinning removed the second. **Captain decision 182a closed the residual.** Era 2 now
+reproduces at **0.770796 over all 89 launches** against a `0.771` that has not moved:
+
+| estimator | population | share |
+|---|---|---|
+| shared-transaction rule | all 89 era-2 launches | 0.759250 |
+| shared-transaction rule | the 86 it could prove | 0.769153 — what Stage 0 printed until 182a |
+| **union rule** | **all 89, all provable** | **0.770796** — what Stage 0 prints now |
+| named-cohort rule | all 89 | 0.770796 — what `0.771` is |
+
+The union recovers every cohort wallet-instance the named-cohort rule knows about on this tape, so
+the structural estimator and the cohort estimator become the **same number to six decimals**, over
+the full 89 rather than the 86 the older rule could see. The 0.002 that used to be explained away is
+gone rather than tolerated, and the tolerance was never touched. The era-1 agreement that confirms it
+(0.450771 every way) is in `stage0.mjs` beside the check itself. **Widening the tolerance would have
+hidden all of it.**
 
 The `readLaunchWindow` that the previous lane deleted rather than ship half-validated is written
 here, against a real caller and against ground truth — see [the live path](#the-live-path-checked-against-ground-truth).
@@ -1611,7 +1694,7 @@ It is scored two ways, because both readings have to come out negative and they 
 | slice | verdict | median room |
 |---|---|---|
 | the most recent 8 launches — exactly what a live run would score today | `entry-room-absent` | **0.284** |
-| the whole post-2026-06-04 regime, 86 proven launches | `entry-room-absent` | **0.231** |
+| the whole post-2026-06-04 regime, 89 proven launches | `entry-room-absent` | **0.229** |
 
 **And this is why it is an assertion rather than a threshold comparison:** on that same wallet the
 field leg reads 351/460 closed round trips positive. Followed on its own it would call the wallet

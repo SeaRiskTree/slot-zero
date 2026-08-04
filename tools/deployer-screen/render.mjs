@@ -267,18 +267,22 @@ export function renderEntry(e, coverage) {
   L.push(distLine('dev buy (SOL)', e.devSol));
   L.push(distLine('its own cohort (SOL)', e.coordinatedSol));
   L.push(distLine('competing wallets', e.outsidersPerLaunch, 1));
-  // Over EVERY measured launch, refused ones included — a zero here is what says the co-ordination
-  // rule found nothing rather than finding no co-ordination, and it is the only visible sign of it.
+  // Over EVERY measured launch, refused ones included — a zero on BOTH halves is what says the
+  // co-ordination rule found nothing rather than finding no co-ordination, and it is the only
+  // visible sign of it. The two halves are printed apart so a reader can see which one carried the
+  // launch: `bundled create-slot tx 0` beside `anchored run tx 3` is a launch only the union scores.
   L.push(distLine('bundled create-slot tx', e.bundledTx, 1));
   L.push(distLine('max wallets in one tx', e.maxWalletsInOneTx, 1));
+  L.push(distLine('anchored run tx', e.runTx, 1));
+  L.push(distLine('wallets adjacency added', e.adjacencyMarks, 1));
   L.push(
     `      hit rate: ${e.roomHitRate.hits}/${e.roomHitRate.n} launches leave room ` +
       `(${pct(e.roomHitRate.rate)}); ${e.launchesWithNoOutsider} launch(es) had no competitor at all`,
   );
   if (e.launchesRoomUnproven > 0) {
     L.push(
-      `      ${e.launchesRoomUnproven} further launch(es) are NOT SCORED: no bundled transaction in ` +
-        `the create slot, so the opening is UNPROVEN rather than open`,
+      `      ${e.launchesRoomUnproven} further launch(es) are NOT SCORED: no shared transaction and ` +
+        `no anchored run in the create slot, so the opening is UNPROVEN rather than open`,
     );
   }
   L.push('      ^ Read this the captain\'s way: it measures how badly configured the dev\'s own');
@@ -510,13 +514,17 @@ export function renderStage0(r, vendorReadings) {
     );
   }
   L.push('');
-  L.push('  The co-ordination rule — a create-slot transaction carrying 2+ distinct wallets marks');
-  L.push('  every wallet in it — needs no wallet list, which is what makes the method applicable to');
-  L.push('  a stranger. HOW MUCH OF THE COHORT IT RECOVERS IS THE OPERATOR\'S SUBMISSION HABIT, NOT A');
+  L.push('  The co-ordination rule is the UNION of two structural tests, and it needs no wallet list,');
+  L.push('  which is what makes the method applicable to a stranger: (a) a create-slot transaction');
+  L.push('  carrying 2+ distinct wallets marks every wallet in it, and (b) the transactions forming a');
+  L.push('  contiguous block-index run through the deployer\'s own mark every wallet in that run.');
+  L.push('  HOW MUCH OF THE COHORT HALF (a) RECOVERS IS THE OPERATOR\'S SUBMISSION HABIT, NOT A');
   L.push('  PROPERTY OF THE RULE: 97-100% from May 2026 on, 69.9% in April, 41.6% in March, and 0%');
-  L.push('  in Dec 2025 - Feb 2026, when this deployer bundled nothing at all. A create slot with no');
-  L.push('  bundled transaction is indistinguishable from one with no co-ordination, so those');
-  L.push('  launches are NOT SCORED — the era rows above are over the scored ones only.');
+  L.push('  in Dec 2025 - Feb 2026, when this deployer shared no transaction at all. Half (b) is what');
+  L.push('  closes that range — over the whole tape the union recovers 1140 of 1140 cohort wallet-');
+  L.push('  instances, against 960 for (a) alone. A create slot NEITHER half marks is still');
+  L.push('  indistinguishable from one with no co-ordination, so those launches are NOT SCORED —');
+  L.push('  the era rows above are over the scored ones only.');
   const unprovenInEras = r.eraSplit.reduce((n, e) => n + e.nRoomUnproven, 0);
   L.push(
     `  ${unprovenInEras} launch(es) in these two eras were excluded for that reason` +
@@ -539,6 +547,27 @@ export function renderStage0(r, vendorReadings) {
   L.push('  one. A false negative does NOT fail: refusing to score an unproven opening costs real');
   L.push('  coverage, and that cost is the ruling (decision 134a), not a defect. A REFUSED window is');
   L.push('  counted as unmeasured and never as a false negative — it carries no verdict to be wrong.');
+  L.push('');
+
+  L.push('THE ADJACENCY TRIPWIRE — does half (b) of the co-ordination rule still read anything?');
+  L.push(
+    `  ${r.adjacencyRuns.launches} launch(es) ${r.adjacencyRuns.era} (needs ` +
+      `${r.adjacencyRuns.minLaunches}): ${r.adjacencyRuns.withRun} produced an anchored run of 2+ ` +
+      `transactions, shortest run ${r.adjacencyRuns.minRunTx}`,
+  );
+  L.push(
+    `  ${r.adjacencyRuns.cohortRecovered}/${r.adjacencyRuns.cohortInstances} cohort wallet-instances ` +
+      `recovered, ${r.adjacencyRuns.falseMarks} non-cohort wallet(s) marked; over ` +
+      `${r.adjacencyRuns.createSlotFills} create-slot fill(s): ` +
+      `${r.adjacencyRuns.unreadableIndexes} unreadable sid index(es), ` +
+      `${r.adjacencyRuns.slotPrefixMismatches} prefix mismatch(es), ` +
+      `${r.adjacencyRuns.txWithTwoIndexes} tx with two indices   ` +
+      `${r.adjacencyRuns.ok ? 'OK' : 'FAILED'}`,
+  );
+  L.push('  The shared-transaction rule recovers NOTHING in this era, so adjacency is the only thing');
+  L.push('  carrying these launches. If pump.fun\'s sid format moves, the block index stops decoding,');
+  L.push('  every run collapses to length 1 and every launch that depends on half (b) silently goes');
+  L.push('  back to UNPROVEN — the safe direction, and invisible without this check.');
   L.push('');
 
   L.push('FIELD MEASUREMENT — reproduced against the dataset\'s own committed P&L table');

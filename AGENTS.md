@@ -45,7 +45,13 @@ what is established and what is open.
   `analysis/window-population/measure.mjs` and `tools/arrival-rate-walk/arrival.mjs`, are this
   boundary's deliberate cost — do not "fix" any of them by importing across it. The segmentation copy
   is held together by a **reproduction test**, not by discipline: the tool's own code must return the
-  published break dates over the committed tape.
+  published break dates over the committed tape. **The copies have now DIVERGED in the RULE, not
+  only in the code**: captain decision 182a widened the screen's co-ordination rule to a union, and
+  `tools/arrival-rate-walk/series.mjs` → `roomIsProven` and `tools/window-decay-tripwire/` both
+  deliberately keep the narrower shared-transaction predicate, because 182a's room readings were
+  verified against the one deployer whose cohort is named and those two lanes run on strangers and
+  on published backtest constants respectively. Each file says so at its own `roomIsProven`; do not
+  reconcile them without a decision.
 - **`analysis/` is a third area and it is offline like `src/`.** One-off measurements over the
   local tape that are neither library nor tool. `test/window-population.test.ts` scans it for
   sockets, `process.env` and key-shaped strings, and asserts no imports across `analysis/`↔`tools/`.
@@ -627,7 +633,10 @@ dev currently?"*, and the shape of the answer is the point:
   The predicate is **create-slot-scoped, not operation-scoped** — it is a floor on the evidence, and
   no tighter one exists: a deployer-in-bundle reading matches 0 of 235 launches because this deployer
   never shares its own create-slot transaction (decision 139a, `measure.mjs` → `roomIsProven`).
-- **HOW OFTEN THAT REFUSAL FIRES IS MEASURED NOW, AND IT IS THE COMMON CASE: 1 candidate in 14.**
+- **HOW OFTEN THAT REFUSAL FIRES WAS MEASURED UNDER HALF (a) ALONE: 1 candidate in 14 — and that
+  census PREDATES the union, so read every figure in it as a LOWER bound.** Re-running it under the
+  union is a queued lane, sequenced after 182a; `bundling.mjs` → `proven` is frozen at
+  `bundledTx >= 1` on purpose so the committed record and the code that wrote it still agree.
   `maxLaunchesPerCandidate` and `minLaunchesSampled` are both 8, so Stage 2 reaches a verdict only
   for a candidate whose most recent 8 eligible launches were *every one* bundled. Captain decision
   173a sized that with `tools/deployer-screen/bundling.mjs`, a **windows-only** pass that reports
@@ -648,14 +657,19 @@ dev currently?"*, and the shape of the answer is the point:
   rank-43/44 order statistic of an 89-launch series whose median is `0.7708`; three recipes agree,
   including `analysis/window-population/measure.mjs`. **Never widen that tolerance instead** — it was
   absorbing a real −0.0115 defect and a +0.0028 documentation error that partially cancelled, so the
-  check passed for the wrong reason. Correction recorded in the tape's `IMPORT.md` → "Corrections",
-  never in the primary record itself.
+  check passed for the wrong reason. **Decision 182a closed the residual entirely**: the union rule
+  reproduces era 2 at **0.770796 over all 89** where the shared-transaction rule read 0.769153 over
+  the 86 it could prove, so the structural and named-cohort estimators are now the same number to
+  six decimals. `0.771` and the ±0.02 tolerance are unchanged. Corrections 8 and 10 in the tape's
+  `IMPORT.md` own both notes, never the primary record itself.
 - **Distributions plus a hit rate, never a mean** — a standing captain bar for this class of claim.
   Sniper outcomes are heavy-tailed on both sides, so a mean is a wrong answer rather than a rough one.
   A test asserts `entry.mjs` contains no mean in its executable half.
 - **Only closed round trips have a P&L**, by the dataset's own rule (residual within 0.1% of tokens
-  bought). Reproducing it from raw fills agrees with `wallet_launch_pnl.csv` on **1,502 create-slot
-  outsider pairs, 0 closure mismatches, max error 5e-7 SOL** — checked in Stage 0 every run.
+  bought). Reproducing it from raw fills agrees with `wallet_launch_pnl.csv` on **1,322 create-slot
+  outsider pairs, 0 closure mismatches, max error 5e-7 SOL** — checked in Stage 0 every run. It read
+  1,502 until decision 182a, and **every one of the 180 pairs the union removes is a NAMED cohort
+  wallet**: the field was reporting the operation's own best-priced wallets as independent snipers.
 - **The run record is a VERSIONED CONTRACT: bump, never retro-edit.** Committed records are the
   grading lane's input; readers version-detect, and `test/deployer-screen.test.ts` asserts the exact
   key set PER version — for the candidate row, the `entry` block, (from schema 6) `entry.coverage`,

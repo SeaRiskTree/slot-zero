@@ -677,7 +677,9 @@ describe('the summary counts closure, and deliberately never counts money', () =
 
   it('closes a pair whose residual is within the dataset\'s own 0.1% tolerance', () => {
     // The rule is the population tape's, not a new one: reproducing `wallet_launch_pnl.csv` from
-    // raw fills under it agreed on 1,502 create-slot outsider pairs with zero closure mismatches.
+    // raw fills under it agrees on 1,322 create-slot outsider pairs with zero closure mismatches
+    // (1,502 before captain decision 182a widened the co-ordination rule; the closure rule itself is
+    // untouched, and only the outsider population it runs over got smaller).
     expect(closureAt([at('w', 'buy', '1000', 0), at('w', 'sell', '999.5', 1)], 10)).toEqual({
       closed: 1,
       open: 0,

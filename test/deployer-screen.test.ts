@@ -63,6 +63,7 @@ import {
 } from '../tools/deployer-screen/dune.mjs';
 import {
   CURVE_INITIAL_PRICE_SOL,
+  blockTxIndex,
   createSlotGroups,
   measureCompletion,
   measureCreateSlot,
@@ -71,6 +72,7 @@ import {
   percentile,
   roomIsProven,
   solBetweenPrices,
+  tallyCreateSlot,
   toLaunchRefs,
   toTokenRecords,
   walletTransactions,
@@ -99,7 +101,12 @@ import {
   toEntryRecordRow,
 } from '../tools/deployer-screen/stage2.mjs';
 import type { Stage2Coverage } from '../tools/deployer-screen/stage2.mjs';
-import { measureSubjectLaunches, replayRollingRoom, runStage0 } from '../tools/deployer-screen/stage0.mjs';
+import {
+  CREATE_SLOT_COHORT,
+  measureSubjectLaunches,
+  replayRollingRoom,
+  runStage0,
+} from '../tools/deployer-screen/stage0.mjs';
 import {
   applyGate,
   measureConsistency,
@@ -223,6 +230,20 @@ const fill = (
   tokens: o.tokens ?? (o.sol ?? 1) * 1e7,
   priceSol: 1e-7,
 });
+
+/**
+ * A `sid` built the way pump.fun builds one: `slot(12) + blockTxIndex(6) + innerInstructionIndex(4)`.
+ *
+ * The decomposition is validated rather than assumed — over the committed tape's 2,699 create-slot
+ * fills the leading field is always the fill's own slot and no transaction ever carries two block
+ * indices — and `measure.mjs` → `blockTxIndex` is what reads it. Fixtures that care about the
+ * co-ordination rule's ADJACENCY half must build their keys here rather than take `fill`'s default
+ * counter, which pads to 22 digits and therefore hands every transaction block index 0.
+ */
+const sidAt = (slot: number, blockTxIndex: number, innerIndex = 0) =>
+  String(slot).padStart(12, '0') +
+  String(blockTxIndex).padStart(6, '0') +
+  String(innerIndex).padStart(4, '0');
 
 const DAY = 86_400_000;
 const T0 = Date.parse('2026-06-01T00:00:00Z');
@@ -539,16 +560,20 @@ describe('the co-ordination rule — the Stage 2 seam', () => {
   });
 
   it('counts a lone co-ordinated wallet as independent — a conservatism that costs us', () => {
-    // A book wallet that never shares a transaction is indistinguishable from an outsider on
-    // fills alone. It is credited to the outsiders, which INFLATES room left. That direction is
-    // deliberate: it makes a "leaves room" conclusion harder to reach, not easier.
+    // A book wallet that shares neither a transaction NOR the deployer's block-index run is
+    // indistinguishable from an outsider on fills alone. It is credited to the outsiders, which
+    // INFLATES room left. That direction is deliberate: it makes a "leaves room" conclusion harder
+    // to reach, not easier. The indices are 200 apart so neither half of the rule can reach it —
+    // the adjacent case is the next test, and it is the one decision 182a added.
     const m = measureCreateSlot([
-      fill({ tx: 'devtx', wallet: 'dev', sol: 10 }),
-      fill({ tx: 'solo1', wallet: 'secretbook', sol: 10 }),
+      fill({ sid: sidAt(100, 500), tx: 'devtx', wallet: 'dev', sol: 10 }),
+      fill({ sid: sidAt(100, 700), tx: 'solo1', wallet: 'secretbook', sol: 10 }),
     ]);
     expect(m!.coordinatedSol).toBe(0);
     expect(m!.independentSol).toBe(10);
     expect(m!.roomLeft).toBeCloseTo(0.5, 10);
+    expect(m!.runTx).toBe(1);
+    expect(m!.adjacencyMarks).toBe(0);
   });
 
   it('reads the deployer off the fills rather than trusting a creator field', () => {
@@ -587,6 +612,170 @@ describe('the co-ordination rule — the Stage 2 seam', () => {
     const fills = [fill({ slot: 1000 }), fill({ slot: 1100 }), fill({ slot: 99_999 })];
     const kept = windowFilter(fills, 160); // the pinned live span, stage2_entry.windowSlotSpan
     expect(kept.map((f) => f.slot)).toEqual([1000, 1100]);
+  });
+});
+
+describe('the co-ordination rule, half (b) — the deployer-anchored block-index run', () => {
+  // Captain decision 182a. `sid` encodes `slot(12) + blockTxIndex(6) + innerIndex(4)`, so the
+  // create slot's transactions can be put in the order the block packed them. A Jito bundle lands
+  // as an atomic contiguous sequence and no outsider can insert a transaction into it, so a
+  // transaction at the deployer's index ± 1 is inside the deployer's own submission or is the very
+  // next thing the leader packed. The signal is free: `parseFill` already reads the field.
+
+  it('decomposes sid into the block transaction index, and refuses anything else', () => {
+    // The decomposition, not an assumption: over the committed tape's 2,699 create-slot fills the
+    // leading field always equals the fill's own slot and no transaction carries two indices.
+    expect(blockTxIndex('0004116399650007760002')).toBe(776);
+    expect(blockTxIndex(sidAt(411639965, 776, 2))).toBe(776);
+    expect(blockTxIndex(sidAt(100, 0))).toBe(0);
+    // NaN, never a guess. A moved format must collapse the run, not relocate it.
+    expect(blockTxIndex('short')).toBeNaN();
+    expect(blockTxIndex('00041163996500abcd0002')).toBeNaN();
+  });
+
+  it('marks a wallet that rode the deployer\'s run without ever sharing a transaction', () => {
+    // THE CASE THE SHARED-TRANSACTION RULE CANNOT SEE, and the one this repo's own subject presents
+    // for the whole of December 2025 - February 2026: separate transactions, one bundle.
+    const m = measureCreateSlot([
+      fill({ sid: sidAt(100, 500), tx: 'devtx', wallet: 'dev', sol: 10 }),
+      fill({ sid: sidAt(100, 501), tx: 'booktx', wallet: 'book', sol: 6 }),
+      fill({ sid: sidAt(100, 700), tx: 'solo', wallet: 'outsider', sol: 4 }),
+    ]);
+    expect(m!.bundledTx).toBe(0); // half (a) found nothing at all
+    expect(m!.runTx).toBe(2);
+    expect(m!.adjacencyMarks).toBe(1);
+    expect(m!.coordinatedSol).toBe(6);
+    expect(m!.independentSol).toBe(4);
+    // And the launch is SCORED, where before decision 182a it would have been refused whole.
+    expect(roomIsProven(m!)).toBe(true);
+    expect(m!.roomLeft).toBeCloseTo(0.2, 10);
+  });
+
+  it('walks outwards in BOTH directions from the anchor', () => {
+    // A bundle can place the deployer's own buy anywhere inside itself, so an anchor that only
+    // walked forwards would miss whatever the operator put first.
+    const m = measureCreateSlot([
+      fill({ sid: sidAt(100, 499), tx: 'before', wallet: 'book1', sol: 3 }),
+      fill({ sid: sidAt(100, 500), tx: 'devtx', wallet: 'dev', sol: 10 }),
+      fill({ sid: sidAt(100, 501), tx: 'after', wallet: 'book2', sol: 3 }),
+      fill({ sid: sidAt(100, 600), tx: 'solo', wallet: 'outsider', sol: 4 }),
+    ]);
+    expect(m!.runTx).toBe(3);
+    expect(m!.adjacencyMarks).toBe(2);
+    expect(m!.coordinatedWallets).toBe(2);
+    expect(m!.independentWallets).toBe(1);
+  });
+
+  it('stops at a gap of 2 — strict contiguity, measured rather than chosen', () => {
+    // Widening to step <= 2 buys 9 more marks over the whole tape and to <= 3 buys 15 while
+    // DOUBLING the false marks (2 -> 4). Coincidental adjacency among non-run transactions runs at
+    // 12.35%, so every extra step of tolerance is bought at a real price.
+    const m = measureCreateSlot([
+      fill({ sid: sidAt(100, 500), tx: 'devtx', wallet: 'dev', sol: 10 }),
+      fill({ sid: sidAt(100, 502), tx: 'near', wallet: 'nearby', sol: 10 }),
+    ]);
+    expect(m!.runTx).toBe(1);
+    expect(m!.adjacencyMarks).toBe(0);
+    expect(m!.independentSol).toBe(10);
+  });
+
+  it('UNIONS with the shared-transaction rule and never replaces it', () => {
+    // The two halves are complementary, not nested. Here the operation sends a SECOND bundle far
+    // away in the block — 57 cohort instances over 14 of the tape's launches have this shape — which
+    // an anchored run cannot reach and a shared transaction can. Both must land.
+    const m = measureCreateSlot([
+      fill({ sid: sidAt(100, 500), tx: 'devtx', wallet: 'dev', sol: 10 }),
+      fill({ sid: sidAt(100, 501), tx: 'near', wallet: 'bookA', sol: 2 }),
+      fill({ sid: sidAt(100, 900), tx: 'far', wallet: 'bookB', sol: 2 }),
+      fill({ sid: sidAt(100, 900, 1), tx: 'far', wallet: 'bookC', sol: 2 }),
+      fill({ sid: sidAt(100, 950), tx: 'solo', wallet: 'outsider', sol: 4 }),
+    ]);
+    expect(m!.bundledTx).toBe(1); // the far group, caught by half (a)
+    expect(m!.runTx).toBe(2); // the near one, caught by half (b)
+    expect(m!.adjacencyMarks).toBe(1); // bookA, and only bookA, is what (b) ADDED
+    expect(m!.coordinatedWallets).toBe(3);
+    expect(m!.coordinatedSol).toBe(6);
+    expect(m!.independentWallets).toBe(1);
+    expect(m!.independentSol).toBe(4);
+  });
+
+  it('THE DIRECTION OF ERROR, as a property: unioning can only ever LOWER a room reading', () => {
+    // The safety property the whole decision rests on. `sharedTx` is a subset of the union by
+    // construction, so adding a wallet can only move stake INTO the operation's numerator — and
+    // decision 134a's asymmetry becomes structural rather than empirical. An implementation that
+    // could raise a room reading would be wrong, whatever else it got right.
+    const cases: Fill[][] = [
+      // adjacency adds a wallet the shared-transaction rule never saw
+      [
+        fill({ sid: sidAt(100, 500), tx: 'devtx', wallet: 'dev', sol: 10 }),
+        fill({ sid: sidAt(100, 501), tx: 'book', wallet: 'book', sol: 5 }),
+        fill({ sid: sidAt(100, 800), tx: 'solo', wallet: 'out', sol: 5 }),
+      ],
+      // adjacency adds nothing
+      [
+        fill({ sid: sidAt(100, 500), tx: 'devtx', wallet: 'dev', sol: 10 }),
+        fill({ sid: sidAt(100, 900), tx: 'solo', wallet: 'out', sol: 10 }),
+      ],
+      // both halves fire on the same wallets
+      [
+        fill({ sid: sidAt(100, 500), tx: 'devtx', wallet: 'dev', sol: 10 }),
+        fill({ sid: sidAt(100, 501), tx: 'b', wallet: 'x', sol: 2 }),
+        fill({ sid: sidAt(100, 501, 1), tx: 'b', wallet: 'y', sol: 2 }),
+        fill({ sid: sidAt(100, 900), tx: 'solo', wallet: 'out', sol: 6 }),
+      ],
+    ];
+    for (const fills of cases) {
+      const groups = createSlotGroups(fills)!;
+      const union = tallyCreateSlot(groups).measurement;
+      const sharedOnly = tallyCreateSlot({ ...groups, coordinated: groups.coordinatedBySharedTx }).measurement;
+      // The set relation, which is what makes the arithmetic relation hold.
+      for (const w of groups.coordinatedBySharedTx) expect(groups.coordinated.has(w)).toBe(true);
+      expect(union.roomLeft).toBeLessThanOrEqual(sharedOnly.roomLeft);
+      expect(union.operationShare).toBeGreaterThanOrEqual(sharedOnly.operationShare);
+      // And a launch the older rule could score is never DE-scored by the widening.
+      if (roomIsProven(sharedOnly)) expect(roomIsProven(union)).toBe(true);
+    }
+  });
+
+  it('refuses half (b) ENTIRELY when two transactions claim the same block index', () => {
+    // The one failure mode of this rule that is NOT in the safe direction. Colliding indices mean
+    // the decomposition is reading something other than a block index, and a run built on that
+    // would not be short — it would swallow the whole create slot and mark every outsider as the
+    // operation. So an inconsistent slot gets no adjacency at all and falls back to half (a),
+    // which is the reading the screen had before decision 182a.
+    const m = measureCreateSlot([
+      fill({ sid: sidAt(100, 500), tx: 'devtx', wallet: 'dev', sol: 10 }),
+      fill({ sid: sidAt(100, 500, 1), tx: 'other', wallet: 'out1', sol: 5 }),
+      fill({ sid: sidAt(100, 501), tx: 'third', wallet: 'out2', sol: 5 }),
+    ]);
+    expect(m!.runTx).toBe(0);
+    expect(m!.adjacencyMarks).toBe(0);
+    expect(m!.coordinatedWallets).toBe(0);
+    expect(m!.independentSol).toBe(10);
+    // Nothing marked at all, so the launch is UNPROVEN rather than wrongly scored.
+    expect(roomIsProven(m!)).toBe(false);
+  });
+
+  it('refuses half (b) when a sid carries no readable index, rather than guessing a position', () => {
+    // A moved format is the expected cause, and it breaks TOWARDS refusal: the run collapses,
+    // the launch goes back to unproven, and Stage 0's tripwire is what says so out loud.
+    const m = measureCreateSlot([
+      fill({ sid: 'not-a-sid', tx: 'devtx', wallet: 'dev', sol: 10 }),
+      fill({ sid: 'also-not-one', tx: 'book', wallet: 'book', sol: 10 }),
+    ]);
+    expect(m!.runTx).toBe(0);
+    expect(m!.adjacencyMarks).toBe(0);
+    expect(roomIsProven(m!)).toBe(false);
+  });
+
+  it('a transaction whose own fills disagree about their index disables the run too', () => {
+    const m = measureCreateSlot([
+      fill({ sid: sidAt(100, 500), tx: 'devtx', wallet: 'dev', sol: 10 }),
+      fill({ sid: sidAt(100, 777), tx: 'devtx', wallet: 'dev', sol: 1 }),
+      fill({ sid: sidAt(100, 501), tx: 'book', wallet: 'book', sol: 9 }),
+    ]);
+    expect(m!.runTx).toBe(0);
+    expect(m!.adjacencyMarks).toBe(0);
   });
 });
 
@@ -3819,6 +4008,9 @@ describe('the keyless boundary holds in both directions', () => {
   // producers reached it and WHOSE fact that is (captain decision 174b), and all three new keys are
   // inside `entry` — ENTRY_KEYS_BY_SCHEMA below.
   PERSISTED_BY_SCHEMA[10] = PERSISTED_BY_SCHEMA[9]!;
+  // Schema 11 adds no candidate ROW field either. The co-ordination rule became a UNION, and
+  // everything it changed is inside `entry` (ENTRY_KEYS_BY_SCHEMA below) plus the `stage0` block.
+  PERSISTED_BY_SCHEMA[11] = PERSISTED_BY_SCHEMA[10]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -3879,6 +4071,12 @@ describe('the keyless boundary holds in both directions', () => {
     'unmeasuredCauseAttribution',
     'unmeasuredContributingCauses',
   ];
+  // Schema 11: the co-ordination rule became the UNION of the shared-transaction rule and the
+  // deployer-anchored block-index run (captain decision 182a). The two halves are persisted APART,
+  // and that is the point of the version: `bundledTx` alone can no longer say which half proved a
+  // launch, and `adjacencyMarks` is the only field that says how much of the operation a
+  // schema-≤10 `roomLeft` was booking as outsider capital.
+  const ENTRY_KEYS_11 = [...ENTRY_KEYS_10, 'runTx', 'adjacencyMarks'];
   const ENTRY_KEYS_BY_SCHEMA: Record<number, string[]> = {
     3: ENTRY_KEYS_3_AND_4,
     4: ENTRY_KEYS_3_AND_4,
@@ -3893,6 +4091,8 @@ describe('the keyless boundary holds in both directions', () => {
     9: ENTRY_KEYS_6,
     // Schema 10 splits the unmeasured verdicts by CAUSE — the three keys above.
     10: ENTRY_KEYS_10,
+    // Schema 11 persists the two halves of the co-ordination rule apart.
+    11: ENTRY_KEYS_11,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -3949,6 +4149,9 @@ describe('the keyless boundary holds in both directions', () => {
     9: CREATION_KEYS_9,
     // Schema 10 changes `entry`, not `creation`.
     10: CREATION_KEYS_9,
+    // Schema 11 changes the co-ordination rule, which is a Stage 2 measurement. Enumeration is
+    // untouched.
+    11: CREATION_KEYS_9,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -3985,6 +4188,8 @@ describe('the keyless boundary holds in both directions', () => {
     9: ENTRY_COVERAGE_KEYS_6,
     // Schema 10's three new keys sit on `entry` itself, not in its coverage block.
     10: ENTRY_COVERAGE_KEYS_6,
+    // Schema 11 changes the co-ordination rule, not the eligibility filter.
+    11: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -4025,6 +4230,10 @@ describe('the keyless boundary holds in both directions', () => {
     9: SPEND_KEYS_8,
     // Schema 10 spends nothing new and touches no budget.
     10: SPEND_KEYS_8,
+    // Schema 11 leaves it alone too, and that is the cheapest fact about the change: the union's
+    // second signal is already inside every fill the walk fetched, so it buys no request, no host
+    // and no vendor quota. A widening that cost something would show up HERE.
+    11: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -4055,6 +4264,7 @@ describe('the keyless boundary holds in both directions', () => {
     9: DUNE_KEYS_9,
     // Schema 10 leaves the Dune block alone — a separate lane owns that surface.
     10: DUNE_KEYS_9,
+    11: DUNE_KEYS_9,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -4076,6 +4286,7 @@ describe('the keyless boundary holds in both directions', () => {
   const DUNE_COVERAGE_KEYS_BY_SCHEMA: Record<number, string[]> = {
     9: DUNE_COVERAGE_KEYS_9,
     10: DUNE_COVERAGE_KEYS_9,
+    11: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -4089,6 +4300,7 @@ describe('the keyless boundary holds in both directions', () => {
   const DUNE_COVERAGE_TABLE_KEYS_BY_SCHEMA: Record<number, string[]> = {
     9: DUNE_COVERAGE_TABLE_KEYS_9,
     10: DUNE_COVERAGE_TABLE_KEYS_9,
+    11: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -6220,11 +6432,19 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
    * `10 * (1/room - 1)` against 10 SOL of outsider capital lands on the room asked for.
    *
    * **The operation's stake is split across a bundled transaction by default, and that is
-   * load-bearing rather than incidental.** A create slot in which nothing is bundled gives the
-   * co-ordination rule nothing to find, and `scoreEntry` refuses to score such a launch at all
-   * (`measure.mjs` → `roomIsProven`, captain decision 134a). So the default fixture has the dev
-   * share `devtx` with one of its own wallets — one bundled transaction, two wallets, the same
-   * room figure — and `bundled: false` builds the unproven shape on purpose.
+   * load-bearing rather than incidental.** A create slot in which the co-ordination rule marks
+   * nothing gives it nothing to find, and `scoreEntry` refuses to score such a launch at all
+   * (`measure.mjs` → `roomIsProven`, captain decisions 134a and 182a). So the default fixture has
+   * the dev share `devtx` with one of its own wallets — one bundled transaction, two wallets, the
+   * same room figure — and `bundled: false` builds the unproven shape on purpose.
+   *
+   * **Every `sid` here is explicit, and the block indices are deliberately far apart.** Since
+   * decision 182a the rule ALSO marks the deployer-anchored contiguous block-index run, so a
+   * fixture that let transactions fall next to each other by accident would mark the outsiders as
+   * the operation and quietly turn the `bundled: false` shape into a proven one — destroying the
+   * decision-134a fixtures without failing anything visibly. The operation sits at index 100 and
+   * the outsiders start at 200, which is the shape the tape shows (median gap to the next
+   * create-slot transaction: 108 indices). {@link sidAt} builds the key.
    */
   const windowFills = (room: number, outcomes: number[], bundled = true) => {
     const operationSol = 10 * (1 / room - 1);
@@ -6233,15 +6453,17 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     // `coordinatedSol`. Only `bundledTx` and `maxWalletsInOneTx` move.
     const fills = bundled
       ? [
-          fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: operationSol * 0.6, tokens: 6e5 }),
-          fill({ slot: 100, tx: 'devtx', wallet: 'devbook', sol: operationSol * 0.4, tokens: 4e5 }),
+          fill({ slot: 100, sid: sidAt(100, 100), tx: 'devtx', wallet: 'dev', sol: operationSol * 0.6, tokens: 6e5 }),
+          fill({ slot: 100, sid: sidAt(100, 100, 1), tx: 'devtx', wallet: 'devbook', sol: operationSol * 0.4, tokens: 4e5 }),
         ]
-      : [fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: operationSol, tokens: 1e6 })];
+      : [fill({ slot: 100, sid: sidAt(100, 100), tx: 'devtx', wallet: 'dev', sol: operationSol, tokens: 1e6 })];
     outcomes.forEach((realised, i) => {
       const stake = 10 / outcomes.length;
-      fills.push(fill({ slot: 100, tx: `o${i}`, wallet: `w${i}`, sol: stake, tokens: 1000 }));
       fills.push(
-        fill({ slot: 140, tx: `s${i}`, wallet: `w${i}`, sol: stake + realised, tokens: 1000, side: 'sell' }),
+        fill({ slot: 100, sid: sidAt(100, 200 + i * 10), tx: `o${i}`, wallet: `w${i}`, sol: stake, tokens: 1000 }),
+      );
+      fills.push(
+        fill({ slot: 140, sid: sidAt(140, 200 + i * 10), tx: `s${i}`, wallet: `w${i}`, sol: stake + realised, tokens: 1000, side: 'sell' }),
       );
     });
     return fills;
@@ -6501,12 +6723,12 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     expect(s.verdict).toBe('entry-open-after-costs');
     expect(s.launchesRoomUnproven).toBe(3);
     const caveats = s.caveats.join(' ');
-    expect(caveats).toMatch(/3 of 11 measured launch\(es\) had NO bundled transaction/);
+    expect(caveats).toMatch(/3 of 11 measured launch\(es\) had NO co-ordination evidence/);
     expect(caveats).toMatch(/UNPROVEN rather than open/);
     // The direction of the error it prevents is named, because that is what makes the refusal
     // legible as a safety property rather than as fussiness.
     expect(caveats).toMatch(/inflate room/);
-    expect(caveats).toMatch(/134a/);
+    expect(caveats).toMatch(/134a and 182a/);
   });
 
   it('bundledTx and maxWalletsInOneTx span EVERY launch handed in, refused ones included', () => {
@@ -6525,12 +6747,14 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
   });
 
   it('roomIsProven is the floor of the evidence, not a threshold on its quality', () => {
-    // One bundled transaction is the minimum evidence that the rule could see anything at all. It
-    // does NOT mean recovery was complete — on the committed tape a bundled launch still misses
-    // cohort wallets that bought alone — so a proven room figure stays an upper bound.
-    expect(roomIsProven({ bundledTx: 0 })).toBe(false);
-    expect(roomIsProven({ bundledTx: 1 })).toBe(true);
-    expect(roomIsProven({ bundledTx: 7 })).toBe(true);
+    // ONE MARK is the minimum evidence that the rule could see anything at all, and since captain
+    // decision 182a the marked set is the UNION of the shared-transaction rule and the
+    // deployer-anchored block-index run. It does NOT mean recovery was complete — a wallet that
+    // neither shares a transaction nor rides the run is still counted as independent — so a proven
+    // room figure stays an upper bound.
+    expect(roomIsProven({ coordinatedWallets: 0 })).toBe(false);
+    expect(roomIsProven({ coordinatedWallets: 1 })).toBe(true);
+    expect(roomIsProven({ coordinatedWallets: 7 })).toBe(true);
   });
 
   it('a refused launch is NOT a dropped one — the two say different things and are counted apart', () => {
@@ -6540,7 +6764,7 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     expect(s.launchesRoomUnproven).toBe(8);
     const caveats = s.caveats.join(' ');
     expect(caveats).toMatch(/2 launch window\(s\) could not be walked back to the mint/);
-    expect(caveats).toMatch(/8 of 8 measured launch\(es\) had NO bundled transaction/);
+    expect(caveats).toMatch(/8 of 8 measured launch\(es\) had NO co-ordination evidence/);
     expect(s.rationale).toMatch(/2 window\(s\) were dropped/);
     expect(s.rationale).toMatch(/8 further window\(s\) were measured but NOT SCORED/);
   });
@@ -6852,10 +7076,10 @@ describe('the rolling replay — the control that would have caught the unproven
    * the NAMED cohort says the truth was. On a stranger the second does not exist, which is the
    * whole reason the first is what a live run computes.
    */
-  const taped = (i: number, screenRoom: number, truthRoom: number, bundledTx: number) => ({
+  const taped = (i: number, screenRoom: number, truthRoom: number, coordinatedWallets: number) => ({
     mint: `m${i}`,
     dateIso: `2026-01-${String((i % 28) + 1).padStart(2, '0')}T00:00:00.000Z`,
-    createSlot: { roomLeft: screenRoom, bundledTx } as never,
+    createSlot: { roomLeft: screenRoom, coordinatedWallets } as never,
     field: [],
     // The replay reads room and nothing else, so a window tape it never opens is empty here.
     fills: [],
@@ -6863,8 +7087,9 @@ describe('the rolling replay — the control that would have caught the unproven
   });
 
   it('fails on a window the screen calls enterable that the named cohort says was not', () => {
-    // The exact shape of the 24 real ones: the rule found nothing (bundledTx 0), so the operation's
-    // own stake landed in the outsider half and room read 0.65 where the truth was 0.24.
+    // The exact shape of the 24 real ones: the rule found nothing, so the operation's own stake
+    // landed in the outsider half and room read 0.65 where the truth was 0.24. The last argument is
+    // the size of the marked set, which is what `roomIsProven` reads (captain decision 182a).
     const launches = Array.from({ length: 8 }, (_, i) => taped(i, 0.65, 0.24, 1));
     const r = replayRollingRoom(launches, T);
     expect(r.windows).toBe(1);
@@ -8707,6 +8932,96 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
     expect(field.verdict).toBe('entry-room-absent');
   });
 
+  it('THE DIRECTION OF ERROR HOLDS ON EVERY ONE OF THE 235 COMMITTED LAUNCHES', () => {
+    // The unit test above pins the property on fixtures; this pins it where it has to hold. For
+    // every launch on the tape, narrowing `coordinated` back to the shared-transaction half must
+    // produce a room reading that is >= the union's. If a single launch went the other way the
+    // widening would be capable of manufacturing an edge, and decision 182a's whole justification —
+    // that the asymmetry is STRUCTURAL rather than measured — would be false.
+    let raised = 0;
+    let lowered = 0;
+    let newlyProven = 0;
+    for (const l of measureSubjectLaunches(DATA_DIR)) {
+      const groups = createSlotGroups(l.fills)!;
+      const union = tallyCreateSlot(groups).measurement;
+      const sharedOnly = tallyCreateSlot({ ...groups, coordinated: groups.coordinatedBySharedTx }).measurement;
+      for (const w of groups.coordinatedBySharedTx) expect(groups.coordinated.has(w)).toBe(true);
+      if (union.roomLeft > sharedOnly.roomLeft + 1e-12) raised += 1;
+      if (union.roomLeft < sharedOnly.roomLeft - 1e-12) lowered += 1;
+      if (roomIsProven(union) && !roomIsProven(sharedOnly)) newlyProven += 1;
+      // A launch the older rule scored is never de-scored by the widening.
+      if (roomIsProven(sharedOnly)) expect(roomIsProven(union)).toBe(true);
+    }
+    expect(raised).toBe(0);
+    // Not vacuous: it really does move readings, and all 60 of the refusals it lifts are real.
+    expect(lowered).toBeGreaterThan(0);
+    expect(newlyProven).toBe(60);
+  });
+
+  it('THE FIELD NO LONGER CONTAINS THE OPERATION\'S OWN WALLETS — 180 of them, and they are all cohort', () => {
+    // The defect decision 182a folded into the same change. Those 180 (wallet, launch) pairs were
+    // in `outsiders`, so their fills, their queue positions and their round trips were being
+    // reported as what an INDEPENDENT sniper achieved on this deployer's launches. They are also
+    // the operation's best-priced entrants, so their presence flattered the field.
+    const cohort = new Set(CREATE_SLOT_COHORT);
+    let underSharedTx = 0;
+    let underUnion = 0;
+    let removedCohort = 0;
+    let removedNonCohort = 0;
+    let addedNonCohortMarks = 0;
+    for (const l of measureSubjectLaunches(DATA_DIR)) {
+      const groups = createSlotGroups(l.fills)!;
+      const wallets = new Set(groups.inSlot.map((f) => f.wallet));
+      wallets.delete(groups.deployer);
+      for (const w of wallets) {
+        const inFieldBefore = !groups.coordinatedBySharedTx.has(w);
+        const inFieldNow = !groups.coordinated.has(w);
+        if (inFieldBefore) underSharedTx += 1;
+        if (inFieldNow) underUnion += 1;
+        if (inFieldBefore && !inFieldNow) {
+          if (cohort.has(w)) removedCohort += 1;
+          else removedNonCohort += 1;
+        }
+        // The risk that IS new, and it is in the field leg rather than the room leg: over-marking
+        // removes wallets from a hit rate the verdict vetoes on. Measured magnitude here: zero.
+        if (inFieldBefore && !inFieldNow && !cohort.has(w)) addedNonCohortMarks += 1;
+      }
+    }
+    expect(underSharedTx).toBe(1502); // this repo's own published figure
+    expect(underUnion).toBe(1322);
+    expect(removedCohort).toBe(180);
+    expect(removedNonCohort).toBe(0);
+    expect(addedNonCohortMarks).toBe(0);
+    // And the field reproduction still lands on the dataset's own columns over the smaller
+    // population — the recipe did not change, only who it runs over.
+    expect(result.fieldCheck.pairs).toBe(1322);
+    expect(result.fieldCheck.closureMismatches).toBe(0);
+  });
+
+  it('THE ADJACENCY TRIPWIRE: the pre-March launches still produce deployer-anchored runs', () => {
+    // Report section 7.4's assertion, and the reason it is pre-March: over that stretch the
+    // shared-transaction rule recovers 0 of 45 cohort wallet-instances, so adjacency is the ONLY
+    // thing carrying the result. If pump.fun's `sid` format moves, every run collapses to length 1
+    // and those launches silently go back to UNPROVEN — the safe direction, and invisible without
+    // a check that fails loudly.
+    const a = result.adjacencyRuns;
+    expect(a.ok).toBe(true);
+    expect(a.launches).toBe(15);
+    expect(a.launches).toBeGreaterThanOrEqual(a.minLaunches);
+    expect(a.withRun).toBe(15);
+    expect(a.minRunTx).toBeGreaterThanOrEqual(2);
+    // The `sid` decomposition itself, re-validated on every run rather than once.
+    expect(a.createSlotFills).toBeGreaterThan(100);
+    expect(a.unreadableIndexes).toBe(0);
+    expect(a.slotPrefixMismatches).toBe(0);
+    expect(a.txWithTwoIndexes).toBe(0);
+    // Complete recovery, and — the opposite failure — nobody else swept in. Indexes COLLIDING
+    // rather than vanishing would show up here, and that one is not in the safe direction.
+    expect(a.cohortInstances).toBe(45);
+    expect(a.cohortRecovered).toBe(45);
+    expect(a.falseMarks).toBe(0);
+  });
+
   it('THE ROLLING REPLAY: the live recipe, at every point in the tape, with no false positive', () => {
     // The control the two slices above structurally could not be. Both of them sample months where
     // the co-ordination rule recovers 97-100% of the known cohort; over Dec 2025 - Feb 2026 it
@@ -8714,33 +9029,47 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
     // whose measured per-launch prize to outsiders was about zero. Every error that rule can make
     // runs towards "enterable", so a false positive here is the failure and a false negative is the
     // accepted price of decision 134a.
-    expect(result.rollingRoom.windows).toBeGreaterThan(200);
+    expect(result.rollingRoom.windows).toBe(228);
     expect(result.rollingRoom.falsePositives).toBe(0);
     expect(result.rollingRoom.falsePositiveWindows).toEqual([]);
     expect(result.rollingRoom.ok).toBe(true);
-    // The check is not vacuous: it does evaluate real verdicts on both sides of the bar, and it
-    // does refuse windows rather than scoring everything.
-    expect(result.rollingRoom.present).toBeGreaterThan(0);
-    expect(result.rollingRoom.absent).toBeGreaterThan(0);
-    expect(result.rollingRoom.unmeasured).toBeGreaterThan(0);
-    // And the coverage cost is real and visible rather than quietly absorbed — it lands in
-    // `unmeasured`, which is NOT the same state as a false negative and is not counted as one. A
-    // refused window carries no verdict for the cohort to contradict, so on this tape the screen
-    // never once measured a window, said ABSENT, and was wrong about it.
+    // The check is not vacuous: it evaluates real verdicts on BOTH sides of the bar.
+    expect(result.rollingRoom.present).toBe(88);
+    expect(result.rollingRoom.absent).toBe(140);
+    // AND THE COVERAGE COST IS NOW ZERO — captain decision 182a. Under the shared-transaction rule
+    // alone this read `unmeasured: 81, present: 53, absent: 94`: 81 windows the screen refused to
+    // answer because the rule could see nothing in enough of their launches. The union rule marks
+    // the same launches by the deployer-anchored block-index run, so every window is measured and
+    // the false-positive count is STILL zero. Nothing was relaxed to get there — decision 134a's
+    // refusal is untouched and the bars are unmoved (decision 141a); the rule simply sees more.
+    expect(result.rollingRoom.unmeasured).toBe(0);
+    // A refused window carries no verdict for the cohort to contradict, and there are none left to
+    // refuse. On this tape the screen never once measured a window, said ABSENT, and was wrong.
     expect(result.rollingRoom.falseNegatives).toBe(0);
   });
 
-  it('refuses the launches whose opening is unproven, and says how many in each era', () => {
-    // 60 of the 235 covered launches carry no bundled create-slot transaction at all. Three of them
-    // fall inside the published era-2 bucket, which is where the -0.0115 the tolerance used to
-    // absorb came from.
+  it('scores BOTH eras whole under the union rule, and neither is refused for want of evidence', () => {
+    // THE PUBLISHED CONSTANT THAT MOVED (captain decision 182a). 60 of the 235 covered launches
+    // carry no bundled create-slot transaction, and 3 of those fall inside the published era-2
+    // bucket — which is where the -0.0115 the tolerance used to absorb came from. Under the
+    // shared-transaction rule alone this read `n: 86, nRoomUnproven: 3`. All three carry a
+    // deployer-anchored block-index run, so the union marks them and the era is whole again.
     const era2 = result.eraSplit.find((e) => e.era.startsWith('2026-06-04'))!;
-    expect(era2.nRoomUnproven).toBe(3);
-    expect(era2.n).toBe(86);
-    // Era 1 bundled throughout, so the re-pinning is the only thing that moves it: 0.451 either way.
+    expect(era2.nRoomUnproven).toBe(0);
+    expect(era2.n).toBe(89);
+    // And it lands on the named-cohort estimator EXACTLY rather than 0.002 short of it: the
+    // structural rule over all 89 and the cohort rule over all 89 are now the same number. That is
+    // what makes this a stronger check than the one it replaces, not merely a wider one.
+    expect(era2.operationShareMedian).toBeCloseTo(0.770796, 6);
+    // Era 1's shared transactions already recovered the cohort, so nothing about it moves: 45
+    // launches at 0.450771 before and after.
     const era1 = result.eraSplit.find((e) => e.era.startsWith('2026-05-01'))!;
     expect(era1.nRoomUnproven).toBe(0);
     expect(era1.n).toBe(45);
+    expect(era1.operationShareMedian).toBeCloseTo(0.450771, 6);
+    // The refusal itself is untouched — it just has nothing left to refuse on THIS tape. 60
+    // launches would still be refused under the shared-transaction half alone.
+    expect(measureSubjectLaunches(DATA_DIR).filter((l) => !roomIsProven(l.createSlot)).length).toBe(0);
   });
 
   it('reproduces the published §5.1 era split and the dataset\'s own P&L table', () => {
@@ -8770,26 +9099,42 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
   });
 
   it('and it FAILS if the unproven openings are ever let back in — the control, demonstrated', () => {
-    // A control nobody has seen fail is a control nobody has tested. This reverts decision 134a in
-    // the only way that matters to the replay — every launch declared proven, which is what the
-    // screen did before this change — and the replay must light up rather than stay quiet.
+    // A control nobody has seen fail is a control nobody has tested. This reverts BOTH rulings the
+    // replay rests on, in the only way that matters to it: the co-ordination rule goes back to the
+    // shared-transaction half alone (pre-182a), and every launch is then declared proven (pre-134a).
+    // That is exactly what the screen did before either decision, and the replay must light up.
     //
-    // `bundledTx: 1` is exactly the "no bundled transaction means no co-ordination" reading, so the
-    // 24 below are the real ones off the committed tape, not a synthetic number.
-    const launches = measureSubjectLaunches(DATA_DIR).map((l) => ({
-      ...l,
-      createSlot: { ...l.createSlot, bundledTx: Math.max(l.createSlot.bundledTx, 1) },
-    }));
-    const reverted = replayRollingRoom(launches, T['stage2_entry']);
+    // The room figure has to be recomputed, not just re-flagged: `measureSubjectLaunches` now
+    // returns the UNION reading, in which the operation's own adjacent wallets are already in the
+    // numerator. Re-tallying with `coordinated` narrowed back to `coordinatedBySharedTx` — through
+    // the production `tallyCreateSlot`, so the fixture cannot drift from the real arithmetic — puts
+    // them back in the outsider half, which is where the inflation came from. So the 24 below are
+    // the real ones off the committed tape, not a synthetic number.
+    const preUnion = measureSubjectLaunches(DATA_DIR).map((l) => {
+      const groups = createSlotGroups(l.fills)!;
+      const sharedOnly = tallyCreateSlot({ ...groups, coordinated: groups.coordinatedBySharedTx });
+      return {
+        ...l,
+        createSlot: { ...sharedOnly.measurement, coordinatedWallets: Math.max(sharedOnly.measurement.coordinatedWallets, 1) },
+      };
+    });
+    const reverted = replayRollingRoom(preUnion, T['stage2_entry']);
     expect(reverted.ok).toBe(false);
     expect(reverted.falsePositives).toBe(24);
     // All 24 in the same direction. That one-sidedness is the reason the ruling is "refuse to
     // score" rather than "carry a bound": there is no compensating error to trade it against.
     expect(reverted.falseNegatives).toBe(0);
     expect(reverted.unmeasured).toBe(0);
-    // 60 of the 235 covered launches are the ones being let back in.
-    expect(launches.filter((l) => !roomIsProven(l.createSlot)).length).toBe(0);
-    expect(measureSubjectLaunches(DATA_DIR).filter((l) => !roomIsProven(l.createSlot)).length).toBe(60);
+    // Every launch declared proven, which is the pre-134a screen.
+    expect(preUnion.filter((l) => !roomIsProven(l.createSlot)).length).toBe(0);
+    // AND THE HALF-WAY HOUSE IS THE SHIPPED-UNTIL-NOW BEHAVIOUR: narrow the rule back to shared
+    // transactions but KEEP decision 134a's refusal, and 60 of the 235 covered launches go
+    // unproven — the coverage decision 182a bought back. Under the union it is 0, asserted above.
+    const sharedOnlyProven = measureSubjectLaunches(DATA_DIR).filter((l) => {
+      const groups = createSlotGroups(l.fills)!;
+      return !roomIsProven(tallyCreateSlot({ ...groups, coordinated: groups.coordinatedBySharedTx }).measurement);
+    });
+    expect(sharedOnlyProven.length).toBe(60);
   });
 
   it('fails LOUDLY if the entry bar is ever loosened enough to admit this wallet', () => {

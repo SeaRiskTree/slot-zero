@@ -60,6 +60,7 @@ import { entryCostTargets, measureLaunchEntry, priceLaunchEntry, scoreEntry } fr
 import {
   CURVE_INITIAL_PRICE_SOL,
   CURVE_K,
+  blockTxIndex,
   createSlotGroups,
   measureCompletion,
   median,
@@ -257,7 +258,7 @@ export function cohortRoomLeft(groups) {
  * over the launch's OWN STORED WINDOW — every fill in the tape file — while a live run trims to
  * `thresholds.json` → `stage2_entry.windowSlotSpan` slots from the create slot. That is not an
  * oversight and the two paths must not be made to agree. `wallet_launch_pnl.csv`, which
- * {@link verifyFieldReproduction} checks against on 1,502 create-slot outsider pairs with zero
+ * {@link verifyFieldReproduction} checks against on 1,322 create-slot outsider pairs with zero
  * closure mismatches, is itself computed over each launch's stored window. Imposing a slot span here
  * would move closure verdicts at the tail and break that reproduction — which is the regression guard
  * that makes the live recipe trustworthy in the first place. A live run has no stored window to use,
@@ -765,6 +766,132 @@ export function replayRollingRoom(launches, t) {
 }
 
 /**
+ * @typedef {object} AdjacencyRunCheck
+ * @property {number} launches            Pre-March launches examined.
+ * @property {number} minLaunches         Launches this check needs to mean anything.
+ * @property {string} era                 The date bound, stated so a saved run is self-describing.
+ * @property {number} withRun             Of those, ones producing a run of 2+ transactions.
+ * @property {number} minRunTx            Shortest run seen. `0` means a launch produced no run.
+ * @property {number} createSlotFills     Create-slot fills whose `sid` was decomposed.
+ * @property {number} slotPrefixMismatches Fills whose `sid` leading field is not their own slot.
+ * @property {number} unreadableIndexes   Fills whose `sid` carries no readable block index.
+ * @property {number} txWithTwoIndexes    Transactions seen carrying two different block indices.
+ * @property {number} cohortRecovered     Cohort wallet-instances the rule marks in this era.
+ * @property {number} cohortInstances     Cohort wallet-instances present in these create slots.
+ * @property {number} falseMarks          Non-cohort create-slot wallets the rule marks here.
+ * @property {boolean} ok
+ */
+
+/**
+ * **THE TRIPWIRE ON THE ADJACENCY SIGNAL, AND IT EXISTS BECAUSE THAT SIGNAL BREAKS SILENTLY.**
+ *
+ * Half (b) of the co-ordination rule (`measure.mjs` → {@link import('./measure.mjs').blockTxIndex})
+ * reads a block transaction index out of pump.fun's `sid`. If that format ever moves, the
+ * decomposition yields garbage, every deployer-anchored run collapses to length 1, and every launch
+ * that depended on adjacency silently becomes UNPROVEN again — a return to the pre-182a behaviour.
+ * That is the safe direction, which is exactly the problem: nothing else in the screen would report
+ * it, and Stage 2 would simply start answering less often for a reason no output names.
+ *
+ * **The population is the subject's pre-2026-03 launches, and the choice is load-bearing.** Over
+ * that stretch the shared-transaction rule recovers **0 of 45** cohort wallet-instances — the
+ * operation co-ordinated without ever sharing a transaction — so adjacency is the *only* thing
+ * carrying the result and a collapse cannot hide behind half (a). Later eras would mask it.
+ *
+ * Four things are asserted, and each catches a different way the field could move under us:
+ *
+ * 1. **Every one of those launches still produces a run of 2+ transactions.** The direct form of
+ *    the assertion report §7.4 asks for.
+ * 2. **The `sid` decomposition still holds** — its leading field is the fill's own slot, and no
+ *    transaction carries two different block indices. That is `evidence/exp9.mjs`'s validation, run
+ *    every time rather than once.
+ * 3. **The recovery is still complete** — 45 of 45 cohort wallet-instances marked.
+ * 4. **It still marks nobody else** — zero non-cohort create-slot wallets. A format change that
+ *    made indexes collide rather than vanish would sweep the whole create slot into the run, which
+ *    is the one failure mode of this rule that is NOT in the safe direction.
+ *
+ * Like the era buckets' `minN`, `minLaunches` is a vacuity guard rather than a statistical floor:
+ * an empty bucket makes every assertion below trivially true. The committed tape delivers 15.
+ *
+ * @param {readonly TapedLaunch[]} launches
+ * @returns {AdjacencyRunCheck}
+ */
+export function verifyAdjacencyRuns(launches) {
+  const era = '< 2026-03-01';
+  const inEra = launches.filter((l) => l.dateIso.slice(0, 10) < '2026-03-01');
+
+  let withRun = 0;
+  let minRunTx = Number.POSITIVE_INFINITY;
+  let createSlotFills = 0;
+  let slotPrefixMismatches = 0;
+  let unreadableIndexes = 0;
+  let txWithTwoIndexes = 0;
+  let cohortInstances = 0;
+  let cohortRecovered = 0;
+  let falseMarks = 0;
+
+  for (const l of inEra) {
+    const groups = createSlotGroups(l.fills);
+    if (groups === null) continue;
+    if (groups.runTx >= 2) withRun += 1;
+    minRunTx = Math.min(minRunTx, groups.runTx);
+
+    /** @type {Map<string, number>} */
+    const indexByTx = new Map();
+    for (const f of groups.inSlot) {
+      createSlotFills += 1;
+      const index = blockTxIndex(f.sid);
+      if (!Number.isFinite(index)) {
+        unreadableIndexes += 1;
+        continue;
+      }
+      // The leading field is everything before the 6-digit index and the 4-digit inner index.
+      if (Number(f.sid.slice(0, -10)) !== f.slot) slotPrefixMismatches += 1;
+      const seen = indexByTx.get(f.tx);
+      if (seen === undefined) indexByTx.set(f.tx, index);
+      else if (seen !== index) txWithTwoIndexes += 1;
+    }
+
+    for (const wallet of new Set(groups.inSlot.map((f) => f.wallet))) {
+      if (wallet === groups.deployer) continue;
+      if (COHORT_SET.has(wallet)) {
+        cohortInstances += 1;
+        if (groups.coordinated.has(wallet)) cohortRecovered += 1;
+      } else if (groups.coordinated.has(wallet)) falseMarks += 1;
+    }
+  }
+
+  // 10 is a declared vacuity floor, not a derived one — the same status as the era buckets' `minN`
+  // and stated for the same reason. Nothing here measures a count at which anything stabilises; what
+  // it defends against is a bucket emptied by a renamed tape or a shifted date bound passing every
+  // assertion below trivially. The committed tape delivers 15, so the bar sits comfortably under it.
+  const minLaunches = 10;
+  return {
+    launches: inEra.length,
+    minLaunches,
+    era,
+    withRun,
+    minRunTx: Number.isFinite(minRunTx) ? minRunTx : 0,
+    createSlotFills,
+    slotPrefixMismatches,
+    unreadableIndexes,
+    txWithTwoIndexes,
+    cohortRecovered,
+    cohortInstances,
+    falseMarks,
+    ok:
+      inEra.length >= minLaunches &&
+      withRun === inEra.length &&
+      createSlotFills > 0 &&
+      slotPrefixMismatches === 0 &&
+      unreadableIndexes === 0 &&
+      txWithTwoIndexes === 0 &&
+      cohortInstances > 0 &&
+      cohortRecovered === cohortInstances &&
+      falseMarks === 0,
+  };
+}
+
+/**
  * @typedef {object} ControlDeployer
  * @property {string} creator
  * @property {string} mint
@@ -868,8 +995,10 @@ export function verifyCurveInversion(controls) {
  * @typedef {object} EraReproduction
  * @property {string} era
  * @property {number} n     Launches in the era whose opening is PROVEN, and therefore scored.
- * @property {number} nRoomUnproven Launches in the era excluded for carrying no bundled
- *   transaction. Reported so the era's population can be reconciled with the published one.
+ * @property {number} nRoomUnproven Launches in the era excluded because the co-ordination rule
+ *   marked nothing in their create slot. Reported so the era's population can be reconciled with
+ *   the published one, and so a reader can see that under the union rule it is 0 in both eras
+ *   where a schema-≤9 record's era 2 read 3.
  * @property {number} minN Launches this bucket must hold for the comparison to mean anything.
  * @property {number} devSolMedian
  * @property {number} coordinatedSolMedian
@@ -894,6 +1023,8 @@ export function verifyCurveInversion(controls) {
  *   post-2026-06-04 regime, which is the population the June report measured.
  * @property {RollingRoomReplay} rollingRoom The same known-negative question asked at EVERY point
  *   in the tape's history, against the named cohort. See {@link replayRollingRoom}.
+ * @property {AdjacencyRunCheck} adjacencyRuns The tripwire on the block-index signal half (b) of
+ *   the co-ordination rule reads. See {@link verifyAdjacencyRuns}.
  * @property {CostReproduction} costCheck The entry-cost and after-cost legs, run over the committed
  *   on-chain table. See {@link verifyOnChainCostReproduction}.
  * @property {{ n: number, roomP25: number, roomMedian: number, roomP75: number }} controlPopulation
@@ -929,10 +1060,11 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
   // `Math.abs(NaN - published) > 0.02` is FALSE, so an era bucket that matched no launches used to
   // report PASSED and then authorise keyed spending. Anything that empties the filter — renamed
   // window files, every `reached_mint` false, a `--data-dir` pointing at a differently dated tape, a
-  // shifted date range — is exactly that case. The buckets hold 45 and 86 launches as committed —
-  // 86 and not 89 because this split is filtered on `roomIsProven` and three era-2 launches carry
-  // no bundled create-slot transaction — so a floor of 20 leaves room for ordinary variation while
-  // refusing a hollowed-out bucket.
+  // shifted date range — is exactly that case. The buckets hold 45 and 89 launches as committed —
+  // era 2 was 86 until captain decision 182a, because the split is filtered on `roomIsProven` and
+  // three era-2 launches carried no bundled create-slot transaction; the union rule marks all three
+  // by the deployer-anchored block-index run, so the era is whole again — so a floor of 20 leaves
+  // room for ordinary variation while refusing a hollowed-out bucket.
   //
   // THE ERA-2 CONSTANT IS RE-PINNED, AND THE TOLERANCE IS NOT THE FIX (captain decision 135c).
   // The June report's §5.1 table prints `0.768` for era 2, and that cell is **not the median of its
@@ -945,11 +1077,11 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
   // the imported prose goes; the report and the dataset README are a primary record and are not
   // edited.
   //
-  // Why this matters more than 0.003 of a share: until now the 0.02 tolerance was absorbing a real
-  // **−0.0115** defect (the co-ordination rule finding nothing on 3 of the 89 launches, so ~9.6–10.0
-  // SOL of the operation's own stake was booked as outsider capital) and a **+0.0028** documentation
-  // error, which partially cancelled. The check passed for the wrong reason. Refusing to score an
-  // unproven opening removes the first; re-pinning removes the second.
+  // Why this matters more than 0.003 of a share: until 2026-08-02 the 0.02 tolerance was absorbing a
+  // real **−0.0115** defect (the co-ordination rule finding nothing on 3 of the 89 launches, so
+  // ~9.6–10.0 SOL of the operation's own stake was booked as outsider capital) and a **+0.0028**
+  // documentation error, which partially cancelled. The check passed for the wrong reason. Refusing
+  // to score an unproven opening removed the first; re-pinning removed the second.
   //
   /** @type {{ era: string, lo: string, hi: string, share: number, minN: number, published: string }[]} */
   const eras = [
@@ -974,24 +1106,30 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
   ];
 
   // Measured over the launches the screen would actually SCORE, which is the point of the check:
-  // this reproduces the room primitive as a live run computes it, and a live run no longer computes
-  // it on a launch whose create slot carried no bundled transaction. Era 1 is unaffected (all 45 of
-  // its launches bundled); era 2 loses the 3 that did not, leaving 86 and a median share of 0.769.
+  // this reproduces the room primitive as a live run computes it, and a live run does not compute it
+  // on a launch whose create slot the co-ordination rule marked nothing in. Under the union rule
+  // (captain decision 182a) that is no launch in either era, so both buckets are whole: 45 and 89.
   //
-  // WHAT THE RESIDUAL 0.002 ACTUALLY IS, corrected 2026-08-02 — an earlier version of this comment
-  // called it "the order statistic moving when three launches leave an 89-launch series", and that
-  // is not what happened. The two figures are produced by two different estimators over the same
-  // launches, and dropping the three unproven ones moves this one UP, not down:
+  // THE RESIDUAL IS NOW ZERO, AND THAT IS THE POINT OF THE WIDENING. The check compares a
+  // STRUCTURAL-rule median against a COHORT-derived constant — two different estimators over the
+  // same launches — and until 182a they did not land on the same number:
   //
-  //   structural bundle rule, all 89 era-2 launches  → 0.759250
-  //   structural bundle rule, the 86 proven ones     → 0.769153   ← what this check computes
-  //   NAMED-COHORT rule,      all 89                 → 0.770796   ← what 0.771 is
+  //   shared-transaction rule, all 89 era-2 launches   → 0.759250
+  //   shared-transaction rule, the 86 it could prove   → 0.769153   ← what this check used to compute
+  //   UNION rule,             all 89 (all provable)    → 0.770796   ← what it computes now
+  //   NAMED-COHORT rule,      all 89                   → 0.770796   ← what 0.771 is
   //
-  // So the comparison is a structural-rule median against a cohort-derived constant, and the 0.010
-  // the proven filter adds is the operation's own stake coming back out of the outsider numerator on
-  // the launches where the rule could see it. The two estimators agree EXACTLY in era 1 (0.450771
-  // both ways), because the bundle rule recovered essentially the whole cohort in that period. All
-  // four figures are reproducible offline from the committed tape.
+  // The union recovers every cohort wallet-instance the named-cohort rule knows about on this tape,
+  // so the structural estimator and the cohort estimator become the SAME NUMBER to six decimals,
+  // over the full 89 rather than over the 86 the older rule could see. The 0.002 that the previous
+  // comment explained away is gone rather than tolerated. The two estimators already agreed exactly
+  // in era 1 (0.450771 every way), because the shared-transaction rule alone recovered essentially
+  // the whole cohort in that period. All figures are reproducible offline from the committed tape.
+  //
+  // Note what did NOT move: `0.771` is unchanged, and it is still the constant decision 135c pinned.
+  // What moved is the denominator (86 → 89) and the measured median (0.769153 → 0.770796), and both
+  // moved TOWARDS the published value. The correction is recorded in the tape's `IMPORT.md` →
+  // "Corrections"; `report.md` is a primary record and is not edited.
   const eraSplit = eras.map((e) => {
     const all = launches.filter((l) => {
       const d = l.dateIso.slice(0, 10);
@@ -1042,6 +1180,11 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
   // The same question as (6), asked at every point in the tape's history rather than at two. See
   // `replayRollingRoom`: (6) samples only the months where the co-ordination rule works.
   const rollingRoom = replayRollingRoom(launches, entryThresholds);
+
+  // --- (9) THE ADJACENCY TRIPWIRE -------------------------------------------------------------
+  // Half (b) of the co-ordination rule breaks SILENTLY and towards refusal, so it needs a check
+  // that fails loudly. See `verifyAdjacencyRuns` for why the population is the pre-March launches.
+  const adjacencyRuns = verifyAdjacencyRuns(launches);
 
   // --- (8) THE COST LEG, against the committed on-chain table ---------------------------------
   // Free, offline and deterministic like the rest, and it is the only check that exercises what a
@@ -1214,8 +1357,31 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
           : ` Worst window ends ${worst.atIso.slice(0, 10)}: screen ` +
             `${worst.screenRoomMedian.toFixed(3)} against a true ${worst.truthRoomMedian.toFixed(3)} ` +
             `over ${worst.scored} scored launch(es).`) +
-        ` Check first whether launches with NO bundled create-slot transaction have been allowed ` +
+        ` Check first whether launches the co-ordination rule marked NOTHING in have been allowed ` +
         `back into the score (measure.mjs -> roomIsProven, captain decision 134a).`,
+    );
+  }
+
+  // THE ADJACENCY TRIPWIRE. Half (b) of the co-ordination rule reads a block transaction index out
+  // of pump.fun's `sid`, and if that format moves the signal does not error — it evaporates, every
+  // run collapses to length 1, and Stage 2 quietly goes back to refusing the launches half (a)
+  // cannot see. Nothing else here would report that, which is the whole reason this check exists.
+  if (!adjacencyRuns.ok) {
+    failures.push(
+      `THE ADJACENCY SIGNAL DID NOT REPRODUCE over the subject's ${adjacencyRuns.era} launches ` +
+        `(needs ${adjacencyRuns.minLaunches}, found ${adjacencyRuns.launches}): ` +
+        `${adjacencyRuns.withRun}/${adjacencyRuns.launches} produced a deployer-anchored run of 2+ ` +
+        `transactions (shortest run ${adjacencyRuns.minRunTx}), ` +
+        `${adjacencyRuns.cohortRecovered}/${adjacencyRuns.cohortInstances} cohort wallet-instances ` +
+        `recovered, ${adjacencyRuns.falseMarks} non-cohort wallet(s) marked. Over ` +
+        `${adjacencyRuns.createSlotFills} create-slot fill(s): ${adjacencyRuns.unreadableIndexes} ` +
+        `unreadable sid index(es), ${adjacencyRuns.slotPrefixMismatches} sid prefix mismatch(es), ` +
+        `${adjacencyRuns.txWithTwoIndexes} transaction(s) carrying two block indices. ` +
+        `The shared-transaction rule recovers NOTHING in this era, so adjacency is the only thing ` +
+        `carrying these launches: a collapse here means pump.fun's sid format has moved and every ` +
+        `launch that depends on half (b) has silently become UNPROVEN again (measure.mjs -> ` +
+        `blockTxIndex, captain decision 182a). Non-zero false marks are the opposite failure — ` +
+        `indexes colliding rather than vanishing — and that one is NOT in the safe direction.`,
     );
   }
 
@@ -1229,6 +1395,7 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
     subjectEntryRecent,
     subjectEntryPostBreak,
     rollingRoom,
+    adjacencyRuns,
     costCheck,
     controlPopulation,
     controlPresets,

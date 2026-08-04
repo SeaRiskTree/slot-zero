@@ -26,9 +26,12 @@
  *  6. **THE KNOWN-NEGATIVE CONTROL: Stage 2 must NOT score `7ufmve7Z…` as beatable.** This is the
  *     load-bearing assertion of the entry stage, and it is the counterpart of (1). The gate passes
  *     that wallet because it is competent; Stage 2 must refuse it because its opening window has
- *     been unprofitable for outsiders since 2026-06-04 — measured, in
- *     `data/slot-zero-june-regime-change/report.md`, not assumed. Any design that scores it as
- *     beatable is wrong, so a design that starts to is failed here rather than shipped.
+ *     been unprofitable for outsiders since 2026-06-04 — measured, not assumed. The measurement a
+ *     reader can open is `analysis/window-population/README.md` §4.1 (a blind changepoint scan over
+ *     the committed tape lands the close on 2026-06-04) and §4.3 (the per-launch prize falls from a
+ *     +5.30 SOL median inside the window to +1.38 SOL after it); `test/window-population.test.ts`
+ *     asserts both. Any design that scores it as beatable is wrong, so a design that starts to is
+ *     failed here rather than shipped.
  *
  *     The trap this specifically catches: the field leg, read on its own, **says the wallet is
  *     beatable.** Gross of fees its post-break field is 76.3% of closed round trips positive at a
@@ -1288,8 +1291,9 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
 
   // THE KNOWN-NEGATIVE CONTROL, and it is the counterpart of the gate assertion above. The gate
   // MUST pass this wallet; Stage 2 MUST refuse it. `7ufmve7Z…` is competent and it is not beatable
-  // — measured in data/slot-zero-june-regime-change/report.md §5, §6, not assumed — so a Stage 2
-  // that scores it as having room is a Stage 2 that is wrong, whatever else it gets right.
+  // — measured in analysis/window-population/README.md §4.1 and §4.3 over the committed tape, and
+  // asserted by test/window-population.test.ts, not assumed — so a Stage 2 that scores it as having
+  // room is a Stage 2 that is wrong, whatever else it gets right.
   //
   // Note which leg would produce the wrong answer if it were allowed to: the FIELD leg, read on its
   // own, is positive here. Gross of fees this wallet's post-break field is ~77% of closed round
@@ -1305,8 +1309,9 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
       failures.push(
         `STAGE 2 SCORED OUR SUBJECT DEPLOYER AS ENTERABLE AFTER COSTS, over ${label}. That wallet is ` +
           `the known negative: its opening window has been unprofitable for outsiders since ` +
-          `2026-06-04 because its own group takes 97% of the profit available there ` +
-          `(slot-zero-june-regime-change/report.md §6.1). Measured room here is ` +
+          `2026-06-04 — the per-launch prize falls from a +5.30 SOL median to +1.38 SOL across that ` +
+          `date (analysis/window-population/README.md §4.3, blind changepoint scan at §4.1). ` +
+          `Measured room here is ` +
           `${score.roomLeft.median.toFixed(3)} against a ${entryThresholds.minRoomLeft} bar. ` +
           `Something in the entry score has drifted — check first whether the field leg has been ` +
           `allowed to carry a positive verdict, because gross of fees it reads ` +

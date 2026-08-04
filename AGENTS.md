@@ -65,6 +65,31 @@ what is established and what is open.
 - `tools/` and `analysis/` are plain `.mjs` with JSDoc types so they run on the Node 20 floor with
   no build step; `tsconfig.json` covers them with `allowJs`+`checkJs`, so `tsc --noEmit` checks them too.
 
+## Citing a report this repo does not hold
+
+**`data/` holds TAPES, NOT REPORTS. Every companion report and decision record lives in
+firstmate's records, outside this tree, and a `data/<report-name>/report.md` citation is a dead
+path** — it renders as a file the reader can open, and there is no such file. `README.md` →
+"the six companion reports" states the standing position: none of them is committed here, so any
+figure attributed to one is evidence from elsewhere and is asserted by no test in this repo. That
+is a deliberate boundary, not an oversight; **do not import one to make a citation resolve** —
+bringing an external document in has a licensing and provenance dimension and is a captain
+decision.
+
+**The form, and it is enforced:** name the report *without* a `data/` prefix and say where it
+lives — `` `slot-zero-june-regime-change` §6.1 (held in firstmate's records, not in this repo) ``.
+`tools/window-decay-tripwire/detector.mjs` is the model. **Prefer an in-repo route when one
+exists**, because a reader can check it: `analysis/window-population/` re-derives the June report's
+2026-06-04 close and its closed-regime prize from the committed tape, and
+`test/window-population.test.ts` asserts both — so claims resting on that break cite §4.1/§4.3
+there rather than the external report.
+
+`test/citations.test.ts` fails on any `data/**/*.md` citation that does not resolve on disk. It
+carries a **pending allow-list** of the sites that predate it, each of which must still contain the
+dead path it is listed for — so the list cannot go stale, and it is the worklist for retiring them.
+A citation added from today is not on that list and fails immediately. **Adding an entry to it is
+not how you make the check pass**; fix the citation.
+
 ## The dataset
 
 `data/population-tape-2026-07-29/` is a **primary record — never reformat, re-sort or
@@ -75,7 +100,8 @@ verbatim. When later evidence contradicts the imported prose, add to `IMPORT.md`
 → "Corrections"; do not edit `report.md` or the dataset `README.md`.
 
 **WHICH DATASETS THAT NEVER-EDIT RULE PROTECTS** (captain ruling 186a; full record
-`data/slot-zero-bundling-predicate-question/decision-182a-gradtape-figure.md`). The protection
+`slot-zero-bundling-predicate-question` → `decision-182a-gradtape-figure.md`, held outside this
+repo — see "Citing a report this repo does not hold" below). The protection
 attaches to an **imported primary record**, marked by an `IMPORT.md` plus explicit
 primary-record / never-reformat-a-row language — `data/population-tape-2026-07-29/` is the
 example. A dataset **produced by this repo** carries no `IMPORT.md`, and its prose is ordinary
@@ -175,7 +201,8 @@ Five facts that bind any lane touching it:
 `tools/arrival-rate-walk/` answers `analysis/window-population/README.md` §8's first question — *how
 often does a profitable opening window arrive, and how long does it last* — by building that report's
 per-launch series for a cohort of deployers instead of one. Scope, bounds and limits in its
-`README.md`; the investigation behind its shape is `data/slot-zero-cursor-gap-walk-blast/report.md`.
+`README.md`; the investigation behind its shape is `slot-zero-cursor-gap-walk-blast` → `report.md`,
+held outside this repo (see "Citing a report this repo does not hold").
 Five things bind anything that touches it or copies from it:
 
 - **A WINDOW WALK GETS ONE BOUND, IN ONE UNIT — copy `walk.mjs`, never `readLaunchWindow`.**
@@ -627,7 +654,8 @@ dev currently?"*, and the shape of the answer is the point:
   table in a consumer**, and note that **Stage 3 is a second consumer of Stage 2's fill walk, not a
   reader of `runs/*.json`**. `tools/deployer-screen/README.md` → "What a later stage may filter on"
   owns the six-row table, the attribution rationale, the predicate's fail-safe behaviours and the
-  superseded-rule note; the evidence is `data/slot-zero-stage2-reverify/report.md` §5.
+  superseded-rule note; the evidence is `slot-zero-stage2-reverify` → `report.md` §5, held outside
+  this repo (see "Citing a report this repo does not hold").
 - **Entry cost is recovered from the chain, and the signatures are free.** Every `Fill` carries its
   transaction, so `measure.mjs` → `walletTransactions` and `entry.mjs` → `entryCostTargets` name the
   transactions to price with no discovery step; `pumpfun.mjs` → `parseTransactionCosts` reads
@@ -666,8 +694,10 @@ dev currently?"*, and the shape of the answer is the point:
   wallet is refused by ROOM and only room.
 - **`7ufmve7Z…` is the known-negative control, and it is load-bearing twice over.** Stage 0 asserts
   the gate **passes** it (it is competent) *and* that Stage 2 **refuses** it (it is not beatable —
-  measured, `data/slot-zero-june-regime-change/report.md`). Any design that scores it as beatable is
-  wrong; `runStage0` fails loudly, including if a later lane loosens `minRoomLeft` to fit an output.
+  measured, `analysis/window-population/README.md` §4.1 and §4.3, which re-derive the 2026-06-04
+  close blind from the committed tape and are asserted by `test/window-population.test.ts`). Any
+  design that scores it as beatable is wrong; `runStage0` fails loudly, including if a later lane
+  loosens `minRoomLeft` to fit an output.
 - **Everything derived from the fill tape ALONE is GROSS OF FEES and is an upper bound.** The trap is
   concrete, not theoretical: gross, `7ufmve7Z…`'s post-break field reads **358/469 closed round trips
   positive**; fee-inclusive, that same regime made **+0.54 SOL per launch with 51 of 106 wallets

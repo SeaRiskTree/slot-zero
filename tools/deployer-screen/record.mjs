@@ -193,7 +193,7 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   measurement — and the rule at ANY schema version is that a later stage filters only on a
  *   MEASURED verdict, never on an unmeasured one whatever its cause. That attribution was settled
  *   during review, after the split had been committed; `tools/deployer-screen/README.md` → "What a
- *   later stage may filter on" and the AGENTS.md bullet are the authoritative record. `entry.mjs` →
+ *   later stage may filter on" is the authoritative record. `entry.mjs` →
  *   `isDeployerAttributable` is the predicate that owns this rule, and on a schema-≤9 record it
  *   answers `false` for the whole unmeasured family — the safe direction, and the reason the field
  *   must not be reconstructed. Every such score also carries the rule in `entry.caveats`

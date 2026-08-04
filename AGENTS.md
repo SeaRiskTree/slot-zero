@@ -550,34 +550,18 @@ dev currently?"*, and the shape of the answer is the point:
   ones — `entry-cost-unmeasured` and `entry-cost-prohibitive` — have no older equivalent, and
   **unmeasured cost is never a pass**. A schema-≤5 `entry-room-present` is NOT the same finding;
   `tools/deployer-screen/README.md` → "The run-record schema" owns the boundary.
-- **AN UNMEASURED VERDICT IS SIX PRODUCERS AND ALL SIX ARE OURS — a later stage may filter ONLY on a
-  MEASURED verdict, never on an unmeasured one whatever its cause** (captain decision 174b,
-  schema 10). `entry-unmeasured` and `entry-cost-unmeasured` are reached by six distinct code paths
-  in `entry.mjs` → `scoreEntry`: too few windows offered, windows dropped, windows REFUSED as
-  unproven openings (decision 134a), too few closed round trips, too little of the field priced, too
-  few round trips priced end to end — every one a fact about **our** budget and evidence. The last
-  row to be re-attributed was `too-few-closed-round-trips`: closure is read inside a window whose
-  tail `readLaunchWindow` truncates (65,000 ms of seek against 160 slots), the lost fills are
-  disproportionately late sells, and slot drift moves with the calendar — so it varies with *when* a
-  candidate launched. That re-attribution was settled during review, *after* the split had been
-  committed, so the branch's earlier commit message states the superseded rule — this bullet and
-  `tools/deployer-screen/README.md` → "What a later stage may filter on" are the authoritative
-  record. The four filterable verdicts are `entry-open-after-costs`,
-  `entry-room-absent`, `entry-cost-prohibitive`, `entry-field-loss-making`; anything else is no
-  answer and is carried forward. `verdict !== 'entry-unmeasured'` is a filter on our own coverage
-  wearing a measurement's clothes, which is the invisible false rejection this screen exists to
-  remove, one layer down.
-  `unmeasuredCause` / `unmeasuredCauseAttribution` / `unmeasuredContributingCauses` are on the score
-  **and** in the record, and **`entry.mjs` → `isDeployerAttributable` is the predicate — do not
-  rebuild the table in a consumer.** It fails safe three ways: an unrecognised verdict, a schema-≤9
-  record and an unrecognised cause all answer `false`. The attribution table stays as the single
-  owner of the mapping, so a future deployer-attributable producer has to come there on purpose. The
-  rule and the six-row table are
-  `tools/deployer-screen/README.md` → "What a later stage may filter on"; the evidence is
-  `data/slot-zero-stage2-reverify/report.md` §5, which also fixes the shape — **Stage 3 is a second
-  consumer of Stage 2's fill walk, not a reader of `runs/*.json`**, because the entry block is
-  distributions with no per-launch row and no wallet identity. This lane made the outcomes legible
-  and retuned nothing.
+- **AN UNMEASURED VERDICT IS SIX PRODUCERS AND EVERY ONE OF THEM IS OUR OWN COVERAGE — a later stage
+  may filter ONLY on a MEASURED verdict, never on an unmeasured one whatever its cause** (captain
+  decision 174b, schema 10). The four filterable verdicts are `entry-open-after-costs`,
+  `entry-room-absent`, `entry-cost-prohibitive` and `entry-field-loss-making`; every unmeasured
+  outcome is **no answer** and must be carried forward, surfaced and counted, never dropped.
+  `verdict !== 'entry-unmeasured'` is a filter on our own budget and evidence wearing a
+  measurement's clothes — the invisible false rejection this screen exists to remove, one layer
+  down. **`entry.mjs` → `isDeployerAttributable` is the predicate; do not rebuild the attribution
+  table in a consumer**, and note that **Stage 3 is a second consumer of Stage 2's fill walk, not a
+  reader of `runs/*.json`**. `tools/deployer-screen/README.md` → "What a later stage may filter on"
+  owns the six-row table, the attribution rationale, the predicate's fail-safe behaviours and the
+  superseded-rule note; the evidence is `data/slot-zero-stage2-reverify/report.md` §5.
 - **Entry cost is recovered from the chain, and the signatures are free.** Every `Fill` carries its
   transaction, so `measure.mjs` → `walletTransactions` and `entry.mjs` → `entryCostTargets` name the
   transactions to price with no discovery step; `pumpfun.mjs` → `parseTransactionCosts` reads

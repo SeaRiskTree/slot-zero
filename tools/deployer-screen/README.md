@@ -1428,6 +1428,14 @@ CEILINGS this leg admits — `maxExecutionsPerRun` executions at
 | `insufficient` | `remaining − reserve` is below the worst case | **refused before the first request**; creation enumeration falls back to the Solana RPC walk |
 | `unreadable` | `POST /usage` failed or returned something this will not read | **refused** — an unreadable balance is not headroom |
 
+`unreadable` has three causes and all three refuse. The vendor's body could not be read; **no
+returned billing period contains the instant of the reading**, so the CURRENT period was never
+established (we POST an empty body, which is documented to return exactly that period, so a
+non-bracketing answer means something is wrong and the newest listed period is *not* a substitute);
+or **the plan itself did not price to a finite number of credits**, which a missing or non-numeric
+pinned bound produces. The last one refuses even under `allowanceRequired: false`, because that flag
+waives an unread *balance* and here it is the run's own cost that is unknown.
+
 A refusal here is the ordinary Dune fallback: slower, never wrong. `--dry-run` prints the worst case
 and the balance below which the leg refuses, and needs no credential to do it.
 

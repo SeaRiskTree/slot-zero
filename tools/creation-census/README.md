@@ -149,6 +149,14 @@ execution at `worstCaseCreditsPerExecution`, plus reads at this month's own `?li
 | `insufficient` | **refused, exit 2, nothing issued but the free read.** No execution, not even the saved-query GET |
 | `unreadable` | **refused** — an unreadable balance is not headroom |
 
+`unreadable` has three causes and all three refuse. The vendor's body could not be read; **no
+returned billing period contains the instant of the reading**, so the CURRENT period was never
+established (we POST an empty body, which is documented to return exactly that period, so a
+non-bracketing answer means something is wrong and the newest listed period is *not* a substitute);
+or **the plan itself did not price to a finite number of credits**, which a missing or non-numeric
+pinned bound produces. The last one refuses even under `allowanceRequired: false`, because that flag
+waives an unread *balance* and here it is the run's own cost that is unknown.
+
 **This lane has no fallback** — unlike the screen, which walks the Solana RPC when Dune refuses, a
 census with no Dune answer is no census. So refusing costs one deferred run, while proceeding blind
 costs a billed execution that returns nothing and cannot be retried this period. `--dry-run`, the

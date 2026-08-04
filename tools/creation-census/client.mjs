@@ -483,8 +483,6 @@ export const LOCAL_ESTIMATE_CAVEAT =
  * @property {string} periodStart      `YYYY-MM-DD`, the vendor's own string.
  * @property {string} periodEnd        `YYYY-MM-DD`. **NOT a calendar month** — this account's period
  *   was measured running 2026-07-29 -> 2026-08-29, i.e. it resets on a subscription anniversary.
- * @property {'brackets-now' | 'latest'} periodSelected Which rule picked the period, so a record can
- *   say whether the figure is about today or about the newest period the vendor listed.
  * @property {number} periodsReturned  How many periods the response carried.
  * @property {number} readAtMs         When this reading was taken. A reading ages badly; see the lag.
  * @property {number | null} privateQueries Saved private queries in use, when the response says. The
@@ -550,8 +548,8 @@ export function parseUsageResponse(body, readAtMs) {
     if (typeof start !== 'string' || typeof end !== 'string') continue;
     if (typeof used !== 'number' || !Number.isFinite(used) || used < 0) continue;
     if (typeof included !== 'number' || !Number.isFinite(included) || included <= 0) continue;
-    const startMs = Date.parse(`${start}T00:00:00Z`);
-    const endMs = Date.parse(`${end}T00:00:00Z`);
+    const startMs = parseUsageDate(start);
+    const endMs = parseUsageDate(end);
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
     periods.push({ start, end, used, included, startMs, endMs });
   }
@@ -563,15 +561,23 @@ export function parseUsageResponse(body, readAtMs) {
     return { ok: false, allowance: null, reasons };
   }
 
-  // The period that BRACKETS the reading is the one a run spends against. When none does — the
-  // caller asked for a historical window, or the vendor's period boundaries have moved — fall back
-  // to the newest period rather than to the first, and say which rule applied, because a guard
-  // reporting last quarter's headroom as today's is worse than one reporting nothing.
+  // The period that BRACKETS the reading is the ONLY one a run may spend against, and when none
+  // does this REFUSES rather than substituting another. We always POST an empty body, which the
+  // vendor documents as returning the CURRENT period, so a non-bracketing answer means the vendor,
+  // the clock or our reading of the shape is wrong — and a balance that could not be established is
+  // not headroom, the same rule {@link decideAllowance} applies to a null allowance. The newest
+  // period's own dates go into the refusal so an operator can see what the vendor did return.
   const bracketing = periods.filter((p) => p.startMs <= readAtMs && readAtMs < p.endMs);
-  const chosen =
-    bracketing.length > 0
-      ? bracketing.reduce((a, b) => (b.startMs > a.startMs ? b : a))
-      : periods.reduce((a, b) => (b.startMs > a.startMs ? b : a));
+  if (bracketing.length === 0) {
+    const newest = periods.reduce((a, b) => (b.startMs > a.startMs ? b : a));
+    reasons.push(
+      `POST /usage returned ${periods.length} readable billing period(s) but none of them contains the ` +
+        `instant of this reading (${new Date(readAtMs).toISOString()}), so the CURRENT billing period ` +
+        `could not be established; the newest one listed runs ${newest.start} -> ${newest.end}.`,
+    );
+    return { ok: false, allowance: null, reasons };
+  }
+  const chosen = bracketing.reduce((a, b) => (b.startMs > a.startMs ? b : a));
   const privateQueries = doc['private_queries'];
 
   return {
@@ -583,7 +589,6 @@ export function parseUsageResponse(body, readAtMs) {
       creditsRemaining: Math.max(0, chosen.included - chosen.used),
       periodStart: chosen.start,
       periodEnd: chosen.end,
-      periodSelected: bracketing.length > 0 ? 'brackets-now' : 'latest',
       periodsReturned: periods.length,
       readAtMs,
       privateQueries:
@@ -676,6 +681,14 @@ export function estimatePlanCredits(plan) {
  *   because "we could not see the balance" is not a reason to spend. A lane may pass
  *   `allowanceRequired: false` to proceed unguarded, and then the caveat travels with the run.
  *
+ * A PLAN THAT DOES NOT PRICE IS `unreadable` TOO, AND IT REFUSES UNCONDITIONALLY. The pinned bounds
+ * both lanes price against are read from JSON at runtime through an untyped object, so a missing or
+ * non-numeric bound reaches {@link estimatePlanCredits} and comes back as `NaN` — and every `<`
+ * against `NaN` is false, which would clear a run priced at nothing through the `sufficient` door.
+ * That inverts the guard's own rule, so the finiteness of the worst case and of the reserve is
+ * checked BEFORE any comparison rather than at each one, and no `allowanceRequired: false` opts out
+ * of it: the question was never answered, so there is nothing for a lane to waive.
+ *
  * @param {object} input
  * @param {DuneSpendPlan} input.plan
  * @param {DuneSpendEstimate} input.estimate
@@ -690,6 +703,32 @@ export function decideAllowance(input) {
   const reserve = Math.max(0, input.reserveCredits);
   const worst = input.estimate.worstCaseCredits;
   const caveats = [ALLOWANCE_LAG_CAVEAT, ALLOWANCE_SHARED_CAVEAT];
+
+  if (!Number.isFinite(worst) || !Number.isFinite(reserve)) {
+    const broken = !Number.isFinite(worst)
+      ? `the plan's worst case priced to ${String(worst)}`
+      : `the reserve priced to ${String(input.reserveCredits)}`;
+    return {
+      verdict: 'unreadable',
+      ok: false,
+      worstCaseCredits: worst,
+      creditsUsed: null,
+      creditsIncluded: null,
+      creditsRemaining: null,
+      reserveCredits: reserve,
+      spendableCredits: null,
+      shortfallCredits: null,
+      periodStart: null,
+      periodEnd: null,
+      readAtUtc: null,
+      reasons: [
+        `REFUSED before spending anything: ${broken}, not a finite number of credits, so ` +
+          `${input.plan.lane} cannot say what this run could cost and no comparison against the ` +
+          `balance would mean anything. A pinned bound is missing or non-numeric.`,
+      ],
+      caveats,
+    };
+  }
 
   if (input.allowance === null) {
     const why = [...(input.unreadableReasons ?? [])];
@@ -819,6 +858,25 @@ export function localCreditEstimate(input) {
 /** @param {number} n @returns {number} */
 function round3(n) {
   return Number(n.toFixed(3));
+}
+
+/**
+ * Read a billing period boundary, whichever of the two shapes the vendor sends.
+ *
+ * Dune documents `start_date`/`end_date` as bare `YYYY-MM-DD` and this repository has no live
+ * capture to confirm it. A bare date parses on its own as UTC midnight, so the direct parse is tried
+ * FIRST and the `T00:00:00Z` suffix is only a fallback for a value the runtime cannot parse alone.
+ * The other order is what breaks: appending the suffix to a full ISO timestamp yields
+ * `...T00:00:00ZT00:00:00Z`, drops every period, and reads as unreadable — which sends the screen to
+ * the ~13 h RPC walk on every run and refuses the census permanently, since it has no fallback.
+ *
+ * @param {string} value
+ * @returns {number} Epoch milliseconds, or `NaN` when neither shape parses.
+ */
+function parseUsageDate(value) {
+  const direct = Date.parse(value);
+  if (Number.isFinite(direct)) return direct;
+  return Date.parse(`${value}T00:00:00Z`);
 }
 
 // --- END SHARED REGION: the Dune monthly credit ceiling guard ---------------------------------

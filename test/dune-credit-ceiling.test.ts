@@ -200,7 +200,6 @@ describe('what the vendor says, and what this refuses to read into it', () => {
         creditsRemaining: 2163.7,
         periodStart: '2026-07-29',
         periodEnd: '2026-08-29',
-        periodSelected: 'brackets-now',
         privateQueries: 9,
       });
     }
@@ -215,18 +214,55 @@ describe('what the vendor says, and what this refuses to read into it', () => {
       NOW_MS,
     );
     expect(r.allowance?.creditsUsed).toBe(2_450);
-    expect(r.allowance?.periodSelected).toBe('brackets-now');
     expect(r.allowance?.periodsReturned).toBe(2);
+  });
 
-    // And when none brackets the reading — a historical window was asked for, or the vendor moved
-    // its boundaries — it takes the NEWEST and says which rule applied, rather than silently
-    // reporting a stale balance as current.
+  it('REFUSES when no returned period brackets the reading, rather than reading the newest', () => {
+    // We always POST an empty body, which the vendor documents as returning the CURRENT period, so
+    // an answer that contains no period covering now means something is wrong — the vendor, the
+    // clock, or our reading of the shape. Substituting the newest period would report a stale (or
+    // future-dated) balance as today's headroom, and a low `credits_used` there would clear a run
+    // whose real balance was never established. An unestablished balance is not headroom, the same
+    // rule `decideAllowance` applies to a null allowance.
     const stale = parseUsageResponse(
       usageBody([period(5, 2500, '2026-01-01', '2026-02-01'), period(9, 2500, '2026-02-01', '2026-03-01')]),
       NOW_MS,
     );
-    expect(stale.allowance?.creditsUsed).toBe(9);
-    expect(stale.allowance?.periodSelected).toBe('latest');
+    expect(stale.ok).toBe(false);
+    expect(stale.allowance).toBeNull();
+    // The refusal names what the vendor DID return, so an operator can diagnose it without a second
+    // billed call — the reading itself is free, but the diagnosis is what costs a person time.
+    expect(stale.reasons.join(' ')).toContain('2026-02-01 -> 2026-03-01');
+    // And the screen falls back to the RPC walk / the census defers, rather than either proceeding.
+    const decision = screenDecideAllowance({
+      plan: PLAN,
+      estimate: estimatePlanCredits(PLAN),
+      allowance: stale.allowance,
+      unreadableReasons: stale.reasons,
+      reserveCredits: 25,
+      tightMultiple: 2,
+      allowanceRequired: true,
+    });
+    expect(decision.verdict).toBe('unreadable');
+    expect(decision.ok).toBe(false);
+  });
+
+  it('reads a bare date and a full ISO timestamp to the SAME allowance', () => {
+    // The documented shape is bare `YYYY-MM-DD`, but no live response has ever been seen from this
+    // repository. Appending `T00:00:00Z` to a full ISO timestamp yields `...ZT00:00:00Z`, which
+    // parses to NaN, drops every period and reads as unreadable — sending the screen to the ~13 h
+    // RPC walk on every run and refusing the census permanently, since it has no fallback. So the
+    // bare parse is tried first and the suffix is only a fallback.
+    for (const parse of [parseUsageResponse, censusParseUsageResponse]) {
+      const bare = parse(usageBody([period(336.3)]), NOW_MS);
+      const iso = parse(
+        usageBody([period(336.3, 2500, '2026-07-29T00:00:00Z', '2026-08-29T00:00:00Z')]),
+        NOW_MS,
+      );
+      expect(iso.ok).toBe(true);
+      expect(iso.allowance?.creditsRemaining).toBe(bare.allowance?.creditsRemaining);
+      expect(iso.allowance?.creditsUsed).toBe(bare.allowance?.creditsUsed);
+    }
   });
 
   it('refuses a body it cannot read rather than inventing headroom', () => {
@@ -397,6 +433,52 @@ describe('the decision, and the two things it cannot see', () => {
     expect(unguarded.verdict).toBe('unreadable');
     expect(unguarded.ok).toBe(true);
     expect(unguarded.reasons.join(' ')).toMatch(/Proceeding UNGUARDED/);
+  });
+
+  it('refuses a plan that does not PRICE, instead of clearing it through the `sufficient` door', () => {
+    // The pinned bounds both lanes price against are read from JSON at runtime through an untyped
+    // object, so a missing or non-numeric bound reaches `estimatePlanCredits` and comes back NaN.
+    // Every `<` against NaN is FALSE, so before this guard a run priced at nothing sailed past both
+    // comparisons and was returned as `sufficient` — the exact inversion of the module's own rule
+    // that every unknown refuses. A fat balance must not rescue an unpriceable plan.
+    const rich = parseUsageResponse(usageBody([period(0)]), NOW_MS).allowance;
+    for (const decideOne of [screenDecideAllowance, censusDecideAllowance]) {
+      const broken = decideOne({
+        plan: PLAN,
+        estimate: estimatePlanCredits({ ...PLAN, creditsPerExecution: undefined } as never),
+        allowance: rich,
+        reserveCredits: 25,
+        tightMultiple: 2,
+        allowanceRequired: true,
+      } as never);
+      expect(broken.verdict).toBe('unreadable');
+      expect(broken.ok).toBe(false);
+      expect(broken.reasons.join(' ')).toMatch(/not a finite number of credits/);
+
+      // A non-finite RESERVE is the same failure from the other side: it makes `spendable` NaN.
+      const noReserve = decideOne({
+        plan: PLAN,
+        estimate,
+        allowance: rich,
+        reserveCredits: Number.NaN,
+        tightMultiple: 2,
+        allowanceRequired: true,
+      } as never);
+      expect(noReserve.verdict).toBe('unreadable');
+      expect(noReserve.ok).toBe(false);
+
+      // And `allowanceRequired: false` does NOT waive it — that flag waives an unread BALANCE, and
+      // here the plan's own cost is what could not be established, so there is nothing to waive.
+      const unguarded = decideOne({
+        plan: PLAN,
+        estimate: estimatePlanCredits({ ...PLAN, bytesPerRow: 'many' } as never),
+        allowance: rich,
+        reserveCredits: 25,
+        tightMultiple: 2,
+        allowanceRequired: false,
+      } as never);
+      expect(unguarded.ok).toBe(false);
+    }
   });
 
   it('always carries what it cannot see — the lag and the shared key', () => {

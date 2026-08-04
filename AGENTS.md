@@ -679,9 +679,18 @@ dev currently?"*, and the shape of the answer is the point:
   the cost model. Measured per launch on our tape: **~19 DISTINCT transactions at the median — the
   UNION** of the create-slot scope (p50 7) and the closed-round-trip window scope (p50 18), not
   their sum (`render.mjs` publishes that pair and the union). Over the cap of launches a candidate is
-  walked, that is **~190 requests at the median** — re-derived at captain decision 190a's cap of 10,
-  and still inside `stage2_cost.maxRpcRequestsPerCandidate`'s unchanged 400, which is why that
-  ceiling did not have to move with the cap. Pacing is `creation_walk`'s and the two legs are
+  walked, that is **~190 requests at the median, ~350 at p90 and ~740 at the observed worst** at
+  captain decision 190a's cap of 10. **`stage2_cost.maxRpcRequestsPerCandidate` HAD TO MOVE WITH THAT
+  CAP and is 500, not 400** (captain decision 197b) — sized to hold the PER-PLANNED-LAUNCH headroom
+  constant, `500 / 10 = 400 / 8 = 50` requests a launch, which is why 500 and not another number.
+  **The median fitting is not the test**, and that is the trap the raise closed: `stage2.mjs` skips a
+  WHOLE launch when the remaining ceiling cannot cover its target list — a launch is never priced
+  half-way — and `minPricedFraction` is a hit rate over field ENTRANTS, not over launches, so a
+  skipped launch is by construction one of the heaviest and removes a disproportionate share of the
+  numerator while every one of its entrants stays in the denominator.
+  `thresholds.json` → `stage2_cost.justification.maxRpcRequestsPerCandidate` owns the arithmetic,
+  including the breach point (`500 / 8 = 62.5` transactions a launch) and why all of it is an upper
+  bound. Pacing is `creation_walk`'s and the two legs are
   serialised — `api.mainnet-beta` rate-limits globally across methods. **`entry-cost-prohibitive`
   gates on the PER-LAUNCH median** (`entryCostPerSolStakedByLaunch`, decision 140a) — every launch
   counts once, so a busy launch cannot outvote the rest; the pooled per-entry distribution ships

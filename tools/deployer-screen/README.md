@@ -1040,7 +1040,13 @@ a caveat names the count and the reason on every score that has one.
 
 ### What a later stage may filter on
 
-**Captain decision 174b, 2026-08-03. Read this before writing any filter over a Stage 2 outcome.**
+**Captain decision 174b, 2026-08-03. Read this before writing any filter over a Stage 2 outcome.
+THIS SECTION AND THE AGENTS.md BULLET ARE THE AUTHORITATIVE STATEMENT OF THE RULE.** The
+attribution question inside 174b was settled during review, after the split had already been
+committed: the earlier commit on this branch and its message describe the PRE-DECISION rule, under
+which `too-few-closed-round-trips` was attributed to the deployer and was the one thing a later
+stage could filter an unmeasured candidate on. That rule is superseded — history is not rewritten,
+so a reader who finds only the old message must be led here. What follows is what the code does.
 
 The two unmeasured verdicts are not one finding each. Between them they have **six distinct
 producers**, enumerated from `entry.mjs` → `scoreEntry` rather than from intent, and they do not

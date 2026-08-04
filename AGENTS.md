@@ -559,7 +559,10 @@ dev currently?"*, and the shape of the answer is the point:
   row to be re-attributed was `too-few-closed-round-trips`: closure is read inside a window whose
   tail `readLaunchWindow` truncates (65,000 ms of seek against 160 slots), the lost fills are
   disproportionately late sells, and slot drift moves with the calendar — so it varies with *when* a
-  candidate launched. The four filterable verdicts are `entry-open-after-costs`,
+  candidate launched. That re-attribution was settled during review, *after* the split had been
+  committed, so the branch's earlier commit message states the superseded rule — this bullet and
+  `tools/deployer-screen/README.md` → "What a later stage may filter on" are the authoritative
+  record. The four filterable verdicts are `entry-open-after-costs`,
   `entry-room-absent`, `entry-cost-prohibitive`, `entry-field-loss-making`; anything else is no
   answer and is carried forward. `verdict !== 'entry-unmeasured'` is a filter on our own coverage
   wearing a measurement's clothes, which is the invisible false rejection this screen exists to

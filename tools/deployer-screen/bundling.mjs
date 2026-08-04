@@ -17,8 +17,15 @@
  * of 10 planned and this census's all-of-8 headline is **stricter than what Stage 2 requires** — it
  * understates how many candidates are scoreable, which is the safe direction for a finding of this
  * shape. A census record is never retro-edited; re-running it under the new cap is a separate
- * decision. This file still re-pins no window parameter, so a re-run would measure the launches
- * Stage 2 actually plans.
+ * decision.
+ *
+ * **A re-run would follow the cap but NOT the rule, and that is deliberate here.** This file re-pins
+ * no window parameter, so a re-run would plan the 10 launches Stage 2 plans — but {@link fullSample}
+ * would still demand 10 of 10 proven, where Stage 2 requires only 8 proven of 10 planned. The launch
+ * COUNT follows `maxLaunchesPerCandidate`; the PREDICATE does not follow `minLaunchesSampled`. So the
+ * census's headline stays **stricter than the live scoreability rule**, which understates how many
+ * candidates are scoreable — the safe direction for a finding of this shape. Reconciling the two is
+ * a separate decision this lane does not take.
  *
  * ## The predicate this pass measures under, which has moved once
  *

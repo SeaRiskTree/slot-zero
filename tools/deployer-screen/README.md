@@ -1569,6 +1569,38 @@ launches cluster on busy deployers — so the binomial understates the real rate
 matters. That is why the gap is two and not one. The base rate itself comes from one deployer's
 long-window launches, so none of these is an answer rate for a stranger.
 
+**Those three figures are the request-cap component only, and 0.32% is not the full-day run's
+expected no-verdict rate.** They are computed from the 4-in-127 page-cost drop rate and nothing else.
+The dominant cause for a stranger is the other one: `census/2026-08-03-bundling-census.md` measures
+per-launch proven at **44 of 112 = 0.3929** under the union predicate, and **0 of 13 strangers**
+proven on all eight (1 of 14 counting our own control, which is the one). At ~39% proven per launch,
+8-of-10 proven is not reachable for a typical stranger, so the run's no-verdict rate is governed by
+`roomIsProven`, not by anything pinned here. The raise **does** help that dominant cause — the same
+census recorded 3 candidates sitting at 7 of 8, which a two-launch gap now reaches — but this lane
+does not quantify it, and the pinned figure must not be read as if it had.
+
+**A ceiling this lane does not close.** Decoupling the cap from the floor creates a verdict shape
+that was structurally impossible at 8-and-8: a candidate scored on 8 of 10 launches whose 2 missing
+launches were selected **by drop cause** rather than at random — request-cap drops fall on the
+busiest launches, `roomIsProven` drops on launches with no co-ordination evidence. At 8-and-8 such a
+candidate returned `entry-unmeasured`; it now returns a verdict computed over a non-random
+subsample. That is the same shape this tool refuses to read elsewhere — the cost leg discards a
+ceiling-truncated launch *whole* because a truncated walk holds the earliest entrants by slot, and
+`minPricedFraction` exists for the same reason.
+
+**The direction of that bias is unmeasured**, and the attempt that failed to settle it is the
+evidence: over the 235 committed launches the rank correlation between per-launch fill count and
+`roomLeft` is **0.0250**, i.e. negligible; the busiest quartile's median `roomLeft` is **0.3032**
+against the quietest quartile's **0.2771**, which points one way; but dropping the busiest 7 of 235
+(the 3.1% request-cap rate) moves the median `roomLeft` **0.3146 → 0.3314**, i.e. *up*, toward
+enterable, which points the other way. Two statistics, opposite in sign, on n = 1 deployer. On this
+tape it changes no verdict, because that 0.3146 median sits 0.24 **below** the `minRoomLeft` bar of
+0.55 — but n = 1 says nothing about a stranger sitting near the bar. So the standing bar (*a null
+result is an acceptable result, a false positive is not*) is **not discharged** for this new sample
+shape by this lane. Captain decision 198b accepted that knowingly and split the work: a
+refuse-near-the-bar guard is a separate filed lane blocked on this one, and the full-day screen run
+blocks on **both**, so the unguarded shape is never what that run uses.
+
 The floor was **not** the adjustable half: closing the gap by lowering `minLaunchesSampled` would
 weaken the evidence a verdict rests on rather than give it headroom, and 190a names the direction.
 **No bar moved** — every scored launch clears exactly what it cleared before; two more are offered.
@@ -1886,6 +1918,13 @@ raised the cap to 10 against the same floor of 8, so the live rule is 8 proven o
 census's all-of-8 headline is **stricter than what Stage 2 requires** — it understates how many
 candidates are scoreable, the safe direction for a finding of this shape. A census record is never
 retro-edited; re-running it under the new cap is a separate decision.
+
+A re-run would follow the cap but **not** the rule. `bundling.mjs` re-pins no window parameter, so it
+would plan the 10 launches Stage 2 plans — but its `fullSample` headline would still demand 10 of 10
+proven, where Stage 2 requires only 8 proven of 10 planned. The launch **count** follows
+`maxLaunchesPerCandidate`; the **predicate** does not follow `minLaunchesSampled`. The census's
+re-run predicate is therefore deliberately stricter than the live rule, in the same understating
+direction, and reconciling the two is a separate decision.
 
 **What the pass does, and what it deliberately does not.** It walks create-slot windows with Stage
 2's own pinned window parameters and reports only `bundledTx`, `runTx`, `maxWalletsInOneTx`,

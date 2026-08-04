@@ -40,7 +40,7 @@
  * what it is asked for and the client retries. A cap on successful pages would have let a launch
  * cost three times the printed number. The walk also reserves the *whole* cost of a page — one
  * attempt plus its backoffs — before starting one, so 18 is an exact bound rather than an
- * approximate one and the `3 × 8 × 18` arithmetic above is true rather than nearly true.
+ * approximate one and the `3 × 10 × 18` arithmetic above is true rather than nearly true.
  *
  * ## Drops are attributed, never lumped
  *

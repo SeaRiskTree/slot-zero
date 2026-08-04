@@ -288,6 +288,30 @@ export class DuneClient {
     return run;
   }
 
+  /**
+   * Read the account's credit allowance — the pre-flight half of the monthly ceiling guard.
+   *
+   * **Free.** Dune documents `POST /usage` as a metadata endpoint that consumes no credits, so this
+   * is RETRIED once, unlike every other POST this client makes. The three are three different
+   * things and the difference is the whole reason they are separate methods: `execute` buys a billed
+   * execution that cannot be taken back, `postJson` consumes an irreplaceable private-query slot,
+   * and this one creates nothing and costs nothing — a transport hiccup on it must not be what
+   * decides a run cannot afford itself.
+   *
+   * It returns the RAW body and reads nothing out of it. {@link parseUsageResponse} does that, and
+   * it is a pure function precisely so the response shape can be pinned by tests with no key.
+   *
+   * @returns {Promise<unknown>}
+   */
+  async readUsage() {
+    const run = this.#queue.then(
+      () => this.#request(USAGE_PATH, { method: 'POST', body: {}, retries: 1 }),
+      () => this.#request(USAGE_PATH, { method: 'POST', body: {}, retries: 1 }),
+    );
+    this.#queue = run.catch(() => undefined);
+    return run;
+  }
+
   /** Sleep between polls, on this client's own injected clock so tests stay free. @param {number} ms */
   async wait(ms) {
     await this.#sleep(ms);
@@ -372,3 +396,487 @@ export class DuneClient {
     throw lastTransportError ?? new DuneRefused(`Request to ${path} failed with no diagnosis`, { status: null, terminal: false });
   }
 }
+
+// --- BEGIN SHARED REGION: the Dune monthly credit ceiling guard -------------------------------
+//
+// **THIS BLOCK IS DUPLICATED BYTE FOR BYTE IN `tools/deployer-screen/client.mjs` AND
+// `tools/creation-census/client.mjs`, AND `test/dune-credit-ceiling.test.ts` FAILS IF THE TWO
+// COPIES DRIFT.** The boundary in this repository is the DIRECTORY (`CLAUDE.md` -> "The one
+// network-capable area is `tools/`"), a third vendor goes into `client.mjs` rather than a new file,
+// and neither keyed tool may import the other. So the only way both tools can be guarded by ONE
+// rule is a duplicated text pinned by a test — the same remedy `COHORT_SQL` already uses across the
+// same boundary. Do not "fix" it by importing across the boundary, and do not edit one copy.
+//
+// WHAT IT GUARDS. Dune bills a SHARED monthly allowance (Free tier: 2,500 credits) in credits, and
+// a FAILED execution is billed exactly like a successful one. Before this block existed, both tools
+// discovered the ceiling by hitting it — an HTTP 402 partway through a multi-execution run leaves
+// neither a result nor the credits to retry. The measured case that motivated it: one venue-research
+// investigation spent ~350 credits, 14% of a month, in a single sitting.
+//
+// THREE UNITS, AND THEY ARE NOT INTERCHANGEABLE. Credits are the monthly allowance. Executions are
+// billed whether or not they succeed and are what {@link DuneClient} already ceilings. Result BYTES
+// are billed separately at {@link EXPORT_CREDITS_PER_MB}. This block converts a run's plan, stated
+// in executions and bytes, into the one unit the allowance is denominated in.
+
+/**
+ * Dune's account-usage endpoint, relative to the API base.
+ *
+ * `POST` — not `GET`, which is the shape that catches a reader out — with an optional
+ * `{start_date, end_date}` body; sending `{}` returns the CURRENT billing period. Dune documents it
+ * as a metadata endpoint that consumes no credits, and this repository's own evaluation used it
+ * throughout without the counter moving for it.
+ */
+export const USAGE_PATH = '/usage';
+
+/**
+ * Free-tier result-export price in credits per megabyte of result bytes — Dune's published figure,
+ * and the one already applied by `stats().estimatedExportCredits`. Compute is billed ON TOP of it,
+ * which is why an export figure alone is never presented as a bill.
+ */
+export const EXPORT_CREDITS_PER_MB = 20;
+
+/**
+ * Why a reading of the allowance is a FLOOR on spend rather than a measurement of it.
+ *
+ * Measured on this account during the Dune evaluation: the counter rose +6.0 credits while the
+ * evaluator was completely idle, and it lands in whole-credit jumps. So `credits_used` at any
+ * instant is behind the truth, `remaining` is therefore an OVER-statement, and a guard that spent
+ * right up to it would be spending money the vendor has already taken. The reserve subtracted before
+ * any comparison is what absorbs that, and it is pinned per lane rather than here.
+ */
+export const ALLOWANCE_LAG_CAVEAT =
+  'The Dune usage counter LAGS and lands in whole-credit jumps — measured rising +6.0 credits while ' +
+  'this account was idle. A reading is a floor on what has been spent and a ceiling on what remains, ' +
+  'never a measurement of either, so the allowance check subtracts a pinned reserve before comparing.';
+
+/**
+ * The half of the allowance no reading can bound: the key is shared.
+ *
+ * The Free-tier allowance belongs to the ACCOUNT, not to this run, and this repository's own
+ * `CLAUDE.md` records the key as shared with whatever else holds it. Another holder can spend the
+ * whole remainder between our reading and our execution and nothing here would see it. The reserve
+ * makes that less likely; it cannot make it impossible.
+ */
+export const ALLOWANCE_SHARED_CAVEAT =
+  'The Dune allowance is the ACCOUNT\'s and the key is shared, so another holder can spend it between ' +
+  'this reading and this run\'s first execution. A sufficient reading is evidence, never a reservation.';
+
+/**
+ * What a run's own arithmetic is worth once it has started spending.
+ *
+ * Between the pre-flight reading and the end of a run the vendor counter is useless — it lags by
+ * more than the run lasts — so what a record carries for its own spend is computed locally from the
+ * executions issued and the bytes read. It is an ESTIMATE and the label travels with the number:
+ * execution compute is priced by a table Dune does not publish, and `execution_cost_credits`
+ * understates the bill by ~3.5x because retrieving results is ~71% of it.
+ */
+export const LOCAL_ESTIMATE_CAVEAT =
+  'LOCAL ESTIMATE, not the bill: executions priced at this lane\'s pinned worst case and bytes at the ' +
+  'published export rate. Dune publishes no execution-compute price table and `execution_cost_credits` ' +
+  'understates the bill by ~3.5x. Only POST /usage is authoritative, and it lags minutes.';
+
+/**
+ * @typedef {object} DuneAllowance
+ * @property {number} creditsUsed      As the vendor reported it, for the selected billing period.
+ * @property {number} creditsIncluded  The period's allowance. 2,500 on the Free tier.
+ * @property {number} creditsRemaining `creditsIncluded - creditsUsed`, floored at 0.
+ * @property {string} periodStart      `YYYY-MM-DD`, the vendor's own string.
+ * @property {string} periodEnd        `YYYY-MM-DD`. **NOT a calendar month** — this account's period
+ *   was measured running 2026-07-29 -> 2026-08-29, i.e. it resets on a subscription anniversary.
+ * @property {number} periodsReturned  How many periods the response carried.
+ * @property {number} readAtMs         When this reading was taken. A reading ages badly; see the lag.
+ * @property {number | null} privateQueries Saved private queries in use, when the response says. The
+ *   Free tier allows 10 and the census's deploy step counts them a different way; this is a bonus
+ *   field, never the authority.
+ */
+
+/**
+ * @typedef {object} UsageReading
+ * @property {boolean} ok
+ * @property {DuneAllowance | null} allowance
+ * @property {string[]} reasons Why the response could not be read, when it could not.
+ */
+
+/**
+ * Read `POST /usage`'s body into an allowance, or refuse it.
+ *
+ * **ONE FIELD NAME HERE IS AN ASSUMPTION AND IS MARKED AS ONE.** Dune's own documentation
+ * contradicts itself: the response SCHEMA names the array `billing_periods` and the EXAMPLE beside
+ * it names the same array `billingPeriods`. This repository has no committed capture of a live
+ * response to settle it, so both spellings are accepted and which one answered is not recorded —
+ * accepting both is cheaper than being wrong, and being wrong here refuses a run that could have
+ * proceeded. If a live response ever settles it, narrow this; do not widen it further.
+ *
+ * Everything else is refused rather than guessed. A response this cannot read yields no allowance,
+ * and a caller with no allowance refuses the run — absence of evidence is not evidence of headroom.
+ *
+ * @param {unknown} body
+ * @param {number} readAtMs
+ * @returns {UsageReading}
+ */
+export function parseUsageResponse(body, readAtMs) {
+  /** @type {string[]} */
+  const reasons = [];
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return { ok: false, allowance: null, reasons: ['POST /usage did not return a JSON object.'] };
+  }
+  const doc = /** @type {Record<string, unknown>} */ (body);
+  const raw = doc['billing_periods'] ?? doc['billingPeriods'];
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return {
+      ok: false,
+      allowance: null,
+      reasons: [
+        'POST /usage carried no billing period (neither `billing_periods` nor `billingPeriods` held a ' +
+          'non-empty array), so this run cannot see what the allowance has left.',
+      ],
+    };
+  }
+
+  /** @type {{ start: string, end: string, used: number, included: number, startMs: number, endMs: number }[]} */
+  const periods = [];
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const p = /** @type {Record<string, unknown>} */ (entry);
+    const start = p['start_date'];
+    const end = p['end_date'];
+    const used = p['credits_used'];
+    const included = p['credits_included'];
+    // TYPE-checked, never truth-checked: `credits_used: 0` is a legitimate reading at the start of a
+    // period, and `=== 0` collapsing into "the field is gone" is the failure shape this repository
+    // already records for Dune's `bonded` column.
+    if (typeof start !== 'string' || typeof end !== 'string') continue;
+    if (typeof used !== 'number' || !Number.isFinite(used) || used < 0) continue;
+    if (typeof included !== 'number' || !Number.isFinite(included) || included <= 0) continue;
+    const startMs = parseUsageDate(start);
+    const endMs = parseUsageDate(end);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) continue;
+    periods.push({ start, end, used, included, startMs, endMs });
+  }
+  if (periods.length === 0) {
+    reasons.push(
+      'POST /usage returned billing periods but none of them carried a readable start_date, end_date, ' +
+        'credits_used and credits_included, so the allowance is unknown rather than large.',
+    );
+    return { ok: false, allowance: null, reasons };
+  }
+
+  // The period that BRACKETS the reading is the ONLY one a run may spend against, and when none
+  // does this REFUSES rather than substituting another. We always POST an empty body, which the
+  // vendor documents as returning the CURRENT period, so a non-bracketing answer means the vendor,
+  // the clock or our reading of the shape is wrong — and a balance that could not be established is
+  // not headroom, the same rule {@link decideAllowance} applies to a null allowance. The newest
+  // period's own dates go into the refusal so an operator can see what the vendor did return.
+  const bracketing = periods.filter((p) => p.startMs <= readAtMs && readAtMs < p.endMs);
+  if (bracketing.length === 0) {
+    const newest = periods.reduce((a, b) => (b.startMs > a.startMs ? b : a));
+    reasons.push(
+      `POST /usage returned ${periods.length} readable billing period(s) but none of them contains the ` +
+        `instant of this reading (${new Date(readAtMs).toISOString()}), so the CURRENT billing period ` +
+        `could not be established; the newest one listed runs ${newest.start} -> ${newest.end}.`,
+    );
+    return { ok: false, allowance: null, reasons };
+  }
+  const chosen = bracketing.reduce((a, b) => (b.startMs > a.startMs ? b : a));
+  const privateQueries = doc['private_queries'];
+
+  return {
+    ok: true,
+    reasons,
+    allowance: {
+      creditsUsed: chosen.used,
+      creditsIncluded: chosen.included,
+      creditsRemaining: Math.max(0, chosen.included - chosen.used),
+      periodStart: chosen.start,
+      periodEnd: chosen.end,
+      periodsReturned: periods.length,
+      readAtMs,
+      privateQueries:
+        typeof privateQueries === 'number' && Number.isFinite(privateQueries) ? privateQueries : null,
+    },
+  };
+}
+
+/**
+ * @typedef {object} DuneSpendPlan
+ * @property {string} lane                 Which tool is asking, for the refusal sentence.
+ * @property {number} executions           Executions this run MAY spend — the client's ceiling, not
+ *   the expected count. A plan is admissible only if its worst case fits; that is the same rule the
+ *   screen already applies to Helius credits.
+ * @property {number} creditsPerExecution  Worst-case execution-compute credits for ONE of this
+ *   lane's executions. Pinned per lane, because Dune publishes no price table for compute and the
+ *   real figure depends entirely on what the statement scans — measured 0.75-0.92 credits for this
+ *   repository's creation queries against 221.5 for one that joined the trade tape.
+ * @property {number} resultReads          Result reads this run may issue.
+ * @property {number} rowsPerRead          The `?limit=` a read is issued with. Bytes, not rows, are
+ *   what is billed; this is one factor of the bytes bound.
+ * @property {number} bytesPerRow          Pinned per-row byte ceiling for this lane's result shape.
+ */
+
+/**
+ * @typedef {object} DuneSpendEstimate
+ * @property {number} executionCredits Worst-case compute.
+ * @property {number} exportBytes      Worst-case result bytes.
+ * @property {number} exportCredits    Those bytes at {@link EXPORT_CREDITS_PER_MB}.
+ * @property {number} worstCaseCredits The sum, and the only figure a decision compares.
+ */
+
+/**
+ * Price a run's PLAN before it spends anything.
+ *
+ * It prices the worst case the client's own ceilings admit, never the expected cost, and the two
+ * differ by more than an order of magnitude on a normal run. That is deliberate and it is the same
+ * discipline the Helius leg already uses: a plan is admissible when its worst case fits, so the
+ * ceiling is exact rather than usually-right. Refusing a run that would have cost 2 credits because
+ * it COULD have cost 195 is the safe direction — the screen falls back to a slower walk and the
+ * census waits for the period to roll — and the alternative is the failure this guard exists to
+ * prevent: dying at the fifth execution with the month gone.
+ *
+ * @param {DuneSpendPlan} plan
+ * @returns {DuneSpendEstimate}
+ */
+export function estimatePlanCredits(plan) {
+  const executions = Math.max(0, plan.executions);
+  const executionCredits = executions * Math.max(0, plan.creditsPerExecution);
+  const exportBytes = Math.max(0, plan.resultReads) * Math.max(0, plan.rowsPerRead) * Math.max(0, plan.bytesPerRow);
+  const exportCredits = (exportBytes / 1_000_000) * EXPORT_CREDITS_PER_MB;
+  return {
+    executionCredits: round3(executionCredits),
+    exportBytes,
+    exportCredits: round3(exportCredits),
+    worstCaseCredits: round3(executionCredits + exportCredits),
+  };
+}
+
+/**
+ * @typedef {object} AllowanceDecision
+ * @property {'sufficient' | 'tight' | 'insufficient' | 'unreadable'} verdict
+ * @property {boolean} ok                  Whether the run may spend. `tight` is a WARNING and passes.
+ * @property {number} worstCaseCredits     What the plan could cost.
+ * @property {number | null} creditsUsed
+ * @property {number | null} creditsIncluded
+ * @property {number | null} creditsRemaining
+ * @property {number} reserveCredits       Held back for the counter's lag; never spendable.
+ * @property {number | null} spendableCredits `creditsRemaining - reserveCredits`, floored at 0.
+ * @property {number | null} shortfallCredits How far short the plan is, when it is short.
+ * @property {string | null} periodStart
+ * @property {string | null} periodEnd
+ * @property {string | null} readAtUtc
+ * @property {string[]} reasons            The refusal or the warning, in full sentences.
+ * @property {string[]} caveats            What this decision cannot see. Always non-empty.
+ */
+
+/**
+ * Decide whether a plan may spend, given what the allowance says.
+ *
+ * FOUR OUTCOMES, and the third and fourth are the point:
+ *
+ * - `sufficient` — the plan's worst case fits with room to run it again.
+ * - `tight` — it fits, but not twice. The run PROCEEDS and says so: a run that cannot be repeated is
+ *   a run whose failure cannot be retried, and an operator about to queue heavier work should see
+ *   that before the period rolls, not after.
+ * - `insufficient` — refuse BEFORE the first execution. Stopping here is the whole deliverable;
+ *   stopping after the fifth execution is the failure.
+ * - `unreadable` — the allowance could not be read, so nothing is known. It refuses by default,
+ *   because "we could not see the balance" is not a reason to spend. A lane may pass
+ *   `allowanceRequired: false` to proceed unguarded, and then the caveat travels with the run.
+ *
+ * A PLAN THAT DOES NOT PRICE IS `unreadable` TOO, AND IT REFUSES UNCONDITIONALLY. The pinned bounds
+ * both lanes price against are read from JSON at runtime through an untyped object, so a missing or
+ * non-numeric bound reaches {@link estimatePlanCredits} and comes back as `NaN` — and every `<`
+ * against `NaN` is false, which would clear a run priced at nothing through the `sufficient` door.
+ * That inverts the guard's own rule, so the finiteness of the worst case and of the reserve is
+ * checked BEFORE any comparison rather than at each one, and no `allowanceRequired: false` opts out
+ * of it: the question was never answered, so there is nothing for a lane to waive.
+ *
+ * @param {object} input
+ * @param {DuneSpendPlan} input.plan
+ * @param {DuneSpendEstimate} input.estimate
+ * @param {DuneAllowance | null} input.allowance
+ * @param {readonly string[]} [input.unreadableReasons] Why there is no allowance, when there is none.
+ * @param {number} input.reserveCredits
+ * @param {number} input.tightMultiple    How many worst cases must fit before a run is not "tight".
+ * @param {boolean} input.allowanceRequired
+ * @returns {AllowanceDecision}
+ */
+export function decideAllowance(input) {
+  const reserve = Math.max(0, input.reserveCredits);
+  const worst = input.estimate.worstCaseCredits;
+  const caveats = [ALLOWANCE_LAG_CAVEAT, ALLOWANCE_SHARED_CAVEAT];
+
+  if (!Number.isFinite(worst) || !Number.isFinite(reserve)) {
+    const broken = !Number.isFinite(worst)
+      ? `the plan's worst case priced to ${String(worst)}`
+      : `the reserve priced to ${String(input.reserveCredits)}`;
+    return {
+      verdict: 'unreadable',
+      ok: false,
+      worstCaseCredits: worst,
+      creditsUsed: null,
+      creditsIncluded: null,
+      creditsRemaining: null,
+      reserveCredits: reserve,
+      spendableCredits: null,
+      shortfallCredits: null,
+      periodStart: null,
+      periodEnd: null,
+      readAtUtc: null,
+      reasons: [
+        `REFUSED before spending anything: ${broken}, not a finite number of credits, so ` +
+          `${input.plan.lane} cannot say what this run could cost and no comparison against the ` +
+          `balance would mean anything. A pinned bound is missing or non-numeric.`,
+      ],
+      caveats,
+    };
+  }
+
+  if (input.allowance === null) {
+    const why = [...(input.unreadableReasons ?? [])];
+    return {
+      verdict: 'unreadable',
+      ok: !input.allowanceRequired,
+      worstCaseCredits: worst,
+      creditsUsed: null,
+      creditsIncluded: null,
+      creditsRemaining: null,
+      reserveCredits: reserve,
+      spendableCredits: null,
+      shortfallCredits: null,
+      periodStart: null,
+      periodEnd: null,
+      readAtUtc: null,
+      reasons: [
+        `The Dune allowance could not be read, so this run cannot say whether its worst case of ` +
+          `${worst} credit(s) fits. ` +
+          (input.allowanceRequired
+            ? `Refused before spending anything — an unreadable balance is not headroom.`
+            : `Proceeding UNGUARDED because this lane was configured not to require the reading.`),
+        ...why,
+      ],
+      caveats,
+    };
+  }
+
+  const remaining = input.allowance.creditsRemaining;
+  const spendable = Math.max(0, round3(remaining - reserve));
+  const shortfall = spendable >= worst ? 0 : round3(worst - spendable);
+  const period = `${input.allowance.periodStart} -> ${input.allowance.periodEnd}`;
+  const balance =
+    `${input.allowance.creditsUsed} of ${input.allowance.creditsIncluded} credit(s) used in the billing ` +
+    `period ${period}; ${remaining} remain, ${spendable} spendable after the ${reserve}-credit reserve.`;
+
+  if (spendable < worst) {
+    return {
+      verdict: 'insufficient',
+      ok: false,
+      worstCaseCredits: worst,
+      creditsUsed: input.allowance.creditsUsed,
+      creditsIncluded: input.allowance.creditsIncluded,
+      creditsRemaining: remaining,
+      reserveCredits: reserve,
+      spendableCredits: spendable,
+      shortfallCredits: shortfall,
+      periodStart: input.allowance.periodStart,
+      periodEnd: input.allowance.periodEnd,
+      readAtUtc: new Date(input.allowance.readAtMs).toISOString(),
+      reasons: [
+        `REFUSED before the first execution: ${input.plan.lane} plans at most ${input.plan.executions} ` +
+          `execution(s) and ${input.plan.resultReads} result read(s), a worst case of ${worst} credit(s), ` +
+          `and it is ${shortfall} credit(s) short.`,
+        balance,
+        `An execution is billed whether or not it succeeds, so a run that starts and cannot finish ` +
+          `leaves neither a result nor the credits to retry. The period rolls on ${input.allowance.periodEnd}.`,
+      ],
+      caveats,
+    };
+  }
+
+  const tight = spendable < worst * Math.max(1, input.tightMultiple);
+  return {
+    verdict: tight ? 'tight' : 'sufficient',
+    ok: true,
+    worstCaseCredits: worst,
+    creditsUsed: input.allowance.creditsUsed,
+    creditsIncluded: input.allowance.creditsIncluded,
+    creditsRemaining: remaining,
+    reserveCredits: reserve,
+    spendableCredits: spendable,
+    shortfallCredits: 0,
+    periodStart: input.allowance.periodStart,
+    periodEnd: input.allowance.periodEnd,
+    readAtUtc: new Date(input.allowance.readAtMs).toISOString(),
+    reasons: tight
+      ? [
+          `TIGHT: the worst case of ${worst} credit(s) fits, but fewer than ${input.tightMultiple} of ` +
+            `them do, so this run may be the last one this period can afford.`,
+          balance,
+        ]
+      : [balance],
+    caveats,
+  };
+}
+
+/**
+ * Render a decision as lines an operator reads before anything is spent. One place, so the screen's
+ * stdout, the census's stdout and a dry run all say the same thing in the same words.
+ *
+ * @param {AllowanceDecision} decision
+ * @returns {string[]}
+ */
+export function describeAllowanceDecision(decision) {
+  const head = `dune allowance: ${decision.verdict.toUpperCase()} — worst case ${decision.worstCaseCredits} credit(s)`;
+  return [head, ...decision.reasons.map((r) => `  ${r}`), ...decision.caveats.map((c) => `  ! ${c}`)];
+}
+
+/**
+ * What this run believes it spent, computed from its own counters rather than from the vendor.
+ *
+ * The vendor's counter lags by longer than a run lasts, so re-reading it at the end would report the
+ * balance from before the run. This is the only figure a record can carry for its own spend, and
+ * {@link LOCAL_ESTIMATE_CAVEAT} travels with it everywhere it surfaces.
+ *
+ * @param {object} input
+ * @param {number} input.executions          Executions actually issued.
+ * @param {number} input.creditsPerExecution The lane's pinned worst case per execution.
+ * @param {number} input.resultBytes         Bytes the vendor's own metadata declared.
+ * @returns {{ executions: number, resultBytes: number, executionCredits: number, exportCredits: number,
+ *   estimatedCredits: number, caveat: string }}
+ */
+export function localCreditEstimate(input) {
+  const executionCredits = Math.max(0, input.executions) * Math.max(0, input.creditsPerExecution);
+  const exportCredits = (Math.max(0, input.resultBytes) / 1_000_000) * EXPORT_CREDITS_PER_MB;
+  return {
+    executions: input.executions,
+    resultBytes: input.resultBytes,
+    executionCredits: round3(executionCredits),
+    exportCredits: round3(exportCredits),
+    estimatedCredits: round3(executionCredits + exportCredits),
+    caveat: LOCAL_ESTIMATE_CAVEAT,
+  };
+}
+
+/** @param {number} n @returns {number} */
+function round3(n) {
+  return Number(n.toFixed(3));
+}
+
+/**
+ * Read a billing period boundary, whichever of the two shapes the vendor sends.
+ *
+ * Dune documents `start_date`/`end_date` as bare `YYYY-MM-DD` and this repository has no live
+ * capture to confirm it. A bare date parses on its own as UTC midnight, so the direct parse is tried
+ * FIRST and the `T00:00:00Z` suffix is only a fallback for a value the runtime cannot parse alone.
+ * The other order is what breaks: appending the suffix to a full ISO timestamp yields
+ * `...T00:00:00ZT00:00:00Z`, drops every period, and reads as unreadable — which sends the screen to
+ * the ~13 h RPC walk on every run and refuses the census permanently, since it has no fallback.
+ *
+ * @param {string} value
+ * @returns {number} Epoch milliseconds, or `NaN` when neither shape parses.
+ */
+function parseUsageDate(value) {
+  const direct = Date.parse(value);
+  if (Number.isFinite(direct)) return direct;
+  return Date.parse(`${value}T00:00:00Z`);
+}
+
+// --- END SHARED REGION: the Dune monthly credit ceiling guard ---------------------------------

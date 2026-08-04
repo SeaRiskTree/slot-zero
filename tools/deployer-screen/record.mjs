@@ -262,8 +262,33 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `entry-room-absent` or `entry-open-after-costs` reached over 8 of 10 launches is exactly the
  *   shape 198b refuses today and is not comparable with a schema-12 one. Committed records are never
  *   retro-edited, so the older reading stays legal; what it cannot do is stand in for a guarded one.
+ * - **13** — **the Dune MONTHLY CREDIT CEILING becomes a thing a run checked rather than something
+ *   it discovered by hitting.** The only key set that moves is the run-level `dune` block, which
+ *   gains `allowance` and `localEstimate`: `PERSISTED_BY_SCHEMA[13]`, `ENTRY_KEYS_BY_SCHEMA[13]`,
+ *   `ENTRY_COVERAGE_KEYS_BY_SCHEMA[13]`, `SPEND_KEYS_BY_SCHEMA[13]` and
+ *   `CREATION_KEYS_BY_SCHEMA[13]` all equal `[12]`.
+ *
+ *   **What it carries.** `allowance` is the verdict of `dune.mjs` → `checkDuneAllowance`, taken
+ *   from `POST /usage` BEFORE the leg's first billed request — the coverage probe included, since a
+ *   result read is billed by bytes. It holds the plan's worst case in credits, the period's
+ *   `credits_used`/`credits_included`, what remained, the reserve held back for the counter's lag,
+ *   and the reasons. `null` means the run never reached Dune at all (no key, `--no-dune`,
+ *   `--ownership-only`, or no candidate to gate) — **not** that the check passed. `localEstimate`
+ *   is what the run believes it spent, computed from its own execution and byte counters at this
+ *   lane's pinned worst case per execution, and it carries its own caveat string saying it is not
+ *   the bill.
+ *
+ *   **Why a local estimate at all, when the vendor reports the real figure.** The vendor's counter
+ *   lags minutes and lands in whole-credit jumps — measured rising +6.0 while the account was idle
+ *   — so re-reading it after a run reports the balance from before the run. A record therefore
+ *   cannot carry its own true cost, only a reading taken before it and an estimate of what it added.
+ *
+ *   **The one that will bite:** on a schema-≤12 record the absence of `dune.allowance` is not
+ *   evidence that a run had headroom. Nothing checked. A schema-12 run that reports two executions
+ *   may have been the run that emptied the period, and no committed record can say — which is
+ *   exactly the gap this version closes rather than a shortcoming of the older ones.
  */
-export const RECORD_SCHEMA_VERSION = 12;
+export const RECORD_SCHEMA_VERSION = 13;
 
 /**
  * Completeness of a run, as the record can actually support.

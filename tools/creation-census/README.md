@@ -120,14 +120,64 @@ not).
 | | |
 |---|---|
 | executions | **1 per run**, which is one census month. The coverage probe rides in the same result. |
-| requests | **48**, covering the verification, the execution, up to 40 polls and the one read, plus one retry of headroom. It is `maxPollAttempts + 4` and must stay there: below it the request ceiling binds first, and a run that exhausts its budget between the execution and the read has burned a billed, unrecoverable execution and thrown its answer away. |
+| requests | **48**, covering the credit-guard `POST /usage`, the verification, the execution, up to 40 polls and the one read, plus one retry of headroom. It is `maxPollAttempts + 5` and must stay there: below it the request ceiling binds first, and a run that exhausts its budget between the execution and the read has burned a billed, unrecoverable execution and thrown its answer away. |
 | result rows | **5,000** deployer rows, ceiling 20,000; read at `?limit=` rows + 64 |
 | pacing | **250 ms** between request starts |
 | measured cost | **1 execution, 5 requests, 188,232 result bytes, ~3.8 export credits** (estimate) |
 
-**Nothing here tracks the month.** The tool is stateless between runs, so the free tier's 2,500
-credits a month — shared with whatever else holds this key — are the operator's arithmetic, not the
-tool's.
+### The monthly credit ceiling — checked, not discovered by hitting
+
+**The ceiling is credits per BILLING PERIOD, and the period is not a calendar month.** Free tier:
+2,500 credits, and this account's period was measured running **2026-07-29 → 2026-08-29** — it
+resets on a subscription anniversary. Three units are involved and they are not interchangeable:
+credits are the allowance, **executions** are billed whether or not they succeed, and result
+**bytes** are billed separately at ~20 credits/MB.
+
+**Consumption is read from `POST /api/v1/usage`** — free, consumes no credits, reporting
+`credits_used` / `credits_included` per period. `client.mjs` → `readUsage` fetches it,
+`parseUsageResponse` reads it, `run.mjs` → `checkDuneAllowance` decides, and it runs **first**:
+ahead of the saved-query verification and long ahead of the execution.
+
+**What a run does when it does not fit.** `run.mjs` → `duneSpendPlan` prices the CEILINGS — one
+execution at `worstCaseCreditsPerExecution`, plus reads at this month's own `?limit=` of at most
+`resultBytesPerRowCeiling` bytes a row:
+
+| verdict | what happens |
+|---|---|
+| `sufficient` | the run proceeds |
+| `tight` | it proceeds and **says this may be the last run the period can afford** |
+| `insufficient` | **refused, exit 2, nothing issued but the free read.** No execution, not even the saved-query GET |
+| `unreadable` | **refused** — an unreadable balance is not headroom |
+
+`unreadable` has three causes and all three refuse. The vendor's body could not be read; **no
+returned billing period contains the instant of the reading**, so the CURRENT period was never
+established (we POST an empty body, which is documented to return exactly that period, so a
+non-bracketing answer means something is wrong and the newest listed period is *not* a substitute);
+or **the plan itself did not price to a finite number of credits**, which a missing or non-numeric
+pinned bound produces. The last one refuses even under `allowanceRequired: false`, because that flag
+waives an unread *balance* and here it is the run's own cost that is unknown.
+
+**This lane has no fallback** — unlike the screen, which walks the Solana RPC when Dune refuses, a
+census with no Dune answer is no census. So refusing costs one deferred run, while proceeding blind
+costs a billed execution that returns nothing and cannot be retried this period. `--dry-run`, the
+default, prints the worst case with **no key at all**.
+
+**What the guard cannot see** — and both caveats travel on every verdict, passing ones included:
+
+- **The counter LAGS.** Measured: `credits_used` rose **+6.0 while the account was idle**, in
+  whole-credit jumps. A reading is a *floor* on spend and a *ceiling* on what remains, so
+  `allowanceReserveCredits` is held back before any comparison.
+- **The key is SHARED.** Another holder can spend the remainder between our reading and our
+  execution. *A sufficient reading is evidence, never a reservation.*
+- **Execution compute is not predictable from the vendor** — Dune publishes no price table — so
+  `worstCaseCreditsPerExecution` is a per-lane pin against measured executions of comparable
+  statements. `COHORT_SQL` growing a trade-tape join would break it silently.
+- **Nothing tracks the period across runs.** The record carries the reading it took plus
+  `dune.localEstimate`, this run's own estimate of its own spend, labelled as one — re-reading
+  `/usage` afterwards would report the balance from *before* the run.
+- **ONE FIELD NAME IS AN ASSUMPTION.** Dune's docs contradict themselves — response schema
+  `billing_periods`, example `billingPeriods` — and no live response has been seen from this
+  repository. Both spellings are accepted; narrow it if one is ever settled.
 
 ---
 

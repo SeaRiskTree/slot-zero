@@ -113,8 +113,9 @@ Three cross-checks that make those numbers believable:
 
 Nothing was swept and nothing was issued before a dry run printed the sample, every ceiling and the
 worst case. Credits are the vendor's estimate at ~20/MB of results; only `POST /usage` is
-authoritative, and **nothing here tracks the month** — the tool is stateless between runs, so the
-monthly arithmetic stays the operator's.
+authoritative — and a run now reads it and refuses a plan the period cannot cover before spending
+anything (`README.md` → "The monthly credit ceiling"). **Nothing tracks the period across runs**:
+the tool is stateless between them, so that arithmetic stays the operator's.
 
 **The ongoing cost is a real one and it scales with how oversized the batch is, not with its size.**
 Two bounds decide how many follow-up executions a run issues, and both are the vendor's rather than

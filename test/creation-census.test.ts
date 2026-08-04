@@ -53,7 +53,14 @@ import {
   serialiseCohortFile,
   summariseLaunches,
 } from '../tools/creation-census/census.mjs';
-import { DuneClient, DuneRefused, CeilingReached, DUNE_API_BASE, describeDuneStatus } from '../tools/creation-census/client.mjs';
+import {
+  DuneClient,
+  DuneRefused,
+  CeilingReached,
+  DUNE_API_BASE,
+  describeDuneStatus,
+  localCreditEstimate,
+} from '../tools/creation-census/client.mjs';
 import { KEY_ENV_VAR, resolveDuneCredential } from '../tools/creation-census/credential.mjs';
 import {
   EXIT,
@@ -677,6 +684,8 @@ describe('the caveat travels with the number', () => {
       census: parseCensusRows(healthyRows()),
       coverage: { ok: true, reasons: [] },
       spend: { requests: 5, executions: 1, executionCeiling: 1, resultBytes: 1, estimatedExportCredits: 0 },
+      allowance: null,
+      localEstimate: localCreditEstimate({ executions: 1, creditsPerExecution: 25, resultBytes: 1 }),
       cohortFile: 'x',
       savedQueryMatchedCommittedSql: true,
     });
@@ -686,11 +695,11 @@ describe('the caveat travels with the number', () => {
   it('leaves the request ceiling able to COVER a whole successful run', () => {
     // At 40 the request ceiling bound before `maxPollAttempts` did, so an execution finishing on a
     // late poll exhausted the budget BEFORE the result read: a billed, unrecoverable execution
-    // spent and its answer thrown away. The ceiling must cover 1 verify + 1 execute +
-    // maxPollAttempts polls + 1 read, plus one retry of headroom.
+    // spent and its answer thrown away. The ceiling must cover 1 credit-guard POST /usage +
+    // 1 verify + 1 execute + maxPollAttempts polls + 1 read, plus one retry of headroom.
     const bounds = readBounds();
-    expect(bounds.dune.maxRequestsPerRun).toBeGreaterThanOrEqual(bounds.dune.maxPollAttempts + 4);
-    expect(String(bounds.justification['dune.maxRequestsPerRun'])).toMatch(/maxPollAttempts \+ 4/);
+    expect(bounds.dune.maxRequestsPerRun).toBeGreaterThanOrEqual(bounds.dune.maxPollAttempts + 5);
+    expect(String(bounds.justification['dune.maxRequestsPerRun'])).toMatch(/maxPollAttempts \+ 5/);
   });
 
   it('gives every pinned parameter a stated reason', () => {
@@ -732,11 +741,33 @@ describe('the committed run is evidence, and it still agrees with itself', () =>
   const record = JSON.parse(readFileSync(recordPath, 'utf8'));
   const cohort = readDuneResultFile(readFileSync(join(TOOL_DIR, 'runs', '2026-07-cohort.json'), 'utf8'), 'committed');
 
+  // The record's key set PER VERSION. Committed records are never retro-edited, so the committed run
+  // below stays legal at the version it was written under while the current build writes a wider
+  // shape — and both are pinned. Asserting `record.schemaVersion === RECORD_SCHEMA_VERSION` instead
+  // (which is what this test used to do) makes "bump, never retro-edit" impossible to obey: the
+  // first bump would fail against evidence nobody may edit.
+  const DUNE_KEYS_1 = [
+    'queryId',
+    'savedQueryMatchedCommittedSql',
+    'requests',
+    'executions',
+    'executionCeiling',
+    'resultBytes',
+    'estimatedExportCredits',
+  ];
+  // Schema 2: the monthly credit ceiling. `allowance` is what POST /usage said BEFORE the execution
+  // — `null` only on a run that planned none — and `localEstimate` is what the run believes it added
+  // afterwards, from its own counters, because the vendor's counter lags by longer than a run lasts.
+  const DUNE_KEYS_2 = [...DUNE_KEYS_1, 'allowance', 'localEstimate'];
+  const DUNE_KEYS_BY_SCHEMA: Record<number, string[]> = { 1: DUNE_KEYS_1, 2: DUNE_KEYS_2 };
+
   it('pins the exact key set the record carries for its schema version', () => {
     // A versioned contract: bump, never retro-edit. A reader version-detects, so a record whose
     // version defines a key set must carry that block — the VERSION decides whether to assert,
     // never the block's presence.
-    expect(record.schemaVersion).toBe(RECORD_SCHEMA_VERSION);
+    expect(DUNE_KEYS_BY_SCHEMA[record.schemaVersion], 'the committed record declares an unknown schema')
+      .toBeDefined();
+    expect(Object.keys(record.dune).sort()).toEqual([...DUNE_KEYS_BY_SCHEMA[record.schemaVersion]!].sort());
     expect(Object.keys(record).sort()).toEqual(
       [
         'caveats',
@@ -775,6 +806,33 @@ describe('the committed run is evidence, and it still agrees with itself', () =>
         ['bracketsMonth', 'firstRowUtc', 'lastRowUtc', 'rowsInMonth', 'table'].sort(),
       );
     }
+  });
+
+  it('pins what THIS build writes, which no committed record can show until one is re-run', () => {
+    // The committed record above is evidence of an older version and may never be edited to match a
+    // newer one. So the current version's shape is asserted against `buildCensusRecord`'s own
+    // output — otherwise a key added at the current version would be pinned by nothing at all until
+    // somebody spent an execution, which is exactly the wrong incentive on a metered surface.
+    const built = buildCensusRecord({
+      runAtUtc: '2026-08-04T00:00:00.000Z',
+      bounds: JULY,
+      parameters: { minLaunches: 30, maxRows: 5000 },
+      queryId: 1,
+      census: parseCensusRows(healthyRows()),
+      coverage: { ok: true, reasons: [] },
+      spend: { requests: 5, executions: 1, executionCeiling: 1, resultBytes: 1, estimatedExportCredits: 0 },
+      allowance: null,
+      localEstimate: localCreditEstimate({ executions: 1, creditsPerExecution: 25, resultBytes: 1 }),
+      cohortFile: 'x',
+      savedQueryMatchedCommittedSql: true,
+    });
+    expect(built['schemaVersion']).toBe(RECORD_SCHEMA_VERSION);
+    expect(DUNE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION], 'the current version has no pinned key set')
+      .toBeDefined();
+    expect(Object.keys(built['dune'] as object).sort()).toEqual(
+      [...DUNE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
+    expect(Object.keys(built).sort()).toEqual(Object.keys(record).sort());
   });
 
   it('re-derives its own numbers from the cohort file it names', () => {

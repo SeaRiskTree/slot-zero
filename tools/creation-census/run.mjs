@@ -35,7 +35,16 @@ import { join, dirname, relative, isAbsolute, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveDuneCredential } from './credential.mjs';
-import { DuneClient, DuneRefused, CeilingReached } from './client.mjs';
+import {
+  DuneClient,
+  DuneRefused,
+  CeilingReached,
+  decideAllowance,
+  describeAllowanceDecision,
+  estimatePlanCredits,
+  localCreditEstimate,
+  parseUsageResponse,
+} from './client.mjs';
 import {
   CENSUS_SQL,
   PROLIFIC_CUT_CAVEAT,
@@ -415,6 +424,80 @@ export function buildPlan(bounds, args) {
 }
 
 /**
+ * The run's spend, stated in the units the monthly credit ceiling is denominated in.
+ *
+ * It prices the CEILINGS, not the expected run: `dune.maxExecutionsPerRun` executions and one result
+ * read each plus one of headroom, every read at the `?limit=` this month's plan will actually use.
+ * A plan is admissible when its worst case fits — the same rule the screen applies to Helius — so
+ * the guard is exact rather than usually-right.
+ *
+ * `plannedExecutions` is 0 on `--deploy` and `--verify`, which spend no execution and read no
+ * result; the guard then costs nothing to satisfy and the run is not held up by an allowance it
+ * cannot spend.
+ *
+ * @param {any} bounds
+ * @param {{ resultLimit: number }} plan
+ * @param {number} plannedExecutions
+ * @returns {import('./client.mjs').DuneSpendPlan}
+ */
+export function duneSpendPlan(bounds, plan, plannedExecutions) {
+  return {
+    lane: 'tools/creation-census',
+    executions: plannedExecutions,
+    creditsPerExecution: bounds.dune.worstCaseCreditsPerExecution,
+    // One result read per execution, plus one of headroom for a re-read. Zero when nothing executes.
+    resultReads: plannedExecutions === 0 ? 0 : plannedExecutions + 1,
+    rowsPerRead: plan.resultLimit,
+    bytesPerRow: bounds.dune.resultBytesPerRowCeiling,
+  };
+}
+
+/**
+ * Read the account allowance and decide whether this plan may spend — BEFORE the saved-query
+ * verification and long before the execution.
+ *
+ * **Every failure here yields no allowance rather than an optimistic one.** A transport failure, a
+ * refusal, a body this cannot parse: all of them mean the balance is unknown, and
+ * {@link decideAllowance} refuses an unknown balance while `dune.allowanceRequired` is true. The
+ * reading itself is free and is retried once inside the client, so one hiccup does not reach here.
+ *
+ * @param {DuneClient} client
+ * @param {object} input
+ * @param {import('./client.mjs').DuneSpendPlan} input.spendPlan
+ * @param {any} input.bounds
+ * @param {number} input.nowMs
+ * @returns {Promise<{ estimate: import('./client.mjs').DuneSpendEstimate,
+ *   allowance: import('./client.mjs').DuneAllowance | null,
+ *   decision: import('./client.mjs').AllowanceDecision }>}
+ */
+export async function checkDuneAllowance(client, input) {
+  const estimate = estimatePlanCredits(input.spendPlan);
+  /** @type {import('./client.mjs').UsageReading} */
+  let reading = { ok: false, allowance: null, reasons: [] };
+  try {
+    reading = parseUsageResponse(await client.readUsage(), input.nowMs);
+  } catch (cause) {
+    // The message carries a path and a body excerpt and never a credential — the key is a HEADER
+    // and is interpolated in exactly one place, so no URL or message this client builds holds it.
+    reading = {
+      ok: false,
+      allowance: null,
+      reasons: [`POST /usage could not be read: ${cause instanceof Error ? cause.message : String(cause)}`],
+    };
+  }
+  const decision = decideAllowance({
+    plan: input.spendPlan,
+    estimate,
+    allowance: reading.allowance,
+    unreadableReasons: reading.reasons,
+    reserveCredits: input.bounds.dune.allowanceReserveCredits,
+    tightMultiple: input.bounds.dune.allowanceTightMultiple,
+    allowanceRequired: input.bounds.dune.allowanceRequired,
+  });
+  return { estimate, allowance: reading.allowance, decision };
+}
+
+/**
  * @param {readonly string[]} argv
  * @param {Record<string, string | undefined>} env
  * @param {(line: string) => void} say
@@ -448,6 +531,17 @@ export async function main(argv, env, say) {
   say(`  saved query    ${plan.queryId === null ? 'NOT DEPLOYED' : plan.queryId}`);
   say(`  ceilings       ${bounds.dune.maxExecutionsPerRun} execution(s), ${bounds.dune.maxRequestsPerRun} requests`);
   say(`  out            ${outDir}`);
+  const plannedExecutions = args.deploy || args.verify ? 0 : bounds.dune.maxExecutionsPerRun;
+  const spendPlan = duneSpendPlan(bounds, plan, plannedExecutions);
+  const estimate = estimatePlanCredits(spendPlan);
+  // THE COST BEFORE THE SPEND, printed on every invocation including the keyless dry run. What the
+  // dry run cannot show is the balance: reading it needs the key, so it is read on --live only, and
+  // it is read BEFORE anything is verified or executed.
+  say(
+    `  worst case     ${estimate.worstCaseCredits} credit(s) — ${spendPlan.executions} execution(s) at ` +
+      `${spendPlan.creditsPerExecution} = ${estimate.executionCredits}, plus ${spendPlan.resultReads} read(s) of at ` +
+      `most ${spendPlan.rowsPerRead} row(s) at ${spendPlan.bytesPerRow} bytes = ${estimate.exportCredits}`,
+  );
   say('');
 
   if (args.deploy) {
@@ -465,6 +559,10 @@ export async function main(argv, env, say) {
 
   if (!args.live) {
     say('DRY RUN — nothing was issued. Add --live to spend.');
+    say(
+      '  the allowance itself is NOT read here: POST /usage needs the key. On --live it is read ' +
+        'first, and the run refuses before the saved-query check if the worst case above does not fit.',
+    );
     say('');
     say(PROLIFIC_CUT_CAVEAT);
     return EXIT.ok;
@@ -484,6 +582,29 @@ export async function main(argv, env, say) {
     minIntervalMs: bounds.dune.minIntervalMs,
     onRequest: (path, attempt) => say(`  -> ${path}${attempt > 0 ? ` (retry ${attempt})` : ''}`),
   });
+
+  // ---- THE MONTHLY CREDIT CEILING, CHECKED BEFORE ANYTHING ELSE. -----------------------------
+  // First keyed call of the run, ahead of the saved-query verification and long ahead of the
+  // execution, because the failure this prevents is a billed run that dies partway with neither a
+  // result nor the credits to retry — and stopping before the first execution is the whole point.
+  // Skipped only when the run plans no execution at all (--deploy, --verify), where there is no
+  // spend to gate.
+  /** @type {import('./client.mjs').AllowanceDecision | null} */
+  let allowanceDecision = null;
+  if (plannedExecutions > 0) {
+    try {
+      const checked = await checkDuneAllowance(client, { spendPlan, bounds, nowMs: Date.now() });
+      allowanceDecision = checked.decision;
+    } catch (cause) {
+      // checkDuneAllowance swallows its own read failures; reaching here means the client itself
+      // refused (a ceiling, say), which is still an unknown balance and is still a refusal.
+      say(`refused: the Dune allowance could not be checked: ${cause instanceof Error ? cause.message : String(cause)}`);
+      return EXIT.refused;
+    }
+    for (const line of describeAllowanceDecision(allowanceDecision)) say(line);
+    say('');
+    if (!allowanceDecision.ok) return EXIT.refused;
+  }
 
   try {
     if (args.deploy) {
@@ -562,6 +683,12 @@ export async function main(argv, env, say) {
       census,
       coverage,
       spend: client.stats(),
+      allowance: allowanceDecision,
+      localEstimate: localCreditEstimate({
+        executions: client.stats().executions,
+        creditsPerExecution: bounds.dune.worstCaseCreditsPerExecution,
+        resultBytes: client.stats().resultBytes,
+      }),
       cohortFile: evidencePointer(cohortPath),
       savedQueryMatchedCommittedSql,
     });

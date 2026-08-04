@@ -22,7 +22,8 @@ import { buildPath, ENDPOINT_ROLES } from './client.mjs';
 // The per-deployer cap's arithmetic, imported rather than restated: a dry run that printed a bound
 // the query does not apply would be worse than printing none. It is arithmetic over a pinned
 // threshold — no Dune-derived value crosses this import.
-import { LAUNCH_CAP_FLOOR, launchCapPerWallet } from './dune.mjs';
+import { LAUNCH_CAP_FLOOR, duneSpendPlan, launchCapPerWallet } from './dune.mjs';
+import { estimatePlanCredits } from './client.mjs';
 import { LANDING_TIP_CAVEAT } from './entry.mjs';
 // The reach the plan quotes is DERIVED, never a second copy of the formula: an operator reads this
 // block before authorising a run, so it has to describe the walk `readLaunchWindow` will actually do.
@@ -1064,7 +1065,9 @@ export function renderStage1(run) {
  *   this is the preview of an enforced bound rather than a second estimate of it.
  * @param {{ creationQueryId: number, coverageQueryId: number, maxExecutionsPerRun: number,
  *   maxRequestsPerRun: number, maxResultRows: number, maxCoverageLagMs: number,
- *   minIntervalMs: number }} plan.dune The pinned Dune bounds.
+ *   minIntervalMs: number, worstCaseCreditsPerExecution: number, resultBytesPerRowCeiling: number,
+ *   allowanceReserveCredits: number, allowanceTightMultiple: number,
+ *   allowanceRequired: boolean }} plan.dune The pinned Dune bounds.
  * @param {import('./credential.mjs').DuneCredential} plan.duneCredential Never its value: `label`,
  *   a length and a shape are the only things printed.
  * @param {boolean} plan.usingDune Whether creation enumeration would take the Dune route.
@@ -1217,6 +1220,9 @@ export function renderDryRun(plan) {
             `(value never read, printed or stored; sent as a header, never in a URL)`,
         );
       }
+      L.push(
+        `  POST ${plan.duneCredential.label}/usage                          x 1   THE CREDIT CEILING (free, no execution)`,
+      );
       L.push(`  GET  ${plan.duneCredential.label}/query/{id}                 x 2   verify the saved SQL`);
       L.push(
         `  GET  ${plan.duneCredential.label}/query/${d.coverageQueryId}/results` +
@@ -1239,6 +1245,20 @@ export function renderDryRun(plan) {
         `  executions                    up to ${d.maxExecutionsPerRun}  (1 enumeration + at most 1 probe refresh)`,
       );
       L.push(`  requests                      ceiling ${d.maxRequestsPerRun}, polling and result reads included`);
+      // WHAT THE PLAN COULD COST, IN THE UNIT THE MONTHLY ALLOWANCE IS DENOMINATED IN, printed
+      // before anything is spent. A real run is ~20 credits; this is the worst case the ceilings
+      // above admit, and it is what a live run compares the account's remaining balance against —
+      // the balance itself needs the key and so is read on a real run only, never here.
+      const spend = estimatePlanCredits(duneSpendPlan(d));
+      L.push(
+        `  worst case                    ${spend.worstCaseCredits} credit(s) = ${spend.executionCredits} compute ` +
+          `(${d.maxExecutionsPerRun} x ${d.worstCaseCreditsPerExecution}) + ${spend.exportCredits} export ` +
+          `(${spend.exportBytes} bytes at ${d.resultBytesPerRowCeiling} bytes/row)`,
+      );
+      L.push(
+        `  refuses below                 ${spend.worstCaseCredits + d.allowanceReserveCredits} credit(s) remaining ` +
+          `(worst case + a ${d.allowanceReserveCredits}-credit reserve for the counter's lag), and falls back to the walk`,
+      );
       // THE TWO BOUNDS THAT ACTUALLY HOLD, printed as the arithmetic that produces them. The SQL's
       // per-deployer cap is the greater of a pinned floor and the row ceiling shared out, so above
       // 39 deployers the floor binds and the SQL's rows bound EXCEEDS the reader's ceiling — which

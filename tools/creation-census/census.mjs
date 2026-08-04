@@ -83,8 +83,19 @@ export const PROLIFIC_CUT_CAVEAT =
   'three, and nothing in the output reveals that. Raising this floor narrows the census on ' +
   'prolific-ness alone; whoever raises it must say so here.';
 
-/** The census result's own schema version. Bump, never retro-edit — committed runs are evidence. */
-export const RECORD_SCHEMA_VERSION = 1;
+/**
+ * The census result's own schema version. **Bump, never retro-edit — committed runs are evidence.**
+ *
+ * - **1** — the original shape.
+ * - **2** — the `dune` block gains `allowance` and `localEstimate`: what the monthly credit ceiling
+ *   said before this run spent anything, and what the run believes it spent afterwards. Before it, a
+ *   record could not say whether the run had checked it could afford itself, and `credits_used` at
+ *   the time of the run is not recoverable later — the vendor reports a running total, not a
+ *   history. `allowance` is `null` only on a run that planned no execution (`--deploy`, `--verify`),
+ *   where there was no spend to gate. `localEstimate.estimatedCredits` is an ESTIMATE and carries
+ *   its own caveat string; it is never the bill.
+ */
+export const RECORD_SCHEMA_VERSION = 2;
 
 /**
  * The census ladder this repository has already published, by seed month and prolific-ness floor.
@@ -577,6 +588,12 @@ export function normaliseSql(sql) {
  * @property {CensusCoverage} coverage
  * @property {{ requests: number, executions: number, executionCeiling: number, resultBytes: number,
  *   estimatedExportCredits: number }} spend
+ * @property {import('./client.mjs').AllowanceDecision | null} allowance What the monthly credit
+ *   ceiling guard saw BEFORE this run spent anything, or `null` on a run that planned no execution.
+ * @property {ReturnType<typeof import('./client.mjs').localCreditEstimate>} localEstimate What this
+ *   run believes it spent, from its OWN counters. The vendor's counter lags by longer than a run
+ *   lasts, so re-reading it at the end would report the balance from before the run; this is the
+ *   only figure a record can carry for its own spend, and the caveat travels inside it.
  * @property {string} cohortFile Path, relative to the repository root, of the raw result this record
  *   describes. The rows are the evidence; this record is the reading of them.
  * @property {boolean} savedQueryMatchedCommittedSql The OUTCOME of the pre-execution comparison
@@ -627,6 +644,10 @@ export function buildCensusRecord(input) {
       executionCeiling: input.spend.executionCeiling,
       resultBytes: input.spend.resultBytes,
       estimatedExportCredits: input.spend.estimatedExportCredits,
+      // The two halves of the credit ceiling: what the allowance said before, and what this run
+      // thinks it took. Neither is the bill — only POST /usage is, and it lags minutes.
+      allowance: input.allowance,
+      localEstimate: input.localEstimate,
     },
     coverage: { ok: input.coverage.ok, reasons: input.coverage.reasons, tables },
     census: {

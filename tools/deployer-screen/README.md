@@ -1058,13 +1058,14 @@ The size of that gap is measured rather than feared, on the one wallet where we 
 
 | our subject `7ufmve7Z…`, post-2026-06-04 | reading |
 |---|---|
-| the field, **gross of fees**, as Stage 2 measures it | **351 / 460 closed round trips positive (76.3%)**, median **+0.116 SOL** |
+| the field, **gross of fees**, as Stage 2 measures it | **358 / 469 closed round trips positive (76.3%)**, median **+0.1169 SOL** |
 | the regime, **fee-inclusive**, from `onchain_create_slot_pnl.csv` | **+0.54 SOL per launch across 106 wallets, 51 of them negative** |
 
-(The gross row is over the 86 post-break launches whose opening is proven — the three that Stage 2
-now refuses take 13 round trips with them. The fee-inclusive row is the regime's published figure
-over all 89 and is quoted unchanged; it moves the argument not at all, since the point is the sign
-of the gap, not its third digit.)
+(The gross row is over all 89 post-break launches, none of which the union co-ordination rule leaves
+unproven — the three the older shared-transaction rule refused are back in the population, and their
+round trips with them. The fee-inclusive row is the regime's published figure over the same 89 and is
+quoted unchanged; it moves the argument not at all, since the point is the sign of the gap, not its
+third digit.)
 
 Read naively, the field says this wallet is beatable. It is not. So the field can only ever veto.
 
@@ -1714,7 +1715,7 @@ It is scored two ways, because both readings have to come out negative and they 
 | the whole post-2026-06-04 regime, 89 proven launches | `entry-room-absent` | **0.229** |
 
 **And this is why it is an assertion rather than a threshold comparison:** on that same wallet the
-field leg reads 351/460 closed round trips positive. Followed on its own it would call the wallet
+field leg reads 358/469 closed round trips positive. Followed on its own it would call the wallet
 beatable. The verdict has to survive a leg pointing the wrong way, and Stage 0 fails loudly if it
 ever stops doing so — including if a future lane quietly loosens `minRoomLeft` to fit an output.
 

@@ -86,7 +86,7 @@ post-break launches — under the union co-ordination rule none of them is left 
 That pairing
 is what stops the tool from grading itself favourably, and `stage0.mjs` fails loudly if a later lane
 loosens a bar enough to admit the wallet. It matters most because the **field** leg on that same
-wallet reads 351 of 460 closed round trips positive gross of fees — followed on its own it would
+wallet reads 358 of 469 closed round trips positive gross of fees — followed on its own it would
 call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md`.
 
 ---
@@ -447,7 +447,7 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
   entry cost it recovers from the chain, but that cost is itself a lower bound — a landing tip paid
   in a separate transaction of the same bundle is in no figure — so netting sharpens the veto
   without changing its direction. The counterexample is on our own subject: 76.3% of post-break
-  closed round trips are positive gross (351 / 460), and the same population is not worth trading
+  closed round trips are positive gross (358 / 469), and the same population is not worth trading
   fee-inclusive.
 - **P&L in the population tape is bounded by each launch's own collection window** — across the
   239 it is 60 s on 210, 120 s on 4 and 300 s on 25 — and **on the 103 graduated launches that

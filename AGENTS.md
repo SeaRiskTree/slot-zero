@@ -610,7 +610,7 @@ dev currently?"*, and the shape of the answer is the point:
   measured, `data/slot-zero-june-regime-change/report.md`). Any design that scores it as beatable is
   wrong; `runStage0` fails loudly, including if a later lane loosens `minRoomLeft` to fit an output.
 - **Everything derived from the fill tape ALONE is GROSS OF FEES and is an upper bound.** The trap is
-  concrete, not theoretical: gross, `7ufmve7Z…`'s post-break field reads **351/460 closed round trips
+  concrete, not theoretical: gross, `7ufmve7Z…`'s post-break field reads **358/469 closed round trips
   positive**; fee-inclusive, that same regime made **+0.54 SOL per launch with 51 of 106 wallets
   negative**. So the field leg can only ever **veto** a verdict, never earn one — netting the
   measured cost sharpens the veto without changing its direction, because measured cost is itself a

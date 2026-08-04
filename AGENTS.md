@@ -137,7 +137,8 @@ Five facts that bind any lane touching it:
   different denominators; the wider window holds far more wallets. `summarise.mjs` →
   `closureOfEarlyPairs` is the like-for-like measure and the only one to quote.
 - **The committed window is NOT a constant, and a flat 60 s baseline is a published-number bug.**
-  On the graduated 103 it is 60 s on 83, 120 s on 3 and 300 s on 17 — `window_ms` in
+  On the graduated 103 it is 60 s on 83, 120 s on 3 and 300 s on 17 (whole tape: 210 / 4 / 25 of
+  239) — `window_ms` in
   `data/population-tape-2026-07-29/window/{mint}.meta.json`, exposed by `launches.mjs` →
   `readWindowMeta`. Hardcoding 60 s overstated this uplift by ~6 points before it was caught, and
   `coverage.csv` now carries `committed_window_s` per launch so a reader can see the cut applied.

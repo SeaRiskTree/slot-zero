@@ -179,18 +179,18 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   and directly comparable.
  *   **What a reader of an older record must not do: infer the cause.** `entry-unmeasured` and
  *   `entry-cost-unmeasured` have six distinct producers between them (`entry.mjs` →
- *   `UNMEASURED_CAUSES`), and on a schema-≤9 record the label cannot say which fired. Five of the
- *   six are facts about OUR coverage — the walk was never offered enough windows, windows were
- *   dropped, windows were REFUSED as unproven openings (decision 134a), too little of the field
- *   priced, too few round trips priced end to end — and exactly one,
- *   `too-few-closed-round-trips`, is a fact about the deployer. So a consumer filtering on
- *   `verdict !== 'entry-unmeasured'` against an older record is filtering on its own budget and
- *   evidence while believing it is filtering on a measurement. `entry.mjs` →
+ *   `UNMEASURED_CAUSES`), and on a schema-≤9 record the label cannot say which fired. **All six are
+ *   facts about OUR coverage** — the walk was never offered enough windows, windows were dropped,
+ *   windows were REFUSED as unproven openings (decision 134a), the field closed too few round trips
+ *   inside a window whose tail our own walk truncates, too little of the field priced, too few round
+ *   trips priced end to end. So a consumer filtering on `verdict !== 'entry-unmeasured'` against an
+ *   older record is filtering on its own budget and evidence while believing it is filtering on a
+ *   measurement — and the rule at ANY schema version is that a later stage filters only on a
+ *   MEASURED verdict, never on an unmeasured one whatever its cause. `entry.mjs` →
  *   `isDeployerAttributable` is the predicate that owns this rule, and on a schema-≤9 record it
  *   answers `false` for the whole unmeasured family — the safe direction, and the reason the field
  *   must not be reconstructed. Every such score also carries the rule in `entry.caveats`
- *   (`COVERAGE_ATTRIBUTION_CAVEAT` / `DEPLOYER_ATTRIBUTION_CAVEAT`), so the limit travels with the
- *   number.
+ *   (`COVERAGE_ATTRIBUTION_CAVEAT`), so the limit travels with the number.
  */
 export const RECORD_SCHEMA_VERSION = 10;
 

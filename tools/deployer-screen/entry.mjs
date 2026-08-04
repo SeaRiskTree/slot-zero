@@ -460,10 +460,10 @@ export const UNMEASURED_VERDICTS = ['entry-unmeasured', 'entry-cost-unmeasured']
  * {@link scoreEntry}, and the whole point of captain decision 174b.
  *
  * **The defect this exists to remove.** Before it, six unrelated code paths collapsed onto two
- * labels, five of which describe OUR evidence and one of which describes the DEPLOYER. A consumer
- * writing `verdict !== 'entry-unmeasured'` was therefore filtering on our own coverage while
- * believing it was filtering on a measurement — the invisible false rejection this whole screen
- * exists to remove, one layer down. Enumerated from the code rather than from intent, in the order
+ * labels, every one of which describes OUR evidence rather than the DEPLOYER. A consumer writing
+ * `verdict !== 'entry-unmeasured'` was therefore filtering on our own coverage while believing it
+ * was filtering on a measurement — the invisible false rejection this whole screen exists to
+ * remove, one layer down. Enumerated from the code rather than from intent, in the order
  * `scoreEntry` can reach them:
  *
  * | code | where | it says |
@@ -499,17 +499,27 @@ export const UNMEASURED_CAUSES = [
  *
  * `'our-coverage'` is a limit of this reading: our budget, our luck against a shedding endpoint, or
  * evidence the co-ordination rule could not recover. `'deployer'` is a property of the launches
- * themselves, measured on a full sample.
+ * themselves, measured on a full sample by an instrument that does not vary between candidates.
  *
- * **Exactly one cause is `'deployer'`, and that asymmetry is the finding, not an accident of the
- * table.** Five of the six producers say nothing whatever about a deployer.
+ * **NO cause is `'deployer'`, and that is the finding rather than a redundancy** (captain decision
+ * 174b, revised). All six producers describe us, so a later stage may filter ONLY on the four
+ * MEASURED verdicts — `entry-open-after-costs`, `entry-room-absent`, `entry-cost-prohibitive`,
+ * `entry-field-loss-making` — and must carry EVERY unmeasured outcome forward as no answer. The
+ * field, the type and this table stay: a future producer CAN be deployer-attributable, and it has to
+ * come here on purpose to become one.
  *
- * `too-few-closed-round-trips` is attributed to the deployer with its bound stated: closure is read
- * inside the pinned `windowMs`, which is OUR choice — but it is the SAME window for every candidate,
- * so it is a fixed instrument rather than a per-candidate coverage accident. That is the line this
- * table draws. A cause is `'our-coverage'` when it varies with what this run happened to reach; it
- * is `'deployer'` when the same instrument was applied to everyone and this deployer's launches came
- * back thin.
+ * `too-few-closed-round-trips` was the one row attributed to the deployer, on the ground that
+ * closure is read inside the pinned `windowMs` and that is the same window for every candidate. It
+ * is not: `pumpfun.mjs` → `readLaunchWindow` seeks in MILLISECONDS (65,000) and decides membership
+ * in SLOTS (160), so at 2026-07 slot drift 160 slots reach up to 70.6 s and the window's tail is
+ * never fetched. The truncated fills are disproportionately late SELLS — 354 in-window fills, 161 of
+ * them sells, across 102 launches — and dropping one flips a wallet from closed to open. So
+ * `closed.length` is partly a function of WHEN a candidate's launches happened, which is a
+ * time-varying limit of ours; `thresholds.json` → `stage2_entry.windowSlotSpan` already states that
+ * a too-narrow span silently changes gate outcomes at `minFieldRoundTrips`. The honest note beside
+ * it: that defect moved our own create-slot series by nothing to seven significant figures, because
+ * create-slot outsiders close early — but that is n = 1 deployer on our own tape and establishes no
+ * bound for a stranger, which is exactly why the conservative attribution is the captain's call.
  *
  * @type {Readonly<Record<UnmeasuredCause, 'our-coverage' | 'deployer'>>}
  */
@@ -517,7 +527,7 @@ export const UNMEASURED_CAUSE_ATTRIBUTION = Object.freeze({
   'too-few-windows-available': 'our-coverage',
   'windows-dropped': 'our-coverage',
   'too-few-proven-windows': 'our-coverage',
-  'too-few-closed-round-trips': 'deployer',
+  'too-few-closed-round-trips': 'our-coverage',
   'too-little-of-the-field-priced': 'our-coverage',
   'too-few-priced-round-trips': 'our-coverage',
 });
@@ -536,24 +546,18 @@ export const COVERAGE_ATTRIBUTION_CAVEAT =
   '`isDeployerAttributable` is the predicate; captain decision 174b is the rule.';
 
 /**
- * The counterpart, and the one case where a filter IS legitimate. Still carries its own bound.
- */
-export const DEPLOYER_ATTRIBUTION_CAVEAT =
-  'THIS IS A FINDING ABOUT THIS DEPLOYER, on a full sample: room was measured and clears the bar, ' +
-  'and the field around these launches did not produce enough complete round trips to read. ' +
-  '`unmeasuredCauseAttribution` reads `deployer`, so a later stage MAY filter on it. The bound ' +
-  'travels with it: closure is read inside the pinned entry window, which is the same window for ' +
-  'every candidate — a fixed instrument, not a per-candidate coverage accident.';
-
-/**
  * **May a later stage filter this candidate out?** Captain decision 174b, as a predicate.
  *
- * `true` when the outcome is a statement about the deployer — every measured verdict, plus the one
- * unmeasured cause that is itself a measurement. `false` when it is a statement about our own
- * coverage, which a consumer must carry forward as *no answer* rather than drop.
+ * `true` when the outcome is a statement about the deployer — today that is every MEASURED verdict
+ * and nothing else, because {@link UNMEASURED_CAUSE_ATTRIBUTION} attributes all six producers to our
+ * own coverage. `false` when it is a statement about our own coverage, which a consumer must carry
+ * forward as *no answer* rather than drop.
  *
- * Two properties are deliberate and both fail SAFE:
+ * Three properties are deliberate and all three fail SAFE:
  *
+ * - **A verdict this module does not recognise returns `false`.** A typo, a value from a future
+ *   schema or a hand-edited record is carried forward exactly like an unknown cause, rather than
+ *   waved through as a measurement.
  * - **A record older than schema 10 carries no `unmeasuredCause`,** so every unmeasured verdict on
  *   it returns `false` — not filterable. That is correct: those records genuinely cannot say which
  *   producer fired, and guessing would reintroduce exactly the collapse this removes.
@@ -569,6 +573,7 @@ export const DEPLOYER_ATTRIBUTION_CAVEAT =
  * @returns {boolean}
  */
 export function isDeployerAttributable(finding) {
+  if (!(/** @type {readonly string[]} */ (ENTRY_VERDICTS).includes(finding.verdict))) return false;
   if (!(/** @type {readonly string[]} */ (UNMEASURED_VERDICTS).includes(finding.verdict))) return true;
   const cause = finding.unmeasuredCause ?? null;
   if (cause === null) return false;
@@ -954,9 +959,12 @@ export function scoreEntry(launches, t, context = {}) {
   }
 
   if (closed.length < t.minFieldRoundTrips) {
-    // THE ONE CAUSE IN THIS FAMILY THAT IS A MEASUREMENT. Room was read on a full sample and clears
-    // the bar, so outsiders did reach these create slots — and then too few of them completed a
-    // round trip to build a hit rate from. Nothing about our budget or our luck produced that.
+    // Room was read on a full sample and clears the bar, so outsiders did reach these create slots
+    // — and then too few of them completed a round trip to build a hit rate from. This reads like a
+    // fact about the deployer and is NOT one: `readLaunchWindow` reaches 65,000 ms but counts 160
+    // slots, so the window's tail goes unfetched by an amount that varies with slot drift, and the
+    // fills it loses are disproportionately late SELLS — each one flipping a wallet from closed to
+    // open. `our-coverage`, per {@link UNMEASURED_CAUSE_ATTRIBUTION}.
     attributeUnmeasured(score, ['too-few-closed-round-trips']);
     score.rationale =
       `the opening window leaves room (median ${fmt(roomLeft.median)}), but only ${closed.length} ` +
@@ -1077,11 +1085,7 @@ function attributeUnmeasured(score, causes) {
   score.unmeasuredCause = primary;
   score.unmeasuredCauseAttribution = UNMEASURED_CAUSE_ATTRIBUTION[primary];
   score.unmeasuredContributingCauses = [...causes];
-  score.caveats.push(
-    score.unmeasuredCauseAttribution === 'deployer'
-      ? DEPLOYER_ATTRIBUTION_CAVEAT
-      : COVERAGE_ATTRIBUTION_CAVEAT,
-  );
+  score.caveats.push(COVERAGE_ATTRIBUTION_CAVEAT);
 }
 
 /** @param {number} n @returns {string} */

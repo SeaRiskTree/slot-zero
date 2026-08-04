@@ -445,18 +445,37 @@ export const MAX_MS_PER_SLOT = 500;
  * difference was ZERO: ONE `request-cap` drop left 7 sampled and `scoreEntry` returned
  * `entry-unmeasured` for the **whole candidate**, a naive independent-draws estimate of about
  * **22.6%** of candidates at the tape's 4-in-127 per-launch rate. At two spare launches the same
- * estimate is about **0.32%**. Both are estimates of the right order and not measured answer rates,
- * since that base rate comes from one deployer's long-window launches, which are also the busiest
- * ones there; `thresholds.json` → `stage2_entry.justification.maxLaunchesPerCandidate` owns the
- * arithmetic and `test/deployer-screen.test.ts` pins it. And
- * the drops fall on the busiest launches, which are the ones most likely to belong to an active
- * deployer, so the lost answers are not uniformly distributed. An unmeasured verdict is **no
- * answer** and never a rejection (AGENTS.md, captain decision 174b), so this is not a false
- * positive and it is the direction the standing tiebreaker permits; the drop also falls on busy
- * launches, biasing the per-launch prize DOWN, which is the direction a screen looking for room may
- * safely err in. **The zero-slack coupling itself — sample floor equal to launch cap — is a known
- * SEPARATE lane and is not fixed here**; `test/deployer-screen.test.ts` pins the identity so the
- * day it moves, this paragraph is re-read rather than left stale.
+ * estimate is about **0.32%**. **Both figures are the REQUEST-CAP COMPONENT ONLY** — they are
+ * computed from this drop cause and from nothing else, so neither is the full-day run's expected
+ * no-verdict rate, which `measure.mjs` → `roomIsProven` governs for a stranger. They are also
+ * estimates of the right order and not measured answer rates, since that base rate comes from one
+ * deployer's long-window launches, which are also the busiest ones there;
+ * `thresholds.json` → `stage2_entry.justification.maxLaunchesPerCandidate` owns the arithmetic and
+ * the wider context, and `test/deployer-screen.test.ts` → 'THE SAMPLING RULE HAS HEADROOM, and the
+ * REQUEST-CAP unmeasured rate it buys is PINNED' pins it. And the drops fall on the busiest
+ * launches, which are the ones most likely to belong to an active deployer, so the lost answers are
+ * not uniformly distributed. An unmeasured verdict is **no answer** and never a rejection
+ * (AGENTS.md, captain decision 174b), so this is not a false positive and it is the direction the
+ * standing tiebreaker permits.
+ *
+ * **What the drop does to the numbers is NOT settled, and this paragraph must not be read as a
+ * reassurance that it is.** The expectation that dropping busy launches biases the **per-launch
+ * prize** down — busy launches being the high-prize ones — is a stated expectation and not a
+ * measurement here; `tools/arrival-rate-walk/bounds.json` →
+ * `walk.maxRequestsPerLaunch` states the same expectation for the same reason, and no committed
+ * check derives it. **It is about the prize and must not be read as covering `roomLeft` or the
+ * verdict.** For those, this branch records the direction of the SURVIVING-SAMPLE bias as
+ * **UNMEASURED**: rank correlation between per-launch fill count and `roomLeft` 0.0250, busiest
+ * quartile median `roomLeft` 0.3032 against the quietest quartile's 0.2771, but dropping the
+ * busiest 7 of 235 moves the median `roomLeft` 0.3146 → 0.3314, i.e. **up**, toward enterable —
+ * two statistics opposite in sign on n = 1 deployer, so the direction is not established either
+ * way. `thresholds.json` → `stage2_entry.justification.maxLaunchesPerCandidate` and the README's
+ * "What a dropped launch costs" own that ceiling and its derivation route.
+ *
+ * **The zero-slack coupling that this paragraph was written under is FIXED on this branch**, by
+ * captain decision 190a: the cap is 10 against a floor of 8 and the gap is two launches, as stated
+ * fifteen lines above. The identity pin that used to guard it is gone with the coupling; what pins
+ * the gap now is that request-cap unmeasured-rate test.
  *
  * @param {object} bounds
  * @param {number} bounds.windowMs        Nominal window length. A floor on the reach, nothing more.

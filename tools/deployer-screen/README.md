@@ -1601,6 +1601,17 @@ shape by this lane. Captain decision 198b accepted that knowingly and split the 
 refuse-near-the-bar guard is a separate filed lane blocked on this one, and the full-day screen run
 blocks on **both**, so the unguarded shape is never what that run uses.
 
+**How those four figures were derived, and the limit on them.** The population is the 235 committed
+launches as returned by `stage0.mjs` → `measureSubjectLaunches` over
+`data/population-tape-2026-07-29`. The two per-launch quantities are its **fill count** (busyness)
+and its `createSlot.roomLeft`. The correlation is a **rank** correlation over those two; the
+quartiles are cut **by fill count**; and the median shift is the median `roomLeft` over all 235
+against the median with the **7 busiest removed**, 7 being the 3.1% request-cap rate applied to that
+population. **This was a one-off derivation by this lane and no committed check reproduces it**, so
+unlike the page-cost model beside it these numbers can go stale silently. That is part of the honest
+record rather than a footnote: the follow-up guard lane should land them as a check if it needs to
+depend on them.
+
 The floor was **not** the adjustable half: closing the gap by lowering `minLaunchesSampled` would
 weaken the evidence a verdict rests on rather than give it headroom, and 190a names the direction.
 **No bar moved** — every scored launch clears exactly what it cleared before; two more are offered.
@@ -1608,8 +1619,10 @@ The cost is requests: the stage arithmetic went `3 × 8 × 18 = 432` to `3 × 10
 ceiling moved with it so the dry run is still the whole exposure. An unmeasured verdict remains *no
 answer* and never a rejection, and a drop is counted and reported where the truncated tail was
 silent. `thresholds.json` → `stage2_entry.justification.maxLaunchesPerCandidate` owns the arithmetic
-and `test/deployer-screen.test.ts` → “THE SAMPLING RULE HAS HEADROOM” pins the resulting rate, so
-neither threshold can move it silently again.
+and `test/deployer-screen.test.ts` → “THE SAMPLING RULE HAS HEADROOM, and the REQUEST-CAP unmeasured
+rate it buys is PINNED” pins the **request-cap component** of that rate, so neither threshold can
+move that component silently again. It is not the total: what the full-day run answers nothing at is
+governed by `roomIsProven`, and no committed check pins that.
 
 **The margin is a cursor hint and never a proof tolerance.** The pre-mint tripwire still compares
 `ts < createdAtMs` with zero slack, and coverage is still discharged only by an explicit

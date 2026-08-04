@@ -7813,8 +7813,10 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
 
     // Four launches — the busiest on either tape — now cost more pages than the cap affords and are
     // dropped whole as `request-cap`. That is a COUNTED drop and it shrinks `n` visibly, where the
-    // truncated tail it replaces was silent; and it falls on busy launches, so it biases per-launch
-    // prize DOWN, which is the direction a screen looking for room may safely err in.
+    // truncated tail it replaces was silent. It falls on busy launches, which is EXPECTED to bias
+    // the per-launch PRIZE down — busy launches being the high-prize ones — but that expectation has
+    // no committed derivation and does not cover `roomLeft` or the verdict, whose surviving-sample
+    // direction this branch records as UNMEASURED. See `pumpfun.mjs` → `windowReachMs`.
     expect(before.filter((n) => n > PAGES_AVAILABLE).length).toBe(0);
     const overCap = overCapLaunches();
     expect(overCap.length).toBe(4);

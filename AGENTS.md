@@ -320,7 +320,13 @@ Learned at real cost; the citations are to
   must backdate it; `tools/deployer-screen/bundling.mjs` and `tools/arrival-rate-walk/` both pin
   **5,000 ms** and both count what still trips. The tape's own `created_timestamp` does not have
   this problem (0 disagreements on 235 launches), so it is a property of the vendor pair, not of
-  the walk.
+  the walk. **A THIRD vendor pair shows the same shape and the screen does NOT backdate against
+  it**: Stage 2's mint times come from **MadeOnSol**'s `profile.pump_tokens[].created_timestamp`
+  (`measure.mjs` → `toLaunchRefs`), and the first full-day default run dropped **6 of 10 windows on
+  one candidate** to the pre-mint tripwire — enough to take it from 10 planned windows to 3 walked.
+  Whether `screen.mjs` should pin the same 5,000 ms is open and is a decision, not a passing fix;
+  `runs/2026-08-04-full-day-default.md` → "Two things that went wrong in the plumbing" owns the
+  observation and states what is and is not proven about the cause.
 - **Per-launch request budgets: p50 4 pages, p90 8, p95 13, max 24** (same metadata; fills p50
   381, max 2,321). Bound a walk by **requests, not pages**, or the shed rate makes the true cost
   ~3x the plan.
@@ -809,6 +815,20 @@ dev currently?"*, and the shape of the answer is the point:
   our subject is **proven 235/235** while it *bundles* 0% (Dec–Feb) → 58.5% (Apr) → 98.1% (Jul),
   175/235 overall — so the bundling rate is not stationary *for an operator that changes its habit*,
   and a shared-transaction-only reading takes the rule's blind spot for the deployer's habit.
+- **AND THE CENSUS'S SHAPE HELD LIVE: the first full-day default run returned NO measured entry
+  verdict at all.** 82 gated, 4 gate-passed, 3 scored, **3 of 3 `entry-unmeasured`** — so the run
+  could not answer "is any window enterable after costs", and that is the result rather than a
+  failure. **The dominant hole is UNPROVEN windows, not walk drops: 18 of the 22 windows that walked
+  cleanly were refused by `roomIsProven`, against 8 walk drops over 30 planned.** Two consequences
+  bind a lane reading this: 190a's headroom and 198b's guard both landed before it, and **198b fired
+  zero times** — every refusal came from the sample-size floor upstream of it, so *the near-bar
+  guard is not the binding constraint and tightening its padding alone would convert nothing*. Also
+  **182a's adjacency half marked zero extra wallets on all 22 stranger windows**, so on strangers the
+  union collapsed to the shared-transaction rule; n = 3 deployers, an observation and not a rate.
+  `runs/2026-08-04-full-day-default.md` owns every figure, the refusal-cause split, the spend and
+  what it does and does not imply for the unproven-upper-bound follow-up — cite it rather than
+  restating them. **Do not carry the pre-existing "roughly one candidate in four" refusal prior
+  anywhere**: it predates both changes and this run does not support it.
 - **THE EVIDENCE THAT WOULD MAKE A STRANGER'S CREATE SLOT PROVABLE HAS BEEN LOOKED FOR AND IS NOT
   THERE — DO NOT RE-DERIVE THIS** (decision 203a; `census/2026-08-04-proof-coverage-probe.md` owns
   every figure). Two sources were measured to exhaustion. **Shared fee payer**, which the cost leg

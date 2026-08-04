@@ -605,6 +605,22 @@ Stage 2 entry score in it. Read it through `runs/2026-08-02-good-vs-elite.md`, w
 comparison against the elite baseline, the spend accounting, and the reasons the two gate hit rates
 are **not** like-for-like. Do not re-derive those figures here.
 
+### The third committed run — the full-day default, and it returned no entry verdict
+
+`runs/2026-08-04.json` (schema 12, `completed: true`), the first run at the pinned defaults with no
+tier filter and no candidate cap: **128 seeded, 46 prefiltered, 82 gated, 0 dropped by the candidate
+cap**. It is also the first run under captain decisions 190a and 198b.
+
+**Stage 2 scored 3 of the 4 gate survivors and returned `entry-unmeasured` on all three**, so it
+answers nothing about whether any window is enterable after costs — which is a legitimate outcome
+and is recorded as one. **18 of the 22 windows that walked cleanly were refused as unproven**,
+against 8 walk drops; the 198b near-bar guard fired **zero** times, every refusal coming from the
+sample-size floor upstream of it. Read it through `runs/2026-08-04-full-day-default.md`, which owns
+the refusal-cause split, the spend, the two plumbing failures (a billed Dune probe execution that
+failed over to the walk, and six mint-time drops against MadeOnSol's creation timestamps) and what
+the refusal rate does and does not imply for tightening the unproven-window padding. Do not
+re-derive those figures here.
+
 ## Retention — MadeOnSol terms §5a(d)
 
 > *(d) you may not cache, store, or accumulate API Data beyond what is reasonably necessary to

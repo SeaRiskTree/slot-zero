@@ -605,6 +605,22 @@ Stage 2 entry score in it. Read it through `runs/2026-08-02-good-vs-elite.md`, w
 comparison against the elite baseline, the spend accounting, and the reasons the two gate hit rates
 are **not** like-for-like. Do not re-derive those figures here.
 
+### The third committed run — the full-day default, and it returned no entry verdict
+
+`runs/2026-08-04.json` (schema 12, `completed: true`), the first run at the pinned defaults with no
+tier filter and no candidate cap: **128 seeded, 46 prefiltered, 82 gated, 0 dropped by the candidate
+cap**. It is also the first run under captain decisions 190a and 198b.
+
+**Stage 2 scored 3 of the 4 gate survivors and returned `entry-unmeasured` on all three**, so it
+answers nothing about whether any window is enterable after costs — which is a legitimate outcome
+and is recorded as one. **18 of the 22 windows that walked cleanly were refused as unproven**,
+against 8 walk drops; the 198b near-bar guard fired **zero** times, every refusal coming from the
+sample-size floor upstream of it. Read it through `runs/2026-08-04-full-day-default.md`, which owns
+the refusal-cause split, the spend, the two plumbing failures (a billed Dune probe execution that
+failed over to the walk, and six mint-time drops against MadeOnSol's creation timestamps) and what
+the refusal rate does and does not imply for tightening the unproven-window padding. Do not
+re-derive those figures here.
+
 ## Retention — MadeOnSol terms §5a(d)
 
 > *(d) you may not cache, store, or accumulate API Data beyond what is reasonably necessary to
@@ -1759,10 +1775,14 @@ reader of that record had no way to know.
 **Every run reports its drops per cause, per wallet and in total**, in the record (`entry.coverage.dropsByReason`
 and the run-level `entryDrops`) and in the rendered output. A non-zero
 `mintTimeDisagreement` is treated as a **reportable event, not a footnote**: all 235 clock
-observations come from our own tape and this lane has never held a vendor key, so whether MadeOnSol's
-clock agrees with the fill tape on *stranger* wallets is untested. If they routinely disagree, the
+observations come from our own tape, where the gap is exactly 0, so whether MadeOnSol's
+clock agrees with the fill tape on *stranger* wallets was an open question. If they routinely disagree, the
 tripwire stops being free and starts discarding real launches at scale — and a visible per-run count
-is what stops that happening silently.
+is what stops that happening silently. **The first full-day default run fired it: 6 windows on one
+stranger candidate, the drops that took it from 10 planned windows to 3 walked.**
+`runs/2026-08-04-full-day-default.md` → *"Two things that went wrong in the plumbing"* owns that
+observation, what it does and does not prove about the cause, and the open question of whether
+Stage 2 should backdate as the census does. Nothing about this tripwire changed.
 
 **On the other vendor pair that has now been walked, they routinely DO disagree.** Driven from
 `frontend-api-v3`'s millisecond-precision `created_timestamp` instead of MadeOnSol's, the tripwire
@@ -1999,6 +2019,9 @@ that verdict as its schema means it**: room was present and the price of the sea
 measured, which is not what a schema-6 `entry-open-after-costs` says. It is committed evidence and
 is never retro-edited, so the reader is what has to be correct. The `--dry-run` output
 and the live-vs-tape check above remain the keyless evidence that the walk is the same code path.
+**A second Stage 2 record is committed and it carries no verdict at all**: `runs/2026-08-04.json`
+(schema 12) returned `entry-unmeasured` on all three candidates it scored — see *"The third
+committed run"* above and `runs/2026-08-04-full-day-default.md`.
 
 ## The bundling census — a windows-only pass, and what it is sizing
 

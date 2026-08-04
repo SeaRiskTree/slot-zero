@@ -67,7 +67,6 @@ const PENDING: ReadonlyArray<readonly [file: string, deadPath: string]> = [
   // check. The June-report citation here is the last of the seven that round was opened for.
   ['tools/deployer-screen/README.md', 'data/slot-zero-june-regime-change/report.md'],
   ['tools/deployer-screen/README.md', 'data/slot-zero-bundling-predicate-question/report.md'],
-  ['tools/deployer-screen/thresholds.json', 'data/slot-zero-dune-evaluate/report.md'],
   ['tools/deployer-screen/thresholds.json', 'data/slot-zero-stage2-reverify/report.md'],
 
   // Rest of the deployer-screen tool.

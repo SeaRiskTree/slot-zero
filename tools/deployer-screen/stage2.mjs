@@ -51,7 +51,8 @@
  * Every launch that leaves the sample is counted **by cause** ({@link Stage2DropReasons}), carried
  * into the run record and rendered. The cause that matters is `mintTimeDisagreement`: it says the
  * vendor's mint time and pump.fun's fill tape contradicted each other, which never happens on the
- * committed tape and has never been checked on a stranger, because this lane has held no vendor key.
+ * committed tape and DOES happen on strangers — first observed live in
+ * `runs/2026-08-04-full-day-default.md`, which owns that reading.
  * A lump total could not be read for it, so there is no lump total.
  *
  * **No keyed request is issued here, ever.** The mint list comes from the profile Stage 1 already

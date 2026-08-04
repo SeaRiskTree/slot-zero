@@ -8759,9 +8759,13 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
 
   it('counts a mint-time disagreement separately and reports it as an event, per wallet', async () => {
     // The assumption under test is that the vendor's creation time and pump.fun's fills agree. It
-    // holds to the millisecond on all 235 of our own launches, and has NEVER been checked on a
-    // stranger — this lane has held no vendor key. A visible per-run count is what stops it being
-    // untested forever, and stops the tripwire from silently discarding real launches at scale.
+    // holds to the millisecond on all 235 of our own launches, and on strangers it has now been seen
+    // to break: the full-day default run of 2026-08-04 took 6 mintTimeDisagreement drops on one
+    // candidate, enough to take it from 10 planned windows to 3 walked
+    // (`runs/2026-08-04-full-day-default.md` owns the reading). So the per-run count this test pins
+    // is what surfaced it rather than a precaution against a hypothetical — a visible count is what
+    // stops the case going untested, and stops the tripwire from silently discarding real launches
+    // at scale.
     const fetchImpl = (async (url: string | URL) => {
       // The cursor is `0-<windowEnd>`, so this serves a row five seconds before whichever launch's
       // mint time the walk is currently seeking from.

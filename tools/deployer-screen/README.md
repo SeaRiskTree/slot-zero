@@ -1520,12 +1520,9 @@ early, so an early skew smaller than that cannot cut the tail off before the slo
 
 The cost is bounded and it is no longer one page. Reaching 85,000ms rather than 65,000ms moves the
 page cost over the 127 committed launches that can show the effect from p50 5 / p90 7 /
-p95 7 / max 14 to p50 6 / p90 8 / p95 9 / max 17, so **4 of 127 = 3.1%** now exceed the ~16 pages
-the cap affords and are dropped as `request-cap`, where it was **0 of 127**. (The guard in
-`test/deployer-screen.test.ts` costs a launch as `ceil(rows / pageLimit) + 1` and so pins figures one
-page higher — p50 7 / p90 9 / p95 10 / max 18, 5 of 127. That extra page proves nothing older
-exists, and this walk never spends it: the page that reaches back past the mint carries the
-endpoint's own `hasMore === false`. `pumpfun.mjs` → `windowReachMs` owns the distinction.)
+p95 8 / max 14 to p50 6 / p90 8 / p95 9 / max 17, so **4 of 127 = 3.1%** now exceed the ~16 pages
+the cap affords and are dropped as `request-cap`, where it was **0 of 127**. `pumpfun.mjs` →
+`windowReachMs` owns the page-cost story and `test/deployer-screen.test.ts` pins these same figures.
 
 And the consequence is the candidate's, not the launch's: `minLaunchesSampled` and `maxLaunchesPerCandidate` are the same
 pinned value (8), so there is no slack — one such drop among a candidate's 8 planned launches leaves

@@ -7764,23 +7764,37 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     const PAGES_AVAILABLE =
       (T.maxRequestsPerLaunch as number) - ((loadThresholds()['stage2_entry'] as { keylessRetryBackoffMs: number[] }).keylessRetryBackoffMs.length + 1) + 1;
     expect(PAGES_AVAILABLE).toBe(16);
-    const pagesAt = (L: (typeof tapedWindows)[number], reach: number) =>
-      Math.ceil(L.allTs.filter((ts) => ts <= L.createdAtMs + reach).length / (T.tradePageLimit as number)) + 1;
+    //
+    // THE EXACT COST MODEL, and the modulo term is the whole of it. The page that reaches back past
+    // the mint carries the endpoint's own `hasMore === false`, so the coverage proof arrives WITH
+    // the rows and costs nothing extra — UNLESS the last page comes back exactly full, in which
+    // case the walk spends one more request to learn that it was the end. A flat `+1` charges for
+    // that page always and plain `ceil` never charges for it; both are wrong, in opposite
+    // directions, and the difference is real on this tape (at the reach this replaces one launch
+    // hits the exactly-full case, which is why the before-p95 is 8 rather than 7). Validated twice:
+    // against the live production walk of `Spam` (`GxN4wsPK...`, 851 rows in [mint, mint+85,000ms],
+    // 9 pages modelled, 9 requests issued, 0 shed), and against this block's own full replay of
+    // `readLaunchWindow` over all 127 committed launches.
+    const pagesAt = (L: (typeof tapedWindows)[number], reach: number) => {
+      const rows = L.allTs.filter((ts) => ts <= L.createdAtMs + reach).length;
+      const limit = T.tradePageLimit as number;
+      return Math.ceil(rows / limit) + (rows % limit === 0 ? 1 : 0);
+    };
 
     const before = tapedWindows.map((L) => pagesAt(L, OLD_NOMINAL_REACH));
     const after = tapedWindows.map((L) => pagesAt(L, REACH));
     const p = (a: number[], q: number) => [...a].sort((x, y) => x - y)[Math.floor(q * (a.length - 1))];
-    expect([p(before, 0.5), p(before, 0.95), Math.max(...before)]).toEqual([6, 8, 15]);
-    expect([p(after, 0.5), p(after, 0.95), Math.max(...after)]).toEqual([7, 10, 18]);
+    expect([p(before, 0.5), p(before, 0.95), Math.max(...before)]).toEqual([5, 8, 14]);
+    expect([p(after, 0.5), p(after, 0.95), Math.max(...after)]).toEqual([6, 9, 17]);
 
-    // Five launches — the busiest on either tape — now cost more pages than the cap affords and are
+    // Four launches — the busiest on either tape — now cost more pages than the cap affords and are
     // dropped whole as `request-cap`. That is a COUNTED drop and it shrinks `n` visibly, where the
     // truncated tail it replaces was silent; and it falls on busy launches, so it biases per-launch
     // prize DOWN, which is the direction a screen looking for room may safely err in.
     expect(before.filter((n) => n > PAGES_AVAILABLE).length).toBe(0);
     const overCap = tapedWindows.filter((_, i) => (after[i] as number) > PAGES_AVAILABLE);
-    expect(overCap.length).toBe(5);
-    expect([...new Set(overCap.map((L) => L.symbol))].sort()).toEqual(['Beagles', 'Dummy', 'Glow', '🤨']);
+    expect(overCap.length).toBe(4);
+    expect([...new Set(overCap.map((L) => L.symbol))].sort()).toEqual(['Dummy', 'Glow', '🤨']);
 
     // AND WHAT A DROP COSTS IS THE CANDIDATE'S VERDICT, not a smaller sample. This identity is the
     // reason: the sample floor and the per-candidate launch cap are the same pinned value, so there
@@ -7792,13 +7806,13 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
 
     // The size of that, AS AN ESTIMATE AND NOT A MEASUREMENT. Two assumptions, both false in part:
     // (i) it treats a candidate's 8 launches as independent draws at the tape's cap-hit rate, and
-    // (ii) the 5/127 base rate comes from ONE deployer's long-window launches on the committed
+    // (ii) the 4/127 base rate comes from ONE deployer's long-window launches on the committed
     // tapes, which are also the busiest ones there. So this is the right order of magnitude for
     // how often Stage 2 now loses a verdict outright, not an answer rate for a stranger. Computed
     // from the inputs rather than hardcoded, so it moves if any of them moves.
     const capHitRate = overCap.length / tapedWindows.length;
     const lostVerdictEstimate = 1 - (1 - capHitRate) ** (T.minLaunchesSampled as number);
-    expect(lostVerdictEstimate).toBeCloseTo(0.2748, 3);
+    expect(lostVerdictEstimate).toBeCloseTo(0.2259, 3);
   });
 
   it('is derived from the SPAN, so widening the span widens the reach instead of reopening the gap', () => {

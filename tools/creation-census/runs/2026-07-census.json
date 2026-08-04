@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "tool": "tools/creation-census",
+  "runAtUtc": "2026-08-04T05:26:09.244Z",
+  "month": "2026-07",
+  "monthStartUtc": "2026-07-01T00:00:00.000Z",
+  "monthEndUtc": "2026-08-01T00:00:00.000Z",
+  "parameters": {
+    "min_launches": 30,
+    "max_rows": 5000
+  },
+  "dune": {
+    "queryId": 8214953,
+    "savedQueryMatchedCommittedSql": true,
+    "requests": 5,
+    "executions": 1,
+    "executionCeiling": 1,
+    "resultBytes": 188232,
+    "estimatedExportCredits": 3.765
+  },
+  "coverage": {
+    "ok": true,
+    "reasons": [],
+    "tables": [
+      {
+        "table": "evt_createevent",
+        "firstRowUtc": "2024-04-26T09:55:52.000Z",
+        "lastRowUtc": "2026-08-04T05:23:05.000Z",
+        "rowsInMonth": 857288,
+        "bracketsMonth": true
+      },
+      {
+        "table": "call_create",
+        "firstRowUtc": "2024-01-14T12:57:12.000Z",
+        "lastRowUtc": "2026-08-04T05:22:36.000Z",
+        "rowsInMonth": 2851,
+        "bracketsMonth": true
+      }
+    ]
+  },
+  "census": {
+    "declaredTotal": 3036,
+    "deployersReturned": 3036,
+    "refusedByShape": 0,
+    "unreadableRows": 0,
+    "capped": false,
+    "launchesInMonth": {
+      "deployers": 3036,
+      "min": 30,
+      "p50": 66,
+      "p90": 355,
+      "p99": 1567,
+      "max": 12555,
+      "ladder": [
+        {
+          "cohortAtMost": 10,
+          "threshold": 2385,
+          "deployers": 10
+        },
+        {
+          "cohortAtMost": 20,
+          "threshold": 2024,
+          "deployers": 20
+        },
+        {
+          "cohortAtMost": 50,
+          "threshold": 1236,
+          "deployers": 50
+        },
+        {
+          "cohortAtMost": 100,
+          "threshold": 829,
+          "deployers": 99
+        },
+        {
+          "cohortAtMost": 250,
+          "threshold": 428,
+          "deployers": 250
+        },
+        {
+          "cohortAtMost": 500,
+          "threshold": 213,
+          "deployers": 500
+        },
+        {
+          "cohortAtMost": 1000,
+          "threshold": 103,
+          "deployers": 996
+        },
+        {
+          "cohortAtMost": 2500,
+          "threshold": 38,
+          "deployers": 2480
+        }
+      ]
+    }
+  },
+  "cohortFile": "tools/creation-census/runs/2026-07-cohort.json",
+  "caveats": [
+    "THE min_launches FLOOR IS A PROLIFIC-NESS CUT, NOT A COMPETENCE ONE. It selects deployers by how much they created in the seed month and by nothing else — no bonding rate, no completion, no \"still active\" term — so it is the same species of filter as the vendor feed's, which looked like quality and was tempo. It is weaker in three ways that matter (historical rather than trailing, per calendar month rather than per 7.5 days, and conditioning on volume rather than on success) and it introduces no survivorship bias at all. What it DOES miss is the low-cadence deployer: a wallet launching three times a month for two years is absent at any floor above three, and nothing in the output reveals that. Raising this floor narrows the census on prolific-ness alone; whoever raises it must say so here."
+  ]
+}

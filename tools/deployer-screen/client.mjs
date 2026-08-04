@@ -49,8 +49,9 @@ const KEYED_RUN_CEILING_REMEDY =
  * Thrown when a request would exceed the run's ceiling. Carries no credential.
  *
  * `remedy` is a parameter rather than a constant because this message is **persisted**: the
- * creation walk stores it verbatim in a run record's `creation.stopDetail`, and the grading lane
- * reads run records. A per-candidate RPC ceiling reusing the keyed run ceiling's wording put "the
+ * creation walk stores it in a run record's `creation.stopDetail` — vendor identifiers struck on the
+ * way in by `record.mjs` → `redactCreationNotes`, the wording itself untouched — and the grading
+ * lane reads run records. A per-candidate RPC ceiling reusing the keyed run ceiling's wording put "the
  * run stopped early" and "raise --max-requests" into a record whose top level said
  * `completed: true`, over a lever that does not apply to it — two false statements in the declared
  * input of another lane. A caller with its own ceiling passes its own consequence and its own lever.

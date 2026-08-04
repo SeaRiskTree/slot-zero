@@ -52,8 +52,10 @@ export const SWAP_API = 'https://swap-api.pump.fun';
 export const SOLANA_RPC = 'https://api.mainnet-beta.solana.com';
 
 /**
- * What a {@link SolanaRpcClient} ceiling actually stops, and the lever that raises it — persisted
- * verbatim as `creation.stopDetail` in a run record, so it has to be true of THIS ceiling.
+ * What a {@link SolanaRpcClient} ceiling actually stops, and the lever that raises it — persisted as
+ * `creation.stopDetail` in a run record, so it has to be true of THIS ceiling. Only vendor
+ * identifiers are struck from it on the way in (`record.mjs` → `redactCreationNotes`); the wording
+ * itself reaches the record unchanged, so a sentence that is wrong here is wrong there.
  */
 const RPC_CEILING_REMEDY =
   'This is the PER-CANDIDATE RPC ceiling, so the run has not stopped: it bounds how far back ' +
@@ -1203,9 +1205,10 @@ export class SolanaRpcClient {
  *   {@link readCreatedHistoryIndexed}, whose provider bills by rows returned rather than by
  *   request; it is a ceiling like any other and carries no additional meaning.
  * @property {string | null} stopDetail The upstream message, when `stopReason` is `upstream-error`,
- *   or the ceiling's own message when `request-ceiling` threw. It is persisted verbatim in the run
- *   record, so it must describe THIS walk's ceiling — a per-candidate bound — and never claim the
- *   run stopped.
+ *   or the ceiling's own message when `request-ceiling` threw. It is persisted in the run record,
+ *   with only vendor identifiers struck from it on the way in (`record.mjs` →
+ *   `redactCreationNotes`), so its wording must describe THIS walk's ceiling — a per-candidate
+ *   bound — and never claim the run stopped.
  */
 
 /**

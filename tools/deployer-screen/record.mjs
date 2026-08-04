@@ -308,9 +308,9 @@ export function redactCreationNotes(creation) {
   if (creation === null) return null;
   return {
     ...creation,
-    stopDetail: creation.stopDetail === null ? null : redactVendorIdentifiers(creation.stopDetail),
+    stopDetail: creation.stopDetail == null ? null : redactVendorIdentifiers(creation.stopDetail),
     listingUnmeasuredNote:
-      creation.listingUnmeasuredNote === null
+      creation.listingUnmeasuredNote == null
         ? null
         : redactVendorIdentifiers(creation.listingUnmeasuredNote),
   };
@@ -419,15 +419,18 @@ export function kindMetaOf(kind) {
  *
  * `summary` and `detail` are split on purpose. The summary is **wallet-independent** — it names the
  * kind, the measurement and the status class and nothing else — so it is safe to group on. The
- * detail is the raw message, which carries the per-wallet URL, and must never become a grouping key:
- * keying on it gives every wallet its own line and buries the one sentence that matters.
+ * detail is the cause's own message, routed through {@link redactVendorIdentifiers} at construction
+ * in {@link unmeasuredBecause} / {@link unmeasuredNoSource}, so the URL that used to sit in it is
+ * struck. It still varies with the cause rather than with the kind, so it must never become a
+ * grouping key: keying on it gives near-identical failures their own lines and buries the one
+ * sentence that matters.
  *
  * @typedef {object} Unmeasured
  * @property {string} measurement       What was not measured, named as the record names it.
  * @property {string} subject           The wallet it was not measured for.
  * @property {UnmeasuredKind} kind      What actually happened.
  * @property {string} summary           Stable across wallets. The grouping key.
- * @property {string | null} detail     The raw cause. Per-wallet; never a grouping key.
+ * @property {string | null} detail     The redacted cause. Varies per failure; never a grouping key.
  */
 
 /**
@@ -577,9 +580,11 @@ export function describeUnmeasured(u) {
  * Collapse unmeasured entries onto their distinct summaries, preserving first-seen order.
  *
  * Grouped rather than listed per wallet because sixty identical lines bury the one sentence that
- * matters. The key is the wallet-independent {@link Unmeasured.summary} and never the detail, which
- * embeds a per-wallet URL and would give every wallet a group of its own — grouping that groups
- * nothing is just a longer list.
+ * matters. The key is the wallet-independent {@link Unmeasured.summary} and never the detail. The
+ * detail is redacted at construction, so it no longer embeds the per-wallet URL — but it still
+ * carries whatever else the cause's message held, so it remains per-failure and keying on it would
+ * still give near-identical failures a group each. Grouping that groups nothing is just a longer
+ * list.
  *
  * @param {readonly Unmeasured[]} unmeasured
  * @returns {Map<string, number>}

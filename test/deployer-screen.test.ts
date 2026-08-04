@@ -8155,6 +8155,18 @@ describe('what a Stage 2 run record may persist', () => {
     // The status survives — it is what identifies the failure and is the only part that cannot be
     // carrying an identifier.
     expect(creation!.stopDetail).toMatch(/HTTP 400/);
+    // And `listingUnmeasuredNote` pinned INDEPENDENTLY: the note above arrives already redacted by
+    // `unmeasuredBecause`, so it would pass even with that branch deleted. This one is raw.
+    const rawNote = redactCreationNotes({
+      stopReason: 'upstream-error',
+      stopDetail: null,
+      listingUnmeasuredNote: `the ownership listing was not read: HTTP 400 on ${url}`,
+      rpcRequests: 12,
+    });
+    expect(rawNote!.listingUnmeasuredNote).not.toMatch(/frontend-api-v3/);
+    expect(rawNote!.listingUnmeasuredNote).not.toMatch(new RegExp(WALLET));
+    expect(rawNote!.listingUnmeasuredNote).toMatch(/HTTP 400/);
+
     // A `no-source` detail is caller-supplied free text and goes through the same boundary.
     expect(JSON.stringify(unmeasuredNoSource('m', WALLET, 'nothing answered', `read ${url}`))).not.toMatch(
       /frontend-api-v3/,

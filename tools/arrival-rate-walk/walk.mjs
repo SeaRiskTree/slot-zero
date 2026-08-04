@@ -4,19 +4,27 @@
  * ## ONE bound, in ONE unit — and that is the whole design
  *
  * `tools/deployer-screen/pumpfun.mjs` → `readLaunchWindow` reaches forward from the mint with **two**
- * bounds in **two units**: a seek cursor at `createdAtMs + windowMs + seekMarginMs` (milliseconds)
- * and a membership filter at `createSlot + windowSlotSpan` (slots). Nothing reconciles them but a
+ * bounds in **two units**: a seek cursor in milliseconds and a membership filter at
+ * `createSlot + windowSlotSpan` (slots). Until captain decision 144a nothing reconciled them but a
  * hardcoded nominal 400 ms/slot with about a second of headroom, and the chain has been slowing all
- * year — p50 389.0 ms/slot in 2025-12 against 418.0 in 2026-07, max observed 441.3. At that maximum
- * the declared 160-slot window is 70.6 s wide against a 65 s reach, so the walk never fetches the
- * last 5.6 s of the window it says it measured. It reports `usable: true`, `reachedCreateSlot: true`
- * and a note that is true in every clause. `data/slot-zero-cursor-gap-walk-blast/report.md` §1
- * measured the consequence: 354 in-window fills never fetched across 102 launches, 161 of them sells.
+ * year — p50 389.0 ms/slot in 2025-12 against 418.0 in 2026-07, max observed 446.55. At that maximum
+ * the declared 160-slot window is 71.4 s wide against the 65 s reach that cursor then had, so the
+ * walk never fetched the last several seconds of the window it said it measured. It reported
+ * `usable: true`, `reachedCreateSlot: true` and a note that was true in every clause.
+ * `data/slot-zero-cursor-gap-walk-blast/report.md` §1 measured the consequence: 354 in-window fills
+ * never fetched across 102 launches, 161 of them sells.
+ *
+ * **That instance is now fixed and the design lesson is not retired.** `readLaunchWindow`'s cursor is
+ * `pumpfun.mjs` → `windowReachMs`, which converts the span in the span's own unit at a measured
+ * worst-case slot rate (85,000 ms at the pinned values) — a reconciliation that is derived and
+ * re-checked against the committed tapes rather than nominal, but still a reconciliation, and it has
+ * to hold every time the chain's slot rate moves. That doc owns the reach, the pages it costs and
+ * the launches it drops; do not restate any of it here.
  *
  * This walk copies `tools/graduated-life-tape/walk.mjs` instead. **{@link seekCursor}(endMs) is the
  * seek AND `tsMs <= endMs` is the membership test**, so there is no conversion for a drifting slot
- * rate to invalidate. The class of defect is removed rather than bounded, and it cost nothing to
- * remove because this is new code in a new directory.
+ * rate to invalidate — nothing to re-derive, re-pin or re-check. The class of defect is removed
+ * rather than bounded, and it cost nothing to remove because this is new code in a new directory.
  *
  * ## The other end: a mint instant this walk does not trust to the millisecond
  *

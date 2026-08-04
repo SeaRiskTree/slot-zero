@@ -125,16 +125,32 @@
  * dry run's plan is the whole exposure, exactly as `stage2.mjs` arranges it. A launch is started
  * only when a full per-launch cap of headroom remains.
  *
- * ## The known bound-mismatch in `readLaunchWindow`, and why it cannot reach this number
+ * ## The `readLaunchWindow` bound-mismatch is CLOSED — and this pass inherited its PRICE
  *
- * `pumpfun.mjs` → `readLaunchWindow` seeks in milliseconds and decides membership in slots, so at
- * 2026 slot times it can fail to fetch the **tail** of a window (`CLAUDE.md`, "the two-bound
- * cursor"). This pass reads the **create slot** — the oldest end of the walk, reached last and
- * proved by the coverage obligation — so a missing tail cannot move any measure on the launch row.
- * That covers `runTx`, `adjacencyMarks` and `coordinatedWallets` as well as `bundledTx` and
+ * `pumpfun.mjs` → `readLaunchWindow` used to seek in milliseconds and decide membership in slots
+ * with nothing between the two units but a nominal 400 ms/slot, so at 2026 slot times it could fail
+ * to fetch the **tail** of a window. Captain decision 144a closed it: the seek is now derived from
+ * `windowSlotSpan` in the span's own unit at a measured worst-case slot rate — `pumpfun.mjs` →
+ * {@link windowReachMs}, **85,000 ms at the pinned values against the 65,000 ms it replaced**.
+ *
+ * It never reached this pass's measures in either state, and that is still worth stating so nobody
+ * re-derives it: this pass reads the **create slot** — the oldest end of the walk, reached last and
+ * proved by the coverage obligation — so a missing tail could not move any measure on the launch
+ * row. That covers `runTx`, `adjacencyMarks` and `coordinatedWallets` as well as `bundledTx` and
  * `maxWalletsInOneTx`: every one of them is computed from create-slot fills alone, and fills the
- * walk never fetched are all NEWER than the create slot. It is stated here so nobody has to
- * re-derive that it does not apply.
+ * walk never fetched are all NEWER than the create slot.
+ *
+ * **WHAT IT DID CHANGE IS WHAT A RE-RUN COSTS, AND WHOEVER RE-RUNS THIS MUST SIZE FOR IT.** The
+ * wider reach buys about a fifth more pages per launch; `pumpfun.mjs` → {@link windowReachMs} owns
+ * that distribution, the population it was measured over and the drop rate it implies, and this file
+ * quotes it rather than keeping a copy. Two consequences land here. (1) `census/2026-08-03-bundling-census.md`
+ * was walked at the superseded 65,000 ms reach, so its recorded SPEND is an underestimate of what
+ * re-running the same census costs — its measures are unaffected, per the paragraph above. (2) The
+ * `maxRequestsPerLaunch` cap this pass reuses from Stage 2 did not move, so the busiest launches now
+ * exhaust it and arrive as `request-cap` drops. Here that is {@link DROPPED_WINDOW_CAVEAT} rather
+ * than a wrong number — counted, denominator-shrinking, never read as an unbundled window — but it
+ * biases the surviving denominator towards the QUIETER launches, which is a new sampling caveat on
+ * any rate this pass publishes and not merely a bigger bill.
  */
 
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -143,7 +159,12 @@ import { fileURLToPath } from 'node:url';
 
 import { CeilingReached } from './client.mjs';
 import { measureCompletion, measureCreateSlot, median, percentile, roomIsProven } from './measure.mjs';
-import { KeylessClient, readCreatorHistory, readLaunchWindow } from './pumpfun.mjs';
+// `windowReachMs` is IMPORTED, never re-derived: the dry run below prints the reach and the cost of
+// the walk it authorises, and a plan that keeps its own copy of the walk's arithmetic is a plan that
+// drifts from the walk. Captain decision 144a moved the reach and left both operator-facing plans
+// quoting the old walk — `render.mjs`, caught in PR #38's own review, and this one. See
+// {@link MEASURED_PAGE_COST}.
+import { KeylessClient, readCreatorHistory, readLaunchWindow, windowReachMs } from './pumpfun.mjs';
 import { applyGate, verdictFor } from './rank.mjs';
 import { measureSubjectLaunches } from './stage0.mjs';
 import { describeTransportFailure } from './stage2.mjs';
@@ -215,11 +236,17 @@ export const PREDICATE_CAVEAT =
  * create transaction. What it costs is that a genuine disagreement under 5 s is no longer seen.
  *
  * IT IS NOT A ONE-ENDED WIDENING, AND ANYTHING COPYING IT MUST KNOW THAT. `readLaunchWindow` seeks
- * at `createdAtMs + windowMs + seekMarginMs`, so a backdated `createdAtMs` also pulls the NEWEST
- * instant the walk reaches 5 s earlier — exactly cancelling the pinned `seekMarginMs` of 5,000 and
- * reinstating the tail truncation that margin exists to prevent (`CLAUDE.md`, "the two-bound
- * cursor"). It is safe in THIS pass because the tail is not read here; in a full-window walk it
- * would silently lose fills.
+ * at `createdAtMs` plus `pumpfun.mjs` → {@link windowReachMs}, so a backdated `createdAtMs` also
+ * pulls the NEWEST instant the walk reaches 5 s earlier. What that costs has changed with captain
+ * decision 144a and the arithmetic is worth having in front of you: the reach is 85,000 ms at the
+ * pinned values — `windowSlotSpan × MAX_MS_PER_SLOT` (160 × 500 = 80,000) plus `seekMarginMs`
+ * (5,000) — so backdating by 5,000 spends the WHOLE of `seekMarginMs` and leaves the walk reaching
+ * exactly the 80,000 ms the span is worth at the pinned worst-case slot rate, with no clock slack
+ * left over (8,552 ms of headroom survives against the 71,448 ms the span is worth at the MEASURED
+ * 446.55 ms/slot maximum, which is the margin actually in hand today). Before 144a the seek was
+ * `createdAtMs + windowMs + seekMarginMs` and the same backdating reinstated outright tail
+ * truncation. It is safe in THIS pass either way because the tail is not read here; in a full-window
+ * walk it spends the margin that exists to stop an early vendor mint time cutting the tail off.
  */
 export const MINT_TIME_BACKDATE_CAVEAT =
   'THE MINT INSTANT IS BACKDATED BY A PINNED MARGIN before the window is walked, because the two ' +
@@ -228,6 +255,32 @@ export const MINT_TIME_BACKDATE_CAVEAT =
   'launch\'s own first fill and the zero-slack pre-mint tripwire would delete the whole launch. ' +
   'A disagreement LARGER than the margin still drops the launch and is still counted; one SMALLER ' +
   'than it is no longer detected.';
+
+/**
+ * The per-launch page cost the dry-run plan quotes, and **the reach it was measured at**.
+ *
+ * `pumpfun.mjs` → {@link windowReachMs} OWNS this measurement, its population and the drop rate it
+ * implies; this pass does not carry a second copy of the distribution and must not grow one. What it
+ * carries is the reach that distribution belongs to, so {@link renderDryRun} can CHECK the figure
+ * against the walk it is about to authorise rather than assert it: if the reach ever moves off
+ * `atReachMs`, the plan says the cost is unknown instead of printing a number measured somewhere
+ * else. A quoted figure that cannot invalidate itself is exactly what went stale here — this plan
+ * went on printing `p50 4 / p90 8 pages` after captain decision 144a widened the reach from
+ * `supersededReachMs` to `atReachMs`, and a dry run is what an operator reads to authorise a run.
+ *
+ * `p50Requests` is `p50Pages` at the ~1.33 requests a page costs against this host's measured ~25%
+ * shed rate (`thresholds.json` → `stage2_entry.justification.maxRequestsPerLaunch`), because the
+ * pacing this plan multiplies by is per REQUEST and quoting pages there under-reads the wall clock
+ * by a third. `supersededP50Pages` is the same owner's before-reading and is here for one job: the
+ * plan derives the rise from the two rather than describing it.
+ */
+const MEASURED_PAGE_COST = Object.freeze({
+  atReachMs: 85_000,
+  p50Pages: 6,
+  p50Requests: 8,
+  supersededReachMs: 65_000,
+  supersededP50Pages: 5,
+});
 
 /** @typedef {{ wallet: string, sources: string[], recordedGateVerdict: string | null }} CohortMember */
 
@@ -451,11 +504,11 @@ export async function censusCandidate(client, input) {
         // widens the walk, which is the end the create slot sits at, so it can only admit more of
         // this launch's own opening and never any of another token's — a token has no fill before
         // its own create transaction. BUT IT MOVES THE NEW END TOO, AND A COPY OF THIS LINE INTO A
-        // FULL-WINDOW WALK IS A BUG: `readLaunchWindow` seeks at `createdAtMs + windowMs +
-        // seekMarginMs`, so backdating by 5,000 ms pulls the newest instant reached 5 s earlier and
-        // exactly cancels the pinned `seekMarginMs` of 5,000 — reinstating the tail truncation that
-        // margin exists to prevent. Harmless HERE only because this pass reads the create slot and
-        // nothing else.
+        // FULL-WINDOW WALK IS A BUG: `readLaunchWindow` seeks at `createdAtMs` plus
+        // `windowReachMs`, so backdating by 5,000 ms pulls the newest instant reached 5 s earlier
+        // and spends the whole of the pinned `seekMarginMs` of 5,000 — leaving the reach exactly
+        // equal to the span at the pinned worst-case slot rate, with no clock slack left. Harmless
+        // HERE only because this pass reads the create slot and nothing else.
         createdAtMs: ref.deployedAtMs - input.mintTimeBackdateMs,
         windowMs: t.windowMs,
         seekMarginMs: t.seekMarginMs,
@@ -982,6 +1035,19 @@ export function renderDryRun(plan) {
   const fillWorst = plan.maxCandidates * plan.entry.maxLaunchesPerCandidate * plan.entry.maxRequestsPerLaunch;
   const listingMin = Math.round((listingWorst * plan.listingIntervalMs) / 60_000);
   const fillMin = Math.round((fillWorst * plan.entry.keylessMinIntervalMs) / 60_000);
+  // DERIVED FROM THE WALK, NOT DESCRIBED. `readLaunchWindow` will seek exactly this far, because
+  // this is the function it calls to decide that. See {@link MEASURED_PAGE_COST} for why the page
+  // cost beside it is checked against the reach rather than simply printed.
+  const reachMs = windowReachMs(plan.entry);
+  const pageCostIsCurrent = reachMs === MEASURED_PAGE_COST.atReachMs;
+  const pageCostRisePct = Math.round(
+    (MEASURED_PAGE_COST.p50Pages / MEASURED_PAGE_COST.supersededP50Pages - 1) * 100,
+  );
+  const expectedMin = Math.round(
+    (plan.maxCandidates * plan.entry.maxLaunchesPerCandidate * MEASURED_PAGE_COST.p50Requests *
+      plan.entry.keylessMinIntervalMs) /
+      60_000,
+  );
   const L = [];
   L.push('DRY RUN — nothing was fetched.');
   L.push('');
@@ -1011,16 +1077,54 @@ export function renderDryRun(plan) {
       `${plan.census.maxKeylessRequests}, about ${fillMin} minute(s) worst case.`,
   );
   L.push(
-    `    Measured per-launch cost on the committed tape is p50 4 / p90 8 pages, so the EXPECTED ` +
-      `cost is nearer ${Math.round((plan.maxCandidates * plan.entry.maxLaunchesPerCandidate * 5 * plan.entry.keylessMinIntervalMs) / 60_000)} minute(s).`,
+    `    The walk seeks ${reachMs / 1000}s past each mint: ${plan.entry.windowSlotSpan} slots at a measured worst-case slot ` +
+      `rate, plus`,
   );
+  L.push(
+    `    ${plan.entry.seekMarginMs / 1000}s of clock slack. pumpfun.mjs -> windowReachMs derives that reach AND owns the ` +
+      `page cost`,
+  );
+  L.push('    measured at it; this plan quotes the owner rather than keeping a copy of it.');
+  if (pageCostIsCurrent) {
+    L.push(
+      `    At that owner's p50 of ${MEASURED_PAGE_COST.p50Pages} page(s) — about ${MEASURED_PAGE_COST.p50Requests} request(s) once this host's ~25% shed ` +
+        `rate is`,
+    );
+    L.push(`    paid — the EXPECTED cost is nearer ${expectedMin} minute(s) than the worst case above.`);
+    L.push(
+      `    THAT IS ~${pageCostRisePct}% MORE PAGES PER LAUNCH than the 2026-08-03 census paid ` +
+        `(p50 ${MEASURED_PAGE_COST.supersededP50Pages} -> ${MEASURED_PAGE_COST.p50Pages} on`,
+    );
+    L.push(
+      `    that owner's population), because captain decision 144a widened the reach from ` +
+        `${MEASURED_PAGE_COST.supersededReachMs / 1000}s to ${reachMs / 1000}s.`,
+    );
+    L.push('    THAT RECORD\'S SPEND UNDERSTATES A RE-RUN by roughly this share; its measures are');
+    L.push('    unaffected. The per-launch cap did not move with the reach, so the busiest launches now');
+    L.push('    exhaust it and are dropped as request-cap — counted, and shrinking the denominator');
+    L.push('    towards the quieter launches.');
+  } else {
+    L.push(
+      `    !! NO EXPECTED COST IS PRINTED: the page cost this plan can quote was measured at a ` +
+        `${MEASURED_PAGE_COST.atReachMs / 1000}s`,
+    );
+    L.push(
+      `    reach and the walk now reaches ${reachMs / 1000}s. Plan against the worst case above until ` +
+        `pumpfun.mjs`,
+    );
+    L.push('    -> windowReachMs is re-measured at the reach in force.');
+  }
   L.push('');
   L.push('WINDOW PARAMETERS ARE STAGE 2\'S OWN, reused rather than re-pinned:');
   L.push(
     `    windowMs ${plan.entry.windowMs}, seekMarginMs ${plan.entry.seekMarginMs}, ` +
       `windowSlotSpan ${plan.entry.windowSlotSpan}, tradePageLimit ${plan.entry.tradePageLimit}, ` +
-      `eligibility floor ${plan.entry.windowMs + plan.entry.seekMarginMs}ms.`,
+      `eligibility floor ${plan.entry.windowMs + plan.entry.seekMarginMs}ms, seek reach ${reachMs}ms.`,
   );
+  L.push('    THE LAST TWO ARE DIFFERENT BOUNDS AND THE GAP IS KNOWN: eligibility still asks');
+  L.push('    windowMs + seekMarginMs, which is shorter than the reach and shorter than the span it');
+  L.push('    gates on. That residual is stage2.mjs\'s and another lane\'s; it is stated here so the');
+  L.push('    two numbers above are not read as one.');
   L.push('');
   L.push('WHAT IT WILL NOT DO: no entry score, no room figure, no field, no entry cost, no verdict.');
   L.push('');

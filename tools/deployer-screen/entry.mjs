@@ -511,16 +511,19 @@ export const UNMEASURED_CAUSES = [
  *
  * `too-few-closed-round-trips` was the one row attributed to the deployer, on the ground that
  * closure is read inside the pinned `windowMs` and that is the same window for every candidate. It
- * is not: `pumpfun.mjs` → `readLaunchWindow` seeks in MILLISECONDS (65,000) and decides membership
- * in SLOTS (160), so at 2026-07 slot drift 160 slots reach up to 70.6 s and the window's tail is
- * never fetched. The truncated fills are disproportionately late SELLS — 354 in-window fills, 161 of
- * them sells, across 102 launches — and dropping one flips a wallet from closed to open. So
- * `closed.length` is partly a function of WHEN a candidate's launches happened, which is a
- * time-varying limit of ours; `thresholds.json` → `stage2_entry.windowSlotSpan` already states that
- * a too-narrow span silently changes gate outcomes at `minFieldRoundTrips`. The honest note beside
- * it: that defect moved our own create-slot series by nothing to seven significant figures, because
- * create-slot outsiders close early — but that is n = 1 deployer on our own tape and establishes no
- * bound for a stranger, which is exactly why the conservative attribution is the captain's call.
+ * is not a fixed instrument: the walk that produces `closed` is bounded by `maxRequestsPerLaunch`,
+ * that cap drops the BUSIEST launches as `request-cap`, and a candidate loses its verdict outright
+ * once the drops exhaust the headroom `minLaunchesSampled` has under `maxLaunchesPerCandidate` — so
+ * both `closed.length` and whether this gate is reached at all are functions of our own budget and
+ * our luck against a shedding endpoint, not of the deployer.
+ *
+ * **The evidence is owned in ONE place and this is a pointer to it, deliberately:**
+ * `tools/deployer-screen/README.md` → "Why `too-few-closed-round-trips` is `our-coverage` and not the
+ * deployer's" holds the argument, the measured drop rate, its population and the honest limit on it.
+ * It has been swapped once already — captain decision 144a closed the two-bound cursor the original
+ * evidence rested on, without touching the classification — and it went stale in three files at once
+ * because three files each kept a copy. `pumpfun.mjs` → `windowReachMs` owns the page-cost and drop
+ * figures themselves.
  *
  * @type {Readonly<Record<UnmeasuredCause, 'our-coverage' | 'deployer'>>}
  */
@@ -986,10 +989,9 @@ export function scoreEntry(launches, t, context = {}) {
   if (closed.length < t.minFieldRoundTrips) {
     // Room was read on a full sample and clears the bar, so outsiders did reach these create slots
     // — and then too few of them completed a round trip to build a hit rate from. This reads like a
-    // fact about the deployer and is NOT one: `readLaunchWindow` reaches 65,000 ms but counts 160
-    // slots, so the window's tail goes unfetched by an amount that varies with slot drift, and the
-    // fills it loses are disproportionately late SELLS — each one flipping a wallet from closed to
-    // open. `our-coverage`, per {@link UNMEASURED_CAUSE_ATTRIBUTION}.
+    // fact about the deployer and is NOT one: the launches this counts over are the ones our own
+    // `maxRequestsPerLaunch` afforded to walk, and it drops the busiest ones. `our-coverage`, per
+    // {@link UNMEASURED_CAUSE_ATTRIBUTION}, whose doc names the one place the evidence lives.
     attributeUnmeasured(score, ['too-few-closed-round-trips']);
     score.rationale =
       `the opening window leaves room (median ${fmt(roomLeft.median)}), but only ${closed.length} ` +

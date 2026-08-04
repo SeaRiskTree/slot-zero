@@ -351,8 +351,11 @@ describe('the walk has ONE bound, in ONE unit', () => {
   const slackMs = 5_000;
 
   it('seeks to exactly the instant it filters on, and the two are the same number', async () => {
-    // This is the whole design. readLaunchWindow seeks in MILLISECONDS and filters in SLOTS, and
-    // nothing reconciles them but a nominal 400 ms/slot the chain has already drifted past.
+    // This is the whole design. readLaunchWindow seeks in MILLISECONDS and filters in SLOTS; the
+    // nominal 400 ms/slot that once reconciled them was drifted past by the chain, and captain
+    // decision 144a replaced it with a conversion at a measured worst-case rate (pumpfun.mjs ->
+    // windowReachMs) rather than with no conversion at all. This walk has no second unit to
+    // reconcile, which is why it is the shape to copy — asserted here, not promised in prose.
     const endMs = mintMs + windowMs;
     const { client, urls } = scriptedClient([
       pageBody(

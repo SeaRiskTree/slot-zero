@@ -4,13 +4,21 @@
  *
  * ## The question, and why it needed its own pass
  *
- * `thresholds.json` → `stage2_entry` pins `maxLaunchesPerCandidate: 8` and `minLaunchesSampled: 8`,
- * **deliberately equal** — a candidate is either scored on a full sample or reported UNMEASURED.
- * Since #17 a launch whose create slot the co-ordination rule marks nothing in is refused as
- * unproven (`measure.mjs` → `roomIsProven`, captain decision 134a). Those two facts multiply:
- * **Stage 2 can only reach a verdict for a candidate whose most recent 8 eligible launches were
- * EVERY ONE marked, and one unmarked launch in eight silences the whole candidate.** That is
- * arithmetic, not observation.
+ * When this pass ran, `thresholds.json` → `stage2_entry` pinned `maxLaunchesPerCandidate: 8` and
+ * `minLaunchesSampled: 8`, **deliberately equal** — a candidate was either scored on a full sample
+ * or reported UNMEASURED. Since #17 a launch whose create slot the co-ordination rule marks nothing
+ * in is refused as unproven (`measure.mjs` → `roomIsProven`, captain decision 134a). Those two
+ * facts multiplied: **Stage 2 could only reach a verdict for a candidate whose most recent 8
+ * eligible launches were EVERY ONE marked, and one unmarked launch in eight silenced the whole
+ * candidate.** That was arithmetic, not observation.
+ *
+ * **THAT PREMISE HAS SINCE MOVED, AND THIS PASS HAS NOT BEEN RE-RUN UNDER IT.** Captain decision
+ * 190a (2026-08-04) raised the cap to 10 against the same floor of 8, so the live rule is 8 proven
+ * of 10 planned and this census's all-of-8 headline is **stricter than what Stage 2 requires** — it
+ * understates how many candidates are scoreable, which is the safe direction for a finding of this
+ * shape. A census record is never retro-edited; re-running it under the new cap is a separate
+ * decision. This file still re-pins no window parameter, so a re-run would measure the launches
+ * Stage 2 actually plans.
  *
  * ## The predicate this pass measures under, which has moved once
  *
@@ -94,9 +102,9 @@
  * | listing pages per wallet | `bundling_census.maxListingPagesPerCandidate` | 4 |
  * | listing requests, whole run | `bundling_census.maxListingRequests` | 480 |
  * | candidates surveyed | `bundling_census.maxCandidatesSurveyed` | 30 |
- * | launches per candidate | `stage2_entry.maxLaunchesPerCandidate`, **reused** | 8 |
+ * | launches per candidate | `stage2_entry.maxLaunchesPerCandidate`, **reused** | 10 |
  * | requests per launch | `stage2_entry.maxRequestsPerLaunch`, **reused** | 18 |
- * | fill requests, whole run | `bundling_census.maxKeylessRequests` | 4320 |
+ * | fill requests, whole run | `bundling_census.maxKeylessRequests` | 5400 |
  * | pacing, listing host | `budget.keylessMinIntervalMs`, **reused** | 2s |
  * | pacing, fill host | `stage2_entry.keylessMinIntervalMs`, **reused** | 7s |
  *
@@ -106,7 +114,7 @@
  * block this file adds pins only what is genuinely new: how many wallets it may read and how many
  * requests the two legs may spend.
  *
- * `30 × 8 × 18 = 4,320` — the declared worst case and the fill ceiling are the same number, so the
+ * `30 × 10 × 18 = 5,400` — the declared worst case and the fill ceiling are the same number, so the
  * dry run's plan is the whole exposure, exactly as `stage2.mjs` arranges it. A launch is started
  * only when a full per-launch cap of headroom remains.
  *

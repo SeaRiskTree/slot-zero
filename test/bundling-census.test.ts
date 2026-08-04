@@ -609,12 +609,17 @@ describe('the headline number is defined over the population it names', () => {
     // and its denominator live in the same object — and since this census has now been taken under
     // two predicates, both readings do too.
     const s = summariseCensus([full(CAP), full(0, 4), full(0)]);
+    // Derived from the pinned cap rather than written out, because the fixture IS three candidates
+    // at that cap: hardcoding 24 meant this test went stale the moment captain decision 190a moved
+    // `stage2_entry.maxLaunchesPerCandidate`, which is the one number this block deliberately reads
+    // instead of re-pinning.
+    const round4 = (x: number) => Math.round(x * 10_000) / 10_000;
     expect(s.perLaunch).toMatchObject({
-      launchesMeasured: 24,
-      proven: 12,
-      rate: 0.5,
-      bundledBySharedTxAlone: 8,
-      sharedTxRate: 0.3333,
+      launchesMeasured: 3 * CAP,
+      proven: CAP + 4,
+      rate: round4((CAP + 4) / (3 * CAP)),
+      bundledBySharedTxAlone: CAP,
+      sharedTxRate: round4(1 / 3),
       provenByAdjacencyOnly: 4,
       candidatesContributing: 3,
     });

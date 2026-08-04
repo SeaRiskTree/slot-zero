@@ -437,13 +437,18 @@ export const MAX_MS_PER_SLOT = 500;
  * shed. That drop is **counted and reported**; a truncated tail was not, and a launch measured from
  * a partial window is a wrong number that looks like a right one.
  *
- * **What that drop costs is the CANDIDATE'S VERDICT, not a smaller sample, and the reader must not
- * miss it.** `minLaunchesSampled` and `maxLaunchesPerCandidate` are the same pinned value, 8, so
- * there is no spare launch to lose: ONE `request-cap` drop among a candidate's 8 planned launches
- * leaves 7 sampled and `scoreEntry` returns `entry-unmeasured` for the **whole candidate**. At the
- * tape's 4-in-127 per-launch rate the naive independent-draws estimate is about a **22.6%** chance
- * per candidate — an estimate of the right order and not a measured answer rate, since that base
- * rate comes from one deployer's long-window launches, which are also the busiest ones there. And
+ * **What that drop costs is the CANDIDATE'S VERDICT, not merely a smaller sample — up to the
+ * headroom the sampling rule carries.** `maxLaunchesPerCandidate` is how many launches Stage 2
+ * plans and `minLaunchesSampled` is how many it must score, so their difference is how many drops a
+ * candidate can absorb. **Captain decision 190a (2026-08-04) made that difference TWO** (cap 10,
+ * floor 8). When this paragraph was written the two were the same pinned value of 8 and the
+ * difference was ZERO: ONE `request-cap` drop left 7 sampled and `scoreEntry` returned
+ * `entry-unmeasured` for the **whole candidate**, a naive independent-draws estimate of about
+ * **22.6%** of candidates at the tape's 4-in-127 per-launch rate. At two spare launches the same
+ * estimate is about **0.32%**. Both are estimates of the right order and not measured answer rates,
+ * since that base rate comes from one deployer's long-window launches, which are also the busiest
+ * ones there; `thresholds.json` → `stage2_entry.justification.maxLaunchesPerCandidate` owns the
+ * arithmetic and `test/deployer-screen.test.ts` pins it. And
  * the drops fall on the busiest launches, which are the ones most likely to belong to an active
  * deployer, so the lost answers are not uniformly distributed. An unmeasured verdict is **no
  * answer** and never a rejection (AGENTS.md, captain decision 174b), so this is not a false

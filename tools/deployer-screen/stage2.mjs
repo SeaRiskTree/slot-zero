@@ -10,9 +10,10 @@
  * | bound | where | value |
  * |---|---|---|
  * | candidates scored | `thresholds.json` → `stage2_entry.maxCandidatesScored` | 3 |
- * | launches per candidate | `stage2_entry.maxLaunchesPerCandidate` | 8 |
+ * | launches per candidate | `stage2_entry.maxLaunchesPerCandidate` | 10 |
+ * | launches that must be SCORED | `stage2_entry.minLaunchesSampled` | 8 |
  * | requests per launch, RETRIES INCLUDED | `stage2_entry.maxRequestsPerLaunch` | 18 |
- * | requests for the whole stage | `stage2_entry.maxKeylessRequests`, on its own client | 432 |
+ * | requests for the whole stage | `stage2_entry.maxKeylessRequests`, on its own client | 540 |
  * | pacing, this host only | `stage2_entry.keylessMinIntervalMs` | 7s |
  * | Solana RPC, the cost leg | `thresholds.json` → `stage2_cost.maxRpcRequestsPerCandidate` | 400 |
  * | pacing, the cost leg | `stage2_cost.rpcMinIntervalMs`, inherited from `creation_walk` | 2.5s |
@@ -22,10 +23,14 @@
  * retries — which does not announce itself, it just degrades the verdict to `entry-unmeasured`. The
  * `--consistency` walk on frontend-api-v3 keeps 2s; it has shed nothing and is not slowed for this.
  * The request arithmetic below is unchanged by it, but the wall clock is: **a typical run takes
- * about 17 minutes and the worst case about 50**, which `--dry-run` prints so that a slow walk is
+ * about 21 minutes and the worst case about 63**, which `--dry-run` prints so that a slow walk is
  * not mistaken for a hang.
  *
- * `3 × 8 × 18 = 432` — the declared worst case and the stage ceiling are **the same number**, so no
+ * The two launch bounds are **deliberately unequal** (captain decision 190a): the stage plans 10
+ * launches and needs 8 of them, so a candidate absorbs two dropped launches before it loses its
+ * verdict entirely. That gap is what the extra requests below buy.
+ *
+ * `3 × 10 × 18 = 540` — the declared worst case and the stage ceiling are **the same number**, so no
  * plan-level truncation is possible and the printed plan is the whole exposure. A launch is only
  * started when a full per-launch cap of headroom remains, so a run never abandons a launch
  * half-walked and never spends requests on a window it cannot finish. `--dry-run` prints this plan

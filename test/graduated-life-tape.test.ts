@@ -733,7 +733,8 @@ describe('the summary counts closure, and deliberately never counts money', () =
   });
 
   it('publishes no SOL figure, because every figure from this tape is gross of fees', () => {
-    // Not a style rule. On the deployer's own post-break field, gross reads 362/473 closed round
+    // Not a style rule. On the deployer's own post-break field over all 89 launches, gross reads
+    // 358/469 closed round
     // trips positive; fee-inclusive, the same population made +0.54 SOL per launch with 51 of 106
     // wallets negative. A collection lane that published a SOL number would publish the wrong sign,
     // so the summariser publishes counts and leaves P&L to a view that can carry the fee brand.

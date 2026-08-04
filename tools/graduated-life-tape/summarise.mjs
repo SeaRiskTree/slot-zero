@@ -13,7 +13,7 @@
  *
  * **P&L.** Every figure derivable from this fill tape is **gross of fees** and is therefore an
  * upper bound, and the trap is concrete rather than theoretical: on the deployer's own post-break
- * field, gross reads 362/473 closed round trips positive, while fee-inclusive the same population
+ * field over all 89 launches, gross reads 358/469 closed round trips positive, while fee-inclusive the same population
  * made +0.54 SOL per launch with 51 of 106 wallets negative. A collection lane that published a
  * SOL figure would be publishing the wrong sign. What it publishes instead is **closure** — how
  * many (wallet, launch) pairs are complete round trips — because that is the thing the widening

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -31,8 +31,19 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-/** A `data/…/….md` reference: a citation shaped like a document a reader could open. */
-const DATA_DOC_CITATION = /data\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\.md/g;
+/**
+ * This file's own tracked path, derived rather than written out so a rename cannot silently
+ * re-break the exclusion below.
+ */
+const SELF = relative(ROOT, fileURLToPath(import.meta.url)).split(sep).join('/');
+
+/**
+ * A `data/…/….md` reference: a citation shaped like a document a reader could open.
+ *
+ * Left-anchored so a path segment merely ENDING in `data/` (`metadata/schema.md`) cannot match from
+ * the `data/` substring onward and report a truncated path the author cannot find in their file.
+ */
+const DATA_DOC_CITATION = /(?<![A-Za-z0-9_.-])data\/[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\.md/g;
 
 /**
  * The sites that predate this check, and the dead path each still carries.
@@ -101,13 +112,21 @@ const PENDING: ReadonlyArray<readonly [file: string, deadPath: string]> = [
   ],
 ];
 
-/** Tracked files worth scanning: skip `data/` itself and the binary/columnar payloads. */
+/**
+ * Tracked files worth scanning: skip `data/` itself and the binary/columnar payloads.
+ *
+ * This file is excluded too, and the reason is principled rather than a carve-out to make the suite
+ * green: it is the allow-list's home, so every dead path it names is a string literal of a citation
+ * that BY DEFINITION does not resolve — the subject of the check, not an instance of the defect.
+ * Scanning it would report `PENDING` back as 22 new violations. The exclusion is exactly one file
+ * (asserted below) so it cannot quietly widen into a directory-level skip.
+ */
 function scannableFiles(): string[] {
   const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' })
     .split('\0')
     .filter(Boolean);
   return tracked.filter(
-    (f) => !f.startsWith('data/') && !f.endsWith('.gz') && !f.endsWith('.csv'),
+    (f) => !f.startsWith('data/') && !f.endsWith('.gz') && !f.endsWith('.csv') && f !== SELF,
   );
 }
 
@@ -130,11 +149,24 @@ function deadCitations(): Array<{ file: string; deadPath: string }> {
 
 const key = (file: string, deadPath: string) => `${file} → ${deadPath}`;
 
+/** One scan of the tree, shared by every assertion below. */
+const DEAD = deadCitations();
+
 describe('no citation points at a document this repo does not hold', () => {
+  it('the guard excludes exactly its own source, and nothing else', () => {
+    const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: ROOT, encoding: 'utf8' })
+      .split('\0')
+      .filter(Boolean)
+      .filter((f) => !f.startsWith('data/') && !f.endsWith('.gz') && !f.endsWith('.csv'));
+    const scanned = new Set(scannableFiles());
+
+    expect(tracked).toContain(SELF);
+    expect(tracked.filter((f) => !scanned.has(f))).toEqual([SELF]);
+  });
+
   it('every new `data/**/*.md` citation resolves on disk', () => {
     const allowed = new Set(PENDING.map(([f, p]) => key(f, p)));
-    const unexpected = deadCitations()
-      .map(({ file, deadPath }) => key(file, deadPath))
+    const unexpected = DEAD.map(({ file, deadPath }) => key(file, deadPath))
       .filter((k) => !allowed.has(k))
       .sort();
 
@@ -145,7 +177,7 @@ describe('no citation points at a document this repo does not hold', () => {
   });
 
   it('the pending allow-list is the worklist it claims to be — no entry has gone stale', () => {
-    const live = new Set(deadCitations().map(({ file, deadPath }) => key(file, deadPath)));
+    const live = new Set(DEAD.map(({ file, deadPath }) => key(file, deadPath)));
     const retired = PENDING.map(([f, p]) => key(f, p))
       .filter((k) => !live.has(k))
       .sort();
@@ -159,7 +191,7 @@ describe('no citation points at a document this repo does not hold', () => {
     // AGENTS.md is the propagation vector: a lane reaching for this evidence copies the form it
     // finds here. That is why the same dead path came back after being fixed once, and why this
     // file is held to the rule with no pending entries.
-    const inAgentsMd = deadCitations().filter(({ file }) => file === 'AGENTS.md');
+    const inAgentsMd = DEAD.filter(({ file }) => file === 'AGENTS.md');
     expect(inAgentsMd).toEqual([]);
   });
 });

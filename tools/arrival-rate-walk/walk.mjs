@@ -4,14 +4,15 @@
  * ## ONE bound, in ONE unit — and that is the whole design
  *
  * `tools/deployer-screen/pumpfun.mjs` → `readLaunchWindow` reaches forward from the mint with **two**
- * bounds in **two units**: a seek cursor at `createdAtMs + windowMs + seekMarginMs` (milliseconds)
- * and a membership filter at `createSlot + windowSlotSpan` (slots). Nothing reconciles them but a
- * hardcoded nominal 400 ms/slot with about a second of headroom, and the chain has been slowing all
- * year — p50 389.0 ms/slot in 2025-12 against 418.0 in 2026-07, max observed 441.3. At that maximum
- * the declared 160-slot window is 70.6 s wide against a 65 s reach, so the walk never fetches the
- * last 5.6 s of the window it says it measured. It reports `usable: true`, `reachedCreateSlot: true`
- * and a note that is true in every clause. `data/slot-zero-cursor-gap-walk-blast/report.md` §1
- * measured the consequence: 354 in-window fills never fetched across 102 launches, 161 of them sells.
+ * bounds in **two units**: a seek cursor in milliseconds and a membership filter at
+ * `createSlot + windowSlotSpan` (slots). For a long time nothing reconciled them but a hardcoded
+ * nominal 400 ms/slot with about a second of headroom, and the chain has been slowing all year, so
+ * the walk stopped fetching the last few seconds of the window it said it measured while reporting
+ * `usable: true`, `reachedCreateSlot: true` and a note true in every clause.
+ * `data/slot-zero-cursor-gap-walk-blast/report.md` §1 measured the consequence: 354 in-window fills
+ * never fetched across 102 launches, 161 of them sells. Captain decision 144a re-denominated that
+ * cursor in a measured worst-case slot rate — `pumpfun.mjs` → `windowReachMs` owns the fix — but the
+ * two bounds are still two, kept in step by a pinned constant that has to be re-measured.
  *
  * This walk copies `tools/graduated-life-tape/walk.mjs` instead. **{@link seekCursor}(endMs) is the
  * seek AND `tsMs <= endMs` is the membership test**, so there is no conversion for a drifting slot

@@ -1149,19 +1149,22 @@ recognise answers `false`, a record older than schema 10 has no `unmeasuredCause
 
 **Why `too-few-closed-round-trips` is `our-coverage` and not the deployer's.** It was the one row
 attributed to the deployer, on the ground that closure is read inside the pinned entry window and
-that window is the same for every candidate. It is not a fixed instrument: `pumpfun.mjs` →
-`readLaunchWindow` seeks in **milliseconds** (65,000) but decides membership in **slots** (160), so
-at 2026-07 slot drift 160 slots reach up to 70.6 s and the window's tail is never fetched. The fills
-it loses are disproportionately late **sells** — 354 in-window fills, 161 of them sells, across 102
-launches — and dropping one flips a wallet from closed to open, which is exactly what
-`thresholds.json` → `stage2_entry.windowSlotSpan` warns silently changes gate outcomes at
-`minFieldRoundTrips`. Slot drift moves with the calendar, so `closed.length` is partly a function of
-*when* a candidate's launches happened: a time-varying limit of ours. The honest note beside it is
-that this defect moved our own create-slot series by **nothing** (identical to seven significant
-figures) because create-slot outsiders close early — but that is n = 1 deployer on our own tape and
-establishes no bound for a stranger, which is precisely why the conservative attribution is the
-captain's call. The field, the type and the table all stay: a future producer **can** be
-deployer-attributable, and it has to come to the table on purpose to become one.
+that window is the same for every candidate. It is not a fixed instrument, and the case that proved
+it is now closed rather than hypothetical: until captain decision 144a `readLaunchWindow` sought in
+**milliseconds** (65,000) while deciding membership in **slots** (160), so as the chain slowed the
+window's tail went unfetched — 354 in-window fills, 161 of them sells, across 102 launches, and
+dropping a late sell flips a wallet from closed to open, exactly what `thresholds.json` →
+`stage2_entry.windowSlotSpan` warns silently changes gate outcomes at `minFieldRoundTrips`. The seek
+now scales with the span (`pumpfun.mjs` → `windowReachMs`, the owner of that history), so that
+particular time-varying loss is gone — but what replaced it is another limit of **ours**: reaching
+further costs pages, and a launch over `maxRequestsPerLaunch` is dropped as `request-cap`, which
+falls hardest on the busiest launches. So `closed.length` still depends on our own instrument rather
+than on the deployer. The honest note beside it is that the seek defect moved our own create-slot
+series by **nothing** (identical to seven significant figures) because create-slot outsiders close
+early — but that is n = 1 deployer on our own tape and establishes no bound for a stranger, which is
+precisely why the conservative attribution is the captain's call. The field, the type and the table
+all stay: a future producer **can** be deployer-attributable, and it has to come to the table on
+purpose to become one.
 
 Two things this does **not** do. It does not retune anything — `minPricedFraction`, decision 134a's
 refusal and every other bar are untouched, and #17's asymmetry (false rejections possible, false

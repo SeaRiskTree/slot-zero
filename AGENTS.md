@@ -68,6 +68,12 @@ RPC signature cache) and a superseded `tape/` probe were excluded; everything el
 verbatim. When later evidence contradicts the imported prose, add to `IMPORT.md`
 → "Corrections"; do not edit `report.md` or the dataset `README.md`.
 
+**THE TAPE'S WINDOW IS NOT A FLAT 60 s — it is per launch, and assuming otherwise has already
+produced wrong published statements more than once.** Measured from `window/{mint}.meta.json` →
+`window_ms` over the 103 graduated launches: **83 at 60 s, 3 at 120 s, 17 at 300 s** (whole tape:
+210 / 4 / 25 of 239). Read each launch's own `window_ms` — `tools/graduated-life-tape/launches.mjs`
+→ `readWindowMeta` is the accessor — before any per-launch rate, uplift or page-count aggregate.
+
 **`report.md` §3.5's timing claims are all four wrong and `IMPORT.md` corrections 4–7 own the
 fixes** — read them before quoting §3.5 on *when* anything happened. The one that will bite a new
 view: **`curve_last_tx_s` is an upper *bound*, never a timing.** The curve keeps taking referencing
@@ -166,6 +172,12 @@ Five things bind anything that touches it or copies from it:
   to seven significant figures) because create-slot outsiders close early; it moves an all-entrant
   reading by 69 pairs / 17.1 SOL. `tools/graduated-life-tape/walk.mjs` and
   `tools/arrival-rate-walk/walk.mjs` both use `seekCursor(endMs)` + `tsMs <= endMs` and cannot have it.
+  **KNOWN CAVEAT, DO NOT RE-DERIVE: the `windowSlotSpan` justification's "~63.5 s" is stale.** It
+  converts 160 slots at the tape's old ~397 ms/slot; the measured span is **68–69 s**, consistent with
+  the drift above, i.e. wider than the 65 s reach rather than comfortably inside it. The prose in
+  `thresholds.json` → `stage2_entry.justification` and `tools/deployer-screen/stage2.mjs` still says
+  63.5 s; a separate consolidation lane owns fixing it, so read the number as an underestimate and do
+  not patch it in passing.
 - **The two clocks agree, and this was measured rather than assumed.** Dune's `created_at` is the
   chain's block time; every fill's `ts` is the vendor's. `getBlockTime(createSlot)` equals the window
   sidecar's `created_timestamp` on **12 of 12** launches spread over 2025-12 → 2026-07 — skew 0 ms,
@@ -225,6 +237,10 @@ Learned at real cost; the citations are to
   or the endpoint saying nothing is older, establishes it. Same distinction as the dataset's
   `meta.reached_mint`. Also **sort by `sid`/`slotIndexId` before reading the queue** — the stored
   tape is ascending and the live endpoint is descending.
+- **`sid` decomposes exactly: slot (12 digits) + transaction index (6 digits) + anchor event ordinal
+  (4 digits)** — verified on 957 fills. So `slot = floor(sid / 1e10)`; the low 10 digits order fills
+  *within* a slot and are not a timestamp. Do not parse it any other way, and do not difference two
+  `sid`s as a duration.
 - **THE TWO PUMP.FUN SURFACES DO NOT AGREE ON A MINT INSTANT, and the disagreement runs in exactly
   the direction that deletes a create slot.** `frontend-api-v3`'s `coins?creator=` rows carry
   **millisecond-precision** `created_timestamp` on older launches while `swap-api`'s fill `ts` is

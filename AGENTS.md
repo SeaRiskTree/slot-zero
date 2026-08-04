@@ -173,8 +173,11 @@ Five things bind anything that touches it or copies from it:
   reading by 69 pairs / 17.1 SOL. `tools/graduated-life-tape/walk.mjs` and
   `tools/arrival-rate-walk/walk.mjs` both use `seekCursor(endMs)` + `tsMs <= endMs` and cannot have it.
   **KNOWN CAVEAT, DO NOT RE-DERIVE: the `windowSlotSpan` justification's "~63.5 s" is stale.** It
-  converts 160 slots at the tape's old ~397 ms/slot; the measured span is **68–69 s**, consistent with
-  the drift above, i.e. wider than the 65 s reach rather than comfortably inside it. The prose in
+  converts 160 slots at the tape's old ~397 ms/slot; on the rates
+  `tools/arrival-rate-walk/README.md` owns, 160 slots is **~66.9 s** at the p50 418.0 ms/slot of
+  2026-07 and **~70.6 s** at the max 441.3, both against the fixed 65 s reach. **Read the bound, not
+  the median**: a reach bound has to hold at the maximum observed slot rate, and that is where the
+  160-slot span exceeds the 65 s reach. The prose in
   `thresholds.json` → `stage2_entry.justification.windowSlotSpan` **and**
   `stage2_entry.justification.windowMs`, and `tools/deployer-screen/stage2.mjs`, all still say
   63.5 s; a separate consolidation lane owns fixing all three, so read the number as an underestimate

@@ -188,6 +188,19 @@ execution.
 
 ---
 
+## Reading the census's largest deployers — the oversized split
+
+**`OVERSIZED-SPLIT.md` owns it, with its evidence in `runs/2026-08-04-oversized-split.json`.** The
+census names deployers; the deployer screen's Dune leg then enumerates each one's whole creation
+history, and `CREATION_SQL`'s per-deployer row cap **refused 604 of these 3,036 wallets (19.9%),
+biased towards the largest histories**. Captain decision 196a splits those wallets into their own
+execution rather than raising the cap. Measured on a 40-wallet draw from this cohort: cap refusals
+**9/40 → 0/40**, overall refusals **12/40 → 5/40**, for 3 extra executions and ~43 estimated export
+credits.
+
+**The remaining refusals are a different cause** — a wallet whose newest launch post-dates the cached
+coverage probe — and the split cannot touch it. Do not read the after figure as a closed blackout.
+
 ## What this tool cannot answer
 
 - **Whether any of these wallets is beatable.** That is the deployer screen's question and its

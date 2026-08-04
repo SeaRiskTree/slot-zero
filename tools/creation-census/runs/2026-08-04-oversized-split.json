@@ -1,0 +1,651 @@
+{
+  "what": "The oversized split measured live on the 2026-07 creation census. Captain decision 196a, 2026-08-04.",
+  "decision": "slot-zero-census-wallet-gate-validation -> decision-196a-oversized-split.md (held in firstmate's records, not in this repo).",
+  "answers": "slot-zero-census-wallet-gate-validation -> report.md finding 2 and section 8 item 1 (held in firstmate's records, not in this repo).",
+  "method": "tools/creation-census/OVERSIZED-SPLIT.md",
+  "producedBy": "tools/deployer-screen/dune.mjs -> enumerateCreations({ splitOversized: true }), the production code path, driven by a disposable harness. No saved query was created, edited or archived; saved query 8204672 was verified byte for byte against the committed CREATION_SQL before the first execution.",
+  "startedAtUtc": "2026-08-04T07:11:12.867Z",
+  "finishedAtUtc": "2026-08-04T07:11:59.749Z",
+  "sample": {
+    "rule": "The scout stratum-A draw reproduced verbatim: rank the 3,031 deployers of tools/creation-census/runs/2026-07-cohort.json that are absent from tools/deployer-screen/feed/ledger.json by sha256(\"slot-zero-census-wallet-gate-validation:\" || wallet) ascending as hex, take the first 40.",
+    "n": 40,
+    "whyForty": "At 40 wallets CREATION_SQL per-deployer cap is exactly 500 - the same cap a full 195-candidate production run applies. A smaller batch gets a MORE generous cap and would understate the very refusal rate being measured.",
+    "reproducesThePublishedDraw": "min 30 / p25 43 / p50 93 / p75 147 / p90 346 / max 685 July creations, identical to the published stratum-A table at nearest-rank quantiles.",
+    "populationCensusDeployers": 3036,
+    "populationEligible": 3031
+  },
+  "bounds": {
+    "sample": 40,
+    "batchCap": 500,
+    "productionCap": 500,
+    "sqlRowCeiling": 19999,
+    "maxSplitExecutions": 3,
+    "maxSplitRowsPerExecution": 8000,
+    "executionCeiling": 5,
+    "requestCeiling": 100,
+    "worstCaseExportCredits": 106,
+    "expected": "pass 1 ~944,347 bytes / ~18.9 export credits (the scout measured this exact batch); the split adds one row per launch of every cap-refused wallet, which its own launches_total declares before a single follow-up execution is issued."
+  },
+  "coverage": {
+    "ok": true,
+    "reasons": [],
+    "fromCache": true
+  },
+  "pass1": {
+    "launchCap": 500,
+    "rowsReturned": 8986,
+    "unreadableRows": 0,
+    "walletsRefusedByShape": 0,
+    "rowAccounting": "8,986 rows returned = the sum over the 40 wallets of min(launches_total, 500), exactly."
+  },
+  "oversizedSplit": {
+    "attempted": true,
+    "executions": 3,
+    "rowsReturned": 20556,
+    "walletsTruncated": 9,
+    "walletsRecovered": 7,
+    "walletsStillRefused": 2,
+    "unplaced": [],
+    "groups": [
+      {
+        "wallets": [
+          "7E9jfxCczubz4FXkkVKzUMHXGwzJxyppC4m7y3ew8ATg"
+        ],
+        "launchCap": 19999,
+        "expectedRows": 6694,
+        "rowsReturned": 6694,
+        "refused": null
+      },
+      {
+        "wallets": [
+          "78N177fzNJpp8pG49xDv1efYcTMSzo9tPTKEA9mAVkh2"
+        ],
+        "launchCap": 19999,
+        "expectedRows": 5979,
+        "rowsReturned": 5979,
+        "refused": null
+      },
+      {
+        "wallets": [
+          "5htGpHK2oV9g2BcDqLdRBqjCLdy8mc3fsESfR5DU73eM",
+          "B9kJYdzb4gB9AC3aFChReDhJ2D5YDCaR4UrEoen2NcyC",
+          "Dfv8M6RUAeDVefkRDEi6nY4pTpBTXTW22yUX9QQeAUJG",
+          "C8BdBLW1GdnCR86nSpcfRMbshvHqwKq9qSTTdSn71AeV",
+          "EH7aHeLEz8wd9wqeMuT364ntXM93j6Mo5cbmjQFhKY9S",
+          "Ex7UenPz33rMzhvgbyQSBdrtJyx67zK3VkG9FxAfDRLa",
+          "6PX4xuN4TLPCL2GqtUZf2Q6iTjwfGbc9vcK33sinN3wP"
+        ],
+        "launchCap": 2857,
+        "expectedRows": 7883,
+        "rowsReturned": 7883,
+        "refused": null
+      }
+    ],
+    "stopped": null,
+    "note": "CAPTAIN DECISION 196a: a wallet the per-deployer cap truncates is re-asked for in its own, smaller execution, where the same arithmetic hands it a much larger cap. The cap was not raised: raising it trades one arbitrary bound for another and leaves the bias towards the largest histories exactly where it was, one notch further out. It is OPT-IN per caller and it spends a BILLED execution per group, so a caller enabling it is stating a budget, and what it does NOT reach is counted rather than left to be inferred from the wallets that came back."
+  },
+  "refusalRate": {
+    "before": {
+      "refused": 12,
+      "of": 40,
+      "rate": 0.3,
+      "byLaunchCap": 9,
+      "byProbeFreshness": 3
+    },
+    "after": {
+      "refused": 5,
+      "of": 40,
+      "rate": 0.125,
+      "byLaunchCap": 0,
+      "byProbeFreshness": 5
+    },
+    "note": "BEFORE is recoverable exactly rather than re-measured: the split eligible set IS the set the first execution cap truncated, and the split changes no other wallet, so refused-before = refused-after + recovered. The freshness class GREW between the published 2026-08-04 reading (1 of 40) and this one (3 of 40) because the cached coverage probe aged while these wallets kept creating; it is not a consequence of the split."
+  },
+  "spend": {
+    "requests": 24,
+    "executions": 4,
+    "executionCeiling": 5,
+    "resultBytes": 3102261,
+    "estimatedExportCredits": 62.045,
+    "apportioned": {
+      "bytesPerRow": 105.01,
+      "pass1Bytes": 943637,
+      "pass1ExportCredits": 18.9,
+      "splitBytes": 2158624,
+      "splitExportCredits": 43.2,
+      "note": "This run predates the per-group resultBytes field, so the split share is apportioned by ROW COUNT at the pooled measured rate. The apportionment is checkable: it puts pass 1 at 943,637 bytes against the 944,347 the published study measured for this same 40-wallet batch, 0.08% apart. Later runs record each follow-up execution own bytes and need no apportionment."
+    }
+  },
+  "wallets": [
+    {
+      "wallet": "Cu4dH4E4ZHZTxKeitv1cQkpA5M7yqTGLFbiNP4pfJBAS",
+      "julyLaunches": 37,
+      "declaredLaunches": 245,
+      "launchesReturned": 245,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "Cg5HtiCgoq1r23APSEB4PpkbNHu5c6xxHRxir2ACaKPD",
+      "julyLaunches": 109,
+      "declaredLaunches": 109,
+      "launchesReturned": 109,
+      "bonded": 1,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "GNUBWkQM7yLsTZarUedNeCRXWWF7Q2gamvNGHhB1Fs4q",
+      "julyLaunches": 43,
+      "declaredLaunches": 49,
+      "launchesReturned": 49,
+      "bonded": 1,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "6EUfJDq9Zccf6N7KddDZX2GsS8hCMSQdQYo9ZeJ44NHq",
+      "julyLaunches": 93,
+      "declaredLaunches": 357,
+      "launchesReturned": 357,
+      "bonded": 1,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "4Me1S3X1Uq21YGuo4TZE1ZbZwfrKUTmU2VAAoxzENPsT",
+      "julyLaunches": 74,
+      "declaredLaunches": 368,
+      "launchesReturned": 368,
+      "bonded": 7,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "D5ZwgsKbLEF3S1niJ6HnkGc2P2QVYbcUN8rREGMx7tkE",
+      "julyLaunches": 53,
+      "declaredLaunches": 184,
+      "launchesReturned": 184,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "3ZExNjsFNHNoE8a9D3L7ri8M8NXg5YCwRLBnHyC64Du3",
+      "julyLaunches": 42,
+      "declaredLaunches": 42,
+      "launchesReturned": 42,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "AMoLKtk9YcX4woAjriPRw7y2A4nuE9Syfp9qMZGCnqf4",
+      "julyLaunches": 95,
+      "declaredLaunches": 97,
+      "launchesReturned": 97,
+      "bonded": 2,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "EKKtZQeiaLfxs3kkCudgVVoL4bAJZTCg1Pw5SdbGk81V",
+      "julyLaunches": 30,
+      "declaredLaunches": 42,
+      "launchesReturned": 42,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "7Eb6TozQeajph1fo2v9gfrYPv924WLVaphFiZRmtzBiU",
+      "julyLaunches": 102,
+      "declaredLaunches": 171,
+      "launchesReturned": 171,
+      "bonded": 0,
+      "usable": false,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": [
+        "this wallet's newest enumerated launch (2026-08-04T06:29:46.000Z) is newer than the probed surfaces' own last row (2026-08-04T01:41:12.000Z), so the probe does not cover the period the count was read over."
+      ]
+    },
+    {
+      "wallet": "2y818eGm4tFsMqne6vg1CmjP5nsiu4q4PpTMr9FMjnTi",
+      "julyLaunches": 32,
+      "declaredLaunches": 69,
+      "launchesReturned": 69,
+      "bonded": 1,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "7z8GKbJgh3uQ6CKHaYSkandj8FUD4qx1dvgv8TKkWti7",
+      "julyLaunches": 37,
+      "declaredLaunches": 37,
+      "launchesReturned": 37,
+      "bonded": 12,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "D6XfYsLmM9eVTBw5JzPARGXuLvwQDyCPr1QTd5rDDJ2b",
+      "julyLaunches": 116,
+      "declaredLaunches": 165,
+      "launchesReturned": 165,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "FaabdHamyc2yh2TSgvpf8eTCbnLtssJ9dGuTibiy8wy1",
+      "julyLaunches": 109,
+      "declaredLaunches": 316,
+      "launchesReturned": 316,
+      "bonded": 1,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "3B3wrmkcJbeZPxSGD4s9Wgwbj2WoKPAU8rb6Nf2oRk4q",
+      "julyLaunches": 74,
+      "declaredLaunches": 74,
+      "launchesReturned": 74,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "B9kJYdzb4gB9AC3aFChReDhJ2D5YDCaR4UrEoen2NcyC",
+      "julyLaunches": 40,
+      "declaredLaunches": 1178,
+      "launchesReturned": 1178,
+      "bonded": 12,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": true,
+      "reaskedInOwnExecution": true,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "EFcGBtCmQ7QvB34pYaonopWf5ZJqHYBB5rAiRYm59G3f",
+      "julyLaunches": 70,
+      "declaredLaunches": 283,
+      "launchesReturned": 283,
+      "bonded": 22,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "CPUxdMuS8UqUxz3ETopicdGaEcgJXhv8y9o469837RY4",
+      "julyLaunches": 55,
+      "declaredLaunches": 380,
+      "launchesReturned": 380,
+      "bonded": 4,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "24sMR47AgTrWzw98yiBo9PWQGdo6qKngDCmgpnopUhbp",
+      "julyLaunches": 38,
+      "declaredLaunches": 235,
+      "launchesReturned": 235,
+      "bonded": 3,
+      "usable": false,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": [
+        "this wallet's newest enumerated launch (2026-08-04T06:22:22.000Z) is newer than the probed surfaces' own last row (2026-08-04T01:41:12.000Z), so the probe does not cover the period the count was read over."
+      ]
+    },
+    {
+      "wallet": "EH7aHeLEz8wd9wqeMuT364ntXM93j6Mo5cbmjQFhKY9S",
+      "julyLaunches": 516,
+      "declaredLaunches": 717,
+      "launchesReturned": 717,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": true,
+      "reaskedInOwnExecution": true,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "C8BdBLW1GdnCR86nSpcfRMbshvHqwKq9qSTTdSn71AeV",
+      "julyLaunches": 651,
+      "declaredLaunches": 899,
+      "launchesReturned": 899,
+      "bonded": 16,
+      "usable": false,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": true,
+      "reaskedInOwnExecution": true,
+      "unplacedBySplit": false,
+      "reasons": [
+        "this wallet's newest enumerated launch (2026-08-04T03:47:21.000Z) is newer than the probed surfaces' own last row (2026-08-04T01:41:12.000Z), so the probe does not cover the period the count was read over."
+      ]
+    },
+    {
+      "wallet": "6PX4xuN4TLPCL2GqtUZf2Q6iTjwfGbc9vcK33sinN3wP",
+      "julyLaunches": 116,
+      "declaredLaunches": 653,
+      "launchesReturned": 653,
+      "bonded": 37,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": true,
+      "reaskedInOwnExecution": true,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "Dfv8M6RUAeDVefkRDEi6nY4pTpBTXTW22yUX9QQeAUJG",
+      "julyLaunches": 212,
+      "declaredLaunches": 1126,
+      "launchesReturned": 1126,
+      "bonded": 16,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": true,
+      "reaskedInOwnExecution": true,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "F7YS7eauch5nvsUgtFFKcvhBrgPE14weZyMg7otvsi7g",
+      "julyLaunches": 118,
+      "declaredLaunches": 118,
+      "launchesReturned": 118,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "5htGpHK2oV9g2BcDqLdRBqjCLdy8mc3fsESfR5DU73eM",
+      "julyLaunches": 323,
+      "declaredLaunches": 2618,
+      "launchesReturned": 2618,
+      "bonded": 44,
+      "usable": false,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": true,
+      "reaskedInOwnExecution": true,
+      "unplacedBySplit": false,
+      "reasons": [
+        "this wallet's newest enumerated launch (2026-08-04T07:02:29.000Z) is newer than the probed surfaces' own last row (2026-08-04T01:41:12.000Z), so the probe does not cover the period the count was read over."
+      ]
+    },
+    {
+      "wallet": "Cp7Fe8h4UUwzka2sV1Keet1sjpnfL9z1yWZnA39M7yE8",
+      "julyLaunches": 147,
+      "declaredLaunches": 147,
+      "launchesReturned": 147,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "GxBLzzNqameBg593FWa6GWNtRns1DhpyGptmcpkCzxBw",
+      "julyLaunches": 42,
+      "declaredLaunches": 47,
+      "launchesReturned": 47,
+      "bonded": 1,
+      "usable": false,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": [
+        "this wallet's newest enumerated launch (2026-08-04T04:23:03.000Z) is newer than the probed surfaces' own last row (2026-08-04T01:41:12.000Z), so the probe does not cover the period the count was read over."
+      ]
+    },
+    {
+      "wallet": "EFwaTPg7yaMofqWK9W7ZVSasZNQQdmMGJprHWVWZT8sA",
+      "julyLaunches": 47,
+      "declaredLaunches": 63,
+      "launchesReturned": 63,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "DHdyXD2tGei5pKai1aSCUbg2LQ4PHaumZECyuFvYVWej",
+      "julyLaunches": 125,
+      "declaredLaunches": 125,
+      "launchesReturned": 125,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "6c6rH6y6sx36f58X2tGGAkAoVAcM9weWfXdaJxUgWuUi",
+      "julyLaunches": 138,
+      "declaredLaunches": 138,
+      "launchesReturned": 138,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "7E9jfxCczubz4FXkkVKzUMHXGwzJxyppC4m7y3ew8ATg",
+      "julyLaunches": 346,
+      "declaredLaunches": 6694,
+      "launchesReturned": 6694,
+      "bonded": 98,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": true,
+      "reaskedInOwnExecution": true,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "2q7KiUtAY3TaDEZWSz5u5XAdGqyg57caTprw2PprLDie",
+      "julyLaunches": 56,
+      "declaredLaunches": 56,
+      "launchesReturned": 56,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "HuFugub2eN2fmdsss5CDeA2Hwq9BFC6GP2PbwTSmudgv",
+      "julyLaunches": 43,
+      "declaredLaunches": 58,
+      "launchesReturned": 58,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "5rFVvx9oqFgp2BGMeXz7jp8XRnDHTdiPjYRR45Fyq3yz",
+      "julyLaunches": 160,
+      "declaredLaunches": 186,
+      "launchesReturned": 186,
+      "bonded": 1,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "EuZPpNER1TiMoui2WrPLDM4XpjHA3GrWDzNTfDqcXwSc",
+      "julyLaunches": 31,
+      "declaredLaunches": 33,
+      "launchesReturned": 33,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "78N177fzNJpp8pG49xDv1efYcTMSzo9tPTKEA9mAVkh2",
+      "julyLaunches": 153,
+      "declaredLaunches": 5979,
+      "launchesReturned": 5979,
+      "bonded": 61,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": true,
+      "reaskedInOwnExecution": true,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "Ex7UenPz33rMzhvgbyQSBdrtJyx67zK3VkG9FxAfDRLa",
+      "julyLaunches": 685,
+      "declaredLaunches": 692,
+      "launchesReturned": 692,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": true,
+      "reaskedInOwnExecution": true,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "91ivBhzDJXUyxARzzszw1ebJkgUtrFpUhVyX4tDtu16G",
+      "julyLaunches": 61,
+      "declaredLaunches": 62,
+      "launchesReturned": 62,
+      "bonded": 8,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "6mnJFU9gpQnb7BCvMPGZ2uy8xZJNZt2ff2TwF7EqNNa6",
+      "julyLaunches": 188,
+      "declaredLaunches": 188,
+      "launchesReturned": 188,
+      "bonded": 13,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    },
+    {
+      "wallet": "DihTFSv3hSfg4892fr5jqcPgXy8hyQtbcutSJB35vd49",
+      "julyLaunches": 42,
+      "declaredLaunches": 42,
+      "launchesReturned": 42,
+      "bonded": 0,
+      "usable": true,
+      "truncatedByLaunchCap": false,
+      "truncatedBySplitPass1": false,
+      "reaskedInOwnExecution": false,
+      "unplacedBySplit": false,
+      "reasons": []
+    }
+  ]
+}

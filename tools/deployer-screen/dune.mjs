@@ -162,7 +162,9 @@ export const LAUNCH_CAP_FLOOR = 500;
  * A wallet above its run's cap falls back to the walk, which is the slow answer rather than a wrong
  * one — and the record carries enough to recompute the cap exactly
  * (`thresholds.dune.maxResultRows`, the gated candidate count and `dune.walletsRefusedByShape`), so
- * what a run applied is auditable after the fact.
+ * what a run applied is auditable after the fact. **Since captain decision 196a it is not the first
+ * answer either**: {@link planOversizedSplit} re-asks for the capped wallets in their own, smaller
+ * execution, where the same arithmetic hands them a far larger cap. See {@link OVERSIZED_SPLIT}.
  *
  * The share-out reads {@link SQL_ROW_CEILING} itself — the literal the SQL contains — rather than
  * re-deriving it from the pinned threshold, so this mirror cannot name a cap the vendor did not
@@ -173,6 +175,187 @@ export const LAUNCH_CAP_FLOOR = 500;
  */
 export function launchCapPerWallet(walletCount) {
   return Math.max(LAUNCH_CAP_FLOOR, Math.floor(SQL_ROW_CEILING / Math.max(1, walletCount)));
+}
+
+// --- the oversized split (captain decision 196a) ------------------------------------------------
+
+/**
+ * The one sentence that says what the split is and what it is not. It reaches a refusal reason and
+ * this module's own documentation, because a reader meeting a still-refused oversized wallet needs
+ * to know the split ran and did not reach it, rather than that it does not exist.
+ */
+export const OVERSIZED_SPLIT =
+  'CAPTAIN DECISION 196a: a wallet the per-deployer cap truncates is re-asked for in its own, ' +
+  'smaller execution, where the same arithmetic hands it a much larger cap. The cap was not raised: ' +
+  'raising it trades one arbitrary bound for another and leaves the bias towards the largest ' +
+  'histories exactly where it was, one notch further out. It is OPT-IN per caller and it spends a ' +
+  'BILLED execution per group, so a caller enabling it is stating a budget, and what it does NOT ' +
+  'reach is counted rather than left to be inferred from the wallets that came back.';
+
+/**
+ * @typedef {object} OversizedGroup
+ * @property {string[]} wallets       The deployers this follow-up execution asks about, largest
+ *   declared history first.
+ * @property {number} launchCap       The per-deployer cap this group's own execution will apply —
+ *   {@link launchCapPerWallet} over the group's size, not the original batch's.
+ * @property {number} expectedRows    Sum of the group's declared histories, i.e. how many rows the
+ *   execution should return if every wallet enumerates whole.
+ */
+
+/**
+ * @typedef {object} OversizedSplitPlan
+ * @property {OversizedGroup[]} groups Follow-up executions to issue, in the order they are issued.
+ *   **Largest history first**, which is the whole point: the refusal this fixes is biased towards
+ *   the largest wallets, so a budget that binds must bind on the smallest ones instead of
+ *   reinstating the bias it removed.
+ * @property {{ wallet: string, declaredLaunches: number | null, reason: string }[]} unplaced
+ *   Wallets the plan could not seat, each with the whole sentence saying why. These stay refused and
+ *   take the creation walk, and the count of them is what a report must state rather than implying
+ *   the split closed the blackout.
+ * @property {number} rowsPlanned     Rows every planned group expects to return, summed.
+ */
+
+/**
+ * Pack cap-truncated wallets into follow-up executions that will not truncate them.
+ *
+ * **Why this is a split rather than a bigger cap.** {@link LAUNCH_CAP_FLOOR} is sized against the
+ * histories this repo had measured (8/10/65/152/247) and refuses **604 of the 3,036 wallets in the
+ * 2026-07 creation census — 19.9%**, biased towards the largest histories, which are the wallets
+ * most worth finding (`slot-zero-census-wallet-gate-validation` → `report.md` finding 2, held in
+ * firstmate's records, not in this repo). Raising
+ * the floor moves that boundary without removing the bias. Splitting removes it at its cause: the
+ * cap is `max(500, floor(19999 / <deployers in the batch>))`, so the SAME committed SQL hands a
+ * two-wallet batch 9,999 rows per deployer and a one-wallet batch 19,999. **No SQL changes, so saved
+ * query `8204672` is untouched** — the deploy step this repo warns about is not part of this change.
+ *
+ * The sizes are free: {@link CREATION_SQL} returns `launches_total` beside every row, so the first
+ * execution already said exactly how big each truncated wallet is. The plan is arithmetic over
+ * numbers already paid for, not a discovery step.
+ *
+ * Two constraints decide a group, and both are the vendor's rather than this module's:
+ *
+ * 1. **The cap must clear the group's largest wallet.** With `k` wallets the cap is
+ *    {@link launchCapPerWallet}`(k)`, so a 6,694-launch wallet fixes `k <= 2`. Wallets are sorted
+ *    descending and grouped contiguously, so the group's first member is its largest and the
+ *    constraint is checked once per admission.
+ * 2. **The rows must stay inside what {@link DuneResultSet}'s reader will accept**, which is
+ *    `maxRowsPerExecution` and defaults to {@link SQL_ROW_CEILING} — the largest result that reader
+ *    does not refuse outright. It is the vendor-facing bound rather than an invented one. **A
+ *    tighter value is an operator's to pass**: `/results` also pages on RESPONSE SIZE, and a group
+ *    Dune pages is refused whole by the reader's own wholeness check, so a big group risks a billed
+ *    execution for no answer. The largest single-page read this repo has measured is 944,347 bytes
+ *    (~8,200 rows); anything above that is untested rather than known-bad.
+ *
+ * A wallet bigger than one whole execution can hold is not seatable at any batch size and is said so
+ * explicitly, because that residual is permanent and belongs in a report rather than in silence.
+ *
+ * @param {object} input
+ * @param {readonly { wallet: string, declaredLaunches: number | null }[]} input.wallets The
+ *   cap-truncated wallets and the totals their own rows declared.
+ * @param {number} input.maxExecutions How many follow-up executions this run may still spend. See
+ *   {@link enumerateCreations} for why that is the run's already-pinned ceiling and not a new number.
+ * @param {number} [input.maxRowsPerExecution] Defaults to {@link SQL_ROW_CEILING}.
+ * @returns {OversizedSplitPlan}
+ */
+export function planOversizedSplit(input) {
+  const maxRows = Math.max(1, Math.min(input.maxRowsPerExecution ?? SQL_ROW_CEILING, SQL_ROW_CEILING));
+  const maxExecutions = Math.max(0, input.maxExecutions);
+  /** @type {{ wallet: string, declaredLaunches: number | null, reason: string }[]} */
+  const unplaced = [];
+  /** @type {{ wallet: string, declared: number }[]} */
+  const seatable = [];
+
+  for (const w of input.wallets) {
+    const declared = w.declaredLaunches;
+    if (declared === null || !Number.isSafeInteger(declared) || declared <= 0) {
+      // Nothing to pack against. This cannot arise from a cap truncation — that refusal is DEFINED
+      // by a declared total above the rows returned — but a planner that quietly assumed a size
+      // would be inventing the one number the whole design rests on.
+      unplaced.push({
+        wallet: w.wallet,
+        declaredLaunches: declared,
+        reason:
+          `this wallet's own rows declared no usable creation total, so there is no size to plan a ` +
+          `follow-up execution against and one cannot be sized rather than guessed. The creation ` +
+          `walk answers for it.`,
+      });
+      continue;
+    }
+    if (declared > SQL_ROW_CEILING) {
+      unplaced.push({
+        wallet: w.wallet,
+        declaredLaunches: declared,
+        reason:
+          `this wallet declares ${declared} creation(s), more than the ${SQL_ROW_CEILING} rows one ` +
+          `whole execution may return, so it does not fit even in an execution of its own — a batch ` +
+          `of one is capped at ${launchCapPerWallet(1)} rows and the result reader refuses anything ` +
+          `larger. It is not seatable at ANY batch size and the creation walk is the only route to ` +
+          `its whole history.`,
+      });
+      continue;
+    }
+    if (declared > maxRows) {
+      unplaced.push({
+        wallet: w.wallet,
+        declaredLaunches: declared,
+        reason:
+          `this wallet declares ${declared} creation(s), more than the ${maxRows} rows per execution ` +
+          `THIS caller budgeted, so the split leaves it where it was. It is not unseatable: the ` +
+          `vendor's own ceiling is ${SQL_ROW_CEILING} rows and ${declared} sits inside it, so a ` +
+          `caller passing a larger \`maxOversizedRowsPerExecution\`, up to ${SQL_ROW_CEILING}, would ` +
+          `seat this wallet in an execution of its own. Under the budget in force the creation walk ` +
+          `answers for it.`,
+      });
+      continue;
+    }
+    seatable.push({ wallet: w.wallet, declared });
+  }
+
+  // Descending, so a group's FIRST member is its largest and the cap constraint is a single check.
+  // It is also the order the budget should bind in: the refusal being fixed is biased towards the
+  // largest histories, so a run that runs out of executions must drop the smallest wallets.
+  seatable.sort((a, b) => b.declared - a.declared || (a.wallet < b.wallet ? -1 : a.wallet > b.wallet ? 1 : 0));
+
+  /** @type {{ wallets: string[], largest: number, rows: number }[]} */
+  const packed = [];
+  for (const w of seatable) {
+    const open = packed[packed.length - 1];
+    if (open !== undefined) {
+      const k = open.wallets.length + 1;
+      // `open.largest` is the group's first member because the list is sorted descending, so the
+      // admission test is "does the cap a group of k gets still clear the biggest wallet in it".
+      if (launchCapPerWallet(k) >= open.largest && open.rows + w.declared <= maxRows) {
+        open.wallets.push(w.wallet);
+        open.rows += w.declared;
+        continue;
+      }
+    }
+    packed.push({ wallets: [w.wallet], largest: w.declared, rows: w.declared });
+  }
+
+  const groups = packed.slice(0, maxExecutions).map((g) => ({
+    wallets: g.wallets,
+    launchCap: launchCapPerWallet(g.wallets.length),
+    expectedRows: g.rows,
+  }));
+  for (const dropped of packed.slice(maxExecutions)) {
+    for (const wallet of dropped.wallets) {
+      const declared = seatable.find((s) => s.wallet === wallet)?.declared ?? null;
+      unplaced.push({
+        wallet,
+        declaredLaunches: declared,
+        reason:
+          `the oversized split had ${maxExecutions} follow-up execution(s) of budget left this run ` +
+          `and this wallet did not fit inside them. An execution is billed whether or not it ` +
+          `succeeds, so the split spends only the budget already pinned rather than raising it, and ` +
+          `the largest histories are seated first — a budget that binds must bind on the smallest ` +
+          `oversized wallets, not reinstate the bias this split removes. The creation walk answers ` +
+          `for it, and a later run with more execution budget reaches it.`,
+      });
+    }
+  }
+
+  return { groups, unplaced, rowsPlanned: groups.reduce((n, g) => n + g.expectedRows, 0) };
 }
 
 /**
@@ -1144,9 +1327,42 @@ export async function readCoverageProbe(client, opts) {
  *   for not matching {@link WALLET_SHAPE}. Counted rather than silently narrowing the batch.
  * @property {number} launchCap The per-deployer row cap this batch applied — {@link
  *   launchCapPerWallet} over the wallets actually sent. `0` when nothing was sent.
- * @property {number} walletsRefusedByLaunchCap How many candidates the cap truncated and therefore
- *   refused. The number that says the batch-level ceiling did NOT fire: these wallets take the walk
- *   and everyone else keeps their Dune answer.
+ * @property {number} walletsRefusedByLaunchCap How many candidates the cap truncated and are STILL
+ *   refused once the oversized split has run. The number that says the batch-level ceiling did NOT
+ *   fire: these wallets take the walk and everyone else keeps their Dune answer. Read it beside
+ *   {@link OversizedSplitOutcome}`.walletsRecovered` — before decision 196a the two were the same
+ *   count by construction, and they no longer are.
+ * @property {OversizedSplitOutcome} oversizedSplit What the split did, what it cost and what it did
+ *   NOT reach. Present on every run, `attempted: false` when nothing was truncated.
+ */
+
+/**
+ * @typedef {object} OversizedSplitOutcome
+ * @property {boolean} attempted   Whether any wallet was cap-truncated at all.
+ * @property {number} executions   Follow-up executions actually spent. Each is billed.
+ * @property {number} rowsReturned Rows those executions returned, summed.
+ * @property {number} resultBytes  Bytes those executions returned, summed — the split's own marginal
+ *   share of the bill, separable from the first execution's rather than apportioned from a run total.
+ * @property {number} walletsTruncated How many the first execution's cap truncated — the "before".
+ * @property {number} walletsRecovered How many of them a follow-up execution then enumerated whole
+ *   AND that are usable afterwards.
+ * @property {number} walletsStillRefused How many remain refused. **State this number**: the split
+ *   removes one refusal class and cannot remove any other, and a report quoting only the recovery
+ *   would read as though the blackout had closed.
+ * @property {{ wallet: string, declaredLaunches: number | null, reason: string }[]} unplaced Wallets
+ *   no follow-up execution was issued for, each with its whole sentence.
+ * @property {{ wallets: string[], launchCap: number, expectedRows: number, rowsReturned: number | null,
+ *   resultBytes: number | null, refused: string | null }[]} groups One entry per planned follow-up
+ *   execution, in issue order, naming the wallets it asked about — the same granularity `unplaced`
+ *   carries, so a reader can see which billed execution answered for which wallet rather than only
+ *   how many there were. `resultBytes` is that execution's own share of the bill: results are ~71% of
+ *   it at ~20 credits/MB, so a split's marginal cost is readable per execution rather than only as a
+ *   run total apportioned after the fact.
+ * @property {string | null} stopped Why the split stopped early, or `null`. A follow-up execution
+ *   that fails is billed and is NOT retried, exactly like the first one.
+ * @property {string} note {@link OVERSIZED_SPLIT} — carried on the outcome so a reader meeting a
+ *   still-refused oversized wallet learns the split ran and did not reach it, rather than that no
+ *   such thing exists.
  */
 
 /**
@@ -1170,7 +1386,14 @@ export async function readCoverageProbe(client, opts) {
  * @param {number} opts.coverageQueryId
  * @param {boolean} opts.refreshProbe
  * @param {number} opts.nowMs
- * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number, maxCoverageLagMs: number }} opts.bounds
+ * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number,
+ *   maxCoverageLagMs: number, maxOversizedExecutions?: number, maxOversizedRowsPerExecution?: number }} opts.bounds
+ * @param {boolean} [opts.splitOversized] **Opt-IN, and deliberately so.** Captain decision 196a
+ *   authorises the split; wiring it into `screen.mjs` also moves `thresholds.json` →
+ *   `dune.maxExecutionsPerRun`, whose justification currently reads "one execution for the
+ *   enumeration, and at most one more to re-execute the coverage probe … nothing else in a run may
+ *   execute". A default that quietly spent that reserve would contradict a pinned reason rather than
+ *   change it, so the caller says so and states its own budget. See {@link OVERSIZED_SPLIT}.
  * @returns {Promise<DuneEnumeration>}
  */
 export async function enumerateCreations(client, opts) {
@@ -1241,6 +1464,21 @@ export async function enumerateCreations(client, opts) {
     }
   };
 
+  /** @type {OversizedSplitOutcome} */
+  const oversizedSplit = {
+    attempted: false,
+    executions: 0,
+    rowsReturned: 0,
+    resultBytes: 0,
+    walletsTruncated: 0,
+    walletsRecovered: 0,
+    walletsStillRefused: 0,
+    unplaced: [],
+    groups: [],
+    stopped: null,
+    note: OVERSIZED_SPLIT,
+  };
+
   if (!coverage.ok || askable.length === 0) {
     fill(new Map(), new Map(), []);
     return {
@@ -1252,6 +1490,7 @@ export async function enumerateCreations(client, opts) {
       walletsRefusedByShape,
       launchCap,
       walletsRefusedByLaunchCap: 0,
+      oversizedSplit,
     };
   }
 
@@ -1279,8 +1518,135 @@ export async function enumerateCreations(client, opts) {
         ];
 
   fill(rowsByWallet, declaredByWallet, batchReasons);
+
+  // --- the oversized split, captain decision 196a ------------------------------------------------
+  //
+  // Everything needed to plan it was already paid for: `launches_total` says exactly how big each
+  // truncated wallet is. What follows spends executions, so it is bounded by the budget the run
+  // ALREADY has — `client.stats()` reports the ceiling `thresholds.dune.maxExecutionsPerRun` pins
+  // and how much of it is gone — rather than by a new number of this module's invention. That
+  // ceiling's own justification asks for a stated monthly arithmetic before it moves; the split
+  // deliberately does not move it, so a run that wants deeper coverage raises it on purpose.
+  /** @type {{ wallet: string, declaredLaunches: number | null }[]} */
+  const truncated = [];
+  for (const [w, e] of byWallet) if (e.truncatedByLaunchCap) truncated.push({ wallet: w, declaredLaunches: e.declaredLaunches });
+  oversizedSplit.walletsTruncated = truncated.length;
+
+  if (truncated.length > 0 && opts.splitOversized === true && unreadableRows > 0) {
+    // A batch whose rows would not parse is already refused whole, and a follow-up execution asks
+    // the same query the same way — it would very probably meet the same shape and buy a second
+    // bill for it. The split does not spend into a run that cannot read its own answer.
+    oversizedSplit.attempted = true;
+    oversizedSplit.stopped =
+      `the oversized split was not attempted: ${unreadableRows} row(s) of the first execution's ` +
+      `answer could not be read, so the whole batch is already refused and a follow-up execution ` +
+      `would ask the same query the same way. An execution is billed whether or not it succeeds.`;
+  } else if (truncated.length > 0 && opts.splitOversized === true) {
+    oversizedSplit.attempted = true;
+    const spent = client.stats();
+    const budget = Math.max(0, spent.executionCeiling - spent.executions);
+    const allowed = Math.min(budget, opts.bounds.maxOversizedExecutions ?? budget);
+    const plan = planOversizedSplit({
+      wallets: truncated,
+      maxExecutions: allowed,
+      maxRowsPerExecution: opts.bounds.maxOversizedRowsPerExecution,
+    });
+    oversizedSplit.unplaced = plan.unplaced;
+
+    const declaredByTruncated = new Map(truncated.map((t) => [t.wallet, t.declaredLaunches]));
+
+    for (const [groupIndex, group] of plan.groups.entries()) {
+      /** @type {{ wallets: string[], launchCap: number, expectedRows: number, rowsReturned: number | null, resultBytes: number | null, refused: string | null }} */
+      const entry = {
+        wallets: [...group.wallets],
+        launchCap: group.launchCap,
+        expectedRows: group.expectedRows,
+        rowsReturned: null,
+        resultBytes: null,
+        refused: null,
+      };
+      oversizedSplit.groups.push(entry);
+      let groupResult;
+      try {
+        // The saved query was verified against the committed text before the first execution of
+        // this run and cannot have changed since, so it is not re-verified per group: that would
+        // buy one request per group and prove nothing new.
+        oversizedSplit.executions += 1;
+        groupResult = await executeAndRead(
+          client,
+          opts.creationQueryId,
+          { [DEPLOYERS_PARAM]: group.wallets.join(',') },
+          opts.bounds,
+        );
+      } catch (cause) {
+        // A follow-up execution is billed whether or not it succeeds and is NOT retried, exactly
+        // like the first one. It refuses this group and stops the split; the wallets it would have
+        // answered for keep the refusal they already had and take the walk, and every wallet the
+        // first execution DID answer for keeps its Dune answer. Nothing here may abort the run:
+        // the batch's own reading is already in hand and is not made worse by a follow-up failing.
+        entry.refused = cause instanceof Error ? cause.message : String(cause);
+        oversizedSplit.stopped =
+          `the oversized split stopped after ${oversizedSplit.executions} follow-up execution(s): ` +
+          `${entry.refused}`;
+        // Every wallet the plan had seated in a LATER group is named here rather than left to be
+        // inferred from a count: its execution was never issued, so it holds no answer of its own
+        // and nothing else in this record would say so.
+        for (const unissued of plan.groups.slice(groupIndex + 1)) {
+          for (const wallet of unissued.wallets) {
+            oversizedSplit.unplaced.push({
+              wallet,
+              declaredLaunches: declaredByTruncated.get(wallet) ?? null,
+              reason:
+                `this wallet's follow-up execution was planned but never issued, because an earlier ` +
+                `follow-up execution of this split failed and a failed execution is billed and is ` +
+                `never retried — so the split stopped rather than spending further. The creation ` +
+                `walk answers for it.`,
+            });
+          }
+        }
+        break;
+      }
+      entry.rowsReturned = groupResult.rows.length;
+      entry.resultBytes = groupResult.resultBytes;
+      oversizedSplit.rowsReturned += groupResult.rows.length;
+      oversizedSplit.resultBytes += groupResult.resultBytes;
+      const parsed = parseCreationRows(groupResult.rows);
+      // The whole-batch rule applies inside a group exactly as it does to the first execution, and
+      // its blast radius is this group rather than the run: a row that will not parse commonly has
+      // no readable deployer, so the wallet that came back short cannot be named.
+      const groupReasons =
+        parsed.unreadableRows === 0
+          ? []
+          : [
+              `${parsed.unreadableRows} row(s) of this wallet's follow-up (oversized-split) Dune ` +
+                `answer could not be read, and a row that fails to parse commonly has no readable ` +
+                `deployer — so the wallet whose history came back short cannot be named and the ` +
+                `whole follow-up execution is refused. The creation walk answers for it.`,
+            ];
+      for (const w of group.wallets) {
+        byWallet.set(
+          w,
+          toWalletEnumeration({
+            wallet: w,
+            launches: parsed.byWallet.get(w) ?? [],
+            declaredLaunches: parsed.declaredByWallet.get(w) ?? null,
+            launchCap: group.launchCap,
+            batchWallets: group.wallets.length,
+            coverage,
+            priorReasons: [...(priorReasons.get(w) ?? []), ...groupReasons],
+          }),
+        );
+      }
+    }
+  }
+
   let walletsRefusedByLaunchCap = 0;
   for (const e of byWallet.values()) if (e.truncatedByLaunchCap) walletsRefusedByLaunchCap += 1;
+  for (const w of truncated) {
+    const after = byWallet.get(w.wallet);
+    if (after !== undefined && after.usable) oversizedSplit.walletsRecovered += 1;
+    else oversizedSplit.walletsStillRefused += 1;
+  }
   return {
     probe,
     coverage,
@@ -1290,6 +1656,7 @@ export async function enumerateCreations(client, opts) {
     walletsRefusedByShape,
     launchCap,
     walletsRefusedByLaunchCap,
+    oversizedSplit,
   };
 }
 

@@ -529,6 +529,14 @@ QUERY cutting one wallet's history deliberately. `launches_total` is type-checke
 because a default would delete the detection the day the column is renamed and gate every capped
 wallet on a truncated count reported as a total.
 
+**A capped wallet is not necessarily the LAST answer any more (captain decision 196a).** `dune.mjs`
+→ `planOversizedSplit` re-asks for the truncated wallets in their own, smaller execution, where the
+same arithmetic hands them a far larger cap; nothing above changes, because the split is **opt-in**
+(`enumerateCreations({ splitOversized: true })`), `screen.mjs` does not pass it, and no SQL moved —
+so the screen still refuses a capped wallet to the walk exactly as described. Method, bounds, the
+live measurement and what the split still cannot reach are owned by
+[`tools/creation-census/OVERSIZED-SPLIT.md`](../creation-census/OVERSIZED-SPLIT.md).
+
 **Bytes, which is the billed unit, stay bounded and the bound is stated.** Reads are still issued
 with `?limit=dune.maxResultRows`, so no read can exceed it whatever the query does. The measured
 **~97 bytes/row was taken at four columns**; the fifth is bounded by arithmetic at <=24 bytes, so

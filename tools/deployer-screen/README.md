@@ -69,10 +69,17 @@ node tools/deployer-screen/screen.mjs --no-stage2
 node tools/deployer-screen/screen.mjs --tier elite --ownership-only
 
 node tools/deployer-screen/screen.mjs --help
+
+# A separate, KEYLESS measurement pass: how often does a deployer bundle its create-slot
+# transaction? It scores nothing and reaches no verdict — see "The bundling census" below.
+# --subject-era needs no network at all; --dry-run prints the whole keyless exposure.
+node tools/deployer-screen/bundling.mjs --dry-run
+node tools/deployer-screen/bundling.mjs --out tools/deployer-screen/census/$(date +%F)-bundling-census.json
+node tools/deployer-screen/bundling.mjs --help
 ```
 
-Exit codes are distinct because the worst failure mode for a screen is an empty result that reads
-like a real negative: `0` ran (possibly with zero survivors — a measured outcome), `2` usage,
+`screen.mjs`'s exit codes are distinct because the worst failure mode for a screen is an empty
+result that reads like a real negative (`bundling.mjs` has its own smaller set — `--help`): `0` ran (possibly with zero survivors — a measured outcome), `2` usage,
 `3` no credential, `4` credential rejected (401/403), `5` quota (429), `6` ceiling reached,
 `7` upstream, `8` Stage 0 failed.
 
@@ -859,7 +866,8 @@ of 24 false-positive windows and creates none in the other direction**, at a pri
 that become unmeasured** rather than wrong. Per launch rather than per window, the same refusal
 takes **60 of the 235 covered launches (25.5%)** out of every score — that is the coverage it costs,
 and it is the intended trade rather than a regression. On a stranger the same trade applies and cannot be
-priced, because there is no ground truth to price it against. `bundledTx` and `maxWalletsInOneTx`
+priced, because there is no ground truth to price it against. **How often it fires on strangers is
+measured, though** — 1 candidate in 14 survives it, see "The bundling census" below. `bundledTx` and `maxWalletsInOneTx`
 reach the score, the record and the rendered line for exactly that reason: they are the only
 observable that exposes the condition, so a saved run can be audited for it after the fact.
 
@@ -1402,10 +1410,17 @@ reader of that record had no way to know.
 **Every run reports its drops per cause, per wallet and in total**, in the record (`entry.coverage.dropsByReason`
 and the run-level `entryDrops`) and in the rendered output. A non-zero
 `mintTimeDisagreement` is treated as a **reportable event, not a footnote**: all 235 clock
-observations come from our own tape and this lane has never held a vendor key, so whether the two
-clocks agree on *stranger* wallets is untested. If they routinely disagree, the tripwire stops being
-free and starts discarding real launches at scale — and a visible per-run count is what stops that
-happening silently.
+observations come from our own tape and this lane has never held a vendor key, so whether MadeOnSol's
+clock agrees with the fill tape on *stranger* wallets is untested. If they routinely disagree, the
+tripwire stops being free and starts discarding real launches at scale — and a visible per-run count
+is what stops that happening silently.
+
+**On the other vendor pair that has now been walked, they routinely DO disagree.** Driven from
+`frontend-api-v3`'s millisecond-precision `created_timestamp` instead of MadeOnSol's, the tripwire
+dropped 5 of 8 launches on the first candidate the bundling census walked — which is why that pass
+backdates the declared mint by `bundling_census.mintTimeBackdateMs` before calling this walk. The
+measurement, what the backdate costs and why it cannot reach a create slot are in
+"The bundling census" below; nothing about this tripwire changed.
 
 
 

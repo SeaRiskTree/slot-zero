@@ -421,12 +421,11 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   and a **cached** probe read by default.
 - **Free tier: 2,500 credits/month, SHARED, and only 10 PRIVATE QUERIES — but the account is NOT at
   that cap, and "the slots are full" is a stale claim that once blocked a lane on nothing.**
-  **Never take a saved-query count on trust; it is one keyless-of-credits request:**
+  **Never take a saved-query count on trust; re-checking it is free of credits, not of the key:**
   `GET /api/v1/queries?limit=100` with the `X-Dune-API-Key` header lists them, and creating a
   throwaway with `POST /api/v1/query` then archiving it proves a slot is free without spending an
-  execution. Measured that way 2026-08-04 by the discovery-widen investigation
-  (`data/slot-zero-discovery-widen-operations/report.md` §2.1, §6): **8 saved queries, 2 production
-  and 6 retired scratch probes, at least one slot free.** Retiring the six scratch ids is queued
+  execution. Measured that way 2026-08-04 by the discovery-widen investigation: **8 saved queries,
+  2 production and 6 retired scratch probes, at least one slot free.** Retiring the six scratch ids is queued
   work, so the number will move — re-list rather than quote it. The two production queries were
   upgraded in place (`8204672`
   enumeration, `8204603` coverage). Their SQL is committed in `dune.mjs` and

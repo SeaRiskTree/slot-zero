@@ -1,6 +1,7 @@
 /**
- * One of the two network-capable modules in this repository (the other is `pumpfun.mjs`), and the
- * one that holds every KEYED vendor client: MadeOnSol's {@link BoundedClient} and Dune's
+ * One of the two network-capable modules in THIS TOOL (the other is `pumpfun.mjs`) — other tools
+ * under `tools/` carry their own keyless clients — and the one module anywhere in this repository
+ * that holds a KEYED vendor client: MadeOnSol's {@link BoundedClient} and Dune's
  * {@link DuneClient}. New clients land here rather than in a file of their own on purpose — the
  * `fetch` allow-list in `test/deployer-screen.test.ts` is exactly two files, and keeping it at two
  * is what makes "one request in flight, under a ceiling" auditable by reading two files.

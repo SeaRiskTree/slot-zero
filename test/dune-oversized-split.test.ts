@@ -226,6 +226,29 @@ describe('planOversizedSplit — the packing, which must never produce a second 
     expect(plan.groups.length).toBeGreaterThan(1);
   });
 
+  it('separates a wallet the CALLER’s tighter row budget refuses from one nothing can seat', () => {
+    // Both are refused, and the reasons are not interchangeable: one is the vendor's own permanent
+    // ceiling, the other is a bound this caller chose and could raise. Saying "not seatable at ANY
+    // batch size" of the second would claim more than the code establishes.
+    const plan = planOversizedSplit({
+      wallets: [
+        { wallet: wallet(1), declaredLaunches: SQL_ROW_CEILING + 1 },
+        { wallet: wallet(2), declaredLaunches: 12_555 },
+      ],
+      maxExecutions: 9,
+      maxRowsPerExecution: 8000,
+    });
+    expect(plan.groups).toEqual([]);
+    const byWallet = new Map(plan.unplaced.map((u) => [u.wallet, u.reason]));
+    expect(byWallet.get(wallet(1))!).toMatch(/not seatable at ANY batch size/);
+    const tightened = byWallet.get(wallet(2))!;
+    expect(tightened).not.toMatch(/not seatable at ANY batch size/);
+    expect(tightened).toMatch(/12555/);
+    expect(tightened).toMatch(/8000/);
+    expect(tightened).toMatch(new RegExp(String(SQL_ROW_CEILING)));
+    expect(tightened).toMatch(/maxOversizedRowsPerExecution/);
+  });
+
   it('spends nothing when there is no budget, and says so per wallet', () => {
     const plan = planOversizedSplit({
       wallets: [{ wallet: wallet(1), declaredLaunches: 900 }],
@@ -399,6 +422,42 @@ describe('the split inside enumerateCreations', () => {
     expect(e.byWallet.get(small)?.usable).toBe(true);
     expect(e.byWallet.get(big)?.usable).toBe(false);
     expect(e.walletsRefusedByLaunchCap).toBe(1);
+  });
+
+  it('names every wallet of a group the stop never issued, rather than leaving it to a count', async () => {
+    // Two wallets too large to share a group, so the plan holds two follow-up executions and the
+    // first one fails. The second group's wallets hold no answer of their own and nothing else in
+    // the record would say so — what the split does not reach is NAMED, never inferred.
+    const bigA = wallet(1);
+    const bigB = wallet(2);
+    const pair = [bigA, bigB, ...Array.from({ length: 38 }, (_, i) => wallet(i + 10))];
+    const first = [...launchRows(bigA, cap, 12_000), ...launchRows(bigB, cap, 12_000)];
+    const s = stub([first, 'fail', 'fail']);
+    const c = client(s.impl);
+    const e = await enumerateCreations(c, {
+      wallets: pair,
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      bounds: BOUNDS,
+      splitOversized: true,
+    });
+    expect(e.oversizedSplit.groups).toHaveLength(1);
+    expect(c.executions()).toBe(2);
+    expect(e.oversizedSplit.stopped).toMatch(/stopped after 1 follow-up execution/);
+    // Every planned wallet is accounted for exactly once across groups plus unplaced.
+    const seen = [
+      ...e.oversizedSplit.groups.flatMap((g) => g.wallets),
+      ...e.oversizedSplit.unplaced.map((u) => u.wallet),
+    ];
+    expect(seen.sort()).toEqual([bigA, bigB].sort());
+    const unissued = e.oversizedSplit.unplaced.find((u) => !e.oversizedSplit.groups[0]!.wallets.includes(u.wallet))!;
+    expect(unissued.declaredLaunches).toBe(12_000);
+    expect(unissued.reason).toMatch(/planned but never issued/);
+    expect(unissued.reason).toMatch(/billed and is never retried/);
+    expect(unissued.reason).toMatch(/creation walk answers for it/);
+    expect(e.oversizedSplit.walletsStillRefused).toBe(2);
   });
 
   it('does not spend into a first execution that could not be read at all', async () => {

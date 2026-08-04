@@ -280,16 +280,30 @@ export function planOversizedSplit(input) {
       });
       continue;
     }
+    if (declared > SQL_ROW_CEILING) {
+      unplaced.push({
+        wallet: w.wallet,
+        declaredLaunches: declared,
+        reason:
+          `this wallet declares ${declared} creation(s), more than the ${SQL_ROW_CEILING} rows one ` +
+          `whole execution may return, so it does not fit even in an execution of its own — a batch ` +
+          `of one is capped at ${launchCapPerWallet(1)} rows and the result reader refuses anything ` +
+          `larger. It is not seatable at ANY batch size and the creation walk is the only route to ` +
+          `its whole history.`,
+      });
+      continue;
+    }
     if (declared > maxRows) {
       unplaced.push({
         wallet: w.wallet,
         declaredLaunches: declared,
         reason:
-          `this wallet declares ${declared} creation(s), more than the ${maxRows} rows one whole ` +
-          `execution may return, so it does not fit even in an execution of its own — a batch of one ` +
-          `is capped at ${launchCapPerWallet(1)} rows and the result reader refuses anything larger. ` +
-          `It is not seatable at ANY batch size and the creation walk is the only route to its whole ` +
-          `history.`,
+          `this wallet declares ${declared} creation(s), more than the ${maxRows} rows per execution ` +
+          `THIS caller budgeted, so the split leaves it where it was. It is not unseatable: the ` +
+          `vendor's own ceiling is ${SQL_ROW_CEILING} rows and ${declared} sits inside it, so a ` +
+          `caller passing a larger \`maxOversizedRowsPerExecution\`, up to ${SQL_ROW_CEILING}, would ` +
+          `seat this wallet in an execution of its own. Under the budget in force the creation walk ` +
+          `answers for it.`,
       });
       continue;
     }
@@ -1538,7 +1552,9 @@ export async function enumerateCreations(client, opts) {
     });
     oversizedSplit.unplaced = plan.unplaced;
 
-    for (const group of plan.groups) {
+    const declaredByTruncated = new Map(truncated.map((t) => [t.wallet, t.declaredLaunches]));
+
+    for (const [groupIndex, group] of plan.groups.entries()) {
       /** @type {{ wallets: string[], launchCap: number, expectedRows: number, rowsReturned: number | null, resultBytes: number | null, refused: string | null }} */
       const entry = {
         wallets: [...group.wallets],
@@ -1571,6 +1587,22 @@ export async function enumerateCreations(client, opts) {
         oversizedSplit.stopped =
           `the oversized split stopped after ${oversizedSplit.executions} follow-up execution(s): ` +
           `${entry.refused}`;
+        // Every wallet the plan had seated in a LATER group is named here rather than left to be
+        // inferred from a count: its execution was never issued, so it holds no answer of its own
+        // and nothing else in this record would say so.
+        for (const unissued of plan.groups.slice(groupIndex + 1)) {
+          for (const wallet of unissued.wallets) {
+            oversizedSplit.unplaced.push({
+              wallet,
+              declaredLaunches: declaredByTruncated.get(wallet) ?? null,
+              reason:
+                `this wallet's follow-up execution was planned but never issued, because an earlier ` +
+                `follow-up execution of this split failed and a failed execution is billed and is ` +
+                `never retried — so the split stopped rather than spending further. The creation ` +
+                `walk answers for it.`,
+            });
+          }
+        }
         break;
       }
       entry.rowsReturned = groupResult.rows.length;

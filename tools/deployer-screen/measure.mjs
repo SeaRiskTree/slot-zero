@@ -196,8 +196,10 @@ export function measureCreateSlot(fills) {
  * separates the two. Reading the second — which is what the screen used to do implicitly — books
  * the operation's own stake as independent capital and inflates `roomLeft`; on our own tape that is
  * ~9.6–10.0 SOL per affected launch, and replaying the live recipe at every point in the tape's
- * history it flips **24 of 228 rolling windows, all 24 towards `ENTRY-ROOM-PRESENT` where the truth
- * is `ABSENT`, with zero flips the other way**
+ * history it flips **22 of 22 rolling windows towards `ENTRY-ROOM-PRESENT` where the truth is
+ * `ABSENT`, with zero flips the other way**. The count is a property of the replay's window width,
+ * which is `maxLaunchesPerCandidate`: it read 24 of 228 at the cap of 8 the cited report measured
+ * under, and 22 of 226 at the 10 captain decision 190a pinned
  * (`slot-zero-stage2-correctness-and-fees/report.md` §3.3).
  *
  * Captain decision 134a: **do not score those launches — call the opening unproven rather than
@@ -212,7 +214,8 @@ export function measureCreateSlot(fills) {
  * practice — a bundled transaction always leaves at least one non-deployer wallet marked — so this
  * is a widening of the marked SET, not a loosening of the bar on it. On the committed tape it takes
  * the unproven count from **60 of 235 to 0**, and the rolling replay's unmeasured windows from
- * **81 of 228 to 0**, with false positives 0 before and after.
+ * **62 of 226 to 0**, with false positives 0 before and after (81 of 228 at the launch cap of 8
+ * this was first measured under — the replay's window is `maxLaunchesPerCandidate` wide).
  *
  * This is deliberately a statement about the *measurement*, not a threshold: one mark is the
  * minimum evidence that the rule was able to see anything at all. **It does not make the recovery

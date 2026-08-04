@@ -914,13 +914,15 @@ proven launches than `minLaunchesSampled` scores `entry-unmeasured` — never `e
 and never folded in with a refusal, which are different findings.
 
 **What the refusal cost, and what decision 182a bought back.** Replaying the live recipe — median
-room over the trailing 8 launches against the 0.55 bar — at all 228 points of our own tape's
-history: refusing removes **24 of 24 false-positive windows and creates none in the other
-direction**. Under half (a) alone that cost **81 windows that became unmeasured** rather than wrong,
-and per launch it took **60 of the 235 covered launches (25.5%)** out of every score. Under the
-union it costs **0 windows and 0 launches**, with false positives still **0**. Nothing was relaxed to
-get there — decision 134a's refusal is untouched, and `minLaunchesSampled` / `maxLaunchesPerCandidate`
-are unmoved (decision 141a) — the rule simply sees more, so it refuses less. On a stranger the trade
+room over the trailing `maxLaunchesPerCandidate` launches against the 0.55 bar — at all **226**
+points of our own tape's history: refusing removes **22 of 22 false-positive windows and creates
+none in the other direction**. Under half (a) alone that cost **62 windows that became unmeasured**
+rather than wrong, and per launch it took **60 of the 235 covered launches (25.5%)** out of every
+score. Under the union it costs **0 windows and 0 launches**, with false positives still **0**.
+Nothing was relaxed to get there — decision 134a's refusal and every evidence bar are untouched —
+the rule simply sees more, so it refuses less. (Every one of those counts is a property of the
+replay's window width, which is `maxLaunchesPerCandidate` — see
+[the rolling replay](#the-rolling-replay--the-same-question-asked-at-every-point-in-the-tape).) On a stranger the trade
 still applies and still cannot be priced, because there is no ground truth to price it against.
 **How often it fires on strangers is measured under BOTH halves** — the census was re-run under the
 union on captain decision 183a, and **1 candidate in 14 survives it either way**: per-launch proof
@@ -1733,7 +1735,7 @@ it five ways before a single request is issued:
 | the create-slot primitive reproduces the published §5.1 era split | operation share 0.4508 → **0.7708** against a published 0.451 → **0.771** (see below) |
 | the **field** measurement reproduces `wallet_launch_pnl.csv` | **1,322 create-slot outsider pairs, 0 closure mismatches, max realised error 5.0e-7 SOL** (1,502 before decision 182a — the 180 it drops are the operation's own wallets) |
 | **the known-negative control**, at two points in time and once more with costs attached | see below |
-| **the rolling replay**, at every point in time | **228 trailing windows, 0 false positives and 0 false negatives**, **0** refused as unmeasured (81 before decision 182a) — see below |
+| **the rolling replay**, at every point in time | **226 trailing windows, 0 false positives and 0 false negatives**, **0** refused as unmeasured (62 before decision 182a) — see below |
 | **the adjacency tripwire**, on the `sid` block-index signal | **15 pre-March launches, all 15 producing a run of 2+ transactions** (shortest 4), 122 create-slot fills decomposed with 0 unreadable indices and 0 prefix mismatches, **45/45 cohort wallet-instances recovered, 0 non-cohort marked** — see below |
 | **the cost leg**, against `onchain_create_slot_pnl.csv`, over the population the gate itself scores | **112 launches, 766 create-slot entries, 627 round trips priced end to end**; median entry cost **0.0308 SOL**; hit rate **0.7384 gross → 0.6045 net**, **87** round trips flipping sign — see below |
 
@@ -1835,7 +1837,7 @@ It is scored two ways, because both readings have to come out negative and they 
 
 | slice | verdict | median room |
 |---|---|---|
-| the most recent 8 launches — exactly what a live run would score today | `entry-room-absent` | **0.284** |
+| the most recent `maxLaunchesPerCandidate` launches (10) — exactly what a live run would score today | `entry-room-absent` | **0.278** |
 | the whole post-2026-06-04 regime, 89 proven launches | `entry-room-absent` | **0.229** |
 
 **And this is why it is an assertion rather than a threshold comparison:** on that same wallet the
@@ -1853,7 +1855,7 @@ co-ordination rule's half (a) happens to recover 97–100% of our subject's coho
 (`analysis/window-population/`). That stretch is what half (b) now carries, and the adjacency
 tripwire above exists because it carries it alone.
 
-So Stage 0 asks the same question at **all 228 trailing windows** instead of two. The recipe is the
+So Stage 0 asks the same question at **all 226 trailing windows** instead of two. The recipe is the
 live one, not an approximation of it: median `roomLeft` over the trailing
 `maxLaunchesPerCandidate` launches against `minRoomLeft`, a window with fewer than
 `minLaunchesSampled` proven launches being unmeasured, exactly as `scoreEntry` would have it. Each
@@ -1862,13 +1864,19 @@ hold only because this is our own subject, which is the whole reason the structu
 
 | | before decision 134a | with it, half (a) only | with it, under the union (decision 182a) |
 |---|---:|---:|---:|
-| windows evaluated | 228 | 228 | 228 |
-| **false positives** — screen says room, the named cohort says none | **24** | **0** | **0** |
+| windows evaluated | 226 | 226 | 226 |
+| **false positives** — screen says room, the named cohort says none | **22** | **0** | **0** |
 | false negatives — screen MEASURED the window and said none, the named cohort says room | 0 | 0 | 0 |
-| windows reported unmeasured — refused, so the screen gave no verdict at all | 0 | 81 | **0** |
+| windows reported unmeasured — refused, so the screen gave no verdict at all | 0 | 62 | **0** |
+
+**Every count in that table is a property of the window's width**, which is
+`maxLaunchesPerCandidate` — so it moves whenever the cap does, and what the check is here to
+establish does not. At the 8 that preceded captain decision 190a the same replay slid **228** windows
+and read **24** false positives before 134a and **81** refusals under half (a) alone. The zero that
+matters is unchanged at either cap.
 
 The last column is what the screen prints today: the refusal is untouched and the rule simply sees
-more, so on this tape it never fires (88 windows room-present, 140 room-absent).
+more, so on this tape it never fires (92 windows room-present, 134 room-absent).
 
 **A refused window is counted as `unmeasured`, never as a false negative.** The two are exactly the
 distinction the ruling exists to keep apart: a window with too few proven launches carries no
@@ -1981,7 +1989,8 @@ summary — the requirement `LANDING_TIP_CAVEAT` set, for the same reason:
   very finding the pass is measuring.
 
 **`--subject-era` answers the era question where it can be answered, and refuses it where it
-cannot.** The live census walks each candidate's most recent 8 launches, which span days to weeks
+cannot.** The live census walks each candidate's most recent `maxLaunchesPerCandidate` launches
+(10 since captain decision 190a; the committed run walked 8), which span days to weeks
 and cannot carry a trend. The committed population tape can: 235 launches of **one** deployer over
 2025-12 → 2026-07, bucketed offline with no request of any kind. That table is a **within-deployer**
 trend at n = 1 and the rendered output says so three times, because a within-deployer trend read as
@@ -1989,6 +1998,8 @@ a population one is the "n = 2, a signal not a rate" failure one level up. **It 
 and the gap between the columns is the point**: pre-March this operator bundles 0 of 15 while the
 union proves 15 of 15, so a shared-transaction-only column reads a rule's blind spot as a deployer's
 habit. Whole tape: **235 of 235 proven, 175 bundled**; trailing-8 replay **228 of 228 against 147**.
+That replay's span is pinned at 8 and so asks all-of-8 where the live rule now asks 8 proven of 10 —
+the stricter question, which understates scoreability; `bundling.mjs` owns why it is left that way.
 
 **The `readLaunchWindow` two-bound cursor cannot reach this number.** That walk can fail to fetch
 the **tail** of a window (`CLAUDE.md`); the census reads the **create slot**, which is the oldest

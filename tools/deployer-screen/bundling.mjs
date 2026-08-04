@@ -683,7 +683,8 @@ export function summariseCensus(rows) {
  * The ERA question, answered where it CAN be answered: offline, over this repository's own tape,
  * for exactly one deployer.
  *
- * The live census walks each candidate's most recent 8 launches, which for an active deployer span
+ * The live census walks each candidate's most recent `maxLaunchesPerCandidate` launches — 10 since
+ * captain decision 190a, 8 when the committed record was written — which for an active deployer span
  * days to weeks. **That sample cannot carry a trend and must not be asked to.** What can is the
  * committed population tape: 235 launches of one deployer over 2025-12 → 2026-07, every one with a
  * proved create slot, already parsed by `stage0.mjs` → `measureSubjectLaunches` for the rolling
@@ -697,7 +698,11 @@ export function summariseCensus(rows) {
  *
  * The second table is the live analogue: for every point in that history, would the trailing
  * 8 launches ALL have been bundled — i.e. would Stage 2 have reached a verdict on this wallet that
- * day? That is the headline number replayed against a real history.
+ * day? That is the headline number replayed against a real history. **Its span is pinned at 8 and
+ * no longer matches the live rule**: captain decision 190a took `maxLaunchesPerCandidate` to 10
+ * against a floor of 8, so this replay asks all-of-8 where Stage 2 now asks 8-proven-of-10. Like
+ * the census headline it is therefore the STRICTER question, which understates scoreability — the
+ * safe direction — and re-cutting it is part of the same re-run decision.
  *
  * **Both halves are bucketed, and the difference between them is the point of the table now.** The
  * subject bundles nothing at all before March 2026 while the union proves every one of those

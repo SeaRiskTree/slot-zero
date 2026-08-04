@@ -1,10 +1,20 @@
 {
   "tool": "deployer-screen/bundling-census",
-  "schemaVersion": 1,
-  "scope": "WINDOWS ONLY. Walks create-slot windows with Stage 2's pinned window parameters and reports ONLY bundledTx and maxWalletsInOneTx per launch. No entry score, no room figure, no field, no entry cost, no verdict, and no threshold is moved by it. Captain decision 173a.",
-  "thresholdsVersion": "5.1.0",
-  "startedAtIso": "2026-08-03T21:10:36.711Z",
-  "finishedAtIso": "2026-08-03T22:10:19.358Z",
+  "schemaVersion": 2,
+  "scope": "WINDOWS ONLY. Walks create-slot windows with Stage 2's pinned window parameters and reports ONLY bundledTx, runTx, maxWalletsInOneTx and the union's mark count per launch. No entry score, no room figure, no field, no entry cost, no verdict, and no threshold is moved by it. Captain decision 173a; re-run under the union predicate on captain decision 183a.",
+  "predicate": {
+    "name": "union",
+    "source": "measure.mjs -> roomIsProven",
+    "decision": "182a",
+    "halves": {
+      "sharedTransaction": "a create-slot transaction carrying 2+ distinct wallets marks all of them",
+      "blockIndexAdjacency": "the deployer-anchored contiguous block-index run at step exactly 1 marks every wallet in it"
+    },
+    "supersedes": "bundledTx >= 1 (the shared-transaction half alone), schema 1"
+  },
+  "thresholdsVersion": "5.2.0",
+  "startedAtIso": "2026-08-04T04:55:58.774Z",
+  "finishedAtIso": "2026-08-04T05:56:23.046Z",
   "completed": true,
   "abortReason": null,
   "spend": {
@@ -13,7 +23,7 @@
     "listingRequests": 101,
     "listingShed": 0,
     "listingCeiling": 480,
-    "fillRequests": 484,
+    "fillRequests": 490,
     "fillShed": 0,
     "fillCeiling": 4320,
     "solanaRpcRequests": 0,
@@ -31,7 +41,7 @@
       {
         "wallet": "2PkPfbNytC8wiiAS8XLmNTPqHwgfqJe3yu3euVZTj9qv",
         "verdict": "gate-failed",
-        "reason": "sample too small: 14 tokens < 25 required"
+        "reason": "sample too small: 15 tokens < 25 required"
       },
       {
         "wallet": "2fjnasKeqKS63myiKHqeVjaCKGEN75U4iPv6ZjsoJ8xa",
@@ -146,7 +156,7 @@
       {
         "wallet": "9R6PV5KTFW94ZhfPg6BF3xKeGkBNSKAGgQtSeLmyxN2R",
         "verdict": "gate-failed",
-        "reason": "sample too small: 10 tokens < 25 required"
+        "reason": "sample too small: 11 tokens < 25 required"
       },
       {
         "wallet": "9g6A9S8rvwEiRwhezK19genZhEqhGcd834XF24FxfGmx",
@@ -191,7 +201,7 @@
       {
         "wallet": "BK2ciybp5WEeWUpPzPACUDfwcNFHeDQSrQsdKyT3Wdkb",
         "verdict": "gate-failed",
-        "reason": "sample too small: 23 tokens < 25 required"
+        "reason": "sample too small: 24 tokens < 25 required"
       },
       {
         "wallet": "CXnxRV24ywNw3NyTmfgu7upN7VNAfRqjkdmAwNv6c1Pv",
@@ -206,7 +216,7 @@
       {
         "wallet": "DFrfDB7vsQRNQYFWyQwtihMWGEfD8vAPPHFEW6krXytc",
         "verdict": "gate-failed",
-        "reason": "sample too small: 11 tokens < 25 required"
+        "reason": "sample too small: 12 tokens < 25 required"
       },
       {
         "wallet": "DMB4e5ajAukCtQpKyKut9vBEbjfQVZZpmePGWhSXNKHe",
@@ -306,7 +316,7 @@
       {
         "wallet": "GCc5qzbbN8xjARVJPovDxfKTCyeqXeeRzhwPH5csKwY6",
         "verdict": "gate-failed",
-        "reason": "sample too small: 9 tokens < 25 required; history spans 11.9 days < 14 required (a rate earned inside a burst is not a record)"
+        "reason": "sample too small: 10 tokens < 25 required; history spans 12.5 days < 14 required (a rate earned inside a burst is not a record)"
       },
       {
         "wallet": "GKVhR9BuJUTDkV6KC2i6QGujJ1PZjVn9KR66fsi1jwBp",
@@ -384,8 +394,11 @@
   "summary": {
     "perLaunch": {
       "launchesMeasured": 112,
-      "bundled": 18,
-      "rate": 0.1607,
+      "proven": 44,
+      "rate": 0.3929,
+      "bundledBySharedTxAlone": 18,
+      "sharedTxRate": 0.1607,
+      "provenByAdjacencyOnly": 26,
       "candidatesContributing": 14
     },
     "perCandidate": {
@@ -398,6 +411,14 @@
         "p75": 0,
         "max": 3
       },
+      "runTxPerLaunch": {
+        "n": 112,
+        "min": 1,
+        "p25": 1,
+        "median": 1,
+        "p75": 4,
+        "max": 5
+      },
       "maxWalletsInOneTxPerLaunch": {
         "n": 112,
         "min": 1,
@@ -405,6 +426,30 @@
         "median": 1,
         "p75": 1,
         "max": 3
+      },
+      "coordinatedWalletsPerLaunch": {
+        "n": 112,
+        "min": 0,
+        "p25": 0,
+        "median": 0,
+        "p75": 3,
+        "max": 9
+      },
+      "adjacencyMarksPerLaunch": {
+        "n": 112,
+        "min": 0,
+        "p25": 0,
+        "median": 0,
+        "p75": 2,
+        "max": 3
+      },
+      "createSlotWalletsPerLaunch": {
+        "n": 112,
+        "min": 1,
+        "p25": 3,
+        "median": 5,
+        "p75": 10.25,
+        "max": 35
       },
       "medianBundledTxByCandidate": {
         "n": 14,
@@ -414,6 +459,14 @@
         "p75": 0,
         "max": 2
       },
+      "medianRunTxByCandidate": {
+        "n": 14,
+        "min": 1,
+        "p25": 1,
+        "median": 1,
+        "p75": 3.375,
+        "max": 5
+      },
       "medianMaxWalletsByCandidate": {
         "n": 14,
         "min": 1,
@@ -421,6 +474,14 @@
         "median": 1,
         "p75": 1,
         "max": 3
+      },
+      "provenShareByCandidate": {
+        "n": 14,
+        "min": 0,
+        "p25": 0,
+        "median": 0.3125,
+        "p75": 0.8438,
+        "max": 1
       },
       "bundledShareByCandidate": {
         "n": 14,
@@ -433,17 +494,21 @@
     },
     "headline": {
       "candidatesWithFullSample": 14,
-      "candidatesBundlingOnAllOfThem": 1,
+      "candidatesProvenOnAllOfThem": 1,
       "fraction": 0.0714,
-      "silencedByOneUnbundledLaunch": 13,
-      "note": "DEFINED ONLY OVER CANDIDATES THAT PRODUCED THE FULL SAMPLE. `minLaunchesSampled` is 8 and `maxLaunchesPerCandidate` is 8, so a candidate with fewer usable windows is already UNMEASURED for a reason that is not bundling, and folding it in either way would answer a different question. `candidatesShortOfAFullSample` counts those separately.",
+      "silencedByOneUnprovenLaunch": 13,
+      "candidatesBundlingOnAllOfThem": 1,
+      "sharedTxFraction": 0.0714,
+      "note": "DEFINED ONLY OVER CANDIDATES THAT PRODUCED THE FULL SAMPLE, AND UNDER THE UNION PREDICATE (measure.mjs -> roomIsProven, decision 182a). `minLaunchesSampled` is 8 and `maxLaunchesPerCandidate` is 8, so a candidate with fewer usable windows is already UNMEASURED for a reason that is not co-ordination evidence, and folding it in either way would answer a different question. `candidatesShortOfAFullSample` counts those separately. `candidatesBundlingOnAllOfThem` is the same count under the SUPERSEDED shared-transaction half and decides nothing; it is here so the first run of this census still compares.",
       "candidatesShortOfAFullSample": 0
     },
     "unscoreable": {
+      "neverProven": 6,
+      "neverProvenWithFullSample": 6,
       "neverBundles": 11,
-      "neverBundlesWithFullSample": 11,
-      "shortOfAFullSampleButAllBundled": 0,
-      "note": "A `neverBundles` candidate has `maxWalletsInOneTx <= 1` on every window it produced: the co-ordination rule can never see a bundle there, so re-screening it produces the same silence forever. That is a different finding from a candidate that merely fell short of 8 of 8 on this reading, and the two are never summed."
+      "neverBundlesButProvenSomewhere": 5,
+      "shortOfAFullSampleButAllProven": 0,
+      "note": "A `neverProven` candidate has `coordinatedWallets === 0` on every window it produced: NEITHER half of the co-ordination rule saw anything, so re-screening it produces the same silence forever. That is a different finding from a candidate that merely fell short of 8 of 8 on this reading, and the two are never summed. `neverBundles` is the SUPERSEDED shared-transaction-half count and no longer means permanent: `neverBundlesButProvenSomewhere` is how many of it the union rescued."
     }
   },
   "candidates": [
@@ -467,65 +532,100 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 0,
       "bundledLaunches": 0,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": true,
       "neverBundles": true,
       "launches": [
         {
-          "ageDays": 61.116,
+          "ageDays": 61.439,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 84.895,
+          "ageDays": 85.218,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 99.899,
+          "ageDays": 100.222,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 10,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 423.331,
+          "ageDays": 423.654,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 425.904,
+          "ageDays": 426.227,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 2,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 445.916,
+          "ageDays": 446.239,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 445.919,
+          "ageDays": 446.242,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 464.911,
+          "ageDays": 465.234,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 7,
+          "bundled": false,
           "proven": false
         }
       ]
@@ -550,66 +650,101 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 7,
       "bundledLaunches": 0,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": false,
       "neverBundles": true,
       "launches": [
         {
-          "ageDays": 4.021,
+          "ageDays": 4.344,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 2,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 4.102,
+          "ageDays": 4.425,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 10,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 4.933,
+          "ageDays": 5.256,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 6,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 5.128,
+          "ageDays": 5.451,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 13,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 5.199,
+          "ageDays": 5.522,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 11,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 6.121,
+          "ageDays": 6.444,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 10,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 6.155,
+          "ageDays": 6.479,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 12,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 6.35,
+          "ageDays": 6.673,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 11,
-          "proven": false
+          "bundled": false,
+          "proven": true
         }
       ]
     },
@@ -633,65 +768,100 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 2,
       "bundledLaunches": 0,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": false,
       "neverBundles": true,
       "launches": [
         {
-          "ageDays": 34.592,
+          "ageDays": 34.915,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 8,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 45.131,
+          "ageDays": 45.455,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 47.422,
+          "ageDays": 47.746,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 3,
+          "adjacencyMarks": 2,
+          "coordinatedWallets": 2,
           "createSlotWallets": 9,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 49.313,
+          "ageDays": 49.636,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 2,
+          "adjacencyMarks": 1,
+          "coordinatedWallets": 1,
           "createSlotWallets": 26,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 50.474,
+          "ageDays": 50.797,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 2,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 56.326,
+          "ageDays": 56.649,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 2,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 58.234,
+          "ageDays": 58.557,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 13,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 60.405,
+          "ageDays": 60.728,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 9,
+          "bundled": false,
           "proven": false
         }
       ]
@@ -716,66 +886,101 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 6,
       "bundledLaunches": 0,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": false,
       "neverBundles": true,
       "launches": [
         {
-          "ageDays": 6.191,
+          "ageDays": 6.514,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 2,
+          "adjacencyMarks": 1,
+          "coordinatedWallets": 1,
           "createSlotWallets": 5,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 6.304,
+          "ageDays": 6.627,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 3,
+          "adjacencyMarks": 2,
+          "coordinatedWallets": 2,
           "createSlotWallets": 3,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 10.203,
+          "ageDays": 10.526,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 3,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 13.223,
+          "ageDays": 13.546,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 9,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 19.204,
+          "ageDays": 19.527,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 4,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 24.215,
+          "ageDays": 24.538,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 10,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 27.071,
+          "ageDays": 27.394,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 12,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 28.132,
+          "ageDays": 28.455,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 11,
-          "proven": false
+          "bundled": false,
+          "proven": true
         }
       ]
     },
@@ -799,65 +1004,100 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 0,
       "bundledLaunches": 0,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": true,
       "neverBundles": true,
       "launches": [
         {
-          "ageDays": 417.498,
+          "ageDays": 417.822,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 6,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 422.795,
+          "ageDays": 423.118,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 7,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 433.385,
+          "ageDays": 433.708,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 10,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 433.482,
+          "ageDays": 433.805,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 433.965,
+          "ageDays": 434.288,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 435.908,
+          "ageDays": 436.231,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 444.211,
+          "ageDays": 444.534,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 4,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 463.365,
+          "ageDays": 463.688,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 4,
+          "bundled": false,
           "proven": false
         }
       ]
@@ -882,66 +1122,101 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 7,
       "bundledLaunches": 0,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": false,
       "neverBundles": true,
       "launches": [
         {
-          "ageDays": 0.024,
+          "ageDays": 0.347,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 5,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 1.051,
+          "ageDays": 1.374,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 4,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 1.063,
+          "ageDays": 1.386,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 11,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 1.106,
+          "ageDays": 1.43,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 3,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 1.29,
+          "ageDays": 1.614,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 10,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 5.105,
+          "ageDays": 5.428,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 4,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 5.275,
+          "ageDays": 5.598,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 10,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 6.064,
+          "ageDays": 6.388,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 14,
-          "proven": false
+          "bundled": false,
+          "proven": true
         }
       ]
     },
@@ -966,65 +1241,100 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 8,
       "bundledLaunches": 8,
       "fullSample": true,
+      "allProven": true,
       "allBundled": true,
+      "neverProven": false,
       "neverBundles": false,
       "launches": [
         {
-          "ageDays": 0.143,
+          "ageDays": 0.466,
           "bundledTx": 2,
           "maxWalletsInOneTx": 3,
+          "runTx": 3,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 6,
           "createSlotWallets": 13,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 0.29,
+          "ageDays": 0.614,
           "bundledTx": 2,
           "maxWalletsInOneTx": 3,
+          "runTx": 3,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 6,
           "createSlotWallets": 16,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 0.352,
+          "ageDays": 0.675,
           "bundledTx": 2,
           "maxWalletsInOneTx": 3,
+          "runTx": 3,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 6,
           "createSlotWallets": 15,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 1.237,
+          "ageDays": 1.56,
           "bundledTx": 2,
           "maxWalletsInOneTx": 3,
+          "runTx": 3,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 6,
           "createSlotWallets": 8,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 1.313,
+          "ageDays": 1.636,
           "bundledTx": 2,
           "maxWalletsInOneTx": 3,
+          "runTx": 3,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 6,
           "createSlotWallets": 13,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 3.195,
+          "ageDays": 3.518,
           "bundledTx": 2,
           "maxWalletsInOneTx": 3,
+          "runTx": 3,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 6,
           "createSlotWallets": 11,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 4.177,
+          "ageDays": 4.5,
           "bundledTx": 2,
           "maxWalletsInOneTx": 3,
+          "runTx": 3,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 6,
           "createSlotWallets": 15,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 4.266,
+          "ageDays": 4.59,
           "bundledTx": 2,
           "maxWalletsInOneTx": 3,
+          "runTx": 3,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 6,
           "createSlotWallets": 14,
+          "bundled": true,
           "proven": true
         }
       ]
@@ -1049,65 +1359,100 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 0,
       "bundledLaunches": 0,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": true,
       "neverBundles": true,
       "launches": [
         {
-          "ageDays": 29.291,
+          "ageDays": 29.614,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 3,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 29.296,
+          "ageDays": 29.619,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 3,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 29.582,
+          "ageDays": 29.905,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 32.875,
+          "ageDays": 33.198,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 2,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 32.894,
+          "ageDays": 33.217,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 3,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 34.438,
+          "ageDays": 34.762,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 34.691,
+          "ageDays": 35.014,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 2,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 35.773,
+          "ageDays": 36.096,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         }
       ]
@@ -1132,65 +1477,100 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 0,
       "bundledLaunches": 0,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": true,
       "neverBundles": true,
       "launches": [
         {
-          "ageDays": 2.752,
+          "ageDays": 3.075,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 3,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 4.342,
+          "ageDays": 4.665,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 6,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 6.255,
+          "ageDays": 6.579,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 4,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 7.914,
+          "ageDays": 8.237,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 5,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 7.95,
+          "ageDays": 8.274,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 5,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 10.427,
+          "ageDays": 10.751,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 8,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 12.18,
+          "ageDays": 12.503,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 12.989,
+          "ageDays": 13.312,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         }
       ]
@@ -1215,65 +1595,100 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 0,
       "bundledLaunches": 0,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": true,
       "neverBundles": true,
       "launches": [
         {
-          "ageDays": 1.039,
+          "ageDays": 1.363,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 3,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 5.262,
+          "ageDays": 5.585,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 2,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 5.883,
+          "ageDays": 6.206,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 3,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 8.056,
+          "ageDays": 8.379,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 4,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 10.879,
+          "ageDays": 11.202,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 18.272,
+          "ageDays": 18.595,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 4,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 19.202,
+          "ageDays": 19.525,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 2,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 28.223,
+          "ageDays": 28.546,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 2,
+          "bundled": false,
           "proven": false
         }
       ]
@@ -1298,65 +1713,100 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 7,
       "bundledLaunches": 6,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": false,
       "neverBundles": false,
       "launches": [
         {
-          "ageDays": 18.959,
+          "ageDays": 19.282,
           "bundledTx": 1,
           "maxWalletsInOneTx": 2,
+          "runTx": 5,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 5,
           "createSlotWallets": 12,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 29.982,
+          "ageDays": 30.305,
           "bundledTx": 1,
           "maxWalletsInOneTx": 2,
+          "runTx": 5,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 5,
           "createSlotWallets": 13,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 31.006,
+          "ageDays": 31.329,
           "bundledTx": 1,
           "maxWalletsInOneTx": 2,
+          "runTx": 5,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 5,
           "createSlotWallets": 14,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 31.145,
+          "ageDays": 31.468,
           "bundledTx": 2,
           "maxWalletsInOneTx": 2,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 4,
           "createSlotWallets": 6,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 32.047,
+          "ageDays": 32.37,
           "bundledTx": 1,
           "maxWalletsInOneTx": 2,
+          "runTx": 5,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 5,
           "createSlotWallets": 9,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 34.996,
+          "ageDays": 35.319,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 10,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 36.854,
+          "ageDays": 37.177,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 7,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 37.964,
+          "ageDays": 38.287,
           "bundledTx": 1,
           "maxWalletsInOneTx": 2,
+          "runTx": 5,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 5,
           "createSlotWallets": 11,
+          "bundled": true,
           "proven": true
         }
       ]
@@ -1381,65 +1831,100 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 0,
       "bundledLaunches": 0,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": true,
       "neverBundles": true,
       "launches": [
         {
-          "ageDays": 2.04,
+          "ageDays": 2.363,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 7,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 9.903,
+          "ageDays": 10.226,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 2,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 9.94,
+          "ageDays": 10.263,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 6,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 26.218,
+          "ageDays": 26.541,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 5,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 31.607,
+          "ageDays": 31.931,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 1,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 48.038,
+          "ageDays": 48.361,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 12,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 70.949,
+          "ageDays": 71.272,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 8,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 75.793,
+          "ageDays": 76.116,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 3,
+          "bundled": false,
           "proven": false
         }
       ]
@@ -1464,65 +1949,100 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 3,
       "bundledLaunches": 0,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": false,
       "neverBundles": true,
       "launches": [
         {
-          "ageDays": 0.889,
+          "ageDays": 1.212,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 23,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 2.943,
+          "ageDays": 3.266,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 5,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 3.797,
+          "ageDays": 4.12,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 4,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 6.253,
+          "ageDays": 6.576,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 6,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 7.117,
+          "ageDays": 7.441,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 5,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 7.445,
+          "ageDays": 7.768,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 4,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 8.052,
+          "ageDays": 8.375,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 4,
+          "adjacencyMarks": 3,
+          "coordinatedWallets": 3,
           "createSlotWallets": 4,
-          "proven": false
+          "bundled": false,
+          "proven": true
         },
         {
-          "ageDays": 8.378,
+          "ageDays": 8.701,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 4,
+          "bundled": false,
           "proven": false
         }
       ]
@@ -1537,8 +2057,8 @@
       "listingRows": 280,
       "listingPageCapped": true,
       "gateTokens": 280,
-      "gateCompletionRate": 0.6679,
-      "gateSpanDays": 51.94,
+      "gateCompletionRate": 0.6714,
+      "gateSpanDays": 50.35,
       "gateVerdict": "gate-passed",
       "launchesEligible": 280,
       "launchesPlanned": 8,
@@ -1547,71 +2067,107 @@
       "launchesDropped": 0,
       "dropsByReason": {},
       "dropNotes": [],
+      "provenLaunches": 4,
       "bundledLaunches": 4,
       "fullSample": true,
+      "allProven": false,
       "allBundled": false,
+      "neverProven": false,
       "neverBundles": false,
       "launches": [
         {
-          "ageDays": 0.123,
-          "bundledTx": 3,
-          "maxWalletsInOneTx": 3,
-          "createSlotWallets": 18,
-          "proven": true
-        },
-        {
-          "ageDays": 0.292,
-          "bundledTx": 3,
-          "maxWalletsInOneTx": 3,
-          "createSlotWallets": 19,
-          "proven": true
-        },
-        {
-          "ageDays": 1.269,
+          "ageDays": 0.266,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
-          "createSlotWallets": 6,
-          "proven": false
-        },
-        {
-          "ageDays": 1.316,
-          "bundledTx": 0,
-          "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 5,
+          "bundled": false,
           "proven": false
         },
         {
-          "ageDays": 3.338,
+          "ageDays": 0.447,
           "bundledTx": 3,
           "maxWalletsInOneTx": 3,
+          "runTx": 4,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 8,
+          "createSlotWallets": 18,
+          "bundled": true,
+          "proven": true
+        },
+        {
+          "ageDays": 0.615,
+          "bundledTx": 3,
+          "maxWalletsInOneTx": 3,
+          "runTx": 4,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 9,
+          "createSlotWallets": 19,
+          "bundled": true,
+          "proven": true
+        },
+        {
+          "ageDays": 1.592,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
+          "createSlotWallets": 6,
+          "bundled": false,
+          "proven": false
+        },
+        {
+          "ageDays": 1.639,
+          "bundledTx": 0,
+          "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
+          "createSlotWallets": 5,
+          "bundled": false,
+          "proven": false
+        },
+        {
+          "ageDays": 3.661,
+          "bundledTx": 3,
+          "maxWalletsInOneTx": 3,
+          "runTx": 4,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 9,
           "createSlotWallets": 21,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 3.827,
+          "ageDays": 4.15,
           "bundledTx": 3,
           "maxWalletsInOneTx": 3,
+          "runTx": 4,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 9,
           "createSlotWallets": 35,
+          "bundled": true,
           "proven": true
         },
         {
-          "ageDays": 4.216,
+          "ageDays": 4.539,
           "bundledTx": 0,
           "maxWalletsInOneTx": 1,
+          "runTx": 1,
+          "adjacencyMarks": 0,
+          "coordinatedWallets": 0,
           "createSlotWallets": 15,
-          "proven": false
-        },
-        {
-          "ageDays": 5.303,
-          "bundledTx": 0,
-          "maxWalletsInOneTx": 1,
-          "createSlotWallets": 10,
+          "bundled": false,
           "proven": false
         }
       ]
     }
   ],
   "caveats": [
+    "THE PREDICATE IS THE UNION (captain decision 182a): a launch is PROVEN when measure.mjs -> roomIsProven marks at least one non-deployer wallet, by the shared-transaction rule OR by the deployer-anchored contiguous block-index run. The FIRST run of this census (173a) measured the shared-transaction half ALONE, so every figure in that superseded record is a LOWER bound on what the screen can now prove. Both halves are reported per launch (bundledTx, runTx) so the older reading is recoverable from this record without re-walking anything. WHAT IT MEASURES IS STILL THE RULE, NOT THE DEPLOYERS: an unproven launch means the rule saw nothing, which is observationally identical to there being nothing to see.",
     "THE LAUNCH LIST IS THE OWNERSHIP READING, not a creation-derived one: a listed token may have been acquired rather than created by this wallet (its create slot is then somebody else's bundling habit), and a token handed on is missing entirely — and the ones handed on are the winners. The measured size of that gap on the five wallets holding both readings is nil (four gaps of exactly zero, one of 1 launch in 239; CREATION-DERIVED.md), which bounds it without removing it.",
     "A window that could not be walked back past the mint is DROPPED, never counted as unbundled. Counting an unreachable create slot as \"no bundle\" would manufacture the very finding this pass is measuring, so the denominator is windows PROVED to reach their create slot.",
     "THE MINT INSTANT IS BACKDATED BY A PINNED MARGIN before the window is walked, because the two vendors disagree: frontend-api-v3 gives millisecond-precision creation times on older rows while swap-api gives whole-second fill times, floored, so the declared mint lands up to ~2s AFTER the launch's own first fill and the zero-slack pre-mint tripwire would delete the whole launch. A disagreement LARGER than the margin still drops the launch and is still counted; one SMALLER than it is no longer detected."

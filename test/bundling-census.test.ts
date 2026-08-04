@@ -23,6 +23,7 @@ import {
   DROPPED_WINDOW_CAVEAT,
   MINT_TIME_BACKDATE_CAVEAT,
   OWNERSHIP_LIST_CAVEAT,
+  PREDICATE_CAVEAT,
   buildCohort,
   censusCandidate,
   loadThresholds,
@@ -109,26 +110,60 @@ function scriptedClient(pages: Record<string, unknown>[][], maxRequests = 1000) 
 }
 
 /**
- * One window: a create slot with `bundles` transactions carrying two wallets each.
+ * pump.fun's within-slot ordering key, built the way `measure.mjs` → `blockTxIndex` reads it:
+ * `slot(12) + blockTxIndex(6) + innerInstructionIndex(4)`.
+ *
+ * **The block index has to be real in a fixture now.** Since captain decision 182a the co-ordination
+ * rule's second half is the deployer-anchored contiguous run over exactly this field, and
+ * `createSlotGroups` refuses adjacency outright when two transactions in one create slot share an
+ * index. A fixture that padded a counter into the whole 22 characters put every transaction at index
+ * 0, which is not "no run" — it is the inconsistency guard firing, and it would have made every
+ * union assertion below pass for the wrong reason.
+ */
+const sidAt = (slot: number, blockIndex: number, inner = 0) =>
+  String(slot).padStart(12, '0') + String(blockIndex).padStart(6, '0') + String(inner).padStart(4, '0');
+
+/** Where each kind of transaction sits in the block, so a run is deliberate rather than accidental. */
+const DEV_INDEX = 100;
+/** Far enough from the deployer's own index that neither can join its run by accident. */
+const BUNDLE_INDEX = 400;
+const LONE_INDEX = 700;
+
+/**
+ * One window: a create slot laid out so each half of the co-ordination rule can be driven alone.
+ *
+ * - `bundles` — transactions carrying two wallets each, at indices far from the deployer's. Half (a).
+ * - `runNeighbours` — single-wallet transactions at the deployer's index + 1, + 2, … Half (b), and
+ *   the shape the live probe found on 5 of the first census run's 11 `neverBundles` wallets.
+ * - `loneWallets` — single-wallet transactions scattered well away from everything. Neither half.
  *
  * `tsMs` must be at or after the launch's own mint time, or the pre-mint tripwire fires with zero
  * slack and the window is dropped as a clock disagreement. The fixtures put every fill one second
  * after the mint, which is what the committed tape shows (the measured gap is exactly 0 on all 235
  * covered launches, so a fixture in the past would be testing the tripwire rather than the census).
  */
-function windowPage(opts: { createSlot: number; bundles: number; loneWallets: number; tsMs: number }) {
+function windowPage(opts: {
+  createSlot: number;
+  bundles: number;
+  loneWallets: number;
+  tsMs: number;
+  runNeighbours?: number;
+}) {
   const rows: Record<string, unknown>[] = [];
-  let n = 0;
-  const sid = () => String(++n).padStart(22, '0');
   const ts = opts.tsMs;
+  const slot = opts.createSlot;
   // The deployer's own buy, alone in its transaction — the shape our subject shows on every launch.
-  rows.push(row({ slot: opts.createSlot, sid: sid(), tx: 'dev', wallet: 'DEV', tsMs: ts }));
+  rows.push(row({ slot, sid: sidAt(slot, DEV_INDEX), tx: 'dev', wallet: 'DEV', tsMs: ts }));
+  for (let r = 0; r < (opts.runNeighbours ?? 0); r++) {
+    rows.push(row({ slot, sid: sidAt(slot, DEV_INDEX + 1 + r), tx: `run${r}`, wallet: `R${r}`, tsMs: ts }));
+  }
   for (let b = 0; b < opts.bundles; b++) {
-    rows.push(row({ slot: opts.createSlot, sid: sid(), tx: `bundle${b}`, wallet: `A${b}`, tsMs: ts }));
-    rows.push(row({ slot: opts.createSlot, sid: sid(), tx: `bundle${b}`, wallet: `B${b}`, tsMs: ts }));
+    // Both wallets in ONE transaction: same block index, different inner-instruction index.
+    rows.push(row({ slot, sid: sidAt(slot, BUNDLE_INDEX + 10 * b, 0), tx: `bundle${b}`, wallet: `A${b}`, tsMs: ts }));
+    rows.push(row({ slot, sid: sidAt(slot, BUNDLE_INDEX + 10 * b, 1), tx: `bundle${b}`, wallet: `B${b}`, tsMs: ts }));
   }
   for (let l = 0; l < opts.loneWallets; l++) {
-    rows.push(row({ slot: opts.createSlot, sid: sid(), tx: `lone${l}`, wallet: `L${l}`, tsMs: ts }));
+    rows.push(row({ slot, sid: sidAt(slot, LONE_INDEX + 10 * l), tx: `lone${l}`, wallet: `L${l}`, tsMs: ts }));
   }
   // Newest first, as the live endpoint serves them.
   return rows.reverse();
@@ -143,7 +178,7 @@ const refs = (n: number) =>
   Array.from({ length: n }, (_, i) => ({ mint: `MINT${i}`, deployedAtMs: OLDEST_MINT_MS - i }));
 
 /** A page whose fills all sit inside every ref's window. */
-const page = (o: { createSlot: number; bundles: number; loneWallets: number }) =>
+const page = (o: { createSlot: number; bundles: number; loneWallets: number; runNeighbours?: number }) =>
   windowPage({ ...o, tsMs: OLDEST_MINT_MS + 1_000 });
 
 /** A census row with everything zeroed, for summary tests about arithmetic rather than walking. */
@@ -164,34 +199,56 @@ const candidate = (o: Partial<CandidateBundling>): CandidateBundling => ({
   launchesDropped: 0,
   dropsByReason: {},
   dropNotes: [],
+  provenLaunches: 0,
   bundledLaunches: 0,
   fullSample: false,
+  allProven: null,
   allBundled: null,
+  neverProven: false,
   neverBundles: false,
   launches: [],
   ...o,
 });
 
-/** `n` launches, `bundled` of which carried a bundle. */
-const launches = (n: number, bundled: number) =>
-  Array.from({ length: n }, (_, i) => ({
-    ageDays: i + 1,
-    bundledTx: i < bundled ? 1 : 0,
-    maxWalletsInOneTx: i < bundled ? 2 : 1,
-    createSlotWallets: 3,
-    proven: i < bundled,
-  }));
+/**
+ * `n` launches: the first `bundled` proven by a shared transaction, the next `runOnly` proven by the
+ * deployer-anchored run alone, the rest proven by neither.
+ *
+ * The middle group is the population captain decision 183a exists to size, so the summary fixtures
+ * have to be able to produce it — a helper that only knew "bundled or not" could not tell the union's
+ * headline from the shared-transaction half's.
+ */
+const launches = (n: number, bundled: number, runOnly = 0) =>
+  Array.from({ length: n }, (_, i) => {
+    const isBundled = i < bundled;
+    const isRunOnly = !isBundled && i < bundled + runOnly;
+    return {
+      ageDays: i + 1,
+      bundledTx: isBundled ? 1 : 0,
+      maxWalletsInOneTx: isBundled ? 2 : 1,
+      runTx: isRunOnly ? 3 : 1,
+      adjacencyMarks: isRunOnly ? 2 : 0,
+      coordinatedWallets: isBundled ? 2 : isRunOnly ? 2 : 0,
+      createSlotWallets: 3,
+      bundled: isBundled,
+      proven: isBundled || isRunOnly,
+    };
+  });
 
-/** A full-sample candidate at the pinned cap, `bundled` of whose windows carried a bundle. */
-const full = (bundled: number, extra: Partial<CandidateBundling> = {}) => {
+/** A full-sample candidate at the pinned cap, `bundled` bundled windows and `runOnly` union-only ones. */
+const full = (bundled: number, runOnly = 0, extra: Partial<CandidateBundling> = {}) => {
   const n = ENTRY.maxLaunchesPerCandidate;
-  const ls = launches(n, bundled);
+  const ls = launches(n, bundled, runOnly);
+  const proven = ls.filter((l) => l.proven).length;
   return candidate({
     launchesUsable: n,
     launchesPlanned: n,
+    provenLaunches: proven,
     bundledLaunches: bundled,
     fullSample: true,
+    allProven: proven === n,
     allBundled: bundled === n,
+    neverProven: ls.every((l) => l.coordinatedWallets === 0),
     neverBundles: ls.every((l) => l.maxWalletsInOneTx <= 1),
     launches: ls,
     ...extra,
@@ -262,8 +319,13 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
     expect(text).toContain(`ceiling ${T['bundling_census'].maxListingRequests}`);
     expect(text).toContain(`ceiling ${T['bundling_census'].maxKeylessRequests}`);
     expect(text).toContain('no entry score, no room figure, no field, no entry cost, no verdict');
-    // Both standing caveats reach the plan, not only the report — the requirement `entry.mjs`
+    // Every standing caveat reaches the plan, not only the report — the requirement `entry.mjs`
     // states for `LANDING_TIP_CAVEAT` and the reason it is a constant rather than a doc line.
+    // `PREDICATE_CAVEAT` is here for a sharper reason: this census has now been taken under two
+    // different co-ordination rules, and a rate quoted without its rule is the same failure as a
+    // fraction quoted without its denominator.
+    expect(text).toContain(PREDICATE_CAVEAT);
+    expect(text).toContain('measure.mjs -> roomIsProven');
     expect(text).toContain(OWNERSHIP_LIST_CAVEAT);
     expect(text).toContain(DROPPED_WINDOW_CAVEAT);
     expect(text).toContain(MINT_TIME_BACKDATE_CAVEAT);
@@ -303,7 +365,7 @@ describe('it measures bundling and nothing else', () => {
     expect(CENSUS_CODE).not.toMatch(/readCreateSlotCosts|roomLeft|operationShare/);
   });
 
-  it('reads bundledTx and maxWalletsInOneTx off a walked window', async () => {
+  it('reads both halves of the co-ordination rule off a walked window', async () => {
     const { client } = scriptedClient([page({ createSlot: 500, bundles: 2, loneWallets: 3 })]);
     const result = await censusCandidate(client, {
       refs: refs(1),
@@ -315,25 +377,77 @@ describe('it measures bundling and nothing else', () => {
     expect(result.launches[0]).toMatchObject({
       bundledTx: 2,
       maxWalletsInOneTx: 2,
+      // The deployer sits alone between two gaps, so half (b) marks nothing here.
+      runTx: 1,
+      adjacencyMarks: 0,
+      coordinatedWallets: 4,
       // DEV + 2 bundles x 2 wallets + 3 lone = 8 distinct wallets in the create slot.
       createSlotWallets: 8,
+      bundled: true,
       proven: true,
     });
+    expect(result.provenLaunches).toBe(1);
     expect(result.bundledLaunches).toBe(1);
   });
 
-  it('THE `GeBJSHK4…` SHAPE: a create slot nobody bundled in is unproven, not unmeasured', async () => {
-    // A busy create slot with every wallet in its own transaction. The co-ordination rule found
-    // nothing, which is observationally identical to there being nothing — `measure.mjs` →
-    // `roomIsProven` is the refusal, and this pass reports the input to it rather than the verdict.
+  it('THE UNION: a window with NO bundle but a deployer-anchored run is PROVEN', async () => {
+    // Captain decision 183a's whole subject. The live probe found this shape on 5 of the first
+    // census run's 11 `neverBundles` wallets, and under the shared-transaction half alone it read
+    // as a deployer that never co-ordinates. The census must now score it exactly as the screen
+    // does — `roomIsProven`, not a local copy of the rule.
+    const { client } = scriptedClient([
+      page({ createSlot: 600, bundles: 0, loneWallets: 3, runNeighbours: 2 }),
+    ]);
+    const result = await censusCandidate(client, { refs: refs(1), nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
+    expect(result.launches[0]).toMatchObject({
+      bundledTx: 0,
+      maxWalletsInOneTx: 1,
+      runTx: 3,
+      adjacencyMarks: 2,
+      coordinatedWallets: 2,
+      bundled: false,
+      proven: true,
+    });
+    expect(result.provenLaunches).toBe(1);
+    expect(result.bundledLaunches).toBe(0);
+    // The superseded flag still reads TRUE here, and it no longer means unscoreable. Keeping it is
+    // what lets the two census records be compared; reading it as permanence is the error this
+    // re-run removes.
+    expect(result.neverBundles).toBe(true);
+    expect(result.neverProven).toBe(false);
+  });
+
+  it('THE `GeBJSHK4…` SHAPE: a create slot NEITHER half marks is unproven, not unmeasured', async () => {
+    // A busy create slot with every wallet in its own transaction and nothing beside the deployer.
+    // The co-ordination rule found nothing, which is observationally identical to there being
+    // nothing — `measure.mjs` → `roomIsProven` is the refusal, and this pass reports the input to
+    // it rather than the verdict.
     const { client } = scriptedClient([page({ createSlot: 700, bundles: 0, loneWallets: 9 })]);
     const result = await censusCandidate(client, { refs: refs(1), nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
-    expect(result.launches[0]).toMatchObject({ bundledTx: 0, maxWalletsInOneTx: 1, proven: false });
+    expect(result.launches[0]).toMatchObject({
+      bundledTx: 0,
+      maxWalletsInOneTx: 1,
+      runTx: 1,
+      adjacencyMarks: 0,
+      coordinatedWallets: 0,
+      bundled: false,
+      proven: false,
+    });
+    expect(result.provenLaunches).toBe(0);
     expect(result.bundledLaunches).toBe(0);
+    expect(result.neverProven).toBe(true);
     expect(result.neverBundles).toBe(true);
     // And it is not a drop: the window was walked and measured perfectly well.
     expect(result.launchesDropped).toBe(0);
     expect(result.launchesUsable).toBe(1);
+  });
+
+  it('tracks the screen\'s predicate rather than restating it', () => {
+    // The first run froze a local copy at `bundledTx >= 1`, which then drifted from `roomIsProven`
+    // when decision 182a widened it — and the record had to carry a caveat saying so. Calling the
+    // function is what makes that class of drift impossible rather than merely noticed.
+    expect(CENSUS_CODE).toMatch(/roomIsProven\(measurement\)/);
+    expect(CENSUS_CODE).not.toMatch(/proven:\s*measurement\.bundledTx/);
   });
 
   it('applies Stage 2\'s own eligibility floor, so a launch too young to have finished is skipped', async () => {
@@ -442,54 +556,87 @@ describe('it measures bundling and nothing else', () => {
 });
 
 describe('the headline number is defined over the population it names', () => {
-  it('counts 8-of-8 bundlers ONLY among candidates that produced a full sample', () => {
+  const CAP = ENTRY.maxLaunchesPerCandidate;
+
+  it('counts 8-of-8 PROVEN candidates ONLY among those that produced a full sample', () => {
     const s = summariseCensus([
-      full(ENTRY.maxLaunchesPerCandidate), // 8 of 8 bundled — scoreable
-      full(ENTRY.maxLaunchesPerCandidate - 1), // 7 of 8 — silenced by one launch
-      full(0), // never bundles, full sample
-      // Six usable windows, every one bundled. Stage 2 would call this UNMEASURED anyway, for a
-      // reason that is not bundling, so it must not be counted on either side of the headline.
-      candidate({ launchesUsable: 6, bundledLaunches: 6, fullSample: false, launches: launches(6, 6) }),
+      full(CAP), // 8 of 8 by shared transaction — scoreable
+      full(0, CAP), // 8 of 8 by the deployer-anchored run alone — scoreable ONLY under the union
+      full(CAP - 1), // 7 of 8 — silenced by one launch
+      full(0), // neither half sees anything, full sample
+      // Six usable windows, every one proven. Stage 2 would call this UNMEASURED anyway, for a
+      // reason that is not co-ordination evidence, so it must not be counted either side of the
+      // headline.
+      candidate({
+        launchesUsable: 6,
+        provenLaunches: 6,
+        bundledLaunches: 6,
+        fullSample: false,
+        launches: launches(6, 6),
+      }),
     ]);
-    expect(s.headline.candidatesWithFullSample).toBe(3);
-    expect(s.headline.candidatesBundlingOnAllOfThem).toBe(1);
-    expect(s.headline.fraction).toBeCloseTo(1 / 3, 3);
-    expect(s.headline.silencedByOneUnbundledLaunch).toBe(2);
+    expect(s.headline.candidatesWithFullSample).toBe(4);
+    expect(s.headline.candidatesProvenOnAllOfThem).toBe(2);
+    expect(s.headline.fraction).toBe(0.5);
+    expect(s.headline.silencedByOneUnprovenLaunch).toBe(2);
     expect(s.headline.candidatesShortOfAFullSample).toBe(1);
+    // AND THE SUPERSEDED READING IS IN THE SAME OBJECT: under the shared-transaction half alone the
+    // run-only candidate disappears, which is exactly the gap decision 183a asked this pass to size.
+    expect(s.headline.candidatesBundlingOnAllOfThem).toBe(1);
+    expect(s.headline.sharedTxFraction).toBe(0.25);
   });
 
   it('counts the permanently unscoreable APART from the near-misses, and never sums them', () => {
     const s = summariseCensus([
-      full(0), // maxWalletsInOneTx 1 on every window — the GeBJSHK4 shape
-      full(ENTRY.maxLaunchesPerCandidate - 1), // a near-miss, and NOT permanently anything
-      candidate({ launchesUsable: 3, bundledLaunches: 3, launches: launches(3, 3) }),
+      full(0), // neither half marks anything on any window — the GeBJSHK4 shape
+      full(0, CAP), // never bundles, but the union proves every window — NOT permanent
+      full(CAP - 1), // a near-miss, and NOT permanently anything
+      candidate({ launchesUsable: 3, provenLaunches: 3, bundledLaunches: 3, launches: launches(3, 3) }),
     ]);
-    expect(s.unscoreable.neverBundles).toBe(1);
-    expect(s.unscoreable.neverBundlesWithFullSample).toBe(1);
-    expect(s.unscoreable.shortOfAFullSampleButAllBundled).toBe(1);
-    // The two are reported as distinct fields; nothing in the summary adds them.
-    expect(s.headline.silencedByOneUnbundledLaunch).toBe(2);
+    expect(s.unscoreable.neverProven).toBe(1);
+    expect(s.unscoreable.neverProvenWithFullSample).toBe(1);
+    expect(s.unscoreable.shortOfAFullSampleButAllProven).toBe(1);
+    // The superseded count is larger, and the difference is named rather than left to be inferred.
+    expect(s.unscoreable.neverBundles).toBe(2);
+    expect(s.unscoreable.neverBundlesButProvenSomewhere).toBe(1);
+    // The categories are reported as distinct fields; nothing in the summary adds them.
+    expect(s.headline.silencedByOneUnprovenLaunch).toBe(2);
   });
 
-  it('every rate ships beside its own denominator', () => {
+  it('every rate ships beside its own denominator, and beside the predicate that produced it', () => {
     // This lane exists because a finding was correctly labelled "n = 2, a signal not a rate". A
     // summary that separated a fraction from its n is how the next reader loses that, so each rate
-    // and its denominator live in the same object.
-    const s = summariseCensus([full(ENTRY.maxLaunchesPerCandidate), full(0)]);
-    expect(s.perLaunch).toMatchObject({ launchesMeasured: 16, bundled: 8, rate: 0.5, candidatesContributing: 2 });
-    expect(s.headline).toMatchObject({ candidatesWithFullSample: 2, candidatesBundlingOnAllOfThem: 1, fraction: 0.5 });
+    // and its denominator live in the same object — and since this census has now been taken under
+    // two predicates, both readings do too.
+    const s = summariseCensus([full(CAP), full(0, 4), full(0)]);
+    expect(s.perLaunch).toMatchObject({
+      launchesMeasured: 24,
+      proven: 12,
+      rate: 0.5,
+      bundledBySharedTxAlone: 8,
+      sharedTxRate: 0.3333,
+      provenByAdjacencyOnly: 4,
+      candidatesContributing: 3,
+    });
+    expect(s.headline).toMatchObject({
+      candidatesWithFullSample: 3,
+      candidatesProvenOnAllOfThem: 1,
+      candidatesBundlingOnAllOfThem: 1,
+    });
   });
 
   it('reports an undefined rate rather than a zero when there is nothing to divide', () => {
     const s = summariseCensus([]);
     expect(s.perLaunch.rate).toBeNull();
+    expect(s.perLaunch.sharedTxRate).toBeNull();
     expect(s.headline.fraction).toBeNull();
+    expect(s.headline.sharedTxFraction).toBeNull();
     expect(s.perLaunch.launchesMeasured).toBe(0);
     expect(s.headline.candidatesWithFullSample).toBe(0);
   });
 
   it('reports distributions rather than a mean — the standing captain bar for this class', () => {
-    const s = summariseCensus([full(ENTRY.maxLaunchesPerCandidate), full(2)]);
+    const s = summariseCensus([full(CAP), full(2, 2)]);
     for (const d of Object.values(s.perCandidate)) {
       if (typeof d !== 'object' || d === null) continue;
       expect(Object.keys(d as object)).toEqual(['n', 'min', 'p25', 'median', 'p75', 'max']);
@@ -499,14 +646,17 @@ describe('the headline number is defined over the population it names', () => {
 
   it('the printed summary states the sample size on every one of the four answers', () => {
     const rendered = renderSummary({
-      summary: summariseCensus([full(ENTRY.maxLaunchesPerCandidate), full(3)]),
-      windowParameters: { maxLaunchesPerCandidate: ENTRY.maxLaunchesPerCandidate },
+      summary: summariseCensus([full(CAP), full(3, 2)]),
+      windowParameters: { maxLaunchesPerCandidate: CAP },
       cohort: { found: 82, gated: 82, gatePassed: 2, surveyed: 2 },
-      caveats: [OWNERSHIP_LIST_CAVEAT, DROPPED_WINDOW_CAVEAT],
+      caveats: [PREDICATE_CAVEAT, OWNERSHIP_LIST_CAVEAT, DROPPED_WINDOW_CAVEAT],
     });
-    expect(rendered).toMatch(/1\. PER-LAUNCH BUNDLING RATE:.*\(n = \d+ windows over \d+ candidates\)/s);
+    expect(rendered).toMatch(/1\. PER-LAUNCH PROVEN RATE \(union\):.*\(n = \d+ windows over \d+ candidates\)/s);
     expect(rendered).toMatch(/3\. HEADLINE.*\(n = \d+ candidates with a full sample\)/s);
     expect(rendered).toContain('4. PERMANENTLY UNSCOREABLE');
+    // The superseded reading is on the page beside the live one, never instead of it.
+    expect(rendered).toContain('Shared-transaction half ALONE');
+    expect(rendered).toContain(PREDICATE_CAVEAT);
     expect(rendered).toContain(OWNERSHIP_LIST_CAVEAT);
   });
 });
@@ -545,27 +695,42 @@ describe('the era question, answered where it can be and refused where it cannot
     expect(t.launches).toBeGreaterThan(200);
     expect(t.bundled).toBeLessThanOrEqual(t.launches);
     expect(t.rate).toBeCloseTo(t.bundled / t.launches, 3);
-    // Months are ordered and every bucket's arithmetic closes.
+    expect(t.provenRate).toBeCloseTo(t.proven / t.launches, 3);
+    // Months are ordered and every bucket's arithmetic closes, on both halves.
     expect(t.byMonth.map((m) => m.month)).toEqual([...t.byMonth.map((m) => m.month)].sort());
     expect(t.byMonth.reduce((n, m) => n + m.launches, 0)).toBe(t.launches);
     expect(t.byMonth.reduce((n, m) => n + m.bundled, 0)).toBe(t.bundled);
-    // THE FINDING THIS TABLE EXISTS FOR: the rate is not stationary for this operator. The earliest
-    // month bundles on nothing and the latest on nearly everything, which is the tape's own
-    // 0% (Dec-Feb) -> 41.6% (Mar) -> 97-100% (from May) progression seen through this predicate.
+    expect(t.byMonth.reduce((n, m) => n + m.proven, 0)).toBe(t.proven);
+    // THE FINDING THIS TABLE EXISTS FOR: the shared-transaction rate is not stationary for this
+    // operator. The earliest month bundles on nothing and the latest on nearly everything, which is
+    // the tape's own 0% (Dec-Feb) -> 41.6% (Mar) -> 97-100% (from May) progression.
     const first = t.byMonth[0];
     const last = t.byMonth[t.byMonth.length - 1];
     expect(first?.rate).toBe(0);
     expect(last?.rate).toBeGreaterThan(0.9);
+    // AND THE UNION'S COLUMN IS WHY THAT MUST NOT BE READ AS A HABIT. Decision 182a's measurement:
+    // the union proves all 235 taped launches, including the pre-March months the shared-transaction
+    // half reads as zero. The first run of the live census reported the left-hand column alone.
+    expect(t.proven).toBe(t.launches);
+    expect(first?.provenRate).toBe(1);
+    expect(t.proven).toBeGreaterThan(t.bundled);
   });
 
   it('replays the headline over that history, and the trailing windows close arithmetically', () => {
     const t = subjectEraTrend();
     expect(t.trailingWindows).toBe(t.launches - 7);
     expect(t.trailingAllBundled).toBeLessThanOrEqual(t.trailingWindows);
+    expect(t.trailingAllProven).toBeLessThanOrEqual(t.trailingWindows);
     expect(t.trailingByMonth.reduce((n, m) => n + m.windows, 0)).toBe(t.trailingWindows);
     expect(t.trailingByMonth.reduce((n, m) => n + m.allBundled, 0)).toBe(t.trailingAllBundled);
+    expect(t.trailingByMonth.reduce((n, m) => n + m.allProven, 0)).toBe(t.trailingAllProven);
+    // UNION >= SHARED-TRANSACTION HALF, ALWAYS AND STRUCTURALLY — (a)'s marked set is a subset of
+    // the union's, so a window the older half proved cannot become unproven. The direction is the
+    // whole safety property of decision 182a and it is asserted, not argued.
+    expect(t.trailingAllProven).toBeGreaterThanOrEqual(t.trailingAllBundled);
     // The live analogue: a census run today walks the NEWEST 8, and on this deployer they are all
-    // bundled — which is why our own subject is not the wallet the pinning silences.
+    // proven — which is why our own subject is not the wallet the pinning silences.
+    expect(t.newestWindowAllProven).toBe(true);
     expect(t.newestWindowAllBundled).toBe(true);
   });
 
@@ -577,6 +742,9 @@ describe('the era question, answered where it can be and refused where it cannot
     expect(text).toContain('WITHIN-DEPLOYER trend');
     expect(text).toContain('READ IT AS ONE DEPLOYER');
     expect(text).toContain('No request of any kind was issued');
+    // And it names which column is which, because the two now disagree by 60 launches.
+    expect(text).toContain('SHARED-TRANSACTION half alone');
+    expect(text).toContain('PROVEN by the union');
   });
 
   it('is a mode of its own, so a real run cannot be mistaken for it', () => {
@@ -619,6 +787,7 @@ describe('the census record is not a screen run record, and must not be filed as
       expect(parsed.spend.listingRequests, file).toBeLessThanOrEqual(parsed.spend.listingCeiling);
       expect(parsed.spend.fillRequests, file).toBeLessThanOrEqual(parsed.spend.fillCeiling);
       // Every caveat travels with the numbers.
+      expect(parsed.caveats, file).toContain(PREDICATE_CAVEAT);
       expect(parsed.caveats, file).toContain(OWNERSHIP_LIST_CAVEAT);
       expect(parsed.caveats, file).toContain(DROPPED_WINDOW_CAVEAT);
       expect(parsed.caveats, file).toContain(MINT_TIME_BACKDATE_CAVEAT);
@@ -627,14 +796,67 @@ describe('the census record is not a screen run record, and must not be filed as
     }
   });
 
+  it('NAMES THE PREDICATE THAT PRODUCED IT, in the record and not only in the report beside it', () => {
+    // The first run's record did not, and it could not have: the predicate was the only one there
+    // was. It has since moved, so a census record that does not say which rule it was taken under
+    // is a rate without its denominator — the failure this whole lane is built to refuse.
+    // THE VERSION DECIDES WHETHER TO ASSERT, never the block's presence — the same rule
+    // `test/deployer-screen.test.ts` states beside its `spend` pin. Pinning schema 2 as a global
+    // invariant would make a schema-3 record uncommittable beside this one, which is the opposite
+    // of the "bump, never retro-edit" rule the bump itself cites.
+    const census = fileURLToPath(new URL('../tools/deployer-screen/census/', import.meta.url));
+    let schema2Records = 0;
+    for (const file of readdirSync(census).filter((f) => f.endsWith('.json'))) {
+      const parsed = JSON.parse(readFileSync(join(census, file), 'utf8'));
+      expect(typeof parsed.schemaVersion, file).toBe('number');
+      if (parsed.schemaVersion !== 2) continue;
+      schema2Records += 1;
+      expect(parsed.predicate, file).toMatchObject({
+        name: 'union',
+        source: 'measure.mjs -> roomIsProven',
+        decision: '182a',
+      });
+      expect(parsed.predicate.supersedes, file).toMatch(/shared-transaction/);
+      // Both halves reach every launch row, so the superseded reading is recoverable from this
+      // record without walking a window again — which is what makes it a replacement rather than a
+      // second, non-comparable document.
+      for (const c of parsed.candidates) {
+        for (const l of c.launches) {
+          expect(Object.keys(l).sort(), file).toEqual(
+            [
+              'adjacencyMarks',
+              'ageDays',
+              'bundled',
+              'bundledTx',
+              'coordinatedWallets',
+              'createSlotWallets',
+              'maxWalletsInOneTx',
+              'proven',
+              'runTx',
+            ].sort(),
+          );
+          // UNION >= SHARED-TRANSACTION HALF on every committed row. Half (a)'s marked set is a
+          // subset of the union's by construction, so a bundled window that read as unproven would
+          // mean the implementation had inverted the safety property decision 182a rests on.
+          expect(l.bundled && !l.proven, `${file} ${c.wallet}`).toBe(false);
+        }
+      }
+    }
+    // And the pin is not vacuous: this run's own record is schema 2.
+    expect(schema2Records, 'no schema-2 census record was checked').toBeGreaterThan(0);
+  });
+
   it('the committed record\'s own arithmetic closes', () => {
     // A summary that disagrees with the rows it was computed from is how a headline outlives its
     // evidence. Recomputing it from `candidates` is cheap and it is the whole audit.
     const census = fileURLToPath(new URL('../tools/deployer-screen/census/', import.meta.url));
     for (const file of readdirSync(census).filter((f) => f.endsWith('.json'))) {
       const parsed = JSON.parse(readFileSync(join(census, file), 'utf8'));
-      const recomputed = summariseCensus(parsed.candidates);
-      expect(recomputed, file).toEqual(parsed.summary);
+      // `summariseCensus` computes the CURRENT schema's summary, so it can only be held against a
+      // record written at that schema; an older or newer record is audited by its own lane's test.
+      if (parsed.schemaVersion === 2) {
+        expect(summariseCensus(parsed.candidates), file).toEqual(parsed.summary);
+      }
       // And the cohort accounting adds up: everything gated either passed or is named as not surveyed.
       expect(parsed.cohort.gatePassed + parsed.cohort.notSurveyed.length, file).toBe(parsed.cohort.gated);
       expect(parsed.cohort.surveyed + parsed.cohort.leftUnsurveyedByCap, file).toBe(parsed.cohort.gatePassed);

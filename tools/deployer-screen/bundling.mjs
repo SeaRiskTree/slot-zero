@@ -1,16 +1,29 @@
 /**
  * THE BUNDLING CENSUS — a windows-only pass that walks create-slot windows and reports **only**
- * whether each one carried a bundled transaction. Captain decision 173a, 2026-08-03.
+ * what the co-ordination rule could see in each one. Captain decisions 173a and 183a, 2026-08-03.
  *
  * ## The question, and why it needed its own pass
  *
  * `thresholds.json` → `stage2_entry` pins `maxLaunchesPerCandidate: 8` and `minLaunchesSampled: 8`,
  * **deliberately equal** — a candidate is either scored on a full sample or reported UNMEASURED.
- * Since #17 a launch whose create slot carried no bundled transaction is refused as unproven
- * (`measure.mjs` → `roomIsProven`, captain decision 134a). Those two facts multiply: **Stage 2 can
- * only reach a verdict for a candidate whose most recent 8 eligible launches were EVERY ONE
- * bundled, and one unbundled launch in eight silences the whole candidate.** That is arithmetic,
- * not observation.
+ * Since #17 a launch whose create slot the co-ordination rule marks nothing in is refused as
+ * unproven (`measure.mjs` → `roomIsProven`, captain decision 134a). Those two facts multiply:
+ * **Stage 2 can only reach a verdict for a candidate whose most recent 8 eligible launches were
+ * EVERY ONE marked, and one unmarked launch in eight silences the whole candidate.** That is
+ * arithmetic, not observation.
+ *
+ * ## The predicate this pass measures under, which has moved once
+ *
+ * The first run (173a, `census/2026-08-03-bundling-census.md` as first committed) measured under the
+ * **shared-transaction half alone** — `bundledTx >= 1` — because that was the shipped predicate on
+ * the day. Captain decision 182a then widened `roomIsProven` to the **UNION** of that half and the
+ * deployer-anchored contiguous block-index run, and captain decision 183a ordered this pass re-run
+ * under it, reporting `runTx` alongside `bundledTx` so the two halves stay readable apart.
+ *
+ * **This file now tracks `measure.mjs` → `roomIsProven` rather than carrying its own copy of the
+ * rule**, which is the whole point: a census whose predicate can drift from the screen's stops being
+ * a statement about the screen. {@link LaunchBundling} reports both halves per launch, so a reader
+ * can recover the older reading from the new record without re-running anything.
  *
  * What was *not* known is how large a population that silences. The live evidence was **two
  * strangers** (`data/slot-zero-stage2-reverify/report.md` §2a): one lost 4 of 8 windows, one lost
@@ -22,7 +35,9 @@
  * answer this itself. **This pass does not raise that cap and does not touch it**: it is not
  * Stage 2. It runs no entry scoring, computes no room figure, prices no entry cost, reaches no
  * verdict and produces no number that could be read as one. It walks the same windows Stage 2 would
- * walk, with the same pinned window parameters, and reports two integers per launch.
+ * walk, with the same pinned window parameters, and reports six measures per launch — `bundledTx`,
+ * `runTx`, `adjacencyMarks`, `coordinatedWallets`, `maxWalletsInOneTx` and `createSlotWallets` —
+ * plus the two flags (`bundled`, `proven`) those measures decide.
  *
  * **It measures; it does not tune.** No threshold moves on the strength of what it finds — the
  * pinning decision returns to the captain with the number.
@@ -100,8 +115,11 @@
  * `pumpfun.mjs` → `readLaunchWindow` seeks in milliseconds and decides membership in slots, so at
  * 2026 slot times it can fail to fetch the **tail** of a window (`CLAUDE.md`, "the two-bound
  * cursor"). This pass reads the **create slot** — the oldest end of the walk, reached last and
- * proved by the coverage obligation — so a missing tail cannot move `bundledTx` or
- * `maxWalletsInOneTx`. It is stated here so nobody has to re-derive that it does not apply.
+ * proved by the coverage obligation — so a missing tail cannot move any measure on the launch row.
+ * That covers `runTx`, `adjacencyMarks` and `coordinatedWallets` as well as `bundledTx` and
+ * `maxWalletsInOneTx`: every one of them is computed from create-slot fills alone, and fills the
+ * walk never fetched are all NEWER than the create slot. It is stated here so nobody has to
+ * re-derive that it does not apply.
  */
 
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -109,7 +127,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CeilingReached } from './client.mjs';
-import { measureCompletion, measureCreateSlot, median, percentile } from './measure.mjs';
+import { measureCompletion, measureCreateSlot, median, percentile, roomIsProven } from './measure.mjs';
 import { KeylessClient, readCreatorHistory, readLaunchWindow } from './pumpfun.mjs';
 import { applyGate, verdictFor } from './rank.mjs';
 import { measureSubjectLaunches } from './stage0.mjs';
@@ -146,6 +164,25 @@ export const DROPPED_WINDOW_CAVEAT =
   'A window that could not be walked back past the mint is DROPPED, never counted as unbundled. ' +
   'Counting an unreachable create slot as "no bundle" would manufacture the very finding this pass ' +
   'is measuring, so the denominator is windows PROVED to reach their create slot.';
+
+/**
+ * The fourth standing caveat, and the one this re-run exists to make impossible to lose: WHICH
+ * PREDICATE produced the number.
+ *
+ * The census has now been taken under two different co-ordination rules. Its first run measured the
+ * shared-transaction half alone; this one measures the union that `measure.mjs` → `roomIsProven`
+ * actually applies. Every rate on this page is a statement about a rule, not about deployers, and a
+ * rate quoted without its rule is the same failure as a fraction quoted without its denominator.
+ */
+export const PREDICATE_CAVEAT =
+  'THE PREDICATE IS THE UNION (captain decision 182a): a launch is PROVEN when measure.mjs -> ' +
+  'roomIsProven marks at least one non-deployer wallet, by the shared-transaction rule OR by the ' +
+  'deployer-anchored contiguous block-index run. The FIRST run of this census (173a) measured the ' +
+  'shared-transaction half ALONE, so every figure in that superseded record is a LOWER bound on ' +
+  'what the screen can now prove. Both halves are reported per launch (bundledTx, runTx) so the ' +
+  'older reading is recoverable from this record without re-walking anything. WHAT IT MEASURES IS ' +
+  'STILL THE RULE, NOT THE DEPLOYERS: an unproven launch means the rule saw nothing, which is ' +
+  'observationally identical to there being nothing to see.';
 
 /**
  * The third standing caveat: the two vendors' clocks do not agree to the millisecond, and this pass
@@ -255,20 +292,30 @@ export function buildCohort(toolDir = HERE) {
  *   wallet plus a timestamp identifies a launch, and no per-token row may be persisted.
  * @property {number} bundledTx        Create-slot transactions carrying 2+ distinct wallets.
  * @property {number} maxWalletsInOneTx Largest wallet count in a single create-slot transaction.
+ * @property {number} runTx           Transactions in the DEPLOYER-ANCHORED CONTIGUOUS BLOCK-INDEX
+ *   RUN, the anchor itself included — half (b) of the co-ordination rule. `1` means the deployer's
+ *   own transaction sat alone between two gaps and half (b) marked nothing; `0` means no run could
+ *   be read at all, which is what a `sid` whose format has moved looks like. Reported alongside
+ *   `bundledTx` on captain decision 183a's instruction, so the two halves stay readable apart and
+ *   the superseded shared-transaction-only reading is recoverable from this record.
+ * @property {number} adjacencyMarks  Wallets half (b) marked that half (a) did NOT. The size of what
+ *   the union added on this launch — the only observable that separates the two halves after the
+ *   fact, and the one that turns "5 of 11" into a rate.
+ * @property {number} coordinatedWallets The UNION's evidence count: distinct non-deployer wallets
+ *   marked by either half. This is exactly what `roomIsProven` reads.
  * @property {number} createSlotWallets Distinct wallets in the create slot at all — the context that
- *   separates "a quiet create slot" from "a busy one that nobody bundled in".
- * @property {boolean} proven          `bundledTx >= 1` — the SHARED-TRANSACTION half of the
- *   co-ordination rule, and **no longer what `measure.mjs` → `roomIsProven` returns.** Captain
- *   decision 182a widened that predicate to the UNION of the shared-transaction rule and the
- *   deployer-anchored block-index run; this census deliberately still reports the older half.
+ *   separates "a quiet create slot" from "a busy one the rule saw nothing in".
+ * @property {boolean} bundled        `bundledTx >= 1` — the SHARED-TRANSACTION half on its own, the
+ *   predicate the FIRST run of this census was taken under (captain decision 173a). Kept, and kept
+ *   named for what it is, so the superseded record's figures can be compared against this one
+ *   without re-walking a window. It is **not** what the screen scores on.
+ * @property {boolean} proven         `measure.mjs` → `roomIsProven` — the UNION, and what the screen
+ *   actually refuses a launch on since captain decision 182a. **This field tracks that function
+ *   rather than restating it**: a census carrying its own copy of the rule can drift from the screen
+ *   it is a finding about, which is how the first run's numbers came to need a caveat.
  *
- *   **That is a freeze, not an oversight.** `census/2026-08-03-bundling-census.md` is a committed
- *   measurement taken under the older predicate, and silently re-defining this field would make the
- *   record and the code that wrote it disagree about what "proven" meant. Re-running the census
- *   under the union — the same keyless windows-only pass at the same cost, reporting `runTx`
- *   alongside `bundledTx` — is a separate queued lane, sequenced after 182a on purpose. Until it
- *   runs, read every `proven` and `neverBundles` figure in that record as a statement about the
- *   shared-transaction half ALONE, which is a LOWER bound on what the screen can now score.
+ *   `bundled` implies `proven` by construction — half (a)'s marked set is a subset of the union's —
+ *   so `proven && !bundled` is exactly the population decision 183a was sizing.
  */
 
 /**
@@ -304,12 +351,21 @@ export function buildCohort(toolDir = HERE) {
  *   one that matters: it says the two vendors' clocks came apart by more than the backdate, which is
  *   a reportable event rather than a busy launch. See {@link MINT_TIME_BACKDATE_CAVEAT}.
  * @property {string[]} dropNotes
- * @property {number} bundledLaunches
+ * @property {number} provenLaunches   Windows the UNION proved — what Stage 2 would score.
+ * @property {number} bundledLaunches  Windows the SHARED-TRANSACTION half alone proved. A subset of
+ *   `provenLaunches` by construction, kept so the first run's reading survives in this record.
  * @property {boolean} fullSample      `launchesUsable === launchesPlanned === the Stage 2 cap`.
- * @property {boolean | null} allBundled `null` unless `fullSample` — the headline is only defined
- *   over a candidate that actually produced the full sample Stage 2 requires.
- * @property {boolean} neverBundles    Every usable window had `maxWalletsInOneTx <= 1`. The
- *   `GeBJSHK4…` shape: permanently unscoreable rather than unlucky.
+ * @property {boolean | null} allProven `null` unless `fullSample` — the headline is only defined
+ *   over a candidate that actually produced the full sample Stage 2 requires. THE HEADLINE FIELD.
+ * @property {boolean | null} allBundled The same question under the superseded shared-transaction
+ *   half, for comparison with the first run. Decides nothing.
+ * @property {boolean} neverProven     Every usable window had `coordinatedWallets === 0`: NEITHER
+ *   half of the rule saw anything, on any window. Permanently unscoreable rather than unlucky, and
+ *   the successor to `neverBundles` as the count that means it.
+ * @property {boolean} neverBundles    Every usable window had `maxWalletsInOneTx <= 1` — the first
+ *   run's `neverBundles`, unchanged in meaning so the two records compare. Under the union this is
+ *   no longer a claim of permanent unscoreability: 5 of the first run's 11 were later shown to carry
+ *   a deployer-anchored run.
  * @property {LaunchBundling[]} launches
  */
 
@@ -432,20 +488,28 @@ export async function censusCandidate(client, input) {
       ageDays: Number(((input.nowMs - ref.deployedAtMs) / 86_400_000).toFixed(3)),
       bundledTx: measurement.bundledTx,
       maxWalletsInOneTx: measurement.maxWalletsInOneTx,
+      runTx: measurement.runTx,
+      adjacencyMarks: measurement.adjacencyMarks,
+      coordinatedWallets: measurement.coordinatedWallets,
       createSlotWallets,
-      // Frozen at the shared-transaction half on purpose — NOT `roomIsProven`, which decision 182a
-      // widened to the union. See the `proven` field's own doc block: the committed census record
-      // was measured under this predicate, and the union re-run is a separate queued lane.
-      proven: measurement.bundledTx >= 1,
+      // The superseded half, kept named for what it is so the first run's record still compares.
+      bundled: measurement.bundledTx >= 1,
+      // CALLED, NOT RESTATED. `roomIsProven` is the screen's own predicate (the union, decision
+      // 182a); a census that carried its own copy of the rule could drift away from the pass it is
+      // a finding about, which is exactly how the first run's numbers came to need a caveat.
+      proven: roomIsProven(measurement),
     });
     input.log?.(
       `    ${window.pages} page(s) / ${window.requests} request(s), ${window.fills.length} fill(s), ` +
-        `bundledTx ${measurement.bundledTx}, maxWalletsInOneTx ${measurement.maxWalletsInOneTx}, ` +
+        `bundledTx ${measurement.bundledTx}, runTx ${measurement.runTx}, ` +
+        `maxWalletsInOneTx ${measurement.maxWalletsInOneTx}, ` +
+        `${measurement.coordinatedWallets} co-ordinated (+${measurement.adjacencyMarks} by adjacency), ` +
         `${createSlotWallets} wallet(s) in the create slot`,
     );
   }
 
-  const bundledLaunches = launches.filter((l) => l.proven).length;
+  const provenLaunches = launches.filter((l) => l.proven).length;
+  const bundledLaunches = launches.filter((l) => l.bundled).length;
   const fullSample = launches.length === t.maxLaunchesPerCandidate;
 
   return {
@@ -456,17 +520,22 @@ export async function censusCandidate(client, input) {
     launchesDropped: dropped,
     dropsByReason,
     dropNotes,
+    provenLaunches,
     bundledLaunches,
     fullSample,
     // THE HEADLINE IS ONLY DEFINED OVER A FULL SAMPLE. A candidate that produced 6 usable windows,
-    // all bundled, is not a candidate Stage 2 would have scored — `minLaunchesSampled` is 8 — so
-    // reporting it as "bundles on all of them" would answer a different question from the one the
+    // all proven, is not a candidate Stage 2 would have scored — `minLaunchesSampled` is 8 — so
+    // reporting it as "proven on all of them" would answer a different question from the one the
     // pinning decision asks. `null` says the census could not decide it, which is a third state
     // and not a failure.
+    allProven: fullSample ? provenLaunches === launches.length : null,
     allBundled: fullSample ? bundledLaunches === launches.length : null,
-    // Deliberately NOT `bundledLaunches === 0`: a candidate with one usable window and no bundle in
-    // it is unlucky, and this flag claims something stronger — that the rule found no bundle in any
-    // window at all, which is the `GeBJSHK4…` shape.
+    // Under the union `roomIsProven` is exactly `coordinatedWallets >= 1`, so this agrees with
+    // `provenLaunches === 0` row for row. What the expression buys over it is the `length > 0`
+    // guard: a candidate that produced NO usable window has proved nothing either way and must
+    // never be counted as permanently unscoreable, which is a claim about what re-screening
+    // cannot change.
+    neverProven: launches.length > 0 && launches.every((l) => l.coordinatedWallets === 0),
     neverBundles: launches.length > 0 && launches.every((l) => l.maxWalletsInOneTx <= 1),
     launches,
   };
@@ -500,30 +569,47 @@ function distribution(values) {
  * @returns {Record<string, any>}
  */
 export function summariseCensus(rows) {
-  const allLaunches = rows.flatMap((r) => r.launches);
-  const bundledLaunches = allLaunches.filter((l) => l.proven).length;
+  const allLaunches = rows.flatMap((l) => l.launches);
+  const provenLaunches = allLaunches.filter((l) => l.proven).length;
+  const bundledLaunches = allLaunches.filter((l) => l.bundled).length;
   const withFullSample = rows.filter((r) => r.fullSample);
+  const allProven = withFullSample.filter((r) => r.allProven === true);
   const allBundled = withFullSample.filter((r) => r.allBundled === true);
   const surveyed = rows.filter((r) => r.launchesUsable > 0);
 
   return {
-    // (1) the per-launch rate
+    // (1) the per-launch rate, under BOTH halves — the union is the live number and the
+    // shared-transaction half is what the superseded record reported.
     perLaunch: {
       launchesMeasured: allLaunches.length,
-      bundled: bundledLaunches,
-      rate: allLaunches.length === 0 ? null : Number((bundledLaunches / allLaunches.length).toFixed(4)),
+      proven: provenLaunches,
+      rate: allLaunches.length === 0 ? null : Number((provenLaunches / allLaunches.length).toFixed(4)),
+      // The first run's predicate, carried so the two records compare without a re-walk.
+      bundledBySharedTxAlone: bundledLaunches,
+      sharedTxRate:
+        allLaunches.length === 0 ? null : Number((bundledLaunches / allLaunches.length).toFixed(4)),
+      // Exactly what the union added. `bundled` implies `proven`, so this subtraction is total.
+      provenByAdjacencyOnly: provenLaunches - bundledLaunches,
       candidatesContributing: surveyed.length,
     },
     // (2) the per-candidate distributions
     perCandidate: {
       candidatesWithAnyWindow: surveyed.length,
       bundledTxPerLaunch: distribution(allLaunches.map((l) => l.bundledTx)),
+      runTxPerLaunch: distribution(allLaunches.map((l) => l.runTx)),
       maxWalletsInOneTxPerLaunch: distribution(allLaunches.map((l) => l.maxWalletsInOneTx)),
+      coordinatedWalletsPerLaunch: distribution(allLaunches.map((l) => l.coordinatedWallets)),
+      adjacencyMarksPerLaunch: distribution(allLaunches.map((l) => l.adjacencyMarks)),
+      createSlotWalletsPerLaunch: distribution(allLaunches.map((l) => l.createSlotWallets)),
       medianBundledTxByCandidate: distribution(
         surveyed.map((r) => median(r.launches.map((l) => l.bundledTx))),
       ),
+      medianRunTxByCandidate: distribution(surveyed.map((r) => median(r.launches.map((l) => l.runTx)))),
       medianMaxWalletsByCandidate: distribution(
         surveyed.map((r) => median(r.launches.map((l) => l.maxWalletsInOneTx))),
+      ),
+      provenShareByCandidate: distribution(
+        surveyed.map((r) => Number((r.provenLaunches / r.launchesUsable).toFixed(4))),
       ),
       bundledShareByCandidate: distribution(
         surveyed.map((r) => Number((r.bundledLaunches / r.launchesUsable).toFixed(4))),
@@ -532,32 +618,48 @@ export function summariseCensus(rows) {
     // (3) THE HEADLINE — the population Stage 2 can currently reach a verdict for
     headline: {
       candidatesWithFullSample: withFullSample.length,
-      candidatesBundlingOnAllOfThem: allBundled.length,
+      candidatesProvenOnAllOfThem: allProven.length,
       fraction:
         withFullSample.length === 0
           ? null
-          : Number((allBundled.length / withFullSample.length).toFixed(4)),
+          : Number((allProven.length / withFullSample.length).toFixed(4)),
       // Its complement, named, because that is what the current pinning silences.
-      silencedByOneUnbundledLaunch: withFullSample.length - allBundled.length,
+      silencedByOneUnprovenLaunch: withFullSample.length - allProven.length,
+      // The same headline under the superseded shared-transaction half, so the gain the union
+      // actually bought is visible in the record rather than inferred across two files.
+      candidatesBundlingOnAllOfThem: allBundled.length,
+      sharedTxFraction:
+        withFullSample.length === 0
+          ? null
+          : Number((allBundled.length / withFullSample.length).toFixed(4)),
       note:
-        'DEFINED ONLY OVER CANDIDATES THAT PRODUCED THE FULL SAMPLE. `minLaunchesSampled` is 8 and ' +
+        'DEFINED ONLY OVER CANDIDATES THAT PRODUCED THE FULL SAMPLE, AND UNDER THE UNION PREDICATE ' +
+        '(measure.mjs -> roomIsProven, decision 182a). `minLaunchesSampled` is 8 and ' +
         '`maxLaunchesPerCandidate` is 8, so a candidate with fewer usable windows is already ' +
-        'UNMEASURED for a reason that is not bundling, and folding it in either way would answer a ' +
-        'different question. `candidatesShortOfAFullSample` counts those separately.',
+        'UNMEASURED for a reason that is not co-ordination evidence, and folding it in either way ' +
+        'would answer a different question. `candidatesShortOfAFullSample` counts those separately. ' +
+        '`candidatesBundlingOnAllOfThem` is the same count under the SUPERSEDED shared-transaction ' +
+        'half and decides nothing; it is here so the first run of this census still compares.',
       candidatesShortOfAFullSample: surveyed.length - withFullSample.length,
     },
     // (4) permanently unscoreable, kept apart from near-misses
     unscoreable: {
+      neverProven: rows.filter((r) => r.neverProven).length,
+      neverProvenWithFullSample: withFullSample.filter((r) => r.neverProven).length,
+      // The first run's count, unchanged in meaning. Under the union it no longer implies permanent
+      // unscoreability, which is the whole finding of this re-run.
       neverBundles: rows.filter((r) => r.neverBundles).length,
-      neverBundlesWithFullSample: withFullSample.filter((r) => r.neverBundles).length,
-      shortOfAFullSampleButAllBundled: surveyed.filter(
-        (r) => !r.fullSample && r.launchesUsable > 0 && r.bundledLaunches === r.launchesUsable,
+      neverBundlesButProvenSomewhere: rows.filter((r) => r.neverBundles && r.provenLaunches > 0).length,
+      shortOfAFullSampleButAllProven: surveyed.filter(
+        (r) => !r.fullSample && r.launchesUsable > 0 && r.provenLaunches === r.launchesUsable,
       ).length,
       note:
-        'A `neverBundles` candidate has `maxWalletsInOneTx <= 1` on every window it produced: the ' +
-        'co-ordination rule can never see a bundle there, so re-screening it produces the same ' +
+        'A `neverProven` candidate has `coordinatedWallets === 0` on every window it produced: ' +
+        'NEITHER half of the co-ordination rule saw anything, so re-screening it produces the same ' +
         'silence forever. That is a different finding from a candidate that merely fell short of ' +
-        '8 of 8 on this reading, and the two are never summed.',
+        '8 of 8 on this reading, and the two are never summed. `neverBundles` is the SUPERSEDED ' +
+        'shared-transaction-half count and no longer means permanent: ' +
+        '`neverBundlesButProvenSomewhere` is how many of it the union rescued.',
     },
   };
 }
@@ -582,46 +684,64 @@ export function summariseCensus(rows) {
  * 8 launches ALL have been bundled — i.e. would Stage 2 have reached a verdict on this wallet that
  * day? That is the headline number replayed against a real history.
  *
+ * **Both halves are bucketed, and the difference between them is the point of the table now.** The
+ * subject bundles nothing at all before March 2026 while the union proves every one of those
+ * launches, so a shared-transaction-only column reads as "this operator did not co-ordinate" where
+ * the truth is "this rule could not see it". That is the same confusion this re-run exists to remove
+ * from the live census, one deployer down.
+ *
  * @param {string} [dataDir]
- * @returns {{ launches: number, bundled: number, rate: number,
- *   byMonth: { month: string, launches: number, bundled: number, rate: number, medianMaxWalletsInOneTx: number }[],
- *   trailingWindows: number, trailingAllBundled: number, trailingRate: number,
- *   trailingByMonth: { month: string, windows: number, allBundled: number, rate: number }[],
- *   newestWindowAllBundled: boolean | null }}
+ * @returns {{ launches: number, proven: number, provenRate: number, bundled: number, rate: number,
+ *   byMonth: { month: string, launches: number, proven: number, provenRate: number, bundled: number,
+ *     rate: number, medianMaxWalletsInOneTx: number, medianRunTx: number }[],
+ *   trailingWindows: number, trailingAllProven: number, trailingProvenRate: number,
+ *   trailingAllBundled: number, trailingRate: number,
+ *   trailingByMonth: { month: string, windows: number, allProven: number, provenRate: number,
+ *     allBundled: number, rate: number }[],
+ *   newestWindowAllProven: boolean | null, newestWindowAllBundled: boolean | null }}
  */
 export function subjectEraTrend(dataDir = DEFAULT_DATA_DIR) {
   const launches = measureSubjectLaunches(dataDir);
-  /** @type {Map<string, { launches: number, bundled: number, maxWallets: number[] }>} */
+  /** @type {Map<string, { launches: number, proven: number, bundled: number, maxWallets: number[], runTx: number[] }>} */
   const months = new Map();
   for (const l of launches) {
     const key = l.dateIso.slice(0, 7);
-    const bucket = months.get(key) ?? { launches: 0, bundled: 0, maxWallets: [] };
+    const bucket = months.get(key) ?? { launches: 0, proven: 0, bundled: 0, maxWallets: [], runTx: [] };
     bucket.launches += 1;
+    if (roomIsProven(l.createSlot)) bucket.proven += 1;
     if (l.createSlot.bundledTx >= 1) bucket.bundled += 1;
     bucket.maxWallets.push(l.createSlot.maxWalletsInOneTx);
+    bucket.runTx.push(l.createSlot.runTx);
     months.set(key, bucket);
   }
 
   const span = 8;
-  /** @type {Map<string, { windows: number, allBundled: number }>} */
+  /** @type {Map<string, { windows: number, allProven: number, allBundled: number }>} */
   const trailingMonths = new Map();
   let trailingWindows = 0;
+  let trailingAllProven = 0;
   let trailingAllBundled = 0;
   for (let i = span - 1; i < launches.length; i++) {
     const window = launches.slice(i - span + 1, i + 1);
-    const ok = window.every((l) => l.createSlot.bundledTx >= 1);
+    const provenOk = window.every((l) => roomIsProven(l.createSlot));
+    const bundledOk = window.every((l) => l.createSlot.bundledTx >= 1);
     trailingWindows += 1;
-    if (ok) trailingAllBundled += 1;
+    if (provenOk) trailingAllProven += 1;
+    if (bundledOk) trailingAllBundled += 1;
     const key = (launches[i]?.dateIso ?? '').slice(0, 7);
-    const bucket = trailingMonths.get(key) ?? { windows: 0, allBundled: 0 };
+    const bucket = trailingMonths.get(key) ?? { windows: 0, allProven: 0, allBundled: 0 };
     bucket.windows += 1;
-    if (ok) bucket.allBundled += 1;
+    if (provenOk) bucket.allProven += 1;
+    if (bundledOk) bucket.allBundled += 1;
     trailingMonths.set(key, bucket);
   }
 
+  const proven = launches.filter((l) => roomIsProven(l.createSlot)).length;
   const bundled = launches.filter((l) => l.createSlot.bundledTx >= 1).length;
   return {
     launches: launches.length,
+    proven,
+    provenRate: launches.length === 0 ? Number.NaN : Number((proven / launches.length).toFixed(4)),
     bundled,
     rate: launches.length === 0 ? Number.NaN : Number((bundled / launches.length).toFixed(4)),
     byMonth: [...months.entries()]
@@ -629,11 +749,17 @@ export function subjectEraTrend(dataDir = DEFAULT_DATA_DIR) {
       .map(([month, b]) => ({
         month,
         launches: b.launches,
+        proven: b.proven,
+        provenRate: Number((b.proven / b.launches).toFixed(4)),
         bundled: b.bundled,
         rate: Number((b.bundled / b.launches).toFixed(4)),
         medianMaxWalletsInOneTx: median(b.maxWallets),
+        medianRunTx: median(b.runTx),
       })),
     trailingWindows,
+    trailingAllProven,
+    trailingProvenRate:
+      trailingWindows === 0 ? Number.NaN : Number((trailingAllProven / trailingWindows).toFixed(4)),
     trailingAllBundled,
     trailingRate: trailingWindows === 0 ? Number.NaN : Number((trailingAllBundled / trailingWindows).toFixed(4)),
     trailingByMonth: [...trailingMonths.entries()]
@@ -641,9 +767,13 @@ export function subjectEraTrend(dataDir = DEFAULT_DATA_DIR) {
       .map(([month, b]) => ({
         month,
         windows: b.windows,
+        allProven: b.allProven,
+        provenRate: Number((b.allProven / b.windows).toFixed(4)),
         allBundled: b.allBundled,
         rate: Number((b.allBundled / b.windows).toFixed(4)),
       })),
+    newestWindowAllProven:
+      launches.length < span ? null : launches.slice(-span).every((l) => roomIsProven(l.createSlot)),
     newestWindowAllBundled:
       launches.length < span ? null : launches.slice(-span).every((l) => l.createSlot.bundledTx >= 1),
   };
@@ -657,27 +787,39 @@ export function renderSubjectEraTrend(t) {
   L.push('  Source: data/population-tape-2026-07-29, every taped launch whose create slot is proved.');
   L.push('  No request of any kind was issued to produce this table.');
   L.push('');
-  L.push(`  ${t.bundled} of ${t.launches} taped launches carried a bundled create-slot transaction (${t.rate}).`);
+  L.push(`  ${t.proven} of ${t.launches} taped launches are PROVEN by the union (${t.provenRate}),`);
+  L.push(`  of which ${t.bundled} carried a bundled create-slot transaction (${t.rate}) — the`);
+  L.push('  SHARED-TRANSACTION half alone, which is the predicate the first census run used.');
   L.push('');
-  L.push('  month     launches  bundled     rate   median maxWalletsInOneTx');
+  L.push('  month     launches   proven  provenRate  bundled  sharedTxRate   med maxWallets  med runTx');
   for (const m of t.byMonth) {
     L.push(
-      `  ${m.month}   ${String(m.launches).padStart(8)}  ${String(m.bundled).padStart(7)}  ` +
-        `${m.rate.toFixed(4).padStart(7)}   ${m.medianMaxWalletsInOneTx}`,
+      `  ${m.month}   ${String(m.launches).padStart(8)}  ${String(m.proven).padStart(7)}  ` +
+        `${m.provenRate.toFixed(4).padStart(10)}  ${String(m.bundled).padStart(7)}  ` +
+        `${m.rate.toFixed(4).padStart(12)}   ${String(m.medianMaxWalletsInOneTx).padStart(11)}  ` +
+        `${m.medianRunTx}`,
     );
   }
   L.push('');
-  L.push('  THE HEADLINE NUMBER REPLAYED: would the trailing 8 launches ALL have been bundled —');
+  L.push('  THE GAP BETWEEN THE TWO COLUMNS IS THE FINDING. Before 2026-03 this operator bundles');
+  L.push('  NOTHING and the union proves EVERYTHING: the shared-transaction half was reading a rule\'s');
+  L.push('  blind spot as a deployer\'s habit. That is the same confusion the live census re-run removes.');
+  L.push('');
+  L.push('  THE HEADLINE NUMBER REPLAYED: would the trailing 8 launches ALL have been proven —');
   L.push('  i.e. would Stage 2 have reached a verdict on this wallet that day?');
-  L.push(`    ${t.trailingAllBundled} of ${t.trailingWindows} trailing windows (${t.trailingRate}).`);
-  L.push('  month     windows  all bundled     rate');
+  L.push(
+    `    union: ${t.trailingAllProven} of ${t.trailingWindows} trailing windows (${t.trailingProvenRate}); ` +
+      `shared-tx half alone: ${t.trailingAllBundled} (${t.trailingRate}).`,
+  );
+  L.push('  month     windows  all proven  provenRate  all bundled  sharedTxRate');
   for (const m of t.trailingByMonth) {
     L.push(
-      `  ${m.month}   ${String(m.windows).padStart(7)}  ${String(m.allBundled).padStart(11)}  ` +
-        `${m.rate.toFixed(4).padStart(7)}`,
+      `  ${m.month}   ${String(m.windows).padStart(7)}  ${String(m.allProven).padStart(10)}  ` +
+        `${m.provenRate.toFixed(4).padStart(10)}  ${String(m.allBundled).padStart(11)}  ` +
+        `${m.rate.toFixed(4).padStart(12)}`,
     );
   }
-  L.push(`    newest window all bundled: ${t.newestWindowAllBundled}`);
+  L.push(`    newest window all proven: ${t.newestWindowAllProven} (all bundled: ${t.newestWindowAllBundled})`);
   L.push('');
   L.push('  READ IT AS ONE DEPLOYER. A second window series does not exist in this repository and');
   L.push('  cannot be produced from this tape. It says the rate is NOT stationary for this operator;');
@@ -685,14 +827,15 @@ export function renderSubjectEraTrend(t) {
   return L.join('\n');
 }
 
-const USAGE = `bundling-census — how often do deployers bundle their create-slot transaction?
+const USAGE = `bundling-census — how often can the co-ordination rule see anything in a create slot?
 
   node tools/deployer-screen/bundling.mjs [options]
 
 WHAT IT IS
   A WINDOWS-ONLY pass. It walks create-slot windows with Stage 2's own pinned window parameters and
-  reports ONLY bundledTx and maxWalletsInOneTx per launch. It runs no entry scoring, computes no
-  room figure, prices no entry cost and reaches no verdict. Captain decision 173a.
+  reports ONLY bundledTx, runTx, maxWalletsInOneTx and the union's mark count per launch. It runs no
+  entry scoring, computes no room figure, prices no entry cost and reaches no verdict. Captain
+  decision 173a; re-run under the UNION predicate on captain decision 183a.
 
   IT SPENDS NO KEYED REQUEST. There is no keyed client in this file. The cohort comes from this
   repository's own committed records and the launch list from the keyless ownership listing.
@@ -860,6 +1003,10 @@ export function renderDryRun(plan) {
   L.push('');
   L.push('WHAT IT WILL NOT DO: no entry score, no room figure, no field, no entry cost, no verdict.');
   L.push('');
+  L.push('PREDICATE: measure.mjs -> roomIsProven, the UNION (decision 182a). Both halves are reported');
+  L.push('  per launch — bundledTx (shared transaction) and runTx (deployer-anchored block-index run).');
+  L.push('');
+  L.push(`CAVEAT CARRIED BY EVERY NUMBER: ${PREDICATE_CAVEAT}`);
   L.push(`CAVEAT CARRIED BY EVERY NUMBER: ${OWNERSHIP_LIST_CAVEAT}`);
   L.push(`CAVEAT CARRIED BY EVERY NUMBER: ${DROPPED_WINDOW_CAVEAT}`);
   L.push(`CAVEAT CARRIED BY EVERY NUMBER: ${MINT_TIME_BACKDATE_CAVEAT}`);
@@ -1051,9 +1198,13 @@ export async function main(opts, out, err) {
       });
       if (!opts.json) {
         out(
-          `    → ${result.bundledLaunches}/${result.launchesUsable} window(s) bundled` +
-            (result.allBundled === true ? ', ALL OF A FULL 8-SAMPLE' : '') +
-            (result.neverBundles ? ', NEVER BUNDLES — permanently unscoreable' : '') +
+          `    → ${result.provenLaunches}/${result.launchesUsable} window(s) PROVEN ` +
+            `(${result.bundledLaunches} by shared transaction)` +
+            (result.allProven === true ? ', ALL OF A FULL 8-SAMPLE' : '') +
+            (result.neverProven ? ', NEVER PROVEN — permanently unscoreable' : '') +
+            (result.neverBundles && result.provenLaunches > 0
+              ? ', never bundles but the union proves it'
+              : '') +
             (result.launchesDropped > 0 ? `, ${result.launchesDropped} dropped` : ''),
         );
       }
@@ -1068,11 +1219,30 @@ export async function main(opts, out, err) {
   const summary = summariseCensus(rows);
   const record = {
     tool: 'deployer-screen/bundling-census',
-    schemaVersion: 1,
+    // SCHEMA 2 — captain decision 183a. `proven` is now the UNION (`measure.mjs` -> `roomIsProven`)
+    // where schema 1 froze it at the shared-transaction half, and every launch carries `runTx`,
+    // `adjacencyMarks`, `coordinatedWallets` and a separate `bundled` flag. A schema-1 record's
+    // `proven` / `neverBundles` figures are a LOWER bound on what the screen can prove and are not
+    // comparable field-for-field; bump, never retro-edit, the same rule `record.mjs` holds.
+    schemaVersion: 2,
     scope:
       'WINDOWS ONLY. Walks create-slot windows with Stage 2\'s pinned window parameters and reports ' +
-      'ONLY bundledTx and maxWalletsInOneTx per launch. No entry score, no room figure, no field, ' +
-      'no entry cost, no verdict, and no threshold is moved by it. Captain decision 173a.',
+      'ONLY bundledTx, runTx, maxWalletsInOneTx and the union\'s mark count per launch. No entry ' +
+      'score, no room figure, no field, no entry cost, no verdict, and no threshold is moved by it. ' +
+      'Captain decision 173a; re-run under the union predicate on captain decision 183a.',
+    // THE PREDICATE THAT PRODUCED EVERY NUMBER BELOW, in the record itself rather than only in the
+    // report beside it. The first run of this census was taken under a different one.
+    predicate: {
+      name: 'union',
+      source: 'measure.mjs -> roomIsProven',
+      decision: '182a',
+      halves: {
+        sharedTransaction: 'a create-slot transaction carrying 2+ distinct wallets marks all of them',
+        blockIndexAdjacency:
+          'the deployer-anchored contiguous block-index run at step exactly 1 marks every wallet in it',
+      },
+      supersedes: 'bundledTx >= 1 (the shared-transaction half alone), schema 1',
+    },
     thresholdsVersion: T['version'],
     startedAtIso,
     finishedAtIso: new Date().toISOString(),
@@ -1117,7 +1287,7 @@ export async function main(opts, out, err) {
     },
     summary,
     candidates: rows,
-    caveats: [OWNERSHIP_LIST_CAVEAT, DROPPED_WINDOW_CAVEAT, MINT_TIME_BACKDATE_CAVEAT],
+    caveats: [PREDICATE_CAVEAT, OWNERSHIP_LIST_CAVEAT, DROPPED_WINDOW_CAVEAT, MINT_TIME_BACKDATE_CAVEAT],
   };
 
   if (opts.out !== null) {
@@ -1139,7 +1309,7 @@ export function renderSummary(record) {
   const s = record.summary;
   const L = [];
   L.push('');
-  L.push('BUNDLING CENSUS — captain decision 173a');
+  L.push('BUNDLING CENSUS — captain decisions 173a and 183a, under the UNION predicate');
   L.push('');
   L.push(
     `SAMPLE: ${s.perLaunch.candidatesContributing} candidate(s) produced at least one usable ` +
@@ -1149,9 +1319,15 @@ export function renderSummary(record) {
   );
   L.push('');
   L.push(
-    `1. PER-LAUNCH BUNDLING RATE: ${s.perLaunch.bundled} of ${s.perLaunch.launchesMeasured} = ` +
+    `1. PER-LAUNCH PROVEN RATE (union): ${s.perLaunch.proven} of ${s.perLaunch.launchesMeasured} = ` +
       `${s.perLaunch.rate === null ? 'undefined' : s.perLaunch.rate} ` +
       `(n = ${s.perLaunch.launchesMeasured} windows over ${s.perLaunch.candidatesContributing} candidates).`,
+  );
+  L.push(
+    `   Shared-transaction half ALONE — the superseded predicate: ` +
+      `${s.perLaunch.bundledBySharedTxAlone} = ` +
+      `${s.perLaunch.sharedTxRate === null ? 'undefined' : s.perLaunch.sharedTxRate}. ` +
+      `The union added ${s.perLaunch.provenByAdjacencyOnly} window(s) by adjacency alone.`,
   );
   L.push('');
   L.push('2. PER-CANDIDATE DISTRIBUTIONS');
@@ -1159,29 +1335,44 @@ export function renderSummary(record) {
   const fmt = (/** @type {Record<string, any>} */ x) =>
     `n=${x.n} min ${x.min} p25 ${x.p25} med ${x.median} p75 ${x.p75} max ${x.max}`;
   L.push(`   bundledTx, per launch            ${fmt(d.bundledTxPerLaunch)}`);
+  L.push(`   runTx, per launch                ${fmt(d.runTxPerLaunch)}`);
   L.push(`   maxWalletsInOneTx, per launch    ${fmt(d.maxWalletsInOneTxPerLaunch)}`);
+  L.push(`   coordinatedWallets, per launch   ${fmt(d.coordinatedWalletsPerLaunch)}`);
+  L.push(`   adjacencyMarks, per launch       ${fmt(d.adjacencyMarksPerLaunch)}`);
+  L.push(`   create-slot wallets, per launch  ${fmt(d.createSlotWalletsPerLaunch)}`);
   L.push(`   median bundledTx, per candidate  ${fmt(d.medianBundledTxByCandidate)}`);
+  L.push(`   median runTx, per candidate      ${fmt(d.medianRunTxByCandidate)}`);
   L.push(`   median maxWallets, per candidate ${fmt(d.medianMaxWalletsByCandidate)}`);
+  L.push(`   proven share, per candidate      ${fmt(d.provenShareByCandidate)}`);
   L.push(`   bundled share, per candidate     ${fmt(d.bundledShareByCandidate)}`);
   L.push('');
   L.push(
-    `3. HEADLINE — candidates bundling on ALL of their most recent ` +
+    `3. HEADLINE — candidates PROVEN on ALL of their most recent ` +
       `${record.windowParameters.maxLaunchesPerCandidate} eligible launches: ` +
-      `${s.headline.candidatesBundlingOnAllOfThem} of ${s.headline.candidatesWithFullSample} = ` +
+      `${s.headline.candidatesProvenOnAllOfThem} of ${s.headline.candidatesWithFullSample} = ` +
       `${s.headline.fraction === null ? 'undefined' : s.headline.fraction} ` +
       `(n = ${s.headline.candidatesWithFullSample} candidates with a full sample).`,
   );
   L.push(
-    `   Its complement — silenced by at least one unbundled launch in eight: ` +
-      `${s.headline.silencedByOneUnbundledLaunch}. ` +
+    `   Under the superseded shared-transaction half: ${s.headline.candidatesBundlingOnAllOfThem} = ` +
+      `${s.headline.sharedTxFraction === null ? 'undefined' : s.headline.sharedTxFraction}.`,
+  );
+  L.push(
+    `   Its complement — silenced by at least one unproven launch in eight: ` +
+      `${s.headline.silencedByOneUnprovenLaunch}. ` +
       `${s.headline.candidatesShortOfAFullSample} candidate(s) never produced a full sample and are ` +
-      `already UNMEASURED for a reason that is not bundling.`,
+      `already UNMEASURED for a reason that is not co-ordination evidence.`,
   );
   L.push('');
   L.push(
-    `4. PERMANENTLY UNSCOREABLE (maxWalletsInOneTx <= 1 on every window): ` +
-      `${s.unscoreable.neverBundles}, of which ${s.unscoreable.neverBundlesWithFullSample} produced ` +
+    `4. PERMANENTLY UNSCOREABLE (NEITHER half marked anything on any window): ` +
+      `${s.unscoreable.neverProven}, of which ${s.unscoreable.neverProvenWithFullSample} produced ` +
       `a full sample. Counted APART from near-misses; the two are never summed.`,
+  );
+  L.push(
+    `   The superseded neverBundles count is ${s.unscoreable.neverBundles}, of which ` +
+      `${s.unscoreable.neverBundlesButProvenSomewhere} the union proves on at least one window — ` +
+      `so that flag no longer means permanent.`,
   );
   L.push('');
   for (const c of record.caveats) L.push(`CAVEAT: ${c}`);

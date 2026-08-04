@@ -7692,6 +7692,40 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
   const fetchedAt = (L: ReturnType<typeof tapedWindows>[number], reach: number) =>
     L.inWindow.filter((f) => (L.tsByTx.get(f.tx) as number) <= L.createdAtMs + reach);
 
+  // THE PAGE-COST MODEL LIVES HERE RATHER THAN INSIDE ONE TEST because two tests read it and the
+  // second one's arithmetic is only worth anything if it is the SAME measurement: the drop rate
+  // pinned below is the input to the sampling-rule headroom the next test computes, so it is
+  // derived from this tape on every run rather than retyped as a constant that can drift.
+  //
+  // `while (spent() + attemptsPerRequest <= maxRequests)` with retryBackoffMs [3000, 9000] gives
+  // attemptsPerRequest 3, so an unshed walk gets pages while spent <= 15: sixteen of them.
+  const PAGES_AVAILABLE =
+    (T.maxRequestsPerLaunch as number) - ((loadThresholds()['stage2_entry'] as { keylessRetryBackoffMs: number[] }).keylessRetryBackoffMs.length + 1) + 1;
+
+  /**
+   * THE EXACT COST MODEL, and the modulo term is the whole of it. The page that reaches back past
+   * the mint carries the endpoint's own `hasMore === false`, so the coverage proof arrives WITH the
+   * rows and costs nothing extra — UNLESS the last page comes back exactly full, in which case the
+   * walk spends one more request to learn that it was the end. A flat `+1` charges for that page
+   * always and plain `ceil` never charges for it; both are wrong, in opposite directions, and the
+   * difference is real on this tape (at the reach this replaces one launch hits the exactly-full
+   * case, which is why the before-p95 is 8 rather than 7). Validated twice: against the live
+   * production walk of `Spam` (`GxN4wsPK…`, 851 rows in [mint, mint+85,000ms], 9 pages modelled,
+   * 9 requests issued, 0 shed), and against a full replay of `readLaunchWindow` over all 127
+   * committed launches.
+   */
+  const pagesAt = (L: ReturnType<typeof tapedWindows>[number], reach: number) => {
+    const rows = L.allTs.filter((ts) => ts <= L.createdAtMs + reach).length;
+    const limit = T.tradePageLimit as number;
+    return Math.ceil(rows / limit) + (rows % limit === 0 ? 1 : 0);
+  };
+
+  /** Launches the request cap drops WHOLE at the reach in force. */
+  const overCapLaunches = () => tapedWindows().filter((L) => pagesAt(L, REACH) > PAGES_AVAILABLE);
+
+  /** The measured per-launch drop rate, and the input to the headroom arithmetic below. */
+  const capHitRate = () => overCapLaunches().length / tapedWindows().length;
+
   it('has a population that can show the effect at all', () => {
     // If this ever reads 0 the whole block is vacuous, which is the failure mode a guard denominated
     // in the wrong variable already had once.
@@ -7767,29 +7801,9 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
 
   it('and what it costs is PAGES, bounded, counted, and in the safe direction', () => {
     // Reaching further means paging through more rows to get back to the mint, and this is the one
-    // place the fix is not free. Pinned so that a later widening has to look at the bill.
-    //
-    // `while (spent() + attemptsPerRequest <= maxRequests)` with retryBackoffMs [3000, 9000] gives
-    // attemptsPerRequest 3, so an unshed walk gets pages while spent <= 15: sixteen of them.
-    const PAGES_AVAILABLE =
-      (T.maxRequestsPerLaunch as number) - ((loadThresholds()['stage2_entry'] as { keylessRetryBackoffMs: number[] }).keylessRetryBackoffMs.length + 1) + 1;
+    // place the fix is not free. Pinned so that a later widening has to look at the bill. The cost
+    // model itself is shared with the headroom test below — see `pagesAt` in this block's scope.
     expect(PAGES_AVAILABLE).toBe(16);
-    //
-    // THE EXACT COST MODEL, and the modulo term is the whole of it. The page that reaches back past
-    // the mint carries the endpoint's own `hasMore === false`, so the coverage proof arrives WITH
-    // the rows and costs nothing extra — UNLESS the last page comes back exactly full, in which
-    // case the walk spends one more request to learn that it was the end. A flat `+1` charges for
-    // that page always and plain `ceil` never charges for it; both are wrong, in opposite
-    // directions, and the difference is real on this tape (at the reach this replaces one launch
-    // hits the exactly-full case, which is why the before-p95 is 8 rather than 7). Validated twice:
-    // against the live production walk of `Spam` (`GxN4wsPK...`, 851 rows in [mint, mint+85,000ms],
-    // 9 pages modelled, 9 requests issued, 0 shed), and against this block's own full replay of
-    // `readLaunchWindow` over all 127 committed launches.
-    const pagesAt = (L: ReturnType<typeof tapedWindows>[number], reach: number) => {
-      const rows = L.allTs.filter((ts) => ts <= L.createdAtMs + reach).length;
-      const limit = T.tradePageLimit as number;
-      return Math.ceil(rows / limit) + (rows % limit === 0 ? 1 : 0);
-    };
 
     const before = tapedWindows().map((L) => pagesAt(L, OLD_NOMINAL_REACH));
     const after = tapedWindows().map((L) => pagesAt(L, REACH));
@@ -7802,15 +7816,15 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     // truncated tail it replaces was silent; and it falls on busy launches, so it biases per-launch
     // prize DOWN, which is the direction a screen looking for room may safely err in.
     expect(before.filter((n) => n > PAGES_AVAILABLE).length).toBe(0);
-    const overCap = tapedWindows().filter((_, i) => (after[i] as number) > PAGES_AVAILABLE);
+    const overCap = overCapLaunches();
     expect(overCap.length).toBe(4);
     expect([...new Set(overCap.map((L) => L.symbol))].sort()).toEqual(['Dummy', 'Glow', '🤨']);
 
     // AND WHAT A DROP COSTS IS THE CANDIDATE'S VERDICT, not merely a smaller sample — up to the
     // headroom the sampling rule now carries. See the next test, which owns that arithmetic and
     // pins what the headroom buys; the cap-hit rate measured here is its input.
-    const capHitRate = overCap.length / tapedWindows().length;
-    expect(capHitRate).toBeCloseTo(0.0315, 4);
+    expect(capHitRate()).toBe(overCap.length / tapedWindows().length);
+    expect(capHitRate()).toBeCloseTo(0.0315, 4);
   });
 
   it('THE SAMPLING RULE HAS HEADROOM, and the unmeasured rate that buys is PINNED', () => {
@@ -7836,13 +7850,14 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
 
     // WHAT THE GAP BUYS, as an ESTIMATE and never a measurement. Two assumptions, both false in
     // part: (i) it treats a candidate's planned launches as independent draws at the cap-hit rate
-    // measured in the test above, and (ii) that 4/127 base rate comes from ONE deployer's
+    // derived from the same tape and the same page-cost model the test above pins, and (ii) that
+    // 4/127 base rate comes from ONE deployer's
     // long-window launches on the committed tapes, which are also the busiest ones there. Drops in
     // fact CLUSTER — a launch is dropped for being busy, and busy launches cluster on busy
     // deployers — so the true rate at any given slack is worse than this binomial says, which is
     // exactly why the gap is two launches and not one. Right order of magnitude for how often
     // Stage 2 loses a verdict outright; not an answer rate for a stranger.
-    const p = 4 / 127;
+    const p = capHitRate();
     const choose = (n: number, k: number) => {
       let c = 1;
       for (let i = 0; i < k; i++) c = (c * (n - i)) / (i + 1);

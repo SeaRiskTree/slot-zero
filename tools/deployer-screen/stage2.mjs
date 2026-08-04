@@ -15,7 +15,7 @@
  * | requests per launch, RETRIES INCLUDED | `stage2_entry.maxRequestsPerLaunch` | 18 |
  * | requests for the whole stage | `stage2_entry.maxKeylessRequests`, on its own client | 540 |
  * | pacing, this host only | `stage2_entry.keylessMinIntervalMs` | 7s |
- * | Solana RPC, the cost leg | `thresholds.json` → `stage2_cost.maxRpcRequestsPerCandidate` | 400 |
+ * | Solana RPC, the cost leg | `thresholds.json` → `stage2_cost.maxRpcRequestsPerCandidate` | 500 |
  * | pacing, the cost leg | `stage2_cost.rpcMinIntervalMs`, inherited from `creation_walk` | 2.5s |
  *
  * That pacing is pinned **per host**. swap-api sheds about a quarter of what it is asked for, and at

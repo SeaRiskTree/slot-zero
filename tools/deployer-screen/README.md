@@ -2021,9 +2021,11 @@ habit. Whole tape: **235 of 235 proven, 175 bundled**; trailing-8 replay **228 o
 That replay's span is pinned at 8 and so asks all-of-8 where the live rule now asks 8 proven of 10 —
 the stricter question, which understates scoreability; `bundling.mjs` owns why it is left that way.
 
-**The `readLaunchWindow` two-bound cursor cannot reach this number.** That walk can fail to fetch
-the **tail** of a window (`CLAUDE.md`); the census reads the **create slot**, which is the oldest
-end, reached last and proved by the coverage obligation.
+**The `readLaunchWindow` two-bound cursor never reached this number, and captain decision 144a has
+since closed it anyway** — but the wider reach it installed does reach what a **re-run costs**, and
+it adds a sampling caveat to any rate this pass publishes. `bundling.mjs`'s header section "The
+`readLaunchWindow` bound-mismatch is CLOSED — and this pass inherited its PRICE" owns both halves;
+`pumpfun.mjs` → `windowReachMs` owns the reach and the page cost itself.
 
 **The mint instant is BACKDATED by `mintTimeBackdateMs`, and that is a measurement rather than a
 habit.** `frontend-api-v3`'s `created_timestamp` is millisecond-precision on older listing rows

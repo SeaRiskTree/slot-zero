@@ -35,7 +35,9 @@
  * answer this itself. **This pass does not raise that cap and does not touch it**: it is not
  * Stage 2. It runs no entry scoring, computes no room figure, prices no entry cost, reaches no
  * verdict and produces no number that could be read as one. It walks the same windows Stage 2 would
- * walk, with the same pinned window parameters, and reports two integers per launch.
+ * walk, with the same pinned window parameters, and reports six measures per launch — `bundledTx`,
+ * `runTx`, `adjacencyMarks`, `coordinatedWallets`, `maxWalletsInOneTx` and `createSlotWallets` —
+ * plus the two flags (`bundled`, `proven`) those measures decide.
  *
  * **It measures; it does not tune.** No threshold moves on the strength of what it finds — the
  * pinning decision returns to the captain with the number.
@@ -113,8 +115,11 @@
  * `pumpfun.mjs` → `readLaunchWindow` seeks in milliseconds and decides membership in slots, so at
  * 2026 slot times it can fail to fetch the **tail** of a window (`CLAUDE.md`, "the two-bound
  * cursor"). This pass reads the **create slot** — the oldest end of the walk, reached last and
- * proved by the coverage obligation — so a missing tail cannot move `bundledTx` or
- * `maxWalletsInOneTx`. It is stated here so nobody has to re-derive that it does not apply.
+ * proved by the coverage obligation — so a missing tail cannot move any measure on the launch row.
+ * That covers `runTx`, `adjacencyMarks` and `coordinatedWallets` as well as `bundledTx` and
+ * `maxWalletsInOneTx`: every one of them is computed from create-slot fills alone, and fills the
+ * walk never fetched are all NEWER than the create slot. It is stated here so nobody has to
+ * re-derive that it does not apply.
  */
 
 import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -525,9 +530,11 @@ export async function censusCandidate(client, input) {
     // and not a failure.
     allProven: fullSample ? provenLaunches === launches.length : null,
     allBundled: fullSample ? bundledLaunches === launches.length : null,
-    // Deliberately NOT `provenLaunches === 0`: a candidate with one usable window the rule saw
-    // nothing in is unlucky, and this flag claims something stronger — that NEITHER half marked
-    // anything in ANY window, which is the shape that re-screening cannot change.
+    // Under the union `roomIsProven` is exactly `coordinatedWallets >= 1`, so this agrees with
+    // `provenLaunches === 0` row for row. What the expression buys over it is the `length > 0`
+    // guard: a candidate that produced NO usable window has proved nothing either way and must
+    // never be counted as permanently unscoreable, which is a claim about what re-screening
+    // cannot change.
     neverProven: launches.length > 0 && launches.every((l) => l.coordinatedWallets === 0),
     neverBundles: launches.length > 0 && launches.every((l) => l.maxWalletsInOneTx <= 1),
     launches,

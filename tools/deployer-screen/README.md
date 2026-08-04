@@ -868,7 +868,10 @@ rather than argued for in prose.
 **What it does NOT do.** It does not rescue a deployer that co-ordinates without Jito, or one that
 accumulates in the slots after the create slot — 6 of the census's 11 never-bundling candidates stay
 correctly unproven, which the union re-run has since measured rather than projected: `runTx` 1 on
-48 of 48 of their windows. And whether an adjacent transaction is a true bundle or merely the leader's
+48 of 48 of their windows. That figure is
+[`census/2026-08-03-bundling-census.md`](./census/2026-08-03-bundling-census.md) §2.4, recomputable
+from the committed record `census/2026-08-03-bundling-census.json` (schema 2) by reading `runTx` off
+the `launches[]` rows of those 6 candidates. And whether an adjacent transaction is a true bundle or merely the leader's
 packing order is an **inference**: nothing keyless exposes a bundle id. The arithmetic is unaffected
 either way, but this marks adjacency, not a decoded bundle.
 
@@ -1170,9 +1173,17 @@ refusal and every other bar are untouched, and #17's asymmetry (false rejections
 accepts impossible) is deliberate and unchanged. And it does not build any part of Stage 3.
 
 How often the `our-coverage` half fires is measured, not assumed: `too-few-proven-windows` alone
-silences **13 candidates in 14** on the current gate population, under the union predicate as well
-as under the superseded one — see
-[`census/2026-08-03-bundling-census.md`](./census/2026-08-03-bundling-census.md), and `--subject-era`
+silences **13 candidates in 14** on the current gate population, and the figure holds under the
+union predicate **and** under the superseded shared-transaction half alike.
+
+**Correction.** This paragraph previously read "**1 candidate in 14**", which was wrong by an order
+of magnitude: 1 in 14 is the count that *survives* the filter, and the count it silences is the
+complement, 13. The evidence is the committed record
+`census/2026-08-03-bundling-census.json` (schema 2) and its report
+[`census/2026-08-03-bundling-census.md`](./census/2026-08-03-bundling-census.md) §2.3 — 1 of 14
+proven on all eight, complement 13 of 14 — with §2.4 breaking that 13 into **6** permanently
+unscoreable, **3** one window short at 7 of 8 and **4** partially proven. The same 13 falls out of
+the record's `candidates[].allBundled` for the superseded half. See `--subject-era`
 in [`bundling.mjs`](./bundling.mjs) for the same question on our own subject.
 
 ## Bounds

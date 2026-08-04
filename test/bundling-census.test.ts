@@ -800,10 +800,17 @@ describe('the census record is not a screen run record, and must not be filed as
     // The first run's record did not, and it could not have: the predicate was the only one there
     // was. It has since moved, so a census record that does not say which rule it was taken under
     // is a rate without its denominator — the failure this whole lane is built to refuse.
+    // THE VERSION DECIDES WHETHER TO ASSERT, never the block's presence — the same rule
+    // `test/deployer-screen.test.ts` states beside its `spend` pin. Pinning schema 2 as a global
+    // invariant would make a schema-3 record uncommittable beside this one, which is the opposite
+    // of the "bump, never retro-edit" rule the bump itself cites.
     const census = fileURLToPath(new URL('../tools/deployer-screen/census/', import.meta.url));
+    let schema2Records = 0;
     for (const file of readdirSync(census).filter((f) => f.endsWith('.json'))) {
       const parsed = JSON.parse(readFileSync(join(census, file), 'utf8'));
-      expect(parsed.schemaVersion, file).toBe(2);
+      expect(typeof parsed.schemaVersion, file).toBe('number');
+      if (parsed.schemaVersion !== 2) continue;
+      schema2Records += 1;
       expect(parsed.predicate, file).toMatchObject({
         name: 'union',
         source: 'measure.mjs -> roomIsProven',
@@ -835,6 +842,8 @@ describe('the census record is not a screen run record, and must not be filed as
         }
       }
     }
+    // And the pin is not vacuous: this run's own record is schema 2.
+    expect(schema2Records, 'no schema-2 census record was checked').toBeGreaterThan(0);
   });
 
   it('the committed record\'s own arithmetic closes', () => {
@@ -843,8 +852,11 @@ describe('the census record is not a screen run record, and must not be filed as
     const census = fileURLToPath(new URL('../tools/deployer-screen/census/', import.meta.url));
     for (const file of readdirSync(census).filter((f) => f.endsWith('.json'))) {
       const parsed = JSON.parse(readFileSync(join(census, file), 'utf8'));
-      const recomputed = summariseCensus(parsed.candidates);
-      expect(recomputed, file).toEqual(parsed.summary);
+      // `summariseCensus` computes the CURRENT schema's summary, so it can only be held against a
+      // record written at that schema; an older or newer record is audited by its own lane's test.
+      if (parsed.schemaVersion === 2) {
+        expect(summariseCensus(parsed.candidates), file).toEqual(parsed.summary);
+      }
       // And the cohort accounting adds up: everything gated either passed or is named as not surveyed.
       expect(parsed.cohort.gatePassed + parsed.cohort.notSurveyed.length, file).toBe(parsed.cohort.gated);
       expect(parsed.cohort.surveyed + parsed.cohort.leftUnsurveyedByCap, file).toBe(parsed.cohort.gatePassed);

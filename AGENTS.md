@@ -68,6 +68,11 @@ RPC signature cache) and a superseded `tape/` probe were excluded; everything el
 verbatim. When later evidence contradicts the imported prose, add to `IMPORT.md`
 → "Corrections"; do not edit `report.md` or the dataset `README.md`.
 
+**THE TAPE'S WINDOW IS NOT A FLAT 60 s — it is per launch, and assuming otherwise has already
+produced wrong published statements more than once.** Read each launch's own
+`window/{mint}.meta.json` → `window_ms` before any per-launch rate, uplift or page-count aggregate;
+the distribution and the accessor are below, "The tape past the bond".
+
 **`report.md` §3.5's timing claims are all four wrong and `IMPORT.md` corrections 4–7 own the
 fixes** — read them before quoting §3.5 on *when* anything happened. The one that will bite a new
 view: **`curve_last_tx_s` is an upper *bound*, never a timing.** The curve keeps taking referencing
@@ -132,10 +137,11 @@ Five facts that bind any lane touching it:
   different denominators; the wider window holds far more wallets. `summarise.mjs` →
   `closureOfEarlyPairs` is the like-for-like measure and the only one to quote.
 - **The committed window is NOT a constant, and a flat 60 s baseline is a published-number bug.**
-  On the graduated 103 it is 60 s on 83, 120 s on 3 and 300 s on 17 — `window_ms` in
-  `data/population-tape-2026-07-29/window/{mint}.meta.json`, exposed by `launches.mjs` →
-  `readWindowMeta`. Hardcoding 60 s overstated this uplift by ~6 points before it was caught, and
-  `coverage.csv` now carries `committed_window_s` per launch so a reader can see the cut applied.
+  On the graduated 103 it is 60 s on 83, 120 s on 3 and 300 s on 17 (whole tape: 210 / 4 / 25 of
+  239) — `window_ms` in `data/population-tape-2026-07-29/window/{mint}.meta.json`, exposed by
+  `launches.mjs` → `readWindowMeta`. Hardcoding 60 s overstated this uplift by ~6 points before it
+  was caught, and `coverage.csv` now carries `committed_window_s` per launch so a reader can see the
+  cut applied.
 - **`69420` is truncated at its MINT end** — it bonded ~20 days after mint and the walk covered 1.5%
   of that window. **Do not treat its oldest fill as its create slot.** Every other launch proved
   coverage, and 99 of 99 applicable launches agree with the committed window tape's own create slot.
@@ -166,6 +172,16 @@ Five things bind anything that touches it or copies from it:
   to seven significant figures) because create-slot outsiders close early; it moves an all-entrant
   reading by 69 pairs / 17.1 SOL. `tools/graduated-life-tape/walk.mjs` and
   `tools/arrival-rate-walk/walk.mjs` both use `seekCursor(endMs)` + `tsMs <= endMs` and cannot have it.
+  **KNOWN CAVEAT, DO NOT RE-DERIVE: the `windowSlotSpan` justification's "~63.5 s" is stale.** It
+  converts 160 slots at the tape's old ~397 ms/slot; on the rates
+  `tools/arrival-rate-walk/README.md` owns, 160 slots is **~66.9 s** at the p50 418.0 ms/slot of
+  2026-07 and **~70.6 s** at the max 441.3, both against the fixed 65 s reach. **Read the bound, not
+  the median**: a reach bound has to hold at the maximum observed slot rate, and that is where the
+  160-slot span exceeds the 65 s reach. The prose in
+  `thresholds.json` → `stage2_entry.justification.windowSlotSpan` **and**
+  `stage2_entry.justification.windowMs`, and `tools/deployer-screen/stage2.mjs`, all still say
+  63.5 s; a separate consolidation lane owns fixing all three, so read the number as an underestimate
+  and do not patch it in passing.
 - **The two clocks agree, and this was measured rather than assumed.** Dune's `created_at` is the
   chain's block time; every fill's `ts` is the vendor's. `getBlockTime(createSlot)` equals the window
   sidecar's `created_timestamp` on **12 of 12** launches spread over 2025-12 → 2026-07 — skew 0 ms,
@@ -225,6 +241,14 @@ Learned at real cost; the citations are to
   or the endpoint saying nothing is older, establishes it. Same distinction as the dataset's
   `meta.reached_mint`. Also **sort by `sid`/`slotIndexId` before reading the queue** — the stored
   tape is ascending and the live endpoint is descending.
+- **`sid` decomposes exactly: `slot(12) + blockTxIndex(6) + innerInstructionIndex(4)`** — validated
+  over all 2,699 create-slot fills of the committed tape; `tools/deployer-screen/measure.mjs` →
+  `blockTxIndex` and `slot-zero-bundling-predicate-question/report.md` §3.1 own it, and a later
+  957-fill check agrees. **Read it as a STRING SLICE, never as a number**: `Number(sid.slice(0, 12))`
+  for the slot (`tools/arrival-rate-walk/trades.mjs`, `tools/window-decay-tripwire/createslot.mjs`),
+  `sid.slice(-10, -4)` for the index. A 22-digit `sid` is past `Number.MAX_SAFE_INTEGER`, so
+  arithmetic on it can round a fill down into the previous slot. The low 10 digits order fills
+  *within* a slot and are not a timestamp — never difference two `sid`s as a duration.
 - **THE TWO PUMP.FUN SURFACES DO NOT AGREE ON A MINT INSTANT, and the disagreement runs in exactly
   the direction that deletes a create slot.** `frontend-api-v3`'s `coins?creator=` rows carry
   **millisecond-precision** `created_timestamp` on older launches while `swap-api`'s fill `ts` is

@@ -1127,7 +1127,9 @@ export function renderDryRun(plan) {
     L.push(`  survivors scored              up to ${plan.maxScored}  (pinned cap ${t.maxCandidatesScored})`);
     L.push(`  launches per survivor         up to ${t.maxLaunchesPerCandidate}`);
     L.push(`  requests per launch           up to ${t.maxRequestsPerLaunch}, RETRIES INCLUDED`);
-    L.push('                                (measured: p50 4 pages, p90 8, p95 13; ~25% shed rate)');
+    L.push(`                                (measured at this ${windowReachMs(t) / 1000}s reach over the 127 committed`);
+    L.push('                                launches whose tape outlives it: p50 6 pages, p90 8,');
+    L.push('                                p95 9, max 17; ~25% shed rate)');
     L.push(
       `  WORST CASE                    ${plan.maxScored} x ${t.maxLaunchesPerCandidate} x ` +
         `${t.maxRequestsPerLaunch} = ${worstCase} request(s)`,
@@ -1145,7 +1147,8 @@ export function renderDryRun(plan) {
     );
     L.push(
       `  TIME                          about ${minutes(typicalRequests)} min typical ` +
-        `(~6 requests/launch at the measured p50), about ${minutes(worstCase)} min worst case`,
+        `(~6 requests/launch, this walk's p50 over those 127 launches), ` +
+        `about ${minutes(worstCase)} min worst case`,
     );
     L.push(
       worstCase <= t.maxKeylessRequests

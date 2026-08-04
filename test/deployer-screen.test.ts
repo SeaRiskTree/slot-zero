@@ -7630,20 +7630,23 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
    * Rows are read raw and trimmed with the PRODUCTION `windowFilter`, so the window this measures is
    * the window Stage 2 measures and not a reimplementation of it.
    */
-  const tapedWindows = (() => {
+  type TapedWindow = {
+    mint: string;
+    symbol: string;
+    createdAtMs: number;
+    inWindow: ReturnType<typeof windowFilter>;
+    tsByTx: Map<string, number>;
+    msPerSlot: number | null;
+    allTs: number[];
+  };
+  let tapedWindowsCache: TapedWindow[] | null = null;
+  const tapedWindows = () => {
+    if (tapedWindowsCache !== null) return tapedWindowsCache;
     const dirs: [string, boolean][] = [
       [join(REPO_ROOT, 'data', 'graduated-life-tape-2026-08-02', 'life'), false],
       [join(REPO_ROOT, 'data', 'population-tape-2026-07-29', 'window'), true],
     ];
-    const out: {
-      mint: string;
-      symbol: string;
-      createdAtMs: number;
-      inWindow: ReturnType<typeof windowFilter>;
-      tsByTx: Map<string, number>;
-      msPerSlot: number | null;
-      allTs: number[];
-    }[] = [];
+    const out: TapedWindow[] = [];
     for (const [dir, needsLongWindow] of dirs) {
       for (const file of readdirSync(dir)) {
         if (!file.endsWith('.jsonl.gz')) continue;
@@ -7675,18 +7678,19 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
         });
       }
     }
-    return out;
-  })();
+    tapedWindowsCache = out;
+    return tapedWindowsCache;
+  };
 
   /** In-window fills a cursor of `createdAtMs + reach` would actually have fetched. */
-  const fetchedAt = (L: (typeof tapedWindows)[number], reach: number) =>
+  const fetchedAt = (L: ReturnType<typeof tapedWindows>[number], reach: number) =>
     L.inWindow.filter((f) => (L.tsByTx.get(f.tx) as number) <= L.createdAtMs + reach);
 
   it('has a population that can show the effect at all', () => {
     // If this ever reads 0 the whole block is vacuous, which is the failure mode a guard denominated
     // in the wrong variable already had once.
-    expect(tapedWindows.length).toBe(127);
-    expect(tapedWindows.filter((L) => L.msPerSlot !== null).length).toBeGreaterThan(100);
+    expect(tapedWindows().length).toBe(127);
+    expect(tapedWindows().filter((L) => L.msPerSlot !== null).length).toBeGreaterThan(100);
   });
 
   it('pins the rate against the committed tapes, so the constant cannot drift out of validity', () => {
@@ -7694,7 +7698,7 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     // launch's own declared span. Re-derive it here rather than trust the comment: a future tape
     // recording a slower chain must FAIL this, which is the whole point — the nominal 400 it
     // replaces went out of validity with nothing failing.
-    const rates = tapedWindows.map((L) => L.msPerSlot).filter((r): r is number => r !== null);
+    const rates = tapedWindows().map((L) => L.msPerSlot).filter((r): r is number => r !== null);
     const observed = Math.max(...rates);
     expect(observed).toBeCloseTo(MEASURED_MAX_MS_PER_SLOT, 1);
     expect(MEASURED_MAX_MS_PER_SLOT).toBeGreaterThanOrEqual(observed);
@@ -7710,14 +7714,14 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     // The direct obligation, and the one an arithmetic guard cannot stand in for. `ts` is whole
     // seconds, FLOORED, so a fill can be up to 999 ms later than the tape records; the reach must
     // clear the newest in-window fill by more than that on every launch.
-    const shortfalls = tapedWindows
+    const shortfalls = tapedWindows()
       .map((L) => ({ L, required: Math.max(...L.inWindow.map((f) => L.tsByTx.get(f.tx) as number)) - L.createdAtMs }))
       .filter((x) => x.required + 1_000 > REACH);
     expect(shortfalls.map((x) => `${x.L.symbol} needs ${x.required}ms`)).toEqual([]);
 
     // Stated as counts too, so a reader sees how much room is left rather than only that it passed.
     const worst = Math.max(
-      ...tapedWindows.map((L) => Math.max(...L.inWindow.map((f) => L.tsByTx.get(f.tx) as number)) - L.createdAtMs),
+      ...tapedWindows().map((L) => Math.max(...L.inWindow.map((f) => L.tsByTx.get(f.tx) as number)) - L.createdAtMs),
     );
     expect(worst).toBe(71_000); // `papoi`, 2026-07, at 446.54 ms/slot
     expect(REACH).toBe(85_000); // 160 slots x 500 ms/slot + the 5,000 ms clock margin
@@ -7727,9 +7731,9 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     // The before/after. These are the numbers captain decision 144a was raised on, re-derived here
     // from the committed tapes through the production `windowFilter`, so the regression is pinned
     // rather than described.
-    const before = tapedWindows.map((L) => fetchedAt(L, OLD_NOMINAL_REACH));
-    const lost = tapedWindows.map((L, i) => L.inWindow.length - (before[i] as typeof L.inWindow).length);
-    const lostSells = tapedWindows.map(
+    const before = tapedWindows().map((L) => fetchedAt(L, OLD_NOMINAL_REACH));
+    const lost = tapedWindows().map((L, i) => L.inWindow.length - (before[i] as typeof L.inWindow).length);
+    const lostSells = tapedWindows().map(
       (L, i) =>
         L.inWindow.filter((f) => f.side === 'sell').length -
         (before[i] as typeof L.inWindow).filter((f) => f.side === 'sell').length,
@@ -7740,7 +7744,7 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
 
     // The worst single launch, named, so the evidence is reproducible from one file. `Dummy`
     // (`3BhUv3Ft...`, 2026-07-21) is on both tapes; each copy loses the same 95 fills.
-    const dummy = tapedWindows.filter((L) => L.symbol === 'Dummy');
+    const dummy = tapedWindows().filter((L) => L.symbol === 'Dummy');
     expect(dummy.length).toBe(2);
     for (const L of dummy) {
       expect(L.inWindow.length).toBe(1_340);
@@ -7752,7 +7756,7 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     // And nothing is lost at the reach in force. This is the same assertion as the shortfall test
     // above, taken over fills rather than over milliseconds — they fail independently if the
     // flooring slack is ever spent.
-    for (const L of tapedWindows) expect(fetchedAt(L, REACH).length).toBe(L.inWindow.length);
+    for (const L of tapedWindows()) expect(fetchedAt(L, REACH).length).toBe(L.inWindow.length);
   });
 
   it('and what it costs is PAGES, bounded, counted, and in the safe direction', () => {
@@ -7775,14 +7779,14 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     // against the live production walk of `Spam` (`GxN4wsPK...`, 851 rows in [mint, mint+85,000ms],
     // 9 pages modelled, 9 requests issued, 0 shed), and against this block's own full replay of
     // `readLaunchWindow` over all 127 committed launches.
-    const pagesAt = (L: (typeof tapedWindows)[number], reach: number) => {
+    const pagesAt = (L: ReturnType<typeof tapedWindows>[number], reach: number) => {
       const rows = L.allTs.filter((ts) => ts <= L.createdAtMs + reach).length;
       const limit = T.tradePageLimit as number;
       return Math.ceil(rows / limit) + (rows % limit === 0 ? 1 : 0);
     };
 
-    const before = tapedWindows.map((L) => pagesAt(L, OLD_NOMINAL_REACH));
-    const after = tapedWindows.map((L) => pagesAt(L, REACH));
+    const before = tapedWindows().map((L) => pagesAt(L, OLD_NOMINAL_REACH));
+    const after = tapedWindows().map((L) => pagesAt(L, REACH));
     const p = (a: number[], q: number) => [...a].sort((x, y) => x - y)[Math.floor(q * (a.length - 1))];
     expect([p(before, 0.5), p(before, 0.95), Math.max(...before)]).toEqual([5, 8, 14]);
     expect([p(after, 0.5), p(after, 0.95), Math.max(...after)]).toEqual([6, 9, 17]);
@@ -7792,7 +7796,7 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     // truncated tail it replaces was silent; and it falls on busy launches, so it biases per-launch
     // prize DOWN, which is the direction a screen looking for room may safely err in.
     expect(before.filter((n) => n > PAGES_AVAILABLE).length).toBe(0);
-    const overCap = tapedWindows.filter((_, i) => (after[i] as number) > PAGES_AVAILABLE);
+    const overCap = tapedWindows().filter((_, i) => (after[i] as number) > PAGES_AVAILABLE);
     expect(overCap.length).toBe(4);
     expect([...new Set(overCap.map((L) => L.symbol))].sort()).toEqual(['Dummy', 'Glow', '🤨']);
 
@@ -7810,7 +7814,7 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     // tapes, which are also the busiest ones there. So this is the right order of magnitude for
     // how often Stage 2 now loses a verdict outright, not an answer rate for a stranger. Computed
     // from the inputs rather than hardcoded, so it moves if any of them moves.
-    const capHitRate = overCap.length / tapedWindows.length;
+    const capHitRate = overCap.length / tapedWindows().length;
     const lostVerdictEstimate = 1 - (1 - capHitRate) ** (T.minLaunchesSampled as number);
     expect(lostVerdictEstimate).toBeCloseTo(0.2259, 3);
   });

@@ -914,13 +914,15 @@ proven launches than `minLaunchesSampled` scores `entry-unmeasured` — never `e
 and never folded in with a refusal, which are different findings.
 
 **What the refusal cost, and what decision 182a bought back.** Replaying the live recipe — median
-room over the trailing 8 launches against the 0.55 bar — at all 228 points of our own tape's
-history: refusing removes **24 of 24 false-positive windows and creates none in the other
-direction**. Under half (a) alone that cost **81 windows that became unmeasured** rather than wrong,
-and per launch it took **60 of the 235 covered launches (25.5%)** out of every score. Under the
-union it costs **0 windows and 0 launches**, with false positives still **0**. Nothing was relaxed to
-get there — decision 134a's refusal is untouched, and `minLaunchesSampled` / `maxLaunchesPerCandidate`
-are unmoved (decision 141a) — the rule simply sees more, so it refuses less. On a stranger the trade
+room over the trailing `maxLaunchesPerCandidate` launches against the 0.55 bar — at all **226**
+points of our own tape's history: refusing removes **22 of 22 false-positive windows and creates
+none in the other direction**. Under half (a) alone that cost **62 windows that became unmeasured**
+rather than wrong, and per launch it took **60 of the 235 covered launches (25.5%)** out of every
+score. Under the union it costs **0 windows and 0 launches**, with false positives still **0**.
+Nothing was relaxed to get there — decision 134a's refusal and every evidence bar are untouched —
+the rule simply sees more, so it refuses less. (Every one of those counts is a property of the
+replay's window width, which is `maxLaunchesPerCandidate` — see
+[the rolling replay](#the-rolling-replay--the-same-question-asked-at-every-point-in-the-tape).) On a stranger the trade
 still applies and still cannot be priced, because there is no ground truth to price it against.
 **How often it fires on strangers is measured under BOTH halves** — the census was re-run under the
 union on captain decision 183a, and **1 candidate in 14 survives it either way**: per-launch proof
@@ -1207,21 +1209,21 @@ Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 | Solana RPC ceiling, keyless creation walk | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. Governs the creation-derived walk **when no Helius key is present**. Whichever bound bites is recorded per candidate. |
 | Helius credit ceiling, indexed creation walk | **5,200 credits per candidate**, 1,100,000 per run | `thresholds.json` → `creation_walk_helius`, and the unit is the point — this provider bills by transactions **returned**, so a request ceiling cannot bound it. 5,200 clears the largest complete history measured (49,367 succeeded transactions = 4,940 credits) **plus the per-page guard**, which demands 100 credits for the page and 11 more reserved for the curve-classification pass — at 5,000 that guard stopped the walk after 49 pages, truncating the very wallet the ceiling was sized against. The per-candidate median is 320. The run ceiling makes the default plan admissible at 195 × 5,200 = 1,014,000 and is 11% of the monthly allowance, so **nine worst-case full-cap runs fit in a month** and the expected cost of one is ~0.62%. **The two move together**: the run ceiling is checked before the first request, so raising the per-candidate one alone would refuse every default plan. A plan that does not fit is **refused before the first request**, exactly like the keyed and keyless plans. A page is only started when a whole page's worst case still fits, so the ceiling is exact and never overshot. |
 | Helius pacing | 200ms | Measured 2026-08-03 on this endpoint and plan: a ladder at 1000/500/250/100/0 ms (full mode) and 500/200/100/50/0 ms (signatures mode) shed **nothing at any rung, including 0 ms**, and 150 concurrent requests were all answered 200 at an observed 161 req/s. The walk is latency-bound rather than limit-bound — throughput was 3.98 req/s at 100 ms against 3.89 at 0 ms — so 200 ms is a courtesy floor with an order of magnitude of headroom under the documented 50 req/s, not a shed-avoidance figure. |
-| Solana RPC ceiling, cost leg | 400 requests **per candidate** | `thresholds.json` → `stage2_cost`. Measured on our own tape: the create-slot scope is p50 7 / p90 13 / max 20 transactions per launch and the whole-window scope over CLOSED create-slot outsiders is p50 19 / p90 34 / max 70, unioned so none is paid for twice — **and the union is what the walk pays for: p50 20, p90 36.2, max 74 distinct transactions per launch**, so ~160 requests per candidate at the median and ~290 at p90 over 8 launches (an earlier version of this row said ~200 / ~380, which is the same arithmetic with the union left out). Worst case 3 × 400 = 1,200 requests, about 50 minutes, which `--dry-run` prints. **It runs only on a candidate the free legs have not already refused**, so the realistic cost is far lower. |
+| Solana RPC ceiling, cost leg | 500 requests **per candidate** | `thresholds.json` → `stage2_cost`, which owns this measurement. Measured on our own tape: the create-slot scope is p50 7 / p90 13 / max 20 transactions per launch and the whole-window scope over CLOSED create-slot outsiders is p50 18 / p90 35 / max 70, unioned so none is paid for twice — **and the union is what the walk pays for: p50 19, p90 35, p95 41, max 74 distinct transactions per launch**, so ~190 requests per candidate at the median and ~350 at p90 over 10 launches (an earlier version of this row said ~200 / ~380, which is the same arithmetic with the union left out). It was **400** until captain decision 197b: 400 covered the median and the p90 at a launch cap of 10 too, but what decision 190a's cap consumed is the **per-launch headroom** above them — 50 union transactions a launch at 400/8, only 40 at 400/10 — and a launch the ceiling cannot cover is skipped **whole**, which drags `minPricedFraction` 0.8 (a hit rate over field *entrants*) into `entry-cost-unmeasured` on exactly the busiest candidates. 500/10 = 400/8 holds that headroom constant. Worst case 3 × 500 = 1,500 requests, about 62.5 minutes, which `--dry-run` prints. **It runs only on a candidate the free legs have not already refused**, so the realistic cost is far lower. |
 | Solana RPC pacing | 2.5s | Measured: the nominally faster 1.4s was *slower* in wall-clock once 429 backoff is counted. Rate limiting is global across `getSignaturesForAddress` and `getTransaction`. |
 | `getTransaction` batch size | **1** | Measured harmful above 1 on `api.mainnet-beta` — see [Which history the gate counts](#which-history-the-gate-counts). It does not arise on the indexed route, which issues one request per 1,000 transactions and so has nothing left to batch. |
 | RPC retries | 3 with exponential backoff, each attempt counted against the ceiling | Unlike the keyed client, a 429 here is load-shedding and not a verdict — but a 429 storm still cannot outlast the ceiling. |
 
 ### How long a run takes, and how to bound it
 
-**A full default run at the 195-candidate cap is worst-cased in HOURS, not minutes — about 15 —
+**A full default run at the 195-candidate cap is worst-cased in HOURS, not minutes — about 16.4 —
 and the creation walk is essentially all of it.** With `DUNE_API_KEY` set the walk is the fallback
 and a typical run does not take it at all, finishing far inside this figure; the worst case does not
 move, because every candidate may still fall back. The arithmetic is `renderDryRun`'s, so `--dry-run`
 prints these same figures for whatever flags you actually pass:
 
 **With a Helius key that leg is ~46 minutes instead of ~13.5 hours**, and the run's worst case falls
-to roughly 3.2 hours end to end (21 + 46 + 26 + 50 + 50 minutes) — at which point Stage 2 and its
+to roughly 3.6 hours end to end (21 + 46 + 26 + 63 + 62.5 minutes) — at which point Stage 2 and its
 cost leg, not the creation walk, are the largest terms. `--dry-run` prints whichever route your
 environment actually selects.
 
@@ -1232,14 +1234,14 @@ environment actually selects.
 | **Solana RPC, the creation walk — indexed (Helius)** | 195 × 50 pages = 9,750 requests, 1,014,000 credits | 200ms floor, ~280ms measured cycle → **~46 min** |
 | keyless `frontend-api-v3`, the gate's ownership listing | 195 × 4 = 780 requests | 2.0s → ~26 min |
 | keyless `frontend-api-v3`, `--consistency` | 195 × 3 = 585 requests | 2.0s → ~19.5 min |
-| keyless `swap-api`, Stage 2 | 3 × 8 × 18 = 432 requests | 7.0s → ~50 min |
-| **Solana RPC, Stage 2's cost leg** | 3 × 400 = **1,200** requests | 2.5s → **~50 min** |
+| keyless `swap-api`, Stage 2 | 3 × 10 × 18 = 540 requests | 7.0s → ~63 min |
+| **Solana RPC, Stage 2's cost leg** | 3 × 500 = **1,500** requests | 2.5s → **~62.5 min** |
 
-So: **~16 hours** for a default run, **~16.5** with `--consistency`. The cost leg's ~50 minutes is a
-worst case over three survivors; it runs only on candidates the free legs have not already refused,
-so on the committed live run's shape — one survivor of three — it is nearer ~6 minutes at the
-measured median (~152 requests at 2.5s; an earlier version of this sentence said ~8, which was the
-un-unioned 200). It shares the creation walk's limiter and is serialised after it, never beside it. The earlier "about 47 minutes"
+So: **~16.4 hours** for a default run, **~16.75** with `--consistency`. The cost leg's ~62.5 minutes
+is a worst case over three survivors; it runs only on candidates the free legs have not already
+refused, so on the committed live run's shape — one survivor of three — it is nearer ~8 minutes at
+the measured median (~190 requests at 2.5s over 10 launches; it was ~6 at the ~152 a launch cap of 8
+cost, and an earlier version of this sentence said ~8 for the wrong reason — the un-unioned 200). It shares the creation walk's limiter and is serialised after it, never beside it. The earlier "about 47 minutes"
 predated the creation walk and counted only the keyed and `frontend-api-v3` legs; it is wrong by a
 factor of twenty and is withdrawn. **Do not kill a default run because it is still going after an
 hour.**
@@ -1337,16 +1339,22 @@ profile Stage 1 has already paid for, so the shared vendor allowance — which p
 | bound | value |
 |---|---|
 | gate survivors scored | 3 (`--score` can lower it, never raise it) |
-| launches per survivor | 8 |
+| launches per survivor, PLANNED | 10 |
+| launches that must be SCORED (`minLaunchesSampled`) | 8 |
 | **requests per launch, retries included** | 18 |
-| stage ceiling, on its own client | **432** |
+| stage ceiling, on its own client | **540** |
 | pacing, `swap-api` only | **7.0s** |
 
-`3 × 8 × 18 = 432` — **the declared worst case and the ceiling are the same number**, so the plan
+The two launch bounds are **deliberately unequal** — captain decision 190a, 2026-08-04. The stage
+plans 10 launches and needs 8 of them scored, so a candidate absorbs **two** dropped launches before
+it loses its verdict outright; at the 8-and-8 that preceded it, one drop cost the whole candidate.
+See “What a dropped launch costs” below.
+
+`3 × 10 × 18 = 540` — **the declared worst case and the ceiling are the same number**, so the plan
 `--dry-run` prints is the whole exposure and no plan-level truncation is possible. A launch is only
 started when a full per-launch cap of headroom remains, so a run never abandons one half-walked.
 Typical cost is far lower: at the measured median of 4 pages plus shedding, about 6 requests a launch
-and ~144 for a full run. **In wall-clock terms that is about 17 minutes typical and about 50 minutes
+and ~180 for a full run. **In wall-clock terms that is about 21 minutes typical and about 63 minutes
 worst case**, and `--dry-run` prints both — a run this long must not be mistaken for a hang.
 
 ### Why the fill host is paced at 7s and the other keyless host is not
@@ -1377,12 +1385,12 @@ below. A cap on successful pages would have let a launch cost three times the pr
 The bound is **exact, not approximate**. One page can cost up to three requests (one attempt plus two
 backoffs), so the walk reserves the whole per-page cost *before* starting a page. Checking the cap
 only between pages would let a walk sitting at 17 spent requests start a page that sheds twice and
-finish at 20, and `3 × 8 × 20 = 480` overruns the 432 ceiling the dry run prints as the entire
+finish at 20, and `3 × 10 × 20 = 600` overruns the 540 ceiling the dry run prints as the entire
 exposure — surfacing as a mid-walk ceiling error and a dropped launch.
 
 Note also that the **1,400 keyless ceiling in `budget` is a per-client ceiling, not a run total**:
-`screen.mjs` builds two independent keyless clients, and Stage 2's 432 sits on its own. The enforced
-combined worst case is 1,832. The 1,400 is **derived from the candidate cap**, not chosen, and it is
+`screen.mjs` builds two independent keyless clients, and Stage 2's 540 sits on its own. The enforced
+combined worst case is 1,940. The 1,400 is **derived from the candidate cap**, not chosen, and it is
 derived over both passes that share the `frontend-api-v3` client: the gate's ownership listing at 4
 pages per candidate (780) plus `--consistency` at 3 pages per gate survivor (585) is 1,365 worst
 case. The previous 600 counted only the consistency pass, so gating at the default candidate cap
@@ -1546,15 +1554,77 @@ p95 8 / max 14 to p50 6 / p90 8 / p95 9 / max 17, so **4 of 127 = 3.1%** now exc
 the cap affords and are dropped as `request-cap`, where it was **0 of 127**. `pumpfun.mjs` →
 `windowReachMs` owns the page-cost story and `test/deployer-screen.test.ts` pins these same figures.
 
-And the consequence is the candidate's, not the launch's: `minLaunchesSampled` and `maxLaunchesPerCandidate` are the same
-pinned value (8), so there is no slack — one such drop among a candidate's 8 planned launches leaves
-7 sampled and `scoreEntry` returns `entry-unmeasured` for the **whole candidate**. Naive
-independent-launches **estimate**, not a measurement: `1 − (1 − 4/127)^8` ≈ **22.6%** of candidates,
-assuming independent draws at the tape's cap-hit rate and taking that base rate from one deployer's
-long-window launches, which are also the busiest on the tape. An unmeasured verdict is *no answer*
-and never a rejection, and the drop is counted and reported where the truncated tail was silent. The
-zero-slack coupling between the sample floor and the launch cap is a **separate filed lane** and is
-not fixed here. No threshold moved: the `3 × 8 × 18 = 432` arithmetic is unchanged.
+#### What a dropped launch costs
+
+The consequence is the candidate's, not the launch's — and how much it costs is the gap between
+`maxLaunchesPerCandidate` (how many launches the stage **plans**) and `minLaunchesSampled` (how many
+it must **score**). **Captain decision 190a, 2026-08-04, made that gap two**: the stage plans 10 and
+needs 8, so a candidate absorbs two dropped launches — to the request cap above, to an unproven
+create slot, to any cause — before it returns `entry-unmeasured` outright.
+
+When the widened reach landed, the two were the same pinned value of 8 and the gap was **zero**: one
+drop among a candidate's 8 planned launches left 7 sampled and silenced the whole candidate. Naive
+independent-launches **estimates**, not measurements, at the tape's 4-in-127 cap-hit rate: **22.6%**
+of candidates lost their verdict at zero slack, **3.1%** at one spare launch, **0.32%** at two. One
+spare launch was not enough because drops **cluster** — a launch is dropped for being busy, and busy
+launches cluster on busy deployers — so the binomial understates the real rate exactly where it
+matters. That is why the gap is two and not one. The base rate itself comes from one deployer's
+long-window launches, so none of these is an answer rate for a stranger.
+
+**Those three figures are the request-cap component only, and 0.32% is not the full-day run's
+expected no-verdict rate.** They are computed from the 4-in-127 page-cost drop rate and nothing else.
+The dominant cause for a stranger is the other one: `census/2026-08-03-bundling-census.md` measures
+per-launch proven at **44 of 112 = 0.3929** under the union predicate, and **0 of 13 strangers**
+proven on all eight (1 of 14 counting our own control, which is the one). At ~39% proven per launch,
+8-of-10 proven is not reachable for a typical stranger, so the run's no-verdict rate is governed by
+`roomIsProven`, not by anything pinned here. The raise **does** help that dominant cause — the same
+census recorded 3 candidates sitting at 7 of 8, which a two-launch gap now reaches — but this lane
+does not quantify it, and the pinned figure must not be read as if it had.
+
+**A ceiling this lane does not close.** Decoupling the cap from the floor creates a verdict shape
+that was structurally impossible at 8-and-8: a candidate scored on 8 of 10 launches whose 2 missing
+launches were selected **by drop cause** rather than at random — request-cap drops fall on the
+busiest launches, `roomIsProven` drops on launches with no co-ordination evidence. At 8-and-8 such a
+candidate returned `entry-unmeasured`; it now returns a verdict computed over a non-random
+subsample. That is the same shape this tool refuses to read elsewhere — the cost leg discards a
+ceiling-truncated launch *whole* because a truncated walk holds the earliest entrants by slot, and
+`minPricedFraction` exists for the same reason.
+
+**The direction of that bias is unmeasured**, and the attempt that failed to settle it is the
+evidence: over the 235 committed launches the rank correlation between per-launch fill count and
+`roomLeft` is **0.0250**, i.e. negligible; the busiest quartile's median `roomLeft` is **0.3032**
+against the quietest quartile's **0.2771**, which points one way; but dropping the busiest 7 of 235
+(the 3.1% request-cap rate) moves the median `roomLeft` **0.3146 → 0.3314**, i.e. *up*, toward
+enterable, which points the other way. Two statistics, opposite in sign, on n = 1 deployer. On this
+tape it changes no verdict, because that 0.3146 median sits 0.24 **below** the `minRoomLeft` bar of
+0.55 — but n = 1 says nothing about a stranger sitting near the bar. So the standing bar (*a null
+result is an acceptable result, a false positive is not*) is **not discharged** for this new sample
+shape by this lane. Captain decision 198b accepted that knowingly and split the work: a
+refuse-near-the-bar guard is a separate filed lane blocked on this one, and the full-day screen run
+blocks on **both**, so the unguarded shape is never what that run uses.
+
+**How those four figures were derived, and the limit on them.** The population is the 235 committed
+launches as returned by `stage0.mjs` → `measureSubjectLaunches` over
+`data/population-tape-2026-07-29`. The two per-launch quantities are its **fill count** (busyness)
+and its `createSlot.roomLeft`. The correlation is a **rank** correlation over those two; the
+quartiles are cut **by fill count**; and the median shift is the median `roomLeft` over all 235
+against the median with the **7 busiest removed**, 7 being the 3.1% request-cap rate applied to that
+population. **This was a one-off derivation by this lane and no committed check reproduces it**, so
+unlike the page-cost model beside it these numbers can go stale silently. That is part of the honest
+record rather than a footnote: the follow-up guard lane should land them as a check if it needs to
+depend on them.
+
+The floor was **not** the adjustable half: closing the gap by lowering `minLaunchesSampled` would
+weaken the evidence a verdict rests on rather than give it headroom, and 190a names the direction.
+**No bar moved** — every scored launch clears exactly what it cleared before; two more are offered.
+The cost is requests: the stage arithmetic went `3 × 8 × 18 = 432` to `3 × 10 × 18 = 540`, and the
+ceiling moved with it so the dry run is still the whole exposure. An unmeasured verdict remains *no
+answer* and never a rejection, and a drop is counted and reported where the truncated tail was
+silent. `thresholds.json` → `stage2_entry.justification.maxLaunchesPerCandidate` owns the arithmetic
+and `test/deployer-screen.test.ts` → “THE SAMPLING RULE HAS HEADROOM, and the REQUEST-CAP unmeasured
+rate it buys is PINNED” pins the **request-cap component** of that rate, so neither threshold can
+move that component silently again. It is not the total: what the full-day run answers nothing at is
+governed by `roomIsProven`, and no committed check pins that.
 
 **The margin is a cursor hint and never a proof tolerance.** The pre-mint tripwire still compares
 `ts < createdAtMs` with zero slack, and coverage is still discharged only by an explicit
@@ -1665,7 +1735,7 @@ it five ways before a single request is issued:
 | the create-slot primitive reproduces the published §5.1 era split | operation share 0.4508 → **0.7708** against a published 0.451 → **0.771** (see below) |
 | the **field** measurement reproduces `wallet_launch_pnl.csv` | **1,322 create-slot outsider pairs, 0 closure mismatches, max realised error 5.0e-7 SOL** (1,502 before decision 182a — the 180 it drops are the operation's own wallets) |
 | **the known-negative control**, at two points in time and once more with costs attached | see below |
-| **the rolling replay**, at every point in time | **228 trailing windows, 0 false positives and 0 false negatives**, **0** refused as unmeasured (81 before decision 182a) — see below |
+| **the rolling replay**, at every point in time | **226 trailing windows, 0 false positives and 0 false negatives**, **0** refused as unmeasured (62 before decision 182a) — see below |
 | **the adjacency tripwire**, on the `sid` block-index signal | **15 pre-March launches, all 15 producing a run of 2+ transactions** (shortest 4), 122 create-slot fills decomposed with 0 unreadable indices and 0 prefix mismatches, **45/45 cohort wallet-instances recovered, 0 non-cohort marked** — see below |
 | **the cost leg**, against `onchain_create_slot_pnl.csv`, over the population the gate itself scores | **112 launches, 766 create-slot entries, 627 round trips priced end to end**; median entry cost **0.0308 SOL**; hit rate **0.7384 gross → 0.6045 net**, **87** round trips flipping sign — see below |
 
@@ -1767,7 +1837,7 @@ It is scored two ways, because both readings have to come out negative and they 
 
 | slice | verdict | median room |
 |---|---|---|
-| the most recent 8 launches — exactly what a live run would score today | `entry-room-absent` | **0.284** |
+| the most recent `maxLaunchesPerCandidate` launches (10) — exactly what a live run would score today | `entry-room-absent` | **0.278** |
 | the whole post-2026-06-04 regime, 89 proven launches | `entry-room-absent` | **0.229** |
 
 **And this is why it is an assertion rather than a threshold comparison:** on that same wallet the
@@ -1785,7 +1855,7 @@ co-ordination rule's half (a) happens to recover 97–100% of our subject's coho
 (`analysis/window-population/`). That stretch is what half (b) now carries, and the adjacency
 tripwire above exists because it carries it alone.
 
-So Stage 0 asks the same question at **all 228 trailing windows** instead of two. The recipe is the
+So Stage 0 asks the same question at **all 226 trailing windows** instead of two. The recipe is the
 live one, not an approximation of it: median `roomLeft` over the trailing
 `maxLaunchesPerCandidate` launches against `minRoomLeft`, a window with fewer than
 `minLaunchesSampled` proven launches being unmeasured, exactly as `scoreEntry` would have it. Each
@@ -1794,13 +1864,19 @@ hold only because this is our own subject, which is the whole reason the structu
 
 | | before decision 134a | with it, half (a) only | with it, under the union (decision 182a) |
 |---|---:|---:|---:|
-| windows evaluated | 228 | 228 | 228 |
-| **false positives** — screen says room, the named cohort says none | **24** | **0** | **0** |
+| windows evaluated | 226 | 226 | 226 |
+| **false positives** — screen says room, the named cohort says none | **22** | **0** | **0** |
 | false negatives — screen MEASURED the window and said none, the named cohort says room | 0 | 0 | 0 |
-| windows reported unmeasured — refused, so the screen gave no verdict at all | 0 | 81 | **0** |
+| windows reported unmeasured — refused, so the screen gave no verdict at all | 0 | 62 | **0** |
+
+**Every count in that table is a property of the window's width**, which is
+`maxLaunchesPerCandidate` — so it moves whenever the cap does, and what the check is here to
+establish does not. At the 8 that preceded captain decision 190a the same replay slid **228** windows
+and read **24** false positives before 134a and **81** refusals under half (a) alone. The zero that
+matters is unchanged at either cap.
 
 The last column is what the screen prints today: the refusal is untouched and the rule simply sees
-more, so on this tape it never fires (88 windows room-present, 140 room-absent).
+more, so on this tape it never fires (92 windows room-present, 134 room-absent).
 
 **A refused window is counted as `unmeasured`, never as a false negative.** The two are exactly the
 distinction the ruling exists to keep apart: a window with too few proven launches carries no
@@ -1850,12 +1926,26 @@ superseded reading is recoverable from the new record without re-walking a windo
 `PREDICATE_CAVEAT` puts the rule beside the rate everywhere the rate goes.
 
 **The problem it measures, which is arithmetic before it is observation.** `stage2_entry` pins
-`maxLaunchesPerCandidate: 8` and `minLaunchesSampled: 8`, deliberately equal, and since #17 a launch
-whose create slot the co-ordination rule marks nothing in is refused as unproven (`measure.mjs` →
-`roomIsProven`, captain decision 134a). Multiplied out: **Stage 2 can only reach a verdict for a
-candidate whose most recent 8 eligible launches were every one marked, and one unmarked launch in
-eight silences the whole candidate.** The live evidence for how large a population that silences was
-**two strangers**, because `maxCandidatesScored` is 3 and one of the three was our own control.
+When this pass ran, `maxLaunchesPerCandidate: 8` and `minLaunchesSampled: 8` were deliberately
+equal, and since #17 a launch whose create slot the co-ordination rule marks nothing in is refused as
+unproven (`measure.mjs` → `roomIsProven`, captain decision 134a). Multiplied out: **Stage 2 could
+only reach a verdict for a candidate whose most recent 8 eligible launches were every one marked, and
+one unmarked launch in eight silenced the whole candidate.** The live evidence for how large a
+population that silences was **two strangers**, because `maxCandidatesScored` is 3 and one of the
+three was our own control.
+
+**That premise has since moved and this pass has not been re-run under it.** Captain decision 190a
+raised the cap to 10 against the same floor of 8, so the live rule is 8 proven of 10 planned and this
+census's all-of-8 headline is **stricter than what Stage 2 requires** — it understates how many
+candidates are scoreable, the safe direction for a finding of this shape. A census record is never
+retro-edited; re-running it under the new cap is a separate decision.
+
+A re-run would follow the cap but **not** the rule. `bundling.mjs` re-pins no window parameter, so it
+would plan the 10 launches Stage 2 plans — but its `fullSample` headline would still demand 10 of 10
+proven, where Stage 2 requires only 8 proven of 10 planned. The launch **count** follows
+`maxLaunchesPerCandidate`; the **predicate** does not follow `minLaunchesSampled`. The census's
+re-run predicate is therefore deliberately stricter than the live rule, in the same understating
+direction, and reconciling the two is a separate decision.
 
 **What the pass does, and what it deliberately does not.** It walks create-slot windows with Stage
 2's own pinned window parameters and reports only `bundledTx`, `runTx`, `maxWalletsInOneTx`,
@@ -1899,7 +1989,8 @@ summary — the requirement `LANDING_TIP_CAVEAT` set, for the same reason:
   very finding the pass is measuring.
 
 **`--subject-era` answers the era question where it can be answered, and refuses it where it
-cannot.** The live census walks each candidate's most recent 8 launches, which span days to weeks
+cannot.** The live census walks each candidate's most recent `maxLaunchesPerCandidate` launches
+(10 since captain decision 190a; the committed run walked 8), which span days to weeks
 and cannot carry a trend. The committed population tape can: 235 launches of **one** deployer over
 2025-12 → 2026-07, bucketed offline with no request of any kind. That table is a **within-deployer**
 trend at n = 1 and the rendered output says so three times, because a within-deployer trend read as
@@ -1907,6 +1998,8 @@ a population one is the "n = 2, a signal not a rate" failure one level up. **It 
 and the gap between the columns is the point**: pre-March this operator bundles 0 of 15 while the
 union proves 15 of 15, so a shared-transaction-only column reads a rule's blind spot as a deployer's
 habit. Whole tape: **235 of 235 proven, 175 bundled**; trailing-8 replay **228 of 228 against 147**.
+That replay's span is pinned at 8 and so asks all-of-8 where the live rule now asks 8 proven of 10 —
+the stricter question, which understates scoreability; `bundling.mjs` owns why it is left that way.
 
 **The `readLaunchWindow` two-bound cursor cannot reach this number.** That walk can fail to fetch
 the **tail** of a window (`CLAUDE.md`); the census reads the **create slot**, which is the oldest
@@ -1942,8 +2035,12 @@ this at "about 1-in-14 to about 3-in-14" from a 3-launch probe and said in the s
 
 **The binding constraint has changed hands.** Per-launch evidence went 0.1607 → 0.3929 while the
 headline went 0.0714 → 0.0714: everything the union bought was absorbed by the all-or-nothing
-sampling rule. The predicate is no longer what silences this population — `minLaunchesSampled ==
-maxLaunchesPerCandidate == 8` is. **That question is decision 141a's and nothing here re-opens it.**
+sampling rule. The predicate was no longer what silenced this population — `minLaunchesSampled ==
+maxLaunchesPerCandidate == 8` was. **That question is decision 141a's and nothing here re-opened
+it** — and captain decision 190a has since answered the half of it that was answerable without
+touching the floor, by raising the cap to 10. The three near-misses this census records at 7 of 8
+are exactly the candidates that gap now reaches; what that does to the headline is measurable only
+by re-running the pass, which is a separate decision.
 
 **14 is the whole gate-survivor population this repository can reach, not a truncated 20–30** —
 the census cap is 30 and nothing was left unsurveyed. Reaching more needs fresh keyed discovery.

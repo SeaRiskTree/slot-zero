@@ -738,11 +738,13 @@ export function isDeployerAttributable(finding) {
  * `launchesRoomUnproven`. See {@link UNMEASURED_CAUSE_ATTRIBUTION} and
  * {@link isDeployerAttributable} — a later stage may not drop a candidate on this.
  * On our own tape, replaying the live recipe at every index, that removes
- * **24 of 24 false-positive windows and leaves none at any bar from 0.1 to 0.8**.
+ * **22 of 22 false-positive windows and leaves none at any bar from 0.1 to 0.8**.
  *
  * **What it costs is what captain decision 182a bought back.** Under the shared-transaction rule
- * alone the refusal cost 81 of 228 rolling windows, which became unmeasured rather than wrong;
- * under the UNION rule it costs **0 of 228**, with false positives still 0. The refusal is
+ * alone the refusal cost 62 of 226 rolling windows, which became unmeasured rather than wrong;
+ * under the UNION rule it costs **0 of 226**, with false positives still 0. (Those counts are a
+ * property of the replay's window width, which is `maxLaunchesPerCandidate`: at the 8 that preceded
+ * captain decision 190a they read 24 of 24, and 81 of 228 against 0 of 228.) The refusal is
  * unchanged and no bar was relaxed — the rule simply sees more, so it refuses less. Stage 0's
  * rolling replay asserts both halves of that.
  *

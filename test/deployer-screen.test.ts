@@ -1541,8 +1541,11 @@ describe('the CLI contract', () => {
     expect(text).toMatch(/NO KEYED REQUEST/);
     // And the WALL CLOCK, derived from the pinned pacing rather than written down once. An estimate
     // stale in the optimistic direction gets a run killed by an operator who thinks it has hung.
-    expect(text).toMatch(/about 17 min typical/);
-    expect(text).toMatch(/about 50 min worst case/);
+    // Both derived from the pinned pacing and the pinned caps, so captain decision 190a's launch
+    // cap of 10 shows up here as wall clock: 3 x 10 x 6 = 180 requests typical and 3 x 10 x 18 =
+    // 540 worst case, at 7s apiece. At the cap of 8 these read 17 and 50.
+    expect(text).toMatch(/about 21 min typical/);
+    expect(text).toMatch(/about 63 min worst case/);
     expect(text).toMatch(/7s between requests, swap-api ONLY/);
     // The cost leg's own exposure, on the same surface and in the same units. It is a SEPARATE
     // budget on a different host, so a reader who only saw the swap-api arithmetic would under-read
@@ -1703,9 +1706,12 @@ describe('the CLI contract', () => {
     // frontend-api-v3 has shed nothing here and must NOT be slowed for another host's fault.
     expect(T['budget'].keylessMinIntervalMs).toBe(2_000);
     expect(T['stage2_entry'].keylessMinIntervalMs).toBeGreaterThan(T['budget'].keylessMinIntervalMs);
-    // Pacing moves the wall clock, never the exposure: the stage arithmetic is untouched.
+    // Pacing moves the wall clock, never the exposure: the stage arithmetic is untouched by THIS
+    // pin. The arithmetic itself is 3 x 10 x 18 since captain decision 190a raised the launch cap
+    // for sampling headroom; it was 3 x 8 x 18 = 432 before, and the ceiling moved with it.
     const s2 = T['stage2_entry'];
-    expect(s2.maxCandidatesScored * s2.maxLaunchesPerCandidate * s2.maxRequestsPerLaunch).toBe(432);
+    expect(s2.maxCandidatesScored * s2.maxLaunchesPerCandidate * s2.maxRequestsPerLaunch).toBe(540);
+    expect(s2.maxKeylessRequests).toBe(540);
     // Each justification must name the host it governs, or the next reader re-inherits the
     // misattribution this pin exists to correct.
     expect(s2.justification.keylessMinIntervalMs).toMatch(/swap-api/);
@@ -7558,7 +7564,7 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
   });
 
   it('never issues more requests than its cap, whatever the endpoint says or sheds', async () => {
-    // The bound has to be EXACT, not approximate: the stage arithmetic (3 x 8 x 18 = 432) is printed
+    // The bound has to be EXACT, not approximate: the stage arithmetic (3 x 10 x 18 = 540) is printed
     // by the dry run as the entire exposure, and a walk that overshot by a retry would make the
     // printed plan a lie and surface as a mid-walk CeilingReached and a dropped launch.
     for (const cap of [1, 2, 3, 4, 5, 6, 7, 8, 17, 18]) {
@@ -7686,6 +7692,40 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
   const fetchedAt = (L: ReturnType<typeof tapedWindows>[number], reach: number) =>
     L.inWindow.filter((f) => (L.tsByTx.get(f.tx) as number) <= L.createdAtMs + reach);
 
+  // THE PAGE-COST MODEL LIVES HERE RATHER THAN INSIDE ONE TEST because two tests read it and the
+  // second one's arithmetic is only worth anything if it is the SAME measurement: the drop rate
+  // pinned below is the input to the sampling-rule headroom the next test computes, so it is
+  // derived from this tape on every run rather than retyped as a constant that can drift.
+  //
+  // `while (spent() + attemptsPerRequest <= maxRequests)` with retryBackoffMs [3000, 9000] gives
+  // attemptsPerRequest 3, so an unshed walk gets pages while spent <= 15: sixteen of them.
+  const PAGES_AVAILABLE =
+    (T.maxRequestsPerLaunch as number) - ((loadThresholds()['stage2_entry'] as { keylessRetryBackoffMs: number[] }).keylessRetryBackoffMs.length + 1) + 1;
+
+  /**
+   * THE EXACT COST MODEL, and the modulo term is the whole of it. The page that reaches back past
+   * the mint carries the endpoint's own `hasMore === false`, so the coverage proof arrives WITH the
+   * rows and costs nothing extra — UNLESS the last page comes back exactly full, in which case the
+   * walk spends one more request to learn that it was the end. A flat `+1` charges for that page
+   * always and plain `ceil` never charges for it; both are wrong, in opposite directions, and the
+   * difference is real on this tape (at the reach this replaces one launch hits the exactly-full
+   * case, which is why the before-p95 is 8 rather than 7). Validated twice: against the live
+   * production walk of `Spam` (`GxN4wsPK…`, 851 rows in [mint, mint+85,000ms], 9 pages modelled,
+   * 9 requests issued, 0 shed), and against a full replay of `readLaunchWindow` over all 127
+   * committed launches.
+   */
+  const pagesAt = (L: ReturnType<typeof tapedWindows>[number], reach: number) => {
+    const rows = L.allTs.filter((ts) => ts <= L.createdAtMs + reach).length;
+    const limit = T.tradePageLimit as number;
+    return Math.ceil(rows / limit) + (rows % limit === 0 ? 1 : 0);
+  };
+
+  /** Launches the request cap drops WHOLE at the reach in force. */
+  const overCapLaunches = () => tapedWindows().filter((L) => pagesAt(L, REACH) > PAGES_AVAILABLE);
+
+  /** The measured per-launch drop rate, and the input to the headroom arithmetic below. */
+  const capHitRate = () => overCapLaunches().length / tapedWindows().length;
+
   it('has a population that can show the effect at all', () => {
     // If this ever reads 0 the whole block is vacuous, which is the failure mode a guard denominated
     // in the wrong variable already had once.
@@ -7761,29 +7801,9 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
 
   it('and what it costs is PAGES, bounded, counted, and in the safe direction', () => {
     // Reaching further means paging through more rows to get back to the mint, and this is the one
-    // place the fix is not free. Pinned so that a later widening has to look at the bill.
-    //
-    // `while (spent() + attemptsPerRequest <= maxRequests)` with retryBackoffMs [3000, 9000] gives
-    // attemptsPerRequest 3, so an unshed walk gets pages while spent <= 15: sixteen of them.
-    const PAGES_AVAILABLE =
-      (T.maxRequestsPerLaunch as number) - ((loadThresholds()['stage2_entry'] as { keylessRetryBackoffMs: number[] }).keylessRetryBackoffMs.length + 1) + 1;
+    // place the fix is not free. Pinned so that a later widening has to look at the bill. The cost
+    // model itself is shared with the headroom test below — see `pagesAt` in this block's scope.
     expect(PAGES_AVAILABLE).toBe(16);
-    //
-    // THE EXACT COST MODEL, and the modulo term is the whole of it. The page that reaches back past
-    // the mint carries the endpoint's own `hasMore === false`, so the coverage proof arrives WITH
-    // the rows and costs nothing extra — UNLESS the last page comes back exactly full, in which
-    // case the walk spends one more request to learn that it was the end. A flat `+1` charges for
-    // that page always and plain `ceil` never charges for it; both are wrong, in opposite
-    // directions, and the difference is real on this tape (at the reach this replaces one launch
-    // hits the exactly-full case, which is why the before-p95 is 8 rather than 7). Validated twice:
-    // against the live production walk of `Spam` (`GxN4wsPK...`, 851 rows in [mint, mint+85,000ms],
-    // 9 pages modelled, 9 requests issued, 0 shed), and against this block's own full replay of
-    // `readLaunchWindow` over all 127 committed launches.
-    const pagesAt = (L: ReturnType<typeof tapedWindows>[number], reach: number) => {
-      const rows = L.allTs.filter((ts) => ts <= L.createdAtMs + reach).length;
-      const limit = T.tradePageLimit as number;
-      return Math.ceil(rows / limit) + (rows % limit === 0 ? 1 : 0);
-    };
 
     const before = tapedWindows().map((L) => pagesAt(L, OLD_NOMINAL_REACH));
     const after = tapedWindows().map((L) => pagesAt(L, REACH));
@@ -7793,30 +7813,104 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
 
     // Four launches — the busiest on either tape — now cost more pages than the cap affords and are
     // dropped whole as `request-cap`. That is a COUNTED drop and it shrinks `n` visibly, where the
-    // truncated tail it replaces was silent; and it falls on busy launches, so it biases per-launch
-    // prize DOWN, which is the direction a screen looking for room may safely err in.
+    // truncated tail it replaces was silent. It falls on busy launches, which is EXPECTED to bias
+    // the per-launch PRIZE down — busy launches being the high-prize ones — but that expectation has
+    // no committed derivation and does not cover `roomLeft` or the verdict, whose surviving-sample
+    // direction this branch records as UNMEASURED. See `pumpfun.mjs` → `windowReachMs`.
     expect(before.filter((n) => n > PAGES_AVAILABLE).length).toBe(0);
-    const overCap = tapedWindows().filter((_, i) => (after[i] as number) > PAGES_AVAILABLE);
+    const overCap = overCapLaunches();
     expect(overCap.length).toBe(4);
     expect([...new Set(overCap.map((L) => L.symbol))].sort()).toEqual(['Dummy', 'Glow', '🤨']);
 
-    // AND WHAT A DROP COSTS IS THE CANDIDATE'S VERDICT, not a smaller sample. This identity is the
-    // reason: the sample floor and the per-candidate launch cap are the same pinned value, so there
-    // is no spare launch to lose — one `request-cap` drop among a candidate's planned launches
-    // leaves it short of `minLaunchesSampled` and `scoreEntry` returns `entry-unmeasured` for the
-    // whole candidate. Asserted structurally so that the day the separate lane that owns this
-    // coupling changes it, this pin fails and the cost above is re-read rather than going stale.
-    expect(T.minLaunchesSampled as number).toBe(T.maxLaunchesPerCandidate as number);
+    // AND WHAT A DROP COSTS IS THE CANDIDATE'S VERDICT, not merely a smaller sample — up to the
+    // headroom the sampling rule now carries. See the next test, which owns that arithmetic and
+    // pins what the headroom buys; the cap-hit rate measured here is its input.
+    expect(capHitRate()).toBeCloseTo(0.0315, 4);
+  });
 
-    // The size of that, AS AN ESTIMATE AND NOT A MEASUREMENT. Two assumptions, both false in part:
-    // (i) it treats a candidate's 8 launches as independent draws at the tape's cap-hit rate, and
-    // (ii) the 4/127 base rate comes from ONE deployer's long-window launches on the committed
-    // tapes, which are also the busiest ones there. So this is the right order of magnitude for
-    // how often Stage 2 now loses a verdict outright, not an answer rate for a stranger. Computed
-    // from the inputs rather than hardcoded, so it moves if any of them moves.
-    const capHitRate = overCap.length / tapedWindows().length;
-    const lostVerdictEstimate = 1 - (1 - capHitRate) ** (T.minLaunchesSampled as number);
-    expect(lostVerdictEstimate).toBeCloseTo(0.2259, 3);
+  it('THE SAMPLING RULE HAS HEADROOM, and the REQUEST-CAP unmeasured rate it buys is PINNED', () => {
+    // EVERY RATE PINNED IN THIS TEST IS THE REQUEST-CAP COMPONENT ALONE — 0.32% at the live cap and
+    // floor, 22.6% at zero slack, 3.1% at one spare launch. They are computed from `capHitRate()`,
+    // which is the 4-in-127 page-cost drop rate the test above measures, and from NOTHING ELSE.
+    // NOBODY MAY READ 0.32% AS THE FULL-DAY RUN'S EXPECTED NO-VERDICT RATE. The dominant cause is a
+    // different one and this repository already measures it: `census/2026-08-03-bundling-census.md`
+    // reads per-launch proven at 44 of 112 = 0.3929 under the union predicate, and 0 of 13 STRANGERS
+    // proven on all eight (1 of 14 counting our own control, which is the one). At ~39% proven per
+    // launch, 8-of-10 proven is not reachable for a typical stranger, so the run's no-verdict rate
+    // will be governed by `roomIsProven` and not by anything pinned here. The cap raise DOES help
+    // that dominant cause — the same census recorded 3 candidates sitting at 7 of 8, which a
+    // two-launch gap now reaches — but this lane does not quantify it, and the numbers below must
+    // not be read as if it had.
+    //
+    // CAPTAIN DECISION 190a, 2026-08-04. `maxLaunchesPerCandidate` is how many launches Stage 2
+    // PLANS; `minLaunchesSampled` is how many it must SCORE. Their difference is the number of
+    // planned launches a candidate may LOSE and still reach a verdict. It used to be ZERO, because
+    // the two were the same pinned value of 8: one drop left 7 and `scoreEntry` returned
+    // `entry-unmeasured` for the WHOLE CANDIDATE. That equality was never a decision; it was two
+    // separately-argued numbers coinciding, and nothing failed when the widened window reach turned
+    // it into a cost. This test is that missing failure.
+    const T = loadThresholds()['stage2_entry'];
+    const cap = T.maxLaunchesPerCandidate as number;
+    const floor = T.minLaunchesSampled as number;
+    const slack = cap - floor;
+
+    // The direction is the decision's, not an implementation detail: the CAP is what may rise. A
+    // future lane closing this gap by dropping the floor would be weakening the evidence a verdict
+    // rests on rather than giving it room, and gets this rather than a green suite.
+    expect(cap).toBeGreaterThan(floor);
+    expect(floor).toBe(8);
+    expect(slack).toBe(2);
+
+    // WHAT THE GAP BUYS AGAINST THE REQUEST-CAP CAUSE, as an ESTIMATE and never a measurement.
+    // Three limits, all of them binding: (i) it treats a candidate's planned launches as independent
+    // draws at the cap-hit rate derived from the same tape and the same page-cost model the test
+    // above pins; (ii) that 4/127 base rate comes from ONE deployer's long-window launches on the
+    // committed tapes, which are also the busiest ones there — and drops in fact CLUSTER, since a
+    // launch is dropped for being busy and busy launches cluster on busy deployers, so the true rate
+    // at any given slack is worse than this binomial says, which is exactly why the gap is two
+    // launches and not one; and (iii) it counts the request cap ALONE, so it is a component and not
+    // a total. See the header above: `roomIsProven` is the larger cause and is not in these numbers.
+    // Right order of magnitude for how often the request cap alone loses Stage 2 a verdict; not an
+    // answer rate for a stranger.
+    const p = capHitRate();
+    const choose = (n: number, k: number) => {
+      let c = 1;
+      for (let i = 0; i < k; i++) c = (c * (n - i)) / (i + 1);
+      return c;
+    };
+    /** P(more than `slack` of `cap` planned launches drop) — i.e. P(no verdict). */
+    const unmeasuredRate = (cap: number, slack: number) => {
+      let survived = 0;
+      for (let k = 0; k <= slack; k++) survived += choose(cap, k) * p ** k * (1 - p) ** (cap - k);
+      return 1 - survived;
+    };
+
+    // The request-cap rate in force. Pinned as a NUMBER, so moving either threshold moves this and
+    // fails here rather than silently changing what the request cap costs in verdicts. It is not
+    // how often the full-day run answers nothing — see the header.
+    expect(unmeasuredRate(cap, slack)).toBeCloseTo(0.0032, 4);
+
+    // And what it is measured against — the two readings that made 190a a decision. Zero slack is
+    // what the tool shipped with, and one spare launch is the cheaper fix that was refused: at
+    // ~3.1% it is an order of magnitude worse than two, before the clustering above is counted.
+    expect(unmeasuredRate(8, 0)).toBeCloseTo(0.2259, 4);
+    expect(unmeasuredRate(9, 1)).toBeCloseTo(0.0308, 4);
+
+    // THE COST OF THE HEADROOM, pinned on the same surface as the benefit so no future reader has
+    // to go and find it: the stage arithmetic is the cap multiplied out, and the ceiling equals the
+    // declared worst case, so the dry run stays the whole exposure. `maxRequestsPerLaunch` is NOT
+    // touched by any of this — it is under open captain decision 193c — and this cap multiplies it
+    // rather than colliding with it.
+    expect(T.maxCandidatesScored * cap * T.maxRequestsPerLaunch).toBe(540);
+    expect(T.maxKeylessRequests).toBe(540);
+    expect(T.maxRequestsPerLaunch).toBe(18);
+
+    // The justification must say what the GAP absorbs, not merely restate the number — the whole
+    // reason this was a lane. Two of the three thresholds it ties together are named in it too.
+    const why = T.justification.maxLaunchesPerCandidate as string;
+    expect(why).toMatch(/minLaunchesSampled/);
+    expect(why).toMatch(/absorbs TWO/);
+    expect(why).toMatch(/190a/);
   });
 
   it('is derived from the SPAN, so widening the span widens the reach instead of reopening the gap', () => {
@@ -8502,23 +8596,25 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     // Before schema 6 a record carried `launchRefsAvailable` and `launchesAttempted` and nothing
     // between them, so three different reasons a launch went unmeasured — too young, dropped by our
     // own per-candidate cap, or never reached — were indistinguishable, and the 65s gate was
-    // observable ONLY by reading seek cursors out of a live run's log. Here the profile offers 12
-    // launches, one of which is too young; 11 are eligible and the cap of 8 takes the rest.
+    // observable ONLY by reading seek cursors out of a live run's log. Here the profile offers 14
+    // launches, one of which is too young; 13 are eligible and the cap takes the rest. The fixture
+    // is sized from the cap rather than pinned at 12, so it keeps exercising a NON-ZERO
+    // `launchesDroppedByCap` now that captain decision 190a has moved the cap to 10.
     const { fetchImpl } = insatiable();
     const client = new KeylessClient({ maxRequests: 400, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
     const { coverage } = await scoreCandidateEntry(client, {
       wallet: 'dev',
-      profile: profile(12),
+      profile: profile((T.maxLaunchesPerCandidate as number) + 4),
       nowMs: CREATED + (T.windowMs as number) + (T.seekMarginMs as number) - 1,
       thresholds: T as never,
     });
 
     expect(coverage.minAgeMs).toBe((T.windowMs as number) + (T.seekMarginMs as number));
-    expect(coverage.launchRefsAvailable).toBe(12);
+    expect(coverage.launchRefsAvailable).toBe((T.maxLaunchesPerCandidate as number) + 4);
     expect(coverage.launchesTooYoung).toBe(1);
-    expect(coverage.launchesEligible).toBe(11);
+    expect(coverage.launchesEligible).toBe((T.maxLaunchesPerCandidate as number) + 3);
     expect(coverage.launchesPlanned).toBe(T.maxLaunchesPerCandidate as number);
-    expect(coverage.launchesDroppedByCap).toBe(11 - (T.maxLaunchesPerCandidate as number));
+    expect(coverage.launchesDroppedByCap).toBe(3);
     // The whole filter reconciles, which is the property the record now proves.
     expect(coverage.launchesTooYoung + coverage.launchesEligible).toBe(coverage.launchRefsAvailable);
     expect(coverage.launchesPlanned + coverage.launchesDroppedByCap).toBe(coverage.launchesEligible);
@@ -9365,13 +9461,18 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
     // whose measured per-launch prize to outsiders was about zero. Every error that rule can make
     // runs towards "enterable", so a false positive here is the failure and a false negative is the
     // accepted price of decision 134a.
-    expect(result.rollingRoom.windows).toBe(228);
+    // The window is `maxLaunchesPerCandidate` launches wide, so these counts move whenever that
+    // cap moves and are re-read rather than carried: at the 8 that preceded captain decision 190a
+    // they were 228 windows, 88 present, 140 absent. At the cap of 10 the replay slides two fewer
+    // windows over the same tape and each is two launches wider. What does NOT move is the answer
+    // it is here for — no false positive, at either cap.
+    expect(result.rollingRoom.windows).toBe(226);
     expect(result.rollingRoom.falsePositives).toBe(0);
     expect(result.rollingRoom.falsePositiveWindows).toEqual([]);
     expect(result.rollingRoom.ok).toBe(true);
     // The check is not vacuous: it evaluates real verdicts on BOTH sides of the bar.
-    expect(result.rollingRoom.present).toBe(88);
-    expect(result.rollingRoom.absent).toBe(140);
+    expect(result.rollingRoom.present).toBe(92);
+    expect(result.rollingRoom.absent).toBe(134);
     // AND THE COVERAGE COST IS NOW ZERO — captain decision 182a. Under the shared-transaction rule
     // alone this read `unmeasured: 81, present: 53, absent: 94`: 81 windows the screen refused to
     // answer because the rule could see nothing in enough of their launches. The union rule marks
@@ -9456,8 +9557,12 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
     });
     const reverted = replayRollingRoom(preUnion, T['stage2_entry']);
     expect(reverted.ok).toBe(false);
-    expect(reverted.falsePositives).toBe(24);
-    // All 24 in the same direction. That one-sidedness is the reason the ruling is "refuse to
+    // 22 at the current `maxLaunchesPerCandidate` of 10, which is the width of a rolling window;
+    // it read 24 over the two extra, narrower windows the cap of 8 produced before captain
+    // decision 190a. The count is a property of the replay's window width, and what it is here to
+    // establish — that reverting the union manufactures false positives at all — is not.
+    expect(reverted.falsePositives).toBe(22);
+    // All 22 in the same direction. That one-sidedness is the reason the ruling is "refuse to
     // score" rather than "carry a bound": there is no compensating error to trade it against.
     expect(reverted.falseNegatives).toBe(0);
     expect(reverted.unmeasured).toBe(0);

@@ -4,13 +4,28 @@
  *
  * ## The question, and why it needed its own pass
  *
- * `thresholds.json` → `stage2_entry` pins `maxLaunchesPerCandidate: 8` and `minLaunchesSampled: 8`,
- * **deliberately equal** — a candidate is either scored on a full sample or reported UNMEASURED.
- * Since #17 a launch whose create slot the co-ordination rule marks nothing in is refused as
- * unproven (`measure.mjs` → `roomIsProven`, captain decision 134a). Those two facts multiply:
- * **Stage 2 can only reach a verdict for a candidate whose most recent 8 eligible launches were
- * EVERY ONE marked, and one unmarked launch in eight silences the whole candidate.** That is
- * arithmetic, not observation.
+ * When this pass ran, `thresholds.json` → `stage2_entry` pinned `maxLaunchesPerCandidate: 8` and
+ * `minLaunchesSampled: 8`, **deliberately equal** — a candidate was either scored on a full sample
+ * or reported UNMEASURED. Since #17 a launch whose create slot the co-ordination rule marks nothing
+ * in is refused as unproven (`measure.mjs` → `roomIsProven`, captain decision 134a). Those two
+ * facts multiplied: **Stage 2 could only reach a verdict for a candidate whose most recent 8
+ * eligible launches were EVERY ONE marked, and one unmarked launch in eight silenced the whole
+ * candidate.** That was arithmetic, not observation.
+ *
+ * **THAT PREMISE HAS SINCE MOVED, AND THIS PASS HAS NOT BEEN RE-RUN UNDER IT.** Captain decision
+ * 190a (2026-08-04) raised the cap to 10 against the same floor of 8, so the live rule is 8 proven
+ * of 10 planned and this census's all-of-8 headline is **stricter than what Stage 2 requires** — it
+ * understates how many candidates are scoreable, which is the safe direction for a finding of this
+ * shape. A census record is never retro-edited; re-running it under the new cap is a separate
+ * decision.
+ *
+ * **A re-run would follow the cap but NOT the rule, and that is deliberate here.** This file re-pins
+ * no window parameter, so a re-run would plan the 10 launches Stage 2 plans — but {@link fullSample}
+ * would still demand 10 of 10 proven, where Stage 2 requires only 8 proven of 10 planned. The launch
+ * COUNT follows `maxLaunchesPerCandidate`; the PREDICATE does not follow `minLaunchesSampled`. So the
+ * census's headline stays **stricter than the live scoreability rule**, which understates how many
+ * candidates are scoreable — the safe direction for a finding of this shape. Reconciling the two is
+ * a separate decision this lane does not take.
  *
  * ## The predicate this pass measures under, which has moved once
  *
@@ -94,9 +109,9 @@
  * | listing pages per wallet | `bundling_census.maxListingPagesPerCandidate` | 4 |
  * | listing requests, whole run | `bundling_census.maxListingRequests` | 480 |
  * | candidates surveyed | `bundling_census.maxCandidatesSurveyed` | 30 |
- * | launches per candidate | `stage2_entry.maxLaunchesPerCandidate`, **reused** | 8 |
+ * | launches per candidate | `stage2_entry.maxLaunchesPerCandidate`, **reused** | 10 |
  * | requests per launch | `stage2_entry.maxRequestsPerLaunch`, **reused** | 18 |
- * | fill requests, whole run | `bundling_census.maxKeylessRequests` | 4320 |
+ * | fill requests, whole run | `bundling_census.maxKeylessRequests` | 5400 |
  * | pacing, listing host | `budget.keylessMinIntervalMs`, **reused** | 2s |
  * | pacing, fill host | `stage2_entry.keylessMinIntervalMs`, **reused** | 7s |
  *
@@ -106,7 +121,7 @@
  * block this file adds pins only what is genuinely new: how many wallets it may read and how many
  * requests the two legs may spend.
  *
- * `30 × 8 × 18 = 4,320` — the declared worst case and the fill ceiling are the same number, so the
+ * `30 × 10 × 18 = 5,400` — the declared worst case and the fill ceiling are the same number, so the
  * dry run's plan is the whole exposure, exactly as `stage2.mjs` arranges it. A launch is started
  * only when a full per-launch cap of headroom remains.
  *
@@ -668,7 +683,8 @@ export function summariseCensus(rows) {
  * The ERA question, answered where it CAN be answered: offline, over this repository's own tape,
  * for exactly one deployer.
  *
- * The live census walks each candidate's most recent 8 launches, which for an active deployer span
+ * The live census walks each candidate's most recent `maxLaunchesPerCandidate` launches — 10 since
+ * captain decision 190a, 8 when the committed record was written — which for an active deployer span
  * days to weeks. **That sample cannot carry a trend and must not be asked to.** What can is the
  * committed population tape: 235 launches of one deployer over 2025-12 → 2026-07, every one with a
  * proved create slot, already parsed by `stage0.mjs` → `measureSubjectLaunches` for the rolling
@@ -682,7 +698,11 @@ export function summariseCensus(rows) {
  *
  * The second table is the live analogue: for every point in that history, would the trailing
  * 8 launches ALL have been bundled — i.e. would Stage 2 have reached a verdict on this wallet that
- * day? That is the headline number replayed against a real history.
+ * day? That is the headline number replayed against a real history. **Its span is pinned at 8 and
+ * no longer matches the live rule**: captain decision 190a took `maxLaunchesPerCandidate` to 10
+ * against a floor of 8, so this replay asks all-of-8 where Stage 2 now asks 8-proven-of-10. Like
+ * the census headline it is therefore the STRICTER question, which understates scoreability — the
+ * safe direction — and re-cutting it is part of the same re-run decision.
  *
  * **Both halves are bucketed, and the difference between them is the point of the table now.** The
  * subject bundles nothing at all before March 2026 while the union proves every one of those
@@ -805,8 +825,9 @@ export function renderSubjectEraTrend(t) {
   L.push('  NOTHING and the union proves EVERYTHING: the shared-transaction half was reading a rule\'s');
   L.push('  blind spot as a deployer\'s habit. That is the same confusion the live census re-run removes.');
   L.push('');
-  L.push('  THE HEADLINE NUMBER REPLAYED: would the trailing 8 launches ALL have been proven —');
-  L.push('  i.e. would Stage 2 have reached a verdict on this wallet that day?');
+  L.push('  THE HEADLINE NUMBER REPLAYED: would the trailing 8 launches ALL have been proven?');
+  L.push('  Its span is pinned at 8 and is now STRICTER than the live rule (decision 190a: 8 proven');
+  L.push('  of 10 planned), so it understates scoreability — the safe direction.');
   L.push(
     `    union: ${t.trailingAllProven} of ${t.trailingWindows} trailing windows (${t.trailingProvenRate}); ` +
       `shared-tx half alone: ${t.trailingAllBundled} (${t.trailingRate}).`,
@@ -844,7 +865,7 @@ OPTIONS
   --dry-run           Print exactly what a real run would fetch, and fetch nothing.
   --subject-era       Print the OFFLINE era trend over the committed population tape and stop.
                       One deployer, 235 taped launches, zero requests. The live census walks only
-                      the most recent 8 launches per candidate, which cannot carry a trend.
+                      the most recent 10 launches per candidate, which cannot carry a trend.
   --candidates <n>    Max gate survivors to survey. Cannot exceed the pinned cap.
   --cohort <n>        Max cohort wallets to gate. Cannot exceed the pinned cap.
   --out <path>        Write the census record as JSON. Default: nothing is written. Write it under
@@ -1200,7 +1221,9 @@ export async function main(opts, out, err) {
         out(
           `    → ${result.provenLaunches}/${result.launchesUsable} window(s) PROVEN ` +
             `(${result.bundledLaunches} by shared transaction)` +
-            (result.allProven === true ? ', ALL OF A FULL 8-SAMPLE' : '') +
+            (result.allProven === true
+              ? `, ALL OF A FULL ${entry.maxLaunchesPerCandidate}-SAMPLE`
+              : '') +
             (result.neverProven ? ', NEVER PROVEN — permanently unscoreable' : '') +
             (result.neverBundles && result.provenLaunches > 0
               ? ', never bundles but the union proves it'

@@ -349,6 +349,121 @@ export function windowFilter(fills, windowSlotSpan) {
 }
 
 /**
+ * The slowest slot this repo has **measured**, in milliseconds, and the whole reason
+ * {@link MAX_MS_PER_SLOT} is not the nominal 400.
+ *
+ * Re-derived offline over the committed launches on both tapes — **337** of them qualify
+ * (235 population + 102 graduated-life, i.e. `reached_mint` true and not truncated), spanning
+ * 2025-12 to 2026-07 — as the local rate across each launch's own declared `windowSlotSpan`, which
+ * is the only stretch the seek has to cover: `(newest ts − oldest ts) / (maxSlot − createSlot)`
+ * over the fills in `[createSlot, createSlot + 160]`. **332** of those 337 yield a rate at all:
+ * only a launch trading across at least 100 slots of its span is fitted, the rest are too short to
+ * fit. The maximum is **446.5409 ms/slot** (`papoi`, `AxshJi4U…`, 2026-07, 159 slots), against a
+ * 2025-12 p50 of 389.0 and a 2026-07 p50 of 418.0. It is pinned rounded **up**, so this constant is
+ * an upper bound on the evidence rather than a value the evidence can creep past.
+ * `test/deployer-screen.test.ts` re-derives it and fails if this constant and the committed
+ * evidence come apart, so the number cannot go stale in silence — which is exactly how the nominal
+ * 400 it replaces survived (captain decision 144a). **What that guard re-derives over is narrower
+ * than the derivation above**: its population is the **127** launches whose tape extends past the
+ * 60 s cut, because the 210 population launches taped at 60 s are cut before the gap begins and
+ * structurally cannot show it. So a future 60 s-window launch faster than this constant would not
+ * fail the guard; the 337-launch figure above is the offline derivation, not the enforcement.
+ *
+ * It bounds the FITTED rate and not the true one: fill `ts` is whole seconds, floored, so over 159
+ * slots the fit carries about ±6.3 ms/slot of quantisation and the chain's real worst case that day
+ * may have been ~453. {@link SLOT_RATE_MARGIN} covers that as well as future drift, and the
+ * tape-derived reach guard in the test checks the result empirically — against the newest in-window
+ * fill on every launch, with 1,000 ms of flooring slack — rather than trusting the arithmetic.
+ */
+export const MEASURED_MAX_MS_PER_SLOT = 446.55;
+
+/**
+ * Explicit forward margin on {@link MEASURED_MAX_MS_PER_SLOT}.
+ *
+ * The chain's slot time drifts, monotonically upward on everything measured here: p50 389.0
+ * ms/slot in 2025-12 against 418.0 in 2026-07, roughly +7.5% in eight months. 10% over the observed
+ * **maximum** is therefore about a year of that drift, plus the ~1.4% of second-resolution
+ * quantisation noted above. It is stated as a number rather than folded into
+ * {@link MAX_MS_PER_SLOT} so that a later reader can see how much room is left and re-pin against a
+ * fresh measurement instead of guessing.
+ */
+export const SLOT_RATE_MARGIN = 1.1;
+
+/**
+ * The slot rate the **seek cursor** is denominated in: `MEASURED_MAX_MS_PER_SLOT × SLOT_RATE_MARGIN`
+ * rounded up to a round number, pinned rather than computed so it is one grep away.
+ *
+ * This is not a claim about how fast the chain runs. It is the rate past which
+ * {@link windowReachMs} would stop covering the declared window, and the test asserts the margin
+ * still holds, so raising it is a decision someone has to take on purpose.
+ */
+export const MAX_MS_PER_SLOT = 500;
+
+/**
+ * How far past the mint the seek cursor must start so the walk can fetch the **whole declared
+ * window** — the fix for captain decision 144a, and the one thing to copy if a new lane rebuilds
+ * this walk.
+ *
+ * **The defect it closes is a unit mismatch, not an off-by-one.** Two bounds reach forward from the
+ * mint and they were denominated in different units: the seek cursor in **milliseconds**
+ * (`createdAtMs + windowMs + seekMarginMs` = 65,000) and membership in **slots**
+ * ({@link windowFilter}, `createSlot + windowSlotSpan` = 160). Nothing reconciled them except a
+ * hardcoded nominal 400 ms/slot, which held only while the chain ran at or under 406.25 ms/slot.
+ * It stopped: measured p50 389.0 ms/slot in 2025-12 against 418.0 in 2026-07 and a maximum of
+ * 446.55, at which 160 slots is 71.4 s against a 65 s reach. The walk then never requested the
+ * window's last few seconds while reporting `usable: true`, `reachedCreateSlot: true` and a note
+ * true in every clause — the endpoint's own coverage proof is about the **oldest** end and says
+ * nothing about the newest. Measured cost on the committed tapes: **354 in-window fills, 161 of
+ * them sells, across 31 of 102 graduated-life launches**, and 393 fills / 170 sells on the
+ * population tape's 25 long-window launches.
+ *
+ * So the reach is derived from the span it has to cover, **in the span's own unit**, at a measured
+ * worst-case rate with an explicit margin. `windowMs` survives only as a floor, so this can never
+ * seek *less* far than the value it replaces; `seekMarginMs` keeps its own separate job — clock
+ * slack against a vendor mint time running early — and is added on top rather than doing double
+ * duty.
+ *
+ * **It is still a cursor hint and never a proof tolerance.** Widening the reach cannot soften the
+ * pre-mint tripwire or the coverage obligation in {@link readLaunchWindow}, and it cannot change
+ * which fills count: membership stays with {@link windowFilter}, so every extra row this fetches
+ * past `createSlot + windowSlotSpan` is discarded. What it buys is that the rows *inside* the span
+ * were asked for at all.
+ *
+ * **It costs pages, and the cost is bounded and visible.** Over the 127 committed launches that can
+ * show the effect, the walk goes from p50 5 / p90 7 / p95 8 / max 14 pages to p50 6 / p90 8 /
+ * p95 9 / max 17, so **4 of 127** — `Dummy` (on both tapes), `Glow` and `🤨`, the busiest on either —
+ * now exceed the 16 pages `maxRequestsPerLaunch` affords and are dropped as `request-cap`.
+ * A live walk of `Spam` (`GxN4wsPK…`) through this path on 2026-08-04 cost 9 requests of 18, zero
+ * shed. That drop is **counted and reported**; a truncated tail was not, and a launch measured from
+ * a partial window is a wrong number that looks like a right one.
+ *
+ * **What that drop costs is the CANDIDATE'S VERDICT, not a smaller sample, and the reader must not
+ * miss it.** `minLaunchesSampled` and `maxLaunchesPerCandidate` are the same pinned value, 8, so
+ * there is no spare launch to lose: ONE `request-cap` drop among a candidate's 8 planned launches
+ * leaves 7 sampled and `scoreEntry` returns `entry-unmeasured` for the **whole candidate**. At the
+ * tape's 4-in-127 per-launch rate the naive independent-draws estimate is about a **22.6%** chance
+ * per candidate — an estimate of the right order and not a measured answer rate, since that base
+ * rate comes from one deployer's long-window launches, which are also the busiest ones there. And
+ * the drops fall on the busiest launches, which are the ones most likely to belong to an active
+ * deployer, so the lost answers are not uniformly distributed. An unmeasured verdict is **no
+ * answer** and never a rejection (AGENTS.md, captain decision 174b), so this is not a false
+ * positive and it is the direction the standing tiebreaker permits; the drop also falls on busy
+ * launches, biasing the per-launch prize DOWN, which is the direction a screen looking for room may
+ * safely err in. **The zero-slack coupling itself — sample floor equal to launch cap — is a known
+ * SEPARATE lane and is not fixed here**; `test/deployer-screen.test.ts` pins the identity so the
+ * day it moves, this paragraph is re-read rather than left stale.
+ *
+ * @param {object} bounds
+ * @param {number} bounds.windowMs        Nominal window length. A floor on the reach, nothing more.
+ * @param {number} bounds.seekMarginMs    Clock slack against an early vendor mint time.
+ * @param {number} bounds.windowSlotSpan  Slots after the create slot that count as inside the window.
+ * @returns {number} Milliseconds past `createdAtMs` that the seek cursor starts from.
+ */
+export function windowReachMs({ windowMs, seekMarginMs, windowSlotSpan }) {
+  return Math.max(windowMs, Math.ceil(windowSlotSpan * MAX_MS_PER_SLOT)) + seekMarginMs;
+}
+
+/**
  * @typedef {object} TradePage
  * @property {Record<string, unknown>[]} rows
  * @property {boolean} recognised Whether the body was a shape we can read rows out of **at all**.
@@ -500,6 +615,10 @@ export function parseFillLoose(row) {
 /**
  * @typedef {object} LaunchWindow
  * @property {string} mint
+ * @property {number} seekFromMs      The NEWEST instant the walk could reach, absolute, as
+ *   {@link windowReachMs} derived it. Reported because the walk's coverage proof is about the
+ *   OLDEST end only: nothing else in this record says whether the newest end was requested at all,
+ *   and that silence is the defect captain decision 144a names.
  * @property {import('./measure.mjs').Fill[]} fills Fills inside the opening window, **anchored on
  *   the earliest curve buy's own slot** rather than on the supplied mint time.
  * @property {number} pages           Pages the walk consumed.
@@ -558,11 +677,19 @@ export function parseFillLoose(row) {
  * disagreement therefore cannot quietly shift which fills are measured; it can only trip the
  * tripwire above.
  *
+ * **THE SEEK REACHES THE WHOLE DECLARED SPAN, AND IT IS DENOMINATED IN SLOTS TO DO SO.** The walk
+ * starts from `createdAtMs` plus {@link windowReachMs}, which converts `windowSlotSpan` at a measured
+ * worst-case slot rate with an explicit margin. It used to be `createdAtMs + windowMs +
+ * seekMarginMs`, reconciled with the slot-denominated membership filter by a hardcoded nominal
+ * 400 ms/slot; the chain drifted past that and the walk silently stopped 3–6 s short of its own
+ * window. Read {@link windowReachMs} before touching either bound — that doc owns the defect, the
+ * measurement and the page cost of the fix.
+ *
  * **`seekMarginMs` and the pre-mint tripwire are DIFFERENT MECHANISMS with different rules, and a
- * reader must not merge them.** The margin is added to the *cursor* only: the walk starts from
- * `createdAtMs + windowMs + seekMarginMs` so that a vendor mint time running *early* by less than the
- * margin cannot cut the tail off the window before the slot trim ever sees it. It buys back rows the
- * seek would otherwise never fetch. It is **not** a tolerance on any proof: the pre-mint tripwire
+ * reader must not merge them.** The margin is added to the *cursor* only, on top of the span-derived
+ * reach, so that a vendor mint time running *early* by less than the margin cannot cut the tail off
+ * the window before the slot trim ever sees it. It buys back rows the seek would otherwise never
+ * fetch. It is **not** a tolerance on any proof: the pre-mint tripwire
  * still compares `ts < createdAtMs` with **zero slack** (the measured gap is exactly 0 on all 235
  * committed launches, so there is no slack to spend), and coverage is still discharged only by the
  * endpoint explicitly saying nothing older exists. Widening the margin can never soften either.
@@ -590,17 +717,23 @@ export function parseFillLoose(row) {
  * @param {string} opts.mint
  * @param {number} opts.createdAtMs Mint time. The seek cursor's hint and the disagreement tripwire —
  *   **not** the window boundary.
- * @param {number} opts.windowMs    Opening window length, for the seek only. 60000 matches the tape.
- * @param {number} opts.seekMarginMs Extra time past the nominal window end to start the seek from,
- *   so an early vendor mint time cannot truncate the tail. A cursor hint, never a proof tolerance.
- * @param {number} opts.windowSlotSpan Slots after the create slot that count as inside the window.
+ * @param {number} opts.windowMs    Opening window length. A FLOOR on the seek reach, so this can
+ *   never seek less far than it used to; the reach itself comes from `windowSlotSpan`. 60000
+ *   matches the tape.
+ * @param {number} opts.seekMarginMs Clock slack added on top of the span-derived reach, so an early
+ *   vendor mint time cannot truncate the tail. A cursor hint, never a proof tolerance.
+ * @param {number} opts.windowSlotSpan Slots after the create slot that count as inside the window,
+ *   and — via {@link windowReachMs} — the quantity the seek reach is derived from.
  * @param {number} opts.maxRequests Hard per-launch request cap, retries included.
  * @param {number} opts.pageLimit   Rows per request.
  * @returns {Promise<LaunchWindow>}
  */
 export async function readLaunchWindow(client, opts) {
   const { mint, createdAtMs, windowMs, seekMarginMs, windowSlotSpan, maxRequests, pageLimit } = opts;
-  const seekFromMs = createdAtMs + windowMs + seekMarginMs;
+  // DENOMINATED IN THE SPAN'S OWN UNIT, at a measured worst-case slot rate — never in a nominal
+  // 400 ms/slot. See {@link windowReachMs}: that nominal conversion is what let the walk stop 3–6 s
+  // short of its own declared window while reporting full coverage.
+  const seekFromMs = createdAtMs + windowReachMs({ windowMs, seekMarginMs, windowSlotSpan });
   const issuedBefore = client.issued();
   const spent = () => client.issued() - issuedBefore;
   const perPageCost = client.attemptsPerRequest();
@@ -741,6 +874,7 @@ export async function readLaunchWindow(client, opts) {
 
   return {
     mint,
+    seekFromMs,
     fills,
     pages,
     requests: spent(),

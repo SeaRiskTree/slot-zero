@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gunzipSync } from 'node:zlib';
 
 import {
   DUNE_API_BASE,
@@ -125,7 +126,10 @@ import {
   KeylessClient,
   KeylessHttpError,
   LAMPORTS_PER_SOL,
+  MAX_MS_PER_SLOT,
+  MEASURED_MAX_MS_PER_SLOT,
   RpcCredentialRejected,
+  SLOT_RATE_MARGIN,
   SOLANA_RPC,
   SolanaRpcClient,
   creditsForTransactions,
@@ -138,6 +142,7 @@ import {
   readLaunchWindow,
   slotFromSlotIndexId,
   windowFilter,
+  windowReachMs,
 } from '../tools/deployer-screen/pumpfun.mjs';
 import {
   PUMP_PROGRAM_ID,
@@ -7226,8 +7231,11 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
     expect(w.usable).toBe(true);
     expect(w.reachedCreateSlot).toBe(true);
     // The FIRST request already carries the cursor. That seek is what makes this affordable: it
-    // turns walking a token's whole history into a handful of requests.
-    expect(calls[0]).toContain(`cursor=0-${CREATED + 60_000 + SEEK_MARGIN_MS}`);
+    // turns walking a token's whole history into a handful of requests. Its reach is derived from
+    // `windowSlotSpan`, NOT from `windowMs` — see the re-denomination block below.
+    const reach = windowReachMs({ windowMs: 60_000, seekMarginMs: SEEK_MARGIN_MS, windowSlotSpan: WINDOW_SLOT_SPAN });
+    expect(calls[0]).toContain(`cursor=0-${CREATED + reach}`);
+    expect(w.seekFromMs).toBe(CREATED + reach);
     expect(w.fills.map((f) => f.wallet).sort()).toEqual(['dev', 'outsider', 'outsider']);
     expect(w.dropReason).toBeNull();
     expect(w.mintTimeDisagreement).toBe(false);
@@ -7274,7 +7282,11 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
       maxRequests: 10,
       pageLimit: 100,
     });
-    expect(calls[0]).toContain(`cursor=0-${CREATED - skewMs + 60_000 + SEEK_MARGIN_MS}`);
+    // The margin sits on TOP of the span-derived reach and keeps its own separate job: the reach
+    // answers "how long is 160 slots", the margin answers "how wrong can the vendor's clock be".
+    expect(calls[0]).toContain(
+      `cursor=0-${CREATED - skewMs + windowReachMs({ windowMs: 60_000, seekMarginMs: SEEK_MARGIN_MS, windowSlotSpan: WINDOW_SLOT_SPAN })}`,
+    );
     expect(w.usable).toBe(true);
     // The late sell is the fill that matters: dropping one flips a wallet from closed to open and
     // shrinks fieldClosedRoundTrips, which is itself a gate.
@@ -7317,6 +7329,52 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
     });
     expect(w.fills.map((f) => f.wallet)).toContain('tail155');
     expect(w.fills.map((f) => f.wallet)).not.toContain('tail161');
+  });
+
+  it('SEEKS FAR ENOUGH TO FETCH THAT 160th SLOT AT A MEASURED SLOT RATE, not a nominal 400ms one', async () => {
+    // Captain decision 144a. The two bounds that reach forward from the mint were denominated in
+    // different units — the cursor in milliseconds (60,000 + 5,000) and membership in slots (160) —
+    // and only a hardcoded nominal 400ms/slot held them together. At the 437.5ms/slot measured on
+    // this repo's own `Dummy` launch, slot +160 lands at 70,000ms: inside the declared window and
+    // 5,000ms beyond the old cursor. The walk never requested it, and said nothing about it.
+    const OLD_NOMINAL_REACH = 60_000 + SEEK_MARGIN_MS;
+    const atSlot = (slot: number, ms: number, wallet: string, type: string) =>
+      row({ ms, wallet, sol: 1, type, sid: String(SLOT0 + slot).padStart(12, '0') + '0000000001' });
+    // 437.5ms/slot: every one of these is inside the declared 160-slot window, and every one is
+    // past the bound the old cursor could reach. Sells, as the measured loss is (161 of 354).
+    const tail = [
+      atSlot(150, CREATED + 65_625, 'tail150', 'sell'),
+      atSlot(155, CREATED + 67_812, 'tail155', 'sell'),
+      atSlot(160, CREATED + 70_000, 'tail160', 'sell'),
+    ];
+    for (const t of tail) expect(Date.parse(String(t['timestamp']))).toBeGreaterThan(CREATED + OLD_NOMINAL_REACH);
+
+    const { fetchImpl, calls } = fakeEndpoint([...history(), ...tail]);
+    const w = await readLaunchWindow(client(fetchImpl), {
+      mint: MINT,
+      createdAtMs: CREATED,
+      windowMs: 60_000,
+      seekMarginMs: SEEK_MARGIN_MS,
+      windowSlotSpan: WINDOW_SLOT_SPAN,
+      maxRequests: 10,
+      pageLimit: 100,
+    });
+
+    // The cursor is derived from the SPAN, in the span's own unit.
+    expect(w.seekFromMs).toBe(
+      CREATED + windowReachMs({ windowMs: 60_000, seekMarginMs: SEEK_MARGIN_MS, windowSlotSpan: WINDOW_SLOT_SPAN }),
+    );
+    expect(w.seekFromMs).toBeGreaterThanOrEqual(CREATED + WINDOW_SLOT_SPAN * MAX_MS_PER_SLOT);
+    expect(calls[0]).toContain(`cursor=0-${w.seekFromMs}`);
+    // And the fills the old bound could not reach are in the window, sells included.
+    expect(w.usable).toBe(true);
+    expect(w.fills.map((f) => f.wallet)).toEqual(
+      expect.arrayContaining(['tail150', 'tail155', 'tail160']),
+    );
+    expect(w.fills.filter((f) => f.side === 'sell')).toHaveLength(4);
+    // Membership has NOT moved: the reach only decides what is asked for, `windowFilter` still
+    // decides what counts, so a row past the span is still discarded however far the seek went.
+    expect(w.fills.map((f) => f.wallet)).not.toContain('latecomer');
   });
 
   it('DROPS a launch whose fills predate the recorded mint — the two clocks disagree', async () => {
@@ -7532,6 +7590,279 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
         expect(w.requests, `cap ${cap} shedEvery ${shedEvery}`).toBeLessThanOrEqual(cap);
       }
     }
+  });
+});
+
+/**
+ * The re-denominated guard for captain decision 144a.
+ *
+ * The defect it replaces was not an off-by-one. `readLaunchWindow` seeks in MILLISECONDS and decides
+ * membership in SLOTS, and the only thing reconciling the two was a hardcoded nominal 400 ms/slot,
+ * asserted here as `windowSlotSpan × 400 <= windowMs + seekMarginMs`, i.e. 64,000 <= 65,000. That
+ * held if and only if the chain ran at or under 406.25 ms/slot. It stopped, monotonically, and
+ * NOTHING FAILED — the guard was written in the variable that did not move. So this block is
+ * denominated in a rate this repo has MEASURED, and it re-derives that measurement from the
+ * committed tapes on every run so the constant cannot go stale in silence the same way.
+ *
+ * Two independent obligations, deliberately kept apart:
+ *   1. the pinned rate still bounds the tape, with the stated margin left over;
+ *   2. the reach that rate produces provably covers every committed launch's WHOLE declared window.
+ * (1) can hold while (2) fails if the span is widened, and (2) can hold on today's tape while (1)
+ * fails on a slower one. Both are needed and neither implies the other.
+ */
+describe('the seek cursor reaches the whole declared slot window, at a MEASURED slot rate', () => {
+  const T = loadThresholds()['stage2_entry'] as Record<string, number>;
+  const REPO_ROOT = join(TOOL_DIR, '..', '..');
+  const SPAN = T.windowSlotSpan as number;
+  const REACH = windowReachMs({
+    windowMs: T.windowMs as number,
+    seekMarginMs: T.seekMarginMs as number,
+    windowSlotSpan: SPAN,
+  });
+  /** What the cursor reached before decision 144a, and what every "before" figure below is against. */
+  const OLD_NOMINAL_REACH = (T.windowMs as number) + (T.seekMarginMs as number);
+
+  /**
+   * Every committed launch whose tape extends past the 60 s cut, i.e. the only ones that can show
+   * this effect at all. The 210 population launches taped at 60 s structurally cannot — the tape
+   * `windowSlotSpan` was pinned from is cut BEFORE the gap begins, which is why it went unnoticed.
+   *
+   * Rows are read raw and trimmed with the PRODUCTION `windowFilter`, so the window this measures is
+   * the window Stage 2 measures and not a reimplementation of it.
+   */
+  type TapedWindow = {
+    mint: string;
+    symbol: string;
+    createdAtMs: number;
+    inWindow: ReturnType<typeof windowFilter>;
+    tsByTx: Map<string, number>;
+    msPerSlot: number | null;
+    allTs: number[];
+  };
+  let tapedWindowsCache: TapedWindow[] | null = null;
+  const tapedWindows = () => {
+    if (tapedWindowsCache !== null) return tapedWindowsCache;
+    const dirs: [string, boolean][] = [
+      [join(REPO_ROOT, 'data', 'graduated-life-tape-2026-08-02', 'life'), false],
+      [join(REPO_ROOT, 'data', 'population-tape-2026-07-29', 'window'), true],
+    ];
+    const out: TapedWindow[] = [];
+    for (const [dir, needsLongWindow] of dirs) {
+      for (const file of readdirSync(dir)) {
+        if (!file.endsWith('.jsonl.gz')) continue;
+        const mint = file.slice(0, -'.jsonl.gz'.length);
+        const meta = JSON.parse(readFileSync(join(dir, `${mint}.meta.json`), 'utf8')) as Record<string, unknown>;
+        // The dataset's own coverage gate, and `69420`, truncated at its MINT end.
+        if (meta['reached_mint'] !== true || meta['truncated'] === true) continue;
+        if (needsLongWindow && !(Number(meta['window_ms']) > 60_000)) continue;
+        const raw = gunzipSync(readFileSync(join(dir, file)))
+          .toString('utf8')
+          .split('\n')
+          .filter((l) => l !== '')
+          .map((l) => JSON.parse(l) as Record<string, unknown>);
+        const inWindow = windowFilter(raw.map(parseFillLoose), SPAN);
+        if (inWindow.length === 0) continue;
+        const tsByTx = new Map(raw.map((r) => [String(r['tx']), Date.parse(String(r['ts']))]));
+        const ts = inWindow.map((f) => tsByTx.get(f.tx) as number);
+        const slots = inWindow.map((f) => f.slot);
+        const spanSlots = Math.max(...slots) - Math.min(...slots);
+        out.push({
+          mint,
+          symbol: String(meta['symbol'] ?? ''),
+          createdAtMs: Number(meta['created_timestamp']),
+          inWindow,
+          tsByTx,
+          // Only a launch that traded across most of its span gives a rate worth fitting.
+          msPerSlot: spanSlots >= 100 ? (Math.max(...ts) - Math.min(...ts)) / spanSlots : null,
+          allTs: raw.map((r) => Date.parse(String(r['ts']))),
+        });
+      }
+    }
+    tapedWindowsCache = out;
+    return tapedWindowsCache;
+  };
+
+  /** In-window fills a cursor of `createdAtMs + reach` would actually have fetched. */
+  const fetchedAt = (L: ReturnType<typeof tapedWindows>[number], reach: number) =>
+    L.inWindow.filter((f) => (L.tsByTx.get(f.tx) as number) <= L.createdAtMs + reach);
+
+  it('has a population that can show the effect at all', () => {
+    // If this ever reads 0 the whole block is vacuous, which is the failure mode a guard denominated
+    // in the wrong variable already had once.
+    expect(tapedWindows().length).toBe(127);
+    expect(tapedWindows().filter((L) => L.msPerSlot !== null).length).toBeGreaterThan(100);
+  });
+
+  it('pins the rate against the committed tapes, so the constant cannot drift out of validity', () => {
+    // MEASURED_MAX_MS_PER_SLOT claims to be the slowest slot on either tape, measured across each
+    // launch's own declared span. Re-derive it here rather than trust the comment: a future tape
+    // recording a slower chain must FAIL this, which is the whole point — the nominal 400 it
+    // replaces went out of validity with nothing failing.
+    const rates = tapedWindows().map((L) => L.msPerSlot).filter((r): r is number => r !== null);
+    const observed = Math.max(...rates);
+    expect(observed).toBeCloseTo(MEASURED_MAX_MS_PER_SLOT, 1);
+    expect(MEASURED_MAX_MS_PER_SLOT).toBeGreaterThanOrEqual(observed);
+
+    // And the pinned rate carries the stated margin OVER that measurement, rather than sitting on
+    // it. 400 was not merely wrong, it was below the p50 of every month after 2026-04.
+    expect(SLOT_RATE_MARGIN).toBeGreaterThan(1);
+    expect(MAX_MS_PER_SLOT).toBeGreaterThanOrEqual(MEASURED_MAX_MS_PER_SLOT * SLOT_RATE_MARGIN);
+    expect(MAX_MS_PER_SLOT).toBeGreaterThan(400);
+  });
+
+  it('reaches every committed launch’s WHOLE declared window, with slack for second-resolution ts', () => {
+    // The direct obligation, and the one an arithmetic guard cannot stand in for. `ts` is whole
+    // seconds, FLOORED, so a fill can be up to 999 ms later than the tape records; the reach must
+    // clear the newest in-window fill by more than that on every launch.
+    const shortfalls = tapedWindows()
+      .map((L) => ({ L, required: Math.max(...L.inWindow.map((f) => L.tsByTx.get(f.tx) as number)) - L.createdAtMs }))
+      .filter((x) => x.required + 1_000 > REACH);
+    expect(shortfalls.map((x) => `${x.L.symbol} needs ${x.required}ms`)).toEqual([]);
+
+    // Stated as counts too, so a reader sees how much room is left rather than only that it passed.
+    const worst = Math.max(
+      ...tapedWindows().map((L) => Math.max(...L.inWindow.map((f) => L.tsByTx.get(f.tx) as number)) - L.createdAtMs),
+    );
+    expect(worst).toBe(71_000); // `papoi`, 2026-07, at 446.54 ms/slot
+    expect(REACH).toBe(85_000); // 160 slots x 500 ms/slot + the 5,000 ms clock margin
+  });
+
+  it('and the reach it replaces did NOT — the fills, and the sells, that were being dropped', () => {
+    // The before/after. These are the numbers captain decision 144a was raised on, re-derived here
+    // from the committed tapes through the production `windowFilter`, so the regression is pinned
+    // rather than described.
+    const before = tapedWindows().map((L) => fetchedAt(L, OLD_NOMINAL_REACH));
+    const lost = tapedWindows().map((L, i) => L.inWindow.length - (before[i] as typeof L.inWindow).length);
+    const lostSells = tapedWindows().map(
+      (L, i) =>
+        L.inWindow.filter((f) => f.side === 'sell').length -
+        (before[i] as typeof L.inWindow).filter((f) => f.side === 'sell').length,
+    );
+    expect(lost.reduce((a, b) => a + b, 0)).toBe(747);
+    expect(lostSells.reduce((a, b) => a + b, 0)).toBe(331);
+    expect(lost.filter((n) => n > 0).length).toBe(55);
+
+    // The worst single launch, named, so the evidence is reproducible from one file. `Dummy`
+    // (`3BhUv3Ft...`, 2026-07-21) is on both tapes; each copy loses the same 95 fills.
+    const dummy = tapedWindows().filter((L) => L.symbol === 'Dummy');
+    expect(dummy.length).toBe(2);
+    for (const L of dummy) {
+      expect(L.inWindow.length).toBe(1_340);
+      expect(fetchedAt(L, OLD_NOMINAL_REACH).length).toBe(1_245); // before
+      expect(fetchedAt(L, REACH).length).toBe(1_340); // after
+      expect(L.inWindow.filter((f) => f.side === 'sell').length - fetchedAt(L, OLD_NOMINAL_REACH).filter((f) => f.side === 'sell').length).toBe(37);
+    }
+
+    // And nothing is lost at the reach in force. This is the same assertion as the shortfall test
+    // above, taken over fills rather than over milliseconds — they fail independently if the
+    // flooring slack is ever spent.
+    for (const L of tapedWindows()) expect(fetchedAt(L, REACH).length).toBe(L.inWindow.length);
+  });
+
+  it('and what it costs is PAGES, bounded, counted, and in the safe direction', () => {
+    // Reaching further means paging through more rows to get back to the mint, and this is the one
+    // place the fix is not free. Pinned so that a later widening has to look at the bill.
+    //
+    // `while (spent() + attemptsPerRequest <= maxRequests)` with retryBackoffMs [3000, 9000] gives
+    // attemptsPerRequest 3, so an unshed walk gets pages while spent <= 15: sixteen of them.
+    const PAGES_AVAILABLE =
+      (T.maxRequestsPerLaunch as number) - ((loadThresholds()['stage2_entry'] as { keylessRetryBackoffMs: number[] }).keylessRetryBackoffMs.length + 1) + 1;
+    expect(PAGES_AVAILABLE).toBe(16);
+    //
+    // THE EXACT COST MODEL, and the modulo term is the whole of it. The page that reaches back past
+    // the mint carries the endpoint's own `hasMore === false`, so the coverage proof arrives WITH
+    // the rows and costs nothing extra — UNLESS the last page comes back exactly full, in which
+    // case the walk spends one more request to learn that it was the end. A flat `+1` charges for
+    // that page always and plain `ceil` never charges for it; both are wrong, in opposite
+    // directions, and the difference is real on this tape (at the reach this replaces one launch
+    // hits the exactly-full case, which is why the before-p95 is 8 rather than 7). Validated twice:
+    // against the live production walk of `Spam` (`GxN4wsPK...`, 851 rows in [mint, mint+85,000ms],
+    // 9 pages modelled, 9 requests issued, 0 shed), and against this block's own full replay of
+    // `readLaunchWindow` over all 127 committed launches.
+    const pagesAt = (L: ReturnType<typeof tapedWindows>[number], reach: number) => {
+      const rows = L.allTs.filter((ts) => ts <= L.createdAtMs + reach).length;
+      const limit = T.tradePageLimit as number;
+      return Math.ceil(rows / limit) + (rows % limit === 0 ? 1 : 0);
+    };
+
+    const before = tapedWindows().map((L) => pagesAt(L, OLD_NOMINAL_REACH));
+    const after = tapedWindows().map((L) => pagesAt(L, REACH));
+    const p = (a: number[], q: number) => [...a].sort((x, y) => x - y)[Math.floor(q * (a.length - 1))];
+    expect([p(before, 0.5), p(before, 0.95), Math.max(...before)]).toEqual([5, 8, 14]);
+    expect([p(after, 0.5), p(after, 0.95), Math.max(...after)]).toEqual([6, 9, 17]);
+
+    // Four launches — the busiest on either tape — now cost more pages than the cap affords and are
+    // dropped whole as `request-cap`. That is a COUNTED drop and it shrinks `n` visibly, where the
+    // truncated tail it replaces was silent; and it falls on busy launches, so it biases per-launch
+    // prize DOWN, which is the direction a screen looking for room may safely err in.
+    expect(before.filter((n) => n > PAGES_AVAILABLE).length).toBe(0);
+    const overCap = tapedWindows().filter((_, i) => (after[i] as number) > PAGES_AVAILABLE);
+    expect(overCap.length).toBe(4);
+    expect([...new Set(overCap.map((L) => L.symbol))].sort()).toEqual(['Dummy', 'Glow', '🤨']);
+
+    // AND WHAT A DROP COSTS IS THE CANDIDATE'S VERDICT, not a smaller sample. This identity is the
+    // reason: the sample floor and the per-candidate launch cap are the same pinned value, so there
+    // is no spare launch to lose — one `request-cap` drop among a candidate's planned launches
+    // leaves it short of `minLaunchesSampled` and `scoreEntry` returns `entry-unmeasured` for the
+    // whole candidate. Asserted structurally so that the day the separate lane that owns this
+    // coupling changes it, this pin fails and the cost above is re-read rather than going stale.
+    expect(T.minLaunchesSampled as number).toBe(T.maxLaunchesPerCandidate as number);
+
+    // The size of that, AS AN ESTIMATE AND NOT A MEASUREMENT. Two assumptions, both false in part:
+    // (i) it treats a candidate's 8 launches as independent draws at the tape's cap-hit rate, and
+    // (ii) the 4/127 base rate comes from ONE deployer's long-window launches on the committed
+    // tapes, which are also the busiest ones there. So this is the right order of magnitude for
+    // how often Stage 2 now loses a verdict outright, not an answer rate for a stranger. Computed
+    // from the inputs rather than hardcoded, so it moves if any of them moves.
+    const capHitRate = overCap.length / tapedWindows().length;
+    const lostVerdictEstimate = 1 - (1 - capHitRate) ** (T.minLaunchesSampled as number);
+    expect(lostVerdictEstimate).toBeCloseTo(0.2259, 3);
+  });
+
+  it('is derived from the SPAN, so widening the span widens the reach instead of reopening the gap', () => {
+    // The failure the nominal 400 had: the span moved and the cursor did not. Here the span is the
+    // input, so it cannot.
+    const b = { windowMs: 60_000, seekMarginMs: 5_000 };
+    expect(windowReachMs({ ...b, windowSlotSpan: 160 })).toBe(85_000);
+    expect(windowReachMs({ ...b, windowSlotSpan: 200 })).toBe(105_000);
+    expect(windowReachMs({ ...b, windowSlotSpan: 400 })).toBe(205_000);
+    for (const windowSlotSpan of [150, 160, 162, 200, 400]) {
+      expect(windowReachMs({ ...b, windowSlotSpan })).toBeGreaterThanOrEqual(
+        windowSlotSpan * MAX_MS_PER_SLOT + b.seekMarginMs,
+      );
+    }
+    // `windowMs` survives only as a FLOOR, so this can never seek less far than the bound it
+    // replaced, however small a span someone pins.
+    expect(windowReachMs({ ...b, windowSlotSpan: 1 })).toBe(65_000);
+    expect(windowReachMs({ windowMs: 300_000, seekMarginMs: 5_000, windowSlotSpan: 160 })).toBe(305_000);
+  });
+
+  it('THE ELIGIBILITY GATE IS A SECOND BOUND AND IT IS STILL SHORT — pinned, not claimed fixed', () => {
+    // `stage2.mjs` -> `minAgeMs = t.windowMs + t.seekMarginMs` refuses a launch whose measured
+    // window has not finished happening yet. It is denominated in the SAME nominal-400 arithmetic
+    // this block just removed from the cursor, and it is outside this lane's file ownership, so it
+    // is pinned here as a MEASURED residual rather than described as covered. The repo's recurring
+    // defect is a claim that outruns its enforcement; this is the enforcement for what was NOT
+    // fixed.
+    //
+    // Direction of the error: a launch admitted early is measured over a window whose tail has not
+    // happened, so its late sells are missing and its field reads WORSE. The field leg is veto-only,
+    // so that biases toward refusing a deployer, never toward calling one enterable. It is the safe
+    // direction, which is why it is a residual and not a blocker.
+    const gate = readFileSync(join(TOOL_DIR, 'stage2.mjs'), 'utf8');
+    expect(gate).toMatch(/const minAgeMs = t\.windowMs \+ t\.seekMarginMs;/);
+    const minAgeMs = (T.windowMs as number) + (T.seekMarginMs as number);
+
+    // Against the MEASURED worst case the gate is short by this much, and the tape says a launch
+    // really does trade that late. If either number moves, this fails and the residual gets re-read.
+    const measuredSpanMs = Math.ceil(SPAN * MEASURED_MAX_MS_PER_SLOT);
+    expect(measuredSpanMs).toBe(71_448);
+    expect(minAgeMs).toBeLessThan(measuredSpanMs);
+    expect(measuredSpanMs - minAgeMs).toBe(6_448);
+
+    // Against the reach now in force it is shorter still: a launch may be admitted 20 s before the
+    // cursor's own bound is in the past, so the seek runs into the future by up to that much.
+    expect(REACH - minAgeMs).toBe(20_000);
   });
 });
 
@@ -8209,12 +8540,17 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     expect(row.coverage.youngestEligibleAgeMs).toBe(coverage.youngestEligibleAgeMs);
   });
 
-  it('and younger than the CURSOR it seeks from, which is the bound that actually binds', async () => {
-    // The gap this closes. The walk seeks from `createdAtMs + windowMs + seekMarginMs` and measures
-    // `windowSlotSpan` slots from the create slot, but eligibility asked only for `windowMs`. So a
-    // launch aged 60-65s passed "has finished happening" while part of its measured window had not
-    // happened yet — the same tail truncation `seekMarginMs` exists to prevent, arriving from the
-    // future side, and silent in the worst way: an absent tail reads as a quiet one.
+  it('and younger than windowMs + seekMarginMs, which is MORE than windowMs and still not enough', async () => {
+    // The gap this closes. Eligibility asked only for `windowMs`, so a launch aged 60-65s passed
+    // "has finished happening" while part of its measured window had not happened yet — the same
+    // tail truncation `seekMarginMs` exists to prevent, arriving from the future side, and silent in
+    // the worst way: an absent tail reads as a quiet one.
+    //
+    // IT IS NO LONGER THE CURSOR'S BOUND, and the title used to say it was. Since captain decision
+    // 144a the cursor is denominated in `windowSlotSpan` at a measured slot rate and reaches 85,000
+    // ms, while this gate is still the nominal-400 arithmetic at 65,000. The residual is measured
+    // and pinned in "the seek cursor reaches the whole declared slot window" above; what follows
+    // pins the gate that exists, not the one that should.
     const { fetchImpl } = insatiable();
     const client = () =>
       new KeylessClient({ maxRequests: 200, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
@@ -8237,20 +8573,20 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     }
   });
 
-  it('that one bound covers the measured span too, so widening the span cannot reopen the gap', () => {
-    // Two quantities reach forward from the mint: the seek cursor at `windowMs + seekMarginMs`
-    // (65s), and the measured window at `windowSlotSpan` slots — 64.0s at this repo's nominal
-    // 400ms/slot, ~63.5s at the tape's observed ~397ms. The cursor dominates, which is why ONE gate
-    // suffices. That domination is a property of the pinned values, not a law: a span past 162
-    // slots would put the tail of the measured window back beyond the gate.
-    const NOMINAL_MS_PER_SLOT = 400;
-    expect((T.windowSlotSpan as number) * NOMINAL_MS_PER_SLOT).toBeLessThanOrEqual(
-      (T.windowMs as number) + (T.seekMarginMs as number),
-    );
-    // And the gate is the sum, asserted on the source so it cannot drift back to `windowMs` alone.
+  it('and the gate is the SUM, not windowMs alone — asserted on the source so it cannot drift back', () => {
+    // SUPERSEDED IN PART, and the supersession is the lesson. This test used to also assert
+    // `windowSlotSpan × 400ms <= windowMs + seekMarginMs` — 64,000 <= 65,000 — and conclude that
+    // one gate covered both bounds. It was true and it went out of validity anyway: the span never
+    // moved, the CHAIN did, from a p50 of 389.0 ms/slot in 2025-12 to 418.0 in 2026-07 with a
+    // measured maximum of 446.5409. A guard denominated in a nominal constant cannot fail when the
+    // world drifts past it, which is how captain decision 144a's defect survived. The rate half now
+    // lives in "the seek cursor reaches the whole declared slot window, at a MEASURED slot rate",
+    // re-derived from the committed tapes; what stays here is the half that is about the SOURCE.
     expect(readFileSync(join(TOOL_DIR, 'stage2.mjs'), 'utf8')).toMatch(
       /const minAgeMs = t\.windowMs \+ t\.seekMarginMs;/,
     );
+    // And it is strictly more than `windowMs`, which is the regression this gate was added for.
+    expect((T.windowMs as number) + (T.seekMarginMs as number)).toBeGreaterThan(T.windowMs as number);
   });
 
   it('reads the mint list from the profile Stage 1 already paid for — no second vendor call', () => {

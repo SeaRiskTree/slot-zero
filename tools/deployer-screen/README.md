@@ -1511,6 +1511,14 @@ the last 5s) comes from the PR #7 review comment that recorded this tradeoff, wh
 without naming a population, and it is not reproduced anywhere in this repo — unlike the span
 figures above, which name theirs. 160 was chosen on measurement, so no change is implied.
 
+**Which of the two conversions of 160 slots to read.** The ~63.5s above is the **tape's own observed
+rate** (~397ms/slot, from 60s ↔ p50 151 slots), and it is **superseded** by the 71,448ms figure
+below, which converts the same 160 slots at the **measured worst-case** 446.55ms/slot. Both describe
+the same span; they differ only in the rate, and the chain's rate rose between them. Re-deriving the
+~63.5s conversion and the ~3.5s-wider claim that rests on it is **a separate lane's**, so the older
+number is left standing here rather than silently updated — read it as history, and read 71,448ms as
+the bound anything in force is measured against.
+
 **Stage 0 deliberately does not use the span**, and the two paths must not be reconciled: it measures
 each committed launch over that launch's own stored window, because `wallet_launch_pnl.csv` — the
 1,322-pair reproduction that licenses believing the live recipe at all — is computed that way. The
@@ -1524,12 +1532,29 @@ detectable after the fact: launches routinely stop trading before the nominal wi
 p50 span 151 against a 160-slot window), so any tail detector fires on nearly every launch and
 carries no information at all.
 
-So it is designed out rather than reported. The walk seeks from `createdAtMs + windowMs +
-seekMarginMs`, with the margin pinned at **5s**, so an early skew smaller than that cannot cut the
-tail off before the slot trim ever sees it. The cost is bounded: the walk still pages *backwards* to
-the mint and still trims by slot afterwards, so the margin only adds rows at the newest end — about
-5s of trading, roughly 32 fills at the tape's p50 of 381 fills per 60s, i.e. at most one extra page.
-That fits inside the 18-request per-launch cap and the `3 × 8 × 18 = 432` arithmetic is unchanged.
+So it is designed out rather than reported. The walk seeks from `createdAtMs + windowReachMs(...)` —
+`max(windowMs, ceil(windowSlotSpan × MAX_MS_PER_SLOT)) + seekMarginMs`, **85,000ms** at the pinned
+values — i.e. a reach derived from the SPAN at a measured worst-case slot rate
+(`MEASURED_MAX_MS_PER_SLOT` 446.55 × `SLOT_RATE_MARGIN` 1.1 → `MAX_MS_PER_SLOT` 500), with `windowMs`
+surviving there only as a floor. **This margin is added on top of that reach and it no longer places
+the cursor**; its own job is unchanged, clock slack of **5s** against a vendor mint time running
+early, so an early skew smaller than that cannot cut the tail off before the slot trim ever sees it.
+
+The cost is bounded and it is no longer one page. Reaching 85,000ms rather than 65,000ms moves the
+page cost over the 127 committed launches that can show the effect from p50 5 / p90 7 /
+p95 8 / max 14 to p50 6 / p90 8 / p95 9 / max 17, so **4 of 127 = 3.1%** now exceed the ~16 pages
+the cap affords and are dropped as `request-cap`, where it was **0 of 127**. `pumpfun.mjs` →
+`windowReachMs` owns the page-cost story and `test/deployer-screen.test.ts` pins these same figures.
+
+And the consequence is the candidate's, not the launch's: `minLaunchesSampled` and `maxLaunchesPerCandidate` are the same
+pinned value (8), so there is no slack — one such drop among a candidate's 8 planned launches leaves
+7 sampled and `scoreEntry` returns `entry-unmeasured` for the **whole candidate**. Naive
+independent-launches **estimate**, not a measurement: `1 − (1 − 4/127)^8` ≈ **22.6%** of candidates,
+assuming independent draws at the tape's cap-hit rate and taking that base rate from one deployer's
+long-window launches, which are also the busiest on the tape. An unmeasured verdict is *no answer*
+and never a rejection, and the drop is counted and reported where the truncated tail was silent. The
+zero-slack coupling between the sample floor and the launch cap is a **separate filed lane** and is
+not fixed here. No threshold moved: the `3 × 8 × 18 = 432` arithmetic is unchanged.
 
 **The margin is a cursor hint and never a proof tolerance.** The pre-mint tripwire still compares
 `ts < createdAtMs` with zero slack, and coverage is still discharged only by an explicit
@@ -1537,13 +1562,26 @@ That fits inside the 18-request per-launch cap and the `3 × 8 × 18 = 432` arit
 
 **It does bound one other thing, and it has to: which launches are old enough to measure.**
 `stage2.mjs` skips a launch younger than `windowMs + seekMarginMs` — **65s**, not 60s. The gate has
-to cover the newest instant the walk reaches for, and two quantities reach forward from the mint: the
-seek cursor at 65s, and the measured window at `windowSlotSpan` slots (64.0s at the nominal
-400ms/slot, ~63.5s at the tape's observed ~397ms). The cursor dominates, so one bound covers both.
-Gating on `windowMs` alone admitted a launch aged 60–65s whose tail had not happened yet — the same
-truncation this margin exists to prevent, arriving from the future side, and silent in the same way,
-because an absent tail reads as a quiet one. A test pins both the behaviour and the relation
-`windowSlotSpan × 400ms ≤ windowMs + seekMarginMs`, so widening the span past the gate fails loudly.
+to cover the newest instant the walk reaches for. Gating on `windowMs` alone admitted a launch aged
+60–65s whose tail had not happened yet — the same truncation this margin exists to prevent, arriving
+from the future side, and silent in the same way, because an absent tail reads as a quiet one.
+
+**That gate no longer covers the seek cursor, and the tense matters.** It once did: the cursor was
+also at 65s and the 160-slot span was reckoned at a nominal 400ms/slot (64.0s), so one bound covered
+both. Since captain decision 144a the cursor is `windowReachMs`, denominated in the span's own unit
+at a measured worst-case slot rate — **85,000ms** — while this gate stays at 65,000ms; and at the
+measured 446.55ms/slot maximum the span alone is 71,448ms, leaving the gate **6,448ms short**. That
+is a known residual owned by another lane, pinned with its direction of error (it biases toward
+refusing a deployer, never toward calling one enterable) by the test `THE ELIGIBILITY GATE IS A
+SECOND BOUND AND IT IS STILL SHORT`.
+
+The old assertion `windowSlotSpan × 400ms ≤ windowMs + seekMarginMs` **no longer exists**: it was
+denominated in the variable that did not move — the span never changed, the chain's slot rate did —
+so it stayed true and went out of validity with nothing failing. Coverage is now enforced by the
+describe block `the seek cursor reaches the whole declared slot window, at a MEASURED slot rate` in
+`test/deployer-screen.test.ts`, which re-derives the slot rate from the committed tapes on every run
+and asserts the reach covers the whole declared span. Widening the span still fails loudly, through
+that block rather than through the nominal-400 inequality.
 
 **And from schema 6 the filter is readable from the record itself, not only from a log.**
 `entry.coverage` carries `minAgeMs` (the 65s gate), `launchesTooYoung`, `launchesEligible`,

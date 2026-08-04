@@ -7781,6 +7781,24 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     const overCap = tapedWindows.filter((_, i) => (after[i] as number) > PAGES_AVAILABLE);
     expect(overCap.length).toBe(5);
     expect([...new Set(overCap.map((L) => L.symbol))].sort()).toEqual(['Beagles', 'Dummy', 'Glow', '🤨']);
+
+    // AND WHAT A DROP COSTS IS THE CANDIDATE'S VERDICT, not a smaller sample. This identity is the
+    // reason: the sample floor and the per-candidate launch cap are the same pinned value, so there
+    // is no spare launch to lose — one `request-cap` drop among a candidate's planned launches
+    // leaves it short of `minLaunchesSampled` and `scoreEntry` returns `entry-unmeasured` for the
+    // whole candidate. Asserted structurally so that the day the separate lane that owns this
+    // coupling changes it, this pin fails and the cost above is re-read rather than going stale.
+    expect(T.minLaunchesSampled as number).toBe(T.maxLaunchesPerCandidate as number);
+
+    // The size of that, AS AN ESTIMATE AND NOT A MEASUREMENT. Two assumptions, both false in part:
+    // (i) it treats a candidate's 8 launches as independent draws at the tape's cap-hit rate, and
+    // (ii) the 5/127 base rate comes from ONE deployer's long-window launches on the committed
+    // tapes, which are also the busiest ones there. So this is the right order of magnitude for
+    // how often Stage 2 now loses a verdict outright, not an answer rate for a stranger. Computed
+    // from the inputs rather than hardcoded, so it moves if any of them moves.
+    const capHitRate = overCap.length / tapedWindows.length;
+    const lostVerdictEstimate = 1 - (1 - capHitRate) ** (T.minLaunchesSampled as number);
+    expect(lostVerdictEstimate).toBeCloseTo(0.2748, 3);
   });
 
   it('is derived from the SPAN, so widening the span widens the reach instead of reopening the gap', () => {

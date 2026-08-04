@@ -352,16 +352,22 @@ export function windowFilter(fills, windowSlotSpan) {
  * The slowest slot this repo has **measured**, in milliseconds, and the whole reason
  * {@link MAX_MS_PER_SLOT} is not the nominal 400.
  *
- * Re-derived offline over **every** committed launch on both tapes — 332 launches spanning 2025-12
- * to 2026-07 — as the local rate across each launch's own declared `windowSlotSpan`, which is the
- * only stretch the seek has to cover: `(newest ts − oldest ts) / (maxSlot − createSlot)` over the
- * fills in `[createSlot, createSlot + 160]`. The maximum is **446.5409 ms/slot** (`papoi`,
- * `AxshJi4U…`, 2026-07, 159 slots), against a 2025-12 p50 of 389.0 and a 2026-07 p50 of 418.0. It
- * is pinned rounded **up**, so this constant is an upper bound on the evidence rather than a value
- * the evidence can creep past.
- * `test/deployer-screen.test.ts` re-derives it from those tapes and fails if this constant and the
- * committed evidence come apart, so the number cannot go stale in silence — which is exactly how
- * the nominal 400 it replaces survived (captain decision 144a).
+ * Re-derived offline over the committed launches on both tapes — **337** of them qualify
+ * (235 population + 102 graduated-life, i.e. `reached_mint` true and not truncated), spanning
+ * 2025-12 to 2026-07 — as the local rate across each launch's own declared `windowSlotSpan`, which
+ * is the only stretch the seek has to cover: `(newest ts − oldest ts) / (maxSlot − createSlot)`
+ * over the fills in `[createSlot, createSlot + 160]`. **332** of those 337 yield a rate at all:
+ * only a launch trading across at least 100 slots of its span is fitted, the rest are too short to
+ * fit. The maximum is **446.5409 ms/slot** (`papoi`, `AxshJi4U…`, 2026-07, 159 slots), against a
+ * 2025-12 p50 of 389.0 and a 2026-07 p50 of 418.0. It is pinned rounded **up**, so this constant is
+ * an upper bound on the evidence rather than a value the evidence can creep past.
+ * `test/deployer-screen.test.ts` re-derives it and fails if this constant and the committed
+ * evidence come apart, so the number cannot go stale in silence — which is exactly how the nominal
+ * 400 it replaces survived (captain decision 144a). **What that guard re-derives over is narrower
+ * than the derivation above**: its population is the **127** launches whose tape extends past the
+ * 60 s cut, because the 210 population launches taped at 60 s are cut before the gap begins and
+ * structurally cannot show it. So a future 60 s-window launch faster than this constant would not
+ * fail the guard; the 337-launch figure above is the offline derivation, not the enforcement.
  *
  * It bounds the FITTED rate and not the true one: fill `ts` is whole seconds, floored, so over 159
  * slots the fit carries about ±6.3 ms/slot of quantisation and the chain's real worst case that day
@@ -428,10 +434,24 @@ export const MAX_MS_PER_SLOT = 500;
  * p90 9 / p95 10 / max 18, so **5 of 127** — `Dummy` (on both tapes), `Glow`, `🤨` and `Beagles`, the busiest on either —
  * now exceed the 16 pages `maxRequestsPerLaunch` affords and are dropped as `request-cap`.
  * A live walk of `Spam` (`GxN4wsPK…`) through this path on 2026-08-04 cost 9 requests of 18, zero
- * shed. That drop is **counted and reported**; a truncated tail was not. A launch missing from the
- * sample shrinks `n` visibly, whereas a launch measured from a partial window is a wrong number
- * that looks like a right one — and the drop falls on busy launches, biasing the per-launch prize
- * DOWN, which is the direction a screen looking for room may safely err in.
+ * shed. That drop is **counted and reported**; a truncated tail was not, and a launch measured from
+ * a partial window is a wrong number that looks like a right one.
+ *
+ * **What that drop costs is the CANDIDATE'S VERDICT, not a smaller sample, and the reader must not
+ * miss it.** `minLaunchesSampled` and `maxLaunchesPerCandidate` are the same pinned value, 8, so
+ * there is no spare launch to lose: ONE `request-cap` drop among a candidate's 8 planned launches
+ * leaves 7 sampled and `scoreEntry` returns `entry-unmeasured` for the **whole candidate**. At the
+ * tape's 5-in-127 per-launch rate the naive independent-draws estimate is about a **27.5%** chance
+ * per candidate — an estimate of the right order and not a measured answer rate, since that base
+ * rate comes from one deployer's long-window launches, which are also the busiest ones there. And
+ * the drops fall on the busiest launches, which are the ones most likely to belong to an active
+ * deployer, so the lost answers are not uniformly distributed. An unmeasured verdict is **no
+ * answer** and never a rejection (AGENTS.md, captain decision 174b), so this is not a false
+ * positive and it is the direction the standing tiebreaker permits; the drop also falls on busy
+ * launches, biasing the per-launch prize DOWN, which is the direction a screen looking for room may
+ * safely err in. **The zero-slack coupling itself — sample floor equal to launch cap — is a known
+ * SEPARATE lane and is not fixed here**; `test/deployer-screen.test.ts` pins the identity so the
+ * day it moves, this paragraph is re-read rather than left stale.
  *
  * @param {object} bounds
  * @param {number} bounds.windowMs        Nominal window length. A floor on the reach, nothing more.

@@ -1523,13 +1523,26 @@ That fits inside the 18-request per-launch cap and the `3 × 8 × 18 = 432` arit
 
 **It does bound one other thing, and it has to: which launches are old enough to measure.**
 `stage2.mjs` skips a launch younger than `windowMs + seekMarginMs` — **65s**, not 60s. The gate has
-to cover the newest instant the walk reaches for, and two quantities reach forward from the mint: the
-seek cursor at 65s, and the measured window at `windowSlotSpan` slots (64.0s at the nominal
-400ms/slot, ~63.5s at the tape's observed ~397ms). The cursor dominates, so one bound covers both.
-Gating on `windowMs` alone admitted a launch aged 60–65s whose tail had not happened yet — the same
-truncation this margin exists to prevent, arriving from the future side, and silent in the same way,
-because an absent tail reads as a quiet one. A test pins both the behaviour and the relation
-`windowSlotSpan × 400ms ≤ windowMs + seekMarginMs`, so widening the span past the gate fails loudly.
+to cover the newest instant the walk reaches for. Gating on `windowMs` alone admitted a launch aged
+60–65s whose tail had not happened yet — the same truncation this margin exists to prevent, arriving
+from the future side, and silent in the same way, because an absent tail reads as a quiet one.
+
+**That gate no longer covers the seek cursor, and the tense matters.** It once did: the cursor was
+also at 65s and the 160-slot span was reckoned at a nominal 400ms/slot (64.0s), so one bound covered
+both. Since captain decision 144a the cursor is `windowReachMs`, denominated in the span's own unit
+at a measured worst-case slot rate — **85,000ms** — while this gate stays at 65,000ms; and at the
+measured 446.55ms/slot maximum the span alone is 71,448ms, leaving the gate **6,448ms short**. That
+is a known residual owned by another lane, pinned with its direction of error (it biases toward
+refusing a deployer, never toward calling one enterable) by the test `THE ELIGIBILITY GATE IS A
+SECOND BOUND AND IT IS STILL SHORT`.
+
+The old assertion `windowSlotSpan × 400ms ≤ windowMs + seekMarginMs` **no longer exists**: it was
+denominated in the variable that did not move — the span never changed, the chain's slot rate did —
+so it stayed true and went out of validity with nothing failing. Coverage is now enforced by the
+describe block `the seek cursor reaches the whole declared slot window, at a MEASURED slot rate` in
+`test/deployer-screen.test.ts`, which re-derives the slot rate from the committed tapes on every run
+and asserts the reach covers the whole declared span. Widening the span still fails loudly, through
+that block rather than through the nominal-400 inequality.
 
 **And from schema 6 the filter is readable from the record itself, not only from a log.**
 `entry.coverage` carries `minAgeMs` (the 65s gate), `launchesTooYoung`, `launchesEligible`,

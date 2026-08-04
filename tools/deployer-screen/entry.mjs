@@ -511,13 +511,16 @@ export const UNMEASURED_CAUSES = [
  *
  * `too-few-closed-round-trips` was the one row attributed to the deployer, on the ground that
  * closure is read inside the pinned `windowMs` and that is the same window for every candidate. It
- * is not: how much of a window is fetched at all is our instrument, not the deployer's. Until
- * captain decision 144a `readLaunchWindow` sought in MILLISECONDS while deciding membership in
- * SLOTS and silently lost the window's tail as the chain slowed; the seek now scales with the span
- * (`pumpfun.mjs` → `windowReachMs`), and what it costs instead is pages — a launch over
- * `maxRequestsPerLaunch` is dropped as `request-cap`, and the busiest launches are the ones that
- * drop. Either way `closed.length` is bounded by our own coverage. `tools/deployer-screen/README.md`
- * → "Why `too-few-closed-round-trips` is `our-coverage` and not the deployer's" owns the rationale.
+ * is not: `pumpfun.mjs` → `readLaunchWindow` seeks in MILLISECONDS (65,000) and decides membership
+ * in SLOTS (160), so at 2026-07 slot drift 160 slots reach up to 70.6 s and the window's tail is
+ * never fetched. The truncated fills are disproportionately late SELLS — 354 in-window fills, 161 of
+ * them sells, across 102 launches — and dropping one flips a wallet from closed to open. So
+ * `closed.length` is partly a function of WHEN a candidate's launches happened, which is a
+ * time-varying limit of ours; `thresholds.json` → `stage2_entry.windowSlotSpan` already states that
+ * a too-narrow span silently changes gate outcomes at `minFieldRoundTrips`. The honest note beside
+ * it: that defect moved our own create-slot series by nothing to seven significant figures, because
+ * create-slot outsiders close early — but that is n = 1 deployer on our own tape and establishes no
+ * bound for a stranger, which is exactly why the conservative attribution is the captain's call.
  *
  * @type {Readonly<Record<UnmeasuredCause, 'our-coverage' | 'deployer'>>}
  */
@@ -981,10 +984,10 @@ export function scoreEntry(launches, t, context = {}) {
   if (closed.length < t.minFieldRoundTrips) {
     // Room was read on a full sample and clears the bar, so outsiders did reach these create slots
     // — and then too few of them completed a round trip to build a hit rate from. This reads like a
-    // fact about the deployer and is NOT one: how much of a window we fetch is our instrument —
-    // the seek reach and the per-launch request cap both bound it, and the fills either one loses
-    // are disproportionately late SELLS, each one flipping a wallet from closed to open.
-    // `our-coverage`, per {@link UNMEASURED_CAUSE_ATTRIBUTION}.
+    // fact about the deployer and is NOT one: `readLaunchWindow` reaches 65,000 ms but counts 160
+    // slots, so the window's tail goes unfetched by an amount that varies with slot drift, and the
+    // fills it loses are disproportionately late SELLS — each one flipping a wallet from closed to
+    // open. `our-coverage`, per {@link UNMEASURED_CAUSE_ATTRIBUTION}.
     attributeUnmeasured(score, ['too-few-closed-round-trips']);
     score.rationale =
       `the opening window leaves room (median ${fmt(roomLeft.median)}), but only ${closed.length} ` +

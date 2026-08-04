@@ -67,14 +67,12 @@ December 2025 — never forwards.** Forward observation time is the scarcer reso
 ## The cursor has ONE bound, in ONE unit
 
 `tools/deployer-screen/pumpfun.mjs` → `readLaunchWindow` reaches forward from the mint with **two**
-bounds in **two units**: a seek cursor in milliseconds and a membership filter at
-`createSlot + windowSlotSpan` (slots). For a long time nothing reconciled them but a hardcoded
-nominal 400 ms/slot with about a second of headroom — and the chain has been slowing all year, so it
-silently stopped fetching the last few seconds of the window it reported covering while still
-reporting `usable: true`, `reachedCreateSlot: true` and a note true in every clause. Captain decision
-144a re-denominated that cursor in a measured worst-case slot rate; `pumpfun.mjs` → `windowReachMs`
-owns the fix, its constants and its guard. The two bounds are still two, and keeping them in step is
-now a pinned constant's job.
+bounds in **two units**: a seek cursor at `createdAtMs + windowMs + seekMarginMs` (milliseconds) and
+a membership filter at `createSlot + windowSlotSpan` (slots). Nothing reconciles them but a hardcoded
+nominal 400 ms/slot with about a second of headroom — and the chain has been slowing all year, p50
+389.0 ms/slot in 2025-12 against 418.0 in 2026-07, max observed 441.3. At that maximum the declared
+160-slot window is 70.6 s wide against a 65 s reach. The walk reports `usable: true`,
+`reachedCreateSlot: true` and a note true in every clause, and never fetched the last 5.6 s.
 
 `walk.mjs` copies `tools/graduated-life-tape/walk.mjs` instead: **`seekCursor(endMs)` is the seek and
 `tsMs <= endMs` is the membership test.** One number, one unit, nothing for a drifting slot rate to

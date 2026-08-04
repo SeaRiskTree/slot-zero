@@ -163,13 +163,11 @@ export const DROPPED_WINDOW_CAVEAT =
  * create transaction. What it costs is that a genuine disagreement under 5 s is no longer seen.
  *
  * IT IS NOT A ONE-ENDED WIDENING, AND ANYTHING COPYING IT MUST KNOW THAT. `readLaunchWindow` seeks
- * at `createdAtMs` plus `windowReachMs(...)`, so a backdated `createdAtMs` also pulls the NEWEST
- * instant the walk reaches 5 s earlier. Since captain decision 144a that reach is derived from
- * `windowSlotSpan` at a measured worst-case slot rate and carries headroom over the declared span,
- * so a 5 s backdate eats into that headroom rather than reinstating the tail truncation it used to
- * (`pumpfun.mjs` → `windowReachMs` owns the reach and its margins). It is moot in THIS pass because
- * the tail is not read here; in a full-window walk it is headroom spent, so re-check it against
- * `windowReachMs` before pinning a larger backdate.
+ * at `createdAtMs + windowMs + seekMarginMs`, so a backdated `createdAtMs` also pulls the NEWEST
+ * instant the walk reaches 5 s earlier — exactly cancelling the pinned `seekMarginMs` of 5,000 and
+ * reinstating the tail truncation that margin exists to prevent (`CLAUDE.md`, "the two-bound
+ * cursor"). It is safe in THIS pass because the tail is not read here; in a full-window walk it
+ * would silently lose fills.
  */
 export const MINT_TIME_BACKDATE_CAVEAT =
   'THE MINT INSTANT IS BACKDATED BY A PINNED MARGIN before the window is walked, because the two ' +

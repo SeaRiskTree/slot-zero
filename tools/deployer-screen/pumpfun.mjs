@@ -429,19 +429,27 @@ export const MAX_MS_PER_SLOT = 500;
  * past `createSlot + windowSlotSpan` is discarded. What it buys is that the rows *inside* the span
  * were asked for at all.
  *
- * **It costs pages, and the cost is bounded and visible.** Modelled over the 127 committed launches
- * that can show the effect, the walk goes from p50 6 / p90 8 / p95 8 / max 15 pages to p50 7 /
- * p90 9 / p95 10 / max 18, so **5 of 127** — `Dummy` (on both tapes), `Glow`, `🤨` and `Beagles`, the busiest on either —
+ * **It costs pages, and the cost is bounded and visible.** Over the 127 committed launches that can
+ * show the effect, the walk goes from p50 5 / p90 7 / p95 7 / max 14 pages to p50 6 / p90 8 /
+ * p95 9 / max 17, so **4 of 127** — `Dummy` (on both tapes), `Glow` and `🤨`, the busiest on either —
  * now exceed the 16 pages `maxRequestsPerLaunch` affords and are dropped as `request-cap`.
  * A live walk of `Spam` (`GxN4wsPK…`) through this path on 2026-08-04 cost 9 requests of 18, zero
  * shed. That drop is **counted and reported**; a truncated tail was not, and a launch measured from
  * a partial window is a wrong number that looks like a right one.
  *
+ * **The guard's model runs ONE PAGE HIGH, so its figures are an upper bound rather than this walk's
+ * cost.** `test/deployer-screen.test.ts` costs a launch as `ceil(rows / pageLimit) + 1`, i.e. it
+ * pays for a separate final page proving nothing older exists. This walk spends one only when the
+ * last page of rows comes back exactly full: otherwise the page that reaches back past the mint
+ * carries the endpoint's own `hasMore === false`, and the proof arrives with the rows. Read the
+ * pinned p50 7 / p90 9 / p95 10 / max 18 and 5-of-127 there as that bound, and the figures above as
+ * the walk's own cost.
+ *
  * **What that drop costs is the CANDIDATE'S VERDICT, not a smaller sample, and the reader must not
  * miss it.** `minLaunchesSampled` and `maxLaunchesPerCandidate` are the same pinned value, 8, so
  * there is no spare launch to lose: ONE `request-cap` drop among a candidate's 8 planned launches
  * leaves 7 sampled and `scoreEntry` returns `entry-unmeasured` for the **whole candidate**. At the
- * tape's 5-in-127 per-launch rate the naive independent-draws estimate is about a **27.5%** chance
+ * tape's 4-in-127 per-launch rate the naive independent-draws estimate is about a **22.6%** chance
  * per candidate — an estimate of the right order and not a measured answer rate, since that base
  * rate comes from one deployer's long-window launches, which are also the busiest ones there. And
  * the drops fall on the busiest launches, which are the ones most likely to belong to an active

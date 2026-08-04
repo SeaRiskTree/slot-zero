@@ -686,6 +686,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 7 | no new candidate field, no new `entry` field and no new `entry.coverage` field: `PERSISTED_BY_SCHEMA[7]`, `ENTRY_KEYS_BY_SCHEMA[7]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[7]` all equal `[6]`. **What changed is a POPULATION, under unchanged key names.** `stage0.onChainCostReproduction`'s `launchesPriced`, `entriesPriced`, `entries`, `pairsPriced`, the entry-cost medians, `entryCostPositiveShare`, the gross/net hit rates and medians and `flipsPositiveToNegative` are now measured over the **GATED** population — launches whose create-slot opening is proven (`measure.mjs` → `roomIsProven`), which is the population `entry-cost-prohibitive` is itself computed from — where a schema-6 record's identically named keys meant the unfiltered one. So a schema-6 `launchesPriced: 113 / pairsPriced: 631` and a schema-7 `110 / 618` are not one series; version-detect before comparing them. Three new keys carry the unfiltered reading so the record is self-describing rather than needing external context: `includingUnprovenLaunchesPriced`, `includingUnprovenPairsPriced` and `includingUnprovenEntryCostPerSolStakedMedianByLaunch` (on the committed tape 113, 631 and 0.0388 against the gated 110, 618 and 0.0389 — the unfiltered reading is the CHEAPER one, i.e. the optimistic direction, which is why it is not what the bar reads). The block also gains `minEntryCostPositiveShare`, the floor `entryCostPositiveShare` is compared against, beside the `minLaunches`/`minPairs` bars already there. |
 | 8 | no new candidate field, no new `entry` field and no new `entry.coverage` field: `PERSISTED_BY_SCHEMA[8]`, `ENTRY_KEYS_BY_SCHEMA[8]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[8]` all equal `[7]`. **What changed is the `spend` block: it now reports THREE budgets separately**, because the creation walk can take a keyed indexed route. It gains `rpcProvider` (`helius` or `public`), `rpcEndpoint`, `heliusCredits`, `heliusCreditCeilingPerCandidate` and `plannedWorstCaseHeliusCredits`. They are five new keys rather than additions to the existing totals because the three budgets have three units and no exchange rate between them: MadeOnSol is metered in **requests** against a shared daily allowance, Helius in **credits** against an unshared monthly one, and the keyless hosts in neither — a single "requests" total would hide which allowance a heavy run actually spent. `rpcEndpoint` holds the endpoint's **label** and never the composed URL, which on the keyed route carries the credential in a query parameter. On a schema-≤7 record all five are genuinely absent and must not be reconstructed: those runs predate the indexed route, so the walk was the keyless one and the record cannot say which host answered it. `heliusCredits: 0` beside `rpcProvider: "public"` is a keyless run that spent no credit; `heliusCreditCeilingPerCandidate: null` means the indexed walk did not run at all. |
 | 9 | no new candidate ROW field, no new `entry` field, no new `entry.coverage` field and no new `spend` field: `PERSISTED_BY_SCHEMA[9]`, `ENTRY_KEYS_BY_SCHEMA[9]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[9]` and `SPEND_KEYS_BY_SCHEMA[9]` all equal `[8]`. **What changed is where the launch history comes from: creation ENUMERATION is primary on Dune** (captain decision 156a). A new run-level `dune` block carries the coverage probe's own bounds and the Dune spend in its own units — `used`, `reason`, `rejected`, `unusableNote`, `endpoint`, `creationQueryId`, `coverageQueryId`, `executions`, `executionCeiling`, `requests`, `resultBytes`, `estimatedCredits`, `rowsReturned`, `unreadableRows`, `walletsRefusedByShape` and `coverage` (which tables were probed, from when to when, which are READ by the enumeration, months with no row, and why a probe refused). It is a block of its own rather than five more `spend` keys because Dune is a fourth vendor in a fourth unit — executions plus bytes against a SHARED monthly allowance, where a FAILED execution is billed exactly like a successful one — and `estimatedCredits` is an **estimate**, the published 20 credits/MB applied to the bytes the vendor's own metadata declared, with compute billed on top. Each candidate's `creation` block gains `enumerationSource` (`dune` | `helius` | `keyless-rpc`), `duneLaunches`, `duneFallbackReasons` and `creatorMovementUnmeasured`. **The one that will bite: on a schema-≤8 record `creation.movedCreator: 0` means the walk read every curve and none had moved. On a schema-9 record whose `enumerationSource` is `dune` it means nothing was looked at** — Dune says who created a mint and whether it completed, and nothing about who owns the curve today — and `creatorMovementUnmeasured` is the size of what went unmeasured. Do not add the two, and do not read a Dune-sourced 0 as the walk's 0. On a Dune-sourced candidate `rpcRequests`, `loadShedEvents`, `signaturesScanned`, `signaturesSucceeded`, `transactionsInspected` and `curvesUnread` all read 0 because no walk happened, and `stopReason` is `dune-enumerated`, which is not a stop at all; `coveredFromIso`/`coveredToIso` are the PROBE's bound rather than a walk's window and `wholeHistory` is true inside it. **A single run may carry both sources**: the coverage probe refuses a wallet at a time, so a wallet whose earliest launch sits at or before the probed surfaces' own first row falls back to the walk while the rest of the batch does not. `duneFallbackReasons` is why a candidate fell back, and it is not only coverage — an unreadable row anywhere in the answer refuses the whole batch, a wallet the enumeration returned no row for is refused as an absence of evidence rather than read as zero launches, and a candidate whose address is not base58-shaped is never sent at all (`walletsRefusedByShape` counts those). |
+| 10 | no new candidate ROW field, no new `entry.coverage` field, no new `spend` field, no new `dune` field and no new `creation` field: `PERSISTED_BY_SCHEMA[10]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[10]`, `SPEND_KEYS_BY_SCHEMA[10]`, `DUNE_KEYS_BY_SCHEMA[10]` and `CREATION_KEYS_BY_SCHEMA[10]` all equal `[9]`. **What changed is that an UNMEASURED verdict now says which of its six producers reached it, and whose fact that is** (captain decision 174b). `entry` gains `unmeasuredCause` (one of `entry.mjs` → `UNMEASURED_CAUSES`, or `null` on a measured verdict), `unmeasuredCauseAttribution` (`our-coverage` | `deployer` | `null`) and `unmeasuredContributingCauses` (every producer that applied, primary first — the three sample-size causes can co-occur). **The verdict vocabulary is UNCHANGED**, so unlike the schema-6 boundary a schema-9 verdict and a schema-10 verdict are the same six values and are directly comparable; what an older record cannot do is say WHY an unmeasured one was reached. **The one that will bite:** five of the six producers are facts about OUR coverage — the walk was never offered `minLaunchesSampled` windows, windows were dropped, windows were REFUSED as unproven openings (decision 134a), too little of the field priced, too few round trips priced end to end — and exactly one, `too-few-closed-round-trips`, is a fact about the deployer. So `verdict !== 'entry-unmeasured'` is a filter on our own budget and evidence wearing a measurement's clothes. On a schema-≤9 record the cause is genuinely absent and **must not be reconstructed**: `entry.mjs` → `isDeployerAttributable` answers `false` for the whole unmeasured family there, which is the safe direction. See “What a later stage may filter on” below. |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -1022,7 +1023,7 @@ so the exit question is worth asking** — and nothing more.
 | `entry-cost-unmeasured` | the free legs passed and the cost leg could not price enough of the field. **Terminal for that candidate in that run, and never a pass.** | yes, and it ran out |
 | `entry-cost-prohibitive` | room present and priced, and the price of the seat consumes the opening. | yes |
 | `entry-open-after-costs` | all three legs allow it. | yes |
-| `entry-unmeasured` | too few usable launches for any distribution. | no |
+| `entry-unmeasured` | too few usable launches for any distribution, or too few closed round trips to read the field. **Four distinct producers — see below.** | no |
 
 **`entry-room-present` was removed, not renamed.** Under the captain's ruling of 2026-08-02 fees are
 part of the entry window and "enterable" means enterable *after what it costs to enter*, so a verdict
@@ -1036,6 +1037,53 @@ nothing there": the second is a finding about a deployer, the first is a finding
 and folding them together would let a coverage failure read as a judgement. The score carries
 `launchesRoomUnproven` beside `launchesSampled` so the two populations can always be told apart, and
 a caveat names the count and the reason on every score that has one.
+
+### What a later stage may filter on
+
+**Captain decision 174b, 2026-08-03. Read this before writing any filter over a Stage 2 outcome.**
+
+The two unmeasured verdicts are not one finding each. Between them they have **six distinct
+producers**, enumerated from `entry.mjs` → `scoreEntry` rather than from intent, and they do not
+describe the same kind of thing:
+
+| `unmeasuredCause` | verdict | attribution | what actually happened |
+|---|---|---|---|
+| `too-few-windows-available` | `entry-unmeasured` | **our-coverage** | the walk was never offered `minLaunchesSampled` windows — a short or too-young history, or our own `maxLaunchesPerCandidate` cap. |
+| `windows-dropped` | `entry-unmeasured` | **our-coverage** | windows were reached and could not be walked back to the mint. `entry.coverage.dropsByReason` says which. |
+| `too-few-proven-windows` | `entry-unmeasured` | **our-coverage** | windows were measured perfectly well and **refused**: no bundled transaction in the create slot, so the co-ordination rule recovered nothing (decision 134a). |
+| `too-few-closed-round-trips` | `entry-unmeasured` | **deployer** | room was measured on a full sample and clears the bar, and the field around those launches produced fewer than `minFieldRoundTrips` complete round trips. |
+| `too-little-of-the-field-priced` | `entry-cost-unmeasured` | **our-coverage** | below `minPricedFraction` of the create-slot field priced on-chain, or the cost leg never ran. |
+| `too-few-priced-round-trips` | `entry-cost-unmeasured` | **our-coverage** | entries priced, but too few round trips priced across their **whole** window. |
+
+**Five of the six are facts about us. Exactly one is a fact about the deployer.** So:
+
+> **A later stage may filter on a `deployer` attribution, and never on an `our-coverage` one.**
+> An `our-coverage` outcome must be carried forward as **no answer** — surfaced and counted — not
+> dropped. `verdict !== 'entry-unmeasured'` is a filter on our own budget and evidence wearing a
+> measurement's clothes, and it is the same invisible false rejection this whole screen exists to
+> remove, one layer down.
+
+`entry.mjs` → **`isDeployerAttributable(finding)`** is the predicate that owns the rule; do not
+rebuild the table above in a consumer. It takes the in-process `EntryScore` and a persisted `entry`
+row alike, which matters because **Stage 3 is a second consumer of Stage 2's fill walk, not a reader
+of `runs/*.json`** — the entry block is distributions and hit rates with no per-launch row and no
+wallet identity, and Stage 3's questions are per-launch and per-wallet
+(`slot-zero-stage2-reverify/report.md` §5). It fails safe twice: a record older than schema 10 has
+no `unmeasuredCause` and answers `false` for the whole unmeasured family, and an unrecognised cause
+answers `false` too.
+
+Two things this does **not** do. It does not retune anything — `minPricedFraction`, decision 134a's
+refusal and every other bar are untouched, and #17's asymmetry (false rejections possible, false
+accepts impossible) is deliberate and unchanged. And it does not claim the `deployer` cause is
+unconditioned: closure is read inside the pinned entry window, which is our choice — but it is the
+**same** window for every candidate, a fixed instrument rather than a per-candidate coverage
+accident, and that is the line the table draws. The bound travels on the score, in
+`DEPLOYER_ATTRIBUTION_CAVEAT`.
+
+How often the `our-coverage` half fires is measured, not assumed: `too-few-proven-windows` alone
+silences **1 candidate in 14** on the current gate population — see
+[`census/2026-08-03-bundling-census.md`](./census/2026-08-03-bundling-census.md), and `--subject-era`
+in [`bundling.mjs`](./bundling.mjs) for the same question on our own subject.
 
 ## Bounds
 

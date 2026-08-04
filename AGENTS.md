@@ -550,6 +550,23 @@ dev currently?"*, and the shape of the answer is the point:
   ones — `entry-cost-unmeasured` and `entry-cost-prohibitive` — have no older equivalent, and
   **unmeasured cost is never a pass**. A schema-≤5 `entry-room-present` is NOT the same finding;
   `tools/deployer-screen/README.md` → "The run-record schema" owns the boundary.
+- **AN UNMEASURED VERDICT IS SIX PRODUCERS, FIVE OF THEM OURS — never filter on the verdict alone**
+  (captain decision 174b, schema 10). `entry-unmeasured` and `entry-cost-unmeasured` are reached by
+  six distinct code paths in `entry.mjs` → `scoreEntry`: too few windows offered, windows dropped,
+  windows REFUSED as unproven openings (decision 134a), too little of the field priced, too few round
+  trips priced end to end — all facts about **our** budget and evidence — and exactly one,
+  `too-few-closed-round-trips`, which is a fact about the deployer. So
+  `verdict !== 'entry-unmeasured'` is a filter on our own coverage wearing a measurement's clothes,
+  which is the invisible false rejection this screen exists to remove, one layer down.
+  `unmeasuredCause` / `unmeasuredCauseAttribution` / `unmeasuredContributingCauses` are on the score
+  **and** in the record, and **`entry.mjs` → `isDeployerAttributable` is the predicate — do not
+  rebuild the table in a consumer.** It fails safe twice: a schema-≤9 record and an unrecognised
+  cause both answer `false`. The rule and the six-row table are
+  `tools/deployer-screen/README.md` → "What a later stage may filter on"; the evidence is
+  `data/slot-zero-stage2-reverify/report.md` §5, which also fixes the shape — **Stage 3 is a second
+  consumer of Stage 2's fill walk, not a reader of `runs/*.json`**, because the entry block is
+  distributions with no per-launch row and no wallet identity. This lane made the outcomes legible
+  and retuned nothing.
 - **Entry cost is recovered from the chain, and the signatures are free.** Every `Fill` carries its
   transaction, so `measure.mjs` → `walletTransactions` and `entry.mjs` → `entryCostTargets` name the
   transactions to price with no discovery step; `pumpfun.mjs` → `parseTransactionCosts` reads

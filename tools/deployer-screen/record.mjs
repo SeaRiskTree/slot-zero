@@ -171,8 +171,28 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   No candidate ROW key changes, so `PERSISTED_BY_SCHEMA[9]` equals `[8]`, and nothing about
  *   `entry`, `entry.coverage` or `spend` moves — Dune is metered in its own units in its own block,
  *   because a fourth budget folded into `spend` would imply an exchange rate that does not exist.
+ * - **10** — **the unmeasured verdicts say WHICH producer reached them and WHOSE fact it is**
+ *   (captain decision 174b). No candidate ROW key changes and no `entry.coverage`, `spend`, `dune`
+ *   or `creation` key changes; `entry` gains `unmeasuredCause`, `unmeasuredCauseAttribution` and
+ *   `unmeasuredContributingCauses`. **The verdict vocabulary is UNCHANGED** — this is a split of the
+ *   cause, not of the label, so a schema-9 verdict and a schema-10 verdict are the same six values
+ *   and directly comparable.
+ *   **What a reader of an older record must not do: infer the cause.** `entry-unmeasured` and
+ *   `entry-cost-unmeasured` have six distinct producers between them (`entry.mjs` →
+ *   `UNMEASURED_CAUSES`), and on a schema-≤9 record the label cannot say which fired. Five of the
+ *   six are facts about OUR coverage — the walk was never offered enough windows, windows were
+ *   dropped, windows were REFUSED as unproven openings (decision 134a), too little of the field
+ *   priced, too few round trips priced end to end — and exactly one,
+ *   `too-few-closed-round-trips`, is a fact about the deployer. So a consumer filtering on
+ *   `verdict !== 'entry-unmeasured'` against an older record is filtering on its own budget and
+ *   evidence while believing it is filtering on a measurement. `entry.mjs` →
+ *   `isDeployerAttributable` is the predicate that owns this rule, and on a schema-≤9 record it
+ *   answers `false` for the whole unmeasured family — the safe direction, and the reason the field
+ *   must not be reconstructed. Every such score also carries the rule in `entry.caveats`
+ *   (`COVERAGE_ATTRIBUTION_CAVEAT` / `DEPLOYER_ATTRIBUTION_CAVEAT`), so the limit travels with the
+ *   number.
  */
-export const RECORD_SCHEMA_VERSION = 9;
+export const RECORD_SCHEMA_VERSION = 10;
 
 /**
  * Completeness of a run, as the record can actually support.

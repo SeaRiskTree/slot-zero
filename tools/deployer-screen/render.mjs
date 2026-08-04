@@ -240,6 +240,21 @@ function distHeader() {
 export function renderEntry(e, coverage) {
   const L = [];
   L.push(`      ENTRY: ${e.verdict.toUpperCase()}`);
+  // Captain decision 174b, on the face of the run rather than only in the record. An unmeasured
+  // verdict is two unrelated kinds of thing and the operator has to be able to see which: OUR
+  // COVERAGE is a limit of this reading and never grounds for dropping the wallet, THIS DEPLOYER is
+  // a measurement and is.
+  if (e.unmeasuredCause !== null) {
+    L.push(
+      `      CAUSE: ${e.unmeasuredCause.toUpperCase()} — ` +
+        (e.unmeasuredCauseAttribution === 'deployer'
+          ? 'a finding about THIS DEPLOYER, measured on a full sample'
+          : 'a limit of OUR COVERAGE, not a finding about this deployer — never filter on it') +
+        (e.unmeasuredContributingCauses.length > 1
+          ? ` (also: ${e.unmeasuredContributingCauses.slice(1).join(', ')})`
+          : ''),
+    );
+  }
   for (const line of wrap(e.rationale, 84)) L.push(`        ${line}`);
   L.push('');
 
@@ -895,6 +910,12 @@ export function renderStage1(run) {
     L.push('  ENTRY-COST-PROHIBITIVE and ENTRY-COST-UNMEASURED are both REFUSALS, and the second is');
     L.push('  the absence of a finding rather than a finding of absence: the seat went unpriced, which');
     L.push('  is never evidence that it was cheap.');
+    // Captain decision 174b. The legend is where a reader learns what a verdict is worth, so it is
+    // where the filter rule belongs too — an unmeasured verdict is six producers, five of them ours.
+    L.push('  EVERY unmeasured verdict prints a CAUSE line saying WHOSE fact it is. Only a cause');
+    L.push('  attributed to THIS DEPLOYER may be filtered on downstream; one attributed to OUR');
+    L.push('  COVERAGE is no answer and must be carried forward, counted, never dropped. Filtering');
+    L.push('  on the verdict alone filters on our own budget and evidence (decision 174b).');
     if (anyPriced) {
       L.push('  The *NET* figures above are the on-chain correction and they sit BESIDE the *GROSS*');
       L.push('  ones rather than replacing them. They are an UPPER bound themselves: a landing tip');

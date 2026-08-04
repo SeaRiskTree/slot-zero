@@ -589,6 +589,14 @@ field exists only on the fifth column the cap SQL adds, so a populated value pro
 query is the new text and that the leg executed — a matching `normaliseSql` comparison alone proves
 neither.
 
+**Both legs were re-confirmed against the live vendor on 2026-08-03**, independently of the deploy
+run: `8204672` vs `CREATION_SQL` and `8204603` vs `COVERAGE_SQL` both match under `normaliseSql` (the
+live `8204672` text carries `launches_total` and the cap/ranked CTEs, so it is the five-column text),
+and one further bounded execution of the same code path reproduced the readings above exactly
+(12 requests, 1 execution). **The saved-query comparison leg costs no execution and no credits** — a
+saved-query read is not billed — so checking either query for drift is free, and an execution is only
+needed to prove the leg still *executes*.
+
 **250/109 is consistent with §8.3's ground truth, not a correction to it.** §8.3 owns the 239-tape
 and 247 figures; the excess here is post-tape creations by a still-active deployer, so this number
 is expected to keep drifting upward. Do not read it as a restated ground truth.

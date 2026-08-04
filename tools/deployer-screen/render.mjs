@@ -24,6 +24,9 @@ import { buildPath, ENDPOINT_ROLES } from './client.mjs';
 // threshold — no Dune-derived value crosses this import.
 import { LAUNCH_CAP_FLOOR, launchCapPerWallet } from './dune.mjs';
 import { LANDING_TIP_CAVEAT } from './entry.mjs';
+// The reach the plan quotes is DERIVED, never a second copy of the formula: an operator reads this
+// block before authorising a run, so it has to describe the walk `readLaunchWindow` will actually do.
+import { windowReachMs } from './pumpfun.mjs';
 import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
 
@@ -1151,8 +1154,9 @@ export function renderDryRun(plan) {
     );
     L.push('  A launch is only started when a full page-cap of headroom remains, so no launch is');
     L.push(`  ever abandoned half-walked. Window measured: ${t.windowSlotSpan} SLOTS from the create`);
-    L.push(`  slot — the chain's own ordering, not the vendor's clock. The seek starts ${t.seekMarginMs / 1000}s past`);
-    L.push(`  the nominal ${t.windowMs / 1000}s end so an early vendor mint time cannot truncate the tail; that`);
+    L.push(`  slot — the chain's own ordering, not the vendor's clock. The seek reaches ${windowReachMs(t) / 1000}s`);
+    L.push(`  past the mint: that same ${t.windowSlotSpan} slots at a measured worst-case rate, plus ${t.seekMarginMs / 1000}s of`);
+    L.push('  clock slack, so an early vendor mint time cannot truncate the tail; that');
     L.push('  margin is a cursor hint and never a tolerance on the pre-mint drop. Pinned keyless');
     L.push('  pacing, one request in flight.');
     L.push('');

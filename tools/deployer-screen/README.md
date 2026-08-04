@@ -1497,6 +1497,14 @@ the last 5s) comes from the PR #7 review comment that recorded this tradeoff, wh
 without naming a population, and it is not reproduced anywhere in this repo — unlike the span
 figures above, which name theirs. 160 was chosen on measurement, so no change is implied.
 
+**Which of the two conversions of 160 slots to read.** The ~63.5s above is the **tape's own observed
+rate** (~397ms/slot, from 60s ↔ p50 151 slots), and it is **superseded** by the 71,448ms figure
+below, which converts the same 160 slots at the **measured worst-case** 446.55ms/slot. Both describe
+the same span; they differ only in the rate, and the chain's rate rose between them. Re-deriving the
+~63.5s conversion and the ~3.5s-wider claim that rests on it is **a separate lane's**, so the older
+number is left standing here rather than silently updated — read it as history, and read 71,448ms as
+the bound anything in force is measured against.
+
 **Stage 0 deliberately does not use the span**, and the two paths must not be reconciled: it measures
 each committed launch over that launch's own stored window, because `wallet_launch_pnl.csv` — the
 1,322-pair reproduction that licenses believing the live recipe at all — is computed that way. The

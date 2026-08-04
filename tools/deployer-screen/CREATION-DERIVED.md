@@ -639,11 +639,7 @@ where the traps above are written down.
 **So a change to either committed text is a DEPLOY STEP against its saved query**, and until the
 step is taken the run refuses that leg rather than answering differently — which is the safe
 direction, and still a run with no Dune answer for anybody. `README.md` → *"Deploying a change to the
-committed SQL"* holds the procedure and the id-to-text table. **Outstanding right now: `8204672`
-carries the pre-cap four-column SQL and must be updated in place to the five-column text of §8.2b.**
-**Delete that sentence (and the matching paragraph in `README.md`) as part of that update**: it is a
-point-in-time deployment status, and once `8204672` matches, nothing fails to make it stale — left in
-place it reads as a live warning forever.
+committed SQL"* holds the procedure and the id-to-text table.
 
 ### 8.7 Terms of service
 

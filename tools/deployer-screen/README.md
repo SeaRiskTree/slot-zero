@@ -238,13 +238,6 @@ upgraded in place rather than added. Paste the committed text verbatim — comme
 `normaliseSql` compares everything but line endings and trailing whitespace, and the comments are
 where the traps are written down.
 
-**Currently outstanding: `8204672` carries the pre-cap four-column SQL and must be updated to the
-five-column text with the per-deployer cap** before the next keyed run. Until it is, `DUNE_API_KEY`
-runs fall back to the creation walk with a message naming the mismatch. **Delete this paragraph (and
-the matching one in `CREATION-DERIVED.md` §8.6) as part of that update** — it is a point-in-time
-deployment status, and once `8204672` matches nothing fails, so left in place it reads as a live
-warning forever.
-
 **Spend.** Free tier, 2,500 credits/month, **shared**, and only 10 private queries. **A failed
 execution is still billed and is terminal — `DuneClient.execute` is the one call in this repository
 that is never retried.** Budget from *billed* credits, not `execution_cost_credits`, which

@@ -138,10 +138,10 @@ Five facts that bind any lane touching it:
   `closureOfEarlyPairs` is the like-for-like measure and the only one to quote.
 - **The committed window is NOT a constant, and a flat 60 s baseline is a published-number bug.**
   On the graduated 103 it is 60 s on 83, 120 s on 3 and 300 s on 17 (whole tape: 210 / 4 / 25 of
-  239) — `window_ms` in
-  `data/population-tape-2026-07-29/window/{mint}.meta.json`, exposed by `launches.mjs` →
-  `readWindowMeta`. Hardcoding 60 s overstated this uplift by ~6 points before it was caught, and
-  `coverage.csv` now carries `committed_window_s` per launch so a reader can see the cut applied.
+  239) — `window_ms` in `data/population-tape-2026-07-29/window/{mint}.meta.json`, exposed by
+  `launches.mjs` → `readWindowMeta`. Hardcoding 60 s overstated this uplift by ~6 points before it
+  was caught, and `coverage.csv` now carries `committed_window_s` per launch so a reader can see the
+  cut applied.
 - **`69420` is truncated at its MINT end** — it bonded ~20 days after mint and the walk covered 1.5%
   of that window. **Do not treat its oldest fill as its create slot.** Every other launch proved
   coverage, and 99 of 99 applicable launches agree with the committed window tape's own create slot.

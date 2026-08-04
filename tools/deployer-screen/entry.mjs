@@ -480,16 +480,17 @@ export const UNMEASURED_VERDICTS = ['entry-unmeasured', 'entry-cost-unmeasured']
  * | `too-few-windows-available` | sample-size gate | the walk was never offered `minLaunchesSampled` windows — a short or too-young history, or our own `maxLaunchesPerCandidate` cap. |
  * | `windows-dropped` | sample-size gate | windows were reached and could not be walked back to the mint, so they were dropped (`Stage2Coverage.dropsByReason` says which). |
  * | `too-few-proven-windows` | sample-size gate | windows were measured perfectly well and REFUSED, because their create slot carried no bundled transaction (`measure.mjs` → `roomIsProven`, captain decision 134a). |
+ * | `room-verdict-not-robust-to-missing-launches` | near-bar guard | ENOUGH windows scored, and the launches that went missing could have moved the median across `minRoomLeft` either way, so the bar is not decided by the evidence (captain decision 198b, {@link roomBarRobustness}). |
  * | `too-few-closed-round-trips` | field gate | room was measured on a full sample and clears the bar, and the field around those launches produced fewer than `minFieldRoundTrips` complete round trips. |
  * | `too-little-of-the-field-priced` | cost gate | below `minPricedFraction` of the create-slot field could be priced on-chain — or the cost leg never ran at all. |
  * | `too-few-priced-round-trips` | cost gate | entries priced, but fewer than `minFieldRoundTrips` round trips priced across their WHOLE window, so what the field cleared after costs is unknown. |
- * | `room-verdict-not-robust-to-missing-launches` | near-bar guard | ENOUGH windows scored, and the launches that went missing could have moved the median across `minRoomLeft` either way, so the bar is not decided by the evidence (captain decision 198b, {@link roomBarRobustness}). |
  *
  * The first three share one code site and are the aggregate the decision was really about: a
  * candidate silenced because it never had eight launches, one silenced because pump.fun shed our
  * walk, and one silenced by the co-ordination rule are three different states of the world.
  *
- * **The seventh is not a variant of any of the first three and must not be read as one.** Those
+ * **The near-bar guard's cause is not a variant of any of the first three and must not be read as
+ * one.** Those
  * three say the sample was too SMALL. This one says the sample was large enough and is INCOMPLETE
  * in a way that leaves the answer undetermined — the candidate cleared `minLaunchesSampled` and was
  * refused anyway. A run record where an operator cannot tell those apart is a run record that reads

@@ -245,10 +245,10 @@ export function renderEntry(e, coverage) {
   L.push(`      ENTRY: ${e.verdict.toUpperCase()}`);
   // Captain decision 174b, on the face of the run rather than only in the record. An unmeasured
   // verdict is seven unrelated producers and the operator has to be able to see which fired. All
-  // seven are OUR COVERAGE today — a limit of this reading, never grounds for dropping the wallet — but
-  // the attribution is printed from the score rather than assumed, so a future deployer-attributed
-  // producer says so here without a second edit. The check is nullish: a schema-≤9 `entry` row
-  // carries no field at all and must not fall into this branch.
+  // seven are OUR COVERAGE today — a limit of this reading, never grounds for dropping the wallet
+  // — but the attribution is printed from the score rather than assumed, so a future
+  // deployer-attributed producer says so here without a second edit. The check is nullish: a
+  // schema-≤9 `entry` row carries no field at all and must not fall into this branch.
   if (e.unmeasuredCause != null) {
     L.push(
       `      CAUSE: ${e.unmeasuredCause.toUpperCase()} — ` +

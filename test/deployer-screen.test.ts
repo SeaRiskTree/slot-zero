@@ -11902,24 +11902,140 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       expect(eligibility).toEqual({ known: true, kind: 'dune', minAgeMs: LAG_MS, billed: true });
     });
 
-    it('a construction that fails half-way still reports what it spent', async () => {
+    it('a construction that fails half-way still reports what it spent, and does NOT take the page too', async () => {
       // A spend reported only on success is a spend that goes missing exactly when it is most
-      // surprising — the probe that ran, was billed, and then refused the reading.
+      // surprising — the probe that ran, was billed, and then refused the reading. And SPENDING THE
+      // MONEY AND THEN WITHHOLDING THE PLAN IS BOTH OF THE OUTCOMES 286c REFUSED, ARRIVING
+      // TOGETHER, so the failure becomes the stated reason the one figure is missing rather than a
+      // rejection that stops the whole preview.
       const log: string[] = [];
+      const eligibility = await planEntryEligibility(
+        'dune',
+        {
+          dune: {
+            construction: duneConstruction(),
+            build: () => {
+              throw new Error('the coverage probe refused the trade tables.');
+            },
+          },
+        },
+        { bounds: BOUNDS, spendAuthorised: true, announce: (l) => log.push(l) },
+      );
+      // The money is gone and the page says so, in the order it happened.
+      expect(log.at(-1)).toBe('  ACTUAL, after: 1 execution, 1.8 billed credits');
+      expect(eligibility.known).toBe(false);
+      if (eligibility.known) throw new Error('unreachable');
+      expect(eligibility.spent).toBe(true);
+      const note = eligibilityUnavailableNote(eligibility).join(' ');
+      expect(note).toContain('coverage probe refused the trade tables');
+      expect(note).toContain('the spend was MADE');
+      // It must NOT tell the operator to authorise what they already authorised.
+      expect(note).not.toContain('Pass --dry-run-spend to authorise');
+      // And it is still an absence, in the same vocabulary — never a zero and never a number.
+      expect(note).toContain('UNAVAILABLE — NOT MEASURED, NOT ZERO');
+      expect(eligibilityFloorMs(eligibility)).toBe('UNAVAILABLE');
+    });
+
+    it('a failure where NOTHING WAS SPENT still refuses — the discriminator is the money, not the error', async () => {
+      // The other half, and it must not be weakened by the degrade above. A FREE construction that
+      // cannot be built, and a kind this run carries no constructor for, both cost nothing — so the
+      // honest answer is still "we cannot describe Stage 2 on the source we were asked for", and a
+      // plan that quietly omitted its own subject would be worse than a stated refusal.
       await expect(
         planEntryEligibility(
-          'dune',
+          'swap-api',
           {
-            dune: {
-              construction: duneConstruction(),
+            'swap-api': {
+              construction: freeConstruction('swap-api', 'built from a keyless client'),
               build: () => {
-                throw new Error('the coverage probe refused the trade tables');
+                throw new Error('the keyless client could not be built');
               },
             },
           },
-          { bounds: BOUNDS, spendAuthorised: true, announce: (l) => log.push(l) },
+          { bounds: BOUNDS, spendAuthorised: true, announce: () => {} },
         ),
-      ).rejects.toThrow(/coverage probe refused/);
+      ).rejects.toThrow(/keyless client could not be built/);
+      await expect(
+        planEntryEligibility('dune', {}, { bounds: BOUNDS, spendAuthorised: true, announce: () => {} }),
+      ).rejects.toThrow(/refuses rather than/);
+      // A BILLED construction with no authorisation is never built at all, so its failure cannot
+      // arise: it is an absence that names the flag, not a refusal.
+      const unauthorised = await planEntryEligibility(
+        'dune',
+        {
+          dune: {
+            construction: duneConstruction(),
+            build: () => {
+              throw new Error('a default dry run must NEVER construct a billed fill source');
+            },
+          },
+        },
+        { bounds: BOUNDS, spendAuthorised: false, announce: () => {} },
+      );
+      expect(unauthorised.known).toBe(false);
+      if (unauthorised.known) throw new Error('unreachable');
+      expect(unauthorised.spent).toBeUndefined();
+      expect(eligibilityUnavailableNote(unauthorised).join(' ')).toContain('Pass --dry-run-spend to authorise');
+    });
+
+    it('the plan still PRINTS IN FULL after an authorised spend whose construction failed', async () => {
+      // The rendered consequence of the degrade: the operator paid, so they get the page. The
+      // banner says the spend was made AND that the construction failed, the eligibility line names
+      // the failure, and every free figure on the page is still there.
+      const TH = loadThresholds();
+      const log: string[] = [];
+      const eligibility = await planEntryEligibility(
+        'dune',
+        {
+          dune: {
+            construction: duneConstruction(),
+            build: () => {
+              throw new Error('the coverage probe refused the trade tables.');
+            },
+          },
+        },
+        { bounds: BOUNDS, spendAuthorised: true, announce: (l) => log.push(l) },
+      );
+      const text = renderDryRun({
+        seedPlan: [],
+        maxCandidates: 12,
+        maxKeyedRequests: 45,
+        consistency: false,
+        maxKeylessRequests: TH['budget'].maxKeylessRequests,
+        historySource: 'creation-derived' as const,
+        creationWalk: TH['creation_walk'],
+        costBounds: TH['stage2_cost'],
+        stage2: true,
+        maxScored: TH['stage2_entry'].maxCandidatesScored,
+        entryThresholds: TH['stage2_entry'],
+        spendAuthorised: true,
+        keyDescription: null,
+        rpcEndpoint: resolveSolanaRpcEndpoint({}),
+        indexedWalk: TH['creation_walk_helius'],
+        worstCaseCredits: 0,
+        dune: TH['dune'],
+        duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
+        usingDune: true,
+        duneRefreshProbe: false,
+        entryEligibility: eligibility,
+      });
+      const prose = text.replace(/\s+/g, ' ');
+      expect(prose).toContain('WAS built under this authorisation and the spend was MADE');
+      expect(prose).toContain('FAILED, so the figure it was bought for is UNAVAILABLE');
+      expect(prose).toContain('coverage probe refused the trade tables');
+      expect(prose).toContain('HOW OLD IS UNAVAILABLE IN THIS PLAN');
+      // A spend that bought nothing must never read as one that cost nothing.
+      expect(prose).not.toContain('the authorisation bought nothing');
+      // AND THE PAGE IS COMPLETE — that is the whole point of not propagating the rejection.
+      expect(text).toMatch(/THE PRICE OF THE SEAT/);
+      expect(text).toMatch(/LANDING TIP PAID IN A SEPARATE TRANSACTION/);
+      expect(text).toContain(
+        String(
+          TH['stage2_entry'].maxCandidatesScored *
+            TH['stage2_entry'].maxLaunchesPerCandidate *
+            TH['stage2_entry'].maxRequestsPerLaunch,
+        ),
+      );
       expect(log.at(-1)).toBe('  ACTUAL, after: 1 execution, 1.8 billed credits');
     });
 
@@ -11990,6 +12106,27 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       const text = lines.join('\n');
       expect(text).toContain('DRY RUN, SPEND AUTHORISED');
       expect(text).toContain('the authorisation bought nothing');
+      // AND WITH STAGE 2 OFF NO SOURCE IS CONSULTED AT ALL — the eligibility floor is printed
+      // inside the Stage 2 block and nowhere else, so under a future billed construction the opt-in
+      // would otherwise buy a number this page never shows. The banner says "not asked" rather than
+      // claiming the construction was free, which is not something this run found out.
+      const noStage2 = parseArgs(['--dry-run', '--dry-run-spend', '--no-stage2']);
+      if (!noStage2.ok) throw new Error('unreachable');
+      const offLines: string[] = [];
+      expect(await main(noStage2.opts, {}, (l) => offLines.push(l), () => {})).toBe(0);
+      const off = offLines.join('\n');
+      expect(off).toContain('DRY RUN, SPEND AUTHORISED');
+      expect(off).toContain('Stage 2 is OFF, so no fill source was consulted');
+      expect(off).not.toContain('costs nothing');
+      expect(off).not.toContain('AUTHORISED SPEND — building');
+      // No eligibility figure anywhere, in either form — there is nothing on this page to buy one for.
+      expect(off).not.toMatch(/A launch is not walked until it is/);
+      expect(off).not.toContain('HOW OLD IS UNAVAILABLE IN THIS PLAN');
+      // And the rest of the --no-stage2 plan survives unchanged.
+      expect(off).toContain('KEYED — MadeOnSol');
+      expect(off).toContain('KEYLESS — STAGE 2 DISABLED (--no-stage2).');
+      expect(off).toContain('nothing about whether a window is enterable');
+
       // The default is still the free banner, and neither path fetched anything.
       const plain = parseArgs(['--dry-run']);
       if (!plain.ok) throw new Error('unreachable');

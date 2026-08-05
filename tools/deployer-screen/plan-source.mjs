@@ -39,6 +39,21 @@
  *    {@link planEligibility} announces the bound, then builds, then announces the actual in a
  *    `finally`, so a construction that fails half-way still says what it cost.
  *
+ * ## WHICH REFUSALS SURVIVE, AND THE DISCRIMINATOR IS WHETHER MONEY WAS SPENT
+ *
+ * A construction can fail, and what that costs the operator decides whether it stops the plan:
+ *
+ *  - **Nothing was spent** — an unsupplied kind (the selector's own refusal, upstream of this
+ *    module), a FREE construction that could not be built, or a billed one with no authorisation,
+ *    which is never built at all. The refusal STANDS and the plan stops: it costs nothing, and a
+ *    plan that quietly omitted its own subject would be worse than a stated refusal.
+ *  - **An AUTHORISED spend was already made and the construction then failed** — the refusal does
+ *    NOT stand. Propagating it would take the money AND withhold the page, which is both of the
+ *    outcomes 286c refused arriving together, so the promise that a dry run always shows the plan
+ *    binds harder than the refusal does. {@link planEligibility} degrades to `known: false`
+ *    carrying the failure as its `why`, marks it `spent: true`, and the `finally` still announces
+ *    what it cost — the money is gone and the page says so.
+ *
  * ## The three-valued cost, and why `undeclared` is not `free`
  *
  * {@link FillSourceConstruction.cost} is `'free' | 'billed' | 'undeclared'`. The third value is the
@@ -108,10 +123,15 @@ import { assertMinAgeUsable } from './fill-source.mjs';
  * evidence of a spend, and a banner saying "what it cost is stated above" when the selected source
  * was free to build would be a claim about a purchase that never happened.
  *
+ * `spent` on the absent side marks the one absence that COST something: an authorised billed
+ * construction that was built, billed and then failed. It is a separate field rather than a reading
+ * of `authorisedBy`, because "what would authorise this" and "this was authorised and the money is
+ * gone" are opposite messages to an operator, and the note has to be able to tell them apart.
+ *
  * @typedef {{ known: true, kind: import('./fill-source.mjs').FillSourceKind, minAgeMs: number,
  *       billed: boolean }
  *   | { known: false, kind: import('./fill-source.mjs').FillSourceKind, why: string,
- *       authorisedBy: string | null }} PlanEligibility
+ *       authorisedBy: string | null, spent?: boolean }} PlanEligibility
  */
 
 /**
@@ -244,6 +264,24 @@ export async function planEligibility(input) {
     // clothes, which is the one thing this whole stretch of work removes.
     assertMinAgeUsable(source, minAgeMs);
     return { known: true, kind: source.kind, minAgeMs, billed: construction.cost === 'billed' };
+  } catch (cause) {
+    // THE DISCRIMINATOR IS WHETHER MONEY WAS SPENT, not the shape of the error. A refusal that cost
+    // nothing is the honest answer and is re-thrown for the caller to report. A refusal AFTER an
+    // authorised spend is captain decision 286c's two refused outcomes at once — the money gone AND
+    // a page of free, correct figures withheld — so there the promise that a dry run always shows
+    // the plan binds harder than the refusal does, and the failure becomes the stated reason the
+    // one figure is missing.
+    if (construction.cost !== 'billed') throw cause;
+    return {
+      known: false,
+      kind: construction.kind,
+      why:
+        `this plan was authorised to build it and the spend was MADE, and the construction then ` +
+        `failed: ${cause instanceof Error ? cause.message : String(cause)} The money is gone — ` +
+        `the ACTUAL line above says what it cost — and the figure is not coming with it.`,
+      authorisedBy: input.authorisedBy,
+      spent: true,
+    };
   } finally {
     // AFTER, and in a `finally`, because a construction that failed half-way still spent. A spend
     // reported only on success is a spend that goes missing exactly when it is most surprising.
@@ -289,10 +327,13 @@ export function eligibilityUnavailableNote(eligibility) {
     `UNAVAILABLE — NOT MEASURED, NOT ZERO, AND NOT ANOTHER SOURCE'S NUMBER. The ` +
       `${eligibility.kind} fill source is the one that will apply this gate, and this plan cannot ` +
       `have its answer for free: ${eligibility.why}` +
-      (eligibility.authorisedBy === null
-        ? ' Nothing here authorises that spend, so the plan prints everything it knows and stops.'
-        : ` Pass ${eligibility.authorisedBy} to authorise that spend; this plan did not, and every ` +
-          `other figure on this page is unaffected.`),
+      (eligibility.spent === true
+        ? ' There is nothing further to authorise — this plan already was, and it prints every ' +
+          'other figure it holds rather than withholding the page on top of the spend.'
+        : eligibility.authorisedBy === null
+          ? ' Nothing here authorises that spend, so the plan prints everything it knows and stops.'
+          : ` Pass ${eligibility.authorisedBy} to authorise that spend; this plan did not, and every ` +
+            `other figure on this page is unaffected.`),
   ];
 }
 

@@ -1112,6 +1112,27 @@ same note in place. `sourceFigureUnavailableNote`'s closing sentence was narrowe
 reason: it used to claim those bounds "bind whichever source answers", which is more than it can
 know.
 
+**WHICH REFUSALS SURVIVE, AND THE DISCRIMINATOR IS WHETHER MONEY WAS SPENT.** A construction can
+fail, and what that failure already cost decides whether it stops the plan:
+
+- **Nothing was spent** — the kind is unsupplied and this run carries no constructor for it, a FREE
+  construction could not be built, or a billed one had no authorisation and so was never built at
+  all. The refusal STANDS: `screen.mjs` prints `Refusing to plan: Stage 2 has no usable fill source`
+  and exits `7`. It cost nothing, and a plan that quietly omitted its own subject would be worse
+  than a stated refusal.
+- **An authorised spend was MADE and the construction then failed** — the refusal does NOT stand.
+  Propagating it would take the money *and* withhold the page, which is both of the outcomes 286c
+  refused arriving together, so the promise that a dry run always shows the plan binds harder.
+  `planEligibility` degrades to `known: false` carrying the failure as its `why` and marked
+  `spent: true`; the `finally` still announces what it cost, the banner says the spend was made and
+  the construction failed, and the eligibility line prints UNAVAILABLE naming the failure.
+
+**Only a plan that will PRINT the figure may buy it.** The eligibility floor is rendered inside the
+Stage 2 block and nowhere else, so `--no-stage2` consults no source at all and `entryEligibility`
+arrives as `null` — a third state meaning *not asked*, distinct from *asked and refused*. The banner
+says so in those words rather than claiming the construction was free, which is not something that
+page found out. Otherwise the `--no-stage2` plan is unchanged.
+
 **An undeclared construction is treated as billed, never as free.** A registry entry that says
 nothing about what building it costs is an absence, and reading an absence as a benign value is the
 failure this repo names in three other places (`covered.fromMs` of `0` read as a 56-year window;

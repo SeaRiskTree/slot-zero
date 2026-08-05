@@ -1165,14 +1165,17 @@ export function renderStage1(run) {
  * @param {boolean} plan.stage2
  * @param {number} plan.maxScored
  * @param {import('./stage2.mjs').Stage2Thresholds} plan.entryThresholds
- * @param {import('./plan-source.mjs').PlanEligibility} plan.entryEligibility **THE SELECTED FILL
+ * @param {import('./plan-source.mjs').PlanEligibility | null} plan.entryEligibility **THE SELECTED FILL
  *   SOURCE'S OWN ANSWER, OR A STATED ABSENCE**, resolved by `screen.mjs` — never re-derived here.
  *   The plan states how old a launch must be before it is walked, and only the vendor that will do
  *   the reading can answer that (captain decision 257a); a figure computed a second time in the
  *   renderer is the shape captain decision 144a names, and it would go on agreeing with the run
  *   right up until the day it did not. Captain decision 286c adds the other half: where the source
  *   cannot be asked without a billed construction, this arrives as `known: false` and the line
- *   below prints UNAVAILABLE with the source and the reason, never a substitute number.
+ *   below prints UNAVAILABLE with the source and the reason, never a substitute number. **`null`
+ *   means NO SOURCE WAS CONSULTED AT ALL** — `--no-stage2`, where this page prints no eligibility
+ *   floor anywhere, so buying one would be a spend with no reader. It is a third state rather than
+ *   an absent figure: "not asked" and "asked and refused" are different things to say.
  * @param {boolean} plan.spendAuthorised Whether this dry run was authorised to build a billed fill
  *   source. It changes the banner, because "nothing was fetched" stops being true.
  * @param {'creation-derived' | 'ownership-only'} plan.historySource
@@ -1208,7 +1211,14 @@ export function renderDryRun(plan) {
     // authorisation is permission rather than evidence, so claiming a spend that never happened is
     // the same defect mirrored. It reads the figure's own `billed`, not the flag.
     L.push('DRY RUN, SPEND AUTHORISED — this is exactly what a real run would request.');
-    if (plan.entryEligibility.known && plan.entryEligibility.billed) {
+    if (plan.entryEligibility === null) {
+      // Stage 2 is off, so no source was consulted and the authorisation had nothing to buy. It is
+      // stated as "not asked" rather than as "free": whether building it would have cost anything
+      // is not something this page found out, and claiming either way would be inventing an answer.
+      L.push('Stage 2 is OFF, so no fill source was consulted and the authorisation bought nothing:');
+      L.push('nothing was fetched. This plan states no eligibility floor, so there was nothing here');
+      L.push('worth buying one for.');
+    } else if (plan.entryEligibility.known && plan.entryEligibility.billed) {
       L.push('Building the fill source was authorised to spend; the bound it was given and what it');
       L.push('actually cost are stated above. Nothing else here was fetched.');
     } else if (plan.entryEligibility.known) {
@@ -1220,12 +1230,18 @@ export function renderDryRun(plan) {
       // remove, and a self-contradiction on a page whose eligibility line correctly says UNAVAILABLE.
       // Unknown reads as unknown, names why, and states no cost either way.
       //
-      // WHICH unknown is read from the FIGURE, never from the flag. `known: false` has two
+      // WHICH unknown is read from the FIGURE, never from the flag. `known: false` has three
       // producers — an UNDECLARED construction, which can state no bound and so names no
-      // authorising flag, and a BILLED one this plan was not authorised to build, which names one.
-      // Inferring the first from `spendAuthorised` would assert a false reason on a page whose own
-      // note directly below says what would authorise the purchase.
-      if (plan.entryEligibility.authorisedBy === null) {
+      // authorising flag; a BILLED one this plan was not authorised to build, which names one; and
+      // an authorised billed one that was built, BILLED and then failed, which is the only absence
+      // that cost something. Inferring any of them from `spendAuthorised` would assert a false
+      // reason on a page whose own note directly below says what actually happened.
+      if (plan.entryEligibility.spent === true) {
+        L.push('The selected fill source WAS built under this authorisation and the spend was MADE —');
+        L.push('the bound and what it actually cost are stated above — and the construction then');
+        L.push('FAILED, so the figure it was bought for is UNAVAILABLE. The page is printed in full');
+        L.push('rather than withheld on top of the spend. Same reason, same words, below:');
+      } else if (plan.entryEligibility.authorisedBy === null) {
         L.push('The selected fill source declared NO COST for building it, so this plan did NOT build');
         L.push('it: nothing was fetched, and NOTHING CAN BE SAID ABOUT WHAT BUILDING IT WOULD HAVE');
         L.push('COST. An authorisation cannot cover a spend that can state no bound. Same reason, same');
@@ -1303,13 +1319,25 @@ export function renderDryRun(plan) {
     // bound the Dune source's own transport enforces in its place. Owner: whoever lands Gate 3;
     // `tools/deployer-screen/README.md` → "The dry run is SPLIT so it can be both free and honest"
     // carries the same residual for a reader who never opens this file.
-    const fromSwapApi = plan.entryEligibility.kind === 'swap-api';
+    // A page that prints this block is a page that asked the source, so the caller resolved one.
+    // The invariant is asserted rather than defaulted: substituting a kind here is how a
+    // swap-api-measured figure would come to be printed under another source.
+    const eligibility = plan.entryEligibility;
+    if (eligibility === null) {
+      throw new Error(
+        'renderDryRun was asked to print the Stage 2 block with no fill-source eligibility ' +
+          'resolved. That block LABELS every figure it prints by the selected source, so it cannot ' +
+          'be rendered without one, and defaulting the label is how a figure measured on one ' +
+          'vendor comes to be printed under another.',
+      );
+    }
+    const fromSwapApi = eligibility.kind === 'swap-api';
     /** @param {string} figure */
     const notMeasuredHere = (figure) => {
       for (const note of sourceFigureUnavailableNote({
         figure,
         measuredOn: 'swap-api',
-        selected: plan.entryEligibility.kind,
+        selected: eligibility.kind,
       })) {
         for (const line of wrap(note, 74)) L.push(`    ${line}`);
       }
@@ -1317,7 +1345,7 @@ export function renderDryRun(plan) {
     L.push(
       fromSwapApi
         ? 'KEYLESS — STAGE 2, the ENTRY score. pump.fun fill tape (swap-api), for gate survivors only:'
-        : `STAGE 2, the ENTRY score. Fill tape from the ${plan.entryEligibility.kind} source, for gate survivors only:`,
+        : `STAGE 2, the ENTRY score. Fill tape from the ${eligibility.kind} source, for gate survivors only:`,
     );
     // THE REQUEST LINE BELONGS TO THE SELECTED SOURCE, so it is printed only for the source that
     // makes it. Under the Gate 3 cutover this block described a swap-api walk while Stage 2 read
@@ -1326,7 +1354,7 @@ export function renderDryRun(plan) {
     if (fromSwapApi) {
       L.push('  GET https://swap-api.pump.fun/v2/coins/{mint}/trades?limit=' + `${t.tradePageLimit}&cursor=0-{seekFromMs}`);
     } else {
-      L.push(`  The fills come from the ${plan.entryEligibility.kind} source. Its per-request shape is that`);
+      L.push(`  The fills come from the ${eligibility.kind} source. Its per-request shape is that`);
       L.push('  source\'s own and is NOT restated here — a plan that kept a copy would go on');
       L.push('  describing the walk it was written against. The ceilings below still print and are');
       L.push('  the ones this stage enforces on its OWN keyless client today — a source billed in');
@@ -1398,12 +1426,12 @@ export function renderDryRun(plan) {
       // The cursor geometry is the walk's own, and the else-branch at the top of this block has
       // already said the selected source's per-request shape is not restated here. Printing the
       // swap-api's reach under another source would contradict that in the same breath.
-      L.push(`  How the ${plan.entryEligibility.kind} source reaches that window is its own cursor geometry and`);
+      L.push(`  How the ${eligibility.kind} source reaches that window is its own cursor geometry and`);
       L.push('  is NOT restated here, for the reason the request line above gives.');
     }
-    if (plan.entryEligibility.known) {
+    if (eligibility.known) {
       L.push(
-        `  A launch is not walked until it is ${eligibilityFloorSeconds(plan.entryEligibility)} old — the gate the fill source ` +
+        `  A launch is not walked until it is ${eligibilityFloorSeconds(eligibility)} old — the gate the fill source ` +
           `itself applies,`,
       );
       L.push('  never a second number derived here, so the gate cannot fall behind the cursor when');
@@ -1414,7 +1442,7 @@ export function renderDryRun(plan) {
       // the vendor's and is simply not here, said in those words.
       L.push('  A launch is not walked until it is old enough, and');
       L.push('  HOW OLD IS UNAVAILABLE IN THIS PLAN:');
-      for (const note of eligibilityUnavailableNote(plan.entryEligibility)) {
+      for (const note of eligibilityUnavailableNote(eligibility)) {
         for (const line of wrap(note, 74)) L.push(`    ${line}`);
       }
       L.push('  Every other figure on this page is free of that and stands.');
@@ -1431,7 +1459,7 @@ export function renderDryRun(plan) {
     L.push('  price of the seat beside it is not an answer to "is this enterable". The signatures');
     L.push(
       '  come free with fills Stage 2 already parsed — no vendor request, no extra page from the ' +
-        `${plan.entryEligibility.kind} source.`,
+        `${eligibility.kind} source.`,
     );
     L.push('');
     L.push(`  requests per candidate        up to ${c.maxRpcRequestsPerCandidate}`);

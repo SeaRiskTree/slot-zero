@@ -828,26 +828,34 @@ export async function main(opts, env, out, err) {
     // defect and the reason the gate was injected in the first place (281a/284a/285a). What 286c
     // adds is the other half of the same honesty: where the source cannot be ASKED for free, the
     // plan says so in place and prints everything else, rather than spending or refusing to print.
-    /** @type {import('./plan-source.mjs').PlanEligibility} */
-    let entryEligibility;
-    try {
-      entryEligibility = await planEntryEligibility(ENTRY_FILL_SOURCE_KIND, entryFillSources, {
-        bounds: entryFillBounds(entryThresholds, Date.now()),
-        spendAuthorised: opts.dryRunSpend,
-        // The bound and the actual land ABOVE the plan, in the order they happen, so an operator
-        // reading top to bottom sees what was authorised before they see what it bought.
-        announce: (line) => out(line),
-      });
-    } catch (cause) {
-      // A source this run has no constructor for, or one that refuses to be built even under an
-      // authorised spend, stops the PLAN — the site whose whole job is to say "we cannot describe
-      // Stage 2 on the source we were asked for". Escaping `main` would return Node's exit 1, which
-      // is not in the `EXIT` map, and print the message as a crash.
-      err('');
-      err('Refusing to plan: Stage 2 has no usable fill source.');
-      err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
-      err('  Nothing else was requested.');
-      return EXIT.upstream;
+    /** @type {import('./plan-source.mjs').PlanEligibility | null} */
+    let entryEligibility = null;
+    // ONLY A PLAN THAT WILL PRINT THE FIGURE MAY BUY IT. The eligibility floor is rendered inside
+    // the Stage 2 block and nowhere else, so under `--no-stage2` the source is not consulted at
+    // all — otherwise the opt-in could authorise a bounded purchase of a number that appears on no
+    // page, which is a spend with no reader and one the run path would not make either.
+    if (opts.stage2) {
+      try {
+        entryEligibility = await planEntryEligibility(ENTRY_FILL_SOURCE_KIND, entryFillSources, {
+          bounds: entryFillBounds(entryThresholds, Date.now()),
+          spendAuthorised: opts.dryRunSpend,
+          // The bound and the actual land ABOVE the plan, in the order they happen, so an operator
+          // reading top to bottom sees what was authorised before they see what it bought.
+          announce: (line) => out(line),
+        });
+      } catch (cause) {
+        // A source this run has no constructor for, or one that could not be built where NOTHING
+        // WAS SPENT, stops the PLAN — the site whose whole job is to say "we cannot describe Stage
+        // 2 on the source we were asked for". Escaping `main` would return Node's exit 1, which is
+        // not in the `EXIT` map, and print the message as a crash. A failure AFTER an authorised
+        // spend never reaches here: `planEntryEligibility` degrades it to a stated absence rather
+        // than taking the money and the page both.
+        err('');
+        err('Refusing to plan: Stage 2 has no usable fill source.');
+        err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
+        err('  Nothing else was requested.');
+        return EXIT.upstream;
+      }
     }
     out('');
     out(

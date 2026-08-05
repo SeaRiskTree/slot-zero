@@ -1242,10 +1242,10 @@ export function renderDryRun(plan) {
         L.push('FAILED, so the figure it was bought for is UNAVAILABLE. The page is printed in full');
         L.push('rather than withheld on top of the spend. Same reason, same words, below:');
       } else if (plan.entryEligibility.authorisedBy === null) {
-        L.push('The selected fill source declared NO COST for building it, so this plan did NOT build');
-        L.push('it: nothing was fetched, and NOTHING CAN BE SAID ABOUT WHAT BUILDING IT WOULD HAVE');
-        L.push('COST. An authorisation cannot cover a spend that can state no bound. Same reason, same');
-        L.push('words, as the figure it withholds further down:');
+        L.push('The selected fill source declared NOTHING about what building it costs, so this plan');
+        L.push('did NOT build it: nothing was fetched, and NOTHING CAN BE SAID ABOUT WHAT BUILDING IT');
+        L.push('WOULD HAVE COST. An authorisation cannot cover a spend that can state no bound. Same');
+        L.push('reason, same words, as the figure it withholds further down:');
       } else {
         L.push('The selected fill source was NOT built by this plan, so nothing was fetched for it and');
         L.push('WHAT BUILDING IT WOULD HAVE COST IS UNSTATED HERE. Same reason, same words, as the');

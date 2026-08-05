@@ -128,6 +128,7 @@ import {
   selectEntryFillSource,
 } from '../tools/deployer-screen/screen.mjs';
 import {
+  PLAN_NOTE_WIDTH,
   billedConstruction,
   eligibilityFloorMs,
   eligibilityFloorSeconds,
@@ -11785,7 +11786,12 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       expect(closes).toBeGreaterThan(1);
       const banner = bannerLines.slice(0, closes).join(' ').replace(/\s+/g, ' ');
       expect(banner).toContain('DRY RUN, SPEND AUTHORISED');
-      expect(banner).toContain('declared NO COST');
+      // AN ABSENCE MUST NOT READ AS A BENIGN VALUE EVEN IN ONE CLAUSE. "declared NO COST" reads
+      // most naturally as "declared that it costs nothing", which is the reading 286c refuses and
+      // the reason this branch exists; the headline says what the registration actually did, which
+      // is decline to say anything.
+      expect(banner).toContain('declared NOTHING about what building it costs');
+      expect(banner).not.toContain('declared NO COST');
       expect(banner).toContain('NOTHING CAN BE SAID ABOUT WHAT BUILDING IT WOULD HAVE COST');
       // The established vocabulary, not a third way of saying it: the same note the eligibility line
       // further down prints, so the page cannot contradict itself.
@@ -11929,6 +11935,11 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       const note = eligibilityUnavailableNote(eligibility).join(' ');
       expect(note).toContain('coverage probe refused the trade tables');
       expect(note).toContain('the spend was MADE');
+      // SUB-CASE ONE OF THE POINTER: the cost WAS readable here, and the note points at the line
+      // that carries it. The clause must be true of the other sub-case too — see the unreadable
+      // cost test above, which asserts the same sentence against a cost that could not be read.
+      expect(note).toContain('the ACTUAL line above states what it cost, or that the cost itself could not be read');
+      expect(log.at(-1)).toBe('  ACTUAL, after: 1 execution, 1.8 billed credits');
       // It must NOT tell the operator to authorise what they already authorised.
       expect(note).not.toContain('Pass --dry-run-spend to authorise');
       // And it is still an absence, in the same vocabulary — never a zero and never a number.
@@ -11964,10 +11975,11 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         { bounds: BOUNDS, spendAuthorised: true, announce: (l) => okLog.push(l) },
       );
       expect(ok).toEqual({ known: true, kind: 'dune', minAgeMs: LAG_MS, billed: true });
-      expect(okLog.at(-1)).toContain('ACTUAL, after: UNREADABLE — THE SPEND WAS MADE AND WHAT IT COST COULD NOT BE READ');
-      expect(okLog.at(-1)).toContain('no readable counter');
+      const okActual = okLog.join(' ').replace(/\s+/g, ' ');
+      expect(okActual).toContain('ACTUAL, after: UNREADABLE — THE SPEND WAS MADE AND WHAT IT COST COULD NOT BE READ');
+      expect(okActual).toContain('no readable counter');
       // An unknown cost reads as an unknown — never a zero, never a benign "free".
-      expect(okLog.at(-1)).toContain('not a zero and not a free build');
+      expect(okActual).toContain('not a zero and not a free build');
 
       // (b) An ALREADY-FAILED authorised construction keeps ITS OWN why, not the reporting failure's.
       const failLog: string[] = [];
@@ -11992,7 +12004,20 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       expect(failed.spent).toBe(true);
       expect(failed.why).toContain('coverage probe refused the trade tables');
       expect(failed.why).not.toContain('no readable counter');
-      expect(failLog.at(-1)).toContain('THE SPEND WAS MADE AND WHAT IT COST COULD NOT BE READ');
+      // SUB-CASE TWO OF THE POINTER, and the reason it is phrased as it is: the ACTUAL line here
+      // does NOT say what the construction cost, so a clause claiming it does would be false in
+      // exactly the case this guard fires in.
+      expect(failed.why).toContain('the ACTUAL line above states what it cost, or that the cost itself could not be read');
+      expect(failLog.join(' ').replace(/\s+/g, ' ')).toContain('THE SPEND WAS MADE AND WHAT IT COST COULD NOT BE READ');
+      // AND IT IS LAID OUT AS PROSE, at the width both plan surfaces wrap their shared sentences
+      // to — a ~430-character runaway line on the page an operator reads before authorising a
+      // spend is the shape this branch just removed from the census.
+      const actualLines = failLog.slice(failLog.findIndex((l) => l.includes('ACTUAL, after:')));
+      expect(actualLines.length).toBeGreaterThan(1);
+      for (const line of actualLines) expect(line.length).toBeLessThanOrEqual(PLAN_NOTE_WIDTH + 2);
+      // A SHORT status line is not prose and stays on one line — the established shape here.
+      expect(okLog.filter((l) => l.includes('AUTHORISED SPEND'))).toHaveLength(1);
+      expect(okLog[1]).toBe('  BOUND, before anything is spent: at most 1 execution and 2.0 billed credits');
       // (c) Neither case propagated: both above returned, and the plan still prints its figure or
       // its stated absence rather than the caller seeing a refusal.
       expect(eligibilityFloorMs(ok)).toBe(`${LAG_MS}ms`);

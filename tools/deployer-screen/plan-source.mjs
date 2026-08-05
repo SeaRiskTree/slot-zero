@@ -278,7 +278,8 @@ export async function planEligibility(input) {
       why:
         `this plan was authorised to build it and the spend was MADE, and the construction then ` +
         `failed: ${cause instanceof Error ? cause.message : String(cause)} The money is gone — ` +
-        `the ACTUAL line above says what it cost — and the figure is not coming with it.`,
+        `the ACTUAL line above states what it cost, or that the cost itself could not be read — ` +
+        `and the figure is not coming with it.`,
       authorisedBy: input.authorisedBy,
       spent: true,
     };
@@ -296,8 +297,53 @@ export async function planEligibility(input) {
     // A failure to REPORT a cost is therefore a stated absence, never a propagation; and never a
     // zero or any other benign figure, because an unreadable cost is an UNKNOWN and must read as
     // one, exactly as the eligibility figure itself does.
-    if (construction.cost === 'billed') input.announce(`  ACTUAL, after: ${actualSpend(construction)}`);
+    if (construction.cost === 'billed') {
+      // Short status lines stay one line, which is what they are; a stated absence is PROSE and is
+      // laid out like the prose beside it, at the width both plan surfaces wrap their shared note
+      // to. A sentence that runs off the page reads as broken output on the one page an operator
+      // reads before authorising a spend.
+      for (const line of wrapPlanNote(`ACTUAL, after: ${actualSpend(construction)}`, PLAN_NOTE_WIDTH)) {
+        input.announce(`  ${line}`);
+      }
+    }
   }
+}
+
+/**
+ * The width both plan surfaces wrap a shared sentence to.
+ *
+ * The unavailable note and the stated-absence spend line are one string each, shared between
+ * `screen.mjs` → `renderDryRun` and `bundling.mjs` → `renderDryRun` so the two cannot drift in what
+ * they SAY. Laying them out at one width is the other half of that: a claim that two surfaces print
+ * the same sentence is not worth much if one of them prints it as a single runaway line.
+ */
+export const PLAN_NOTE_WIDTH = 74;
+
+/**
+ * Wrap one shared plan sentence to the width of the block it is printed inside.
+ *
+ * It lives here, beside the strings it lays out, so the census can reach it without importing
+ * `render.mjs` or `screen.mjs` — that would put the Dune client and the credential reader into a
+ * keyless pass's import graph, which captain decision 173a keeps out of it.
+ *
+ * @param {string} text
+ * @param {number} width
+ * @returns {string[]}
+ */
+export function wrapPlanNote(text, width) {
+  /** @type {string[]} */
+  const lines = [];
+  let line = '';
+  for (const word of text.split(/\s+/)) {
+    if (line === '') line = word;
+    else if (line.length + 1 + word.length <= width) line += ` ${word}`;
+    else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line !== '') lines.push(line);
+  return lines;
 }
 
 /**

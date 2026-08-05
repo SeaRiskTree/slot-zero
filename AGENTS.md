@@ -886,10 +886,12 @@ dev currently?"*, and the shape of the answer is the point:
   nothing against a ~85 SOL dev buy, so `coordinatedWallets = 0` is TRUE there rather than blind.
   One deployer's own create transaction is in **no Jito bundle on 9 of 9** windows. **A funding
   graph** is out of budget by two orders of magnitude and **a recurrence rule** is already refused
-  (`roomIsProven` names it). What is left is the CONSEQUENCE of refusing them — the refusal drops
-  near-zero room readings and moves the median UP toward enterable — and that question belongs to
-  `slot-zero-guard-unproven-upper-bound`, because every answer to it has the shape of the 203d the
-  captain declined.
+  (`roomIsProven` names it). The CONSEQUENCE of refusing them is now measured and REPORTED beside
+  every room median by decision 208b (bullet above; `entry.mjs` → `roomMedianBound` owns it) — and
+  read that bullet before quoting the census record's "the refusal moves the room reading up, toward
+  enterable": it holds on these stranger windows and **not universally**. What still belongs to
+  `slot-zero-guard-unproven-upper-bound` is only turning a refusal into a verdict, because every
+  answer to that has the shape of the 203d the captain declined.
 - **Stage 0's era-2 constant is `0.771`, not the published `0.768`** (decision 135c). `0.768` is the
   rank-43/44 order statistic of an 89-launch series whose median is `0.7708`; three recipes agree,
   including `analysis/window-population/measure.mjs`. **Never widen that tolerance instead** — it was

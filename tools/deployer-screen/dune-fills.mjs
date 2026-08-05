@@ -16,21 +16,32 @@
  * eligibility rule. All of it is pure and offline-testable, and all of it is evidence Gate 1
  * already produced.
  *
+ * NOW HERE, and it is the only thing that changed: **the statement and its saved-query id**.
+ * {@link ENTRY_SQL} and {@link ENTRY_QUERY_ID} are committed below, and {@link committedEntryQuery}
+ * assembles the {@link DuneEntryQuery} this module already knew how to read. That is Gate 3
+ * precondition 1's remit — the reproduction suite the STATEMENT feeds (`dune-reproduction.mjs`,
+ * which drives {@link ENTRY_SQL} and {@link entryQueryParameters} directly rather than that
+ * assembly — see {@link committedEntryQuery}, whose first caller will be Gate 3's wiring) ran the
+ * statement against every launch on the committed tape, so the SQL is now THE MEASUREMENT rather
+ * than a claim about one, and a measurement has to be held in custody. `assertSavedQueryMatches`
+ * runs BEFORE any execution, exactly as the enumeration's does.
+ *
+ * **`opts.query` is still injected and absent still REFUSES.** Committing the text did not wire it:
+ * `screen.mjs` selects the swap-api source on every run and hands this source no statement, so every
+ * window still comes back `usable: false`. A source that fabricated a window because its statement
+ * was missing is the exact failure the whole boundary exists to prevent, and that guard is unmoved.
+ *
  * NOT here, deliberately:
  *
- * - **The entry SQL and its saved-query id** are captain decision 258b's, which lands the batch
- *   statement byte-for-byte as a committed constant with `assertSavedQueryMatches` against a pinned
- *   id. This module READS a statement; it does not own one. {@link duneFillSource} takes it as
- *   `opts.query`, and **absent means REFUSE** — every window comes back `usable: false` with a
- *   sentence naming 258b. A source that fabricated a window because its statement was missing is
- *   the exact failure the whole boundary exists to prevent.
  * - **The pinned prices and ceilings** are captain decision 255b's and `thresholds.json`'s. Bounds
  *   arrive as an argument; nothing here writes a number down.
- * - **The two-table union** (captain decision 256a, `pump_amm` beside the bonding curve) is a
- *   property of that statement. What this module enforces is that the projection **says which venue
- *   a row came from** — a row that does not is refused rather than defaulted to the curve, because
- *   `pump_amm` fills are exactly the 18 graduation-spanning launches the union exists to recover
- *   and silently calling them curve fills would move `roomLeft`.
+ * - **The wiring** — which source Stage 2 scores through — is Gate 3's, and it is not convened.
+ *
+ * **The two-table union** (captain decision 256a, `pump_amm` beside the bonding curve) is a property
+ * of that statement and is now carried by it. What this module enforces on top is that the
+ * projection **says which venue a row came from** — a row that does not is refused rather than
+ * defaulted to the curve, because `pump_amm` fills are exactly the 18 graduation-spanning launches
+ * the union exists to recover and silently calling them curve fills would move `roomLeft`.
  *
  * ## The hazard this route reproduces, and where it is answered
  *
@@ -48,7 +59,7 @@
  * edge is not strictly older than the declared mint proves nothing and is refused.
  */
 
-import { assertSavedQueryMatches, executeAndRead, parseDuneTimestamp } from './dune.mjs';
+import { WALLET_SHAPE, assertSavedQueryMatches, executeAndRead, parseDuneTimestamp } from './dune.mjs';
 import { LAMPORTS_PER_SOL } from './measure.mjs';
 // Window GEOMETRY, shared by every source: which fills are inside the window
 // ({@link windowFilter}, denominated in slots) and how far past the mint the window reaches
@@ -364,10 +375,225 @@ export function duneRowsToWindow(rows, opts) {
 }
 
 /**
+ * The saved query {@link ENTRY_SQL} is deployed as.
+ *
+ * **DEPLOY STEP: changing {@link ENTRY_SQL} means updating this saved query in place.** The
+ * comparison runs BEFORE the execution, so a mismatch is not a wrong answer — it is a terminal
+ * refusal of the whole leg on every run until the saved query is restored to the committed text.
+ * `tools/deployer-screen/README.md` → "Deploying a change to the committed SQL" owns the step and
+ * names which id goes with which text.
+ */
+export const ENTRY_QUERY_ID = 8235460;
+
+/**
+ * The opening-window fill statement, committed byte for byte.
+ *
+ * **This is the statement, not an example of one.** `dune-reproduction.mjs` ran it against every
+ * launch on the committed population tape and compared the result through this repo's own
+ * production functions against `wallet_launch_pnl.csv`; the record is
+ * `measurements/2026-08-05-dune-entry-reproduction/`. That is what promotes it from a claim to a
+ * measurement, and it is why it now carries the same custody `CREATION_SQL` does.
+ *
+ * **ONE STATEMENT, TWO CALLERS, and that is deliberate.** The parameter is a LIST of launch
+ * windows, so a production `readWindow` passes a list of one and the reproduction passes a batch.
+ * A second statement for the batch case would be a second answer to "what is in this window", which
+ * is captain decision 144a's defect in a different unit — and it would need its own custody, its
+ * own saved-query slot and its own proof.
+ */
+export const ENTRY_SQL = `-- slot-zero: OPENING-WINDOW FILL TAPE for the deployer screen's Stage 2 entry measurement.
+-- One execution per BATCH of launch windows; a single-launch read passes a batch of one.
+--
+-- Committed byte for byte as ENTRY_SQL in tools/deployer-screen/dune-fills.mjs, and that module
+-- refuses to spend an execution unless the saved query still matches it. A saved query is editable
+-- from a browser and the rows it returns become room, closure and P&L figures, so drift must fail
+-- loudly and BEFORE the bill. The comparison runs first; a mismatch refuses the whole leg and costs
+-- nothing.
+--
+-- UNION OF TWO VENUES, captain decision 256a, and neither half alone is usable:
+--   pumpdotfun_solana.base_trades          the bonding curve, from the program's own SwapEvent
+--   pumpdotfun_solana.pump_amm_evt_*event  PumpSwap, where a graduated token trades afterwards
+-- A token never goes back, so a launch that graduates inside its own opening window has its tail on
+-- the AMM. On the committed population tape that is 18 launches of 235 and 10,476 fills of 107,439.
+-- Reading the curve alone returns those 18 windows SHORT, and a short window is invisible rather
+-- than wrong: it loses late sells first, so wallets that closed read as OPEN and their realised P&L
+-- leaves the field instead of disagreeing with it.
+--
+-- THE AMM HALF READS THE DECODED PROGRAM EVENTS, NOT dex_solana's pumpswap_solana.base_trades, AND
+-- THAT WAS MEASURED RATHER THAN CHOSEN. The first reproduction over the whole tape ran against
+-- pumpswap_solana.base_trades and came back with 5,444 of the tape's 10,476 AMM fills — 48% SHORT,
+-- on all 18 launches, while missing ZERO curve fills. That model is a view over a backfill that
+-- INNER JOINs each swap to a matching SPL transfer inside a bounded instruction-index band and keeps
+-- one row per swap; where the join finds nothing the swap is dropped, silently and with no marker.
+-- The decoded event tables have no such join: they are the program's own emitted events, the same
+-- class of table pump_evt_createevent already is. Re-measured on one launch: 198 of 198 AMM fills,
+-- exact on the wallet, the amounts and the ordering.
+--
+-- AND THE QUOTE COLUMN IS THE user_ ONE, WHICH IS NOT THE OBVIOUS CHOICE. BuyEvent carries three
+-- quote amounts — quote_amount_in, quote_amount_in_with_lp_fee and user_quote_amount_in — and only
+-- the last is the SOL the wallet actually parted with (base plus the LP fee plus the protocol fee).
+-- Matched against the committed tape's own sol column on 198 of 198 fills of one launch: user_quote
+-- agreed on all 198, the other two on none. SellEvent is the mirror, user_quote_amount_out.
+--
+-- THE VENUE TRAVELS WITH EVERY ROW AND IS NEVER INFERRED. The reader refuses a row that cannot say
+-- which table it came from, because the create slot is anchored on the earliest CURVE buy: an AMM
+-- fill read as a curve fill can move that anchor onto a post-graduation slot.
+--
+-- ONE SIDE OF EVERY ROW MUST BE WSOL. The curve only ever trades against SOL; a PumpSwap pool need
+-- not, and a USDC-quoted row would put a USDC amount into a lamport field. On the AMM half the
+-- guard sits on the POOL rather than on the fill, because the event carries a pool and not a mint:
+-- only pools whose CreatePoolEvent declared a WSOL quote are joined, so a non-SOL pool for the same
+-- token contributes nothing rather than contributing a mislabelled amount.
+--
+-- RAW AMOUNTS, SCALED IN THE READER. Dividing here puts a rounding between the chain and the
+-- comparison and makes exact agreement with a committed fill tape unprovable.
+--
+-- TWELVE COLUMNS AND NO MORE, because retrieving results is ~71% of the bill at ~20 credits/MB.
+-- Eleven are read by the row parser; the twelfth, mint, is what groups a batched result back into
+-- launches. No price, no quote and no decimal-scaled amount is selected, because nothing reads one.
+--
+-- THE WINDOW IS PER LAUNCH AND ARRIVES IN THE PARAMETER, never as a literal here. The committed
+-- tape's own windows are 60s on 210 launches, 120s on 4 and 300s on 25, and a flat 60s baseline is
+-- a published-number bug this repo has already paid for once.
+--
+-- The launches parameter is mint:from_unix_ms:to_unix_ms, comma separated; base58 contains neither
+-- separator. The scan_from/scan_to parameters are the batch's own hull and exist ONLY to prune
+-- partitions. Every row is still cut to its own launch's window by the join at the bottom, so a
+-- hull that is too narrow returns a launch NO rows and the reader drops it loudly rather than
+-- returning it short.
+--
+-- EPOCH ARITHMETIC IS from_unixtime/date_diff AND NOT date_add, MEASURED. The obvious
+-- date_add('millisecond', <epoch ms>, TIMESTAMP '1970-01-01') fails the whole execution with
+-- "integer overflow" — an epoch in milliseconds does not fit the 32-bit interval date_add takes —
+-- and an execution is billed whether it succeeds or not. Both functions here are also free of the
+-- session timezone, which a committed statement must be: a session-dependent literal is a value
+-- that can change without the text changing, and custody would not see it.
+WITH windows AS (
+  SELECT
+    split_part(t.v, ':', 1) AS mint,
+    from_unixtime(CAST(split_part(t.v, ':', 2) AS bigint) / 1000e0) AS from_ts,
+    from_unixtime(CAST(split_part(t.v, ':', 3) AS bigint) / 1000e0) AS to_ts
+  FROM unnest(split('{{launches}}', ',')) AS t(v)
+), curve AS (
+  SELECT 'pump' AS venue, c.block_time, c.block_slot, c.tx_index,
+         c.outer_instruction_index, c.inner_instruction_index, c.tx_id, c.trader_id,
+         CASE WHEN c.token_sold_mint_address = 'So11111111111111111111111111111111111111112'
+              THEN c.token_bought_mint_address ELSE c.token_sold_mint_address END AS mint,
+         (c.token_sold_mint_address = 'So11111111111111111111111111111111111111112') AS is_buy,
+         CASE WHEN c.token_sold_mint_address = 'So11111111111111111111111111111111111111112'
+              THEN c.token_sold_amount_raw ELSE c.token_bought_amount_raw END AS sol_raw,
+         CASE WHEN c.token_sold_mint_address = 'So11111111111111111111111111111111111111112'
+              THEN c.token_bought_amount_raw ELSE c.token_sold_amount_raw END AS token_raw
+  FROM pumpdotfun_solana.base_trades c
+  WHERE CAST(c.block_month AS DATE)
+          BETWEEN CAST(date_trunc('month', TIMESTAMP '{{scan_from}}') AS DATE)
+              AND CAST(date_trunc('month', TIMESTAMP '{{scan_to}}') AS DATE)
+    AND c.block_time BETWEEN TIMESTAMP '{{scan_from}}' AND TIMESTAMP '{{scan_to}}'
+    AND (c.token_sold_mint_address = 'So11111111111111111111111111111111111111112'
+         OR c.token_bought_mint_address = 'So11111111111111111111111111111111111111112')
+), pools AS (
+  SELECT DISTINCT p.pool AS pool, p.base_mint AS mint
+  FROM pumpdotfun_solana.pump_amm_evt_createpoolevent p
+  JOIN windows w ON w.mint = p.base_mint
+  WHERE p.quote_mint = 'So11111111111111111111111111111111111111112'
+    AND p.evt_block_time <= TIMESTAMP '{{scan_to}}'
+), amm AS (
+  SELECT 'pump_amm' AS venue, b.evt_block_time AS block_time, b.evt_block_slot AS block_slot,
+         b.evt_tx_index AS tx_index, b.evt_outer_instruction_index AS outer_instruction_index,
+         b.evt_inner_instruction_index AS inner_instruction_index, b.evt_tx_id AS tx_id,
+         b."user" AS trader_id, p.mint AS mint, true AS is_buy,
+         b.user_quote_amount_in AS sol_raw, b.base_amount_out AS token_raw
+  FROM pumpdotfun_solana.pump_amm_evt_buyevent b
+  JOIN pools p ON p.pool = b.pool
+  WHERE b.evt_block_date BETWEEN CAST(TIMESTAMP '{{scan_from}}' AS DATE) AND CAST(TIMESTAMP '{{scan_to}}' AS DATE)
+    AND b.evt_block_time BETWEEN TIMESTAMP '{{scan_from}}' AND TIMESTAMP '{{scan_to}}'
+  UNION ALL
+  SELECT 'pump_amm', s.evt_block_time, s.evt_block_slot,
+         s.evt_tx_index, s.evt_outer_instruction_index,
+         s.evt_inner_instruction_index, s.evt_tx_id,
+         s."user", p.mint, false,
+         s.user_quote_amount_out, s.base_amount_in
+  FROM pumpdotfun_solana.pump_amm_evt_sellevent s
+  JOIN pools p ON p.pool = s.pool
+  WHERE s.evt_block_date BETWEEN CAST(TIMESTAMP '{{scan_from}}' AS DATE) AND CAST(TIMESTAMP '{{scan_to}}' AS DATE)
+    AND s.evt_block_time BETWEEN TIMESTAMP '{{scan_from}}' AND TIMESTAMP '{{scan_to}}'
+), fills AS (
+  SELECT * FROM curve UNION ALL SELECT * FROM amm
+)
+SELECT f.mint, f.block_slot, f.tx_index, f.outer_instruction_index, f.inner_instruction_index,
+       f.tx_id, f.trader_id, f.is_buy, f.venue,
+       CAST(f.sol_raw AS varchar) AS sol_raw,
+       CAST(f.token_raw AS varchar) AS token_raw,
+       date_diff('second', TIMESTAMP '1970-01-01 00:00:00', f.block_time) AS ts_unix
+FROM fills f
+JOIN windows w ON w.mint = f.mint
+WHERE f.block_time BETWEEN w.from_ts AND w.to_ts
+ORDER BY f.mint, f.block_slot, f.tx_index, f.outer_instruction_index, f.inner_instruction_index
+`;
+
+/**
+ * @typedef {object} EntryWindowRequest
+ * One launch window to scan, in the unit the parameter is denominated in.
+ *
+ * @property {string} mint
+ * @property {number} fromMs Oldest instant to scan — the SCAN's old edge, not the mint. It must be
+ *   strictly older than the declared mint or {@link duneRowsToWindow} refuses the window.
+ * @property {number} toMs   Newest instant to scan.
+ */
+
+/**
+ * Render a Trino timestamp literal for {@link ENTRY_SQL}'s partition hull.
+ *
+ * TZ-free on purpose: `block_time` is a `timestamp` without zone and the statement's own epoch
+ * arithmetic is written against `TIMESTAMP '1970-01-01 00:00:00'`, so nothing here depends on the
+ * vendor's session timezone. A session-dependent literal in a committed statement is a value that
+ * can change without the text changing, which is the failure mode custody exists to remove.
+ *
+ * @param {number} ms
+ * @returns {string}
+ */
+function timestampLiteral(ms) {
+  return new Date(ms).toISOString().replace('T', ' ').replace('Z', '');
+}
+
+/**
+ * Build {@link ENTRY_SQL}'s three parameters for a batch of launch windows.
+ *
+ * **A mint that is not base58-shaped is never sent.** Mints are vendor-supplied and land inside a
+ * single-quoted SQL literal, so the rule `dune.mjs` → `WALLET_SHAPE` binds the enumeration's
+ * deployers binds them here too: the guard travels wherever a vendor-derived address reaches a
+ * query language. It THROWS rather than dropping the launch, because a silently shortened batch is
+ * a result that is complete-looking and short — the failure this whole route is written against.
+ *
+ * The hull is derived from the batch rather than passed in, so it cannot disagree with the list it
+ * is supposed to cover.
+ *
+ * @param {readonly EntryWindowRequest[]} windows
+ * @returns {Record<string, string>}
+ */
+export function entryQueryParameters(windows) {
+  if (windows.length === 0) throw new Error('the entry statement needs at least one launch window');
+  for (const w of windows) {
+    if (!WALLET_SHAPE.test(w.mint)) {
+      throw new Error(
+        `refusing to build an entry query for ${JSON.stringify(w.mint)}: it is not base58-shaped, ` +
+          `and a mint reaches a single-quoted SQL literal in ENTRY_SQL. Nothing was executed.`,
+      );
+    }
+    if (!Number.isFinite(w.fromMs) || !Number.isFinite(w.toMs) || w.toMs < w.fromMs) {
+      throw new Error(`refusing to build an entry query for ${w.mint}: its scan bounds are not a window.`);
+    }
+  }
+  return {
+    launches: windows.map((w) => `${w.mint}:${Math.floor(w.fromMs)}:${Math.ceil(w.toMs)}`).join(','),
+    scan_from: timestampLiteral(Math.min(...windows.map((w) => w.fromMs))),
+    scan_to: timestampLiteral(Math.max(...windows.map((w) => w.toMs))),
+  };
+}
+
+/**
  * @typedef {object} DuneEntryQuery
- * The committed statement this reader runs. **Captain decision 258b's to land**, id and text
- * together, so `assertSavedQueryMatches` can refuse a saved query edited from a browser BEFORE an
- * execution is billed.
+ * The committed statement this reader runs, id and text together, so `assertSavedQueryMatches` can
+ * refuse a saved query edited from a browser BEFORE an execution is billed.
  *
  * @property {number} id  The pinned saved-query id.
  * @property {string} sql The committed text, compared against the saved query before spending.
@@ -375,6 +601,33 @@ export function duneRowsToWindow(rows, opts) {
  *   parameters The launch's own narrow predicate. Per 255b every window is sized from the launch's
  *   own bounds and never from a literal.
  */
+
+/**
+ * The committed statement, ready to inject.
+ *
+ * **Exported, and called by NOTHING — not even the reproduction suite.** `screen.mjs` selects the
+ * swap-api source on every run and hands {@link duneFillSource} no query, and
+ * `dune-reproduction.mjs` does not use this assembly either: it drives {@link ENTRY_QUERY_ID},
+ * {@link ENTRY_SQL} and {@link entryQueryParameters} directly, because it batches many launch
+ * windows into one execution while this builds the ONE-launch predicate a production `readWindow`
+ * needs. **Gate 3's wiring will be its first caller.**
+ *
+ * That is the correct resting state for a committed path nobody reaches — but "unreached" and
+ * "unexercised" are different things, and only the first is acceptable. An exported seam that no
+ * test ever drives is the same shape as a reading computed twice and checked once: it compiles, it
+ * looks maintained, and the first caller finds out whether it works. So
+ * `test/dune-entry-reproduction.test.ts` calls `committedEntryQuery().parameters(ref, scan)` and
+ * pins that it produces the one-launch parameter set, which keeps the seam honest at zero cost.
+ *
+ * @returns {DuneEntryQuery}
+ */
+export function committedEntryQuery() {
+  return {
+    id: ENTRY_QUERY_ID,
+    sql: ENTRY_SQL,
+    parameters: (ref, scan) => entryQueryParameters([{ mint: ref.mint, fromMs: scan.fromMs, toMs: scan.toMs }]),
+  };
+}
 
 /**
  * Build the Dune fill source.
@@ -501,10 +754,11 @@ export function duneFillSource(client, opts) {
           ...refused,
           dropReason: 'coverage-unproven',
           note:
-            `DROPPED: this run carries no committed entry statement, so the Dune fill source has ` +
-            `nothing to execute. Captain decision 258b lands that statement and its pinned ` +
-            `saved-query id; until it does, this source refuses every window rather than ` +
-            `returning one it cannot vouch for.`,
+            `DROPPED: this run handed the Dune fill source no injected entry statement, so it has ` +
+            `nothing to execute. The statement and its pinned saved-query id ARE committed in this ` +
+            `module; wiring a source through is Gate 3's, which has not been convened, and ` +
+            `screen.mjs selects the swap-api source and injects none. Absent a statement this ` +
+            `source refuses every window rather than returning one it cannot vouch for.`,
         };
       }
 

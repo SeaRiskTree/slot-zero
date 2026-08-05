@@ -725,11 +725,12 @@ entry number or Stage 3**, and a test asserts it structurally.
 
 ### 8.6 Custody of the two saved queries
 
-The free tier allows **10 private queries and the account holds 10**, so the two production queries
-were **upgraded in place** rather than created: `8204672` (the shape the evaluation designated as
-production, widened from event-only to the union) and `8204603` (its coverage query, widened to
-carry `min`/`max` block time beside the monthly counts). The other six evaluation queries are
-untouched.
+Both production queries were **upgraded in place** rather than created: `8204672` (the shape the
+evaluation designated as production, widened from event-only to the union) and `8204603` (its
+coverage query, widened to carry `min`/`max` block time beside the monthly counts). The evaluation's
+other queries are untouched. **Do not restate the account's private-query count here** — it has moved
+in both directions inside a single day; `README.md` → *"Deploying a change to the committed SQL"* is
+the one place that names ids and counts.
 
 A saved Dune query is editable from a browser and its answer is a gate input, so **the SQL is
 committed here too** — `dune.mjs` → `CREATION_SQL` and `COVERAGE_SQL` — and

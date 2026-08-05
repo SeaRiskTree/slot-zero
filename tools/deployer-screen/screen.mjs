@@ -154,7 +154,11 @@ OPTIONS
   --consistency       Also measure long-horizon consistency for gate survivors, via a keyless
                       pump.fun creator walk. Costs no MadeOnSol quota.
   --ownership-only    Gate on the OWNERSHIP reading alone and skip the creation-derived walk.
-                      Fast and free of Solana RPC, and BIASED TOWARDS REJECTION — see below.
+                      Fast and free of Solana RPC, and BIASED BOTH WAYS AT ONCE — it rejects
+                      through the count bars (20 of 82 clear minTokens+minSpanDays on the
+                      vendor page against 66 of 82 on the creation-derived reading) and
+                      inflates through the rate (higher on 37 of 81 wallets, lower on 29,
+                      median difference 0.0000, by up to +0.6929). See below.
                       The record is stamped historySource: "ownership-only" so a run made this
                       way can never be mistaken for a creation-derived one.
   --no-dune           Skip the Dune creation enumeration and take the Solana RPC walk instead.

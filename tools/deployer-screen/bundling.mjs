@@ -76,12 +76,23 @@
  *   walks. It carries `created_timestamp` and `complete` per row, which is exactly what
  *   `measureCompletion` needs and exactly what `toLaunchRefs` would have taken from the profile.
  *
- * So the gate applied here is the **ownership** reading, and its bias is the one `FEED.md` states:
- * ownership understates a wallet's launches and understates its bonded count by more, so it is
- * **biased towards rejection**. A cohort member that fails this gate is `gate-failed` on a
- * conservative reading, not proven incompetent, and a survivor of it is a survivor on the harder of
- * the two readings. That direction is the safe one for this measurement: the surveyed population is
- * a subset of what a keyed Stage 1 would have passed, not a superset.
+ * So the gate applied here is the **ownership** reading, and its bias is the one `FEED.md` →
+ * "It is biased in BOTH directions at once" states: it runs BOTH ways from the same surface. It
+ * **rejects** through the count bars — ownership understates a wallet's launches and understates
+ * its bonded count by more, and **20 of 82** wallets clear `minTokens`+`minSpanDays` on the vendor
+ * page against **66 of 82** on the creation-derived reading — while the **rate** it computes reads
+ * *higher* than the gate's on **37 of 81** wallets (lower on 29, median difference 0.0000) and by
+ * up to **+0.6929**, because the page holds what a wallet still owns and the ones that move on are
+ * the winners (`slot-zero-gate-bar-measure-own-population` §2.1/§2.3, held in firstmate's records,
+ * not in this repo).
+ *
+ * So a cohort member that fails this gate is `gate-failed` on a reading that is conservative only
+ * on the counts, not proven incompetent — and a survivor of it is **not** a survivor on "the harder
+ * of the two readings", because this reading is harder on the counts and easier on the rate. There
+ * is no safe direction to lean on here: the surveyed population is **neither a subset nor a
+ * superset** of what a keyed Stage 1 would have passed. `runs/2026-08-04.json` holds the disproof —
+ * `FnW6MLyu…` and `DxQ1iNid…` are `vendorVerdict: "gate-passed"` and `gate-failed` on the
+ * creation-derived reading.
  *
  * ## The two contaminations the ownership launch list carries, stated rather than hidden
  *
@@ -1088,7 +1099,11 @@ export function renderDryRun(plan) {
       `ceiling ${plan.census.maxListingRequests}, about ${listingMin} minute(s).`,
   );
   L.push('    This applies the PINNED stage1_gate thresholds to the OWNERSHIP reading, which is');
-  L.push('    biased towards rejection — a survivor of it is a survivor on the harder reading.');
+  L.push('    biased BOTH ways at once: it rejects through the count bars (20 of 82 clear');
+  L.push('    minTokens+minSpanDays here against 66 of 82 on the creation-derived reading) and');
+  L.push('    inflates through the rate (higher on 37 of 81 wallets, by up to +0.6929). A');
+  L.push('    survivor of it is NOT a survivor on "the harder reading" — there is no such thing');
+  L.push('    here, and this population is neither a subset nor a superset of a keyed Stage 1\'s.');
   L.push('');
   L.push(
     `  LEG 2 — keyless fill walk, swap-api.pump.fun, surveying up to ${plan.maxCandidates} gate ` +

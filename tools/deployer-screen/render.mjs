@@ -767,7 +767,7 @@ export function renderStage1(run) {
       (run.keylessShed === undefined ? '' : `, ${run.keylessShed} shed and retried`),
   );
   L.push(`solana rpc         ${run.rpcRequests}  (creation-derived history; ${run.rpcLoadShedEvents} load-shed)`);
-  L.push(`history source     ${run.historySource}${run.historySource === 'ownership-only' ? '  !! BIASED TOWARDS REJECTION' : ''}`);
+  L.push(`history source     ${run.historySource}${run.historySource === 'ownership-only' ? '  !! BIASED BOTH WAYS (rejects on counts, inflates the rate)' : ''}`);
   L.push(`elapsed            ${(run.elapsedMs / 1000).toFixed(1)}s`);
   L.push(`prefiltered out    ${run.prefiltered}  (skipped before spending a request)`);
   L.push(`candidates gated   ${run.candidates.length}`);
@@ -1443,7 +1443,11 @@ export function renderDryRun(plan) {
     L.push(`  up to 4 pages per candidate, so up to ${4 * plan.maxCandidates} for the gate alone.`);
   } else {
     L.push('KEYLESS — Solana RPC: NONE. --ownership-only was passed, so the gate reads the');
-    L.push('  ownership listing alone. That reading is BIASED TOWARDS REJECTION and the record');
+    L.push('  ownership listing alone. That reading is BIASED BOTH WAYS AT ONCE: it REJECTS');
+    L.push('  through the count bars (20 of 82 clear minTokens+minSpanDays on the vendor page');
+    L.push('  against 66 of 82 on the creation-derived reading) and INFLATES through the rate');
+    L.push('  (higher than the gate\'s on 37 of 81 wallets, lower on 29, median difference');
+    L.push('  0.0000, by up to +0.6929). It is NOT a one-way conservative filter. The record');
     L.push('  will be stamped historySource: "ownership-only".');
   }
   if (plan.consistency) {

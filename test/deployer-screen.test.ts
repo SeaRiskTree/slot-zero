@@ -1777,6 +1777,82 @@ describe('the CLI contract', () => {
     ]);
   });
 
+  it('THE THREE SAMPLING CAPS ARE SOURCE-SCOPED, and neither entry may borrow the other\'s arithmetic', () => {
+    // The captain's source-scoping ruling, 2026-08-05. The swap-api walk pays in REQUESTS per launch
+    // page; the Dune source pays CREDITS for windows SCANNED. One shared set of caps would have to be
+    // justified by one cost model and obeyed by both, and on the second source the value would then be
+    // CARRIED rather than derived — a number with no derivation, which this file does not ship.
+    //
+    // So each source carries its own three, and this test is the enforcement BOTH blocks claim in
+    // prose. A justification that says "a test asserts that separation" with no such test is the same
+    // defect one level up.
+    const T = loadThresholds() as Record<string, Record<string, unknown>>;
+    const CAPS = ['maxCandidatesScored', 'minLaunchesSampled', 'maxLaunchesPerCandidate'] as const;
+    const swap = T['stage2_entry']!;
+    const dune = T['stage2_entry_dune']!;
+
+    // Same three parameters on both, so a cap cannot quietly exist on one source only.
+    for (const k of CAPS) {
+      expect(swap[k], `stage2_entry.${k}`).toBeTypeOf('number');
+      expect(dune[k], `stage2_entry_dune.${k}`).toBeTypeOf('number');
+    }
+    // And the Dune block is EXACTLY those three plus its prose — every evidence bar (minRoomLeft, the
+    // field bars, the cost bar) stays in stage2_entry and governs both sources. A source carrying its
+    // own minRoomLeft could answer differently about the same window, which the substitution must
+    // never be able to do.
+    expect(Object.keys(dune).filter((k) => !k.startsWith('$') && k !== 'justification').sort()).toEqual(
+      [...CAPS].sort(),
+    );
+
+    const jSwap = swap['justification'] as Record<string, string>;
+    const jDune = dune['justification'] as Record<string, string>;
+    for (const k of CAPS) {
+      // Neither may NAME the other's cost parameters. The word "request" is deliberately NOT banned
+      // from the Dune entries — each uses it exactly once, to disclaim it — so what is asserted is
+      // the arithmetic's own named terms, which is the thing that would actually be borrowed.
+      expect(jDune[k], `stage2_entry_dune.justification.${k} borrows swap-api arithmetic`).not.toMatch(
+        /maxRequestsPerLaunch|maxKeylessRequests/,
+      );
+      expect(jSwap[k], `stage2_entry.justification.${k} borrows Dune arithmetic`).not.toMatch(
+        /credit|maxResultRows/i,
+      );
+      // And each states its OWN model rather than merely avoiding the other's.
+      expect(jSwap[k], `stage2_entry.justification.${k} states no request arithmetic`).toMatch(
+        /maxRequestsPerLaunch|maxKeylessRequests/,
+      );
+      expect(jDune[k], `stage2_entry_dune.justification.${k} states no credit arithmetic`).toMatch(/credit/i);
+    }
+  });
+
+  it("the Dune caps are derived from WINDOWS SCANNED, and the row ceiling is not what binds them", () => {
+    // The measured finding this block is sized on: the execution is billed for the SCAN, not for the
+    // rows it hands back. Gate 1 measured ~29 credits at 7 x 10 = 70 windows — held in firstmate's
+    // records, NOT in this repo, so that figure is asserted from elsewhere and is not checked here.
+    // What IS checked is the arithmetic built on it.
+    const T = loadThresholds() as Record<string, Record<string, unknown>>;
+    const d = T['stage2_entry_dune'] as Record<string, number>;
+    const dune = T['dune'] as Record<string, number>;
+
+    expect(d['minLaunchesSampled']).toBe(20); // era B, n = 20 — the only raise this repo has evidence for
+    expect(d['maxLaunchesPerCandidate']).toBe(22);
+    expect(d['maxCandidatesScored']).toBe(7);
+
+    // The floor must stay BELOW the cap or a single dropped launch costs the whole candidate's
+    // verdict, and the gap is TWO on both sources — captain decision 190a's argument, re-derived here
+    // in credits rather than restated in requests.
+    const swap = T['stage2_entry'] as Record<string, number>;
+    expect(d['maxLaunchesPerCandidate']! - d['minLaunchesSampled']!).toBe(2);
+    expect(swap['maxLaunchesPerCandidate']! - swap['minLaunchesSampled']!).toBe(2);
+
+    // Windows scanned is the lever, and this is the number the ~64 credits/run rests on.
+    const windows = d['maxCandidatesScored']! * d['maxLaunchesPerCandidate']!;
+    expect(windows).toBe(154);
+    // ROWS RETURNED IS NOT THE LEVER, and the headroom is what says so: one row per planned launch,
+    // against a ceiling two orders of magnitude above it. If this ever stopped holding, the block
+    // comment's derivation would be sized on the wrong quantity.
+    expect(windows).toBeLessThan(dune['maxResultRows']! / 100);
+  });
+
   it('every pinned parameter carries a stated reason, and every stated reason has a parameter', () => {
     // The file's own contract is "the anchor is named in `justification`", and the 2026-08-02
     // provenance audit found eight keys carrying a value and no entry at all — a gap no reader can

@@ -1944,8 +1944,11 @@ the reach** — a launch could be admitted 20s before the cursor's own bound was
 
 **Raising the constant to 71,448 would have re-armed the identical trap**, because the defect was
 never the number: it was writing a *duration* for something the chain controls. The gate derives from
-`windowSlotSpan` at a measured worst-case slot rate now, so when the chain slows again it moves by
-itself. That shortfall's direction of error was the safe one — an early-admitted launch loses its
+`windowSlotSpan` at a measured worst-case slot rate now — a **pinned** rate, so the gate moves only
+when that rate is re-measured against a newer committed tape and the pin is raised. What the
+derivation buys is that a chain slowing past the pin **fails the tape-derived guard loudly** rather
+than silently widening the gap again, and that raising the pin moves the gate and the seek cursor
+together, because they are one call. That shortfall's direction of error was the safe one — an early-admitted launch loses its
 late sells, so its field reads *worse*, and the field leg is veto-only — but it is the class of false
 rejection that is permanent and invisible, since a graded wallet is filed and never offered again.
 

@@ -327,7 +327,11 @@ export async function scoreCandidateEntry(client, input) {
   // could be admitted 20s before the cursor's own bound was in the past. **Raising the constant to
   // 71,448 would have re-armed the identical trap**, because the defect was never the number: it
   // was writing a DURATION for something the chain controls. It is derived now, in the span's own
-  // unit at a measured worst-case slot rate, so when the chain slows again this moves by itself.
+  // unit at a measured worst-case slot rate — but read what that does and does not buy: the rate is
+  // a PINNED constant, so this gate moves only when the slot rate is re-measured against a newer
+  // committed tape and that pin is raised. What it buys is that a chain slowing past the pin FAILS
+  // the tape-derived guard loudly instead of silently leaving the gate short, and that raising the
+  // pin moves the gate and the cursor together because they are one call.
   //
   // This does not give `windowMs` a third job or move membership off `windowSlotSpan` — see
   // `thresholds.json` → `stage2_entry.justification.windowMs`. Nothing here widens what is

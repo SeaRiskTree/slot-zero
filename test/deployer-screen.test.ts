@@ -11695,9 +11695,12 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       // And no plausible number is substituted for the ones it cannot have.
       expect(text).not.toMatch(/p50 \d+ pages/);
       expect(text).not.toMatch(/sheds ~\d+%/);
-      // THE CEILINGS, WORST CASES AND CAVEATS BIND WHICHEVER SOURCE ANSWERS, so they print in BOTH
-      // cases — withholding a page of free, correct figures is the failure the split exists to
-      // avoid, and a rewiring that dropped them would be that failure by another route.
+      // THE CEILINGS, WORST CASES AND CAVEATS PRINT UNDER BOTH SOURCES — which is not the same
+      // claim as binding both, and the difference is the overstatement this change retracted. They
+      // are bounds this stage enforces on its OWN KEYLESS CLIENT, and a source billed in executions
+      // and credits would not be governed by that client at all; they print anyway because
+      // withholding a page of free, correct figures is the failure the split exists to avoid, and a
+      // rewiring that dropped them would be that failure by another route.
       const swapApiText = renderDryRun({
         ...plan,
         entryEligibility: { known: true, kind: 'swap-api', minAgeMs: 85_000, billed: false },

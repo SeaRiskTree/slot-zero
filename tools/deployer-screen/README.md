@@ -619,7 +619,7 @@ Two changes, because the shape bug alone would have left the class of defect in 
 
 The run record also carries the full coverage chain — wallets seeded, prefiltered out, worth a
 request, **dropped by the candidate cap**, gated — and sets `truncated` when the cap dropped anyone.
-Run records are the future grading lane's input, so a capped run must not read as a screen of
+Run records are the grading lane's input, so a capped run must not read as a screen of
 everything enumeration found.
 
 The superseded untiered run record (`runs/2026-07-29-stage1.json`) was **deleted rather than
@@ -2200,8 +2200,9 @@ position size, because our own buy counts towards it), and whether an outsider c
 first. Entry room and exit feasibility are scored **separately and never collapsed**, and no exit
 signal reaches any number Stage 2 produces. Its own lane, and it is blocked on this one.
 
-**Not built — the prediction-grading loop.** A dated immutable record per run so a later run can
-grade the screen's own hit rate. Its own lane. Run records under `runs/` are the input it will read.
+**Built — the prediction-grading loop.** Every run records what it predicted, and `grade.mjs` scores
+those claims against launches the wallets made afterwards. See
+[The feedback loop](#the-feedback-loop--the-screen-grading-its-own-predictions).
 
 **A Stage 2 run record is committed**: `runs/2026-08-02-good.json` scored 3 gate survivors on live
 fills, and `runs/2026-08-02-good-vs-elite.md` reads it. It is a **schema-3** record and it carries

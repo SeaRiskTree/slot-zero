@@ -60,7 +60,9 @@ import {
   parseCoverageProbe,
   parseCreationRows,
   parseDuneTimestamp,
+  summariseMayhem,
   toWalletEnumeration,
+  MAYHEM_OBSERVATION_ONLY,
 } from '../tools/deployer-screen/dune.mjs';
 import {
   CURVE_INITIAL_PRICE_SOL,
@@ -161,7 +163,13 @@ import {
   loadThresholds,
   partialOutPath,
 } from '../tools/deployer-screen/screen.mjs';
-import { LIMITATIONS, renderDryRun, renderEntry, renderStage1 } from '../tools/deployer-screen/render.mjs';
+import {
+  LIMITATIONS,
+  renderDryRun,
+  renderEntry,
+  renderMayhemShare,
+  renderStage1,
+} from '../tools/deployer-screen/render.mjs';
 import {
   RECORD_SCHEMA_VERSION,
   UNMEASURED_KINDS,
@@ -2937,6 +2945,31 @@ describe('the SQL is the surface, and the two traps are pinned in it', () => {
     expect(CREATION_SQL).toContain(`{{${DEPLOYERS_PARAM}}}`);
   });
 
+  it('selects the mayhem flag from the ONE surface that has it, and NULLs it on the other', () => {
+    // Captain decision 227a. `is_mayhem_mode` is a column on `pump_evt_createevent` and there is no
+    // such field on `pump_call_create`, so the union has to supply one — and the value it supplies
+    // must be NULL rather than `false`. A `false` there would report every pre-`createevent` launch
+    // as a measured non-mayhem launch, which is the confident-wrong-answer shape this whole module
+    // refuses, arriving through a default instead of through coverage.
+    const executable = CREATION_SQL.split('\n').filter((l) => !l.trimStart().startsWith('--')).join('\n');
+    expect(executable).toContain('e.is_mayhem_mode AS mayhem');
+    expect(executable).toContain('cast(NULL AS boolean) AS mayhem');
+    expect(executable).toMatch(/AS is_mayhem_mode/);
+    // `bool_or` and not `max`/`coalesce`: it takes the known value wherever either surface has one
+    // and yields NULL only when neither does. A `coalesce(..., false)` anywhere here would be the
+    // default described above.
+    expect(executable).toContain('bool_or(mayhem) AS mayhem');
+    expect(executable, 'a default would manufacture a measured `false`').not.toMatch(
+      /coalesce\([^)]*mayhem/i,
+    );
+    // SIX columns, and the header says so. The count is load-bearing on a read billed by BYTES —
+    // `thresholds.json` -> `dune.resultBytesPerRowCeiling` is derived from it, and a seventh column
+    // added without moving that number would silently understate the export half of every plan.
+    expect(CREATION_SQL).toContain('SIX COLUMNS AND NO MORE');
+    const select = executable.slice(executable.lastIndexOf('SELECT r.deployer'));
+    expect(select.slice(0, select.indexOf('FROM ranked r')).split(',')).toHaveLength(6);
+  });
+
   it('probes EVERY table it reads, and one it deliberately does not', () => {
     // The probe being WIDER than the read is the point: its own output demonstrates the boundary
     // that disqualifies create_v2, rather than the repo asserting it in prose.
@@ -3087,8 +3120,8 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     const e = toWalletEnumeration({
       wallet: 'W',
       launches: [
-        { mint: 'M1', createdAtMs: Date.parse('2025-12-01T00:00:00Z'), bonded: true },
-        { mint: 'M2', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: false },
+        { mint: 'M1', createdAtMs: Date.parse('2025-12-01T00:00:00Z'), bonded: true, mayhem: null },
+        { mint: 'M2', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: false, mayhem: null },
       ],
       coverage: coverage(),
     });
@@ -3111,7 +3144,7 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     // first row may have launched before them, and nothing in the answer would say so.
     const e = toWalletEnumeration({
       wallet: 'W',
-      launches: [{ mint: 'M', createdAtMs: Date.parse('2024-01-14T12:57:12.000Z'), bonded: false }],
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2024-01-14T12:57:12.000Z'), bonded: false, mayhem: null }],
       coverage: coverage(),
     });
     expect(e.usable).toBe(false);
@@ -3123,7 +3156,7 @@ describe('a per-wallet reading is refused at the launch level too', () => {
   it('REFUSES a launch newer than the probed ceiling, which a cached probe makes reachable', () => {
     const e = toWalletEnumeration({
       wallet: 'W',
-      launches: [{ mint: 'M', createdAtMs: NOW_MS + 3_600_000, bonded: false }],
+      launches: [{ mint: 'M', createdAtMs: NOW_MS + 3_600_000, bonded: false, mayhem: null }],
       coverage: coverage(),
     });
     expect(e.usable).toBe(false);
@@ -3164,7 +3197,7 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     // still carried so a record shows the SIZE of what was refused.
     const e = toWalletEnumeration({
       wallet: 'W',
-      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true, mayhem: null }],
       coverage: coverage(),
       priorReasons: ['3 row(s) of the Dune answer could not be read, so the whole batch is refused.'],
     });
@@ -3227,7 +3260,7 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     expect(declaredByWallet.get('V')).toBe(1);
     const refused = toWalletEnumeration({
       wallet: 'W',
-      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true, mayhem: null }],
       declaredLaunches: null,
       launchCap: 100,
       batchWallets: 2,
@@ -3246,6 +3279,7 @@ describe('a per-wallet reading is refused at the launch level too', () => {
         mint: `M${i}`,
         createdAtMs: Date.parse('2026-01-01T00:00:00Z') + i * 1000,
         bonded: i % 2 === 0,
+        mayhem: null,
       })),
       declaredLaunches: 8518,
       launchCap: LAUNCH_CAP_FLOOR,
@@ -3264,7 +3298,7 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     // cannot account for its own row count may not be gated on either.
     const unexplained = toWalletEnumeration({
       wallet: 'W',
-      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true, mayhem: null }],
       declaredLaunches: 9,
       launchCap: LAUNCH_CAP_FLOOR,
       batchWallets: 195,
@@ -3277,7 +3311,7 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     // The control: a wallet whose declared count and returned rows agree is whole, and usable.
     const whole = toWalletEnumeration({
       wallet: 'W',
-      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true, mayhem: null }],
       declaredLaunches: 1,
       launchCap: LAUNCH_CAP_FLOOR,
       batchWallets: 195,
@@ -3341,7 +3375,7 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     ]);
     expect(legitimatelyFalse.unreadableRows).toBe(0);
     expect(legitimatelyFalse.byWallet.get('W')).toEqual([
-      { mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: false },
+      { mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: false, mayhem: null },
     ]);
 
     // Absent, renamed, or any non-boolean spelling of it: unreadable, by the same route a bad
@@ -3365,7 +3399,7 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     // walk read every curve and none had moved. Here it means nothing was looked at.
     const e = toWalletEnumeration({
       wallet: 'W',
-      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true }],
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2026-01-01T00:00:00Z'), bonded: true, mayhem: null }],
       coverage: coverage(),
     });
     const merged = mergeHistories({
@@ -3381,6 +3415,249 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     // Bonded status still comes from the chain's own statement, so the reading is decidable.
     expect(merged.bondedFromCurve).toBe(1);
     expect(merged.bondedUndecidable).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// pump.fun's mayhem-mode flag — CAPTAIN DECISION 227a.
+//
+// `pump_evt_createevent` has always carried an `is_mayhem_mode` boolean and this repo never read it.
+// `slot-zero-graduation-regime-remeasure` sections 1.4 and 3 (held in firstmate's records, not in
+// this repo) measured what it is worth: 27.1% of 2026-07's pump.fun launches carried it, they
+// graduated at 4.1-4.7% against 1.8-2.1% for the rest, and they supplied 46.3% of that month's
+// graduations. It is therefore a first-order confounder for both halves of this screen.
+//
+// 227a's answer was the cheapest one available and the ONLY one of the four that changes no verdict:
+// RECORD the flag and REPORT the share, so the survivor list is auditable for mayhem exposure, and
+// leave what the screen should DO about it to a later decision. Excluding those launches from the
+// competence measure (227b) and excluding mayhem-heavy deployers outright (227c) were both declined.
+//
+// So the load-bearing assertion in this block is the NEGATIVE one: the gate's answer is byte for
+// byte the same with the column populated, absent and malformed.
+describe('the mayhem flag is RECORDED and REPORTED, and it decides nothing', () => {
+  const coverage = () =>
+    assessCoverage({ probe: parseCoverageProbe(HEALTHY_PROBE()), nowMs: NOW_MS, bounds: DUNE_BOUNDS });
+
+  /** One wallet's rows, with whatever the vendor put in the mayhem column. */
+  const rowsWith = (mayhem: readonly unknown[]) =>
+    mayhem.map((m, i) => ({
+      deployer: 'W',
+      mint: `M${i}`,
+      created_at: `2026-0${(i % 8) + 1}-01 00:00:00.000 UTC`,
+      bonded: i % 3 === 0,
+      launches_total: mayhem.length,
+      ...(m === undefined ? {} : { is_mayhem_mode: m }),
+    }));
+
+  /** The whole gate path, from vendor rows to the verdict a candidate row carries. */
+  const gateOutcomeFor = (rows: readonly unknown[]) => {
+    const parsed = parseCreationRows(rows);
+    const e = toWalletEnumeration({
+      wallet: 'W',
+      launches: parsed.byWallet.get('W') ?? [],
+      declaredLaunches: parsed.declaredByWallet.get('W') ?? null,
+      launchCap: LAUNCH_CAP_FLOOR,
+      batchWallets: 1,
+      coverage: coverage(),
+    });
+    const merged = mergeHistories({
+      creates: e.creates,
+      wallet: 'W',
+      curves: e.curves,
+      listed: [],
+      covered: e.covered,
+      unresolvedTransactions: 0,
+    });
+    const completion = measureCompletion(merged.records);
+    const gate = applyGate(
+      { completion, historySource: 'creation-derived' },
+      { minTokens: 3, minCompletionRate: 0.25, minSpanDays: 14 },
+    );
+    return {
+      unreadableRows: parsed.unreadableRows,
+      usable: e.usable,
+      reasons: e.reasons,
+      launches: e.launches,
+      bonded: e.bonded,
+      creates: e.creates,
+      curves: [...e.curves.entries()],
+      covered: e.covered,
+      completion,
+      gate,
+      ...verdictFor({ gate, completion, capped: false }),
+    };
+  };
+
+  it('THE VERDICT IS IDENTICAL with the column populated, absent and malformed', () => {
+    // The hard constraint of 227a, asserted rather than reviewed for. Eight launches, three of them
+    // mayhem, against the same eight with no such column at all and the same eight where every
+    // value is junk. Everything the gate reads — the creates, the curve states, the covered window,
+    // the completion measurement, the gate result and the verdict sentence — must be deep-equal.
+    const flags = [true, false, false, true, false, true, false, false];
+    const populated = gateOutcomeFor(rowsWith(flags));
+    const absent = gateOutcomeFor(rowsWith(flags.map(() => undefined)));
+    // Every shape a shifted, renamed or retyped column can arrive in. NONE of them may refuse a row:
+    // an unreadable row refuses the WHOLE batch, every candidate in it falls back to the creation
+    // walk, and the walk can return a different history and therefore a different verdict — which
+    // would make an observation able to move a gate outcome.
+    const malformed = gateOutcomeFor(rowsWith([null, 'true', 'false', 1, 0, {}, [], 'MAYHEM']));
+
+    expect(absent).toEqual(populated);
+    expect(malformed).toEqual(populated);
+    // And stated positively, so a future reader sees the three really did reach the same verdict
+    // rather than three identical failures.
+    expect(populated.usable).toBe(true);
+    expect(populated.verdict).not.toBe('gate-unmeasured');
+    expect(populated.unreadableRows).toBe(0);
+    expect(malformed.unreadableRows).toBe(0);
+    expect(populated.completion.tokens).toBe(8);
+  });
+
+  it('a malformed mayhem column reads UNMEASURED, where a malformed `bonded` refuses the row', () => {
+    // The asymmetry is deliberate and it is the whole of "change no verdict". `bonded` and
+    // `launches_total` are gate inputs, so an absent one silently shortens a history and the row is
+    // refused. The mayhem flag is an observation, so an absent one can only understate a figure
+    // nothing reads — and refusing on it would let that figure cost a candidate its Dune answer.
+    const good = parseCreationRows(rowsWith([true, false, true]));
+    expect(good.unreadableRows).toBe(0);
+    expect(summariseMayhem(good.byWallet.get('W') ?? [])).toEqual({
+      launches: 3,
+      mayhem: 2,
+      unknown: 0,
+      share: 2 / 3,
+    });
+
+    const junk = parseCreationRows(rowsWith(['yes', undefined, 1]));
+    expect(junk.unreadableRows, 'the mayhem column must never refuse a row').toBe(0);
+    expect(junk.byWallet.get('W')).toHaveLength(3);
+    expect(summariseMayhem(junk.byWallet.get('W') ?? [])).toEqual({
+      launches: 0,
+      mayhem: 0,
+      unknown: 3,
+      // NOT 0. A denominator of zero is "this reading measured the flag on nothing", and reporting
+      // it as 0% would be this screen asserting a wallet launches no mayhem tokens on no evidence.
+      share: null,
+    });
+
+    // The contrast, so the asymmetry is pinned rather than assumed: `bonded` retyped DOES refuse.
+    const bondedShifted = rowsWith([true]).map((r) => ({ ...r, bonded: 'true' }));
+    expect(parseCreationRows(bondedShifted).unreadableRows).toBe(1);
+  });
+
+  it('the share\'s denominator is the readable flags, never the launch count', () => {
+    // A history reaching back past `pump_evt_createevent` picks up rows from `pump_call_create`,
+    // which has no such column, so those launches arrive with nothing to read. Dividing by the whole
+    // history would dilute the share towards zero in exactly the era the flag did not exist to be
+    // set — a wrong answer that looks like a reassuring one.
+    const mixed = parseCreationRows(rowsWith([true, true, undefined, undefined, undefined, undefined]));
+    const exposure = summariseMayhem(mixed.byWallet.get('W') ?? []);
+    expect(exposure.launches).toBe(2);
+    expect(exposure.unknown).toBe(4);
+    expect(exposure.share).toBe(1);
+    expect(exposure.share, 'the whole history would have read 0.3333').not.toBeCloseTo(2 / 6, 4);
+  });
+
+  it('carries the exposure on a REFUSED reading too, without letting it change the refusal', () => {
+    // A refused reading is still the only mayhem evidence a run holds for that wallet, so the count
+    // is taken. What it may not do is participate in the refusal — the reasons and `usable` are
+    // asserted identical across every value of the flag.
+    const refusedMayhem = toWalletEnumeration({
+      wallet: 'W',
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2024-01-14T12:57:12.000Z'), bonded: false, mayhem: true }],
+      coverage: coverage(),
+    });
+    const refusedPlain = toWalletEnumeration({
+      wallet: 'W',
+      launches: [{ mint: 'M', createdAtMs: Date.parse('2024-01-14T12:57:12.000Z'), bonded: false, mayhem: null }],
+      coverage: coverage(),
+    });
+    expect(refusedMayhem.usable).toBe(false);
+    expect(refusedMayhem.reasons).toEqual(refusedPlain.reasons);
+    expect(refusedMayhem.mayhem).toEqual({ launches: 1, mayhem: 1, unknown: 0, share: 1 });
+    expect(refusedPlain.mayhem).toEqual({ launches: 0, mayhem: 0, unknown: 1, share: null });
+  });
+
+  it('never reaches a CreateRecord, so nothing downstream of the merge can read it', () => {
+    // The structural half of "it decides nothing". `mergeHistories` consumes `creates` and `curves`;
+    // if the flag were on either, a later reader could branch on it without anything failing here.
+    const parsed = parseCreationRows(rowsWith([true, true, true]));
+    const e = toWalletEnumeration({
+      wallet: 'W',
+      launches: parsed.byWallet.get('W') ?? [],
+      declaredLaunches: 3,
+      coverage: coverage(),
+    });
+    for (const c of e.creates) {
+      expect(Object.keys(c).sort()).toEqual(
+        ['bondingCurve', 'createdAtMs', 'creator', 'mint', 'signature'].sort(),
+      );
+    }
+    for (const s of e.curves.values()) expect(Object.keys(s).sort()).toEqual(['complete', 'creator']);
+    expect(JSON.stringify([...e.creates, ...e.curves.values()])).not.toMatch(/mayhem/i);
+  });
+
+  it('renders UNMEASURED rather than 0% on every route that cannot see the flag', () => {
+    // The rendered line is where a reader meets this figure, and the two nulls it can print are
+    // different facts. A "0%" on a walk-sourced candidate would be the screen asserting something
+    // about the wallet using a surface that cannot see the column.
+    const walked = renderMayhemShare(
+      { mayhemLaunches: null, mayhemFlagReadable: null, mayhemShare: null, enumerationSource: 'keyless-rpc' },
+      '  ',
+    ).join('\n');
+    expect(walked).toMatch(/UNMEASURED/);
+    expect(walked).toMatch(/keyless-rpc/);
+    expect(walked).toMatch(/NOT a reading of 0%/);
+    expect(walked).not.toMatch(/0\.0%/);
+
+    // The other null: the route DOES read the flag and none of this wallet's launches carried one.
+    const nothingReadable = renderMayhemShare(
+      { mayhemLaunches: 0, mayhemFlagReadable: 0, mayhemShare: null, enumerationSource: 'dune' },
+      '  ',
+    ).join('\n');
+    expect(nothingReadable).toMatch(/UNMEASURED/);
+    expect(nothingReadable).toMatch(/readable on none/);
+
+    // And a real reading names the numerator, the denominator, the gap to the launch count, and the
+    // fact that it is an observation.
+    const measured = renderMayhemShare(
+      {
+        mayhemLaunches: 3,
+        mayhemFlagReadable: 12,
+        mayhemShare: 0.25,
+        duneLaunches: 20,
+        enumerationSource: 'dune',
+      },
+      '  ',
+    ).join('\n');
+    expect(measured).toMatch(/3 of 12/);
+    expect(measured).toMatch(/25\.0%/);
+    expect(measured).toMatch(/8 unreadable/);
+    expect(measured).toMatch(/reaching no bar/);
+
+    // A genuinely measured ZERO is a reading and prints as one — the case the two nulls above must
+    // stay distinguishable from.
+    const zero = renderMayhemShare(
+      { mayhemLaunches: 0, mayhemFlagReadable: 9, mayhemShare: 0, duneLaunches: 9, enumerationSource: 'dune' },
+      '  ',
+    ).join('\n');
+    expect(zero).toMatch(/0 of 9/);
+    expect(zero).toMatch(/0\.0%/);
+    expect(zero).not.toMatch(/UNMEASURED/);
+  });
+
+  it('states, in one place, that the flag is an observation and not an input', () => {
+    // The sentence travels with the number. 227b and 227c were declined, and a later lane meeting
+    // this field needs to find that in the code rather than in a decision record it may not have.
+    expect(MAYHEM_OBSERVATION_ONLY).toMatch(/227a/);
+    expect(MAYHEM_OBSERVATION_ONLY).toMatch(/no gate, no bar, no rate, no verdict/);
+    expect(MAYHEM_OBSERVATION_ONLY).toMatch(/never that/);
+    // And no gate-side module may import the summariser. `dune.mjs` is already walled off from the
+    // Stage 2 modules; this is the same rule stated for the one function a gate module might
+    // plausibly reach for.
+    for (const module of ['rank.mjs', 'measure.mjs', 'entry.mjs', 'stage2.mjs', 'stage0.mjs']) {
+      const text = readFileSync(join(TOOL_DIR, module), 'utf8');
+      expect(text, `${module} must not compute a mayhem figure`).not.toMatch(/summariseMayhem/);
+    }
   });
 });
 
@@ -4070,6 +4347,8 @@ describe('the keyless boundary holds in both directions', () => {
   PERSISTED_BY_SCHEMA[13] = PERSISTED_BY_SCHEMA[12]!;
   // Schema 14's one new key sits inside `entry` — ENTRY_KEYS_BY_SCHEMA below.
   PERSISTED_BY_SCHEMA[14] = PERSISTED_BY_SCHEMA[13]!;
+  // Schema 15's three new keys sit inside `creation` — CREATION_KEYS_BY_SCHEMA below.
+  PERSISTED_BY_SCHEMA[15] = PERSISTED_BY_SCHEMA[14]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -4166,6 +4445,10 @@ describe('the keyless boundary holds in both directions', () => {
     // `launchesRoomUnproven` says how many windows were refused and nothing about what they
     // measured — which is the gap this key closes.
     14: ENTRY_KEYS_14,
+    // Schema 15 records pump.fun's mayhem-mode flag, which is an ENUMERATION column. `entry` is
+    // untouched, and that is the same boundary schemas 9 and 13 drew: no Dune value may reach a
+    // Stage 2 entry number.
+    15: ENTRY_KEYS_14,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -4213,6 +4496,13 @@ describe('the keyless boundary holds in both directions', () => {
     'duneLaunches',
     'enumerationSource',
   ];
+  // Schema 15: captain decision 227a. pump.fun's mayhem-mode flag, RECORDED per launch and REPORTED
+  // as a per-candidate share, reaching no bar and no verdict. `mayhemFlagReadable` is the share's
+  // own DENOMINATOR and is persisted rather than derived — it is NOT `duneLaunches`, because
+  // `pump_call_create` carries no such column and a history reaching back past
+  // `pump_evt_createevent` therefore has launches the flag cannot be read on. All three are `null`
+  // on a candidate the creation walk answered, and that null is UNMEASURED, never 0%.
+  const CREATION_KEYS_15 = [...CREATION_KEYS_9, 'mayhemLaunches', 'mayhemFlagReadable', 'mayhemShare'];
   const CREATION_KEYS_BY_SCHEMA: Record<number, string[]> = {
     4: CREATION_KEYS_4_TO_8,
     5: CREATION_KEYS_4_TO_8,
@@ -4232,6 +4522,7 @@ describe('the keyless boundary holds in both directions', () => {
     13: CREATION_KEYS_9,
     // Schema 14 is a Stage 2 reporting field. Enumeration is untouched.
     14: CREATION_KEYS_9,
+    15: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -4277,6 +4568,8 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 14's one new key sits on `entry` itself; the bound READS this block's `launchesPlanned`
     // accounting, exactly as schema 12's guard does, and adds nothing to it.
     14: ENTRY_COVERAGE_KEYS_6,
+    // Schema 15 records an enumeration column and touches no per-launch entry accounting.
+    15: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -4332,6 +4625,12 @@ describe('the keyless boundary holds in both directions', () => {
     // already taken. It buys no request, no host and no vendor quota. A "bound" that needed a walk to
     // fill the hole would show up HERE, and it would be 203d wearing a report's clothes.
     14: SPEND_KEYS_8,
+    // Schema 15 leaves it alone, and that is the cheapest fact about captain decision 227a: the
+    // mayhem flag is a SIXTH COLUMN on a query that already runs, so it buys no execution, no
+    // request and no host. What it does cost is BYTES on a read billed by them, and that lands in
+    // `dune.resultBytesPerRowCeiling` — re-measured for the sixth column, not assumed — rather than
+    // in this block, which counts requests and credits in three other units.
+    15: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -4374,6 +4673,10 @@ describe('the keyless boundary holds in both directions', () => {
     13: DUNE_KEYS_13,
     // Schema 14 is a Stage 2 reporting field, and no Dune value may reach a Stage 2 entry number.
     14: DUNE_KEYS_13,
+    // Schema 15 adds a column to CREATION_SQL and reports it PER CANDIDATE. Nothing run-level moves:
+    // a run-wide mayhem total would be an aggregate over candidates gated on different histories
+    // from different surfaces, which is not a quantity this block could defend.
+    15: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -4401,6 +4704,9 @@ describe('the keyless boundary holds in both directions', () => {
     13: DUNE_COVERAGE_KEYS_9,
     // Schema 14 is a Stage 2 reporting field and touches nothing Dune reads or writes.
     14: DUNE_COVERAGE_KEYS_9,
+    // Schema 15 changes what CREATION_SQL SELECTS. The probe bounds which tables the enumeration
+    // may be read over and is unchanged by a column added to one of them.
+    15: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -4418,6 +4724,7 @@ describe('the keyless boundary holds in both directions', () => {
     12: DUNE_COVERAGE_TABLE_KEYS_9,
     13: DUNE_COVERAGE_TABLE_KEYS_9,
     14: DUNE_COVERAGE_TABLE_KEYS_9,
+    15: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the

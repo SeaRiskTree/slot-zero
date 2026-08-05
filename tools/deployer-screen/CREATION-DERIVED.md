@@ -537,22 +537,69 @@ so the screen still refuses a capped wallet to the walk exactly as described. Me
 live measurement and what the split still cannot reach are owned by
 [`tools/creation-census/OVERSIZED-SPLIT.md`](../creation-census/OVERSIZED-SPLIT.md).
 
-**Bytes, which is the billed unit, stay bounded and the bound is stated.** Reads are still issued
-with `?limit=dune.maxResultRows`, so no read can exceed it whatever the query does. The measured
-**~97 bytes/row was taken at four columns**; the fifth is bounded by arithmetic at <=24 bytes, so
-<=121 bytes/row and <=~2.42 MB (~48 credits) for a read that fills the ceiling. **The five-column
-shape has now been read once: 28,699 bytes over 250 rows, i.e. ~115 bytes/row** (§8.3b, the deploy
-proof run — one deployer, so the per-response overhead is amortised over far fewer rows than the
-four-column measurement). It is inside the arithmetic bound, which stays pinned at 121 as the
-ceiling; one single-wallet read is not a batch-shaped measurement, so widen it from a real
-multi-wallet run rather than from this one. A median-shaped full-cap run is unchanged at ~9,750 rows
-and ~20 credits.
+**Bytes, which is the billed unit, stay bounded, and at SIX columns the bound is MEASURED rather
+than argued.** Reads are still issued with `?limit=dune.maxResultRows`, so no read can exceed it
+whatever the query does. **The pinned ceiling is unchanged at 121 bytes/row and it is no longer an
+arithmetic bound over an unobserved column** — see §8.2c, which owns the re-measurement captain
+decision 227a's sixth column required. A median-shaped full-cap run is unchanged at ~9,750 rows and
+~20 credits.
 
 **DEPLOY STEP — taken 2026-08-03.** This changed `CREATION_SQL`, so saved query `8204672` **was
 updated in place** to the committed text; §8.3b records the deploy and the proof the leg is live.
 Any *future* change to either committed text is the same deploy step: `README.md` → *"Deploying a
 change to the committed SQL"* owns the procedure and what a mismatch costs; §8.6 owns the custody
 rule behind it.
+
+### 8.2c The sixth column, and the byte ceiling re-measured rather than assumed — 2026-08-05
+
+**Captain decision 227a** adds `is_mayhem_mode` to `CREATION_SQL` as a sixth column: pump.fun's
+mayhem-mode flag, **RECORDED per launch and REPORTED as a per-candidate share, reaching no bar, no
+rate and no verdict.** The evidence is `slot-zero-graduation-regime-remeasure` §§1.4 and 3 (held in
+firstmate's records, not in this repo). 227b (drop those launches from the competence measure) and
+227c (drop mayhem-heavy deployers) were declined and this is not a step towards either.
+
+**Why the ceiling had to be re-measured.** `dune.resultBytesPerRowCeiling` was 121 and that number
+was **97 measured at four columns plus <=24 of arithmetic for a fifth nobody had read batch-shaped**.
+A sixth column against an unverified ceiling is how a read gets silently truncated on a surface
+billed by bytes — the same failure class as a truncated backwards walk, arriving through a budget.
+
+**Measured through `enumerateCreations` against the deployed query, both read shapes:**
+
+| shape | rows | `total_result_set_bytes` | bytes/row |
+|---|---:|---:|---:|
+| five wallets (the §8.3 reproduction set) | 488 | 51,691 | **105.92** |
+| one wallet (`7ufmve7Z…`) | 252 | 26,690 | **105.91** |
+
+**The ceiling holds and does not move.** 105.92 < 121, at both shapes, at six columns.
+
+**Two findings worth more than the number itself.**
+
+1. **The per-response overhead is negligible, which retires a stated cause.** The two shapes agree to
+   two decimals, so `total_result_set_bytes` is essentially per-row at these sizes. §8.2's earlier
+   text explained the five-column ~115 bytes/row reading (28,699 over 250 rows, §8.3b) as overhead
+   amortised over fewer rows — a 252-row read now landing at the same figure as a 488-row one
+   contradicts that. **The ~115 does not reproduce in this accounting and must not be carried
+   forward**; the figure to quote is 105.9.
+2. **The headroom is now thinner than one more column is worth.** `121 - 105.92 = 15.08` bytes,
+   against an arithmetic worst case of ~23 for one boolean column (a JSON key plus `false`). This
+   ceiling survives the sixth column and **would not survive a seventh by arithmetic**, so a seventh
+   column must re-measure and raise the pin rather than lean on a margin that is no longer there.
+   `thresholds.json` → `dune.justification.resultBytesPerRowCeiling` carries the same warning.
+
+**What the flag itself read on the reproduction set**, stated because it is the shape a consumer
+will meet rather than as a finding about these wallets: **385 of 488 rows carried a readable
+boolean, 103 carried `null`, and 3 read `true`.** The nulls are the union's older half — only
+`pump_evt_createevent` has the column, so a mint reached through `pump_call_create` arrives with
+nothing to read. On the subject deployer that is **101 of 252 launches**, which is why the share's
+denominator is `mayhemFlagReadable` and never the launch count: dividing by the whole history would
+report `0/252` where the evidence supports `0/151`, diluting the figure towards zero in exactly the
+era the flag did not exist to be set.
+
+**DEPLOY STEP — taken 2026-08-05.** `CREATION_SQL` changed, so saved query `8204672` **was updated
+in place** to the committed text and `assertSavedQueryMatches` was confirmed passing against it by
+the run that produced the table above. **Spend: 3 executions and 4 result reads** (the coverage probe
+from cache, then re-executed for staleness, then the two enumerations), **~2.7 credits**, against a
+period reading of 663.02 / 2,500 used before the work.
 
 ### 8.3 Reproduced against the 239-launch ground truth, through the production code path
 
@@ -603,7 +650,8 @@ neither.
 
 **Both legs were re-confirmed against the live vendor on 2026-08-03**, independently of the deploy
 run: `8204672` vs `CREATION_SQL` and `8204603` vs `COVERAGE_SQL` both match under `normaliseSql` (the
-live `8204672` text carries `launches_total` and the cap/ranked CTEs, so it is the five-column text),
+live `8204672` text carried `launches_total` and the cap/ranked CTEs, so it was the five-column text
+of that day — §8.2c records the 2026-08-05 deploy that made it six),
 and one further bounded execution of the same code path reproduced the readings above exactly
 (12 requests, 1 execution). **The saved-query comparison leg costs no execution and no credits** — a
 saved-query read is not billed — so checking either query for drift is free, and an execution is only
@@ -626,8 +674,8 @@ is expected to keep drifting upward. Do not read it as a restated ground truth.
 The scan cost is nearly independent of how many wallets are in the filter, so **batching is the cost
 model**: what scales is bytes returned, measured at **~97 bytes/row** after the create transaction
 and the graduation timestamp were dropped from the `SELECT` (they halved the payload and the tool
-reads neither) — **that measurement was taken at four columns**, and §8.2b states the five-column
-ceiling and why it is arithmetic rather than a measurement. At the 195-candidate cap and a median
+reads neither) — **that measurement was taken at four columns**, and the SQL now selects six, which
+§8.2c re-measures at **105.9 bytes/row** against the unchanged 121-byte ceiling. At the 195-candidate cap and a median
 ~50-launch history that is ~0.95 MB, about **20 credits a run — roughly 125 full-cap runs a month**.
 `dune.maxResultRows` caps a read at 20,000 rows and **refuses rather than pages**: an unbounded read
 is an unbounded bill. Since §8.2b the SQL also bounds a run's rows at

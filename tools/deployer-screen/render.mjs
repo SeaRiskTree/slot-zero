@@ -460,6 +460,59 @@ export function renderDropTally(total, by, indent) {
 }
 
 /**
+ * The mayhem-mode share, as ONE sentence written in ONE place — captain decision 227a.
+ *
+ * Every surface that summarises a candidate prints this: `screen.mjs`'s live line, this module's
+ * gate-passed block and the same block's gate-failed sibling. It is a formatter and nothing more:
+ * it reads three fields off a `creation` block and returns a line, and no caller may branch on what
+ * it returns. See `dune.mjs` → `MAYHEM_OBSERVATION_ONLY`.
+ *
+ * **`null` prints as UNMEASURED, never as 0%.** The share is `null` on every candidate the creation
+ * walk answered, because `is_mayhem_mode` is a column on Dune's decoded create event and the walk
+ * reads transactions. A "0%" there would be this screen asserting a wallet launches no mayhem
+ * tokens on the strength of having used a surface that cannot see the flag.
+ *
+ * The DENOMINATOR is stated rather than left to be inferred: it is the launches the flag was
+ * READABLE on, which is not the launch count printed beside it whenever `pump_call_create` supplied
+ * rows the newer event table has none of.
+ *
+ * @param {{ mayhemLaunches: number | null, mayhemFlagReadable: number | null,
+ *   mayhemShare: number | null, duneLaunches?: number | null, enumerationSource?: string } | null}
+ *   creation
+ * @param {string} indent
+ * @returns {string[]} One line, or none when there is no creation reading at all.
+ */
+export function renderMayhemShare(creation, indent) {
+  if (creation === null) return [];
+  const { mayhemLaunches, mayhemFlagReadable, mayhemShare } = creation;
+  if (mayhemLaunches === null || mayhemFlagReadable === null) {
+    return [
+      `${indent}mayhem mode: UNMEASURED — the ${creation.enumerationSource ?? 'walk'} enumeration ` +
+        `does not read the flag. NOT a reading of 0%.`,
+    ];
+  }
+  if (mayhemShare === null || mayhemFlagReadable === 0) {
+    // A different null from the one above, and it is told apart because only this one is a fact
+    // about the WALLET: the route does read the flag, and none of this wallet's enumerated launches
+    // carried a readable one.
+    return [
+      `${indent}mayhem mode: UNMEASURED — the flag was readable on none of this wallet's ` +
+        `enumerated launches. NOT a reading of 0%.`,
+    ];
+  }
+  // The unreadable count is `duneLaunches - mayhemFlagReadable`, both on this same block, and it is
+  // printed rather than left to be subtracted — a denominator smaller than the launch count beside
+  // it reads as an error unless the gap is named.
+  const unreadable =
+    typeof creation.duneLaunches === 'number' ? Math.max(0, creation.duneLaunches - mayhemFlagReadable) : 0;
+  return [
+    `${indent}mayhem mode: ${mayhemLaunches} of ${mayhemFlagReadable} launch(es) the flag was ` +
+      `readable on = ${pct(mayhemShare)}` +
+      `${unreadable > 0 ? `, ${unreadable} unreadable` : ''} — RECORDED, reaching no bar (227a)`,
+  ];
+}
+
+/**
  * Wrap prose to a width so a long rationale stays readable in a terminal.
  *
  * @param {string} text
@@ -900,6 +953,10 @@ export function renderStage1(run) {
             `${c.creation.notCreatedByWallet} acquired, ${c.creation.movedCreator} creator moved); ` +
             `+${c.creation.listedOutsideWindow} carried over from the listing`,
         );
+        // Captain decision 227a, printed on EVERY gate survivor rather than only where the share is
+        // non-zero: this list is what a later decision reads to size the screen's mayhem exposure,
+        // and a wallet that is silent here would be indistinguishable from one measured at zero.
+        for (const line of renderMayhemShare(c.creation, '      ')) L.push(line);
         // A walk that covered nothing gets its own sentence rather than the general one with a
         // hole where the date should be. "Before null" tells a reader nothing, and the state it
         // stands for — the reading falls back to the ownership listing, with no window to correct
@@ -1027,6 +1084,9 @@ export function renderStage1(run) {
       if (c.creation !== null && c.creation.listingUnmeasuredNote !== null) {
         L.push(`      · ownership listing unread: ${c.creation.listingUnmeasuredNote}`);
       }
+      // 227a. An unjudged wallet is still a candidate this run enumerated, and its mayhem exposure
+      // is a fact about the launches rather than about the gate that could not decide over them.
+      for (const line of renderMayhemShare(c.creation, '      · ')) L.push(line);
     }
   }
 
@@ -1058,6 +1118,11 @@ export function renderStage1(run) {
             `ownership-listed launches before it`,
         );
       }
+      // 227a here too. A rejected wallet's mayhem exposure is what tells a later decision whether
+      // this bar is being applied to two different populations through one number — the confounder
+      // §3 of `slot-zero-graduation-regime-remeasure` names (held in firstmate's records, not in
+      // this repo) — and that question is answered from the REJECTIONS as much as the survivors.
+      for (const line of renderMayhemShare(c.creation, '      · ')) L.push(line);
       if (c.historySource === 'ownership-only') {
         L.push('      · OWNERSHIP-ONLY run: this rejection was computed on the biased reading');
       }

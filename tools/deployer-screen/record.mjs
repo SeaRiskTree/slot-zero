@@ -315,8 +315,37 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   candidate reports a median `0.288940` over 4 windows with 6 refused, and the six were separately
  *   walked in `census/2026-08-04-proof-coverage-probe.md` at a room of `0.0000`–`0.0008`, which puts
  *   the completed median at `0.0008`. The record could not say so; a schema-14 one does.
+ * - **15** — **pump.fun's mayhem-mode flag is recorded per launch and reported per candidate**
+ *   (captain decision 227a). The `creation` block gains three keys — `mayhemLaunches`,
+ *   `mayhemFlagReadable` and `mayhemShare`; `PERSISTED_BY_SCHEMA[15]`, `ENTRY_KEYS_BY_SCHEMA[15]`,
+ *   `ENTRY_COVERAGE_KEYS_BY_SCHEMA[15]`, `SPEND_KEYS_BY_SCHEMA[15]` and `DUNE_KEYS_BY_SCHEMA[15]`
+ *   all equal `[14]`.
+ *
+ *   **What it carries and why.** `pump_evt_createevent` has always had an `is_mayhem_mode` boolean
+ *   and this repo never read it. `slot-zero-graduation-regime-remeasure` → `report.md` §1.4 and §3
+ *   (held in firstmate's records, not in this repo) measured what it is worth: 27.1% of 2026-07's
+ *   pump.fun launches carried it, those launches graduated at 4.1–4.7% against 1.8–2.1% for the
+ *   rest, and they supplied 46.3% of the month's graduations. `CREATION_SQL` now selects it as a
+ *   sixth column; `mayhemLaunches` is how many of the enumerated launches carry it,
+ *   `mayhemFlagReadable` is the share's DENOMINATOR — the launches the flag was readable on, which
+ *   is NOT `duneLaunches`, since `pump_call_create` has no such column — and `mayhemShare` is the
+ *   quotient.
+ *
+ *   **It is REPORTING and nothing reads it**, exactly as schema 14 is. No bar, gate, rate or
+ *   verdict takes it as an input, no launch is dropped or weighted for carrying it, and a test pins
+ *   that a run's verdicts are identical with the column populated, absent and malformed. Excluding
+ *   mayhem launches from the competence measure (227b) and excluding mayhem-heavy deployers (227c)
+ *   were both declined; this version must not be read as a step towards either.
+ *
+ *   **The one that will bite a reader: all three are `null` on a candidate the creation walk
+ *   answered, and `null` is UNMEASURED rather than 0%.** The flag lives on Dune's decoded create
+ *   event, and the walk reads transactions and curve accounts — so a walk-sourced candidate has no
+ *   mayhem reading at all, in the same way a Dune-sourced one has no `movedCreator`. Read
+ *   `enumerationSource` beside it. A schema-≤14 record carries no mayhem reading of any kind and
+ *   one cannot be reconstructed from it: the flag was never selected, so the absence says nothing
+ *   about the launches.
  */
-export const RECORD_SCHEMA_VERSION = 14;
+export const RECORD_SCHEMA_VERSION = 15;
 
 /**
  * Completeness of a run, as the record can actually support.

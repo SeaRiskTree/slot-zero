@@ -474,15 +474,32 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   `maxResultRows`, and the ceiling stays as the backstop that refuses such a result whole, exactly as
   before the cap existed. Bytes are bounded separately and unchanged, by `?limit=maxResultRows`.
   `CREATION-DERIVED.md` §8.2b owns it.
+- **`is_mayhem_mode` IS A SIXTH COLUMN THAT IS RECORDED AND REPORTED AND READ BY NOTHING** (captain
+  decision 227a, schema 15). pump.fun's mayhem-mode flag is a first-order confounder — 27.1% of
+  2026-07's launches carried it, they graduate at 4.1–4.7% against 1.8–2.1%, and they supplied 46.3%
+  of that month's graduations (`slot-zero-graduation-regime-remeasure` §§1.4 and 3, held in
+  firstmate's records, not in this repo). The screen records it per launch and prints each
+  candidate's share wherever a candidate is summarised; **no bar, gate, rate or verdict reads it and
+  no launch is dropped or weighted for it** — 227b and 227c were declined. `dune.mjs` →
+  `MAYHEM_OBSERVATION_ONLY` is the one sentence, and a test pins that verdicts are identical with the
+  column populated, absent and malformed. **Three traps.** A malformed value folds to `null` rather
+  than refusing the row, deliberately and unlike `bonded`/`launches_total`, because a refused row
+  refuses the WHOLE batch into the walk and would let a reporting field move a verdict. The share's
+  denominator is `mayhemFlagReadable`, **never the launch count** — only `pump_evt_createevent` has
+  the column, so the union's `pump_call_create` half reads `null` (101 of the subject's 252
+  launches). And **all three fields are `null` on a walk-sourced candidate, meaning UNMEASURED, not
+  0%** — `creatorMovementUnmeasured`'s trap running the other way.
 - **A FAILED EXECUTION IS STILL BILLED AND IS TERMINAL.** `DuneClient.execute` is the one call in
   this repository that is never retried, on any failure, for any reason; polling and result reads are
   retried because they return no bytes when they fail. **Budget from *billed* credits, not
   `execution_cost_credits`, which understates by ~3.5×** — retrieving results is ~71% of the bill at
   ~20 credits/MB. Hence: aggregate server-side, select only the columns the tool reads (dropping the
-  create tx and graduation timestamp halved the payload to **~97 bytes/row** at FOUR columns, and the
-  five-column cap SQL reads ~115 against a pinned 121 ceiling — `CREATION-DERIVED.md` §8.2b owns both
-  figures and the caveat on the second), one execution for the whole batch,
-  and a **cached** probe read by default.
+  create tx and graduation timestamp halved the payload to **~97 bytes/row** at FOUR columns; the SQL
+  selects **six** today and re-measures at **105.9 bytes/row** at BOTH read shapes against a pinned
+  121 ceiling that therefore does not move — `CREATION-DERIVED.md` §8.2c owns those figures, retires
+  the old ~115 five-column reading as non-reproducible, and states the live tripwire: **headroom is
+  now 15.08 bytes, less than one more boolean column is worth, so a SEVENTH column must re-measure
+  and raise the pin**), one execution for the whole batch, and a **cached** probe read by default.
 - **THE MONTHLY CEILING IS NOW CHECKED BEFORE A RUN SPENDS, NOT DISCOVERED BY HITTING IT — and the
   period is NOT a calendar month.** `POST /api/v1/usage` is free (a metadata endpoint that consumes
   no credits), reports `credits_used`/`credits_included` per **billing period**, and this account's
@@ -510,8 +527,12 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   throwaway with `POST /api/v1/query` then archiving it proves a slot is free without spending an
   execution. Measured that way 2026-08-04 by the discovery-widen investigation, then moved the same
   day by decision 187a taking one of the free slots: **9 saved queries, 3 production and 6 retired
-  scratch probes.** Retiring the six scratch ids is queued work, so the number will move — re-list
-  rather than quote it; this correction is an instance of exactly why. The three production queries
+  scratch probes** — and re-listed 2026-08-05 at **10, the cap**, a sibling lane having taken the
+  last free slot for a scratch probe. Retiring the retired scratch ids is queued work, so the number
+  moves in both directions — **re-list rather than quote it**; these two corrections one day apart
+  are an instance of exactly why. **At the cap there is no slot for a throwaway**, so a lane that
+  needs to validate new SQL either archives a retired probe first or deploys to the production id and
+  measures through it. The three production queries
   are deployed in place: `8204672` enumeration and `8204603` coverage, whose SQL is committed in
   `dune.mjs`, and `8214953` creation census, whose SQL is committed in
   `tools/arrival-rate-walk/cohort.mjs` → `COHORT_SQL` and whose runner is

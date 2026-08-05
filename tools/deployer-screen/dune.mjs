@@ -392,10 +392,19 @@ export const CREATION_SQL = `-- slot-zero: ORIGINAL-CREATOR launch enumeration. 
 -- CreateV2 argument and is NOT proof of authorship: six mints declare our subject as \`creator\`
 -- while being signed by six different bot-shaped wallets.
 --
--- FIVE COLUMNS AND NO MORE, because retrieving results is ~71% of the bill at ~20 credits/MB.
+-- SIX COLUMNS AND NO MORE, because retrieving results is ~71% of the bill at ~20 credits/MB.
 -- The create transaction and the graduation timestamp were both dropped once the tool was shown
 -- not to read them; that halves the bytes of every production run. The fifth, launches_total, is
--- a bigint and it is what makes the cap below DETECTABLE rather than silent.
+-- a bigint and it is what makes the cap below DETECTABLE rather than silent. The sixth,
+-- is_mayhem_mode, is captain decision 227a: pump.fun's mayhem-mode flag, RECORDED per launch and
+-- REPORTED as a per-candidate share. It reaches no bar, no rate and no verdict, and dropping the
+-- launches it marks or weighting them were the options the captain declined (227b, 227c).
+--
+-- is_mayhem_mode IS NULLABLE AND THE NULL MEANS "NOT MEASURED", NEVER "not a mayhem launch".
+-- Only pump_evt_createevent carries the column; pump_call_create has no such field, so a mint
+-- only that older surface knows about comes back NULL. bool_or takes the known value wherever
+-- either surface has one and yields NULL only when neither does — the same absence-of-evidence
+-- rule the rest of this module runs on, one column down.
 --
 -- THE CAP IS PER DEPLOYER, NOT PER BATCH, and that is the whole point of this shape. Each
 -- deployer contributes at most greatest(500, floor(19999 / <deployers in the batch>)) rows.
@@ -422,19 +431,21 @@ export const CREATION_SQL = `-- slot-zero: ORIGINAL-CREATOR launch enumeration. 
 WITH deployers AS (
   SELECT trim(w) AS wallet FROM unnest(split('{{deployers}}', ',')) AS t(w)
 ), ev AS (
-  SELECT e."user" AS deployer, e.mint AS mint, e.evt_block_time AS created_at
+  SELECT e."user" AS deployer, e.mint AS mint, e.evt_block_time AS created_at,
+         e.is_mayhem_mode AS mayhem
   FROM pumpdotfun_solana.pump_evt_createevent e
   JOIN deployers d ON d.wallet = e."user"
 ), cl AS (
-  SELECT c.account_user AS deployer, c.account_mint AS mint, c.call_block_time AS created_at
+  SELECT c.account_user AS deployer, c.account_mint AS mint, c.call_block_time AS created_at,
+         cast(NULL AS boolean) AS mayhem
   FROM pumpdotfun_solana.pump_call_create c
   JOIN deployers d ON d.wallet = c.account_user
 ), deduped AS (
-  SELECT deployer, mint, min(created_at) AS created_at
+  SELECT deployer, mint, min(created_at) AS created_at, bool_or(mayhem) AS mayhem
   FROM (SELECT * FROM ev UNION ALL SELECT * FROM cl)
   GROUP BY 1, 2
 ), ranked AS (
-  SELECT b.deployer, b.mint, b.created_at,
+  SELECT b.deployer, b.mint, b.created_at, b.mayhem,
          row_number() OVER (PARTITION BY b.deployer ORDER BY b.created_at DESC, b.mint DESC) AS rn,
          count(*) OVER (PARTITION BY b.deployer) AS launches_total
   FROM deduped b
@@ -442,7 +453,8 @@ WITH deployers AS (
   SELECT greatest(500, cast(floor(19999.0 / greatest(count(DISTINCT wallet), 1)) AS bigint)) AS max_rows
   FROM deployers
 )
-SELECT r.deployer, r.mint, r.created_at, (c.mint IS NOT NULL) AS bonded, r.launches_total
+SELECT r.deployer, r.mint, r.created_at, (c.mint IS NOT NULL) AS bonded, r.launches_total,
+       r.mayhem AS is_mayhem_mode
 FROM ranked r
 LEFT JOIN (SELECT DISTINCT mint FROM pumpdotfun_solana.pump_evt_completeevent) c ON c.mint = r.mint
 WHERE r.rn <= (SELECT max_rows FROM cap)
@@ -780,7 +792,76 @@ export function assessCoverage(input) {
  * @property {number} createdAtMs
  * @property {boolean} bonded Whether `pump_evt_completeevent` holds this mint — the chain's own
  *   statement that the curve completed, and the same transition the on-chain `complete` byte records.
+ * @property {boolean | null} mayhem pump.fun's `is_mayhem_mode` on the create event, or `null`
+ *   when this launch's row could not say. **`null` is "not measured", never "not a mayhem
+ *   launch"** — `pump_call_create` has no such column, so a mint only that surface knows about
+ *   reaches here with nothing to read. See {@link MAYHEM_OBSERVATION_ONLY} for why an unreadable
+ *   value is folded to `null` here rather than refusing the row the way `bonded` does.
  */
+
+/**
+ * The one sentence that says what the mayhem flag is FOR, and what it is forbidden to do.
+ *
+ * It reaches this module's parser, {@link summariseMayhem}'s output and the run record, because a
+ * count sitting beside a gate's inputs reads like one of them unless it says otherwise.
+ *
+ * **Captain decision 227a**, on the evidence of `slot-zero-graduation-regime-remeasure` → `report.md`
+ * §1.4 and §3 (held in firstmate's records, not in this repo — see `CLAUDE.md` → "Citing a report
+ * this repo does not hold"): 27.1% of pump.fun's 2026-07 launches carried `is_mayhem_mode`, they
+ * graduated at 4.1–4.7% against 1.8–2.1% for the rest, and they supplied 46.3% of that month's
+ * graduations. That makes the flag a first-order confounder for both halves of this screen — a
+ * completion rate mixing the two buckets measures two things through one number, and a create-slot
+ * field on a mayhem launch may hold a house agent rather than the independent snipers Stage 2's
+ * entry model assumes. The captain's answer was the cheapest one that changes nothing: RECORD it
+ * and REPORT it, so the survivor list is auditable for mayhem exposure, and leave what the screen
+ * should DO about it to a later decision on evidence this lane is what produces.
+ *
+ * Excluding mayhem launches from the competence measure (227b) and excluding mayhem-heavy deployers
+ * outright (227c) were both declined and must not be quietly adopted.
+ */
+export const MAYHEM_OBSERVATION_ONLY =
+  'CAPTAIN DECISION 227a: pump.fun\'s mayhem-mode flag is RECORDED per launch and REPORTED as a ' +
+  'per-candidate share. It is an observation printed beside the existing numbers and an input to ' +
+  'NOTHING — no gate, no bar, no rate, no verdict reads it, and no launch is dropped or weighted ' +
+  'for carrying it. A null share means the enumeration route did not measure the flag, never that ' +
+  'the candidate has no mayhem launches.';
+
+/**
+ * @typedef {object} MayhemExposure
+ * @property {number} launches How many of this wallet's enumerated launches the flag could be read
+ *   on — the share's DENOMINATOR, and not the same as the launch count beside it.
+ * @property {number} mayhem   Of those, how many carry `is_mayhem_mode = true`.
+ * @property {number} unknown  Launches enumerated whose flag could not be read at all. Counted
+ *   rather than folded into the `false` bucket, because folding it there would report a confident
+ *   low share for a wallet nothing looked at.
+ * @property {number | null} share `mayhem / launches`, or `null` when the denominator is 0 —
+ *   which is the answer "this reading measured the flag on nothing", not "0%".
+ */
+
+/**
+ * Count a wallet's mayhem exposure over the launches one enumeration returned for it.
+ *
+ * **The denominator is the launches the flag was READABLE on, not the launches enumerated**, and
+ * the two are reported apart. A wallet whose history reaches back past `pump_evt_createevent` picks
+ * up rows from `pump_call_create`, which has no such column; dividing by the whole history would
+ * quietly dilute its share towards zero in exactly the era the flag did not exist to be set.
+ *
+ * @param {readonly DuneLaunch[]} launches
+ * @returns {MayhemExposure}
+ */
+export function summariseMayhem(launches) {
+  let mayhem = 0;
+  let known = 0;
+  let unknown = 0;
+  for (const l of launches) {
+    if (l.mayhem === null) unknown += 1;
+    else {
+      known += 1;
+      if (l.mayhem) mayhem += 1;
+    }
+  }
+  return { launches: known, mayhem, unknown, share: known === 0 ? null : mayhem / known };
+}
 
 /**
  * Group the enumeration query's rows by deployer.
@@ -803,6 +884,16 @@ export function assessCoverage(input) {
  * counts the row unreadable rather than defaulting to "not capped": a default would delete the cap's
  * detection the day the column is renamed, and every capped wallet would be gated on a prefix of its
  * history reported as a total — silently, on a run reporting itself fully measured.
+ *
+ * **`is_mayhem_mode` is read exactly the OPPOSITE way, and the asymmetry is the whole of captain
+ * decision 227a's "change no verdict".** A value that is not a boolean folds to `null` — "not
+ * measured" — and the row is kept. It must not join the two columns above in refusing the row,
+ * because a refused row refuses the whole batch, every candidate in it falls back to the creation
+ * walk, and the walk can return a different history and therefore a different verdict. That would
+ * make an OBSERVATION able to move a gate outcome, which is precisely what 227a forbids. The
+ * asymmetry is safe in the direction that matters: `bonded` and `launches_total` are gate inputs
+ * where an absent column silently shortens a history, while an absent mayhem flag can only
+ * understate a reported share, on a figure nothing reads. See {@link MAYHEM_OBSERVATION_ONLY}.
  *
  * `declaredByWallet` carries that count per wallet, or `null` when the wallet's own rows disagreed
  * about it. A disagreement is nameable per wallet, unlike a parse failure, so it refuses that wallet
@@ -848,6 +939,11 @@ export function parseCreationRows(rows) {
     // exists to make visible. A numeric STRING is accepted because a bigint column may arrive as
     // one; a boolean is not, so a shifted column cannot be read as the count 1.
     const declared = readRowCount(row['launches_total']);
+    // 227a's observation column, and it is deliberately NOT part of the refusal test below. Anything
+    // that is not a boolean — the column absent, renamed, or arriving as a string — reads as `null`,
+    // "nobody measured this launch's flag", and the row survives. Refusing here would refuse the
+    // batch, send every candidate to the creation walk, and let a reporting field change a verdict.
+    const mayhem = typeof row['is_mayhem_mode'] === 'boolean' ? row['is_mayhem_mode'] : null;
     if (
       typeof deployer !== 'string' ||
       deployer === '' ||
@@ -874,7 +970,7 @@ export function parseCreationRows(rows) {
     // duplicated mint would double-count a launch on both sides of the gate's fraction.
     if (mints.has(mint)) continue;
     mints.add(mint);
-    byWallet.get(deployer)?.push({ mint, createdAtMs, bonded });
+    byWallet.get(deployer)?.push({ mint, createdAtMs, bonded, mayhem });
   }
 
   for (const list of byWallet.values()) list.sort((a, b) => a.createdAtMs - b.createdAtMs);
@@ -914,6 +1010,12 @@ function readRowCount(value) {
  *   cap cut its history. Counted at run level so a batch that lost one wallet to the cap does not
  *   look like a batch that lost nothing.
  * @property {number} bonded       How many of them the chain says completed.
+ * @property {MayhemExposure} mayhem What share of them pump.fun's mayhem-mode flag marks — captain
+ *   decision 227a, and an OBSERVATION rather than an input. It is computed over whatever rows came
+ *   back, INCLUDING on a reading that is `usable: false`, because a refused reading is still the
+ *   only mayhem evidence this run holds for the wallet and the alternative is a blank where the
+ *   answer "we saw N and could read the flag on none" belongs. Nothing downstream may branch on it;
+ *   see {@link MAYHEM_OBSERVATION_ONLY}.
  * @property {number | null} firstLaunchMs
  * @property {number | null} lastLaunchMs
  */
@@ -1098,6 +1200,10 @@ export function toWalletEnumeration(input) {
     declaredLaunches,
     truncatedByLaunchCap,
     bonded,
+    // Computed from the same rows and touching none of the fields above it. Deliberately placed
+    // AFTER `usable` is decided rather than before: nothing about 227a's flag may participate in
+    // deciding whether this reading may be gated on.
+    mayhem: summariseMayhem(launches),
     firstLaunchMs,
     lastLaunchMs,
   };

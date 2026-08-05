@@ -1147,7 +1147,12 @@ nothing about what building it costs is an absence, and reading an absence as a 
 failure this repo names in three other places (`covered.fromMs` of `0` read as a 56-year window;
 `bonded` absent read as "did not bond"; a wallet with no enumeration row read as zero launches). It
 is never built by a plan, **including under the opt-in** — there is no bound to state first, and a
-spend that cannot be bounded first is not an authorised spend.
+spend that cannot be bounded first is not an authorised spend. **The banner reads UNKNOWN there, not
+"costs nothing"**: under the opt-in it is split by what the figure itself records rather than by the
+flag — the authorised spend that was made, the billed construction that was not authorised, and the
+undeclared one, which says in place that nothing can be said about what building it would have cost.
+A benign default in that last branch would be the same absence-read-as-a-value one line above,
+contradicting the UNAVAILABLE the eligibility line on the same page prints.
 
 **The RUN path did not move.** A real run builds its source and pays whatever that costs: it was
 always going to reach that vendor, and the eligibility answer is an input to a measurement rather

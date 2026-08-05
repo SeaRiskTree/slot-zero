@@ -389,9 +389,19 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
     });
     // The word alone is not the requirement — the REASON is, and the source that owes the answer.
     expect(text).toContain('eligibility floor UNAVAILABLE');
-    expect(text).toContain('NOT MEASURED, NOT ZERO');
-    expect(text).toContain('dune fill source');
-    expect(text).toContain('coverage probe');
+    const flowed = text.replace(/\s+/g, ' ');
+    expect(flowed).toContain('NOT MEASURED, NOT ZERO');
+    expect(flowed).toContain('dune fill source');
+    expect(flowed).toContain('coverage probe');
+    // AND IT IS LAID OUT LIKE EVERY OTHER LINE OF THE BLOCK IT SITS IN. The sentence is shared with
+    // `screen.mjs` → `renderDryRun` so the two plan surfaces cannot drift in what they say; each
+    // still wraps it to its own width, and pushed whole it is one ~450-character runaway line
+    // through the middle of the WINDOW PARAMETERS block.
+    const all = text.split('\n');
+    const start = all.findIndex((l) => l.includes('NOT MEASURED, NOT ZERO'));
+    const noteLines = all.slice(start, start + all.slice(start).findIndex((l) => l.trim() === ''));
+    expect(noteLines.length).toBeGreaterThan(1);
+    for (const line of noteLines) expect(line.length).toBeLessThanOrEqual(80);
     // NEVER A BLANK AND NEVER A ZERO in that slot, and every other parameter still printed.
     expect(text).not.toMatch(/eligibility floor (?:0|NaN|undefined|null|)ms/);
     expect(text).toContain(`seek reach ${windowReachMs(ENTRY)}ms.`);
@@ -425,6 +435,10 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
     expect(constructed).toBe(0);
     expect(eligibility.known).toBe(false);
     // And the census's own plan path is the one that passes `false`, not a caller that might not.
+    // CAPTAIN DECISION 287c KEEPS THIS SOURCE-TEXT PIN. It is deliberate cheap insurance standing
+    // BESIDE the behavioural test immediately below, which drives `planCensusEligibility` with a
+    // constructor that fails if it is ever called and proves the same property observably. Removing
+    // the pin is the captain's call, not a cleanup — add beside it, never replace it.
     expect(CENSUS_SOURCE).toContain('spendAuthorised: false');
 
     // AND THAT IS ASSERTED THROUGH THE CENSUS'S OWN SEAM, not only as a literal. `main` routes its

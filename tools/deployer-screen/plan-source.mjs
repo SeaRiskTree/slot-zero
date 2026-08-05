@@ -285,7 +285,42 @@ export async function planEligibility(input) {
   } finally {
     // AFTER, and in a `finally`, because a construction that failed half-way still spent. A spend
     // reported only on success is a spend that goes missing exactly when it is most surprising.
-    if (construction.cost === 'billed') input.announce(`  ACTUAL, after: ${construction.actual()}`);
+    //
+    // AND THE READ ITSELF IS GUARDED, for the same reason the construction failure above is. A real
+    // billed source reports its actual cost out of the transport's own counters — Dune's credit
+    // accounting — and those can be unreadable. A rejection thrown from a `finally` REPLACES the
+    // completion value of this whole function: both the successful `known: true` and the degraded
+    // `known: false` / `spent: true` that exists for precisely this hazard. The caller would report
+    // a refusal and stop, so the money would be gone AND the page withheld — captain decision 286c's
+    // two refused outcomes together, arriving by the reporting leg instead of the construction one.
+    // A failure to REPORT a cost is therefore a stated absence, never a propagation; and never a
+    // zero or any other benign figure, because an unreadable cost is an UNKNOWN and must read as
+    // one, exactly as the eligibility figure itself does.
+    if (construction.cost === 'billed') input.announce(`  ACTUAL, after: ${actualSpend(construction)}`);
+  }
+}
+
+/**
+ * WHAT THE BILLED CONSTRUCTION ACTUALLY COST, OR THE STATED ABSENCE THAT REPLACES IT.
+ *
+ * Never throws. See the `finally` in {@link planEligibility} for why that is load-bearing rather
+ * than defensive: this is called from a `finally`, where a rejection would silently discard the
+ * eligibility outcome the caller is entitled to.
+ *
+ * @param {FillSourceConstruction} construction
+ * @returns {string}
+ */
+function actualSpend(construction) {
+  try {
+    return construction.actual();
+  } catch (cause) {
+    return (
+      `UNREADABLE — THE SPEND WAS MADE AND WHAT IT COST COULD NOT BE READ: ` +
+      `${cause instanceof Error ? cause.message : String(cause)} That is an UNKNOWN cost, not a ` +
+      `zero and not a free build; read this page as having spent an unstated amount on the ` +
+      `${construction.kind} fill source. Reporting the cost is never allowed to take the plan with ` +
+      `it, so every other figure here stands and the eligibility answer above is unaffected.`
+    );
   }
 }
 

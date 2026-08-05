@@ -1138,6 +1138,37 @@ export function loadThresholds() {
 }
 
 /**
+ * Wrap one shared plan sentence to the width of the block it is printed inside.
+ *
+ * The unavailable note is one string shared with `screen.mjs` → `renderDryRun` so the two plan
+ * surfaces cannot drift in what they SAY. They still lay it out themselves, at their own indents,
+ * and this census must do that too: pushed whole it is a ~450-character runaway line through the
+ * middle of a block every other line of which is wrapped. It is a local copy of the same four-line
+ * greedy wrap `render.mjs` uses rather than an import, because importing that module would put the
+ * screen's whole graph — the Dune client and the credential reader included — into this keyless
+ * pass's imports, which captain decision 173a keeps out of it.
+ *
+ * @param {string} text
+ * @param {number} width
+ * @returns {string[]}
+ */
+function wrapPlanNote(text, width) {
+  /** @type {string[]} */
+  const lines = [];
+  let line = '';
+  for (const word of text.split(/\s+/)) {
+    if (line === '') line = word;
+    else if (line.length + 1 + word.length <= width) line += ` ${word}`;
+    else {
+      lines.push(line);
+      line = word;
+    }
+  }
+  if (line !== '') lines.push(line);
+  return lines;
+}
+
+/**
  * Print the plan, in the units each leg is actually bounded in, before anything is fetched.
  *
  * The same contract `screen.mjs` → `renderDryRun` holds: the worst case printed here is the whole
@@ -1276,7 +1307,9 @@ export function renderDryRun(plan) {
   // NEVER A BLANK AND NEVER A ZERO — captain decision 286c. A floor this plan could not have for
   // free says so in place, names the source that owes it and the reason, and leaves every other
   // parameter above standing.
-  for (const note of eligibilityUnavailableNote(plan.entryEligibility)) L.push(`    ${note}`);
+  for (const note of eligibilityUnavailableNote(plan.entryEligibility)) {
+    for (const line of wrapPlanNote(note, 74)) L.push(`    ${line}`);
+  }
   L.push('');
   L.push('WHAT IT WILL NOT DO: no entry score, no room figure, no field, no entry cost, no verdict.');
   L.push('');

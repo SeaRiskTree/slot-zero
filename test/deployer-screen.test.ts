@@ -11936,6 +11936,69 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       expect(eligibilityFloorMs(eligibility)).toBe('UNAVAILABLE');
     });
 
+    it('a cost that cannot be READ is a stated absence, and never takes the plan with it', async () => {
+      // THE SAME 286c PAIR BY THE REPORTING LEG. A real billed source reads its actual cost out of
+      // the transport's own counters, which can be unreadable — and a rejection thrown from the
+      // `finally` REPLACES this function's completion value, destroying the eligibility answer the
+      // caller is entitled to. `screen.mjs` would report a refusal and exit, so the money would be
+      // gone AND the page withheld. So the failure is announced as an unknown and never propagates,
+      // and the result the try/catch produced survives intact in both directions.
+      const unreadable = () => {
+        throw new Error('the credit balance endpoint returned no readable counter.');
+      };
+
+      // (a) A SUCCESSFUL billed construction still answers, and still says the cost is unknown.
+      const okLog: string[] = [];
+      const ok = await planEntryEligibility(
+        'dune',
+        {
+          dune: {
+            construction: billedConstruction('dune', {
+              why: 'building it runs a billed coverage probe.',
+              bound: 'at most 1 execution and 2.0 billed credits',
+              actual: unreadable,
+            }),
+            build: () => duneStub(),
+          },
+        },
+        { bounds: BOUNDS, spendAuthorised: true, announce: (l) => okLog.push(l) },
+      );
+      expect(ok).toEqual({ known: true, kind: 'dune', minAgeMs: LAG_MS, billed: true });
+      expect(okLog.at(-1)).toContain('ACTUAL, after: UNREADABLE — THE SPEND WAS MADE AND WHAT IT COST COULD NOT BE READ');
+      expect(okLog.at(-1)).toContain('no readable counter');
+      // An unknown cost reads as an unknown — never a zero, never a benign "free".
+      expect(okLog.at(-1)).toContain('not a zero and not a free build');
+
+      // (b) An ALREADY-FAILED authorised construction keeps ITS OWN why, not the reporting failure's.
+      const failLog: string[] = [];
+      const failed = await planEntryEligibility(
+        'dune',
+        {
+          dune: {
+            construction: billedConstruction('dune', {
+              why: 'building it runs a billed coverage probe.',
+              bound: 'at most 1 execution and 2.0 billed credits',
+              actual: unreadable,
+            }),
+            build: () => {
+              throw new Error('the coverage probe refused the trade tables.');
+            },
+          },
+        },
+        { bounds: BOUNDS, spendAuthorised: true, announce: (l) => failLog.push(l) },
+      );
+      expect(failed.known).toBe(false);
+      if (failed.known) throw new Error('unreachable');
+      expect(failed.spent).toBe(true);
+      expect(failed.why).toContain('coverage probe refused the trade tables');
+      expect(failed.why).not.toContain('no readable counter');
+      expect(failLog.at(-1)).toContain('THE SPEND WAS MADE AND WHAT IT COST COULD NOT BE READ');
+      // (c) Neither case propagated: both above returned, and the plan still prints its figure or
+      // its stated absence rather than the caller seeing a refusal.
+      expect(eligibilityFloorMs(ok)).toBe(`${LAG_MS}ms`);
+      expect(eligibilityFloorMs(failed)).toBe('UNAVAILABLE');
+    });
+
     it('a failure where NOTHING WAS SPENT still refuses — the discriminator is the money, not the error', async () => {
       // The other half, and it must not be weakened by the degrade above. A FREE construction that
       // cannot be built, and a kind this run carries no constructor for, both cost nothing — so the
@@ -12175,6 +12238,10 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       // ask, then guard — are pinned as source text because a refactor that quietly routed the run
       // through `planEligibility` would inherit a refusal the run must never have: a real run was
       // always going to reach that vendor.
+      // CAPTAIN DECISION 287c KEEPS THESE SOURCE-TEXT PINS. They are deliberate cheap insurance
+      // standing BESIDE the behavioural test immediately above, which drives `selectEntryFillSource`
+      // against a billed and an undeclared registry and observes the constructor run. Removing them
+      // is the captain's call, not a cleanup — add beside them, never replace them.
       const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
       expect(screen).toMatch(/entryFillSource = selectEntryFillSource\(ENTRY_FILL_SOURCE_KIND, entryFillSources\);/);
       expect(screen).toMatch(/entryMinAgeMs = await entryFillSource\.minAgeMs\(entryFillBounds\(entryThresholds, Date\.now\(\)\)\);/);

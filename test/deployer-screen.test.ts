@@ -1807,18 +1807,21 @@ describe('the CLI contract', () => {
     const jSwap = swap['justification'] as Record<string, string>;
     const jDune = dune['justification'] as Record<string, string>;
 
-    // THE BAN IS SYMMETRIC AND IT IS ON NAMED PARAMETERS, ON BOTH SIDES. Neither entry may NAME the
-    // other lane's cost parameters; neither is banned from the other's bare UNIT word. The Dune
-    // entries each say "request" exactly once, to disclaim it, and a swap-api entry is equally
-    // entitled to say it spends no Dune credit — banning the bare word "credit" on one side only
-    // would fail that legitimate sentence for the wrong reason while the other side stayed free.
-    // What is asserted on both sides is the arithmetic's own named terms, which is the thing that
-    // would actually be borrowed.
+    // THE BAN IS SYMMETRIC AND IT HAS TWO PARTS, ON BOTH SIDES. Neither entry may NAME the other
+    // lane's cost parameters, AND neither may state a QUANTITY in the other lane's unit — a credit
+    // figure on the swap-api side, a request figure on the Dune side. A bare mention of the other
+    // unit, used to DISCLAIM it, is deliberately allowed on both sides: the Dune entries each say
+    // "request" exactly once, to say the unit does not apply here, and a swap-api entry is equally
+    // entitled to say it spends no Dune credit.
     //
-    // The names are taken from the OTHER lane's live key set rather than written out here, so the
-    // check cannot quietly become a regex over parameters that no longer exist: if a swap-api entry
-    // reached for the Dune credit arithmetic it would have to name one of these, and if one of them
-    // is renamed this assertion fails rather than silently stopping to fire.
+    // The quantity half is what gives the parameter half its reach. A borrowed derivation does not
+    // have to name a parameter to be borrowed — the sibling block states its whole credit derivation
+    // in bare figures — so a parameter-name ban alone would miss the realistic borrow while its
+    // comment claimed otherwise. The two halves are checked to be able to fire below, against the
+    // other block's own live text rather than against an invented sentence.
+    //
+    // The parameter names are taken from the OTHER lane's live key set rather than written out here,
+    // so if one is renamed this assertion fails rather than silently stopping to fire.
     const swapCostParams = ['maxRequestsPerLaunch', 'maxKeylessRequests'] as const;
     const duneCostParams = [
       'maxResultRows',
@@ -1831,6 +1834,18 @@ describe('the CLI contract', () => {
     for (const p of duneCostParams) expect(duneLane[p], `dune.${p}`).toBeTypeOf('number');
     const swapCostTerms = new RegExp(swapCostParams.join('|'));
     const duneCostTerms = new RegExp(duneCostParams.join('|'));
+    const requestQuantity = /[\d.,]+\s*requests?/i;
+    const creditQuantity = /[\d.,]+\s*credits?/i;
+    const borrowsDune = (text: string) => duneCostTerms.test(text) || creditQuantity.test(text);
+    const borrowsSwap = (text: string) => swapCostTerms.test(text) || requestQuantity.test(text);
+
+    // THE CHECK CAN FIRE, DEMONSTRATED RATHER THAN ASSERTED: each side's ban is run against the
+    // other block's OWN justification, which states that side's real derivation in that side's real
+    // unit. If either predicate stopped catching the genuine article, these two lines fail.
+    for (const k of CAPS) {
+      expect(borrowsDune(jDune[k]!), `the Dune ban must catch stage2_entry_dune's own ${k}`).toBe(true);
+      expect(borrowsSwap(jSwap[k]!), `the swap-api ban must catch stage2_entry's own ${k}`).toBe(true);
+    }
 
     for (const k of CAPS) {
       // THE LIMIT OF THIS CHECK, so the prose claim is not read as stronger enforcement than it is:
@@ -1839,10 +1854,10 @@ describe('the CLI contract', () => {
       // an explicitly owned text contract here (same idiom as 'every pinned parameter carries a
       // stated reason'), and because the value-level half of the scoping is asserted semantically in
       // the next test. Both blocks' prose now claims only this narrow half.
-      expect(jDune[k], `stage2_entry_dune.justification.${k} borrows swap-api arithmetic`).not.toMatch(
-        swapCostTerms,
+      expect(borrowsSwap(jDune[k]!), `stage2_entry_dune.justification.${k} borrows swap-api arithmetic`).toBe(
+        false,
       );
-      expect(jSwap[k], `stage2_entry.justification.${k} borrows Dune arithmetic`).not.toMatch(duneCostTerms);
+      expect(borrowsDune(jSwap[k]!), `stage2_entry.justification.${k} borrows Dune arithmetic`).toBe(false);
       // And each states its OWN model rather than merely avoiding the other's.
       expect(jSwap[k], `stage2_entry.justification.${k} states no request arithmetic`).toMatch(swapCostTerms);
       expect(jDune[k], `stage2_entry_dune.justification.${k} states no credit arithmetic`).toMatch(/credit/i);

@@ -560,6 +560,17 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   **Nothing tracks the month ACROSS runs** — each run checks the ceiling itself (bullet above) and
   then forgets; the tools are stateless between runs. Auth is the `X-Dune-API-Key`
   **header**, never `Bearer`.
+- **THE ROW CEILING HAS NOW REFUSED A REAL RUN, AND THE TRIGGER IS THE CANDIDATE COUNT, NOT A SPAM
+  WALLET.** 2026-08-05, an untiered default run at **76 deployers**: the per-deployer cap of 500
+  permits 38,000 rows, the batch returned **27,731** against the pinned 20,000 ceiling, and the
+  reading was refused **whole** — `dune.rowsReturned: 0`, `dune.coverage: null`,
+  `enumerationSource: "helius"` on all 76. This is the arithmetic `maxResultRows`'s justification
+  states in advance (the rows bound is `max(19,999, deployers × 500)`, so **above 39 deployers it can
+  exceed the ceiling**) biting for the first time. **Two consequences.** It cost that leg **232,937
+  Helius credits and 4,105 RPC requests** against 1,924 and 33 for a 69-deployer leg that kept its
+  Dune answer; and **a walk-sourced leg has NO mayhem reading at all** — `mayhemShare` null on 76 of
+  76, UNMEASURED and never 0%. Mitigation for a run that wants its Dune answer is `--candidates`
+  below ~39 or a raised ceiling, and both are decisions.
 - **Measured cost, 2026-08-03:** five deployers' whole histories = **8 requests, 1 execution, 1.75
   billed credits**; a 195-candidate run ≈ 20 credits, i.e. ~125 full-cap runs a month. Against 793
   Helius credits and 12 requests for ONE deployer, or 7,166 keyless requests and ~287 min.
@@ -668,11 +679,26 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
   Distinct per-seed yield must be recomputed from `candidates[].seededBy`, and only gated wallets
   carry provenance — prefiltered entries record a reason and no seed. `tools/deployer-screen/README.md`
   → "Two of the three seeds used to yield nothing, silently" owns the field's semantics.
-- **Free tier only** — ~200 requests/day, ~10/min, **shared** across whatever holds the key, and keys
-  expire every 30 days. `/{wallet}/history` is PRO+. Paid tiers are refused standing policy.
+- **NO LONGER FREE TIER, AND NO LONGER SHARED — the key is ULTRA and EXCLUSIVE to slot-zero**
+  (captain, 2026-08-05). Measured the same day from the response headers: `x-ratelimit-limit`
+  **100,000**/day, resetting at **00:00Z**. The old facts were ~200/day, shared, and they are what
+  every bound in `thresholds.json` is still sized against — **`budget.maxKeyedRequests` is still 200
+  per run and was deliberately NOT raised** by the lane that measured this, so a run still refuses a
+  plan over 200 and a full-cap run is still 198. Do not read the new ceiling as authorisation to
+  widen anything; that is a captain decision. `/{wallet}/history` is still PRO+.
+- **THE VENDOR SENDS ITS DAILY COUNTER ON EVERY RESPONSE AND NOTHING HERE READS IT.**
+  `x-ratelimit-remaining` / `x-ratelimit-used` / `x-ratelimit-reset` are on the wire.
+  `budget.maxKeyedRequests` bounds ONE RUN and the tool is stateless between runs, so N legs of
+  60–85 requests each pass the check individually and can exceed the day together — which is exactly
+  what stopped a run mid-flight on 2026-08-05, back when the cap was 200 and shared, after another
+  holder had spent 153 of it. Every other ceiling in this tool refuses before the first request, the
+  Dune monthly balance included. The Ultra upgrade removed the urgency, not the gap: **read the
+  header before a multi-leg session** (`runs/2026-08-05-seed-comparison.md` → "Spend" has the
+  one-line curl) rather than assuming the day is yours.
 - **Spend the whole MadeOnSol daily allowance when a run will answer something** (captain, 2026-08-02:
   there is no free substitute for this data, so hoarding it buys nothing). The screen's pinned bounds
-  are the full ~200/day; the earlier quarter-allowance ceiling is withdrawn, so do not re-derive it.
+  are the full ~200/day (unchanged by the 2026-08-05 Ultra upgrade above); the earlier
+  quarter-allowance ceiling is withdrawn, so do not re-derive it.
   The "if it gets results" conditional binds — no sweeps, no idle retries. **MadeOnSol only**:
   SolanaTracker/CoinGecko keys are production-shared and unchanged, as is keyless pump.fun
   pacing. **Helius is NO LONGER production-shared** — captain, 2026-08-03: that key is this research
@@ -967,6 +993,21 @@ dev currently?"*, and the shape of the answer is the point:
   **`record.mjs` and the README's schema table are two prose copies of the same contract and have
   drifted twice**; a test now pins them together, so move both in one commit. Current version:
   `RECORD_SCHEMA_VERSION` in `record.mjs`.
+- **A RUN CARRIES THE PREDICTIONS IT WAS MADE TO TEST** (schema 17, captain decision 232c).
+  `--predict <path>` reads a document, `record.mjs` → `readPredictions` shape-checks it **before the
+  first request** and refuses one that declares its own `source`, since the reader sets that field
+  from the path; it is embedded verbatim as the run-level `declaredPredictions` block — **not**
+  schema 16's `predictions`, which is the screen's own per-candidate claim summary. A prediction's
+  `metric` is a dotted record path **or** a `derived:` name from `DERIVED_PREDICTION_METRICS`, and
+  `resolvePredictionMetric` is the one resolver for both — the derived half exists because the
+  questions worth predicting are counts over `candidates[]`, not fields. **`reading` is REQUIRED and
+  is never defaulted**: that is 231a's rule one level down, and every rate metric names its reading
+  in its own name (`medianGateCompletionRate` against `medianVendorPageCompletionRate`). **Nothing is
+  evaluated by the screen** — it records the claim and measures the run; grading is another lane's.
+  `declaredPredictions: null` means NOTHING WAS PREDICTED, never that a prediction failed. The block is
+  shape-checked and **not** content-checked, so what makes these predictions rather than
+  postdictions is that the document is committed in its own commit ahead of the run, exactly as
+  `thresholds.json` is — the record cannot prove that and does not claim to.
 
 ## The feedback loop — the screen grading its own predictions
 
@@ -1059,6 +1100,51 @@ its `README.md`; every number reproduces from `node tools/window-decay-tripwire/
   and a run sees one launch, so without the state file the tool would silently become the
   single-launch alarm this lane rejected — the CLI refuses rather than degrade. The verdict latches:
   this lane never un-stops and never re-polls a wallet it has stopped on.
+
+## The two seedings, measured against each other
+
+`tools/deployer-screen/runs/2026-08-05-seed-comparison.md` (captain decision 232c) runs the screen on
+the untiered default seeds and on `--tier good`/`--tier elite`, same day, same code, at an unmoved
+`minCompletionRate` of 0.25. Three records back it, held at
+`tools/deployer-screen/measurements/2026-08-05-seed-comparison/` and **not** under `runs/`: they are
+the 2026-08-05 measurement whose schema number was superseded — schema-15 candidate rows plus a
+run-level `predictions` block that only exists at 17, under the name `declaredPredictions`, so no
+version describes them and they are not the grading lane's contract. That directory's `README.md`
+owns the statement. **The seeding was NOT chosen — that is the captain's.** Four things bind any lane that touches the gate or the feed:
+
+- **THE BAR'S ROLE INVERTS BETWEEN THE SEEDINGS, so an argument about 0.25 is an argument about the
+  UNTIERED pool only.** Untiered: 59 of 76 candidates are eligible on `minTokens`+`minSpanDays` and
+  the rate bar then admits **2** — it is doing all the work. `--tier good`: 18 of 69 eligible, 14
+  admitted. `--tier elite`: 13 of 59 eligible, **13 admitted — the rate bar rejects nobody**, and all
+  46 elite rejections are sample-size rejections. On the tiered legs `minCompletionRate` is very
+  nearly inert.
+- **THE ADMITTED SETS BARELY OVERLAP AND THE RELATION IS A SUBSET, NOT A DISAGREEMENT.** 2 wallets in
+  common (Jaccard 0.0741); every wallet the untiered leg admitted the tiered pair also admitted, and
+  the tiered pair admitted 25 more the untiered leg never saw. The two tier pools were **disjoint**
+  that day, which is tier membership behaving as the trailing window it is.
+- **THE TIERED SEEDING IMPORTS THE VENDOR'S RANKING BY SELECTION, NOT BY RATE INFLATION, and
+  conflating those two gives the wrong answer.** Rate flattery is **nil**: median (vendor page −
+  gate reading) is **0.0000** on all three pools and all three admitted sets, because the two
+  readings are IDENTICAL below the 70-record page cap and diverge in **both** directions above it.
+  Selection is total: **27 of 27 tiered admissions were reachable through `leaderboard:total_bonded`**
+  (the volume ranking) against **0 of 2** untiered ones, which came through `alerts`. Nothing there
+  measures whether vendor rank predicts `roomLeft` — that correlation is the obvious next question
+  and has not been run.
+- **THE "ARTEFACT READS HIGHER THAN THE CONTROL" ASYMMETRY IS A PROPERTY OF THE VENDOR PAGE AND
+  REVERSES ON THE GATE READING.** `thresholds.json` → `minCompletionRate` concludes that raising the
+  bar removes the operator and keeps the artefacts. Measured: on the page the artefacts read 1.0000
+  and 0.9429 against the control's 0.5429, exactly as stated — but on the **gate reading**, which is
+  what the bar is compared against, they read **0.3089 and 0.3303 against the control's 0.4325**, so
+  a bar in **(0.3303, 0.4325]** removes both and keeps the control. n = 2 artefacts, one control, one
+  day. **FILED, NOT ACTED ON** — no bar moved and `thresholds.json` was not touched; it is a captain
+  decision, and it is the same class of defect 231a was raised to fix, one level in.
+
+Stage 2 answered on this population where it had not before: **10 measured `entry-room-absent`
+verdicts** across the three legs against 0 on the 2026-08-04 run, **no `entry-open-after-costs`**, and
+the entry-cost leg never ran because room refused first. The known-negative control was refused
+**live on a stranger run** for the first time (room 0.2805 over 10 launches, 0 unproven). The scoring
+cap of 7 is now the binding constraint on the tiered legs — 13 of 27 survivors went unscored for cap
+reasons alone, which is a cap and not a refusal.
 
 ## Where candidate wallets come from, and the ceiling on that
 

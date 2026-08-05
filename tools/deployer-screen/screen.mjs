@@ -57,6 +57,7 @@ import {
   RECORD_SCHEMA_VERSION,
   deriveTruncation,
   describeUnmeasured,
+  readPredictions,
   redactAll,
   redactCreationNotes,
   redactVendorIdentifiers,
@@ -167,6 +168,13 @@ OPTIONS
   --dune-refresh-probe
                       Re-EXECUTE Dune's coverage probe rather than reading its cached result.
                       Costs one billed execution; the default cached read costs none.
+  --predict <path>    Read a predictions document and carry it VERBATIM in the run record, so the
+                      grading lane has an input rather than a plan. Validated for shape BEFORE the
+                      first request — an unreadable document refuses the run (exit 2) rather than
+                      being discovered after the keyed allowance is gone. Nothing here is evaluated
+                      by this tool: it records what was predicted and measures what happened, and
+                      scoring one against the other belongs to the lane that grades. See
+                      record.mjs -> readPredictions for the shape and what each field must say.
   --out <path>        Write the run record as JSON. Default: nothing is written. An INCOMPLETE run
                       writes <path>.partial.json instead, leaving <path> untouched.
   --json              Print the run record as JSON instead of text.
@@ -240,6 +248,7 @@ export function parseArgs(argv) {
     ownershipOnly: false,
     noDune: false,
     duneRefreshProbe: false,
+    predict: null,
     out: null,
     json: false,
     dataDir: DEFAULT_DATA_DIR,
@@ -316,6 +325,12 @@ export function parseArgs(argv) {
         opts.tier = v;
         break;
       }
+      case '--predict': {
+        const v = next();
+        if (v === null) return { ok: false, message: '--predict needs a path' };
+        opts.predict = v;
+        break;
+      }
       case '--out': {
         const v = next();
         if (v === null) return { ok: false, message: '--out needs a path' };
@@ -351,6 +366,8 @@ export function parseArgs(argv) {
  *   is what every run before captain decision 156a did. The record still says which surface answered.
  * @property {boolean} duneRefreshProbe Re-EXECUTE the coverage probe instead of reading Dune's
  *   cached result for it. An execution is billed; the cached read is not.
+ * @property {string | null} predict Path to a predictions document, carried verbatim in the record.
+ *   Read and shape-checked before the first request; see `record.mjs` → `readPredictions`.
  * @property {string | null} out
  * @property {boolean} json
  * @property {string} dataDir
@@ -418,6 +435,31 @@ export async function main(opts, env, out, err) {
 
   /** @type {'creation-derived' | 'ownership-only'} */
   const historySource = opts.ownershipOnly ? 'ownership-only' : 'creation-derived';
+
+  // ---- The predictions this run is being made to test, if any ----------------------------
+  // Read and shape-checked HERE — before Stage 0, before the plan, before any ceiling — because
+  // the failure it prevents is specific: a run that discovers its predictions were unreadable
+  // after spending the keyed allowance has to spend it again to get them back, and the whole
+  // point of recording a prediction is that it exists before the answer does. Nothing in this
+  // document is evaluated; `record.mjs` -> readPredictions says why.
+  /** @type {Record<string, unknown> | null} */
+  let declaredPredictions = null;
+  if (opts.predict !== null) {
+    /** @type {string} */
+    let text;
+    try {
+      text = readFileSync(opts.predict, 'utf8');
+    } catch (cause) {
+      err(`--predict: could not read ${opts.predict}: ${cause instanceof Error ? cause.message : String(cause)}`);
+      return EXIT.usage;
+    }
+    const parsed = readPredictions(text, opts.predict);
+    if (!parsed.ok) {
+      err(`--predict: ${parsed.message}`);
+      return EXIT.usage;
+    }
+    declaredPredictions = parsed.predictions;
+  }
 
   // ---- Stage 0. Always runs. Nothing keyed happens until it has passed. -------------------
   /** @type {import('./stage0.mjs').Stage0Result} */
@@ -1379,6 +1421,14 @@ export async function main(opts, env, out, err) {
               duneEnumeration === null ? null : coverageRecordRow(duneEnumeration.probe, duneEnumeration.coverage),
           };
         })(),
+        // **What the LANE said it expected of this run, before it looked.** Carried verbatim from
+        // `--predict` and evaluated by nothing here: the screen records the claim and measures the
+        // outcome, and scoring one against the other is the grading lane's job — a tool that graded
+        // its own predictions would be marking its own paper. Deliberately NOT `predictions`, which
+        // is the screen's own per-candidate claim summary further down. `null` means NOTHING WAS
+        // PREDICTED, the normal state of a run made without the flag, and is not "the predictions
+        // failed".
+        declaredPredictions,
         elapsedMs: Date.now() - startedAt,
         // `completed` is whether the run reached the end; `truncated` is whether anything is
         // missing for any reason. A completed run whose candidate cap bit is truncated but NOT

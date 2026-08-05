@@ -382,8 +382,390 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   appends an `exit` claim to the same list and moves the subject across; **no record written under
  *   schema 16 is invalidated by that**, which is the whole reason claims are a list rather than a
  *   scalar. A schema that forced a reset would waste every run recorded in between.
+ * - **17** — **a run can now carry the predictions it was made to test**, so the grading lane has an
+ *   input rather than a plan. The run-level block `declaredPredictions` is new;
+ *   `PERSISTED_BY_SCHEMA[17]`,
+ *   `ENTRY_KEYS_BY_SCHEMA[17]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[17]`, `SPEND_KEYS_BY_SCHEMA[17]`,
+ *   `DUNE_KEYS_BY_SCHEMA[17]` and `CREATION_KEYS_BY_SCHEMA[17]` all equal `[16]`.
+ *
+ *   **`declaredPredictions` is NOT schema 16's `predictions` and the two names are kept apart on
+ *   purpose:** `predictions` is what the SCREEN predicted about its candidates, emitted by the tool
+ *   from its own verdicts, while `declaredPredictions` is what the LANE predicted about the run
+ *   before it looked, supplied by the operator, carried verbatim and graded elsewhere.
+ *
+ *   **Why it belongs in the record and not beside it.** This module's own opening sentence declares
+ *   run records the prediction-grading lane's input, and until this version there was nowhere in one
+ *   to say what a run predicted — so every prediction lived in a companion document that could be
+ *   written, revised or lost independently of the measurement it was about. A sidecar is a second
+ *   copy of a claim, and the two drift until whichever one a reader opens becomes the truth.
+ *
+ *   **What it carries.** `--predict <path>` reads a document, {@link readPredictions} validates it,
+ *   and it is embedded VERBATIM: `documentVersion`, `lane`, `leg`, `madeAtIso`, `basis`, `source`
+ *   (the path it was read from) and `predictions`, each of which is `{id, statement, reading,
+ *   metric, comparator, value, rationale}`. `metric` is EITHER a dotted path into this record OR a
+ *   `derived:` name from {@link DERIVED_PREDICTION_METRICS}, and {@link resolvePredictionMetric} is
+ *   the one resolver for both, so a grader reads the field the prediction named rather than one it
+ *   inferred. The derived half exists because the questions worth predicting are mostly COUNTS over
+ *   `candidates[]` rather than scalars a record holds — *how many did this leg admit* is not a
+ *   field — and leaving those to prose would have made the interesting half of every prediction
+ *   ungradeable, while letting a document carry its own expression would have made a grader an
+ *   interpreter. `metric: null` is legitimate and means the claim is not resolvable from a record at
+ *   all; it still carries `statement` and `rationale`, and it may then carry no comparator.
+ *
+ *   **`reading` is REQUIRED and is the point of the block.** A completion rate is two different
+ *   quantities here — the creation-derived merged history the gate reads, and the vendor's
+ *   70-record page — differing by an order of magnitude on the same wallets, and captain decision
+ *   231a exists because a bar was once stated without naming which. A prediction about a rate that
+ *   does not say which rate is not gradeable, so the reader REFUSES one rather than defaulting.
+ *
+ *   **Nothing here is evaluated by the screen, deliberately.** The tool carries the claim and
+ *   measures the run; scoring the first against the second is the grading lane's job, and a screen
+ *   that graded its own predictions would be marking its own paper. `declaredPredictions: null` is
+ *   the normal state of a run made without `--predict` and means *nothing was predicted*, never *the
+ *   predictions failed*.
+ *
+ *   **The one that will bite a reader: the document is the RUN's, not the tool's, and it is
+ *   unvalidated as to CONTENT.** {@link readPredictions} checks shape, not truth — it cannot know
+ *   whether a stated `value` was reasonable, and a document written after the run would look
+ *   identical to one written before it. What makes these predictions rather than postdictions is
+ *   that the document is committed in its own commit before the run, exactly as `thresholds.json`
+ *   is; the record cannot prove that and does not claim to.
  */
-export const RECORD_SCHEMA_VERSION = 16;
+export const RECORD_SCHEMA_VERSION = 17;
+
+/**
+ * The predictions-document contract version, carried inside the document itself.
+ *
+ * Separate from {@link RECORD_SCHEMA_VERSION} because the two move for different reasons: a record
+ * schema changes when a run measures something new, and this changes when what a prediction has to
+ * say about itself changes. A grader reads both.
+ */
+export const PREDICTIONS_DOCUMENT_VERSION = 1;
+
+/**
+ * The comparators a prediction may use, and the only ones a grader has to implement.
+ *
+ * Deliberately small. Every one is decidable from a single resolved value, so a grader is a lookup
+ * and a comparison rather than an expression evaluator — which is what keeps the claim auditable by
+ * reading it. `between` reads `value` as a two-element `[lo, hi]`, inclusive at both ends.
+ */
+export const PREDICTION_COMPARATORS = ['<', '<=', '>', '>=', '==', 'between', 'includes'];
+
+/**
+ * The readings a prediction may be about.
+ *
+ * `gate` is the creation-derived merged history `screen.mjs` gates on by default; `vendor-page` is
+ * MadeOnSol's 70-record `profile.pump_tokens` listing, which `--ownership-only` and `feed.mjs` read.
+ * `not-a-rate` is for a prediction about something that is not a completion rate at all — a count, a
+ * spend, an overlap — and it is spelled out rather than left implicit so that omitting `reading`
+ * stays an error.
+ */
+export const PREDICTION_READINGS = ['gate', 'vendor-page', 'not-a-rate'];
+
+/**
+ * The DERIVED quantities a prediction may name, and the only ones a grader has to compute.
+ *
+ * A dotted path reaches any scalar the record already holds, and the questions worth predicting are
+ * mostly not scalars the record holds: *how many candidates did this leg admit* is a count over
+ * `candidates[]`, not a field. Leaving those to prose would have made the interesting half of every
+ * prediction ungradeable, and letting a document carry its own expression would have made a grader
+ * an interpreter. So the vocabulary is fixed here, named `derived:` at the call site, and each entry
+ * is one line of arithmetic a reader can check.
+ *
+ * **Every rate metric names its READING in its own name** — `Gate` for the creation-derived merged
+ * history `screen.mjs` gates on, `VendorPage` for MadeOnSol's 70-record listing. The two differ by
+ * an order of magnitude on the same wallets, so a metric called `medianCompletionRate` would be the
+ * exact ambiguity captain decision 231a was taken to remove.
+ *
+ * `VendorMinusGate` is the one that is a comparison rather than a count: per candidate, the vendor
+ * page's rate minus the gate reading's. It is POSITIVE when the vendor's own surface flatters a
+ * wallet relative to what it created — which is the observable that says whether a screen is
+ * importing the vendor's ranking or finding deployers that ranking has passed over.
+ *
+ * @type {Record<string, (record: Record<string, unknown>) => number | null>}
+ */
+export const DERIVED_PREDICTION_METRICS = {
+  gatePassedCount: (r) => countVerdict(r, 'gate-passed'),
+  gateFailedCount: (r) => countVerdict(r, 'gate-failed'),
+  gateUnmeasuredCount: (r) => countVerdict(r, 'gate-unmeasured'),
+  /** Candidates clearing `minTokens` and `minSpanDays` — the population the rate bar then judges. */
+  gateEligibleCount: (r) => {
+    const t = gateThresholdsOf(r);
+    if (t === null) return null;
+    return candidatesOf(r).filter(
+      (c) => numberOr(c['tokens']) >= t.minTokens && numberOr(c['spanDays']) >= t.minSpanDays,
+    ).length;
+  },
+  /** Candidates whose GATE-reading rate clears the pinned bar, whatever the other two bars did. */
+  gateReadingClearingBarCount: (r) => {
+    const t = gateThresholdsOf(r);
+    if (t === null) return null;
+    return candidatesOf(r).filter((c) => numberOr(c['completionRate']) >= t.minCompletionRate).length;
+  },
+  /** The same bar applied to the VENDOR PAGE rate. A different quantity, deliberately named as one. */
+  vendorPageClearingBarCount: (r) => {
+    const t = gateThresholdsOf(r);
+    if (t === null) return null;
+    return candidatesOf(r).filter((c) => numberOr(c['vendorCompletionRate']) >= t.minCompletionRate).length;
+  },
+  medianGateCompletionRate: (r) => median(candidatesOf(r).map((c) => c['completionRate'])),
+  medianVendorPageCompletionRate: (r) => median(candidatesOf(r).map((c) => c['vendorCompletionRate'])),
+  medianVendorMinusGateRate: (r) => median(vendorMinusGate(candidatesOf(r))),
+  admittedMedianVendorMinusGateRate: (r) =>
+    median(vendorMinusGate(candidatesOf(r).filter((c) => c['verdict'] === 'gate-passed'))),
+  /** Candidates the two readings disagreed about — the size of what the gate reading changed. */
+  verdictChangedCount: (r) => candidatesOf(r).filter((c) => c['verdictChanged'] === true).length,
+  /** Scored candidates carrying a MEASURED entry verdict. `entry-unmeasured` is no answer, never one. */
+  measuredEntryVerdictCount: (r) =>
+    candidatesOf(r).filter((c) => {
+      const e = c['entry'];
+      if (typeof e !== 'object' || e === null) return false;
+      const v = /** @type {Record<string, unknown>} */ (e)['verdict'];
+      return typeof v === 'string' && v !== 'entry-unmeasured';
+    }).length,
+};
+
+/** @param {Record<string, unknown>} record @returns {Record<string, unknown>[]} */
+function candidatesOf(record) {
+  const cs = record['candidates'];
+  return Array.isArray(cs) ? /** @type {Record<string, unknown>[]} */ (cs.filter((c) => typeof c === 'object' && c !== null)) : [];
+}
+
+/** @param {Record<string, unknown>} record @param {string} verdict @returns {number} */
+function countVerdict(record, verdict) {
+  return candidatesOf(record).filter((c) => c['verdict'] === verdict).length;
+}
+
+/**
+ * The gate's own pinned bars, as the record carries them.
+ *
+ * Read from the record rather than from `thresholds.json`, because a prediction is graded against
+ * the run that made it and a later build's bars are a different question.
+ *
+ * @param {Record<string, unknown>} record
+ * @returns {{ minTokens: number, minCompletionRate: number, minSpanDays: number } | null}
+ */
+function gateThresholdsOf(record) {
+  const t = record['thresholds'];
+  if (typeof t !== 'object' || t === null) return null;
+  const g = /** @type {Record<string, unknown>} */ (t)['stage1_gate'];
+  if (typeof g !== 'object' || g === null) return null;
+  const gate = /** @type {Record<string, unknown>} */ (g);
+  const [minTokens, minCompletionRate, minSpanDays] = ['minTokens', 'minCompletionRate', 'minSpanDays'].map(
+    (k) => gate[k],
+  );
+  if (typeof minTokens !== 'number' || typeof minCompletionRate !== 'number' || typeof minSpanDays !== 'number') {
+    return null;
+  }
+  return { minTokens, minCompletionRate, minSpanDays };
+}
+
+/** A missing or non-numeric field is `-Infinity`, so it fails a floor rather than passing one. */
+function numberOr(/** @type {unknown} */ v) {
+  return typeof v === 'number' && Number.isFinite(v) ? v : Number.NEGATIVE_INFINITY;
+}
+
+/** Per candidate, vendor-page rate minus gate-reading rate; candidates missing either are dropped. */
+function vendorMinusGate(/** @type {Record<string, unknown>[]} */ candidates) {
+  return candidates
+    .filter((c) => typeof c['vendorCompletionRate'] === 'number' && typeof c['completionRate'] === 'number')
+    .map((c) => /** @type {number} */ (c['vendorCompletionRate']) - /** @type {number} */ (c['completionRate']));
+}
+
+/**
+ * Linear-interpolated median. `null` on an empty sample — never 0, which is a reading.
+ *
+ * Spelled out because a grader has to reproduce it exactly: sort ascending, take the midpoint, and
+ * on an even count average the two around it.
+ *
+ * @param {readonly unknown[]} values
+ * @returns {number | null}
+ */
+function median(values) {
+  /** @type {number[]} */
+  const xs = [];
+  for (const v of values) if (typeof v === 'number' && Number.isFinite(v)) xs.push(v);
+  xs.sort((a, b) => a - b);
+  if (xs.length === 0) return null;
+  const mid = (xs.length - 1) / 2;
+  const lo = xs[Math.floor(mid)];
+  const hi = xs[Math.ceil(mid)];
+  if (lo === undefined || hi === undefined) return null;
+  return (lo + hi) / 2;
+}
+
+/**
+ * Resolve a prediction's `metric` against a run record.
+ *
+ * Two forms, one resolver. A dotted path with `[n]` for array indices reaches a scalar the record
+ * already holds — `coverage.gated`, `candidates[0].completionRate`. A `derived:` name reaches one of
+ * {@link DERIVED_PREDICTION_METRICS}, which is where the counts and medians live that a record
+ * carries the ingredients for but not the answer to.
+ *
+ * Either way this is the ONE resolver, so a grader reads the field the prediction named and not one
+ * it re-derived. A path that does not resolve returns `undefined`, which a grader must treat as
+ * UNGRADEABLE rather than as a miss — the same distinction the whole record keeps everywhere else:
+ * not looking is not a measured negative. `null` is different again and is a reading: an empty
+ * median, an absent block.
+ *
+ * @param {unknown} record
+ * @param {string} path
+ * @returns {unknown}
+ */
+export function resolvePredictionMetric(record, path) {
+  if (typeof path !== 'string' || path.length === 0) return undefined;
+  if (path.startsWith('derived:')) {
+    const fn = Object.prototype.hasOwnProperty.call(DERIVED_PREDICTION_METRICS, path.slice('derived:'.length))
+      ? DERIVED_PREDICTION_METRICS[path.slice('derived:'.length)]
+      : undefined;
+    if (fn === undefined) return undefined;
+    if (typeof record !== 'object' || record === null || Array.isArray(record)) return undefined;
+    return fn(/** @type {Record<string, unknown>} */ (record));
+  }
+  /** @type {unknown} */
+  let node = record;
+  for (const step of path.split('.')) {
+    const match = /^([^[\]]*)((?:\[\d+\])*)$/.exec(step);
+    if (match === null) return undefined;
+    const [, name = '', indices = ''] = match;
+    if (name !== '') {
+      if (typeof node !== 'object' || node === null || Array.isArray(node)) return undefined;
+      if (!Object.prototype.hasOwnProperty.call(node, name)) return undefined;
+      node = /** @type {Record<string, unknown>} */ (node)[name];
+    }
+    for (const raw of indices.match(/\d+/g) ?? []) {
+      if (!Array.isArray(node)) return undefined;
+      node = node[Number(raw)];
+    }
+  }
+  return node;
+}
+
+/**
+ * Read and validate a predictions document.
+ *
+ * **Shape only.** It cannot tell a prediction from a postdiction and does not pretend to — see the
+ * schema-17 note above. What it does refuse is a document that could not be graded at all, and it
+ * refuses BEFORE the run spends anything, because a run that discovered its own predictions were
+ * unreadable after burning the keyed allowance would have to be re-run to get them back.
+ *
+ * @param {string} text Raw file contents.
+ * @param {string} source Path it came from, recorded so the record names its own provenance.
+ * @returns {{ ok: true, predictions: Record<string, unknown> } | { ok: false, message: string }}
+ */
+export function readPredictions(text, source) {
+  /** @type {unknown} */
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch (cause) {
+    return { ok: false, message: `${source} is not valid JSON: ${cause instanceof Error ? cause.message : cause}` };
+  }
+  if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) {
+    return { ok: false, message: `${source} must hold a JSON object` };
+  }
+  const d = /** @type {Record<string, unknown>} */ (doc);
+
+  // The block is carried verbatim, so the reader may not overwrite a field the document declares.
+  // `source` is the one field it supplies itself, from the path — a document declaring its own would
+  // be silently replaced, which is the single place "verbatim" would stop being literally true.
+  if (Object.prototype.hasOwnProperty.call(d, 'source')) {
+    return {
+      ok: false,
+      message: `${source} declares \`source\`, which is set by the reader from the path it was read from and may not be declared`,
+    };
+  }
+
+  if (d['documentVersion'] !== PREDICTIONS_DOCUMENT_VERSION) {
+    return {
+      ok: false,
+      message: `${source} declares documentVersion ${JSON.stringify(d['documentVersion'])}; this build writes ${PREDICTIONS_DOCUMENT_VERSION}`,
+    };
+  }
+  for (const key of ['lane', 'leg', 'madeAtIso', 'basis']) {
+    if (typeof d[key] !== 'string' || /** @type {string} */ (d[key]).length === 0) {
+      return { ok: false, message: `${source} needs a non-empty string \`${key}\`` };
+    }
+  }
+  if (Number.isNaN(Date.parse(/** @type {string} */ (d['madeAtIso'])))) {
+    return { ok: false, message: `${source} has an unparseable madeAtIso` };
+  }
+
+  const rows = d['predictions'];
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { ok: false, message: `${source} needs a non-empty \`predictions\` array` };
+  }
+
+  /** @type {Set<string>} */
+  const ids = new Set();
+  for (const [i, row] of rows.entries()) {
+    const at = `${source} predictions[${i}]`;
+    if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+      return { ok: false, message: `${at} must be an object` };
+    }
+    const r = /** @type {Record<string, unknown>} */ (row);
+    for (const key of ['id', 'statement', 'rationale']) {
+      if (typeof r[key] !== 'string' || /** @type {string} */ (r[key]).length === 0) {
+        return { ok: false, message: `${at} needs a non-empty string \`${key}\`` };
+      }
+    }
+    const id = /** @type {string} */ (r['id']);
+    if (ids.has(id)) return { ok: false, message: `${at} repeats the id ${JSON.stringify(id)}` };
+    ids.add(id);
+
+    // The 231a rule, enforced rather than documented: a prediction about a completion rate that
+    // does not name the reading is not gradeable, and defaulting one would reintroduce exactly the
+    // ambiguity that decision was taken to remove.
+    if (!PREDICTION_READINGS.includes(/** @type {string} */ (r['reading']))) {
+      return { ok: false, message: `${at} needs \`reading\` to be one of ${PREDICTION_READINGS.join(' | ')}` };
+    }
+
+    const metric = r['metric'];
+    if (metric === null) {
+      // A claim no record can resolve is legitimate and stays in the document — but it must not
+      // carry a comparator, or a grader would try to evaluate what it cannot read.
+      if (r['comparator'] !== null || r['value'] !== null) {
+        return { ok: false, message: `${at} has metric: null, so comparator and value must be null too` };
+      }
+      continue;
+    }
+    if (typeof metric !== 'string' || metric.length === 0) {
+      return { ok: false, message: `${at} needs \`metric\` to be a dotted record path, a derived: name, or null` };
+    }
+    // A `derived:` name a grader cannot compute is refused HERE rather than at grading time, where
+    // it would be indistinguishable from a path that simply did not resolve — i.e. from ungradeable
+    // — and a typo would quietly become "we could not tell" instead of "this document is wrong".
+    if (metric.startsWith('derived:')) {
+      const name = metric.slice('derived:'.length);
+      if (!Object.prototype.hasOwnProperty.call(DERIVED_PREDICTION_METRICS, name)) {
+        return {
+          ok: false,
+          message: `${at} names an unknown derived metric ${JSON.stringify(name)}; known: ${Object.keys(DERIVED_PREDICTION_METRICS).join(', ')}`,
+        };
+      }
+    }
+    const comparator = r['comparator'];
+    if (!PREDICTION_COMPARATORS.includes(/** @type {string} */ (comparator))) {
+      return { ok: false, message: `${at} needs \`comparator\` to be one of ${PREDICTION_COMPARATORS.join(' ')}` };
+    }
+    if (comparator === 'between') {
+      const v = r['value'];
+      if (!Array.isArray(v) || v.length !== 2 || v.some((n) => typeof n !== 'number')) {
+        return { ok: false, message: `${at} uses \`between\`, so \`value\` must be [lo, hi] numbers` };
+      }
+      if (/** @type {number} */ (v[0]) > /** @type {number} */ (v[1])) {
+        return { ok: false, message: `${at} has a \`between\` range whose lo exceeds its hi` };
+      }
+      continue;
+    }
+    const value = r['value'];
+    if (value === undefined || (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'boolean')) {
+      return { ok: false, message: `${at} needs a number, string or boolean \`value\`` };
+    }
+  }
+
+  return { ok: true, predictions: { ...d, source } };
+}
 
 /**
  * Completeness of a run, as the record can actually support.

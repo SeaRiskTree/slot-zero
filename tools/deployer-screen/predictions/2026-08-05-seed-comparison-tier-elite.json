@@ -1,0 +1,81 @@
+{
+  "documentVersion": 1,
+  "lane": "slot-zero-widened-run-seed-comparison (captain decision 232c)",
+  "leg": "tiered — --tier elite, the second half of the good/elite seeding",
+  "madeAtIso": "2026-08-05T04:46:12.000Z",
+  "basis": "Written and committed BEFORE the run, from runs/2026-07-29-elite.json (schema 1, completeness UNKNOWN, 12 candidates gated because that run was invoked with a candidate cap below the ceiling) and from thresholds.json -> stage1_gate.justification.minCompletionRate. That record predates the creation-derived reading, so every rate in it is the VENDOR 70-RECORD PAGE. The bar is 0.25 and is held, not tuned: captain decision 231a.",
+  "predictions": [
+    {
+      "id": "E1-pool-is-small",
+      "statement": "The --tier elite pool gates at most 45 candidates.",
+      "reading": "not-a-rate",
+      "metric": "coverage.gated",
+      "comparator": "<=",
+      "value": 45,
+      "rationale": "The 2026-07-29 elite run surfaced 22 distinct wallets and gated 12, and the 12 was a flag rather than the vendor's limit. Elite is the narrowest tier and the three seeds overlap heavily inside it. This run passes no candidate cap, so the reading is what the vendor will serve — an outcome the prior record cannot supply and this prediction is deliberately loose about."
+    },
+    {
+      "id": "E2-admitted-count",
+      "statement": "The --tier elite leg admits between 1 and 12 candidates at 0.25 on the GATE reading.",
+      "reading": "gate",
+      "metric": "derived:gatePassedCount",
+      "comparator": "between",
+      "value": [1, 12],
+      "rationale": "5 of 12 admitted on 2026-07-29 against the vendor page, where all 12 cleared 0.25 on that surface and only the other three bars removed any. On the creation-derived reading the count should fall relative to the pool for the same page-cap reason as the good tier, but the pool size itself is the larger unknown, so the band is wide."
+    },
+    {
+      "id": "E3-elite-pool-sits-highest-on-the-gate-reading",
+      "statement": "The --tier elite pool's median completion rate on the GATE reading exceeds 0.10.",
+      "reading": "gate",
+      "metric": "derived:medianGateCompletionRate",
+      "comparator": ">",
+      "value": 0.1,
+      "rationale": "Against 0.021645 untiered. The elite page median was 0.7685; even at the 3.3x fall measured on the one wallet where both readings exist that projects near 0.23, so 0.10 leaves room for the fall to be steeper on a tier selected almost entirely by recent visible success. PROJECTION ACROSS A READING BOUNDARY, like G3."
+    },
+    {
+      "id": "E4-vendor-page-reads-very-high",
+      "statement": "The --tier elite pool's median rate on the VENDOR PAGE exceeds 0.45.",
+      "reading": "vendor-page",
+      "metric": "derived:medianVendorPageCompletionRate",
+      "comparator": ">",
+      "value": 0.45,
+      "rationale": "0.7685 on 2026-07-29 on the same surface, with a p25 of 0.5524. Set well below that because tier membership slides and the elite feed on a different day is a different set of wallets, not the same ones re-read."
+    },
+    {
+      "id": "E5-elite-admissions-are-the-most-vendor-flattered",
+      "statement": "On the --tier elite leg's ADMITTED candidates, the median of (vendor-page rate minus gate-reading rate) exceeds +0.15 — the largest gap of the three legs.",
+      "reading": "gate",
+      "metric": "derived:admittedMedianVendorMinusGateRate",
+      "comparator": ">",
+      "value": 0.15,
+      "rationale": "The sharpest form of the captain's question 4. Elite is the tier the vendor's own ranking most strongly selects, and the two wallets thresholds.json names as post-break short-window artefacts — yHCxHBEa... at 1.0000 against an old-regime 0.1369, and GeBJSHK4... at 0.9429 against 0.0462 — both reached us through the elite feed. If the gap is ordered elite > good > untiered, the seeding decision is a decision about how much of the vendor's popularity view the screen inherits, and that ordering is the deliverable."
+    },
+    {
+      "id": "E6-control-present-and-admitted",
+      "statement": "The known-negative control 7ufmve7Z... is in the --tier elite pool AND is admitted at 0.25.",
+      "reading": "gate",
+      "metric": null,
+      "comparator": null,
+      "value": null,
+      "rationale": "It came back from all three seeds under tier=elite on 2026-07-29 at 0.5429 on the vendor page, and reads 0.4325 on the gate reading. Graded by finding the wallet in candidates[] and reading its verdict. Note it is NOT guaranteed: the tiers are not disjoint and it had moved to good by 2026-08-02, so a miss here is a fact about tier drift and not about the wallet."
+    },
+    {
+      "id": "E7-dune-answers",
+      "statement": "The Dune enumeration leg is used rather than refused.",
+      "reading": "not-a-rate",
+      "metric": "dune.used",
+      "comparator": "==",
+      "value": true,
+      "rationale": "Same claim as U8 and G8, tested per run because the coverage probe is checked per run."
+    },
+    {
+      "id": "E8-artefact-outranks-the-control-on-the-page-only",
+      "statement": "At least one admitted candidate reads ABOVE the control 7ufmve7Z...'s rate on the vendor page while reading BELOW it on the gate reading — so a bar raised to exclude the artefact would exclude the control first on the page reading, and would not need to on the gate reading.",
+      "reading": "not-a-rate",
+      "metric": null,
+      "comparator": null,
+      "value": null,
+      "rationale": "The captain's question 5, and it is stated as a claim about WHICH READING because the prior evidence is mixed on exactly that point. thresholds.json compares the artefacts' page rates (1.0000, 0.9429) with the control's page rate (0.5429) AND its gate rate (0.4325) in one sentence. On the gate reading the same artefact reads 0.3071 — BELOW the control — so the 'the artefact reads higher than genuine skill' claim may hold on the vendor page and reverse on the gate reading. Graded by reading both rates off every admitted candidate row, which schema 4 onwards carries side by side and no record before it did."
+    }
+  ]
+}

@@ -565,9 +565,14 @@
       "is a BIASED sample rather than a short one and would grade the screen on a sample it would",
       "never have scored.",
       "",
-      "THE DAILY ARITHMETIC: maxKeyedRequests 6 x runsPerDayAssumed 1 = 6 of the ~200/day Free-tier",
-      "allowance, worst case. The feed already takes up to 90 and screen.mjs takes the rest, so this",
-      "lane is deliberately the smallest keyed consumer in the tool. It is OPERATOR-RUN, not",
+      "THE DAILY ARITHMETIC: maxKeyedRequests 6 x runsPerDayAssumed 1 = 6 of the 100,000/day",
+      "allowance, worst case — the denominator restated by captain decision 267a, which found the",
+      "MadeOnSol key is now Ultra and EXCLUSIVE to slot-zero rather than ~200/day and shared. The",
+      "feed takes up to 108 and screen.mjs takes the rest, so this lane is still deliberately the",
+      "smallest keyed consumer in the tool, by three orders of magnitude rather than by a share of a",
+      "scarce day. NOTE THE SHAPE THIS BLOCK ALREADY HAD AND budget.maxKeyedRequests HAS SINCE",
+      "ADOPTED: 6 is 3 claims x 2 ATTEMPTS, i.e. the ceiling counts the retry rather than leaving it",
+      "to headroom. It is OPERATOR-RUN, not",
       "scheduled; putting it on a cron means raising runsPerDayAssumed here and saying what it",
       "displaces, exactly as the feed block requires.",
       "",
@@ -596,7 +601,7 @@
       "maxKeylessRequests": "3 x 10 x 18 = 540 AT THE PINNED stage2_entry VALUES, and the ceiling equals the declared worst case so the dry run prints the whole exposure. THE CHECK IS AGAINST EACH CLAIM'S OWN RECORDED RECIPE, NOT AGAINST THESE PINS, and that is the load-bearing part: an outcome must be measured at the bars the predicting run applied, so a record carrying a larger maxLaunchesPerCandidate or maxRequestsPerLaunch is priced at ITS values and the run is REFUSED before its first request if the sum does not fit here. It is never scaled down to fit — stage2.mjs skips a whole launch rather than pricing one half-way for the same reason, and a truncated walk holds the earliest entrants by slot, which is a biased sample rather than a short one. It sits under budget.maxKeylessRequests, and the two legs never run at once, so this lane cannot crowd out a screen run's own walk.",
       "maxRpcRequests": "3 x stage2_cost.maxRpcRequestsPerCandidate 500 = 1,500, the run-level ceiling the per-candidate one does not provide. It exists because the per-candidate ceiling comes from the RECORD being graded rather than from this file: without a run-level bound, a record pinning a larger stage2_cost ceiling would set this lane's exposure, which is an unbounded provider call wearing a recorded number's clothes. Checked before the first request against the claims actually due, and the run is refused whole if it does not fit. Pacing is stage2_cost.rpcMinIntervalMs, inherited rather than re-pinned: api.mainnet-beta rate-limits GLOBALLY across methods, so this leg is serialised with the fill walk exactly as Stage 2's cost leg is.",
       "keylessMinIntervalMs": "swap-api's own pin, mirroring stage2_entry.keylessMinIntervalMs, because this lane walks the SAME host with the SAME client and a second lane pacing it faster would shed the first lane's requests as well as its own. It is applied as max(this, the recorded run's own value) so it can only ever slow the walk down: a record written under a faster pin cannot make this lane outrun the host, and a future pin raised here cannot be undone by an old record. Pacing moves the wall clock and never the exposure — the 540 above is unchanged by it.",
-      "runsPerDayAssumed": "OPERATOR-RUN, ONCE A DAY AT MOST, and the number exists so the shared-allowance arithmetic is stated rather than assumed: 6 x 1 = 6 keyed requests a day of the ~200/day Free-tier allowance, against the feed's 90 and screen.mjs's remainder. It is an ASSUMPTION about how the tool is invoked and not a bound the code enforces — the enforced bound is maxKeyedRequests, per run. Putting this lane on a schedule means raising this value on purpose and saying what it displaces, which is the same rule feed.runsPerDayAssumed already states; a cron added without touching it is how a lane silently becomes the allowance's largest consumer."
+      "runsPerDayAssumed": "OPERATOR-RUN, ONCE A DAY AT MOST, and the number exists so the allowance arithmetic is stated rather than assumed: 6 x 1 = 6 keyed requests a day of the 100,000/day allowance (restated by captain decision 267a; it read ~200/day and shared before the key went Ultra and exclusive), against the feed's 108 and screen.mjs's remainder. It is an ASSUMPTION about how the tool is invoked and not a bound the code enforces — the enforced bound is maxKeyedRequests, per run. Putting this lane on a schedule means raising this value on purpose and saying what it displaces, which is the same rule feed.runsPerDayAssumed already states; a cron added without touching it is how a lane silently becomes the allowance's largest consumer."
     }
   },
 

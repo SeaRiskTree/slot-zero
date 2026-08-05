@@ -2385,7 +2385,7 @@ against 540, and the entry-cost leg against 1,500 Solana RPC requests. The plan 
 claim's **own** recorded recipe, and a plan that does not fit is refused **whole** — never truncated
 to fit, because a Stage 2 walk cut short holds the earliest entrants by slot, which is a biased sample
 rather than a short one. `thresholds.json` → `feedback_loop.justification` owns every value, including
-the daily arithmetic (6 keyed requests of the ~200/day shared allowance) and the fact that this lane
+the daily arithmetic (6 keyed requests of the 100,000/day allowance) and the fact that this lane
 is operator-run rather than scheduled.
 
 **It re-tunes nothing.** No bar in `thresholds.json` moves for it — `minCompletionRate` is still 0.25,

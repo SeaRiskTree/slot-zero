@@ -16,11 +16,14 @@
  *
  * ## 2. The default path spends nothing
  *
- * A run is a **dry run unless `--live` is passed**. This lane is meant to run on a schedule forever
- * against a key shared with production, so the safe path has to be the one an operator gets by
- * typing the command wrong. Its per-run keyed cost is pinned in `thresholds.json` → `feed` and
- * refused before the first request if the plan does not fit: **3 enumeration + at most `--gate`
- * profile requests, and nothing else is keyed.** It spends no keyless request at all.
+ * A run is a **dry run unless `--live` is passed**. This lane is meant to run on a schedule forever,
+ * so the safe path has to be the one an operator gets by typing the command wrong — and that
+ * argument does not weaken now the key is Ultra and exclusive to slot-zero, because what a cron
+ * spends unreviewed was never only about the size of the allowance. Its per-run keyed cost is pinned
+ * in `thresholds.json` → `feed` and refused before the first request if the plan does not fit:
+ * **6 enumeration + at most `--gate` profile requests, and nothing else is keyed** — 6 and not 3
+ * since captain decision 262a made the seeding tiered (`seed.mjs` → `DEFAULT_TIERS`). It spends no
+ * keyless request at all.
  *
  * ## 3. It grades on the CHEAP reading, and that reading is biased in BOTH directions at once
  *
@@ -61,7 +64,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
+import { BoundedClient, CeilingReached, MADEONSOL_DAILY_REQUESTS, VendorRefused } from './client.mjs';
 import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import {
   ALL_UNMEASURED_MIN_GATED,
@@ -103,8 +106,15 @@ const DEFAULT_RUNS_DIR = join(HERE, 'runs');
  * **2** adds `alarm.unmeasuredConditionArmed`. Bumped rather than added silently for the reason the
  * field itself exists: in a schema-1 record the field's absence is indistinguishable from a run that
  * had the alarm armed, so a reader with no version could not tell a disarmed run from an older one.
+ *
+ * **3** changes what `spend.dailyAllowance` MEANS. Under schema 2 it held the per-run keyed ceiling
+ * (`budget.maxKeyedRequests` — 402 after captain decision 267a, and mislabelled a daily allowance);
+ * under schema 3 it holds the vendor's actual day, `MADEONSOL_DAILY_REQUESTS` (100,000). Bumped
+ * rather than corrected in place because the two quantities differ by ~250x while both being
+ * well-formed request counts, so a reader holding a schema-2 record has nothing in the record itself
+ * that would tell them which one they have — a version is exactly how that is said.
  */
-export const FEED_RECORD_SCHEMA_VERSION = 2;
+export const FEED_RECORD_SCHEMA_VERSION = 3;
 
 const EXIT = {
   ok: 0,
@@ -152,6 +162,8 @@ export const FEED_LIMITATIONS = [
     'UNMEASURED here — that is Stage 2, in screen.mjs.',
 ];
 
+const DEFAULT_SEED_REQUESTS = buildSeedPlan({ limit: 1 }).length;
+
 const USAGE = `feed — continuous discovery of NEW candidate deployer wallets
 
   node tools/deployer-screen/feed.mjs [options]
@@ -178,9 +190,10 @@ OPTIONS
   --help              This text.
 
 WHAT ONE RUN COSTS
-  Keyed (MadeOnSol, shared with production): 3 enumeration requests + at most --gate profile
-  requests. Nothing else is keyed. A plan whose worst case exceeds the pinned per-run ceiling is
-  refused before the first request, with nothing spent.
+  Keyed (MadeOnSol, Ultra and exclusive to this lane): ${DEFAULT_SEED_REQUESTS} enumeration requests
+  on the default tiered seeding — a single --tier narrows the plan and costs fewer — plus at most
+  --gate profile requests. Nothing else is keyed. A plan whose worst case exceeds the pinned per-run
+  ceiling is refused before the first request, with nothing spent.
   Keyless: NONE. This lane does not walk the fill tape and does not touch Solana RPC.
 
 CREDENTIAL
@@ -214,8 +227,8 @@ EXIT CODES
 export function parseFeedArgs(argv) {
   /** @type {FeedOptions} */
   const opts = {
-    // **Dry by default.** A scheduled lane against a shared credential does not get to have its
-    // spending path be the one you reach by forgetting a flag.
+    // **Dry by default.** A scheduled lane — the one caller no human reviews before each spend —
+    // does not get to have its spending path be the one you reach by forgetting a flag.
     live: false,
     bootstrap: false,
     gate: null,
@@ -431,7 +444,7 @@ export function triage(profile, gateThresholds) {
  * @typedef {object} FeedDeps
  * @property {typeof fetch} [fetchImpl] Injected for tests, exactly as `client.mjs` does. There is no
  *   code path in the test suite that reaches the real network — `test/offline-guard.ts` enforces it.
- * @property {(ms: number) => Promise<void>} [sleepImpl] Injected so the 6.5s pacing is free in tests.
+ * @property {(ms: number) => Promise<void>} [sleepImpl] Injected so the keyed pacing is free in tests.
  */
 
 /**
@@ -526,9 +539,15 @@ export async function main(opts, env, out, err, deps = {}) {
     out('');
     out(`  keyed plan            ${seedPlan.length} enumeration + up to ${gateBatch} gate = ${worstCaseKeyed} request(s)`);
     out(`  per-run ceiling       ${maxKeyed} (thresholds.json -> feed.maxKeyedRequestsPerRun)`);
+    // THE DENOMINATOR IS THE VENDOR'S DAY, NOT budget.maxKeyedRequests. It used to be the latter,
+    // which read correctly only while that ceiling happened to BE the daily allowance — at Ultra it
+    // is a per-run ceiling of 402 and printing a share against it would have understated this lane's
+    // headroom by ~250x while looking exactly as authoritative.
+    const dailyWorstCase = worstCaseKeyed * feedT.runsPerDayAssumed;
     out(
       `  assumed daily cost    ${worstCaseKeyed} x ${feedT.runsPerDayAssumed} run(s)/day = ` +
-        `${worstCaseKeyed * feedT.runsPerDayAssumed} of the ~${budgetT.maxKeyedRequests}/day allowance`,
+        `${dailyWorstCase} of the ${MADEONSOL_DAILY_REQUESTS.toLocaleString('en-US')}/day allowance ` +
+        `(${((dailyWorstCase / MADEONSOL_DAILY_REQUESTS) * 100).toFixed(3)}%, Ultra and exclusive to this lane)`,
     );
     out('  keyless plan          NONE. This lane spends no keyless request and touches no Solana RPC.');
     const disabled = unmeasuredAlarmDisabledWarning(gateBatch);
@@ -764,7 +783,8 @@ export async function main(opts, env, out, err, deps = {}) {
    * Persist the ledger, assemble the record, render and optionally write.
    *
    * One path for both the completed and the aborted case, so a run that stopped early still updates
-   * the memory it paid for. Re-learning those wallets would cost the shared allowance twice.
+   * the memory it paid for. Re-learning those wallets would spend a keyed request twice for one
+   * answer.
    *
    * @param {number | null} abortCode The exit code an aborted run is returning, or `null` when the
    *   run completed. Marks the run row incomplete and drives the wording; the decision to abort was
@@ -813,7 +833,7 @@ export async function main(opts, env, out, err, deps = {}) {
         gateBatch,
         assumedRunsPerDay: feedT.runsPerDayAssumed,
         assumedDailyWorstCaseKeyed: worstCaseKeyed * feedT.runsPerDayAssumed,
-        dailyAllowance: budgetT.maxKeyedRequests,
+        dailyAllowance: MADEONSOL_DAILY_REQUESTS,
         endpoints: client.stats().byEndpoint,
       },
       seeds: seedYields.map((s) => ({
@@ -1008,7 +1028,10 @@ export function renderFeedRun(record) {
   lines.push(
     `  SPEND  ${record['keyedRequests']} keyed request(s) of a ${record['spend'].keyedCeiling} per-run ceiling; ` +
       `0 keyless. Assumed daily worst case ` +
-      `${record['spend'].assumedDailyWorstCaseKeyed} of ~${record['spend'].dailyAllowance}.`,
+      `${record['spend'].assumedDailyWorstCaseKeyed} of the ` +
+      `${record['spend'].dailyAllowance.toLocaleString('en-US')}/day allowance ` +
+      `(${((record['spend'].assumedDailyWorstCaseKeyed / record['spend'].dailyAllowance) * 100).toFixed(3)}%, ` +
+      `Ultra and exclusive to this lane).`,
   );
 
   const queue = record['queue'];

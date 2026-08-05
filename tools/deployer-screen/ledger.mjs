@@ -178,7 +178,8 @@ export function loadLedger(path) {
     throw new Error(
       `The feed ledger at ${path} is not readable JSON (${cause instanceof Error ? cause.message : String(cause)}). ` +
         `Refusing to start over: an empty ledger would re-offer every known wallet as new and spend ` +
-        `the shared MadeOnSol allowance re-grading them. Restore the file or point --ledger elsewhere.`,
+        `a keyed MadeOnSol request per wallet re-grading them for verdicts already held. Restore the ` +
+        `file or point --ledger elsewhere.`,
     );
   }
 

@@ -95,7 +95,7 @@ credential; on a tier where keys expire every 30 days, reporting it as a rejecte
 operator to rotate one that works.
 
 A run that stops early still records what it paid for and still exits non-zero. A ceiling hit after
-fifteen profiles must not discard fifteen paid-for measurements — re-spending a shared allowance to
+fifteen profiles must not discard fifteen paid-for measurements — re-spending a keyed allowance to
 learn the same thing is the cost being avoided. Two rules keep that from doing damage of its own:
 
 - **An incomplete run is never rendered as a measured outcome.** The record carries `completed:
@@ -205,9 +205,11 @@ confident wrong answer:
    (247 launches) and `4q4GKBpV…` (152) on every full run. 500 is ~2× the largest per-wallet history
    this repo has measured (8, 10, 65, 152, 247 — `CREATION-DERIVED.md` §8.3) and ~17× below the
    8,518-deploy extreme. So the rows bound is `max(19,999, <deployers> × 500)`, **not** 19,999 by
-   construction: above 39 deployers it exceeds `dune.maxResultRows`, and **the result-row ceiling is
-   kept as the backstop** that refuses such a result whole — the same fallback as before the cap
-   existed. It takes roughly 40 wallets of 500+ launches in one batch to get there.
+   construction: above 39 deployers the floor binds and the bound is `<deployers> × 500`, which
+   exceeds `dune.maxResultRows` above **80** deployers since captain decision 264a raised that
+   ceiling 20,000 → 40,000. **The result-row ceiling is kept as the backstop** that refuses such a
+   result whole — the same fallback as before the cap existed. It takes roughly 80 wallets of 500+
+   launches in one batch to get there.
 
 **And the same rule past coverage: a reading that cannot vouch for itself falls back to the walk
 rather than being gated on.** A result read that cannot prove it is whole (no `total_row_count`, a
@@ -473,17 +475,28 @@ set -a; . /path/to/your/.env; set +a
 ### `MADEONSOL_API_KEY` — required
 
 **As of 2026-08-05 this key is ULTRA and EXCLUSIVE to slot-zero — 100,000 requests/day, resetting
-at 00:00Z — while every bound below is still sized for the old Free tier of ~200/day shared, and
-re-sizing them is open captain work.**
+at 00:00Z, read off `x-ratelimit-limit` rather than off a pricing page.** Captain decision **267a**
+re-derived every bound that used to be sized against the old Free tier of ~200/day shared; the
+[Bounds](#bounds) table below carries the results and each `thresholds.json` → `budget`
+justification names the constraint that now fixes its value.
 
-Free-tier keys expire every 30 days; **whether that 30-day expiry applies on Ultra is UNVERIFIED
-here**. Either way an expired key exits `4` with a message that says so, rather than producing an
-empty ranking. Get one at <https://madeonsol.com/developer>.
+**The 30-day Free-tier key expiry is UNVERIFIED on Ultra and is neither assumed nor deleted.** It is
+stated as unverified wherever it is stated at all, including in the `401` message itself, which now
+puts the cheap check (re-export) ahead of the expensive one (reissue). Either way a rejected key
+exits `4` with a message saying so, rather than producing an empty ranking. Get one at
+<https://madeonsol.com/developer>.
 
 **This credential is on Ultra by captain decision (2026-08-05) and is this research lane's alone.**
 The standing policy of refusing paid tiers still governs every *other* credential this tool reads —
 none of them may need a paid plan — but it no longer describes this one. A `403` here is still
-treated as a bug to report, not as a prompt to upgrade.
+treated as a bug to report, not as a prompt to upgrade: no endpoint this tool calls needs a paid
+tier, so a 403 means the key was downgraded or the vendor gated something that was free.
+
+**One endpoint changed status and the reason it is skipped changed with it.**
+`/deployer-hunter/{wallet}/history` was PRO+ and unreachable; the Ultra key answers it `200`
+(measured 2026-08-05). It is still **not requested**, now for a design reason rather than an
+entitlement one: it returns daily snapshots of `bonding_rate` / `total_deployed` /
+`recent_bond_rate`, the trailing-window aggregates this tool refuses to read at any single instant.
 
 ### `HELIUS_API_KEY` — optional, and its absence is a supported configuration
 
@@ -502,7 +515,7 @@ the keyless endpoint and says why, naming the shape and never the value.
 **A credential the endpoint refuses is TERMINAL for the run, and exits `4`.** It says nothing about
 the deployer being screened, so it may not become that deployer's reading. Absorbed into one
 candidate's `stopReason`, a revoked key would give every candidate after it a silent ownership-only
-history while the record still claimed `historySource: "creation-derived"`, and the whole shared
+history while the record still claimed `historySource: "creation-derived"`, and the whole
 MadeOnSol daily allowance would drain one paid-for profile at a time. Stopping on the first one
 leaves the rest of that allowance unspent; the partial-record rules above apply unchanged.
 
@@ -580,8 +593,44 @@ limitation, and the enumeration is shaped around what their endpoints actually r
   2,660/100, then 4,324/89. All graded `cold`.
 
 So enumeration runs over `recent-bonds` (best seed — a deployer there is bonding curves *now*),
-`alerts`, and `leaderboard?sort=total_bonded`, and a `--tier` filter is how you reach the population
-the gate is designed for.
+`alerts`, and `leaderboard?sort=total_bonded`.
+
+### The seeding is TIERED by default — captain decision 262a
+
+**Since 2026-08-05 a default run issues each of those three endpoints once per tier for `good` and
+`elite`** — six enumeration requests, not three (`seed.mjs` → `DEFAULT_TIERS`). It was untiered.
+The evidence is `runs/2026-08-05-seed-comparison.md`, which ran both seedings the same day, on the
+same code, at an unmoved `minCompletionRate` of 0.25:
+
+| | untiered | tiered (`good` + `elite`) |
+|---|---|---|
+| candidates gated | 76 | 69 + 59, pools **disjoint** that day |
+| **admitted** | **2** | **27** (14 + 13) |
+| admitted-set relation | a strict **subset** of the tiered one | ⊇ untiered, plus 25 more |
+| median (vendor page − gate reading) | 0.0000 | 0.0000 |
+
+So untiered **forfeited 25 candidates and gained none** — a dominance relation rather than a
+trade-off, which is why this is a default and not a flag.
+
+**It is NOT rate flattery, and reading it that way gets the mechanism wrong.** Tiering does not
+admit more wallets by inflating the number the bar reads: the page-minus-gate median is `0.0000` on
+all three pools and all three admitted sets, because the two readings are *identical* below the
+70-record page cap and diverge in both directions above it. What tiering changes is **selection** —
+**27 of 27** tiered admissions were reachable through `leaderboard:total_bonded` against **0 of 2**
+untiered ones, which came through `alerts`. That imports the vendor's own ranking into the pool, and
+**nothing measures whether vendor rank predicts `roomLeft`**. That correlation is the obvious next
+question and has not been run.
+
+**What the default forfeits, stated because no count in a run will show it.** `tier` is another
+trailing window, like `bonding_rate`: membership is unstable and the tiers are not disjoint, so a
+deployer worth screening but graded `moderate` today is invisible to a default run. It is reachable
+with `--tier moderate`. **The untiered seeding itself is no longer reachable from the CLI** — it
+takes `tiers: null` passed to `buildSeedPlan`, which no flag does — so the untiered pool of
+2026-08-05 is reproducible from the committed records under
+`measurements/2026-08-05-seed-comparison/` and not from a flag.
+
+`--tier <t>` still overrides the pair with a single tier, and it is how you reach a population the
+default does not cover.
 
 > **Superseded observation, no committed artefact.** An untiered run was seen to surface active spam
 > deployers launching 70 tokens in under four days at 1–7% completion, all of which the gate
@@ -777,7 +826,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 5 | no new candidate field — the candidate-row change is **inside `entry`**, which gains `launchesRoomUnproven`, `bundledTx` and `maxWalletsInOneTx`. The **`stage0` block also changed**, and it is not comparable across the boundary — below. Consequences for a reader of an older record, below. |
 | 6 | no new candidate field either. **The fee moved inside the entry window** and the eligibility filter became observable, both inside `entry`. **The verdict vocabulary changed and `entry-room-present` no longer exists** — below. `entry` gains `entryCostSol`, `entryCostPerSolStaked` (pooled over ENTRIES), `entryCostPerSolStakedByLaunch` (one figure per LAUNCH, and the one `entry-cost-prohibitive` is compared against), `entryTxFeeSol`, `entryCostPriced`, `fieldRealisedSolNetOfMeasuredFees`, `fieldReturnPerSolNetOfMeasuredFees`, `fieldHitRateNetOfMeasuredFees` and `fieldClosedRoundTripsPriced`; `entry.coverage` gains `minAgeMs`, `launchesTooYoung`, `launchesEligible`, `launchesPlanned`, `launchesDroppedByCap`, `youngestRefAgeMs`, `youngestEligibleAgeMs` and a `cost` block whose `launchesPriced`/`transactionsPriced` count only pricing that BACKS the score, with `launchesDiscarded`/`transactionsDiscarded` beside them for work paid for and then dropped whole and `rpcRequests` spanning both. The **`stage0` block gains `onChainCostReproduction`** — Stage 0's offline cost regression, carried in full (`launchesPriced`, `entriesPriced`, `pairsPriced`, the gross and net medians and hit rates, `flipsPositiveToNegative`, the known-negative wallet's `postBreakVerdict`, `ok`) so a saved run says by how much and over what the fee correction moved the field, not only that it passed — and `thresholds` gains `stage2_cost`, the bounds the cost leg ran under. Those figures are over the **unfiltered** population — every taped launch the committed table can price — which schema 7 changes without renaming a single key. |
 | 7 | no new candidate field, no new `entry` field and no new `entry.coverage` field: `PERSISTED_BY_SCHEMA[7]`, `ENTRY_KEYS_BY_SCHEMA[7]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[7]` all equal `[6]`. **What changed is a POPULATION, under unchanged key names.** `stage0.onChainCostReproduction`'s `launchesPriced`, `entriesPriced`, `entries`, `pairsPriced`, the entry-cost medians, `entryCostPositiveShare`, the gross/net hit rates and medians and `flipsPositiveToNegative` are now measured over the **GATED** population — launches whose create-slot opening is proven (`measure.mjs` → `roomIsProven`), which is the population `entry-cost-prohibitive` is itself computed from — where a schema-6 record's identically named keys meant the unfiltered one. So a schema-6 `launchesPriced: 113 / pairsPriced: 631` and a schema-7 `110 / 618` are not one series; version-detect before comparing them. Three new keys carry the unfiltered reading so the record is self-describing rather than needing external context: `includingUnprovenLaunchesPriced`, `includingUnprovenPairsPriced` and `includingUnprovenEntryCostPerSolStakedMedianByLaunch` (on the committed tape 113, 631 and 0.0388 against the gated 110, 618 and 0.0389 — the unfiltered reading is the CHEAPER one, i.e. the optimistic direction, which is why it is not what the bar reads). The block also gains `minEntryCostPositiveShare`, the floor `entryCostPositiveShare` is compared against, beside the `minLaunches`/`minPairs` bars already there. |
-| 8 | no new candidate field, no new `entry` field and no new `entry.coverage` field: `PERSISTED_BY_SCHEMA[8]`, `ENTRY_KEYS_BY_SCHEMA[8]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[8]` all equal `[7]`. **What changed is the `spend` block: it now reports THREE budgets separately**, because the creation walk can take a keyed indexed route. It gains `rpcProvider` (`helius` or `public`), `rpcEndpoint`, `heliusCredits`, `heliusCreditCeilingPerCandidate` and `plannedWorstCaseHeliusCredits`. They are five new keys rather than additions to the existing totals because the three budgets have three units and no exchange rate between them: MadeOnSol is metered in **requests** against a shared daily allowance, Helius in **credits** against an unshared monthly one, and the keyless hosts in neither — a single "requests" total would hide which allowance a heavy run actually spent. `rpcEndpoint` holds the endpoint's **label** and never the composed URL, which on the keyed route carries the credential in a query parameter. On a schema-≤7 record all five are genuinely absent and must not be reconstructed: those runs predate the indexed route, so the walk was the keyless one and the record cannot say which host answered it. `heliusCredits: 0` beside `rpcProvider: "public"` is a keyless run that spent no credit; `heliusCreditCeilingPerCandidate: null` means the indexed walk did not run at all. |
+| 8 | no new candidate field, no new `entry` field and no new `entry.coverage` field: `PERSISTED_BY_SCHEMA[8]`, `ENTRY_KEYS_BY_SCHEMA[8]` and `ENTRY_COVERAGE_KEYS_BY_SCHEMA[8]` all equal `[7]`. **What changed is the `spend` block: it now reports THREE budgets separately**, because the creation walk can take a keyed indexed route. It gains `rpcProvider` (`helius` or `public`), `rpcEndpoint`, `heliusCredits`, `heliusCreditCeilingPerCandidate` and `plannedWorstCaseHeliusCredits`. They are five new keys rather than additions to the existing totals because the three budgets have three units and no exchange rate between them: MadeOnSol is metered in **requests** against a daily allowance, Helius in **credits** against an unshared monthly one, and the keyless hosts in neither — a single "requests" total would hide which allowance a heavy run actually spent. `rpcEndpoint` holds the endpoint's **label** and never the composed URL, which on the keyed route carries the credential in a query parameter. On a schema-≤7 record all five are genuinely absent and must not be reconstructed: those runs predate the indexed route, so the walk was the keyless one and the record cannot say which host answered it. `heliusCredits: 0` beside `rpcProvider: "public"` is a keyless run that spent no credit; `heliusCreditCeilingPerCandidate: null` means the indexed walk did not run at all. |
 | 9 | no new candidate ROW field, no new `entry` field, no new `entry.coverage` field and no new `spend` field: `PERSISTED_BY_SCHEMA[9]`, `ENTRY_KEYS_BY_SCHEMA[9]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[9]` and `SPEND_KEYS_BY_SCHEMA[9]` all equal `[8]`. **What changed is where the launch history comes from: creation ENUMERATION is primary on Dune** (captain decision 156a). A new run-level `dune` block carries the coverage probe's own bounds and the Dune spend in its own units — `used`, `reason`, `rejected`, `unusableNote`, `endpoint`, `creationQueryId`, `coverageQueryId`, `executions`, `executionCeiling`, `requests`, `resultBytes`, `estimatedCredits`, `rowsReturned`, `unreadableRows`, `walletsRefusedByShape` and `coverage` (which tables were probed, from when to when, which are READ by the enumeration, months with no row, and why a probe refused). It is a block of its own rather than five more `spend` keys because Dune is a fourth vendor in a fourth unit — executions plus bytes against a SHARED monthly allowance, where a FAILED execution is billed exactly like a successful one — and `estimatedCredits` is an **estimate**, the published 20 credits/MB applied to the bytes the vendor's own metadata declared, with compute billed on top. Each candidate's `creation` block gains `enumerationSource` (`dune` | `helius` | `keyless-rpc`), `duneLaunches`, `duneFallbackReasons` and `creatorMovementUnmeasured`. **The one that will bite: on a schema-≤8 record `creation.movedCreator: 0` means the walk read every curve and none had moved. On a schema-9 record whose `enumerationSource` is `dune` it means nothing was looked at** — Dune says who created a mint and whether it completed, and nothing about who owns the curve today — and `creatorMovementUnmeasured` is the size of what went unmeasured. Do not add the two, and do not read a Dune-sourced 0 as the walk's 0. On a Dune-sourced candidate `rpcRequests`, `loadShedEvents`, `signaturesScanned`, `signaturesSucceeded`, `transactionsInspected` and `curvesUnread` all read 0 because no walk happened, and `stopReason` is `dune-enumerated`, which is not a stop at all; `coveredFromIso`/`coveredToIso` are the PROBE's bound rather than a walk's window and `wholeHistory` is true inside it. **A single run may carry both sources**: the coverage probe refuses a wallet at a time, so a wallet whose earliest launch sits at or before the probed surfaces' own first row falls back to the walk while the rest of the batch does not. `duneFallbackReasons` is why a candidate fell back, and it is not only coverage — an unreadable row anywhere in the answer refuses the whole batch, a wallet the enumeration returned no row for is refused as an absence of evidence rather than read as zero launches, and a candidate whose address is not base58-shaped is never sent at all (`walletsRefusedByShape` counts those). |
 | 10 | no new candidate ROW field, no new `entry.coverage` field, no new `spend` field, no new `dune` field and no new `creation` field: `PERSISTED_BY_SCHEMA[10]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[10]`, `SPEND_KEYS_BY_SCHEMA[10]`, `DUNE_KEYS_BY_SCHEMA[10]` and `CREATION_KEYS_BY_SCHEMA[10]` all equal `[9]`. **What changed is that an UNMEASURED verdict now says which of its six producers reached it, and whose fact that is** (captain decision 174b). `entry` gains `unmeasuredCause` (one of `entry.mjs` → `UNMEASURED_CAUSES`, or `null` on a measured verdict), `unmeasuredCauseAttribution` (`our-coverage` | `deployer` | `null`) and `unmeasuredContributingCauses` (every producer that applied, primary first — the three sample-size causes can co-occur). **The verdict vocabulary is UNCHANGED**, so unlike the schema-6 boundary a schema-9 verdict and a schema-10 verdict are the same six values and are directly comparable; what an older record cannot do is say WHY an unmeasured one was reached. **The one that will bite:** all six producers are facts about OUR coverage — the walk was never offered `minLaunchesSampled` windows, windows were dropped, windows were REFUSED as unproven openings (decision 134a), the field closed too few round trips inside a window whose tail our own walk truncates, too little of the field priced, too few round trips priced end to end. So `verdict !== 'entry-unmeasured'` is a filter on our own budget and evidence wearing a measurement's clothes, and a later stage may filter only on a MEASURED verdict at any schema version. On a schema-≤9 record the cause is genuinely absent and **must not be reconstructed**: `entry.mjs` → `isDeployerAttributable` answers `false` for the whole unmeasured family there, which is the safe direction. See “What a later stage may filter on” below. |
 | 11 | no new candidate ROW field, no new `entry.coverage` field, no new `spend` field and no new `dune` field: `PERSISTED_BY_SCHEMA[11]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[11]`, `SPEND_KEYS_BY_SCHEMA[11]` and `DUNE_KEYS_BY_SCHEMA[11]` all equal `[10]`. **What changed is the CO-ORDINATION RULE: it became a UNION** (captain decision 182a) of the existing shared-transaction rule, unchanged, and the deployer-anchored contiguous block-index run at step 1. `entry` gains `runTx` (transactions in that run, anchor included) and `adjacencyMarks` (wallets the run marked that the shared-transaction rule did not) beside `bundledTx` and `maxWalletsInOneTx`. It costs no request, no host and no vendor quota — `sid` is already on every fill the walk fetched. **THE ONE THAT WILL BITE: a schema-≤10 `entry.roomLeft` is not comparable with a schema-11 one, and the older figure is the HIGHER of the two.** A wallet that rode the deployer's bundle without ever sharing a transaction used to be counted as an outsider, so its stake sat in `independentSol` and inflated `roomLeft`; `sharedTx ⊆ union` by construction, so the correction can only move a room reading DOWN. `adjacencyMarks` is the size of what the union added per launch, and therefore the measure of what an older record's room figure was carrying. On the committed tape it removes **180 create-slot wallet-instances from the field** (1,502 → 1,322) and **every one of the 180 is a NAMED cohort wallet** — so a schema-≤10 record's field figures, `outsidersPerLaunch`, `fieldEntrants` and every P&L distribution built on them were partly measuring the operation's own wallets as competitors. `launchesRoomUnproven` changes meaning the same way — it counts launches NEITHER half marked anything in, and on the committed tape the refusal falls from 60 of 235 launches to 0. **No bar was relaxed**: decision 134a's refusal is untouched and `minLaunchesSampled`/`maxLaunchesPerCandidate` are unmoved (decision 141a stands); the rule sees more, so it refuses less. **The `stage0` block is not comparable across the boundary either, and a published constant moved**: `stage2SeamReproduction`'s era-2 entry reads `n: 89, nRoomUnproven: 0` at a measured share of **0.770796** where a schema-5..10 record reads `n: 86, nRoomUnproven: 3` at **0.769153** — the published `0.771` it is compared against is UNCHANGED and the measured figure moved towards it, the structural and named-cohort estimators becoming the same number to six decimals over the full 89. `rollingRoom` goes from `unmeasured: 81, present: 53, absent: 94` to `unmeasured: 0, present: 88, absent: 140`, `falsePositives: 0` on both sides. The block gains `adjacencyRuns`, the tripwire on the `sid` block-index signal, persisted because that signal fails SILENTLY and towards refusal. The correction is recorded in `data/population-tape-2026-07-29/IMPORT.md` → "Corrections"; `report.md` and the dataset README are a primary record and are not edited. |
@@ -1442,26 +1491,26 @@ in [`bundling.mjs`](./bundling.mjs) for the same question on our own subject.
 
 Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 
-**The two MadeOnSol rows below name the tier the bound was DERIVED under, not the tier in force.**
-As of 2026-08-05 the MadeOnSol key is ULTRA and EXCLUSIVE to slot-zero — 100,000 requests/day,
-resetting at 00:00Z — while the 200 ceiling, the 195 cap and the 6.5s pacing are all still sized for
-the old Free tier of ~200/day shared; re-sizing them is open captain work, and `thresholds.json`'s
-own `budget` and `feed` justifications still carry the superseded free-tier wording, which is a
-fenced lane's to correct.
+**The MadeOnSol rows below are RE-DERIVED against the Ultra tier — captain decision 267a,
+2026-08-05.** The key is 100,000 requests/day and exclusive to slot-zero, so the daily allowance has
+stopped being what binds this tool, and each row names the constraint that replaced it. **The
+upgrade on its own widened nothing**: the candidate cap did not move, and the two ceilings that did
+move were forced by arithmetic rather than chosen.
 
 | bound | value | why |
 |---|---|---|
-| keyed request ceiling | 200 | The **whole** MadeOnSol Free-tier daily allowance. Captain's instruction, 2026-08-02: there is no free substitute for this data, so spend the allowance when spending it gets results. The earlier ceiling of 45 was this tool's own quarter-allowance caution and is **withdrawn** — do not re-derive it. |
-| candidate cap | 195 | 200 − 3 enumeration − 2 retry headroom. It is what the allowance leaves, not a judgement about how many deployers are worth grading, and it is above what the three seeds can surface — so a **default run grades everything it surfaces**. |
-| over-budget plan | refused before the first request | `3 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. **The keyless plan is refused the same way**, and it matters more: the keyless work happens *after* the keyed allowance is spent, so a ceiling discovered half-way through wastes quota that was already paid. |
-| keyed pacing | 6.5s between request starts | Free tier bursts at ~10/min, and the allowance is **shared** with whatever else holds this key. |
+| keyed request ceiling | 402 | **No longer an allowance figure.** 2 × (6 enumeration + 195 candidates) — the plan's **one-retry worst case**, since a keyed request is retried at most once and every attempt counts. It was 200, the whole Free-tier day; at 100,000 exclusive an allowance-derived ceiling would refuse nothing, and a bound that cannot refuse is not a bound. It **had** to move: a default plan now costs 6 + 195 = 201 and would have been refused at 200. The old 2-request headroom could not absorb three transport failures at the end of a full run; this cannot be breached by a plan the tool admitted. |
+| candidate cap | 195 | **Unchanged in value, completely re-derived — the coincidence is worth saying out loud.** It was `200 − 3 − 2`, what the keyed day left over; that derivation is void. It is now the largest cap fitting the ceilings already pinned without moving a second threshold: the keyless `frontend-api-v3` ceiling binds at `floor(1,365 / 7 pages a candidate) = 195` exactly, the Helius run ceiling allows 211, and enumeration can reach at most 300 rows. The highest distinct yield ever observed is **128** (2026-08-05, good 69 + elite 59, disjoint pools), so a **default run still grades everything it surfaces**. |
+| over-budget plan | refused before the first request | `6 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. **The keyless plan is refused the same way**, and it matters more: the keyless work happens *after* the keyed requests are spent, so a ceiling discovered half-way through wastes what was already paid. |
+| keyed pacing | 250ms between request starts | **Re-measured on Ultra rather than carried across, and the measurement retired the old constraint.** 6.5s existed for a ~10/min Free-tier burst limit. A ladder at 6,500 / 2,000 / 500 / **0** ms shed **nothing at any rung**, and 60 back-to-back requests (≈183/min sustained) shed nothing either — which a 10/min limiter refuses at request 11. The gate's own endpoint behaved the same (30 back-to-back, 0 shed). What binds is **response latency**: p50 312ms leaderboard, 182ms profile. So 250ms is a courtesy floor, not a shed-avoidance figure, and the keyed leg of a full run goes from ~21 minutes to **~50 seconds**. Limits: one day, ~150 requests, serial only — nothing here probed concurrency. |
+| feed per-run keyed ceiling | 18 | 6 enumeration + `maxGateBatch` 12. Forced by the tiered default; it was 15 at 3 enumeration requests. The daily arithmetic is 18 × 6 runs = **108 of 100,000 (0.108%)**, where it used to be 90 of ~200. **The bound is kept anyway**: a cron is the one caller no human reviews before each spend, and an unbounded lane against a 100,000-request day is still unbounded. |
 | keyless request ceiling, `frontend-api-v3` only | 1,400 | One client serves **two** passes on this host and the ceiling has to cover both. The gate reads the ownership listing it merges the creation window with, up to 4 pages **per candidate** — 195 × 4 = 780 — and `--consistency` then costs up to 3 pages per gate survivor, of which every candidate can be one: 195 × 3 = 585. So 1,365 worst case, and the remaining 35 are retry headroom. The earlier 600 was justified on the consistency pass alone and was already exceeded by gating at the default candidate cap. It does not lean harder on pump.fun — the pacing below is unchanged, so what it buys is wall clock. |
 | keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here, and it bounds a shared public resource rather than expressing our own caution, so the MadeOnSol relaxation does not touch it. The fill host is paced separately — see below. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does — but a 429, a 5xx or a timeout means the request was not served, so re-issuing it is nearer to one successful request than to two. Without it the caller re-runs the whole walk, which is worse for pump.fun too. A 4xx that is not a 429 is never retried: it is the endpoint's considered answer. |
 | Dune executions, creation enumeration | **2 per run** (1 enumeration + at most 1 probe refresh) | `thresholds.json` → `dune`, and the unit is the point: **an execution is billed whether or not it succeeds and is never retried**, so this is the bound on the only unrecoverable Dune spend. ONE execution serves the whole candidate batch — the table scan costs nearly the same for 5 wallets as for 20, so what scales is bytes returned, not wallets. |
 | Dune requests, creation enumeration | 100 per run | Separate from the execution ceiling because it bounds a different thing: polling and result reads bound the wall clock and the polite use of a shared free-tier host, not the money. 2 × (1 SQL verification + 1 execute + 40 status polls + 1 results read) = 86, plus the credit guard's one `POST /usage` and its single retry = 88, leaving 12 of retry headroom. A real run spends about **8**. |
-| Dune result rows | 20,000 per read, and **at most `greatest(500, floor(19999 / <deployers in the batch>))` rows per deployer inside the SQL** | Results are billed at ~20 credits/MB and that is ~71% of the bill. The **~97 bytes/row** measurement was taken at FOUR columns; `CREATION_SQL` selects **six** today, and captain decision 227a's sixth column was the occasion to **re-measure rather than assume the ceiling survived it** — **105.92 bytes/row** batch-shaped (488 rows, five wallets) and **105.91** for one wallet (252 rows), so ≤121 bytes/row still holds and the pin does not move. This ceiling is ≤~2.42 MB (~48 credits), and it is **no longer unobserved** — but its headroom is now 15.08 bytes, less than one more boolean column is worth (~23), so **a seventh column must re-measure and raise it** rather than lean on a margin that is gone. A 195-candidate run at a median ~50-launch history is ~0.95 MB (~20 credits), i.e. roughly 125 full-cap runs against the free 2,500/month, unchanged by the cap. The read ceiling **refuses rather than pages** and is now the **backstop** behind the per-deployer cap, not the first line of defence; it stays reachable at roughly 40 wallets of 500+ launches in one batch, since the rows bound is `max(19,999, <deployers> × 500)` rather than 19,999 by construction. The allowance is **shared**, and what a run may spend against it is checked before the first request — see [The monthly credit ceiling](#the-monthly-credit-ceiling--what-it-is-and-what-it-cannot-see). `thresholds.json` → `dune.justification.maxResultRows` and [CREATION-DERIVED.md §8.2b](./CREATION-DERIVED.md) own the rows arithmetic; [§8.2c](./CREATION-DERIVED.md) owns the byte re-measurement above. |
+| Dune result rows | 40,000 per read, and **at most `greatest(500, floor(19999 / <deployers in the batch>))` rows per deployer inside the SQL** | Results are billed at ~20 credits/MB and that is ~71% of the bill. The **~97 bytes/row** measurement was taken at FOUR columns; `CREATION_SQL` selects **six** today, and captain decision 227a's sixth column was the occasion to **re-measure rather than assume the ceiling survived it** — **105.92 bytes/row** batch-shaped (488 rows, five wallets) and **105.91** for one wallet (252 rows), so ≤121 bytes/row still holds and the pin does not move. This ceiling is ≤~4.84 MB (~97 credits) since captain decision **264a** raised it 20,000 → 40,000, and it is **no longer unobserved** — but its headroom is now 15.08 bytes, less than one more boolean column is worth (~23), so **a seventh column must re-measure and raise it** rather than lean on a margin that is gone. A 195-candidate run at a median ~50-launch history is ~0.95 MB (~20 credits), i.e. roughly 125 full-cap runs against the free 2,500/month, unchanged by the cap. The read ceiling **refuses rather than pages** and is now the **backstop** behind the per-deployer cap, not the first line of defence; it stays reachable at roughly **80** wallets of 500+ launches in one batch, since the rows bound is `max(19,999, <deployers> × 500)` rather than 19,999 by construction. **264a raised it because the backstop fired on a real run**: 76 deployers returned **27,731** rows against the old 20,000 and were refused whole, costing that leg **232,937 Helius credits and 4,105 RPC requests** against 1,924 and 33 for the leg that kept its Dune answer — and its mayhem reading entirely, `mayhemShare` null on 76 of 76, which is UNMEASURED and never 0%. **The SQL is untouched**: `SQL_ROW_CEILING` stays 19,999 and the two are now pinned as an INEQUALITY rather than an equality, so **no saved-query deploy is needed** and this raise cannot leave the Dune leg refusing terminally. The allowance is **shared**, and what a run may spend against it is checked before the first request — see [The monthly credit ceiling](#the-monthly-credit-ceiling--what-it-is-and-what-it-cannot-see). `thresholds.json` → `dune.justification.maxResultRows` and [CREATION-DERIVED.md §8.2b](./CREATION-DERIVED.md) own the rows arithmetic; [§8.2c](./CREATION-DERIVED.md) owns the byte re-measurement above. |
 | Dune coverage staleness | 6 h | The probe cannot vouch for a period it does not reach, and the recent end is where a live screen looks. Dune's own freshness is ~3–4 minutes, so this bounds OUR cache, not the vendor: the probe defaults to a free cached read. Staleness is the one refusal asking again can fix, so it re-executes the probe **once**; a structural refusal (a missing table, a month with no rows) is not retried. |
 | Solana RPC ceiling, keyless creation walk | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. Governs the creation-derived walk **when no Helius key is present**. Whichever bound bites is recorded per candidate. |
 | Helius credit ceiling, indexed creation walk | **5,200 credits per candidate**, 1,100,000 per run | `thresholds.json` → `creation_walk_helius`, and the unit is the point — this provider bills by transactions **returned**, so a request ceiling cannot bound it. 5,200 clears the largest complete history measured (49,367 succeeded transactions = 4,940 credits) **plus the per-page guard**, which demands 100 credits for the page and 11 more reserved for the curve-classification pass — at 5,000 that guard stopped the walk after 49 pages, truncating the very wallet the ceiling was sized against. The per-candidate median is 320. The run ceiling makes the default plan admissible at 195 × 5,200 = 1,014,000 and is 11% of the monthly allowance, so **nine worst-case full-cap runs fit in a month** and the expected cost of one is ~0.62%. **The two move together**: the run ceiling is checked before the first request, so raising the per-candidate one alone would refuse every default plan. A plan that does not fit is **refused before the first request**, exactly like the keyed and keyless plans. A page is only started when a whole page's worst case still fits, so the ceiling is exact and never overshot. |
@@ -1568,17 +1617,21 @@ optimisation.
 
 | endpoint | cost | role |
 |---|---|---|
-| `/deployer-hunter/recent-bonds` | 1 per run | enumeration; carries the `tier` filter |
-| `/deployer-hunter/alerts` | 1 per run | enumeration |
-| `/deployer-hunter/leaderboard?sort=total_bonded` | 1 per run | enumeration |
+| `/deployer-hunter/recent-bonds` | 1 **per tier** | enumeration; carries the `tier` filter |
+| `/deployer-hunter/alerts` | 1 **per tier** | enumeration |
+| `/deployer-hunter/leaderboard?sort=total_bonded` | 1 **per tier** | enumeration |
 | `/deployer-hunter/{wallet}` | **1 per candidate** | the gate — the only cost that scales |
+
+Since captain decision 262a the default tier set is `good` + `elite`, so a default run issues **six**
+enumeration requests — see [The seeding is TIERED by default](#the-seeding-is-tiered-by-default--captain-decision-262a).
 
 `client.mjs` → `ENDPOINT_ROLES` is the authority; `--dry-run` prints it. Not used, deliberately:
 `/deployer-hunter/{wallet}/tokens` is bonded-only and rejects `limit` above 50, and
-`/deployer-hunter/{wallet}/history` is PRO+, which standing policy refuses.
+`/deployer-hunter/{wallet}/history` is reachable on this key but serves trailing-window aggregates
+this tool refuses to read — see [`MADEONSOL_API_KEY`](#madeonsol_api_key--required).
 
 **Dune is a second keyed vendor and is metered separately**, because there is no exchange rate
-between the two: MadeOnSol is requests against a shared daily allowance, Dune is executions plus
+between the two: MadeOnSol is requests against a daily allowance, Dune is executions plus
 result bytes against a shared monthly one.
 
 | endpoint | cost | role |
@@ -1652,8 +1705,8 @@ and the balance below which the leg refuses, and needs no credential to do it.
 ### Stage 2's own bounds — and it spends no vendor quota at all
 
 **Stage 2 issues zero keyed requests.** The mint list comes from the `/deployer-hunter/{wallet}`
-profile Stage 1 has already paid for, so the shared vendor allowance — which production also draws on
-— is untouched by the entire entry measurement. Everything it fetches is pump.fun's free tape.
+profile Stage 1 has already paid for, so the MadeOnSol daily allowance is untouched by the entire
+entry measurement. Everything it fetches is pump.fun's free tape.
 
 | bound | value |
 |---|---|
@@ -2338,7 +2391,7 @@ against 540, and the entry-cost leg against 1,500 Solana RPC requests. The plan 
 claim's **own** recorded recipe, and a plan that does not fit is refused **whole** — never truncated
 to fit, because a Stage 2 walk cut short holds the earliest entrants by slot, which is a biased sample
 rather than a short one. `thresholds.json` → `feedback_loop.justification` owns every value, including
-the daily arithmetic (6 keyed requests of the ~200/day shared allowance) and the fact that this lane
+the daily arithmetic (6 keyed requests of the 100,000/day allowance) and the fact that this lane
 is operator-run rather than scheduled.
 
 **It re-tunes nothing.** No bar in `thresholds.json` moves for it — `minCompletionRate` is still 0.25,

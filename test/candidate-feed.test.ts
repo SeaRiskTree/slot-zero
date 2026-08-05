@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { MADEONSOL_DAILY_REQUESTS } from '../tools/deployer-screen/client.mjs';
 import {
   ALL_UNMEASURED_MIN_GATED,
   appendRun,
@@ -726,7 +727,12 @@ describe('the feed end to end', () => {
     expect(() => readFileSync(ledgerPath, 'utf8')).toThrow();
     expect(lines.join('\n')).toMatch(/DRY RUN — this is the default/);
     // The dry run's arithmetic must be the arithmetic a live run would use, or it is a guess.
-    expect(lines.join('\n')).toMatch(/3 enumeration \+ up to 3 gate = 6 request\(s\)/);
+    expect(lines.join('\n')).toMatch(/6 enumeration \+ up to 3 gate = 9 request\(s\)/);
+    // The daily share is printed against the VENDOR'S DAY, not against budget.maxKeyedRequests.
+    // It read the latter until captain decision 267a, which was right only while that ceiling
+    // happened to BE the daily allowance; at Ultra it is a per-run ceiling of 402 and a share
+    // computed against it would understate this lane's headroom by ~250x while looking authoritative.
+    expect(lines.join('\n')).toMatch(/= 54 of the 100,000\/day allowance \(0\.054%/);
   });
 
   it('surfaces new wallets, gates a bounded batch, and never exceeds the plan', async () => {
@@ -743,8 +749,9 @@ describe('the feed end to end', () => {
     const code = await main(opts(), env, (l) => lines.push(l), () => {}, { fetchImpl, sleepImpl });
 
     expect(code).toBe(0);
-    // 3 enumeration + exactly the batch of 3, and not one request more.
-    expect(calls).toHaveLength(6);
+    // 6 enumeration (three endpoints x the two default tiers) + exactly the batch of 3, and not
+    // one request more.
+    expect(calls).toHaveLength(9);
     expect(calls.filter((c) => /\/deployer-hunter\/W/.test(c))).toHaveLength(3);
 
     const ledger = loadLedger(ledgerPath) as Ledger;
@@ -771,9 +778,9 @@ describe('the feed end to end', () => {
     });
 
     expect(code).toBe(0);
-    // Enumeration still costs 3. Gating costs NOTHING, because every wallet is already graded —
+    // Enumeration still costs 6. Gating costs NOTHING, because every wallet is already graded —
     // which is the quota saving the memory buys, stated as a number.
-    expect(second.calls).toHaveLength(3);
+    expect(second.calls).toHaveLength(6);
     const text = lines.join('\n');
     expect(text).toMatch(/NEW wallets this run\s+0\s+<< none\. This run discovered nothing\./);
     expect(text).toMatch(/already known \(duplicates\) 3 of 3 surfaced/);
@@ -928,8 +935,9 @@ describe('the feed end to end', () => {
     expect(record.seeds.reduce((a, s) => a + s.newWallets, 0)).toBeGreaterThanOrEqual(record.yield.newlySurfaced!);
     // This lane spends no keyless request at all.
     expect(record.keylessRequests).toBe(0);
-    expect(record.spend.plannedWorstCaseKeyed).toBe(6);
+    expect(record.spend.plannedWorstCaseKeyed).toBe(9);
     expect(record.spend.assumedDailyWorstCaseKeyed).toBe(record.spend.plannedWorstCaseKeyed! * record.spend.assumedRunsPerDay!);
+    expect(record.spend.dailyAllowance).toBe(MADEONSOL_DAILY_REQUESTS);
     expect(record.discoveryLag.observations).toBe(3);
     expect(record.discoveryLag.medianDaysAtLeast).toBeGreaterThan(0);
     expect(record.cadenceFilter.floor).toBeGreaterThan(0);
@@ -950,8 +958,9 @@ describe('the feed end to end', () => {
     );
     const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       n += 1;
-      // 3 enumeration + one profile, then the vendor breaks.
-      if (n > 4) return new Response('upstream on fire', { status: 500 });
+      // 6 enumeration (three endpoints x the two default tiers) + one profile, then the vendor
+      // breaks. It must break AFTER enumeration, or nothing is ever recorded as seen.
+      if (n > 7) return new Response('upstream on fire', { status: 500 });
       return good(input, init);
     }) as unknown as typeof fetch;
 
@@ -1038,8 +1047,15 @@ describe('the lane states the ceiling it cannot see past', () => {
     expect(doc).toMatch(/vendor-selected/i);
     expect(doc).toMatch(/discovery lag/i);
     // The per-run call budget has to be in the document, not only in the code: this is the number a
-    // reviewer of the schedule reads.
-    expect(doc).toMatch(/3 enumeration/);
+    // reviewer of the schedule reads. It is 6 since captain decision 262a made the seeding tiered.
+    expect(doc).toMatch(/6 enumeration/);
+    // And the daily share has to be stated against the VENDOR'S day. The document said "~200/day"
+    // while the key was Ultra at 100,000, which is the exact shape of defect captain decision 267a
+    // closed: a denominator that moved by 500x while the argument resting on it did not.
+    expect(doc).toMatch(/of the 100,000\/day allowance/);
+    // Scoped to the SHARE, not to the string: naming ~200/day as history is correct and is what
+    // makes the restatement legible. Presenting it as the denominator is the regression.
+    expect(doc).not.toMatch(/of the ~200\/day/);
     expect(doc).toMatch(/never re-polled|not re-polled/i);
   });
 

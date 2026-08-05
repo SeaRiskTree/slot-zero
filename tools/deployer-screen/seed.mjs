@@ -33,6 +33,12 @@
  * - `leaderboard?sort=total_bonded` — kept as a third, different ordering so the pool is not purely
  *   recency-selected. Its top is spam, and the pre-filter below is what makes it survivable.
  *
+ * ## The seeding is TIERED BY DEFAULT — captain decision 262a, 2026-08-05
+ *
+ * Each of those three endpoints is issued **once per tier in {@link DEFAULT_TIERS}** — `good` and
+ * `elite` — so a default plan is six enumeration requests rather than three. See
+ * {@link buildSeedPlan}, which owns the evidence and what the change forfeits.
+ *
  * ## Why a seed's wallet count is reported rather than merged silently
  *
  * The first committed runs spent two keyed requests per run on `recent-bonds` and `alerts` and got
@@ -89,51 +95,117 @@ export const PREFILTER_MIN_DEPLOYED = 5;
  */
 
 /**
+ * The tiers a default plan enumerates, one pass of all three endpoints each.
+ *
+ * **Captain decision 262a, 2026-08-05.** Before it a default plan was UNTIERED — three requests, no
+ * `tier` parameter. `runs/2026-08-05-seed-comparison.md` ran both seedings the same day, on the same
+ * code, at an unmoved `stage1_gate.minCompletionRate` of 0.25, and the two findings that decided it
+ * are these:
+ *
+ * - **The untiered leg admitted 2 of 76 candidates; the tiered pair admitted 27** (14 good + 13
+ *   elite, and the two tier pools were DISJOINT that day).
+ * - **The untiered admitted set is a strict SUBSET of the tiered one.** Every wallet untiered
+ *   admitted, the tiered pair also admitted; the tiered pair admitted 25 more that untiered never
+ *   surfaced. So untiered forfeits 25 candidates and gains none — a dominance relation, not a
+ *   trade-off, which is why this is a default and not a flag.
+ *
+ * **AND IT IS NOT RATE FLATTERY, which is the reading to refuse.** Tiering does not admit more
+ * wallets by inflating the number the bar reads: the median (vendor page − gate reading) is
+ * **0.0000** on all three pools and on all three admitted sets, because the two readings are
+ * IDENTICAL below the 70-record page cap and diverge in both directions above it. What tiering
+ * changes is **selection**: 27 of 27 tiered admissions were reachable through
+ * `leaderboard:total_bonded`, against 0 of 2 untiered ones, which came through `alerts`. So this
+ * imports the vendor's own ranking into the pool, and **nothing measures whether vendor rank
+ * predicts `roomLeft`** — that correlation is the obvious next question and has not been run.
+ *
+ * **WHAT IT FORFEITS, stated because no count in a run will show it.** `tier` is another trailing
+ * window, like `bonding_rate`: membership is not stable and the tiers are not disjoint, so a
+ * deployer good enough to matter but graded `moderate` today is invisible to a default run. It is
+ * reachable with `--tier moderate`. The untiered seeding itself is reachable only by passing
+ * `tiers: null` to {@link buildSeedPlan} — no CLI flag reaches it, so the untiered pool of
+ * 2026-08-05 is reproducible from the committed records under
+ * `measurements/2026-08-05-seed-comparison/` and not from a flag.
+ *
+ * Order is BEST-SEED-FIRST and tier-second (see {@link buildSeedPlan}), so neither tier is
+ * privileged if a lowered `--max-requests` cuts the plan short.
+ */
+export const DEFAULT_TIERS = Object.freeze(['good', 'elite']);
+
+/**
  * Build the enumeration request plan.
  *
  * Pure and deterministic, which is what makes `--dry-run` an honest preview rather than an
  * approximation: the plan the dry run prints is built by this same function.
  *
+ * **Its LENGTH is the enumeration cost both callers price their plan from** (`screen.mjs` and
+ * `feed.mjs` each read `seedPlan.length` rather than a literal), so the tiered default costs six
+ * keyed requests and no caller had to be told.
+ *
  * @param {object} options
  * @param {number} options.limit Rows per page, clamped per endpoint.
- * @param {string} [options.tier] Optional tier filter — `elite|good|moderate|rising|cold`.
+ * @param {string} [options.tier] A SINGLE tier — what `--tier` passes. Overrides the default pair.
+ * @param {readonly string[] | null} [options.tiers] The tier set. Omitted means
+ *   {@link DEFAULT_TIERS}; `null` or `[]` restores the SUPERSEDED untiered seeding, which no CLI
+ *   reaches. `tier` wins over this when both are given.
  * @returns {SeedPlanEntry[]}
  */
 export function buildSeedPlan(options) {
   const want = Math.max(1, Math.floor(options.limit));
-  const tier = options.tier;
+
+  // One resolution, so "what does a default plan enumerate" has exactly one answer. `undefined` and
+  // `null` are DIFFERENT here and deliberately so: unstated means the pinned default pair, and only
+  // an explicit null asks for the seeding decision 262a superseded.
+  const tiers =
+    options.tier !== undefined
+      ? [options.tier]
+      : options.tiers === undefined
+        ? DEFAULT_TIERS
+        : (options.tiers ?? []);
+  // An empty tier set is ONE untiered pass, never zero passes: a plan of no requests would surface
+  // no wallets and read as an exhausted feed rather than as a misconfiguration.
+  const passes = tiers.length === 0 ? [undefined] : tiers;
 
   /** @type {SeedPlanEntry[]} */
   const plan = [];
 
-  // Ordered best-seed-first, so a run that hits its ceiling early still spent it on the good ones.
-  plan.push({
-    path: '/deployer-hunter/recent-bonds',
-    query: {
-      limit: Math.min(want, RECENT_BONDS_MAX_LIMIT),
-      ...(tier === undefined ? {} : { tier }),
-    },
-    label: `recent-bonds${tier === undefined ? '' : `:${tier}`}`,
-  });
+  /**
+   * @param {string | undefined} tier
+   * @returns {Record<string, string>}
+   */
+  const tierQuery = (tier) => (tier === undefined ? {} : { tier });
+  /**
+   * @param {string} base
+   * @param {string | undefined} tier
+   * @returns {string}
+   */
+  const label = (base, tier) => (tier === undefined ? base : `${base}:${tier}`);
 
-  plan.push({
-    path: '/deployer-hunter/alerts',
-    query: {
-      limit: Math.min(Math.max(want, 50), ALERTS_MAX_LIMIT),
-      ...(tier === undefined ? {} : { tier }),
-    },
-    label: `alerts${tier === undefined ? '' : `:${tier}`}`,
-  });
+  // Ordered best-seed-first and TIER-SECOND, so a run that hits its ceiling early still spent it on
+  // the good seeds and never on one tier at the other's expense. `recent-bonds` is the single best
+  // seed; the leaderboard is kept only for a different ordering and is last for that reason.
+  for (const tier of passes) {
+    plan.push({
+      path: '/deployer-hunter/recent-bonds',
+      query: { limit: Math.min(want, RECENT_BONDS_MAX_LIMIT), ...tierQuery(tier) },
+      label: label('recent-bonds', tier),
+    });
+  }
 
-  plan.push({
-    path: '/deployer-hunter/leaderboard',
-    query: {
-      sort: 'total_bonded',
-      limit: Math.min(want, LEADERBOARD_MAX_LIMIT),
-      ...(tier === undefined ? {} : { tier }),
-    },
-    label: `leaderboard:total_bonded${tier === undefined ? '' : `:${tier}`}`,
-  });
+  for (const tier of passes) {
+    plan.push({
+      path: '/deployer-hunter/alerts',
+      query: { limit: Math.min(Math.max(want, 50), ALERTS_MAX_LIMIT), ...tierQuery(tier) },
+      label: label('alerts', tier),
+    });
+  }
+
+  for (const tier of passes) {
+    plan.push({
+      path: '/deployer-hunter/leaderboard',
+      query: { sort: 'total_bonded', limit: Math.min(want, LEADERBOARD_MAX_LIMIT), ...tierQuery(tier) },
+      label: label('leaderboard:total_bonded', tier),
+    });
+  }
 
   return plan;
 }

@@ -12,8 +12,9 @@
  * the boundary is the directory, and `test/deployer-screen.test.ts` asserts that the network
  * client stays on this side of it.
  *
- * Everything here is about *bounds*, because the key is the captain's own and its allowance is
- * shared:
+ * Everything here is about *bounds*. The key is the captain's own; since 2026-08-05 it is **Ultra
+ * and EXCLUSIVE to slot-zero** rather than Free tier and shared, which changes what the bounds are
+ * FOR without removing one of them — see {@link MADEONSOL_DAILY_REQUESTS}:
  *
  * - **A hard request ceiling.** {@link BoundedClient} counts every request it issues,
  *   including failures and retries, and throws {@link CeilingReached} rather than issue the
@@ -22,9 +23,12 @@
  *   cannot race past each other. Two concurrent jobs against this vendor's keyless endpoint
  *   earned a sustained lockout once already (see CLAUDE.md); the same caution applies to the
  *   keyed one.
- * - **Paced.** Free tier bursts at ~10/min, so the default gap is 6.5 s and the client sleeps
- *   the remainder itself rather than trusting the caller to.
- * - **No retries by default.** A retry is a second request against a shared allowance. The
+ * - **Paced, and the pacing was re-measured on the new tier rather than inherited.** The Free tier
+ *   burst at ~10/min and the gap was 6.5 s; a ladder on Ultra shed nothing at any rung down to
+ *   0 ms, so the gap is now a 250 ms courtesy floor. `thresholds.json` →
+ *   `budget.justification.keyedMinIntervalMs` owns the measurement and its limits. The client
+ *   sleeps the remainder itself rather than trusting the caller to.
+ * - **No retries by default.** A retry is a second request against the allowance. The
  *   client will retry a 5xx or a transport error at most `maxRetriesPerRequest` times, which
  *   defaults to 1, and every attempt is counted against the ceiling.
  *
@@ -38,13 +42,35 @@ import { DUNE_API_BASE, classifyAuthFailure } from './credential.mjs';
 export const BASE_URL = 'https://madeonsol.com/api/v1';
 
 /**
+ * The MadeOnSol daily request allowance, and the DENOMINATOR every share of it is printed against.
+ *
+ * **100,000/day, resetting at 00:00Z, and the key is EXCLUSIVE to slot-zero** — captain, 2026-08-05.
+ * Read off the wire rather than off a pricing page: the vendor returns `x-ratelimit-limit`,
+ * `x-ratelimit-remaining`, `x-ratelimit-used` and `x-ratelimit-reset` on every response, and this
+ * figure is `x-ratelimit-limit` as measured that day. It was ~200/day and SHARED with whatever else
+ * held the key, which is the tier every bound in this tool was originally sized against; captain
+ * decision 267a re-derived those bounds and `thresholds.json` → `budget` owns the result.
+ *
+ * **NOTHING IN THIS REPOSITORY READS THOSE HEADERS**, which is why this is a pinned constant and not
+ * a live reading. The ceilings here bound ONE RUN and the tool is stateless between runs, so N legs
+ * that each fit can still exceed a day together — measured on 2026-08-05, when three legs did
+ * exactly that against the old 200. At 100,000 exclusive it stopped being urgent; it did not stop
+ * being true. Read the header before a multi-leg session.
+ */
+export const MADEONSOL_DAILY_REQUESTS = 100_000;
+
+/**
  * The consequence and the lever for the ceiling this class was written for: the keyed run-wide
- * allowance, which `--max-requests` sets. It is the default because that is the only ceiling this
+ * ceiling, which `--max-requests` sets. It is the default because that is the only ceiling this
  * module owns — every other client that throws this must say what its OWN ceiling bounds.
+ *
+ * The lever's caveat is no longer the daily allowance: at {@link MADEONSOL_DAILY_REQUESTS} a full
+ * run is ~0.2% of a day, so what a raise actually costs is wall clock and how many strangers get
+ * graded unreviewed — a graded wallet is filed and never offered again.
  */
 const KEYED_RUN_CEILING_REMEDY =
-  'The run stopped early and the ranking below is INCOMPLETE. Raise --max-requests only ' +
-  'if the shared daily allowance can afford it.';
+  'The run stopped early and the ranking below is INCOMPLETE. Raise --max-requests if the run ' +
+  'has the wall clock for it; the daily allowance is not what binds here.';
 
 /**
  * Thrown when a request would exceed the run's ceiling. Carries no credential.
@@ -170,18 +196,23 @@ export class VendorRefused extends Error {
  *
  * The captain asked for the endpoint list by name and for spend to be reported concretely rather
  * than as one aggregate number, so this table is the tool's own answer rather than prose in a
- * README that can drift from the code. Only `{wallet}` scales: everything else is one call per run.
+ * README that can drift from the code. Only `{wallet}` scales per candidate: everything else is one
+ * call per tier enumerated (two by default — `seed.mjs` -> `DEFAULT_TIERS`).
  *
  * Two endpoints are deliberately absent and stay absent — `/deployer-hunter/{wallet}/tokens` is
  * bonded-only (no denominator, and it rejects `limit` above 50) and `/deployer-hunter/{wallet}/history`
- * is PRO+, which standing policy refuses.
+ * is reachable on this lane's Ultra key but serves daily snapshots of the trailing-window aggregates
+ * this tool refuses to read, so it stays absent for a design reason rather than an entitlement one.
  *
  * @type {Record<string, { role: string, costModel: string }>}
  */
 export const ENDPOINT_ROLES = {
-  '/deployer-hunter/recent-bonds': { role: 'enumeration; carries the tier filter', costModel: '1 per run' },
-  '/deployer-hunter/alerts': { role: 'enumeration', costModel: '1 per run' },
-  '/deployer-hunter/leaderboard': { role: 'enumeration', costModel: '1 per run' },
+  // ONE PER TIER, not one per run: captain decision 262a made the seeding tiered by default, so
+  // each of these is issued once for `good` and once for `elite` (seed.mjs -> DEFAULT_TIERS).
+  // `--tier <t>` narrows the plan back to one pass each.
+  '/deployer-hunter/recent-bonds': { role: 'enumeration; carries the tier filter', costModel: '1 per tier enumerated (2 by default)' },
+  '/deployer-hunter/alerts': { role: 'enumeration', costModel: '1 per tier enumerated (2 by default)' },
+  '/deployer-hunter/leaderboard': { role: 'enumeration', costModel: '1 per tier enumerated (2 by default)' },
   '/deployer-hunter/{wallet}': { role: 'the gate', costModel: '1 per candidate — the only cost that scales' },
 };
 
@@ -211,6 +242,20 @@ export function endpointOf(path) {
   return bare;
 }
 
+/**
+ * Pacing floor for a construction that specifies none — **a fallback no caller uses, and it is
+ * deliberately NOT the live pin.**
+ *
+ * `thresholds.json` → `budget.keyedMinIntervalMs` owns the pacing a run actually uses (250 ms since
+ * captain decision 267a, re-measured on the Ultra key), and all three production constructions —
+ * `screen.mjs`, `feed.mjs`, `grade.mjs` — pass it explicitly, so nothing is paced by this constant
+ * today. The two are not rivals: the pin owns runs, this owns an argument-less construction.
+ *
+ * 6,500 ms is the superseded Free-tier burst-limit figure, kept because an unspecified default must
+ * fail in the SLOW direction — a caller that forgets gets a needlessly slow client rather than one
+ * outrunning a limiter nobody has measured for it. That asymmetry, not the tier, is the reason for
+ * the number, and it is why this sits 26× above {@link DUNE_DEFAULT_MIN_INTERVAL_MS} below.
+ */
 const DEFAULT_MIN_INTERVAL_MS = 6_500;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -390,7 +435,7 @@ export class BoundedClient {
  * caller falls back to the Solana RPC creation walk rather than retrying.
  *
  * Its own type rather than a reused {@link VendorRefused} because the two vendors' failure shapes do
- * not line up — `classifyAuthFailure` speaks of 30-day Free-tier expiry and a ~200/day request
+ * not line up — `classifyAuthFailure` speaks of MadeOnSol key expiry and a MadeOnSol daily request
  * allowance, neither of which is true of Dune — and a message naming the wrong vendor's remedy sends
  * an operator to rotate a key that is working.
  */

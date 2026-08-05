@@ -481,9 +481,9 @@ verdict.
 all-or-nothing failure: one deployer above it cost every other candidate in the run its Dune answer.
 That is not hypothetical for this seed population — `README.md` records the `total_bonded`
 leaderboard, one of the three enumeration seeds, serving an **8,518-deploy** wallet, and the
-pre-filter skips *low*-deploy wallets without capping high ones. Two or three of those in one batch
-carry it past 20,000 rows. The cost of being wrong is large and one-sided: ~13 hours of RPC walking
-against ~1 credit of Dune.
+pre-filter skips *low*-deploy wallets without capping high ones. A few of those in one batch carry it
+past `dune.maxResultRows` whatever that ceiling is pinned at. The cost of being wrong is large and
+one-sided: ~13 hours of RPC walking against ~1 credit of Dune.
 
 **The fix, and where it lives.** `CREATION_SQL` ranks each deployer's rows **most recent first** —
 the tool asks what a wallet is creating *now*, so a capped deployer's oldest launches are the least
@@ -492,7 +492,7 @@ batch>))` of them, plus that deployer's **true** count as `launches_total`. Thre
 
 | | before | after |
 |---|---|---|
-| rows a run may return | unbounded until the ceiling refuses | **`max(19,999, <deployers> × 500)`**; above 20,000 the ceiling refuses the result whole, as before |
+| rows a run may return | unbounded until the ceiling refuses | **`max(19,999, <deployers> × 500)`**; above `dune.maxResultRows` (40,000 since captain decision 264a) the ceiling refuses the result whole, as before |
 | a wallet over the cap in the batch | **the whole batch → RPC walk** | **only the wallets over the cap walk, however many there are**; every other candidate keeps its Dune answer |
 | executions per run | 1 | **1** (the cap is inside the same query) |
 
@@ -516,10 +516,11 @@ its own.
 
 **What the floor costs, stated rather than hidden.** The rows bound is no longer 19,999 by
 construction: above 39 deployers the floor binds and the SQL may return `<deployers> × 500`. The
-result-row ceiling stays exactly as it was and refuses such a result whole, which is the fallback
-merged `main` already had — never worse than today, just not eliminated. It takes roughly 40 wallets
-of 500+ launches in one batch to reach it, which the `total_bonded` leaderboard seed can serve. That
-is the accepted trade for never truncating a measured wallet.
+result-row ceiling refuses such a result whole, which is the fallback merged `main` already had —
+never worse than today, just not eliminated. It takes roughly **80** wallets of 500+ launches in one
+batch to reach it at the 40,000 captain decision 264a pinned (it was ~40 at 20,000), which the
+`total_bonded` leaderboard seed can serve. That is the accepted trade for never truncating a measured
+wallet.
 
 **A capped wallet is a prefix, never a short history**, and the two checks that could be confused are
 kept apart on purpose: `rows.length !== total_row_count` is about the RESULT SET losing bytes to
@@ -677,11 +678,11 @@ and the graduation timestamp were dropped from the `SELECT` (they halved the pay
 reads neither) — **that measurement was taken at four columns**, and the SQL now selects six, which
 §8.2c re-measures at **105.9 bytes/row** against the unchanged 121-byte ceiling. At the 195-candidate cap and a median
 ~50-launch history that is ~0.95 MB, about **20 credits a run — roughly 125 full-cap runs a month**.
-`dune.maxResultRows` caps a read at 20,000 rows and **refuses rather than pages**: an unbounded read
-is an unbounded bill. Since §8.2b the SQL also bounds a run's rows at
-**`max(19,999, <deployers> × 500)`**, so that ceiling is the backstop rather than the first line of
-defence — reachable only by roughly 40 wallets of 500+ launches in one batch, and a run that reaches
-it falls back whole exactly as it did before the cap existed.
+`dune.maxResultRows` caps a read at 40,000 rows (20,000 until captain decision 264a) and **refuses
+rather than pages**: an unbounded read is an unbounded bill. Since §8.2b the SQL also bounds a run's
+rows at **`max(19,999, <deployers> × 500)`**, so that ceiling is the backstop rather than the first
+line of defence — reachable only by roughly 80 wallets of 500+ launches in one batch, and a run that
+reaches it falls back whole exactly as it did before the cap existed.
 
 Two spend rules that are not negotiable, both from the vendor's own billing model:
 

@@ -14,7 +14,7 @@
  *      measured outcome and is labelled as one.
  *   2  usage error.
  *   3  credential missing or malformed.
- *   4  credential rejected (401/403) — on Free tier, most likely expired.
+ *   4  credential rejected (401/403) — expiry is the likeliest cause, though UNVERIFIED on Ultra.
  *   5  quota exhausted or rate-limited (429).
  *   6  a request ceiling was reached before the run completed.
  *   7  upstream or transport failure, INCLUDING a 400 the vendor's own validator rejected. A
@@ -147,9 +147,14 @@ OPTIONS
                       default run grades everything enumeration surfaces. Ceiling from
                       thresholds.json; this flag can only lower it.
   --max-requests <n>  Hard keyed-request ceiling. Cannot exceed the pinned budget, which is the
-                      whole MadeOnSol Free-tier daily allowance. A plan whose worst case does not
-                      fit under the ceiling is refused before the first request (exit 2).
-  --tier <t>          Restrict enumeration to one tier: elite|good|moderate|rising|cold.
+                      PLAN's one-retry worst case rather than a daily allowance (captain decision
+                      267a — the MadeOnSol key is Ultra at 100,000/day, so the allowance stopped
+                      being what binds). A plan whose worst case does not fit under the ceiling is
+                      refused before the first request (exit 2).
+  --tier <t>          Enumerate ONE tier: elite|good|moderate|rising|cold. The default is TIERED
+                      already — the pinned tier set in seed.mjs -> DEFAULT_TIERS, 'good' + 'elite'
+                      (captain decision 262a). This NARROWS that to one tier; it does not turn
+                      tiering on, and the dry-run plan prints the exact enumeration cost.
   --no-stage2         Skip entry scoring. Stage 1 only — the competence gate on its own, which
                       answers nothing about whether a window is enterable.
   --score <n>         Max gate survivors to score in Stage 2. Cannot exceed the pinned cap.
@@ -209,8 +214,9 @@ WHICH HISTORY THE GATE READS
 
 CREDENTIAL
   Reads ${KEY_ENV_VAR} from the environment. Never printed, never logged, never written to disk,
-  and never stored in this repository. Free-tier keys expire every 30 days; a rejected key exits 4
-  with a specific message rather than an empty result.
+  and never stored in this repository. Free-tier keys expired every 30 days and WHETHER THAT HOLDS
+  ON ULTRA IS UNVERIFIED; either way a rejected key exits 4 with a specific message rather than an
+  empty result.
 
       export ${KEY_ENV_VAR}="$(your-secret-manager read madeonsol)"
       # or, from a dotenv file kept OUTSIDE this repo:
@@ -379,8 +385,8 @@ export function parseArgs(argv) {
  *
  * The mapping is the whole point of having distinct codes, and one case is easy to get wrong: an
  * **HTTP 400 is our query shape, not their verdict on the credential.** Reporting it as
- * `credentialRejected` tells an operator to rotate a key that is working perfectly, which on a tier
- * where keys expire every 30 days is a plausible and entirely wasted afternoon. It is an upstream
+ * `credentialRejected` tells an operator to rotate a key that is working perfectly, which on a
+ * vendor whose keys may expire is a plausible and entirely wasted afternoon. It is an upstream
  * failure, because the thing that failed is upstream of the key.
  *
  * @param {import('./credential.mjs').AuthFailureKind} kind
@@ -487,8 +493,10 @@ export async function main(opts, env, out, err) {
   }
 
   // ---- Plan ------------------------------------------------------------------------------
-  // The pinned bounds are the whole Free-tier daily allowance, and both are hard: `--candidates`
-  // and `--max-requests` can only ever lower them.
+  // The pinned bounds are RE-DERIVED for the Ultra tier (captain decision 267a): the keyed ceiling
+  // is the plan's one-retry worst case, not a daily allowance, and the candidate cap is the largest
+  // the pinned keyless ceiling admits. Both are hard: `--candidates` and `--max-requests` can only
+  // ever lower them.
   const maxKeyed = Math.min(opts.maxRequests ?? budget.maxKeyedRequests, budget.maxKeyedRequests);
   // The plan is built FIRST so the enumeration cost is the plan's own length rather than a literal
   // that happens to match it. A fourth enumeration query would otherwise leave a no-flag invocation
@@ -1264,7 +1272,7 @@ export async function main(opts, env, out, err) {
       err(
         `  Every gate reading after this point would have silently fallen back to the ownership ` +
           `listing while the record still said historySource "${historySource}", so the run stops ` +
-          `instead. The rest of the shared MadeOnSol daily allowance is unspent.`,
+          `instead. The rest of the MadeOnSol daily allowance is unspent.`,
       );
     }
 

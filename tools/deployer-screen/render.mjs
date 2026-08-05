@@ -32,11 +32,9 @@ import { windowReachMs } from './pumpfun.mjs';
 // there rather than here so the screen's plan and the census's cannot drift, and so a change that
 // degraded an UNAVAILABLE into a blank or a zero would have to delete the function that says why.
 import {
-  PLAN_NOTE_WIDTH,
   eligibilityFloorSeconds,
   eligibilityUnavailableNote,
   sourceFigureUnavailableNote,
-  wrapPlanNote,
 } from './plan-source.mjs';
 import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
@@ -1255,9 +1253,7 @@ export function renderDryRun(plan) {
         L.push('WHAT BUILDING IT WOULD HAVE COST IS UNSTATED HERE. Same reason, same words, as the');
         L.push('figure it withholds further down, including what would authorise the purchase:');
       }
-      for (const note of eligibilityUnavailableNote(plan.entryEligibility)) {
-        for (const line of wrapPlanNote(note, PLAN_NOTE_WIDTH)) L.push(`  ${line}`);
-      }
+      for (const line of eligibilityUnavailableNote(plan.entryEligibility)) L.push(`  ${line}`);
     }
   } else {
     L.push('DRY RUN — nothing was fetched. This is exactly what a real run would request.');
@@ -1338,13 +1334,12 @@ export function renderDryRun(plan) {
     const fromSwapApi = eligibility.kind === 'swap-api';
     /** @param {string} figure */
     const notMeasuredHere = (figure) => {
-      for (const note of sourceFigureUnavailableNote({
+      const note = sourceFigureUnavailableNote({
         figure,
         measuredOn: 'swap-api',
         selected: eligibility.kind,
-      })) {
-        for (const line of wrapPlanNote(note, PLAN_NOTE_WIDTH)) L.push(`    ${line}`);
-      }
+      });
+      for (const line of note) L.push(`    ${line}`);
     };
     L.push(
       fromSwapApi
@@ -1446,9 +1441,7 @@ export function renderDryRun(plan) {
       // the vendor's and is simply not here, said in those words.
       L.push('  A launch is not walked until it is old enough, and');
       L.push('  HOW OLD IS UNAVAILABLE IN THIS PLAN:');
-      for (const note of eligibilityUnavailableNote(eligibility)) {
-        for (const line of wrapPlanNote(note, PLAN_NOTE_WIDTH)) L.push(`    ${line}`);
-      }
+      for (const line of eligibilityUnavailableNote(eligibility)) L.push(`    ${line}`);
       L.push('  Every other figure on this page is free of that and stands.');
     }
     L.push('  Pinned keyless pacing, one request in flight.');

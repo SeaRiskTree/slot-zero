@@ -139,7 +139,6 @@ import {
   registrationOf,
   sourceFigureUnavailableNote,
   undeclaredConstruction,
-  wrapPlanNote,
 } from '../tools/deployer-screen/plan-source.mjs';
 import {
   duneFillSource,
@@ -11912,17 +11911,69 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       }
     });
 
-    it('every printer wraps a SHARED plan sentence at the ONE shared width', async () => {
-      // `PLAN_NOTE_WIDTH` claims the shared sentences are laid out at one width, so that "the two
-      // plan surfaces print the same sentence" is a claim about what a reader SEES and not only
-      // about what a string holds. A claim outrunning its enforcement is a named recurring defect
-      // here, and this is the enforcement: every surface that prints a shared note is rendered and
-      // its line breaks compared against the shared wrap. A printer that reintroduces a second
-      // width fails this even when the right margins happen to coincide, because the BREAKS move.
+    it('a SHARED plan sentence is handed to its printers ALREADY WRAPPED, so no printer picks a width', () => {
+      // THE PROPERTY IS STRUCTURAL, so it is asserted structurally rather than by enumerating the
+      // printers that exist today — a guard that has to be extended for every new consumer is a
+      // claim waiting to outrun its enforcement, the named recurring defect here. The note
+      // functions themselves return LINES already inside `PLAN_NOTE_WIDTH`, so the guarantee holds
+      // for consumers that do not exist yet: the only thing a printer can do is indent them.
+      const shapes = [
+        eligibilityUnavailableNote({
+          known: false,
+          kind: 'dune',
+          why: 'building it runs the decoded trade tables\' coverage probe, whose result read is billed by bytes.',
+          authorisedBy: '--dry-run-spend',
+        }),
+        eligibilityUnavailableNote({
+          known: false,
+          kind: 'dune',
+          why: 'the source declared nothing about what building it costs.',
+          authorisedBy: null,
+        }),
+        eligibilityUnavailableNote({
+          known: false,
+          kind: 'dune',
+          why: 'this plan was authorised to build it and the construction then failed.',
+          authorisedBy: '--dry-run-spend',
+          spent: true,
+        }),
+        sourceFigureUnavailableNote({
+          figure: 'pages per launch (p50/p90/p95/max) and the shed rate',
+          measuredOn: 'swap-api',
+          selected: 'dune',
+        }),
+      ];
+      for (const lines of shapes) {
+        // More than one line, or the wrap is not being exercised at all and the pin is vacuous.
+        expect(lines.length).toBeGreaterThan(1);
+        for (const line of lines) {
+          expect(line.length, `a shared note line runs past the shared width: ${line}`).toBeLessThanOrEqual(
+            PLAN_NOTE_WIDTH,
+          );
+          // Never a blank line inside a note: an indented empty string is a gap in the block.
+          expect(line.trim()).not.toBe('');
+        }
+        // AND THE REASON SURVIVES THE WRAP — the words are the whole point of these strings, so
+        // the layout may only move where the spaces fall.
+        const whole = lines.join(' ');
+        expect(whole).toContain('UNAVAILABLE — NOT MEASURED, NOT ZERO, AND NOT ANOTHER SOURCE\'S NUMBER.');
+        expect(whole.length).toBeGreaterThan(PLAN_NOTE_WIDTH);
+      }
+      // A KNOWN figure is an EMPTY array and never one blank line, which would put a gap into every
+      // plan that has nothing to report.
+      expect(eligibilityUnavailableNote({ known: true, kind: 'dune', minAgeMs: 600_000, billed: true })).toEqual([]);
+      expect(sourceFigureUnavailableNote({ figure: 'pages per launch', measuredOn: 'dune', selected: 'dune' })).toEqual(
+        [],
+      );
+    });
+
+    it('every printer renders a SHARED plan sentence verbatim, indented inside its own block', async () => {
+      // The other half: the notes are laid out here, so each page must print those lines UNCHANGED
+      // and in order, indented into the block around them. A printer that re-wrapped what it was
+      // given, or dropped a line of the reason, fails this.
       const TH = loadThresholds();
-      /** Where the shared note's own line breaks fall, whatever the printer indents it by. */
-      const breaksOf = (text: string, note: string) => {
-        const want = wrapPlanNote(note, PLAN_NOTE_WIDTH);
+      /** The shared note's own lines as the page renders them, whatever it indents them by. */
+      const breaksOf = (text: string, want: string[]) => {
         const lines = text.split('\n').map((l) => l.trim());
         const at = lines.indexOf(want[0]!);
         expect(at, `the note's first line is not rendered at the shared width:\n${text}`).toBeGreaterThanOrEqual(0);
@@ -11935,8 +11986,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         why: 'building it runs the decoded trade tables\' coverage probe, whose result read is billed by bytes.',
         authorisedBy: '--dry-run-spend',
       };
-      const note = eligibilityUnavailableNote(unavailable)[0]!;
-      const want = wrapPlanNote(note, PLAN_NOTE_WIDTH);
+      const want = eligibilityUnavailableNote(unavailable);
       expect(want.length).toBeGreaterThan(1);
 
       const screenPlan = {
@@ -11963,8 +12013,8 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       };
       // (1) the screen's Stage 2 block, and (2) the spend-authorised banner, which used to wrap the
       // same sentence two columns wider than everyone else.
-      expect(breaksOf(renderDryRun({ ...screenPlan, spendAuthorised: false }), note)).toEqual(want);
-      expect(breaksOf(renderDryRun({ ...screenPlan, spendAuthorised: true }), note)).toEqual(want);
+      expect(breaksOf(renderDryRun({ ...screenPlan, spendAuthorised: false }), want)).toEqual(want);
+      expect(breaksOf(renderDryRun({ ...screenPlan, spendAuthorised: true }), want)).toEqual(want);
 
       // (3) the census's plan surface, the other half of the "cannot drift" claim.
       const censusText = renderCensusDryRun({
@@ -11976,7 +12026,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         entryEligibility: unavailable,
         listingIntervalMs: TH['budget'].keylessMinIntervalMs,
       });
-      expect(breaksOf(censusText, note)).toEqual(want);
+      expect(breaksOf(censusText, want)).toEqual(want);
 
       // (4) THE OTHER SHARED SENTENCE, printed by the screen when a figure was measured on a source
       // this run is not using. Same vocabulary, so it must be the same layout too.
@@ -11984,13 +12034,14 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         figure: 'pages per launch (p50/p90/p95/max) and the shed rate',
         measuredOn: 'swap-api',
         selected: 'dune',
-      })[0]!;
+      });
+      expect(figureNote.length).toBeGreaterThan(1);
       const measured = renderDryRun({
         ...screenPlan,
         spendAuthorised: false,
         entryEligibility: { known: true, kind: 'dune', minAgeMs: 600_000, billed: true },
       });
-      expect(breaksOf(measured, figureNote)).toEqual(wrapPlanNote(figureNote, PLAN_NOTE_WIDTH));
+      expect(breaksOf(measured, figureNote)).toEqual(figureNote);
     });
 
     it('the eligibility sentence is rendered whole, in both the known and the unknown branch', () => {

@@ -310,19 +310,28 @@ export async function planEligibility(input) {
 }
 
 /**
- * The width both plan surfaces wrap a shared sentence to.
+ * The width every shared plan sentence is laid out at, HERE, before any printer sees it.
  *
- * The unavailable note and the stated-absence spend line are one string each, shared between
+ * The unavailable notes and the stated-absence spend line are shared between
  * `screen.mjs` → `renderDryRun` and `bundling.mjs` → `renderDryRun` so the two cannot drift in what
  * they SAY. Laying them out at one width is the other half of that: a claim that two surfaces print
- * the same sentence is not worth much if one of them prints it as a single runaway line.
+ * the same sentence is not worth much if one of them prints it as a single runaway line. So this
+ * module wraps them itself and hands out LINES — the consumers only indent, and a printer added
+ * later inherits the width instead of choosing one.
  */
 export const PLAN_NOTE_WIDTH = 74;
 
 /**
  * Wrap one shared plan sentence to the width of the block it is printed inside.
  *
- * It lives here, beside the strings it lays out, so the census can reach it without importing
+ * IT IS NOT EXPORTED, AND THAT IS THE POINT. Every shared sentence this module owns is handed to
+ * its printers ALREADY WRAPPED, so a consumer receives LINES and can only indent them. A printer
+ * that wanted a second width would have to write its own wrapper over lines that are already
+ * broken, which reads as broken output immediately rather than drifting quietly — the same shape as
+ * the one-bound cursor in `tools/arrival-rate-walk/walk.mjs`: the class is removed rather than
+ * enumerated, so a printer that does not exist yet is covered too.
+ *
+ * It lives here, beside the strings it lays out, so the census reaches the layout without importing
  * `render.mjs` or `screen.mjs` — that would put the Dune client and the credential reader into a
  * keyless pass's import graph, which captain decision 173a keeps out of it.
  *
@@ -330,7 +339,7 @@ export const PLAN_NOTE_WIDTH = 74;
  * @param {number} width
  * @returns {string[]}
  */
-export function wrapPlanNote(text, width) {
+function wrapPlanNote(text, width) {
   /** @type {string[]} */
   const lines = [];
   let line = '';
@@ -399,12 +408,17 @@ export function eligibilityFloorSeconds(eligibility) {
  * the purchase. It is built here rather than in each printer so the two plan surfaces cannot drift,
  * and so a change that degraded it into a blank or a zero would have to delete this function.
  *
+ * **The return is PRE-WRAPPED LINES, not a sentence**, so the module that owns the words owns their
+ * layout and no printer picks a width. An empty array still means "the figure is known and there is
+ * nothing to say" — never one blank line, which would put a gap into every plan with nothing to
+ * report.
+ *
  * @param {PlanEligibility} eligibility
  * @returns {string[]}
  */
 export function eligibilityUnavailableNote(eligibility) {
   if (eligibility.known) return [];
-  return [
+  return wrapPlanNote(
     `UNAVAILABLE — NOT MEASURED, NOT ZERO, AND NOT ANOTHER SOURCE'S NUMBER. The ` +
       `${eligibility.kind} fill source is the one that will apply this gate, and this plan cannot ` +
       `have its answer for free: ${eligibility.why}` +
@@ -415,7 +429,8 @@ export function eligibilityUnavailableNote(eligibility) {
           ? ' Nothing here authorises that spend, so the plan prints everything it knows and stops.'
           : ` Pass ${eligibility.authorisedBy} to authorise that spend; this plan did not, and every ` +
             `other figure on this page is unaffected.`),
-  ];
+    PLAN_NOTE_WIDTH,
+  );
 }
 
 /**
@@ -452,12 +467,13 @@ export function eligibilityUnavailableNote(eligibility) {
  */
 export function sourceFigureUnavailableNote(spec) {
   if (spec.measuredOn === spec.selected) return [];
-  return [
+  return wrapPlanNote(
     `${spec.figure}: UNAVAILABLE — NOT MEASURED, NOT ZERO, AND NOT ANOTHER SOURCE'S NUMBER. That ` +
       `figure was measured on the ${spec.measuredOn} source and describes only it; this run's ` +
       `fills come from the ${spec.selected} source, against which nothing here has been measured. ` +
       `The ceilings, worst cases and caveats on this page are the ones this stage enforces on its ` +
       `OWN client today, they are what binds a keyless-sourced walk, and they still print — a ` +
       `source billed in other units would not be governed by them.`,
-  ];
+    PLAN_NOTE_WIDTH,
+  );
 }

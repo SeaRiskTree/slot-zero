@@ -187,12 +187,10 @@ import {
   windowReachMs,
 } from './pumpfun.mjs';
 import {
-  PLAN_NOTE_WIDTH,
   eligibilityFloorMs,
   eligibilityUnavailableNote,
   freeConstruction,
   planEligibility,
-  wrapPlanNote,
 } from './plan-source.mjs';
 import { applyGate, verdictFor } from './rank.mjs';
 import { measureSubjectLaunches } from './stage0.mjs';
@@ -1278,9 +1276,7 @@ export function renderDryRun(plan) {
   // NEVER A BLANK AND NEVER A ZERO — captain decision 286c. A floor this plan could not have for
   // free says so in place, names the source that owes it and the reason, and leaves every other
   // parameter above standing.
-  for (const note of eligibilityUnavailableNote(plan.entryEligibility)) {
-    for (const line of wrapPlanNote(note, PLAN_NOTE_WIDTH)) L.push(`    ${line}`);
-  }
+  for (const line of eligibilityUnavailableNote(plan.entryEligibility)) L.push(`    ${line}`);
   L.push('');
   L.push('WHAT IT WILL NOT DO: no entry score, no room figure, no field, no entry cost, no verdict.');
   L.push('');

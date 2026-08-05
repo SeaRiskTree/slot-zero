@@ -211,6 +211,7 @@ import {
   unmeasuredBecause,
   unmeasuredNoSource,
 } from '../tools/deployer-screen/record.mjs';
+import { ENTRY_PREDICTION_READING } from '../tools/deployer-screen/prediction.mjs';
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
 
@@ -1775,6 +1776,189 @@ describe('the CLI contract', () => {
       'minSpanDays',
       'minTokens',
     ]);
+  });
+
+  it('THE THREE SAMPLING CAPS ARE SOURCE-SCOPED, and neither entry may borrow the other\'s arithmetic', () => {
+    // The captain's source-scoping ruling, 2026-08-05. The swap-api walk pays in REQUESTS per launch
+    // page; the Dune source pays CREDITS for windows SCANNED. One shared set of caps would have to be
+    // justified by one cost model and obeyed by both, and on the second source the value would then be
+    // CARRIED rather than derived — a number with no derivation, which this file does not ship.
+    //
+    // So each source carries its own three, and this test is the enforcement BOTH blocks claim in
+    // prose. A justification that says "a test asserts that separation" with no such test is the same
+    // defect one level up.
+    const T = loadThresholds() as Record<string, Record<string, unknown>>;
+    const CAPS = ['maxCandidatesScored', 'minLaunchesSampled', 'maxLaunchesPerCandidate'] as const;
+    const swap = T['stage2_entry']!;
+    const dune = T['stage2_entry_dune']!;
+
+    // Same three parameters on both, so a cap cannot quietly exist on one source only.
+    for (const k of CAPS) {
+      expect(swap[k], `stage2_entry.${k}`).toBeTypeOf('number');
+      expect(dune[k], `stage2_entry_dune.${k}`).toBeTypeOf('number');
+    }
+    // And the Dune block is EXACTLY those three plus its prose — every evidence bar (minRoomLeft, the
+    // field bars, the cost bar) stays in stage2_entry and governs both sources. A source carrying its
+    // own minRoomLeft could answer differently about the same window, which the substitution must
+    // never be able to do.
+    expect(Object.keys(dune).filter((k) => !k.startsWith('$') && k !== 'justification').sort()).toEqual(
+      [...CAPS].sort(),
+    );
+
+    const jSwap = swap['justification'] as Record<string, string>;
+    const jDune = dune['justification'] as Record<string, string>;
+
+    // THE BAN IS SYMMETRIC AND IT HAS TWO PARTS, ON BOTH SIDES. Neither entry may NAME the other
+    // lane's cost parameters, AND neither may state a QUANTITY in the other lane's unit — a credit
+    // figure on the swap-api side, a request figure on the Dune side. A bare mention of the other
+    // unit, used to DISCLAIM it, is deliberately allowed on both sides: the Dune entries each say
+    // "request" exactly once, to say the unit does not apply here, and a swap-api entry is equally
+    // entitled to say it spends no Dune credit.
+    //
+    // The quantity half is what gives the parameter half its reach. A borrowed derivation does not
+    // have to name a parameter to be borrowed — the sibling block states its whole credit derivation
+    // in bare figures — so a parameter-name ban alone would miss the realistic borrow while its
+    // comment claimed otherwise. Each half is therefore proven able to fire ON ITS OWN below, so
+    // neither can silently stop firing behind the other in the combined predicate.
+    //
+    // The parameter names are written out below, and each one is then asserted to still resolve to a
+    // live pin on the lane that owns it — so a rename fails here rather than silently stopping the
+    // ban from firing.
+    const swapCostParams = ['maxRequestsPerLaunch', 'maxKeylessRequests'] as const;
+    const duneCostParams = [
+      'maxResultRows',
+      'worstCaseCreditsPerExecution',
+      'allowanceReserveCredits',
+      'resultBytesPerRowCeiling',
+    ] as const;
+    const duneLane = T['dune'] as Record<string, unknown>;
+    for (const p of swapCostParams) expect(swap[p], `stage2_entry.${p}`).toBeTypeOf('number');
+    for (const p of duneCostParams) expect(duneLane[p], `dune.${p}`).toBeTypeOf('number');
+    const swapCostTerms = new RegExp(swapCostParams.join('|'));
+    const duneCostTerms = new RegExp(duneCostParams.join('|'));
+    const requestQuantity = /[\d.,]+\s*requests?/i;
+    const creditQuantity = /[\d.,]+\s*credits?/i;
+    const borrowsDune = (text: string) => duneCostTerms.test(text) || creditQuantity.test(text);
+    const borrowsSwap = (text: string) => swapCostTerms.test(text) || requestQuantity.test(text);
+
+    // THE CHECK CAN FIRE, DEMONSTRATED RATHER THAN ASSERTED, AND EACH HALF SEPARATELY. Each side's
+    // ban is run against the other block's OWN justification — real text stating that side's real
+    // derivation in that side's real unit, not an invented sentence. The combined predicate is an
+    // OR, so running it on the whole text would let the parameter half mask the quantity half: the
+    // swap-api entries all name maxRequestsPerLaunch, and the OR would short-circuit there while a
+    // broken requestQuantity went unnoticed. So each half is exercised on text the other half
+    // cannot match, derived from the live justification by removing what the other half sees.
+    const stripRequestQuantities = (t: string) => t.replace(/[\d.,]+\s*requests?/gi, 'requests');
+    const stripCreditQuantities = (t: string) => t.replace(/[\d.,]+\s*credits?/gi, 'credits');
+    const stripSwapParams = (t: string) => t.replace(new RegExp(swapCostParams.join('|'), 'g'), 'the cap');
+    const stripDuneParams = (t: string) => t.replace(new RegExp(duneCostParams.join('|'), 'g'), 'the ceiling');
+
+    for (const k of CAPS) {
+      // The swap-api side's real arithmetic, with its request FIGURES reduced to the bare word that
+      // both sides may use. Only the parameter half can still see it.
+      const swapNamesOnly = stripRequestQuantities(jSwap[k]!);
+      expect(requestQuantity.test(swapNamesOnly), `${k}: the bare unit word is not a quantity`).toBe(false);
+      expect(swapCostTerms.test(swapNamesOnly), `${k}: the swap parameter half fires alone`).toBe(true);
+      expect(borrowsSwap(swapNamesOnly)).toBe(true);
+
+      // The same text with its parameter NAMES removed — the realistic borrow, a derivation stated
+      // in figures alone. Only the quantity half can still see it.
+      const swapFiguresOnly = stripSwapParams(jSwap[k]!);
+      expect(swapCostTerms.test(swapFiguresOnly), `${k}: no swap parameter name survives`).toBe(false);
+      expect(requestQuantity.test(swapFiguresOnly), `${k}: the request quantity half fires alone`).toBe(true);
+      expect(borrowsSwap(swapFiguresOnly)).toBe(true);
+
+      // The Dune mirror: its whole credit derivation is stated in figures and names none of the four
+      // banned parameters, which is exactly why the quantity half exists.
+      const duneFiguresOnly = stripDuneParams(jDune[k]!);
+      expect(duneCostTerms.test(duneFiguresOnly), `${k}: no Dune parameter name survives`).toBe(false);
+      expect(creditQuantity.test(duneFiguresOnly), `${k}: the credit quantity half fires alone`).toBe(true);
+      expect(borrowsDune(duneFiguresOnly)).toBe(true);
+    }
+
+    // And the Dune parameter half, which only one entry exercises — it is the one that reasons about
+    // the enumeration lane's row ceiling.
+    const duneNamesOnly = stripCreditQuantities(jDune['maxCandidatesScored']!);
+    expect(creditQuantity.test(duneNamesOnly)).toBe(false);
+    expect(duneCostTerms.test(duneNamesOnly), 'the Dune parameter half fires alone').toBe(true);
+    expect(borrowsDune(duneNamesOnly)).toBe(true);
+
+    for (const k of CAPS) {
+      // THE LIMIT OF THIS CHECK, so the prose claim is not read as stronger enforcement than it is:
+      // it reaches the other lane's PARAMETER NAMES and number-adjacent uses of its UNIT, and a bare
+      // mention of that unit — used to disclaim it — is deliberately allowed on both sides. What it
+      // does NOT reach is a borrow phrased with neither: a request product written as "six page
+      // fetches a launch" names no parameter and states no request figure, and would pass. That
+      // residual is acceptable because `justification` is an explicitly owned text contract here
+      // (same idiom as 'every pinned parameter carries a stated reason'), and because the
+      // value-level half of the scoping is asserted semantically in the next test. Both blocks'
+      // prose claims exactly this and no more.
+      expect(borrowsSwap(jDune[k]!), `stage2_entry_dune.justification.${k} borrows swap-api arithmetic`).toBe(
+        false,
+      );
+      expect(borrowsDune(jSwap[k]!), `stage2_entry.justification.${k} borrows Dune arithmetic`).toBe(false);
+      // And each states its OWN model rather than merely avoiding the other's.
+      expect(jSwap[k], `stage2_entry.justification.${k} states no request arithmetic`).toMatch(swapCostTerms);
+      expect(jDune[k], `stage2_entry_dune.justification.${k} states no credit arithmetic`).toMatch(/credit/i);
+    }
+  });
+
+  it("the Dune caps are derived from WINDOWS SCANNED, and the row ceiling is not what binds them", () => {
+    // The measured finding this block is sized on: the execution is billed for the SCAN, not for the
+    // rows it hands back. Gate 1 measured ~29 credits at 7 x 10 = 70 windows — held in firstmate's
+    // records, NOT in this repo, so that figure is asserted from elsewhere and is not checked here.
+    // What IS checked is the arithmetic built on it.
+    const T = loadThresholds() as Record<string, Record<string, unknown>>;
+    const d = T['stage2_entry_dune'] as Record<string, number>;
+    const dune = T['dune'] as Record<string, number>;
+
+    expect(d['minLaunchesSampled']).toBe(20); // era B, n = 20 — the only raise this repo has evidence for
+    expect(d['maxLaunchesPerCandidate']).toBe(22);
+    // 7 -> 14, captain decision 289b. 14 is the larger of the two per-run survivor counts the
+    // 2026-08-05 seed comparison recorded (14 good, 13 elite); the pooled 27 was declined because it
+    // is sized to a population the discovery widening will move. Interim, not terminal.
+    expect(d['maxCandidatesScored']).toBe(14);
+
+    // The floor must stay BELOW the cap or a single dropped launch costs the whole candidate's
+    // verdict, and the gap is TWO on both sources — captain decision 190a's argument, re-derived here
+    // in credits rather than restated in requests.
+    const swap = T['stage2_entry'] as Record<string, number>;
+    expect(d['maxLaunchesPerCandidate']! - d['minLaunchesSampled']!).toBe(2);
+    expect(swap['maxLaunchesPerCandidate']! - swap['minLaunchesSampled']!).toBe(2);
+
+    // Windows scanned is the lever, and this is the number the ~128 credits/run rests on.
+    const windows = d['maxCandidatesScored']! * d['maxLaunchesPerCandidate']!;
+    expect(windows).toBe(308);
+    // ROWS RETURNED IS NOT THE LEVER, and the headroom is what says so: one row per planned launch,
+    // against a ceiling two orders of magnitude above it. If this ever stopped holding, the block
+    // comment's derivation would be sized on the wrong quantity.
+    //
+    // WHAT THIS BOUND IS, stated exactly, because it is easy to misread as a vendor limit: 400 windows
+    // is a SELF-IMPOSED HEADROOM CONVENTION OF THIS TEST — one hundredth of the row ceiling, chosen so
+    // the derivation stays two orders of magnitude clear of a quantity it is not sized on. THE
+    // ENUMERATION LANE'S ROW CEILING IS NOWHERE NEAR: at one row per planned launch, dune.maxResultRows
+    // 40,000 is not reached until 40,000 / 22 = ~1,818 candidates, so rows returned genuinely bind
+    // nothing at any cap this lane will plausibly consider. That 40,000 is REPO-OWNED — the ?limit=
+    // this repo sends, pinned by captain decision 264a for enumeration reasons — and the VENDOR's own
+    // ceiling is UNMEASURED: 40,000 was verified accepted, and nothing here has looked for what would
+    // be refused.
+    //
+    // IT IS STILL A LIVE TRIPWIRE ON THE NEXT RAISE, and knowing whose bound it is decides what to do
+    // when it fires. At the pinned cap of 22 launches, a scoring cap of 18 (396 windows) is the LAST
+    // that passes and 27 (594) does not. So the widened-pool derivation captain decision 289b defers
+    // to meets TWO REPO DECISIONS AND NO EXTERNAL BOUND, and the one that binds first is THIS
+    // CONVENTION: relax it and say why, NOT raise dune.maxResultRows chasing a bound that does not
+    // exist. That value is the enumeration lane's and is sized in BYTES rather than rows, so a Stage 2
+    // sampling question is no reason to touch it.
+    //
+    // THE COUPLING IS DELIBERATE AND BORROWED, so it is named rather than left implicit:
+    // dune.maxResultRows is owned by the ENUMERATION lane (captain decision 264a moved it
+    // 20,000 -> 40,000 for enumeration reasons alone), and this convention is expressed as a fraction
+    // of it. A change on either side is therefore to be taken deliberately. Nothing auto-moves today —
+    // Stage 2's own three caps are asserted above as literals, so an enumeration-driven change to that
+    // ceiling can only loosen or tighten this convention, never move a pinned Stage 2 value.
+    const ROW_HEADROOM_DIVISOR = 100;
+    expect(windows).toBeLessThan(dune['maxResultRows']! / ROW_HEADROOM_DIVISOR);
   });
 
   it('every pinned parameter carries a stated reason, and every stated reason has a parameter', () => {
@@ -9393,9 +9577,15 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     // gate was a hand-written `windowMs + seekMarginMs` = 65,000 ms, a DURATION describing something
     // the chain controls, while membership is 160 SLOTS. Raising it to 71,448 would have re-armed
     // the identical trap at the next drift, so the gate now derives from the span at the same
-    // measured rate the cursor uses — `pumpfun.mjs` -> `windowReachMs`, one function, two call
-    // sites. A test asserting a shortfall that no longer exists would be the same defect in mirror
-    // image, so it is gone and this is the enforcement.
+    // measured rate the cursor uses — on the swap-api source, `pumpfun.mjs` -> `windowReachMs`.
+    // NO CALL-SITE COUNT IS GIVEN HERE ANY MORE. This comment used to say "one function, two call
+    // sites"; captain decision 260a's fill-source injection moves those calls, so the count went
+    // stale with nothing failing — the same claim-outrunning-enforcement class the captain ruled
+    // on in 284a and 285a, and the reason `thresholds.json`'s `seekMarginMs`, `windowMs` and
+    // `windowSlotSpan` entries dropped the identical anchor. What is durable is that the gate IS
+    // the reach, and that is what this test reads out of a live run rather than off any module's
+    // source text. A test asserting a shortfall that no longer exists would be the same defect in
+    // mirror image, so it is gone and this is the enforcement.
     //
     // Read from a PRODUCTION run rather than by regexing `stage2.mjs` or re-typing the arithmetic.
     // A source-text assertion is satisfied by a line that is never reached, and a re-typed
@@ -9483,6 +9673,21 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
       // The gate in force today would have refused nothing that run measured.
       expect(b.youngestRefAgeMs).toBeGreaterThanOrEqual(coverage.minAgeMs);
     }
+  });
+
+  it('and the RECORDED reading states this reach, so raising the slot rate cannot leave it stale', () => {
+    // `prediction.mjs` -> `ENTRY_PREDICTION_READING` is embedded verbatim into every schema 16/17
+    // run record, and records are never retro-edited — so a figure pinned in that sentence is a
+    // figure that outlives the value it describes. It names the reach, and the reach is derived from
+    // `windowSlotSpan` at `MAX_MS_PER_SLOT`, which this repo expects to RAISE when the chain's slot
+    // rate is re-measured against a newer tape.
+    //
+    // So the sentence is checked against the DERIVATION rather than against a literal typed here.
+    // When the pin moves, this fails and the recorded wording becomes a deliberate decision — which
+    // is the point, because the string's text is the captain's to change, not a fix round's.
+    // Asserting on it is legitimate for the same reason the record's key set is: it is an owned
+    // serialized contract, not a proxy for whether some other code works.
+    expect(ENTRY_PREDICTION_READING).toContain(`${REACH.toLocaleString('en-US')}ms at the pinned values`);
   });
 
   it('and BOTH callers derive it, so the census still measures the launches the screen would score', () => {

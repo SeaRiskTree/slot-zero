@@ -1206,4 +1206,24 @@ describe('this lane grades the screen and never re-tunes it', () => {
     expect(grade).toMatch(/from '\.\/swapapi-fills\.mjs'/);
     expect(grade).toMatch(/from '\.\/rpc-costs\.mjs'/);
   });
+
+  it('THE TWO SOURCES DISAGREE ON EXACTLY THE KEYS THE GRADER READS BACK, and that is the hazard', () => {
+    // Not reachable today and deliberately pinned anyway. `screen.mjs` records `thresholds.stage2_entry`
+    // into every run record UNCONDITIONALLY, and `grade.mjs` -> REQUIRED_ENTRY_RECIPE reads the sampling
+    // rule back out of that recorded block. `minLaunchesSampled` and `maxLaunchesPerCandidate` are in
+    // that required list AND are exactly the two keys that differ between the sources — so a Gate 3
+    // wiring that scored through the Dune source while still recording `stage2_entry` would file a
+    // recipe of 8-of-10 against a verdict computed at 20-of-22. A MISSING key is refused loudly as
+    // `recipe-unusable`; a key belonging to the other source is not refused at all.
+    //
+    // This test's job is to keep that disagreement REAL. If a later lane "fixes" the drift by making the
+    // two blocks agree rather than by fixing the recorder, this fails and says so.
+    const swap = (T as Record<string, Record<string, number>>)['stage2_entry']!;
+    const dune = (T as Record<string, Record<string, number>>)['stage2_entry_dune']!;
+    const readBack = REQUIRED_ENTRY_RECIPE.filter((k) => k in dune);
+    expect(readBack.sort()).toEqual(['maxLaunchesPerCandidate', 'minLaunchesSampled']);
+    for (const k of readBack) {
+      expect(dune[k], `stage2_entry_dune.${k} must differ from the block the recorder files`).not.toBe(swap[k]);
+    }
+  });
 });

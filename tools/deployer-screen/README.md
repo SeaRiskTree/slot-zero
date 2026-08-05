@@ -1033,6 +1033,26 @@ unmeasured**, never `0`. What it does NOT hold is the entry SQL and its pinned s
 (captain decision 258b) or any price or ceiling (255b): the statement is injected, and **absent
 means refuse every window**.
 
+**The three sampling caps are source-scoped, and the Dune source's live in `thresholds.json` →
+`stage2_entry_dune`** (6.1.0, the captain's ruling of 2026-08-05). The swap-api walk pays in
+**requests** per launch page and the Dune source pays **credits** for windows **scanned**, so one
+shared set would have been justified by one cost model and merely *carried* on the other source.
+That block holds `maxCandidatesScored` **14** (captain decision 289b), `minLaunchesSampled` 20 and
+`maxLaunchesPerCandidate` 22
+and nothing else — every evidence bar stays in `stage2_entry` and governs both sources — and, like
+`dune-fills.mjs` itself, **nothing reads it until Gate 3**. Its `justification` entries own each
+derivation, including why 14 is an **interim** size — it serves the largest per-run survivor count
+measured so far (14 of leg B1's, 13 of B2's), while the pooled 27 is sized to today's population and
+the terminal size gets derived against the widened discovery pool — and why the floor of 20 makes a
+verdict **harder** to reach, not easier. `stage2_entry_dune` is the **single owner** of those three
+values: `stage2_entry`'s own justifications point at it and restate none of them, so when 289b's
+interim size is superseded that block is the one edit site. A test asserts that neither block's
+justification NAMES the other's cost parameters **nor states a QUANTITY in the other's unit** — a
+credit figure on the swap-api side, a request figure on the Dune side — while a bare mention of the
+other unit, used to disclaim it, is deliberately allowed on both sides. That is vocabulary and
+cross-unit figures, not the arithmetic itself — a borrow phrased with neither a banned parameter
+name nor a quantity in the other unit would still pass, and the test names that residual itself.
+
 `grade.mjs` builds the same two sources the screen does, so there is still exactly one Stage 2 and
 the grader cannot drift from the screen it grades.
 
@@ -1779,6 +1799,14 @@ entry measurement. Everything it fetches is pump.fun's free tape.
 | **requests per launch, retries included** | 18 |
 | stage ceiling, on its own client | **1,260** |
 | pacing, `swap-api` only | **7.0s** |
+
+**The first three rows are the SWAP-API fill source's own caps and are pinned as such** —
+`thresholds.json` **6.1.0** source-scoped the three sampling caps, so `stage2_entry`'s 7 / 8 / 10 are
+derived from this source's request arithmetic and the Dune source carries its own three in
+`stage2_entry_dune` (see [The Dune fill source is committed and nothing routes through
+it](#the-dune-fill-source-is-committed-and-nothing-routes-through-it)). Every **evidence** bar —
+`minRoomLeft`, the field bars, the cost bar — stays in `stage2_entry` and governs both sources.
+`ENTRY_FILL_SOURCE_KIND` is `'swap-api'` on every run, so this table is what every run applies.
 
 The two launch bounds are **deliberately unequal** — captain decision 190a, 2026-08-04. The stage
 plans 10 launches and needs 8 of them scored, so a candidate absorbs **two** dropped launches before

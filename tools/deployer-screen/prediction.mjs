@@ -45,8 +45,10 @@
  * nothing.
  *
  * {@link PredictionBlock.madeAtIso} is the run's own `finishedAtIso`, and that choice is a proof
- * rather than a convention. Stage 2 refuses any launch younger than `windowMs + seekMarginMs` at the
- * moment it decides eligibility (`stage2.mjs` → `scoreCandidateEntry`), and that decision happened
+ * rather than a convention. Stage 2 refuses any launch younger than its fill source's own
+ * `minAgeMs` — on the swap-api source `pumpfun.mjs` → `windowReachMs`, which owns that figure and
+ * derives it from the slot span at a measured worst-case rate — at the moment it decides
+ * eligibility, and that decision happened
  * before the run finished — so **every launch in the sample was created strictly before
  * `finishedAtIso`**. A launch created after it is therefore provably out of sample, with no
  * assumption about clocks, ordering or how long the run took. `outcome.mjs` filters on exactly that.
@@ -143,7 +145,10 @@ export const DEFERRED_SUBJECTS = Object.freeze([
  */
 export const ENTRY_PREDICTION_READING =
   'STAGE 2 ENTRY, over pump.fun swap-api fills for the launches `measure.mjs` -> `toLaunchRefs` ' +
-  'read off the MadeOnSol profile, gated to launches at least `windowMs + seekMarginMs` old, ' +
+  'read off the MadeOnSol profile, gated to launches at least the Stage 2 fill source`s own ' +
+  '`minAgeMs` old — the same instant its seek cursor reaches, which on the swap-api source is ' +
+  '`pumpfun.mjs` -> `windowReachMs` and is 85,000ms at the pinned values, NOT the superseded ' +
+  'hand-written `windowMs + seekMarginMs` sum of 65,000ms this sentence used to name, ' +
   'scored by `entry.mjs` -> `scoreEntry` at this run`s pinned `stage2_entry` and `stage2_cost` ' +
   'bars. It is NOT the gate reading: `gateReading` on this block names that one separately, and ' +
   'the two must never be pooled or compared.';
@@ -158,8 +163,9 @@ export const ENTRY_PREDICTION_READING =
 export const ENTRY_GRADEABLE_WHEN =
   'Scoreable once this deployer has created enough further launches, ALL of them after this ' +
   'record`s `madeAtIso`, for the same Stage 2 recipe to reach a MEASURED verdict over them. The ' +
-  'boundary is a proof, not a convention: Stage 2 refused every launch younger than ' +
-  '`windowMs + seekMarginMs` at the instant it chose its sample, and that instant precedes ' +
+  'boundary is a proof, not a convention: Stage 2 refused every launch younger than the fill ' +
+  'source`s own `minAgeMs` — the seek cursor`s own bound, derived from the slot span at a ' +
+  'measured worst-case rate — at the instant it chose its sample, and that instant precedes ' +
   '`madeAtIso`, so a launch created after `madeAtIso` cannot have been in the sample. An outcome ' +
   'measurement that reaches an unmeasured verdict grades NOTHING — it is our coverage again, not ' +
   'a miss.';

@@ -28,6 +28,10 @@
 
 import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs';
 import { parseCreateTransaction, readCurveState } from './creation.mjs';
+// The unit constant lives in the pure core now (captain decision 260a): it is a property of
+// Solana's unit rather than of this reader, and it was `stage0.mjs`'s only reason to import a fill
+// source at all.
+import { LAMPORTS_PER_SOL } from './measure.mjs';
 
 /** Creator listing host. */
 export const FRONTEND_API = 'https://frontend-api-v3.pump.fun';
@@ -637,35 +641,15 @@ export function parseFillLoose(row) {
 }
 
 /**
- * Why a launch window was dropped. One value per cause, never a lump total, because the causes call
- * for different actions: a request cap means the launch was busy, a `mint-time-disagreement` means
- * the vendor's clock and the fill tape have come apart and the measurement is no longer resting on
- * what we think it is.
+ * The window contract these two types name lives in `fill-source.mjs` now, not here.
  *
- * @typedef {'mint-time-disagreement' | 'coverage-unproven' | 'unrecognised-body' | 'request-cap'
- *   | 'stalled-cursor' | 'unparsed-rows' | 'no-fills'} LaunchWindowDropReason
- */
-
-/**
- * @typedef {object} LaunchWindow
- * @property {string} mint
- * @property {number} seekFromMs      The NEWEST instant the walk could reach, absolute, as
- *   {@link windowReachMs} derived it. Reported because the walk's coverage proof is about the
- *   OLDEST end only: nothing else in this record says whether the newest end was requested at all,
- *   and that silence is the defect captain decision 144a names.
- * @property {import('./measure.mjs').Fill[]} fills Fills inside the opening window, **anchored on
- *   the earliest curve buy's own slot** rather than on the supplied mint time.
- * @property {number} pages           Pages the walk consumed.
- * @property {number} requests        Requests it cost, **including retries of shed ones**.
- * @property {number} rowsSeen        Rows the endpoint returned, before window filtering.
- * @property {number} unparsedRows    Rows we could not read. Non-zero makes the launch unusable.
- * @property {boolean} reachedCreateSlot Whether the walk provably got back past the mint.
- * @property {boolean} hitRequestCap  Whether it stopped because of `maxRequests`.
- * @property {boolean} mintTimeDisagreement Whether a row older than the supplied mint time came
- *   back — proof the two clocks disagree, and a hard drop. See {@link readLaunchWindow}.
- * @property {boolean} usable         Whether this window may be measured at all.
- * @property {LaunchWindowDropReason | null} dropReason `null` exactly when `usable`.
- * @property {string} note            Why, in one sentence. Always populated.
+ * Captain decision 260a: nothing in `LaunchWindow` or `LaunchWindowDropReason` is pump.fun-specific
+ * — they are the vocabulary of **proved coverage**, which every fill source owes and which this
+ * module happened to be the first to write down. They are aliased back rather than duplicated, so
+ * there is one contract and this reader is one implementation of it.
+ *
+ * @typedef {import('./fill-source.mjs').LaunchWindowDropReason} LaunchWindowDropReason
+ * @typedef {import('./fill-source.mjs').LaunchWindow} LaunchWindow
  */
 
 /**
@@ -1911,22 +1895,12 @@ function creditsForCurveReads(n) {
   return curveReadRequests(n);
 }
 
-/** Lamports in one SOL. Named so the conversion is never a bare literal in an arithmetic line. */
-export const LAMPORTS_PER_SOL = 1_000_000_000;
-
 /**
- * @typedef {object} TransactionCosts
- * What one transaction cost, recovered exactly from the chain.
+ * The cost contract these two types name lives in `cost-source.mjs` now, for the reason the window
+ * contract lives in `fill-source.mjs`: an exact fee and an exact per-account lamport delta are
+ * properties of the chain, not of the reader. Aliased back rather than duplicated.
  *
- * @property {string} signature
- * @property {number} feeSol      `meta.fee` — **base plus priority**, in SOL. Exact, and charged to
- *   {@link TransactionCosts.feePayer}.
- * @property {string | null} feePayer `accountKeys[0]`. For a bundled transaction this is NOT the
- *   trader — CLAUDE.md's fee-payer counter-trap — which is why it is carried rather than assumed.
- * @property {Map<string, number>} solOutByWallet `(preBalance − postBalance) / 1e9` per account, so
- *   a positive number is SOL that LEFT that account. This is the wallet's real lamport change and it
- *   already nets the swap, the venue fee, rent, its own fee if it is the payer, and **any tip paid
- *   inside this transaction**.
+ * @typedef {import('./cost-source.mjs').TransactionCosts} TransactionCosts
  */
 
 /**
@@ -2001,16 +1975,11 @@ export function parseTransactionCosts(tx) {
 }
 
 /**
- * @typedef {object} CostWalkResult
- * @property {Map<string, TransactionCosts>} priced  By signature.
- * @property {number} requests            RPC requests this walk issued, retries included.
- * @property {number} unresolved          Transactions the endpoint never resolved, or whose shape
- *   {@link parseTransactionCosts} refused. Neither is "cost zero" — see the caller.
- * @property {number} viaBlock            Priced from a whole-block read.
- * @property {number} viaTransaction      Priced one `getTransaction` at a time.
- * @property {boolean} blockRouteTried
- * @property {string | null} blockRouteNote Why the block route was not used, when it was not.
- * @property {boolean} stoppedForBudget   The per-candidate RPC ceiling ended the walk early.
+ * Aliased from the contract, alongside {@link TransactionCosts} and for the same reason. An
+ * unresolved transaction here is one {@link parseTransactionCosts} refused or the endpoint never
+ * served; neither is "cost zero" — see `stage2.mjs`.
+ *
+ * @typedef {import('./cost-source.mjs').CostWalkResult} CostWalkResult
  */
 
 /**

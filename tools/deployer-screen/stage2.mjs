@@ -73,15 +73,11 @@
  * It does not measure exit. Not partially, not as an input, not as a tiebreak. See `entry.mjs`.
  */
 
-import { CeilingReached } from './client.mjs';
+import { CeilingReached, RequestFailed } from './client.mjs';
+import { assertCostWalkAccounted } from './cost-source.mjs';
 import { entryCostTargets, measureLaunchEntry, priceLaunchEntry, scoreEntry } from './entry.mjs';
+import { assertWindowUsable } from './fill-source.mjs';
 import { toLaunchRefs } from './measure.mjs';
-// `windowReachMs` is IMPORTED and is the eligibility gate ITSELF, not merely the walk's cursor.
-// The gate asks "has this launch finished happening"; the cursor asks "how far past the mint must I
-// seek". Those are the SAME INSTANT, so they are the same function call and cannot drift apart —
-// which is exactly what they did while the gate carried its own hand-written `windowMs +
-// seekMarginMs`. See {@link scoreCandidateEntry}.
-import { KeylessHttpError, readCreateSlotCosts, readLaunchWindow, windowReachMs } from './pumpfun.mjs';
 import { redactAll, redactVendorIdentifiers } from './record.mjs';
 
 /**
@@ -161,13 +157,15 @@ import { redactAll, redactVendorIdentifiers } from './record.mjs';
 /**
  * @typedef {object} Stage2Coverage
  * @property {number} launchRefsAvailable  Launches the vendor profile offered.
- * @property {number} minAgeMs             The eligibility gate itself — `pumpfun.mjs` →
- *   `windowReachMs`, i.e. `windowSlotSpan` converted at a MEASURED worst-case slot rate with
- *   `windowMs` as a floor, plus `seekMarginMs` — persisted so a record PROVES the property rather
- *   than leaving it to be reconstructed from a log's seek cursors. **It is DERIVED FROM PINNED
- *   INPUTS** — the declared span and a pinned worst-case slot rate — so a record carries what that
- *   derivation was worth on the day it was written, and two records differing means the pinned rate
- *   was RE-MEASURED AND RAISED between them, never that the chain moved under a live reading. See
+ * @property {number} minAgeMs             The eligibility gate itself, **as the fill source
+ *   answered it** — persisted so a record PROVES the property rather than leaving it to be
+ *   reconstructed from a log's seek cursors. On the swap-api source it is that vendor's own cursor
+ *   reach, i.e. the declared slot span converted at a PINNED worst-case slot rate with the nominal
+ *   window as a floor, so a record carries what that derivation was worth on the day it was
+ *   written and two records differing means the pinned rate was RE-MEASURED AND RAISED between
+ *   them, never that the chain moved under a live reading. A source whose tables lag answers from
+ *   an observed watermark instead, in which case two records CAN differ because the vendor's lag
+ *   moved — which is the reading a written duration could not have produced. See
  *   {@link scoreCandidateEntry}.
  * @property {number} launchesTooYoung     Refs refused by that gate: their window had not finished
  *   happening at the moment the walk would have placed its cursor.
@@ -253,7 +251,7 @@ export function emptyDropReasons() {
  * A drop note is persisted, and this client's URLs carry the mint, so `cause.message` is not
  * usable here: `HTTP 400 on https://swap-api.pump.fun/v2/coins/<MINT>/trades?…` would put a
  * vendor-derived token address into a run record and break the containment
- * {@link toEntryRecordRow} claims. {@link KeylessHttpError} carries its status as a field for
+ * {@link toEntryRecordRow} claims. {@link RequestFailed} carries its status as a field for
  * exactly this reason, and anything else is reduced to its constructor name — which is the part
  * that identifies the failure, and the only part that cannot be carrying an identifier.
  *
@@ -261,7 +259,11 @@ export function emptyDropReasons() {
  * @returns {string}
  */
 export function describeTransportFailure(cause) {
-  if (cause instanceof KeylessHttpError) return `HTTP ${cause.status}`;
+  // Read off {@link RequestFailed}, which carries its status as a FIELD, rather than off any one
+  // vendor's subclass of it. That is what lets this module describe a failure from a source it does
+  // not import — the swap-api's `KeylessHttpError` and any future source's refusal are the same
+  // shape here — and it changes nothing for the keyless walk, whose errors are that subclass.
+  if (cause instanceof RequestFailed && cause.status !== null) return `HTTP ${cause.status}`;
   if (cause instanceof Error) return cause.name === '' ? 'an unnamed error' : cause.name;
   return 'a non-Error throw';
 }
@@ -293,21 +295,31 @@ export function describeTransportFailure(cause) {
  * `entry-cost-unmeasured` is exactly that answer — the free legs passed and the cost leg has
  * nothing yet.
  *
- * @param {import('./pumpfun.mjs').KeylessClient} client
+ * ## The source is INJECTED, and this module names no vendor
+ *
+ * Captain decision 260a. Stage 2 used to import `readLaunchWindow` and `windowReachMs` from
+ * `pumpfun.mjs` and `readCreateSlotCosts` beside them, which made the swap-api and the Solana RPC
+ * **compile-time properties of a scoring module**. They arrive as a {@link
+ * import('./fill-source.mjs').FillSource} and a {@link import('./cost-source.mjs').CostSource} now,
+ * selected in `screen.mjs`, and nothing below asks either of them which vendor it is. That is not
+ * cosmetic: a module that can tell is one refactor away from a bar that differs by source, and a
+ * wrongly refused deployer is filed and never offered again.
+ *
+ * @param {import('./fill-source.mjs').FillSource} fillSource
  * @param {object} input
  * @param {string} input.wallet
  * @param {unknown} input.profile A parsed `/deployer-hunter/{wallet}` response from Stage 1.
  * @param {number} input.nowMs    Clock, injected so a run is reproducible in a test.
  * @param {Stage2Thresholds} input.thresholds
- * @param {import('./pumpfun.mjs').SolanaRpcClient | null} [input.rpc] The cost leg's client, with
- *   its own per-candidate ceiling. `null` or absent disables the leg, and the verdict then cannot
- *   be better than `entry-cost-unmeasured` — which is the intended consequence, not a degradation.
- * @param {boolean} [input.preferBlockRoute] `thresholds.json` → `stage2_cost.preferBlockRoute`.
+ * @param {import('./cost-source.mjs').CostSource | null} [input.costSource] The cost leg's source,
+ *   with its own per-candidate ceiling. `null` or absent disables the leg, and the verdict then
+ *   cannot be better than `entry-cost-unmeasured` — which is the intended consequence, not a
+ *   degradation.
  * @param {(line: string) => void} [input.log]
  * @returns {Promise<{ score: import('./entry.mjs').EntryScore, coverage: Stage2Coverage }>}
  */
-export async function scoreCandidateEntry(client, input) {
-  return scoreLaunchRefsEntry(client, { ...input, refs: toLaunchRefs(input.profile) });
+export async function scoreCandidateEntry(fillSource, input) {
+  return scoreLaunchRefsEntry(fillSource, { ...input, refs: toLaunchRefs(input.profile) });
 }
 
 /**
@@ -325,28 +337,40 @@ export async function scoreCandidateEntry(client, input) {
  * per-launch request cap and `maxLaunchesPerCandidate` apply exactly as they do to a screen run, so
  * an outcome measurement is comparable with the prediction it grades.
  *
- * @param {import('./pumpfun.mjs').KeylessClient} client
+ * @param {import('./fill-source.mjs').FillSource} fillSource
  * @param {object} input
  * @param {string} input.wallet
  * @param {readonly import('./measure.mjs').LaunchRef[]} input.refs Newest first, as
  *   `measure.mjs` → `toLaunchRefs` returns them.
  * @param {number} input.nowMs
  * @param {Stage2Thresholds} input.thresholds
- * @param {import('./pumpfun.mjs').SolanaRpcClient | null} [input.rpc]
- * @param {boolean} [input.preferBlockRoute]
+ * @param {import('./cost-source.mjs').CostSource | null} [input.costSource]
  * @param {(line: string) => void} [input.log]
  * @returns {Promise<{ score: import('./entry.mjs').EntryScore, coverage: Stage2Coverage }>}
  */
-export async function scoreLaunchRefsEntry(client, input) {
+export async function scoreLaunchRefsEntry(fillSource, input) {
   const t = input.thresholds;
+  /** @type {import('./fill-source.mjs').FillSourceBounds} */
+  const bounds = {
+    windowMs: t.windowMs,
+    seekMarginMs: t.seekMarginMs,
+    windowSlotSpan: t.windowSlotSpan,
+    maxRequestsPerLaunch: t.maxRequestsPerLaunch,
+    tradePageLimit: t.tradePageLimit,
+    nowMs: input.nowMs,
+  };
   const refs = [...input.refs].sort((a, b) => b.deployedAtMs - a.deployedAtMs);
 
   // A launch younger than this has not finished happening. Measuring it would read a truncated
   // opening as a quiet one.
   //
-  // THE BOUND IS THE WALK'S OWN REACH, AND IT IS THE SAME FUNCTION CALL — not a second count that
-  // happens to agree. The gate has to cover the NEWEST INSTANT THE WALK REACHES FOR, which is
-  // exactly what `windowReachMs` computes, so asking it is the only way the two cannot come apart.
+  // THE BOUND IS THE SOURCE'S OWN REACH, AND IT IS ASKED OF THE SOURCE — not a second count that
+  // happens to agree. The gate has to cover the NEWEST INSTANT THE READ REACHES FOR, so the vendor
+  // that will do the reading is the only thing that can answer it, and asking it is the only way
+  // the two cannot come apart. On the swap-api that answer is `pumpfun.mjs` → `windowReachMs`,
+  // unchanged and to the millisecond; on a source whose tables LAG it must be an observed watermark
+  // (captain decision 257a), which is a question this module could not even ask while the duration
+  // was written here.
   //
   // HISTORY, and read the tense, because this expression has now failed the same way TWICE. It was
   // once `windowMs` alone, which admitted a launch aged 60–65s whose tail had not happened yet:
@@ -388,11 +412,7 @@ export async function scoreLaunchRefsEntry(client, input) {
   // the gate above was observable only by reading seek cursors out of a run log. `minAgeMs`,
   // `launchesTooYoung`, `launchesEligible`, `launchesPlanned` and `launchesDroppedByCap` make the
   // filter's whole arithmetic readable from the record itself.
-  const minAgeMs = windowReachMs({
-    windowMs: t.windowMs,
-    seekMarginMs: t.seekMarginMs,
-    windowSlotSpan: t.windowSlotSpan,
-  });
+  const minAgeMs = await fillSource.minAgeMs(bounds);
   const ages = refs.map((r) => input.nowMs - r.deployedAtMs);
   const eligible = refs.filter((r) => input.nowMs - r.deployedAtMs >= minAgeMs);
   const planned = eligible.slice(0, t.maxLaunchesPerCandidate);
@@ -410,12 +430,12 @@ export async function scoreLaunchRefsEntry(client, input) {
   let attempted = 0;
   let dropped = 0;
   let stoppedForBudget = false;
-  const requestsBefore = client.issued();
+  const requestsBefore = fillSource.issued();
 
   for (const ref of planned) {
     // Reserve the whole per-launch cost before starting. Beginning a walk we cannot finish would
     // spend requests to produce a window that is unusable by construction.
-    if (client.remaining() < t.maxRequestsPerLaunch) {
+    if (fillSource.remaining() < t.maxRequestsPerLaunch) {
       stoppedForBudget = true;
       dropNotes.push(
         `stopped before ${planned.length - attempted} further launch(es): fewer than ` +
@@ -426,18 +446,10 @@ export async function scoreLaunchRefsEntry(client, input) {
     }
 
     attempted += 1;
-    /** @type {import('./pumpfun.mjs').LaunchWindow} */
+    /** @type {import('./fill-source.mjs').SourcedLaunchWindow} */
     let window;
     try {
-      window = await readLaunchWindow(client, {
-        mint: ref.mint,
-        createdAtMs: ref.deployedAtMs,
-        windowMs: t.windowMs,
-        seekMarginMs: t.seekMarginMs,
-        windowSlotSpan: t.windowSlotSpan,
-        maxRequests: t.maxRequestsPerLaunch,
-        pageLimit: t.tradePageLimit,
-      });
+      window = await fillSource.readWindow(ref, bounds);
     } catch (cause) {
       if (cause instanceof CeilingReached) {
         stoppedForBudget = true;
@@ -451,6 +463,13 @@ export async function scoreLaunchRefsEntry(client, input) {
       dropNotes.push(`DROPPED (transport error): ${describeTransportFailure(cause)}`);
       continue;
     }
+
+    // EVERY source is held to the coverage contract HERE, at the one point every source's output
+    // passes through. It throws rather than counting, because a source claiming `usable` without
+    // the proof is a source bug and not a vendor's bad luck: the window it returns is
+    // measurable-looking and silently wrong, which is the failure this whole stage is built to
+    // refuse. A source's genuine bad luck arrives as `usable: false` and is counted below.
+    assertWindowUsable(window);
 
     if (!window.usable) {
       dropped += 1;
@@ -492,17 +511,13 @@ export async function scoreLaunchRefsEntry(client, input) {
   const cost = emptyCostCoverage();
 
   // The free legs have spoken. `entry-cost-unmeasured` here means they did not refuse the candidate
-  // and the cost leg has nothing yet — the one state worth spending a Solana RPC request on.
-  if (input.rpc != null && score.verdict === 'entry-cost-unmeasured') {
+  // and the cost leg has nothing yet — the one state worth spending a cost request on.
+  if (input.costSource != null && score.verdict === 'entry-cost-unmeasured') {
     cost.ran = true;
-    const rpc = input.rpc;
-    const rpcBefore = rpc.issued();
+    const costSource = input.costSource;
+    const rpcBefore = costSource.issued();
     /** @type {import('./entry.mjs').LaunchEntry[]} */
     const pricedLaunches = [];
-    // Latched per candidate rather than per launch: the whole-block route is UNTESTED against this
-    // endpoint, so the first launch pays one request to find out and the rest of the candidate
-    // inherits the answer. Bounded waste, and the answer reaches the record.
-    let preferBlock = input.preferBlockRoute ?? true;
     // A transport failure abandons the cost leg for THIS CANDIDATE and nothing else. It must never
     // reach the outer catch: a run that has already spent its keyed MadeOnSol allowance cannot be
     // thrown away over one wallet's bad luck on a public endpoint that sheds a quarter of what it
@@ -523,7 +538,7 @@ export async function scoreLaunchRefsEntry(client, input) {
       // every request may be retried and a null `getTransaction` is asked again — so the invariant
       // is also enforced on the way out, where a walk truncated by the ceiling has its partial
       // pricing DISCARDED rather than attached.
-      if (targets.length > 0 && rpc.remaining() < targets.length) {
+      if (targets.length > 0 && costSource.remaining() < targets.length) {
         cost.launchesSkippedForBudget += 1;
         cost.stoppedForBudget = true;
         cost.notes.push(
@@ -534,14 +549,10 @@ export async function scoreLaunchRefsEntry(client, input) {
         continue;
       }
 
-      /** @type {Awaited<ReturnType<typeof readCreateSlotCosts>>} */
+      /** @type {import('./cost-source.mjs').CostWalkResult} */
       let walk;
       try {
-        walk = await readCreateSlotCosts(rpc, {
-          transactions: targets,
-          createSlot: entry.createSlot.slot,
-          preferBlock,
-        });
+        walk = await costSource.priceLaunch({ transactions: targets, createSlot: entry.createSlot.slot });
       } catch (cause) {
         transportFailed = true;
         // Nothing this candidate priced backs the score any more, because the score is not recomputed
@@ -559,6 +570,10 @@ export async function scoreLaunchRefsEntry(client, input) {
         );
         break;
       }
+      // Held to its contract at the one point every cost source's output passes through, for the
+      // reason `assertWindowUsable` is called above: counters that do not add up are a source bug,
+      // and a run record is reconciled arithmetically from exactly these numbers.
+      assertCostWalkAccounted(walk, targets.length);
       cost.transactionsUnresolved += walk.unresolved;
       cost.viaBlock += walk.viaBlock;
       cost.viaTransaction += walk.viaTransaction;
@@ -566,9 +581,6 @@ export async function scoreLaunchRefsEntry(client, input) {
       if (walk.blockRouteNote !== null && !cost.notes.includes(walk.blockRouteNote)) {
         cost.notes.push(walk.blockRouteNote);
       }
-      // One probe decides the route for the candidate. `blockRouteTried` with nothing to show for
-      // it is the failure; a route that was never applicable leaves the probe available.
-      if (walk.blockRouteTried && walk.viaBlock === 0) preferBlock = false;
       // A LAUNCH THE CEILING CUT SHORT IS DISCARDED WHOLE. The reservation above cannot see
       // retries, so the ceiling can still bite mid-launch; keeping what it managed would attach a
       // cost figure for whichever entrants `walletTransactions` sorted first — the earliest slots —
@@ -596,7 +608,7 @@ export async function scoreLaunchRefsEntry(client, input) {
       pricedLaunches.push(priceLaunchEntry(entry, targets, walk.priced));
     }
 
-    cost.rpcRequests = rpc.issued() - rpcBefore;
+    cost.rpcRequests = costSource.issued() - rpcBefore;
     // A candidate whose walk died mid-flight keeps the pre-cost score, which is already
     // `entry-cost-unmeasured`. Rescoring on a partial attachment is the one thing that must not
     // happen: it would turn a failed measurement into a priced reading of unknown coverage.
@@ -624,7 +636,7 @@ export async function scoreLaunchRefsEntry(client, input) {
       launchesUsable: measured.length,
       launchesDropped: dropped,
       dropsByReason,
-      requestsIssued: client.issued() - requestsBefore,
+      requestsIssued: fillSource.issued() - requestsBefore,
       stoppedForBudget,
       dropNotes,
       cost,

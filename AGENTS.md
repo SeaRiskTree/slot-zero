@@ -750,6 +750,30 @@ dev currently?"*, and the shape of the answer is the point:
   cannot be read back apart.
 - **Stage 2 spends no keyed request.** It reuses the mint list from the profile Stage 1 already paid
   for (`measure.mjs` → `toLaunchRefs`), so the keyed vendor allowance is untouched by it.
+- **WHERE THE FILLS AND THE COSTS COME FROM IS INJECTED, AND NO SCORING MODULE NAMES A VENDOR**
+  (captain decision 260a). `fill-source.mjs` and `cost-source.mjs` are CONTRACTS that import nothing
+  at runtime; `swapapi-fills.mjs`, `rpc-costs.mjs` and `dune-fills.mjs` are implementations;
+  `screen.mjs` → `selectEntryFillSource` is the one selection site and **refuses** a kind it has no
+  constructor for rather than falling back. `stage2.mjs`, `entry.mjs`, `measure.mjs`, `stage0.mjs`
+  and `rank.mjs` reach no source implementation at any depth and may not read a source `kind`.
+  **The eligibility gate moved with it and that is the third time** — it is `fillSource.minAgeMs()`
+  now, because "has this launch finished happening" is the VENDOR'S to answer (144a's *never write a
+  duration for something someone else controls*, and 257a's watermark requires exactly this
+  inversion). `ENTRY_FILL_SOURCE_KIND` is `'swap-api'`: **the Dune path is committed and nothing
+  routes through it**, which is the correct resting state until Gate 3, and `dune-fills.mjs` refuses
+  every window until decision 258b lands its statement. No record field, bar or verdict moved.
+  `tools/deployer-screen/README.md` → "Where the fills come from is INJECTED" owns it, including
+  what the change does **not** claim — after the cutover a Dune value *will* reach `entry.roomLeft`;
+  what survives is that nothing deciding anything knows which vendor produced its input.
+- **THE 156a BOUNDARY IS GUARDED BY TWO ASSERTIONS NOW, AND THE OLD ONE CANNOT FAIL** (captain
+  decision 261a). `test/deployer-screen.test.ts` → "NO Dune value can reach a Stage 2 entry number or
+  Stage 3" is a deny-list on the literal filename `./dune.mjs`, and **one hop of indirection defeats
+  it completely** — measured: a module importing `dune.mjs` and imported by `stage2.mjs` passed the
+  whole file, including when named `dune-costs.mjs`, the name 255b step (3) itself prescribes. It is
+  kept byte-unchanged as the record of 156a's intent; the enforcing one beside it — "a scoring module
+  imports only from a declared pure set" — is an **exhaustive allow-list plus a transitive closure
+  plus a no-branching-on-provenance rule**, so it fails on a NEW edge at any depth whatever it is
+  called. Adding an import to a scoring module means editing that list on purpose.
 - **THE GATE'S COMPLETION RATE IS TWO DIFFERENT QUANTITIES AND A BAR ON ONE DOES NOT TRANSFER TO THE
   OTHER.** `screen.mjs` gates on the **creation-derived merged history** by default (median window
   147.1 days on the last real run's 82 candidates); `--ownership-only` and `feed.mjs` read the

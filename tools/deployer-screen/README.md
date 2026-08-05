@@ -973,6 +973,69 @@ Three measurements per candidate, over that candidate's own most recent launches
 free — arithmetic over fills already in hand — and the third is not, so the first two run first and
 a deployer that fails either is refused before one Solana RPC request is spent on it.
 
+### Where the fills come from is INJECTED, and Stage 2 names no vendor
+
+Captain decision 260a, 2026-08-05. `stage2.mjs` used to import `readLaunchWindow` and
+`windowReachMs` from `pumpfun.mjs` and `readCreateSlotCosts` beside them, which made the swap-api
+and the Solana RPC **compile-time properties of a scoring module**. They arrive as a `FillSource`
+and a `CostSource` now:
+
+| module | role |
+|---|---|
+| `fill-source.mjs` | the CONTRACT — `FillSource`, `FILL_SOURCE_KINDS`, the `LaunchWindow` coverage vocabulary, and `assertWindowUsable`. **Imports nothing at runtime**, which is what makes it safe for a scoring module to import, and a test asserts that rather than trusting it. |
+| `cost-source.mjs` | the same for the cost leg — `CostSource`, `TransactionCosts`, `CostWalkResult`, `assertCostWalkAccounted`. |
+| `swapapi-fills.mjs` | pump.fun's keyless trade endpoint wearing the contract. **This is what every run reads**, unchanged in every bound, cursor, tripwire and drop rule. |
+| `rpc-costs.mjs` | `api.mainnet-beta`/Helius wearing the cost contract. The whole-block probe and its per-candidate latch moved in here, because which route is worth a request is a property of that endpoint. |
+| `dune-fills.mjs` | the Dune source. Committed, and **nothing routes through it in a run** — see below. |
+| `screen.mjs` | `ENTRY_FILL_SOURCE_KIND` and `selectEntryFillSource` — the ONE selection site, which 156a already names as the one place both sides meet. |
+
+`stage2.mjs`, `entry.mjs`, `measure.mjs`, `stage0.mjs` and `rank.mjs` import **no source
+implementation at all**, directly or transitively, and none of them may read a source kind.
+
+Two consequences are worth stating in full.
+
+**The eligibility gate is now a question asked of the source, and captain decision 257a forces
+that independently.** "Has this launch finished happening?" is the vendor's to answer: the swap-api
+answers with its own cursor reach (`windowReachMs`, to the millisecond, exactly as before), and a
+source whose tables LAG must answer from an observed watermark. This is the third time that
+expression has moved and the second time the lesson was the same one — captain decision 144a's
+*the defect is writing a DURATION for something someone else controls* — so it is not written down
+in a scoring module any more at all.
+
+**Provenance is recorded and read by nothing.** Every window carries `kind`; no bar, gate, rate or
+verdict reads it, and the added boundary assertion pins that no scoring module branches on it. This
+is captain decision 227a's `is_mayhem_mode` posture one layer down. Persisting `kind` to the run
+record is the schema-bump lane's, not this one's: nothing in a committed record moved.
+
+**What this does NOT claim.** After the cutover a Dune value WILL reach `entry.roomLeft` — that is
+the programme, and any account of this change that says otherwise is describing the import graph and
+calling it the architecture. What survives is the narrower and stronger property: **no module that
+decides anything knows which vendor produced the fills it decides on.** That is the property whose
+loss lets a bar drift toward a source, silently and in the invisible direction, since a graded
+wallet is filed and never offered again.
+
+### The Dune fill source is committed and nothing routes through it
+
+`ENTRY_FILL_SOURCE_KIND` is `'swap-api'` on every run. The cutover is **Gate 3**, which has not been
+convened, and a committed path nobody calls is the correct resting state — the same posture captain
+decision 258b states for its committed SQL. `selectEntryFillSource` **refuses** a kind it has no
+constructor for rather than falling back, because a run that quietly measured on a different vendor
+than it was asked to would report itself complete and be wrong in the one direction nothing
+observes.
+
+What `dune-fills.mjs` holds is the row → window assembly and its coverage proof: the boundary is
+**observed** by scanning wider than the window at both ends, a scan that never looked older than the
+declared mint is refused `coverage-unproven`, the pre-mint tripwire keeps the swap-api walk's zero
+slack, ordering is recovered as `tx_index` then `outer_instruction_index` (Gate 1 §5.2 — the obvious
+mapping onto `inner_instruction_index` is wrong), rows are sorted by the key before anything is
+summed, the venue column is mandatory rather than defaulted, and `priceSol` is **NaN, meaning
+unmeasured**, never `0`. What it does NOT hold is the entry SQL and its pinned saved-query id
+(captain decision 258b) or any price or ceiling (255b): the statement is injected, and **absent
+means refuse every window**.
+
+`grade.mjs` builds the same two sources the screen does, so there is still exactly one Stage 2 and
+the grader cannot drift from the screen it grades.
+
 ### 1. Entry room
 
 How much of the opening window the deployer and its own wallets take before anybody else is filled:

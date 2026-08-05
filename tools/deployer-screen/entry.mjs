@@ -355,7 +355,7 @@ export function entryCostTargets(fills, entry) {
  *
  * @param {LaunchEntry} entry
  * @param {readonly import('./measure.mjs').WalletTransaction[]} targets What was asked for.
- * @param {ReadonlyMap<string, import('./pumpfun.mjs').TransactionCosts>} priced What came back.
+ * @param {ReadonlyMap<string, import('./cost-source.mjs').TransactionCosts>} priced What came back.
  * @returns {LaunchEntry} A new entry; the input is not mutated.
  */
 export function priceLaunchEntry(entry, targets, priced) {

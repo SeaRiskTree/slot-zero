@@ -72,6 +72,8 @@ import {
   readCreatedHistoryIndexed,
   readCreatorHistory,
 } from './pumpfun.mjs';
+import { rpcCostSource } from './rpc-costs.mjs';
+import { swapApiFillSource } from './swapapi-fills.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderMayhemShare, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
 import { addDropReasons, emptyDropReasons, scoreCandidateEntry, toEntryRecordRow, totalDrops } from './stage2.mjs';
@@ -116,6 +118,51 @@ const LISTING_PAGES_FOR_MERGE = 4;
  * every 25 seconds, plus the first request of each candidate so a walk is seen to start at all.
  */
 const RPC_HEARTBEAT_EVERY = 10;
+
+/**
+ * Which fill source Stage 2 runs on. **`swap-api`, and the cutover is not this lane's.**
+ *
+ * Captain decision 260a built the source-agnostic provider so that a Dune fill source *can* reach
+ * Stage 2 by injection. The captain's programme cuts over at **Gate 3**, which has not been
+ * convened, so this run reads pump.fun's keyless trade endpoint exactly as it did before the
+ * provider existed. A committed Dune path that nothing routes through is the correct resting state,
+ * not an unfinished one — the same posture captain decision 258b states for its committed SQL.
+ *
+ * @type {import('./fill-source.mjs').FillSourceKind}
+ */
+export const ENTRY_FILL_SOURCE_KIND = 'swap-api';
+
+/**
+ * Choose the fill source, from constructors the caller supplies.
+ *
+ * **It refuses rather than falls back**, and that is the whole reason it is a function. A selector
+ * that quietly used the swap-api when asked for a source it had no constructor for is how a cutover
+ * reports itself done while nothing moved: every number would be a swap-api number, every record
+ * would say the run succeeded, and the only evidence would be an absence. This repo has the same
+ * shape on the record twice already — a guard denominated in the variable that did not move, and a
+ * `0` sentinel read as a 56-year window.
+ *
+ * The constructors are thunks so that a source is only built when it is selected. Building the
+ * unselected one would be harmless today and would stop being harmless the moment a source's
+ * constructor spends something to find out what it can vouch for.
+ *
+ * @param {import('./fill-source.mjs').FillSourceKind} kind
+ * @param {Partial<Record<import('./fill-source.mjs').FillSourceKind,
+ *   () => import('./fill-source.mjs').FillSource>>} sources
+ * @returns {import('./fill-source.mjs').FillSource}
+ */
+export function selectEntryFillSource(kind, sources) {
+  const build = sources[kind];
+  if (build === undefined) {
+    throw new Error(
+      `Stage 2 was asked for a ${kind} fill source and this run carries no constructor for one. ` +
+        `It refuses rather than substituting another source: a run that silently measured on a ` +
+        `different vendor than it was asked to would report itself complete and be wrong in the ` +
+        `one direction nothing observes.`,
+    );
+  }
+  return build();
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
@@ -1156,6 +1203,12 @@ export async function main(opts, env, out, err) {
 
     // ---- Stage 2 — ENTRY. Keyless, and it spends no keyed request at all. -----------------
     if (opts.stage2) {
+      // THE ONE PLACE A FILL SOURCE IS CHOSEN (captain decision 260a). Everything downstream —
+      // `stage2.mjs`, `entry.mjs`, `measure.mjs`, `rank.mjs` — receives the source and never names
+      // one. See {@link selectEntryFillSource} for what this run resolves to and why.
+      const entryFillSource = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, {
+        'swap-api': () => swapApiFillSource(stage2Keyless),
+      });
       const survivors = candidates.filter((c) => c.verdict === 'gate-passed');
       const toScore = survivors.slice(0, maxScored);
       scoringTruncatedBy = survivors.length - toScore.length;
@@ -1194,13 +1247,12 @@ export async function main(opts, env, out, err) {
                 },
               }),
         });
-        const { score, coverage } = await scoreCandidateEntry(stage2Keyless, {
+        const { score, coverage } = await scoreCandidateEntry(entryFillSource, {
           wallet: c.wallet,
           profile: profiles.get(c.wallet),
           nowMs: Date.now(),
           thresholds: entryThresholds,
-          rpc: costRpc,
-          preferBlockRoute: costBounds.preferBlockRoute,
+          costSource: rpcCostSource(costRpc, { preferBlockRoute: costBounds.preferBlockRoute }),
           log: opts.json ? undefined : (line) => out(line),
         });
         rpcRequests += costRpc.issued();

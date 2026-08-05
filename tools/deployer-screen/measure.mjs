@@ -14,6 +14,17 @@
  */
 
 /**
+ * Lamports in one SOL. Named so the conversion is never a bare literal in an arithmetic line.
+ *
+ * It lives in the pure core rather than beside the RPC reader that consumes it (captain decision
+ * 260a). It is a property of Solana's unit, not of any vendor, and it was `stage0.mjs`'s ONLY
+ * reason to import `pumpfun.mjs` — i.e. the last edge by which a scoring module reached a fill
+ * source at all. Keeping a unit constant in a transport module is what made that edge look
+ * necessary; it is not.
+ */
+export const LAMPORTS_PER_SOL = 1_000_000_000;
+
+/**
  * pump.fun bonding-curve invariant: initial virtual SOL x initial virtual token reserves.
  *
  * `src/index.ts` carries the same parameters for the analysis core. They are repeated rather

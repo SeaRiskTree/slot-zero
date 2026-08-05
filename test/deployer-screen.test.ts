@@ -172,6 +172,7 @@ import {
   renderStage1,
 } from '../tools/deployer-screen/render.mjs';
 import {
+  DERIVED_PREDICTION_METRICS,
   RECORD_SCHEMA_VERSION,
   UNMEASURED_KINDS,
   UNRECOGNISED_KIND,
@@ -2775,6 +2776,64 @@ describe('the run-record completeness contract', () => {
     expect(resolvePredictionMetric(record, '')).toBeUndefined();
     // A path must not walk into a prototype and report a hit.
     expect(resolvePredictionMetric(record, 'coverage.constructor')).toBeUndefined();
+  });
+
+  it('computes every derived metric a prediction may name, from the committed record', () => {
+    // The derived vocabulary is what makes the interesting half of a prediction gradeable — "how
+    // many did this leg admit" is a count over `candidates[]`, not a field. Exercised against a
+    // REAL committed record rather than a fixture, because a metric that only works on a shape
+    // this file invented is a metric that does not work.
+    const record = JSON.parse(readFileSync(join(TOOL_DIR, 'runs', '2026-08-04.json'), 'utf8')) as Record<string, unknown>;
+    for (const name of Object.keys(DERIVED_PREDICTION_METRICS)) {
+      const v = resolvePredictionMetric(record, `derived:${name}`);
+      expect(v === null || typeof v === 'number', `derived:${name} must resolve to a number or null`).toBe(true);
+    }
+    // The verdict counts must account for every candidate, or one of them is silently dropping a
+    // verdict the record does carry.
+    const candidates = (record['candidates'] as unknown[]).length;
+    const passed = resolvePredictionMetric(record, 'derived:gatePassedCount') as number;
+    const failed = resolvePredictionMetric(record, 'derived:gateFailedCount') as number;
+    const unmeasured = resolvePredictionMetric(record, 'derived:gateUnmeasuredCount') as number;
+    expect(passed + failed + unmeasured).toBe(candidates);
+    expect(passed).toBe(4);
+
+    // THE TWO READINGS ARE TWO METRICS AND THEY DISAGREE — which is the whole reason each one
+    // names its reading. On this record the vendor page reads roughly twice the gate median.
+    expect(resolvePredictionMetric(record, 'derived:medianGateCompletionRate')).toBeCloseTo(0.021645, 6);
+    expect(resolvePredictionMetric(record, 'derived:medianVendorPageCompletionRate')).toBeCloseTo(0.042857, 6);
+    // And the bar admits a different number of wallets depending which one it is applied to, on
+    // the SAME 82 candidates — the ambiguity captain decision 231a removed, measured.
+    expect(resolvePredictionMetric(record, 'derived:gateReadingClearingBarCount')).toBe(17);
+    expect(resolvePredictionMetric(record, 'derived:vendorPageClearingBarCount')).toBe(19);
+    // The eligible population the rate bar actually judges: 66 of the 82 clear tokens and span.
+    expect(resolvePredictionMetric(record, 'derived:gateEligibleCount')).toBe(66);
+    // This run reached no measured entry verdict at all — 3 scored, 3 `entry-unmeasured`.
+    expect(resolvePredictionMetric(record, 'derived:measuredEntryVerdictCount')).toBe(0);
+
+    // An empty sample is `null`, never 0 — 0 is a rate and would grade as one.
+    expect(resolvePredictionMetric({ candidates: [] }, 'derived:medianGateCompletionRate')).toBeNull();
+    // Bars the record does not carry make a threshold-dependent metric UNGRADEABLE rather than 0.
+    expect(resolvePredictionMetric({ candidates: [] }, 'derived:gateEligibleCount')).toBeNull();
+  });
+
+  it('refuses a derived metric no grader could compute, at read time and not at grading time', () => {
+    // A typo in a `derived:` name would otherwise resolve to `undefined` at grading time, which is
+    // the code for UNGRADEABLE — so a wrong document would read as "we could not tell" rather than
+    // as "this document is wrong". Refusing it up front keeps those two apart.
+    const doc = {
+      documentVersion: PREDICTIONS_DOCUMENT_VERSION,
+      lane: 'l',
+      leg: 'untiered',
+      madeAtIso: '2026-08-05T00:00:00.000Z',
+      basis: 'b',
+      predictions: [{ id: 'p', statement: 's', rationale: 'r', reading: 'not-a-rate', metric: 'derived:gatePassedCount', comparator: '>=', value: 1 }],
+    };
+    expect(readPredictions(JSON.stringify(doc), 'd.json').ok).toBe(true);
+    const typo = { ...doc, predictions: [{ ...doc.predictions[0], metric: 'derived:gatePassdCount' }] };
+    const refused = readPredictions(JSON.stringify(typo), 'd.json');
+    expect(refused.ok).toBe(false);
+    if (refused.ok) throw new Error('unreachable');
+    expect(refused.message).toMatch(/unknown derived metric/);
   });
 
   it('gives the unknown state somewhere honest to go', () => {

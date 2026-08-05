@@ -402,10 +402,15 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   **What it carries.** `--predict <path>` reads a document, {@link readPredictions} validates it,
  *   and it is embedded VERBATIM: `documentVersion`, `lane`, `leg`, `madeAtIso`, `basis`, `source`
  *   (the path it was read from) and `predictions`, each of which is `{id, statement, reading,
- *   metric, comparator, value, rationale}`. `metric` is a dotted path INTO THIS RECORD and
- *   {@link resolvePredictionMetric} is the one resolver for it, so a grader reads the same field the
- *   prediction named rather than one it inferred. `metric: null` is legitimate and means the claim
- *   is not resolvable from a record alone; it still carries `statement` and `rationale`.
+ *   metric, comparator, value, rationale}`. `metric` is EITHER a dotted path into this record OR a
+ *   `derived:` name from {@link DERIVED_PREDICTION_METRICS}, and {@link resolvePredictionMetric} is
+ *   the one resolver for both, so a grader reads the field the prediction named rather than one it
+ *   inferred. The derived half exists because the questions worth predicting are mostly COUNTS over
+ *   `candidates[]` rather than scalars a record holds — *how many did this leg admit* is not a
+ *   field — and leaving those to prose would have made the interesting half of every prediction
+ *   ungradeable, while letting a document carry its own expression would have made a grader an
+ *   interpreter. `metric: null` is legitimate and means the claim is not resolvable from a record at
+ *   all; it still carries `statement` and `rationale`, and it may then carry no comparator.
  *
  *   **`reading` is REQUIRED and is the point of the block.** A completion rate is two different
  *   quantities here — the creation-derived merged history the gate reads, and the vendor's
@@ -458,13 +463,150 @@ export const PREDICTION_COMPARATORS = ['<', '<=', '>', '>=', '==', 'between', 'i
 export const PREDICTION_READINGS = ['gate', 'vendor-page', 'not-a-rate'];
 
 /**
+ * The DERIVED quantities a prediction may name, and the only ones a grader has to compute.
+ *
+ * A dotted path reaches any scalar the record already holds, and the questions worth predicting are
+ * mostly not scalars the record holds: *how many candidates did this leg admit* is a count over
+ * `candidates[]`, not a field. Leaving those to prose would have made the interesting half of every
+ * prediction ungradeable, and letting a document carry its own expression would have made a grader
+ * an interpreter. So the vocabulary is fixed here, named `derived:` at the call site, and each entry
+ * is one line of arithmetic a reader can check.
+ *
+ * **Every rate metric names its READING in its own name** — `Gate` for the creation-derived merged
+ * history `screen.mjs` gates on, `VendorPage` for MadeOnSol's 70-record listing. The two differ by
+ * an order of magnitude on the same wallets, so a metric called `medianCompletionRate` would be the
+ * exact ambiguity captain decision 231a was taken to remove.
+ *
+ * `VendorMinusGate` is the one that is a comparison rather than a count: per candidate, the vendor
+ * page's rate minus the gate reading's. It is POSITIVE when the vendor's own surface flatters a
+ * wallet relative to what it created — which is the observable that says whether a screen is
+ * importing the vendor's ranking or finding deployers that ranking has passed over.
+ *
+ * @type {Record<string, (record: Record<string, unknown>) => number | null>}
+ */
+export const DERIVED_PREDICTION_METRICS = {
+  gatePassedCount: (r) => countVerdict(r, 'gate-passed'),
+  gateFailedCount: (r) => countVerdict(r, 'gate-failed'),
+  gateUnmeasuredCount: (r) => countVerdict(r, 'gate-unmeasured'),
+  /** Candidates clearing `minTokens` and `minSpanDays` — the population the rate bar then judges. */
+  gateEligibleCount: (r) => {
+    const t = gateThresholdsOf(r);
+    if (t === null) return null;
+    return candidatesOf(r).filter(
+      (c) => numberOr(c['tokens']) >= t.minTokens && numberOr(c['spanDays']) >= t.minSpanDays,
+    ).length;
+  },
+  /** Candidates whose GATE-reading rate clears the pinned bar, whatever the other two bars did. */
+  gateReadingClearingBarCount: (r) => {
+    const t = gateThresholdsOf(r);
+    if (t === null) return null;
+    return candidatesOf(r).filter((c) => numberOr(c['completionRate']) >= t.minCompletionRate).length;
+  },
+  /** The same bar applied to the VENDOR PAGE rate. A different quantity, deliberately named as one. */
+  vendorPageClearingBarCount: (r) => {
+    const t = gateThresholdsOf(r);
+    if (t === null) return null;
+    return candidatesOf(r).filter((c) => numberOr(c['vendorCompletionRate']) >= t.minCompletionRate).length;
+  },
+  medianGateCompletionRate: (r) => median(candidatesOf(r).map((c) => c['completionRate'])),
+  medianVendorPageCompletionRate: (r) => median(candidatesOf(r).map((c) => c['vendorCompletionRate'])),
+  medianVendorMinusGateRate: (r) => median(vendorMinusGate(candidatesOf(r))),
+  admittedMedianVendorMinusGateRate: (r) =>
+    median(vendorMinusGate(candidatesOf(r).filter((c) => c['verdict'] === 'gate-passed'))),
+  /** Candidates the two readings disagreed about — the size of what the gate reading changed. */
+  verdictChangedCount: (r) => candidatesOf(r).filter((c) => c['verdictChanged'] === true).length,
+  /** Scored candidates carrying a MEASURED entry verdict. `entry-unmeasured` is no answer, never one. */
+  measuredEntryVerdictCount: (r) =>
+    candidatesOf(r).filter((c) => {
+      const e = c['entry'];
+      if (typeof e !== 'object' || e === null) return false;
+      const v = /** @type {Record<string, unknown>} */ (e)['verdict'];
+      return typeof v === 'string' && v !== 'entry-unmeasured';
+    }).length,
+};
+
+/** @param {Record<string, unknown>} record @returns {Record<string, unknown>[]} */
+function candidatesOf(record) {
+  const cs = record['candidates'];
+  return Array.isArray(cs) ? /** @type {Record<string, unknown>[]} */ (cs.filter((c) => typeof c === 'object' && c !== null)) : [];
+}
+
+/** @param {Record<string, unknown>} record @param {string} verdict @returns {number} */
+function countVerdict(record, verdict) {
+  return candidatesOf(record).filter((c) => c['verdict'] === verdict).length;
+}
+
+/**
+ * The gate's own pinned bars, as the record carries them.
+ *
+ * Read from the record rather than from `thresholds.json`, because a prediction is graded against
+ * the run that made it and a later build's bars are a different question.
+ *
+ * @param {Record<string, unknown>} record
+ * @returns {{ minTokens: number, minCompletionRate: number, minSpanDays: number } | null}
+ */
+function gateThresholdsOf(record) {
+  const t = record['thresholds'];
+  if (typeof t !== 'object' || t === null) return null;
+  const g = /** @type {Record<string, unknown>} */ (t)['stage1_gate'];
+  if (typeof g !== 'object' || g === null) return null;
+  const gate = /** @type {Record<string, unknown>} */ (g);
+  const [minTokens, minCompletionRate, minSpanDays] = ['minTokens', 'minCompletionRate', 'minSpanDays'].map(
+    (k) => gate[k],
+  );
+  if (typeof minTokens !== 'number' || typeof minCompletionRate !== 'number' || typeof minSpanDays !== 'number') {
+    return null;
+  }
+  return { minTokens, minCompletionRate, minSpanDays };
+}
+
+/** A missing or non-numeric field is `-Infinity`, so it fails a floor rather than passing one. */
+function numberOr(/** @type {unknown} */ v) {
+  return typeof v === 'number' && Number.isFinite(v) ? v : Number.NEGATIVE_INFINITY;
+}
+
+/** Per candidate, vendor-page rate minus gate-reading rate; candidates missing either are dropped. */
+function vendorMinusGate(/** @type {Record<string, unknown>[]} */ candidates) {
+  return candidates
+    .filter((c) => typeof c['vendorCompletionRate'] === 'number' && typeof c['completionRate'] === 'number')
+    .map((c) => /** @type {number} */ (c['vendorCompletionRate']) - /** @type {number} */ (c['completionRate']));
+}
+
+/**
+ * Linear-interpolated median. `null` on an empty sample — never 0, which is a reading.
+ *
+ * Spelled out because a grader has to reproduce it exactly: sort ascending, take the midpoint, and
+ * on an even count average the two around it.
+ *
+ * @param {readonly unknown[]} values
+ * @returns {number | null}
+ */
+function median(values) {
+  /** @type {number[]} */
+  const xs = [];
+  for (const v of values) if (typeof v === 'number' && Number.isFinite(v)) xs.push(v);
+  xs.sort((a, b) => a - b);
+  if (xs.length === 0) return null;
+  const mid = (xs.length - 1) / 2;
+  const lo = xs[Math.floor(mid)];
+  const hi = xs[Math.ceil(mid)];
+  if (lo === undefined || hi === undefined) return null;
+  return (lo + hi) / 2;
+}
+
+/**
  * Resolve a prediction's `metric` against a run record.
  *
- * Dotted path, with `[n]` for array indices — `coverage.gated`, `candidates[0].completionRate`. The
- * one resolver, so a grader reads the field the prediction named and not one it re-derived; a path
- * that does not resolve returns `undefined`, which a grader must treat as UNGRADEABLE rather than as
- * a miss. That distinction is the same one the whole record keeps everywhere else: not looking is
- * not a measured negative.
+ * Two forms, one resolver. A dotted path with `[n]` for array indices reaches a scalar the record
+ * already holds — `coverage.gated`, `candidates[0].completionRate`. A `derived:` name reaches one of
+ * {@link DERIVED_PREDICTION_METRICS}, which is where the counts and medians live that a record
+ * carries the ingredients for but not the answer to.
+ *
+ * Either way this is the ONE resolver, so a grader reads the field the prediction named and not one
+ * it re-derived. A path that does not resolve returns `undefined`, which a grader must treat as
+ * UNGRADEABLE rather than as a miss — the same distinction the whole record keeps everywhere else:
+ * not looking is not a measured negative. `null` is different again and is a reading: an empty
+ * median, an absent block.
  *
  * @param {unknown} record
  * @param {string} path
@@ -472,6 +614,14 @@ export const PREDICTION_READINGS = ['gate', 'vendor-page', 'not-a-rate'];
  */
 export function resolvePredictionMetric(record, path) {
   if (typeof path !== 'string' || path.length === 0) return undefined;
+  if (path.startsWith('derived:')) {
+    const fn = Object.prototype.hasOwnProperty.call(DERIVED_PREDICTION_METRICS, path.slice('derived:'.length))
+      ? DERIVED_PREDICTION_METRICS[path.slice('derived:'.length)]
+      : undefined;
+    if (fn === undefined) return undefined;
+    if (typeof record !== 'object' || record === null || Array.isArray(record)) return undefined;
+    return fn(/** @type {Record<string, unknown>} */ (record));
+  }
   /** @type {unknown} */
   let node = record;
   for (const step of path.split('.')) {
@@ -570,7 +720,19 @@ export function readPredictions(text, source) {
       continue;
     }
     if (typeof metric !== 'string' || metric.length === 0) {
-      return { ok: false, message: `${at} needs \`metric\` to be a dotted record path or null` };
+      return { ok: false, message: `${at} needs \`metric\` to be a dotted record path, a derived: name, or null` };
+    }
+    // A `derived:` name a grader cannot compute is refused HERE rather than at grading time, where
+    // it would be indistinguishable from a path that simply did not resolve — i.e. from ungradeable
+    // — and a typo would quietly become "we could not tell" instead of "this document is wrong".
+    if (metric.startsWith('derived:')) {
+      const name = metric.slice('derived:'.length);
+      if (!Object.prototype.hasOwnProperty.call(DERIVED_PREDICTION_METRICS, name)) {
+        return {
+          ok: false,
+          message: `${at} names an unknown derived metric ${JSON.stringify(name)}; known: ${Object.keys(DERIVED_PREDICTION_METRICS).join(', ')}`,
+        };
+      }
     }
     const comparator = r['comparator'];
     if (!PREDICTION_COMPARATORS.includes(/** @type {string} */ (comparator))) {

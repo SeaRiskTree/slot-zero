@@ -54,10 +54,11 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  * - **4** — the gate reads a CREATION-derived launch history rather than an ownership-derived one.
  *   Candidate rows gain `historySource`, the `vendor*` fields holding the old reading whole, and
  *   `creation` holding the walk's coverage and bounds. A schema-1, schema-2 or schema-3 record's
- *   `tokens` and `completionRate` are the OWNERSHIP reading — biased towards rejection, and
- *   understating a bonded count more than a launch count. **Do not compare them with a schema-4
- *   `completionRate` as though they answered the same question**; compare against
- *   `vendorCompletionRate`, which is the same measurement the older records hold.
+ *   `tokens` and `completionRate` are the OWNERSHIP reading, which is biased in BOTH directions at
+ *   once: its COUNTS reject (understating launches, and understating a bonded count by more) while
+ *   its RATE inflates. **Do not compare them with a schema-4 `completionRate` as though they
+ *   answered the same question**; compare against `vendorCompletionRate`, which is the same
+ *   measurement the older records hold.
  * - **5** — Stage 2 stops scoring launches whose create slot carried no bundled transaction, and
  *   the `entry` block gains the three fields that make that visible: `launchesRoomUnproven`,
  *   `bundledTx` and `maxWalletsInOneTx`. **Two consequences for a reader of an older record.**

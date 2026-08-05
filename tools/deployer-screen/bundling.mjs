@@ -1087,6 +1087,10 @@ export function loadThresholds() {
  * @param {number} plan.maxCandidates
  * @param {Record<string, any>} plan.census
  * @param {import('./stage2.mjs').Stage2Thresholds} plan.entry
+ * @param {number} plan.entryMinAgeMs THE CENSUS'S OWN FILL SOURCE'S ANSWER, asked of it by the
+ *   caller — never re-derived here. Captain decision 257a made "has this launch finished happening"
+ *   the source's to answer, so a floor computed a second time in this printer would go on agreeing
+ *   with the pass it describes right up until the day it did not.
  * @param {number} plan.listingIntervalMs
  * @returns {string}
  */
@@ -1097,8 +1101,10 @@ export function renderDryRun(plan) {
   const listingMin = Math.round((listingWorst * plan.listingIntervalMs) / 60_000);
   const fillMin = Math.round((fillWorst * plan.entry.keylessMinIntervalMs) / 60_000);
   // DERIVED FROM THE WALK, NOT DESCRIBED. `readLaunchWindow` will seek exactly this far, because
-  // this is the function it calls to decide that. See {@link MEASURED_PAGE_COST} for why the page
-  // cost beside it is checked against the reach rather than simply printed.
+  // this is the function it calls to decide that — the census walks its own windows, so the REACH
+  // is still ours to derive. The eligibility FLOOR is not: it arrives as `plan.entryMinAgeMs`. See
+  // {@link MEASURED_PAGE_COST} for why the page cost beside it is checked against the reach rather
+  // than simply printed.
   const reachMs = windowReachMs(plan.entry);
   const spanReachMs = Math.ceil(plan.entry.windowSlotSpan * MAX_MS_PER_SLOT);
   const reachBase = spanReachMs >= plan.entry.windowMs
@@ -1192,14 +1198,15 @@ export function renderDryRun(plan) {
   L.push(
     `    windowMs ${plan.entry.windowMs}, seekMarginMs ${plan.entry.seekMarginMs}, ` +
       `windowSlotSpan ${plan.entry.windowSlotSpan}, tradePageLimit ${plan.entry.tradePageLimit}, ` +
-      `eligibility floor ${reachMs}ms, seek reach ${reachMs}ms.`,
+      `eligibility floor ${plan.entryMinAgeMs}ms, seek reach ${reachMs}ms.`,
   );
-  L.push('    THE LAST TWO ARE ONE BOUND, DERIVED ONCE: both are pumpfun.mjs -> windowReachMs, the');
+  L.push('    THE FLOOR IS THE GATE THE FILL SOURCE ITSELF APPLIES, never a second number derived');
+  L.push('    here; the REACH is this walk\'s own cursor, pumpfun.mjs -> windowReachMs, the');
   L.push('    windowSlotSpan converted at a MEASURED worst-case slot rate with windowMs as a floor,');
-  L.push('    plus clock slack. They used to be two numbers — a hand-written windowMs + seekMarginMs');
-  L.push('    for eligibility against a span-derived reach — and the chain drifted the gap open to');
-  L.push('    20s with nothing failing. A launch is old enough exactly when the cursor\'s own bound');
-  L.push('    is in the past, so it is the same call and cannot come apart again.');
+  L.push('    plus clock slack. They are the same number for the swap-api source this census reads,');
+  L.push('    and a source whose tables LAG answers a larger floor — which is why the floor is asked');
+  L.push('    rather than computed. The floor used to be a hand-written windowMs + seekMarginMs against');
+  L.push('    a span-derived reach, and the chain drifted that gap open to 20s with nothing failing.');
   L.push('');
   L.push('WHAT IT WILL NOT DO: no entry score, no room figure, no field, no entry cost, no verdict.');
   L.push('');
@@ -1269,8 +1276,34 @@ export async function main(opts, out, err) {
     return EXIT.usage;
   }
 
+  // Its OWN client and its OWN ceiling, for the reason `screen.mjs` gives for Stage 2's: a different
+  // host with different pacing, and neither leg may eat the other's budget or exceed what the dry
+  // run printed. It is built ABOVE the dry-run branch because THE PLAN MUST STATE THE FLOOR THE
+  // SOURCE ITSELF WILL APPLY — asking it costs no request, and a plan that derived that duration
+  // again would be the second expression captain decision 144a's rule is about.
+  const fillClient = new KeylessClient({
+    maxRequests: census.maxKeylessRequests,
+    minIntervalMs: entry.keylessMinIntervalMs,
+    retryBackoffMs: entry.keylessRetryBackoffMs ?? [],
+    onRequest: (url) => {
+      if (!opts.json) out(`  → GET ${url}`);
+    },
+  });
+  const entryFillSource = censusFillSource(fillClient);
+  const entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entry, Date.now()));
+
   if (opts.dryRun) {
-    out(renderDryRun({ cohortSize: cohort.length, cohortCap, maxCandidates, census, entry, listingIntervalMs }));
+    out(
+      renderDryRun({
+        cohortSize: cohort.length,
+        cohortCap,
+        maxCandidates,
+        census,
+        entry,
+        entryMinAgeMs,
+        listingIntervalMs,
+      }),
+    );
     return EXIT.ok;
   }
 
@@ -1282,18 +1315,6 @@ export async function main(opts, out, err) {
       if (!opts.json) out(`  → GET ${url}`);
     },
   });
-  // Its OWN client and its OWN ceiling, for the reason `screen.mjs` gives for Stage 2's: a different
-  // host with different pacing, and neither leg may eat the other's budget or exceed what the dry
-  // run printed.
-  const fillClient = new KeylessClient({
-    maxRequests: census.maxKeylessRequests,
-    minIntervalMs: entry.keylessMinIntervalMs,
-    retryBackoffMs: entry.keylessRetryBackoffMs ?? [],
-    onRequest: (url) => {
-      if (!opts.json) out(`  → GET ${url}`);
-    },
-  });
-
   /** @type {CandidateBundling[]} */
   const rows = [];
   /** @type {{ wallet: string, verdict: string, reason: string }[]} */
@@ -1383,6 +1404,7 @@ export async function main(opts, out, err) {
     for (const s of toSurvey) {
       if (!opts.json) out(`  ${s.member.wallet}`);
       const result = await censusCandidate(fillClient, {
+        fillSource: entryFillSource,
         refs: s.refs,
         nowMs: Date.now(),
         entry,

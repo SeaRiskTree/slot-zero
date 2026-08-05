@@ -317,6 +317,7 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
       maxCandidates: T['bundling_census'].maxCandidatesSurveyed,
       census: T['bundling_census'],
       entry: ENTRY,
+      entryMinAgeMs: windowReachMs(ENTRY),
       listingIntervalMs: T['budget'].keylessMinIntervalMs,
     });
     expect(text).toContain('KEYED SPEND: 0');
@@ -333,6 +334,27 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
     expect(text).toContain(OWNERSHIP_LIST_CAVEAT);
     expect(text).toContain(DROPPED_WINDOW_CAVEAT);
     expect(text).toContain(MINT_TIME_BACKDATE_CAVEAT);
+
+    // THE PLAN STATES THE FLOOR ITS OWN SOURCE ANSWERS, and the reach stays the walk's. They are
+    // one number for the swap-api source this census reads, so proving the plan is not deriving the
+    // floor itself takes a source that answers something else — the run path's pin below could not
+    // see this printer, which is how a stale claim survived a round here.
+    const lagged = renderDryRun({
+      cohortSize: 82,
+      cohortCap: T['bundling_census'].maxCohortSize,
+      maxCandidates: T['bundling_census'].maxCandidatesSurveyed,
+      census: T['bundling_census'],
+      entry: ENTRY,
+      entryMinAgeMs: windowReachMs(ENTRY) + 240_000,
+      listingIntervalMs: T['budget'].keylessMinIntervalMs,
+    });
+    expect(text).toContain(`eligibility floor ${windowReachMs(ENTRY)}ms, seek reach ${windowReachMs(ENTRY)}ms.`);
+    expect(lagged).toContain(
+      `eligibility floor ${windowReachMs(ENTRY) + 240_000}ms, seek reach ${windowReachMs(ENTRY)}ms.`,
+    );
+    // And the plan no longer claims the two are one call, because for a lagging source they are not.
+    expect(lagged).not.toContain('THE LAST TWO ARE ONE BOUND');
+    expect(lagged).toContain('THE FLOOR IS THE GATE THE FILL SOURCE ITSELF APPLIES');
   });
 
   it('rejects bad input rather than guessing, and the caps can only be lowered', () => {

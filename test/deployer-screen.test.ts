@@ -5214,6 +5214,23 @@ describe('the keyless boundary holds in both directions', () => {
       expect(importsOf(module), `${module}'s local imports`).toEqual([...allowed].sort());
     }
 
+    /**
+     * AND WHICH SYMBOLS, because the module list is one granularity too coarse for `client.mjs`.
+     * That module exports `DuneClient` beside the ceiling and transport error types `stage2.mjs`
+     * wants, so `import { DuneClient, CeilingReached, RequestFailed } from './client.mjs'` adds NO
+     * module edge: the allow-list above still matches, the closure below never fires because
+     * `client.mjs` is not a vendor module, and nothing reads a `kind`. That is 261a's one-hop
+     * indirection one granularity down. EXHAUSTIVE in the same idiom — no wildcard, no per-module
+     * exception, and a module absent from this list may take nothing from `client.mjs` at all.
+     */
+    const SCORING_CLIENT_SYMBOLS: Record<string, string[]> = {
+      'stage2.mjs': ['CeilingReached', 'RequestFailed'],
+    };
+    for (const module of Object.keys(SCORING_IMPORTS)) {
+      const taken = namedImportsFrom(all.get(`tools/deployer-screen/${module}`) ?? '', 'client.mjs');
+      expect(taken, `${module}'s symbols from client.mjs`).toEqual([...(SCORING_CLIENT_SYMBOLS[module] ?? [])].sort());
+    }
+
     // TRANSITIVE, and this is the half that catches a name nobody has thought of yet. The allow-list
     // above pins the direct edges; this closes over them, so a module reachable from a scoring
     // module at ANY depth is covered whatever it is called. `dune-costs.mjs` under `stage2.mjs`
@@ -9011,6 +9028,18 @@ function executableHalf(text: string): string {
  * which can only over-report. The list it feeds is an exhaustive equality, so an over-report fails
  * loudly and is settled on purpose rather than silently allowed.
  */
+function namedImportsFrom(text: string, module: string): string[] {
+  const code = executableHalf(text);
+  const pattern = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*['"\`]\\./${module.replace('.', '\\.')}['"\`]`, 'g');
+  const taken = [...code.matchAll(pattern)].flatMap((m) =>
+    m[1]!
+      .split(',')
+      .map((s) => s.trim().split(/\s+as\s+/)[0]!.trim())
+      .filter((s) => s !== ''),
+  );
+  return [...new Set(taken)].sort();
+}
+
 function localModuleLoads(text: string): string[] {
   const code = executableHalf(text);
   return [...new Set([...code.matchAll(/['"`]\.\/([\w.-]+\.mjs)['"`]/g)].map((m) => m[1]!))].sort();
@@ -11368,6 +11397,22 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     });
     expect(JSON.parse(JSON.stringify({ minAgeMs: coverage.minAgeMs })).minAgeMs).toBe(coverage.minAgeMs);
     expect(Number.isFinite(coverage.minAgeMs)).toBe(true);
+  });
+
+  it('the import allow-list sees WHICH SYMBOLS come from client.mjs, not only that it is imported', () => {
+    // The hole this closes, driven through the extractor the allow-list itself runs on: taking
+    // `DuneClient` from `client.mjs` inside a scoring module adds no module edge, so every other
+    // half of that assertion stays green. `stage2.mjs` may take the ceiling and transport error
+    // types and nothing else, and the list is exhaustive, so a third symbol means coming back.
+    const probe = "import { DuneClient, CeilingReached, RequestFailed } from './client.mjs';";
+    expect(namedImportsFrom(probe, 'client.mjs')).toEqual(['CeilingReached', 'DuneClient', 'RequestFailed']);
+    expect(namedImportsFrom(probe, 'client.mjs')).not.toEqual(['CeilingReached', 'RequestFailed']);
+    // Aliasing does not hide it, and prose describing the import cannot add one.
+    expect(namedImportsFrom("import { DuneClient as C } from './client.mjs';", 'client.mjs')).toEqual(['DuneClient']);
+    expect(namedImportsFrom("// import { DuneClient } from './client.mjs'\n", 'client.mjs')).toEqual([]);
+    // And what `stage2.mjs` actually takes today is exactly the pinned pair.
+    const stage2 = readFileSync(join(TOOL_DIR, 'stage2.mjs'), 'utf8');
+    expect(namedImportsFrom(stage2, 'client.mjs')).toEqual(['CeilingReached', 'RequestFailed']);
   });
 
   it('the import allow-list sees a DYNAMIC load, not only a static one', () => {

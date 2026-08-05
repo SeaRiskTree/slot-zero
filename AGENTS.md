@@ -823,7 +823,9 @@ dev currently?"*, and the shape of the answer is the point:
   The two `maxCandidatesScored` were the same integer until 289b and the coincidence had to be
   disclaimed in prose; now the values themselves show the scoping. **14 is INTERIM, not terminal** —
   27 would serve the whole pooled survivor set but is sized to today's population, so the final size
-  gets derived against the widened discovery pool. **Nothing reads that block**:
+  gets derived against the widened discovery pool. **`stage2_entry_dune` is the SINGLE OWNER of
+  those three values** — `stage2_entry`'s justifications point at it and restate none of them, so
+  the block is the one edit site when the interim size is superseded. **Nothing reads that block**:
   Gate 3 has not been convened and `screen.mjs` selects `'swap-api'` on every run, so every live
   number is still `stage2_entry`'s. Every evidence bar (`minRoomLeft`, the field bars, the cost bar)
   stays in `stage2_entry` and governs both sources, and a test forbids either justification from

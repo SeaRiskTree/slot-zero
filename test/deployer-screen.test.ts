@@ -1806,11 +1806,33 @@ describe('the CLI contract', () => {
 
     const jSwap = swap['justification'] as Record<string, string>;
     const jDune = dune['justification'] as Record<string, string>;
+
+    // THE BAN IS SYMMETRIC AND IT IS ON NAMED PARAMETERS, ON BOTH SIDES. Neither entry may NAME the
+    // other lane's cost parameters; neither is banned from the other's bare UNIT word. The Dune
+    // entries each say "request" exactly once, to disclaim it, and a swap-api entry is equally
+    // entitled to say it spends no Dune credit — banning the bare word "credit" on one side only
+    // would fail that legitimate sentence for the wrong reason while the other side stayed free.
+    // What is asserted on both sides is the arithmetic's own named terms, which is the thing that
+    // would actually be borrowed.
+    //
+    // The names are taken from the OTHER lane's live key set rather than written out here, so the
+    // check cannot quietly become a regex over parameters that no longer exist: if a swap-api entry
+    // reached for the Dune credit arithmetic it would have to name one of these, and if one of them
+    // is renamed this assertion fails rather than silently stopping to fire.
+    const swapCostParams = ['maxRequestsPerLaunch', 'maxKeylessRequests'] as const;
+    const duneCostParams = [
+      'maxResultRows',
+      'worstCaseCreditsPerExecution',
+      'allowanceReserveCredits',
+      'resultBytesPerRowCeiling',
+    ] as const;
+    const duneLane = T['dune'] as Record<string, unknown>;
+    for (const p of swapCostParams) expect(swap[p], `stage2_entry.${p}`).toBeTypeOf('number');
+    for (const p of duneCostParams) expect(duneLane[p], `dune.${p}`).toBeTypeOf('number');
+    const swapCostTerms = new RegExp(swapCostParams.join('|'));
+    const duneCostTerms = new RegExp(duneCostParams.join('|'));
+
     for (const k of CAPS) {
-      // Neither may NAME the other's cost parameters. The word "request" is deliberately NOT banned
-      // from the Dune entries — each uses it exactly once, to disclaim it — so what is asserted is
-      // the arithmetic's own named terms, which is the thing that would actually be borrowed.
-      //
       // THE LIMIT OF THIS CHECK, so the prose claim is not read as stronger enforcement than it is:
       // it asserts VOCABULARY, not arithmetic. A Dune entry that named no swap-api parameter while
       // describing a request product would still pass. That is acceptable because `justification` is
@@ -1818,15 +1840,11 @@ describe('the CLI contract', () => {
       // stated reason'), and because the value-level half of the scoping is asserted semantically in
       // the next test. Both blocks' prose now claims only this narrow half.
       expect(jDune[k], `stage2_entry_dune.justification.${k} borrows swap-api arithmetic`).not.toMatch(
-        /maxRequestsPerLaunch|maxKeylessRequests/,
+        swapCostTerms,
       );
-      expect(jSwap[k], `stage2_entry.justification.${k} borrows Dune arithmetic`).not.toMatch(
-        /credit|maxResultRows/i,
-      );
+      expect(jSwap[k], `stage2_entry.justification.${k} borrows Dune arithmetic`).not.toMatch(duneCostTerms);
       // And each states its OWN model rather than merely avoiding the other's.
-      expect(jSwap[k], `stage2_entry.justification.${k} states no request arithmetic`).toMatch(
-        /maxRequestsPerLaunch|maxKeylessRequests/,
-      );
+      expect(jSwap[k], `stage2_entry.justification.${k} states no request arithmetic`).toMatch(swapCostTerms);
       expect(jDune[k], `stage2_entry_dune.justification.${k} states no credit arithmetic`).toMatch(/credit/i);
     }
   });

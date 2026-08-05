@@ -93,6 +93,121 @@ property of a wallet — and it means the prior records understate what a tiered
 measurement. The three predictions documents under `predictions/` were committed **before** the run
 and stand unchanged; they are the input the legs will be graded against whenever they are run.
 
+## Exactly what the elite leg completed before it was stopped
+
+**No gate verdict exists for any candidate.** The screen renders verdicts after gating finishes, so
+the stopped run produced history readings and nothing downstream of them. Nothing below is a gate
+result, a completion rate or a rank, and none of it may be read as one — the standing rule is that a
+ceiling hit is never recordable as a measured result, and an aborted run is that.
+
+What it did reach:
+
+| stage | reached |
+|---|---|
+| enumeration | **complete** — 3 seeds, 50 rows / 50 wallets each, **59 distinct**, **0 prefiltered** |
+| Dune allowance guard | **complete** — `sufficient`, worst case 195.2 credits against 1,804.525 spendable |
+| Dune coverage probe | **complete** — 3 tables, PASSED, 2024-01-14 → 2026-08-05, 0 empty months |
+| Dune enumeration | **complete for all 59** — one execution, 2,652 rows, 0 unreadable |
+| per-candidate history reading | **10 of 59** finished; an 11th profile was paid for and its walk interrupted |
+| gate, Stage 2, record | **not reached at all** |
+
+Of the 10 finished readings, **7 were answered by Dune and 3 fell back to the Helius walk**. That is
+the first 10 of a deterministic rank order, not a random sample of the 59, so it is an observation
+and not a rate.
+
+### The three fallbacks are all worth knowing, and two of them are new
+
+- **Two of the three were refused for RECENCY, not for depth.** Both wallets' newest enumerated
+  launch (`04:38:56Z` and `03:37:49Z`) was newer than the probed surfaces' own last row
+  (`03:03:42Z`), so the probe could not vouch for the period the count was read over and the reading
+  fell back to the walk. The mechanism is documented; the shape it takes on a live pool is not. **It
+  bites hardest on exactly the wallets a discovery lane most wants** — a deployer that launched in
+  the last hour is the one a recency-seeded feed just surfaced, and it is the one whose Dune answer
+  gets refused. The probe defaults to a **cached** read (`refreshProbeByDefault: false`), so its last
+  row is as old as the cache; `--dune-refresh-probe` moves it forward for one billed execution
+  (measured 0.751 credits) and is the lever, at the cost this file's resume plan carries.
+- **The third is the per-deployer row cap firing on a real batch for the first time.**
+  `yHCxHBEa…` declared 751 creations and the batch's cap returned its most recent 500 — a prefix,
+  not a short history — so it walked **alone** while the other 58 kept their Dune answer. This is
+  precisely the failure the cap was introduced to stop being batch-wide, demonstrated live rather
+  than argued. Its walk then read 751 created against an ownership listing of 280 (471 hidden, 324
+  creator moved), consistent with the 749 / 280 the same wallet read on 2026-08-04.
+
+### 227a's mayhem flag populates, and its denominator trap is now measured live
+
+All 7 Dune-sourced readings carried a mayhem share; all 3 Helius-sourced ones correctly read
+**UNMEASURED — NOT a reading of 0%**. Every share read **0.0%**, and the denominators are the point:
+
+| launches enumerated | flag readable on | unreadable |
+|---|---|---|
+| 458 | **5** | 453 |
+| 177 | 114 | 63 |
+| 32 | 28 | 4 |
+| 29 | 29 | 0 |
+| 17 | 17 | 0 |
+| 11 | 9 | 2 |
+| 10 | 10 | 0 |
+
+`mayhemFlagReadable` is **not** `duneLaunches`, and on the worst of these it is **5 of 458** — a
+history reaching back through the `pump_call_create` half of the union, which carries no such
+column. A reader who used the launch count as the denominator would have reported that wallet at
+0.0% of 458 with the same confidence as the wallet where all 29 were readable. The warning was
+written from the subject deployer's 101-of-252 split; **1.1% readable is an order of magnitude worse
+than the case it was written from.**
+
+## What a clean resume takes
+
+**There is nothing to resume into.** The screen is stateless between runs by design and caches
+nothing: no record was written, so a resumed leg re-issues its 3 enumeration requests, re-fetches
+every profile, and re-executes the Dune enumeration. The 17 keyed requests and 7.507 credits already
+spent buy no head start and are not recoverable — what they bought is the cost model below and the
+findings above.
+
+**A resume is therefore a fresh run of each leg, and the only question is how the three fit.**
+
+```
+node tools/deployer-screen/screen.mjs --tier elite \
+  --predict tools/deployer-screen/predictions/2026-08-05-seed-comparison-tier-elite.json \
+  --out    tools/deployer-screen/runs/<date>-tier-elite.json
+node tools/deployer-screen/screen.mjs --tier good \
+  --predict tools/deployer-screen/predictions/2026-08-05-seed-comparison-tier-good.json \
+  --out    tools/deployer-screen/runs/<date>-tier-good.json
+node tools/deployer-screen/screen.mjs \
+  --predict tools/deployer-screen/predictions/2026-08-05-seed-comparison-untiered.json \
+  --out    tools/deployer-screen/runs/<date>-untiered.json
+```
+
+The predictions documents are already committed and are **not** rewritten for a later date — that is
+the whole point of committing them ahead of the run, and a resumed leg graded against a re-dated
+document would be graded against a postdiction.
+
+**Check the counter before each leg, and only start one whose worst case fits the remainder.** The
+reading is free of credits and costs one keyed request:
+
+```
+curl -sD - -o /dev/null -H "authorization: Bearer $MADEONSOL_API_KEY" \
+  https://madeonsol.com/api/v1/deployer-hunter/leaderboard?sort=total_bonded'&'limit=1 \
+  | grep -i x-ratelimit
+```
+
+Two things about the ordering, both of which cost nothing to get right and are expensive to get
+wrong:
+
+- **Run the two tiered halves adjacent to each other.** They are one leg of the comparison, and tier
+  membership is a trailing window — `7ufmve7Z…` read elite on 2026-07-29 and good four days later
+  with its own numbers essentially unchanged. Splitting them across a reset makes leg B two
+  populations rather than one.
+- **Straddle the 00:00Z reset rather than spanning a day.** Leg B (elite 62 + good ~68 = ~130) late
+  in one UTC day and leg A (~85) immediately after the reset puts the two legs hours apart instead of
+  a day apart, which is the closest the 200/day cap allows them to be. It also depends on the shared
+  key being quiet, which today it was not — hence the check above before each leg rather than a plan
+  fixed in advance.
+
+Also worth passing to whoever runs it: consider `--dune-refresh-probe` on the **first** leg only. It
+costs one billed execution (~0.75 credits) and moves the probe's last row up to the run, which is
+what the two recency fallbacks above needed; the legs that follow within the 6 h staleness bound
+inherit the fresher cached probe for nothing.
+
 ## What is committed and works, independent of the stop
 
 Captain decision 232c's standing requirement — *each run records what it predicted, so a later run

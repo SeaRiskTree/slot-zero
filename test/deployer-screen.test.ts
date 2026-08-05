@@ -13,7 +13,8 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
@@ -182,8 +183,11 @@ import {
   describeUnmeasured,
   groupUnmeasured,
   partitionUnmeasured,
+  PREDICTIONS_DOCUMENT_VERSION,
+  readPredictions,
   redactCreationNotes,
   redactVendorIdentifiers,
+  resolvePredictionMetric,
   schemaVersionOf,
   unmeasuredBecause,
   unmeasuredNoSource,
@@ -1425,11 +1429,35 @@ describe('the CLI contract', () => {
       ['--max-requests', '-3'],
       ['--tier', 'platinum'],
       ['--out'],
+      ['--predict'],
       ['--nonsense'],
     ]) {
       expect(parseArgs(argv).ok, argv.join(' ')).toBe(false);
     }
   });
+
+  it('refuses an unreadable predictions document BEFORE stage 0, let alone a request', async () => {
+    // The ordering is the whole value of the flag. A run that discovered its predictions were
+    // malformed after spending the keyed allowance would have to spend it again to get them back,
+    // and a prediction recovered after the answer is not one. So the document is read before the
+    // plan is built, before Stage 0 runs, and before the credential is consulted — which is what
+    // makes reaching exit 2 with a stage-0-only invocation the proof rather than the symptom.
+    const dir = mkdtempSync(join(tmpdir(), 'predict-'));
+    const bad = join(dir, 'bad.json');
+    writeFileSync(bad, JSON.stringify({ documentVersion: 1, lane: 'l', leg: 'g', madeAtIso: 'not-a-date', basis: 'b', predictions: [] }));
+    const r = parseArgs(['--stage0', '--predict', bad]);
+    if (!r.ok) throw new Error('unreachable');
+    const err: string[] = [];
+    expect(await main(r.opts, {}, () => {}, (l) => err.push(l))).toBe(2);
+    expect(err.join('\n')).toMatch(/unparseable madeAtIso/);
+
+    const missing = join(dir, 'nope.json');
+    const r2 = parseArgs(['--stage0', '--predict', missing]);
+    if (!r2.ok) throw new Error('unreachable');
+    const err2: string[] = [];
+    expect(await main(r2.opts, {}, () => {}, (l) => err2.push(l))).toBe(2);
+    expect(err2.join('\n')).toMatch(/could not read/);
+  }, 60_000);
 
   it('leaves the candidate cap unset by default, so the budget decides it', () => {
     // The committed elite run seeded 22 wallets and graded 12 because it was invoked with a number
@@ -2686,6 +2714,67 @@ describe('the run-record completeness contract', () => {
     expect(schemaVersionOf(null)).toBe(1);
     // This build writes the current version, and it is >= 2 (the version that added `completed`).
     expect(RECORD_SCHEMA_VERSION).toBeGreaterThanOrEqual(2);
+  });
+
+  it('refuses a predictions document that could not be graded, and says which row', () => {
+    // Shape, never truth: `readPredictions` cannot tell a prediction from a postdiction and does
+    // not try. What it CAN refuse is a document a grader would have to guess at, and each refusal
+    // below is one of those guesses declined.
+    const base = {
+      documentVersion: PREDICTIONS_DOCUMENT_VERSION,
+      lane: 'l',
+      leg: 'untiered',
+      madeAtIso: '2026-08-05T00:00:00.000Z',
+      basis: 'b',
+    };
+    const row = { id: 'p1', statement: 's', rationale: 'r', reading: 'gate', metric: 'coverage.gated', comparator: '>=', value: 1 };
+    const read = (doc: unknown) => readPredictions(JSON.stringify(doc), 'doc.json');
+
+    expect(read({ ...base, predictions: [row] }).ok).toBe(true);
+
+    // A version this build does not write. Two documents under one shape is the drift the whole
+    // record contract exists to refuse, one level down.
+    expect(read({ ...base, documentVersion: 99, predictions: [row] })).toMatchObject({ ok: false });
+    // Empty is not "no predictions" — a run made with --predict claimed it was testing something.
+    expect(read({ ...base, predictions: [] })).toMatchObject({ ok: false });
+    // Two rows under one id: a grader keyed on it would score one and silently drop the other.
+    expect(read({ ...base, predictions: [row, { ...row, statement: 'other' }] })).toMatchObject({ ok: false });
+
+    // THE 231a RULE, ENFORCED. A completion rate is two quantities here and they differ by an
+    // order of magnitude on the same wallets, so a prediction that does not name its reading is
+    // refused rather than defaulted — defaulting is precisely the defect 231a was taken to remove.
+    const noReading: Record<string, unknown> = { ...row };
+    delete noReading['reading'];
+    expect(read({ ...base, predictions: [noReading] })).toMatchObject({ ok: false });
+    expect(read({ ...base, predictions: [{ ...row, reading: 'whichever' }] })).toMatchObject({ ok: false });
+
+    // A comparator no grader implements, and a `between` whose range is inverted.
+    expect(read({ ...base, predictions: [{ ...row, comparator: '~=' }] })).toMatchObject({ ok: false });
+    expect(read({ ...base, predictions: [{ ...row, comparator: 'between', value: [9, 1] }] })).toMatchObject({ ok: false });
+    expect(read({ ...base, predictions: [{ ...row, comparator: 'between', value: [1, 9] }] }).ok).toBe(true);
+
+    // An unresolvable claim is LEGITIMATE and stays in the document — it just may not carry a
+    // comparator, or a grader would try to evaluate a value it has no field to read.
+    expect(read({ ...base, predictions: [{ ...row, metric: null, comparator: null, value: null }] }).ok).toBe(true);
+    expect(read({ ...base, predictions: [{ ...row, metric: null }] })).toMatchObject({ ok: false });
+
+    expect(read('not json' as unknown)).toMatchObject({ ok: false });
+    expect(readPredictions('[]', 'doc.json')).toMatchObject({ ok: false });
+  });
+
+  it('resolves a metric path the way a grader must, and returns undefined rather than guessing', () => {
+    // `undefined` is UNGRADEABLE and never a miss — the same distinction the rest of this record
+    // keeps everywhere: not looking is not a measured negative.
+    const record = { coverage: { gated: 82 }, candidates: [{ wallet: 'a', entry: null }], dune: { used: false } };
+    expect(resolvePredictionMetric(record, 'coverage.gated')).toBe(82);
+    expect(resolvePredictionMetric(record, 'candidates[0].wallet')).toBe('a');
+    expect(resolvePredictionMetric(record, 'candidates[0].entry')).toBeNull();
+    expect(resolvePredictionMetric(record, 'dune.used')).toBe(false);
+    expect(resolvePredictionMetric(record, 'coverage.notAKey')).toBeUndefined();
+    expect(resolvePredictionMetric(record, 'candidates[9].wallet')).toBeUndefined();
+    expect(resolvePredictionMetric(record, '')).toBeUndefined();
+    // A path must not walk into a prototype and report a hit.
+    expect(resolvePredictionMetric(record, 'coverage.constructor')).toBeUndefined();
   });
 
   it('gives the unknown state somewhere honest to go', () => {
@@ -4359,6 +4448,11 @@ describe('the keyless boundary holds in both directions', () => {
   // grader CANNOT re-derive it. A record without the claim and without the instant it stopped being
   // in-sample is permanently unfalsifiable, which is why every record at schema ≤15 stays so.
   PERSISTED_BY_SCHEMA[16] = [...PERSISTED_BY_SCHEMA[15]!, 'prediction'].sort();
+  // Schema 17's one new key is a run-level `declaredPredictions` block —
+  // RUN_LEVEL_KEYS_ADDED_BY_SCHEMA below. It carries what the LANE said it expected of the run and
+  // is read by nothing in this tool; schema 16's `prediction` is the SCREEN's own claim about a
+  // candidate, which is a different thing under a deliberately different name.
+  PERSISTED_BY_SCHEMA[17] = PERSISTED_BY_SCHEMA[16]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -4464,6 +4558,10 @@ describe('the keyless boundary holds in both directions', () => {
     // are byte-identical with the claim recorded and without it. A prediction that had needed a new
     // measurement would show up HERE, and it would be the lane re-tuning the screen it grades.
     16: ENTRY_KEYS_14,
+    // Schema 17 records what the LANE predicted of the run. That is a run-level claim about the
+    // whole leg, and nothing in it reaches an entry number — the same boundary schemas 9, 13 and 15
+    // drew.
+    17: ENTRY_KEYS_14,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -4541,6 +4639,8 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 16 is a candidate-row field that restates a Stage 2 verdict as a claim. Enumeration is
     // untouched, and no Dune value reaches it.
     16: CREATION_KEYS_15,
+    // Schema 17 is a run-level block. Enumeration is untouched.
+    17: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -4590,6 +4690,8 @@ describe('the keyless boundary holds in both directions', () => {
     15: ENTRY_COVERAGE_KEYS_6,
     // Schema 16 reads this block's accounting and adds nothing to it.
     16: ENTRY_COVERAGE_KEYS_6,
+    // Schema 17 adds a run-level block and no per-launch accounting of any kind.
+    17: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -4656,6 +4758,9 @@ describe('the keyless boundary holds in both directions', () => {
     // request, no host and no vendor quota. The GRADING half spends — on its own ceilings in
     // `thresholds.json` -> `feedback_loop`, in its own tool, and never inside a screen run.
     16: SPEND_KEYS_8,
+    // Schema 17 costs no request, no execution and no host: `--predict` reads ONE local file
+    // before the plan is even built. There is no fourth unit for this block to grow.
+    17: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -4704,6 +4809,8 @@ describe('the keyless boundary holds in both directions', () => {
     15: DUNE_KEYS_13,
     // Schema 16 is a Stage 2 restatement; no Dune value may reach it, the same boundary as 9 and 13.
     16: DUNE_KEYS_13,
+    // Schema 17 is a run-level block that no vendor answers.
+    17: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -4735,6 +4842,8 @@ describe('the keyless boundary holds in both directions', () => {
     // may be read over and is unchanged by a column added to one of them.
     15: DUNE_COVERAGE_KEYS_9,
     16: DUNE_COVERAGE_KEYS_9,
+    // Schema 17 does not touch the probe.
+    17: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -4754,6 +4863,7 @@ describe('the keyless boundary holds in both directions', () => {
     14: DUNE_COVERAGE_TABLE_KEYS_9,
     15: DUNE_COVERAGE_TABLE_KEYS_9,
     16: DUNE_COVERAGE_TABLE_KEYS_9,
+    17: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -4775,6 +4885,11 @@ describe('the keyless boundary holds in both directions', () => {
     8: SPEND_KEYS_8.filter((k) => !SPEND_KEYS_3_TO_7.includes(k)),
     9: ['dune'],
     16: ['predictions'],
+    // Schema 17: the predictions the LANE was made to test, carried verbatim from `--predict` and
+    // evaluated by nothing here. `null` on a run made without the flag means NOTHING WAS
+    // PREDICTED, which is not the same as a prediction that failed. The name is deliberately not
+    // schema 16's `predictions`, which is the screen's own claim about its candidates.
+    17: ['declaredPredictions'],
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {

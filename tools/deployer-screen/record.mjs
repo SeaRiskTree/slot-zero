@@ -382,8 +382,218 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   appends an `exit` claim to the same list and moves the subject across; **no record written under
  *   schema 16 is invalidated by that**, which is the whole reason claims are a list rather than a
  *   scalar. A schema that forced a reset would waste every run recorded in between.
+ * - **17** — **a run can now carry the predictions it was made to test**, so the grading lane has an
+ *   input rather than a plan. The run-level block `declaredPredictions` is new;
+ *   `PERSISTED_BY_SCHEMA[17]`,
+ *   `ENTRY_KEYS_BY_SCHEMA[17]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[17]`, `SPEND_KEYS_BY_SCHEMA[17]`,
+ *   `DUNE_KEYS_BY_SCHEMA[17]` and `CREATION_KEYS_BY_SCHEMA[17]` all equal `[16]`.
+ *
+ *   **`declaredPredictions` is NOT schema 16's `predictions` and the two names are kept apart on
+ *   purpose:** `predictions` is what the SCREEN predicted about its candidates, emitted by the tool
+ *   from its own verdicts, while `declaredPredictions` is what the LANE predicted about the run
+ *   before it looked, supplied by the operator, carried verbatim and graded elsewhere.
+ *
+ *   **Why it belongs in the record and not beside it.** This module's own opening sentence declares
+ *   run records the prediction-grading lane's input, and until this version there was nowhere in one
+ *   to say what a run predicted — so every prediction lived in a companion document that could be
+ *   written, revised or lost independently of the measurement it was about. A sidecar is a second
+ *   copy of a claim, and the two drift until whichever one a reader opens becomes the truth.
+ *
+ *   **What it carries.** `--predict <path>` reads a document, {@link readPredictions} validates it,
+ *   and it is embedded VERBATIM: `documentVersion`, `lane`, `leg`, `madeAtIso`, `basis`, `source`
+ *   (the path it was read from) and `predictions`, each of which is `{id, statement, reading,
+ *   metric, comparator, value, rationale}`. `metric` is a dotted path INTO THIS RECORD and
+ *   {@link resolvePredictionMetric} is the one resolver for it, so a grader reads the same field the
+ *   prediction named rather than one it inferred. `metric: null` is legitimate and means the claim
+ *   is not resolvable from a record alone; it still carries `statement` and `rationale`.
+ *
+ *   **`reading` is REQUIRED and is the point of the block.** A completion rate is two different
+ *   quantities here — the creation-derived merged history the gate reads, and the vendor's
+ *   70-record page — differing by an order of magnitude on the same wallets, and captain decision
+ *   231a exists because a bar was once stated without naming which. A prediction about a rate that
+ *   does not say which rate is not gradeable, so the reader REFUSES one rather than defaulting.
+ *
+ *   **Nothing here is evaluated by the screen, deliberately.** The tool carries the claim and
+ *   measures the run; scoring the first against the second is the grading lane's job, and a screen
+ *   that graded its own predictions would be marking its own paper. `declaredPredictions: null` is
+ *   the normal state of a run made without `--predict` and means *nothing was predicted*, never *the
+ *   predictions failed*.
+ *
+ *   **The one that will bite a reader: the document is the RUN's, not the tool's, and it is
+ *   unvalidated as to CONTENT.** {@link readPredictions} checks shape, not truth — it cannot know
+ *   whether a stated `value` was reasonable, and a document written after the run would look
+ *   identical to one written before it. What makes these predictions rather than postdictions is
+ *   that the document is committed in its own commit before the run, exactly as `thresholds.json`
+ *   is; the record cannot prove that and does not claim to.
  */
-export const RECORD_SCHEMA_VERSION = 16;
+export const RECORD_SCHEMA_VERSION = 17;
+
+/**
+ * The predictions-document contract version, carried inside the document itself.
+ *
+ * Separate from {@link RECORD_SCHEMA_VERSION} because the two move for different reasons: a record
+ * schema changes when a run measures something new, and this changes when what a prediction has to
+ * say about itself changes. A grader reads both.
+ */
+export const PREDICTIONS_DOCUMENT_VERSION = 1;
+
+/**
+ * The comparators a prediction may use, and the only ones a grader has to implement.
+ *
+ * Deliberately small. Every one is decidable from a single resolved value, so a grader is a lookup
+ * and a comparison rather than an expression evaluator — which is what keeps the claim auditable by
+ * reading it. `between` reads `value` as a two-element `[lo, hi]`, inclusive at both ends.
+ */
+export const PREDICTION_COMPARATORS = ['<', '<=', '>', '>=', '==', 'between', 'includes'];
+
+/**
+ * The readings a prediction may be about.
+ *
+ * `gate` is the creation-derived merged history `screen.mjs` gates on by default; `vendor-page` is
+ * MadeOnSol's 70-record `profile.pump_tokens` listing, which `--ownership-only` and `feed.mjs` read.
+ * `not-a-rate` is for a prediction about something that is not a completion rate at all — a count, a
+ * spend, an overlap — and it is spelled out rather than left implicit so that omitting `reading`
+ * stays an error.
+ */
+export const PREDICTION_READINGS = ['gate', 'vendor-page', 'not-a-rate'];
+
+/**
+ * Resolve a prediction's `metric` against a run record.
+ *
+ * Dotted path, with `[n]` for array indices — `coverage.gated`, `candidates[0].completionRate`. The
+ * one resolver, so a grader reads the field the prediction named and not one it re-derived; a path
+ * that does not resolve returns `undefined`, which a grader must treat as UNGRADEABLE rather than as
+ * a miss. That distinction is the same one the whole record keeps everywhere else: not looking is
+ * not a measured negative.
+ *
+ * @param {unknown} record
+ * @param {string} path
+ * @returns {unknown}
+ */
+export function resolvePredictionMetric(record, path) {
+  if (typeof path !== 'string' || path.length === 0) return undefined;
+  /** @type {unknown} */
+  let node = record;
+  for (const step of path.split('.')) {
+    const match = /^([^[\]]*)((?:\[\d+\])*)$/.exec(step);
+    if (match === null) return undefined;
+    const [, name = '', indices = ''] = match;
+    if (name !== '') {
+      if (typeof node !== 'object' || node === null || Array.isArray(node)) return undefined;
+      if (!Object.prototype.hasOwnProperty.call(node, name)) return undefined;
+      node = /** @type {Record<string, unknown>} */ (node)[name];
+    }
+    for (const raw of indices.match(/\d+/g) ?? []) {
+      if (!Array.isArray(node)) return undefined;
+      node = node[Number(raw)];
+    }
+  }
+  return node;
+}
+
+/**
+ * Read and validate a predictions document.
+ *
+ * **Shape only.** It cannot tell a prediction from a postdiction and does not pretend to — see the
+ * schema-17 note above. What it does refuse is a document that could not be graded at all, and it
+ * refuses BEFORE the run spends anything, because a run that discovered its own predictions were
+ * unreadable after burning the keyed allowance would have to be re-run to get them back.
+ *
+ * @param {string} text Raw file contents.
+ * @param {string} source Path it came from, recorded so the record names its own provenance.
+ * @returns {{ ok: true, predictions: Record<string, unknown> } | { ok: false, message: string }}
+ */
+export function readPredictions(text, source) {
+  /** @type {unknown} */
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch (cause) {
+    return { ok: false, message: `${source} is not valid JSON: ${cause instanceof Error ? cause.message : cause}` };
+  }
+  if (typeof doc !== 'object' || doc === null || Array.isArray(doc)) {
+    return { ok: false, message: `${source} must hold a JSON object` };
+  }
+  const d = /** @type {Record<string, unknown>} */ (doc);
+
+  if (d['documentVersion'] !== PREDICTIONS_DOCUMENT_VERSION) {
+    return {
+      ok: false,
+      message: `${source} declares documentVersion ${JSON.stringify(d['documentVersion'])}; this build writes ${PREDICTIONS_DOCUMENT_VERSION}`,
+    };
+  }
+  for (const key of ['lane', 'leg', 'madeAtIso', 'basis']) {
+    if (typeof d[key] !== 'string' || /** @type {string} */ (d[key]).length === 0) {
+      return { ok: false, message: `${source} needs a non-empty string \`${key}\`` };
+    }
+  }
+  if (Number.isNaN(Date.parse(/** @type {string} */ (d['madeAtIso'])))) {
+    return { ok: false, message: `${source} has an unparseable madeAtIso` };
+  }
+
+  const rows = d['predictions'];
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { ok: false, message: `${source} needs a non-empty \`predictions\` array` };
+  }
+
+  /** @type {Set<string>} */
+  const ids = new Set();
+  for (const [i, row] of rows.entries()) {
+    const at = `${source} predictions[${i}]`;
+    if (typeof row !== 'object' || row === null || Array.isArray(row)) {
+      return { ok: false, message: `${at} must be an object` };
+    }
+    const r = /** @type {Record<string, unknown>} */ (row);
+    for (const key of ['id', 'statement', 'rationale']) {
+      if (typeof r[key] !== 'string' || /** @type {string} */ (r[key]).length === 0) {
+        return { ok: false, message: `${at} needs a non-empty string \`${key}\`` };
+      }
+    }
+    const id = /** @type {string} */ (r['id']);
+    if (ids.has(id)) return { ok: false, message: `${at} repeats the id ${JSON.stringify(id)}` };
+    ids.add(id);
+
+    // The 231a rule, enforced rather than documented: a prediction about a completion rate that
+    // does not name the reading is not gradeable, and defaulting one would reintroduce exactly the
+    // ambiguity that decision was taken to remove.
+    if (!PREDICTION_READINGS.includes(/** @type {string} */ (r['reading']))) {
+      return { ok: false, message: `${at} needs \`reading\` to be one of ${PREDICTION_READINGS.join(' | ')}` };
+    }
+
+    const metric = r['metric'];
+    if (metric === null) {
+      // A claim no record can resolve is legitimate and stays in the document — but it must not
+      // carry a comparator, or a grader would try to evaluate what it cannot read.
+      if (r['comparator'] !== null || r['value'] !== null) {
+        return { ok: false, message: `${at} has metric: null, so comparator and value must be null too` };
+      }
+      continue;
+    }
+    if (typeof metric !== 'string' || metric.length === 0) {
+      return { ok: false, message: `${at} needs \`metric\` to be a dotted record path or null` };
+    }
+    const comparator = r['comparator'];
+    if (!PREDICTION_COMPARATORS.includes(/** @type {string} */ (comparator))) {
+      return { ok: false, message: `${at} needs \`comparator\` to be one of ${PREDICTION_COMPARATORS.join(' ')}` };
+    }
+    if (comparator === 'between') {
+      const v = r['value'];
+      if (!Array.isArray(v) || v.length !== 2 || v.some((n) => typeof n !== 'number')) {
+        return { ok: false, message: `${at} uses \`between\`, so \`value\` must be [lo, hi] numbers` };
+      }
+      if (/** @type {number} */ (v[0]) > /** @type {number} */ (v[1])) {
+        return { ok: false, message: `${at} has a \`between\` range whose lo exceeds its hi` };
+      }
+      continue;
+    }
+    const value = r['value'];
+    if (value === undefined || (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'boolean')) {
+      return { ok: false, message: `${at} needs a number, string or boolean \`value\`` };
+    }
+  }
+
+  return { ok: true, predictions: { ...d, source } };
+}
 
 /**
  * Completeness of a run, as the record can actually support.

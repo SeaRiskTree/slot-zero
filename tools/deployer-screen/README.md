@@ -1085,7 +1085,7 @@ The captain refused both. `plan-source.mjs` is the split:
 | SELECTION, with no network call | `screen.mjs` → `resolveEntryFillSource`. It resolves a registration — data — and refuses an unsupplied kind exactly as `selectEntryFillSource` always did. `selectEntryFillSource` is now that plus the `build()` the RUN path always wants. |
 | CONSTRUCTION, only where it is free or authorised | `plan-source.mjs` → `planEligibility`. The default plan never calls a billed constructor, and a test drives it with a stub whose constructor fails the test if it is ever reached. |
 | the figure it could not have | printed as **UNAVAILABLE**, naming the source and the reason, by `plan-source.mjs` → `eligibilityUnavailableNote` — one string, used by both plan surfaces, so they cannot drift and so a change degrading it into a blank or a zero has to delete the function. |
-| the spending plan | `--dry-run-spend`, with `--dry-run` only. It states the **bounded** spend before spending and the **actual** after; the order is a property of `planEligibility` rather than of the caller's memory, and the actual is reported in a `finally`, because a construction that failed half-way still spent. |
+| the spending plan | `--dry-run-spend`, with `--dry-run` only. It states the **bounded** spend before spending and the **actual** after; the order is a property of `planEligibility` rather than of the caller's memory, and the actual is reported in a `finally`, because a construction that failed half-way still spent. **A cost that cannot be READ is a stated absence, never a propagation** — a real billed source reads its actual out of the transport's own counters (Dune's credit accounting), and a rejection thrown from that `finally` would replace the whole plan's outcome and hand the caller a refusal, i.e. the money gone AND the page withheld. So `actualSpend` never throws: it prints that the spend was made and what it cost could not be read, which is an UNKNOWN and not a zero. |
 
 **Every claim on that page that was measured on ONE source is labelled with it, and is UNAVAILABLE
 under another** (standing ruling 285a). The request line was only the first: the host name in the
@@ -1124,8 +1124,9 @@ fail, and what that failure already cost decides whether it stops the plan:
   Propagating it would take the money *and* withhold the page, which is both of the outcomes 286c
   refused arriving together, so the promise that a dry run always shows the plan binds harder.
   `planEligibility` degrades to `known: false` carrying the failure as its `why` and marked
-  `spent: true`; the `finally` still announces what it cost, the banner says the spend was made and
-  the construction failed, and the eligibility line prints UNAVAILABLE naming the failure.
+  `spent: true`; the `finally` still announces what it cost — or that the cost itself could not be
+  read — the banner says the spend was made and the construction failed, and the eligibility line
+  prints UNAVAILABLE naming the failure.
 
 **Only a plan that will PRINT the figure may buy it.** The eligibility floor is rendered inside the
 Stage 2 block and nowhere else, so `--no-stage2` consults no source at all and `entryEligibility`

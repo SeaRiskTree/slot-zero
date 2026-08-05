@@ -19,7 +19,9 @@
  * NOW HERE, and it is the only thing that changed: **the statement and its saved-query id**.
  * {@link ENTRY_SQL} and {@link ENTRY_QUERY_ID} are committed below, and {@link committedEntryQuery}
  * assembles the {@link DuneEntryQuery} this module already knew how to read. That is Gate 3
- * precondition 1's remit — the reproduction suite it feeds (`dune-reproduction.mjs`) ran the
+ * precondition 1's remit — the reproduction suite the STATEMENT feeds (`dune-reproduction.mjs`,
+ * which drives {@link ENTRY_SQL} and {@link entryQueryParameters} directly rather than that
+ * assembly — see {@link committedEntryQuery}, whose first caller will be Gate 3's wiring) ran the
  * statement against every launch on the committed tape, so the SQL is now THE MEASUREMENT rather
  * than a claim about one, and a measurement has to be held in custody. `assertSavedQueryMatches`
  * runs BEFORE any execution, exactly as the enumeration's does.

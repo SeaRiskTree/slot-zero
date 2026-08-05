@@ -16,11 +16,13 @@
  * ## The states, and why `held` is not `rejected`
  *
  * The feed grades on the **ownership reading** — one keyed profile request, no Solana RPC walk. That
- * reading is documented as biased **towards rejection** (`README.md` → "Which history the gate
- * counts": ownership understates a wallet's launches, understates its bonded launches by more, and
- * so scores the better deployer worse). A feed that recorded its failures as `gate-failed` would be
- * manufacturing exactly the invisible false rejection the creation-derived lane exists to remove,
- * once per scheduled run, forever.
+ * reading is documented as biased in **both directions at once** (`FEED.md` → "It is biased in BOTH
+ * directions at once"): it **rejects** through the count bars, because ownership understates a
+ * wallet's launches, understates its bonded launches by more, and so scores the better deployer
+ * worse (`README.md` → "Which history the gate counts"), and it **inflates** through the rate. A
+ * feed that recorded its failures as `gate-failed` would be manufacturing exactly the invisible
+ * false rejection the creation-derived lane exists to remove, once per scheduled run, forever —
+ * and the other direction is why clearing this gate is not a pass either.
  *
  * So the failing state is named {@link FeedState} `held`: *this wallet did not clear the gate on the
  * cheap, biased reading*. It is a triage outcome, never a verdict on the wallet. The authority is
@@ -86,7 +88,9 @@ export const LEDGER_SCHEMA_VERSION = 1;
  *   triage word and `gateVerdict` is what the shared gate actually returned, and collapsing the two
  *   would make `held` read as a measured rejection.
  * @property {'ownership-only' | 'creation-derived' | null} gateReading Which history the grade was
- *   computed over. `ownership-only` is biased towards rejection; the summary counts them.
+ *   computed over. `ownership-only` rejects through the counts and inflates the rate; the summary
+ *   counts them. Read this field before comparing or pooling rates across the two sources — they
+ *   are different quantities and can differ by up to 0.69 on one wallet.
  * @property {string | null} gradedAtIso
  * @property {string} origin `feed` or `run-record`. A wallet we learned from a committed screen run
  *   was never surfaced by this feed and must not be counted as its yield.
@@ -721,9 +725,10 @@ export function feedAlarm(input) {
  * Count what the ledger holds.
  *
  * `heldOnOwnershipReading` and `heldNearMiss` are the two figures that keep the cheap reading honest.
- * The feed grades on a history that is biased towards rejection, so the population it has quietly
- * set aside has to be a number in every run's report — otherwise the bias is a sentence in a
- * document and the wallets are simply gone.
+ * The feed grades on a history that rejects through the count bars, so the population it has quietly
+ * set aside has to be a number in every run's report — otherwise that half of the bias is a sentence
+ * in a document and the wallets are simply gone. The other half, the rate this reading inflates,
+ * is not visible here at all: it lands in the `queued` pile, which these two figures do not count.
  *
  * @param {Ledger} ledger
  * @returns {LedgerSummary}

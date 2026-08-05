@@ -22,15 +22,19 @@
  * refused before the first request if the plan does not fit: **3 enumeration + at most `--gate`
  * profile requests, and nothing else is keyed.** It spends no keyless request at all.
  *
- * ## 3. It grades on the CHEAP reading, and that reading is biased towards rejection
+ * ## 3. It grades on the CHEAP reading, and that reading is biased in BOTH directions at once
  *
  * The gate here reads the vendor profile — which tokens the wallet OWNS NOW — because the
  * creation-derived history costs ~100 Solana RPC requests per candidate at 2.5s apart and no
- * schedule can carry it. That reading understates a wallet's launches, understates its bonded
- * launches by more, and so scores the better deployer worse (`README.md` → "Which history the gate
- * counts"). Therefore **a failure here is `held`, not `gate-failed`** — a triage outcome, not a
- * verdict — and every run prints the standing count of held wallets and the near-misses inside it.
- * `screen.mjs` remains the authority on whether a wallet is competent.
+ * schedule can carry it. That reading **rejects** through the count bars — it understates a
+ * wallet's launches and understates its bonded launches by more, so it scores the better deployer
+ * worse (`README.md` → "Which history the gate counts") — and it **inflates** through the rate,
+ * because the page holds what a wallet still owns and the ones that move on are the winners
+ * (`FEED.md` → "It is biased in BOTH directions at once" carries the measured counts). Therefore
+ * **a failure here is `held`, not `gate-failed`** — a triage outcome, not a verdict — and every run
+ * prints the standing count of held wallets and the near-misses inside it. It is NOT a one-way
+ * conservative filter, so clearing it is not pre-validation either. `screen.mjs` remains the
+ * authority on whether a wallet is competent.
  *
  * ## 4. A dead feed must not read as a healthy quiet one
  *
@@ -132,6 +136,17 @@ export const FEED_LIMITATIONS = [
     'counted and their trailing counts reported, so the cost is visible; it is not eliminated.',
   'THE GATE READING HERE IS OWNERSHIP-DERIVED AND BIASED TOWARDS REJECTION. A `held` wallet is NOT ' +
     'a rejected wallet. screen.mjs, which reads the creation-derived history, is the authority.',
+  'AND THAT BIAS RUNS BOTH WAYS AT ONCE, FROM THE SAME SURFACE. Measured over the 82 candidates of ' +
+    'the screen\'s last real run, which records both readings per candidate: the vendor page ' +
+    'REJECTS through the count bars — 20 of 82 clear minTokens+minSpanDays here against 66 of 82 on ' +
+    'the creation-derived reading — while the RATE it computes reads HIGHER than the gate\'s on 37 ' +
+    'of 81 wallets, by up to +0.6929, because the page holds what a wallet still OWNS and the ones ' +
+    'that move on are the winners. So `held` is over-populated and `queued` is over-generous at the ' +
+    'same time; this is not a one-way conservative filter.',
+  'THIS RECORD\'S completionRate IS NOT screen.mjs\'s completionRate. They are different quantities ' +
+    'over different histories and differ by up to 0.69 on one wallet. Every ledger row carries ' +
+    '`gateReading` (`ownership-only` here, `creation-derived` under screen.mjs\'s default) — read ' +
+    'it before comparing, pooling or ranking rates across the two sources.',
   'CLEARING THIS GATE IS NOT A RECOMMENDATION. It means competent enough to be worth measuring. ' +
     'Whether a deployer leaves an outsider any room, and whether that room is profitable, is ' +
     'UNMEASURED here — that is Stage 2, in screen.mjs.',
@@ -1023,8 +1038,9 @@ export function renderFeedRun(record) {
  * The standing state of the ledger, printed on every run including a dry one.
  *
  * `held on the ownership reading` and `near-miss` are here rather than in a document because they
- * are the running cost of grading cheaply: wallets this lane set aside on a reading that is biased
- * towards rejection. A number that appears every run gets acted on; a caveat in a README does not.
+ * are the running cost of grading cheaply: wallets this lane set aside on a reading that rejects
+ * through the count bars while inflating through the rate. A number that appears every run gets
+ * acted on; a caveat in a README does not.
  *
  * @param {import('./ledger.mjs').Ledger} ledger
  * @returns {string}
@@ -1036,7 +1052,7 @@ export function renderLedgerState(ledger) {
     `    ${s.wallets} wallet(s): ${s.queued} queued, ${s.held} held, ${s.unmeasured} unmeasured, ` +
       `${s.prefiltered} pre-filtered, ${s.deferred} awaiting the gate`,
     `    ${s.queuedUnscreened} cleared the gate and have not been through the beatability screen`,
-    `    ${s.heldOnOwnershipReading} held on the OWNERSHIP reading, which is biased towards rejection — of those,`,
+    `    ${s.heldOnOwnershipReading} held on the OWNERSHIP reading, which rejects through the counts and inflates the rate — of those,`,
     `    ${s.heldNearMiss} missed on exactly ONE gate leg — the plausible false negatives.`,
     '    They are NOT re-polled: a competent dev does not reopen a window, so re-checking them is',
     '    the graveyard. Re-reading one on the creation-derived history is a screen.mjs run and a',

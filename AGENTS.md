@@ -335,7 +335,9 @@ Learned at real cost; the citations are to
   `kol-deployer-entity-cluster/report.md` §6. Ownership is a sellable position — the owner collects
   the creator fees — so the ones that move on are the winners, and a listed history understates
   launches, understates *bonded* launches by more, and therefore **scores the better dev worse**.
-  The bias runs towards rejection, and a false rejection is invisible. Confirmed on-chain
+  The COUNT bias runs towards rejection, and a false rejection is invisible — but **a RATE computed
+  from that same page runs the other way** and both directions are measured; see "Where candidate
+  wallets come from" below before calling the ownership reading conservative. Confirmed on-chain
   2026-08-02: `maxxing` (`32CdQdBU…pump`, $7.7M ATH, this operation's best launch and 83% of its
   lifetime creator-fee income) was created by
   `7ufmve7Z…` in tx `64pCziaL…`, and its creator has since moved twice — the second time (tx
@@ -1013,9 +1015,27 @@ supersedes the re-open monitor (captain, 2026-08-02: *a competent dev will not r
   bound and it exists only for wallets the vendor profiled — cite it, do not let it read as coverage.
 - **The feed grades on the OWNERSHIP reading, so its failures are `held`, never `gate-failed`.** The
   creation-derived walk costs ~100 keyless RPC per candidate (or Helius credits when keyed) and this
-  lane's bounds carry neither — it spends no Solana RPC at all. Ownership is biased
-  towards rejection, so `held` is a triage outcome and `screen.mjs` stays the authority; every run
-  prints the standing held count and the one-leg near-misses inside it.
+  lane's bounds carry neither — it spends no Solana RPC at all. So `held` is a triage outcome and
+  `screen.mjs` stays the authority; every run prints the standing held count and the one-leg
+  near-misses inside it.
+- **THAT READING IS BIASED IN BOTH DIRECTIONS AT ONCE, FROM THE SAME SURFACE — "biased towards
+  rejection" names only half of it and was the standing text here until captain decision 233a.**
+  Measured over the 82 candidates of the screen's last real run, which records both readings per
+  candidate (`slot-zero-gate-bar-measure-own-population` §2.1/§2.3, held in firstmate's records, not
+  in this repo): it **rejects** through the count bars — **20 of 82** wallets clear
+  `minTokens`+`minSpanDays` on the vendor page against **66 of 82** on the gate reading, because a
+  70-record page for a wallet creating ~9/day spans three days — while the **rate** it computes reads
+  *higher* than the gate's on **37 of 81** wallets (lower on 29, median difference 0.0000) and by up
+  to **+0.6929**. The page is not merely a short window, it is a **success-biased** short window. So
+  the feed's `held` pile is over-populated and its `queued`/gate-passed pile is over-generous,
+  simultaneously — do not reason about it as a one-way conservative filter.
+- **`feed.mjs`'s `completionRate` and `screen.mjs`'s are DIFFERENT QUANTITIES that can differ by
+  0.69 on the same wallet, and `gateReading` is the field that tells them apart.** Every ledger row
+  records it (`ownership-only` for all 75 graded wallets today); `screen.mjs`'s default is
+  `creation-derived`. That is what keeps the two legible rather than silently conflated, and it is
+  what makes keeping the feed on the vendor page defensible — **never compare or pool the two
+  without reading `gateReading` first.** `tools/deployer-screen/FEED.md` → "Why the gate here reads
+  ownership, and what that costs" is the long form.
 - **Bounds are per-run and pinned in `thresholds.json` → `feed`: 3 enumeration + at most `--gate`
   keyed requests, zero keyless, and `--live` is required to spend anything.** The daily arithmetic
   (15 × 6 = 90 of ~200) is deliberately a minority share; raising the cadence without lowering the

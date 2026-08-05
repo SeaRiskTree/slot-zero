@@ -115,7 +115,13 @@ count, understates its *bonded* count by more, and therefore **scores the better
 that creates 20, bonds 9, then hands on 3 of the winners reads as 17 launches / 6 bonded = 35%
 instead of the true 45%. A gate set at 40% rejects it — and **a false rejection is invisible**: the
 wallet is dropped, never researched, and nothing downstream contradicts it. A false *acceptance* at
-least gets caught by the beatability screen later. The bias runs the wrong way.
+least gets caught by the beatability screen later. That direction of the bias runs the wrong way.
+
+**It is not the only direction, and the reading is not a one-way conservative filter.** Measured
+over one run's 82 candidates, the vendor page's *rate* reads **higher** than the creation-derived
+gate's more often than lower, because the page is a success-biased short window rather than merely a
+short one. `FEED.md` → "It is biased in BOTH directions at once" is the owner of both directions and
+their measured counts; read it before calling this reading conservative.
 
 ### The premise, observed rather than inherited
 
@@ -363,8 +369,9 @@ Four rules keep that window from claiming more than it covers.
   100 requests against 1,000-entry pages — has no floor at all. The record says so with
   `coveredFromIso: null` and `coveredDays: 0`, and the merge then treats **every** listed row as
   outside the window and carries it over unchanged. The whole reading falls back to the ownership
-  listing, which is biased towards rejection by a measured ~0 launches (`CREATION-DERIVED.md`) and
-  honest. The creates the walk did prove are still counted; what an empty window withdraws is only
+  listing, whose launch COUNT is biased towards rejection by a measured ~0 launches
+  (`CREATION-DERIVED.md`) and honest — its *rate* is biased the other way, see `FEED.md` → "It is
+  biased in BOTH directions at once". The creates the walk did prove are still counted; what an empty window withdraws is only
   the right to call a listed token the walk never saw *acquired*. This encoding replaces a `0` floor
   that read as 1970: a 56-year window containing every timestamp, under which one live wallet's
   30 launches / 20 bonded / `gate-passed` became 2 / 0 / `gate-failed` with an ordinary rationale.
@@ -1483,9 +1490,15 @@ Two levers already exist, and this is what they are for:
   is ~40 minutes of walking rather than ~13.5 hours. It truncates coverage, and the record says so.
 - **`--ownership-only`** skips every creation-derived reading — Dune enumeration and walk alike, and
   the walk is the ~13.5 hours — leaving a run
-  of well under an hour. Its reading is **biased towards rejection** — that is the defect this whole
-  lane exists to fix — and the record is stamped `historySource: "ownership-only"` so the bias
-  travels with the numbers rather than being forgotten.
+  of well under an hour. Its reading is **biased in BOTH directions at once** — it rejects through
+  the count bars (**20 of 82** clear `minTokens`+`minSpanDays` on the vendor page against **66 of
+  82** on the creation-derived reading) and inflates through the rate (higher than the gate's on
+  **37 of 81** wallets, lower on 29, median difference 0.0000, by up to **+0.6929**), which is the
+  defect this whole lane exists to fix — and the record is stamped
+  `historySource: "ownership-only"` so the bias travels with the numbers rather than being
+  forgotten. `FEED.md` → "It is biased in BOTH directions at once" is the long form; the figures are
+  `slot-zero-gate-bar-measure-own-population` §2.1/§2.3, held in firstmate's records, not in this
+  repo.
 
 Every figure above is in `thresholds.json` → `justification`, and `--dry-run` prints the plan
 without fetching anything.
@@ -2249,12 +2262,23 @@ are all absent. Its two inputs are keyless: the cohort is read off disk from `fe
 from `readCreatorHistory` on `frontend-api-v3.pump.fun`. So the MadeOnSol, Helius and Dune
 allowances are untouched by it and the bound it declares in advance is a zero.
 
-**The gate it applies is the OWNERSHIP reading, which is biased towards rejection** — the same bias
-`FEED.md` states for the feed, and the same reason it does not carry the creation-derived walk
-(~100 keyless RPC per candidate). So a census survivor is a survivor on the harder of the two
-readings, and the surveyed population is a subset of what a keyed Stage 1 would have passed rather
-than a superset. Every cohort member is re-gated by the pass; the verdict this repository's own
-keyed runs recorded travels beside it for comparison and decides nothing.
+**The gate it applies is the OWNERSHIP reading, and that reading is biased in BOTH directions at
+once** — the same bias `FEED.md` → "It is biased in BOTH directions at once" states for the feed,
+and the same reason this pass does not carry the creation-derived walk (~100 keyless RPC per
+candidate). It **rejects** through the count bars — **20 of 82** wallets clear
+`minTokens`+`minSpanDays` on the vendor page against **66 of 82** on the creation-derived reading —
+and it **inflates** through the rate, which reads *higher* than the gate's on **37 of 81** wallets
+(lower on 29, median difference 0.0000) and by up to **+0.6929**
+(`slot-zero-gate-bar-measure-own-population` §2.1/§2.3, held in firstmate's records, not in this
+repo).
+
+So a census survivor is **not** a survivor on "the harder of the two readings": the vendor reading
+is harder on the count bars and *easier* on the rate, and the surveyed population is **neither a
+subset nor a superset** of what a keyed Stage 1 would have passed — it overlaps both ways. The
+disproof is in this repository: in `runs/2026-08-04.json`, `FnW6MLyu…` and `DxQ1iNid…` are both
+`vendorVerdict: "gate-passed"` while `gate-failed` on the creation-derived reading. Every cohort
+member is re-gated by the pass; the verdict this repository's own keyed runs recorded travels
+beside it for comparison and decides nothing.
 
 **Four caveats travel with every number**, into the dry-run plan, the record and the rendered
 summary — the requirement `LANDING_TIP_CAVEAT` set, for the same reason:

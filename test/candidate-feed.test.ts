@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { MADEONSOL_DAILY_REQUESTS } from '../tools/deployer-screen/client.mjs';
 import {
   ALL_UNMEASURED_MIN_GATED,
   appendRun,
@@ -936,6 +937,7 @@ describe('the feed end to end', () => {
     expect(record.keylessRequests).toBe(0);
     expect(record.spend.plannedWorstCaseKeyed).toBe(9);
     expect(record.spend.assumedDailyWorstCaseKeyed).toBe(record.spend.plannedWorstCaseKeyed! * record.spend.assumedRunsPerDay!);
+    expect(record.spend.dailyAllowance).toBe(MADEONSOL_DAILY_REQUESTS);
     expect(record.discoveryLag.observations).toBe(3);
     expect(record.discoveryLag.medianDaysAtLeast).toBeGreaterThan(0);
     expect(record.cadenceFilter.floor).toBeGreaterThan(0);

@@ -155,6 +155,8 @@ export const FEED_LIMITATIONS = [
     'UNMEASURED here — that is Stage 2, in screen.mjs.',
 ];
 
+const DEFAULT_SEED_REQUESTS = buildSeedPlan({ limit: 1 }).length;
+
 const USAGE = `feed — continuous discovery of NEW candidate deployer wallets
 
   node tools/deployer-screen/feed.mjs [options]
@@ -181,9 +183,10 @@ OPTIONS
   --help              This text.
 
 WHAT ONE RUN COSTS
-  Keyed (MadeOnSol, shared with production): 3 enumeration requests + at most --gate profile
-  requests. Nothing else is keyed. A plan whose worst case exceeds the pinned per-run ceiling is
-  refused before the first request, with nothing spent.
+  Keyed (MadeOnSol, Ultra and exclusive to this lane): ${DEFAULT_SEED_REQUESTS} enumeration requests
+  on the default tiered seeding — a single --tier narrows the plan and costs fewer — plus at most
+  --gate profile requests. Nothing else is keyed. A plan whose worst case exceeds the pinned per-run
+  ceiling is refused before the first request, with nothing spent.
   Keyless: NONE. This lane does not walk the fill tape and does not touch Solana RPC.
 
 CREDENTIAL

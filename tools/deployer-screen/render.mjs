@@ -1027,7 +1027,7 @@ export function renderStage1(run) {
     L.push('  cap  = the page the GATE\'S reading came from was full, so older launches exist that');
   L.push('         it does not show. Under creation-derived history that is the ownership listing,');
   L.push('         which supplies everything before the creation window.');
-    L.push('  seeds= how many of the 3 enumeration queries surfaced this wallet');
+    L.push(`  seeds= how many of this run's ${run.coverage.seeds.length} enumeration queries surfaced this wallet`);
     L.push('');
     // The legend has to speak the vocabulary the run actually emitted, and it has to state the
     // gross-only limit exactly where it is true. Naming a verdict this tool can no longer emit, or

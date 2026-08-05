@@ -993,16 +993,18 @@ dev currently?"*, and the shape of the answer is the point:
   **`record.mjs` and the README's schema table are two prose copies of the same contract and have
   drifted twice**; a test now pins them together, so move both in one commit. Current version:
   `RECORD_SCHEMA_VERSION` in `record.mjs`.
-- **A RUN CARRIES THE PREDICTIONS IT WAS MADE TO TEST** (schema 16, captain decision 232c).
+- **A RUN CARRIES THE PREDICTIONS IT WAS MADE TO TEST** (schema 17, captain decision 232c).
   `--predict <path>` reads a document, `record.mjs` → `readPredictions` shape-checks it **before the
-  first request**, and it is embedded verbatim as the run-level `predictions` block. A prediction's
+  first request** and refuses one that declares its own `source`, since the reader sets that field
+  from the path; it is embedded verbatim as the run-level `declaredPredictions` block — **not**
+  schema 16's `predictions`, which is the screen's own per-candidate claim summary. A prediction's
   `metric` is a dotted record path **or** a `derived:` name from `DERIVED_PREDICTION_METRICS`, and
   `resolvePredictionMetric` is the one resolver for both — the derived half exists because the
   questions worth predicting are counts over `candidates[]`, not fields. **`reading` is REQUIRED and
   is never defaulted**: that is 231a's rule one level down, and every rate metric names its reading
   in its own name (`medianGateCompletionRate` against `medianVendorPageCompletionRate`). **Nothing is
   evaluated by the screen** — it records the claim and measures the run; grading is another lane's.
-  `predictions: null` means NOTHING WAS PREDICTED, never that a prediction failed. The block is
+  `declaredPredictions: null` means NOTHING WAS PREDICTED, never that a prediction failed. The block is
   shape-checked and **not** content-checked, so what makes these predictions rather than
   postdictions is that the document is committed in its own commit ahead of the run, exactly as
   `thresholds.json` is — the record cannot prove that and does not claim to.
@@ -1103,8 +1105,12 @@ its `README.md`; every number reproduces from `node tools/window-decay-tripwire/
 
 `tools/deployer-screen/runs/2026-08-05-seed-comparison.md` (captain decision 232c) runs the screen on
 the untiered default seeds and on `--tier good`/`--tier elite`, same day, same code, at an unmoved
-`minCompletionRate` of 0.25. Three schema-16 records back it. **The seeding was NOT chosen — that is
-the captain's.** Four things bind any lane that touches the gate or the feed:
+`minCompletionRate` of 0.25. Three records back it, held at
+`tools/deployer-screen/measurements/2026-08-05-seed-comparison/` and **not** under `runs/`: they are
+the 2026-08-05 measurement whose schema number was superseded — schema-15 candidate rows plus a
+run-level `predictions` block that only exists at 17, under the name `declaredPredictions`, so no
+version describes them and they are not the grading lane's contract. That directory's `README.md`
+owns the statement. **The seeding was NOT chosen — that is the captain's.** Four things bind any lane that touches the gate or the feed:
 
 - **THE BAR'S ROLE INVERTS BETWEEN THE SEEDINGS, so an argument about 0.25 is an argument about the
   UNTIERED pool only.** Untiered: 59 of 76 candidates are eligible on `minTokens`+`minSpanDays` and

@@ -666,6 +666,16 @@ export function readPredictions(text, source) {
   }
   const d = /** @type {Record<string, unknown>} */ (doc);
 
+  // The block is carried verbatim, so the reader may not overwrite a field the document declares.
+  // `source` is the one field it supplies itself, from the path — a document declaring its own would
+  // be silently replaced, which is the single place "verbatim" would stop being literally true.
+  if (Object.prototype.hasOwnProperty.call(d, 'source')) {
+    return {
+      ok: false,
+      message: `${source} declares \`source\`, which is set by the reader from the path it was read from and may not be declared`,
+    };
+  }
+
   if (d['documentVersion'] !== PREDICTIONS_DOCUMENT_VERSION) {
     return {
       ok: false,

@@ -5,18 +5,23 @@ Captain decision 232c. Run the widened screen on **both** seedings at
 to an output) and report the comparison. **Choosing the seeding is the captain's and is not done
 here.**
 
-Three run records, all **schema 16**, all `completed: true`, all on 2026-08-05 within 166 minutes of
-each other:
+Three run records, all `completed: true`, all on 2026-08-05 within 166 minutes of each other. They
+are held at `tools/deployer-screen/measurements/2026-08-05-seed-comparison/` rather than under
+`runs/`, because **no schema version describes them** — schema-15 candidate rows plus a run-level
+block that only exists at 17; that directory's own `README.md` owns the full statement:
 
 | leg | invocation | record |
 |---|---|---|
-| A — untiered | `screen.mjs` (no flag that changes a parameter) | `2026-08-05-untiered.json` |
-| B1 — tiered | `screen.mjs --tier good` | `2026-08-05-tier-good.json` |
-| B2 — tiered | `screen.mjs --tier elite` | `2026-08-05-tier-elite.json` |
+| A — untiered | `screen.mjs` (no flag that changes a parameter) | `measurements/2026-08-05-seed-comparison/2026-08-05-untiered.json` |
+| B1 — tiered | `screen.mjs --tier good` | `measurements/2026-08-05-seed-comparison/2026-08-05-tier-good.json` |
+| B2 — tiered | `screen.mjs --tier elite` | `measurements/2026-08-05-seed-comparison/2026-08-05-tier-elite.json` |
 
 Each carries the predictions it was made to test, embedded verbatim from a document committed
-**before** it ran. Leg B is B1 ∪ B2; the two halves are one seeding and are reported together
-wherever the comparison is A against B.
+**before** it ran, in its run-level `predictions` block — which is the **pre-rename** name for what
+the shipped code now writes as `declaredPredictions` at schema 17. A reader following this repo's
+version-detection rule must read *that* block here and not the shipped `predictions`, which on a
+schema-17 record means the screen's own per-candidate claim summary. Leg B is B1 ∪ B2; the two
+halves are one seeding and are reported together wherever the comparison is A against B.
 
 ---
 

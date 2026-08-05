@@ -2759,6 +2759,12 @@ describe('the run-record completeness contract', () => {
     expect(read({ ...base, predictions: [{ ...row, metric: null, comparator: null, value: null }] }).ok).toBe(true);
     expect(read({ ...base, predictions: [{ ...row, metric: null }] })).toMatchObject({ ok: false });
 
+    // THE BLOCK IS CARRIED VERBATIM, so the one field the reader supplies itself may not be
+    // declared: `source` is the path it was read from, and accepting a declared one would silently
+    // replace it — the single place "verbatim" would stop being literally true.
+    expect(read({ ...base, source: 'somewhere/else.json', predictions: [row] })).toMatchObject({ ok: false });
+    expect(read({ ...base, source: null, predictions: [row] })).toMatchObject({ ok: false });
+
     expect(read('not json' as unknown)).toMatchObject({ ok: false });
     expect(readPredictions('[]', 'doc.json')).toMatchObject({ ok: false });
   });

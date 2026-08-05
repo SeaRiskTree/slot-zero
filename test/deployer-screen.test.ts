@@ -12566,7 +12566,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     expect(Number.isNaN(ordered.fills[0]!.priceSol)).toBe(true);
   });
 
-  it('the Dune source gates on an OBSERVED WATERMARK, and refuses every window until 258b lands its statement', async () => {
+  it('the Dune source gates on an OBSERVED WATERMARK, and refuses every window it is injected no statement for', async () => {
     // Captain decision 257a: Dune's tables lag the chain by longer than the swap-api gate, and a
     // launch queried before its fills are decoded returns well-formed, complete-looking and SHORT.
     // The lag is not written down — it is read off the tables — and an unreadable watermark refuses
@@ -12615,12 +12615,16 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     // measure on the source it was asked for — never as a launch-level drop or a measured verdict.
     expect(() => selectEntryFillSource('dune', { dune: () => source(null) })).toThrow(/cannot be built/);
 
-    // And with no committed statement it refuses the window with a sentence naming the decision
-    // that owns one, rather than returning a window it cannot vouch for. It spends nothing.
+    // And handed no statement it refuses the window rather than returning one it cannot vouch for.
+    // It spends nothing. The note is pinned on the BEHAVIOUR it states — that this run injected no
+    // statement — and deliberately not on a decision number: the statement itself is committed in
+    // `dune-fills.mjs` now, and the last wording named the decision that was going to land it, which
+    // is how it went stale the moment that landed.
     const refused = await source(lagged).readWindow({ mint: MINT, deployedAtMs: CREATED }, BOUNDS);
     expect(refused.usable).toBe(false);
     expect(refused.dropReason).toBe('coverage-unproven');
-    expect(refused.note).toMatch(/258b/);
+    expect(refused.note).toMatch(/no injected entry statement/);
+    expect(refused.note).not.toMatch(/258b/);
     expect(client.issued()).toBe(0);
   });
 
@@ -12731,7 +12735,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     // THE POINT OF THE WHOLE PROVIDER, end to end through the production `scoreLaunchRefsEntry`:
     // a Dune-sourced window is measured by the same `measure.mjs`/`entry.mjs` the swap-api walk
     // feeds, and nothing between the source and the verdict names a vendor.
-    const SQL = 'SELECT 1 -- slot-zero entry statement, decision 258b owns the real one';
+    const SQL = 'SELECT 1 -- a stand-in; the real statement is dune-fills.mjs ENTRY_SQL';
     const rows = [
       row(),
       row({ tx_index: 1125, tx_id: 'tx-b', trader_id: 'OUT1', outer_instruction_index: 5, sol_raw: '15000000000' }),

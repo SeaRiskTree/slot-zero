@@ -742,10 +742,11 @@ export function duneFillSource(client, opts) {
           ...refused,
           dropReason: 'coverage-unproven',
           note:
-            `DROPPED: this run carries no committed entry statement, so the Dune fill source has ` +
-            `nothing to execute. Captain decision 258b lands that statement and its pinned ` +
-            `saved-query id; until it does, this source refuses every window rather than ` +
-            `returning one it cannot vouch for.`,
+            `DROPPED: this run handed the Dune fill source no injected entry statement, so it has ` +
+            `nothing to execute. The statement and its pinned saved-query id ARE committed in this ` +
+            `module; wiring a source through is Gate 3's, which has not been convened, and ` +
+            `screen.mjs selects the swap-api source and injects none. Absent a statement this ` +
+            `source refuses every window rather than returning one it cannot vouch for.`,
         };
       }
 

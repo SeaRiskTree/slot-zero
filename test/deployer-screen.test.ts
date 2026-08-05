@@ -1854,19 +1854,34 @@ describe('the CLI contract', () => {
     expect(d['maxLaunchesPerCandidate']! - d['minLaunchesSampled']!).toBe(2);
     expect(swap['maxLaunchesPerCandidate']! - swap['minLaunchesSampled']!).toBe(2);
 
-    // Windows scanned is the lever, and this is the number the ~64 credits/run rests on.
+    // Windows scanned is the lever, and this is the number the ~128 credits/run rests on.
     const windows = d['maxCandidatesScored']! * d['maxLaunchesPerCandidate']!;
     expect(windows).toBe(308);
     // ROWS RETURNED IS NOT THE LEVER, and the headroom is what says so: one row per planned launch,
     // against a ceiling two orders of magnitude above it. If this ever stopped holding, the block
     // comment's derivation would be sized on the wrong quantity.
     //
-    // AND IT IS A LIVE TRIPWIRE ON THE NEXT RAISE, not just a sanity check. The bound is 400 windows,
-    // so at the pinned cap of 22 launches a scoring cap of 18 (396) is the LAST that passes and 27
-    // (594) does not. Above ~18 candidates the ROW ceiling binds before the credit budget does, so the
-    // widened-pool derivation captain decision 289b defers to must either move dune.maxResultRows or
-    // justify sitting under it. stage2_entry_dune.justification.maxCandidatesScored states this.
-    expect(windows).toBeLessThan(dune['maxResultRows']! / 100);
+    // WHAT THIS BOUND IS, stated exactly, because it is easy to misread as a vendor limit: 400 windows
+    // is a SELF-IMPOSED HEADROOM CONVENTION OF THIS TEST — one hundredth of the row ceiling, chosen so
+    // the derivation stays two orders of magnitude clear of a quantity it is not sized on. THE VENDOR
+    // CEILING IS NOWHERE NEAR: at one row per planned launch, dune.maxResultRows 40,000 is not reached
+    // until 40,000 / 22 = ~1,818 candidates, so rows returned genuinely bind nothing at any cap this
+    // lane will plausibly consider.
+    //
+    // IT IS STILL A LIVE TRIPWIRE ON THE NEXT RAISE, and knowing whose bound it is decides what to do
+    // when it fires. At the pinned cap of 22 launches, a scoring cap of 18 (396 windows) is the LAST
+    // that passes and 27 (594) does not. So the widened-pool derivation captain decision 289b defers
+    // to will meet THIS CONVENTION, not a vendor ceiling: the decision it faces is whether to relax
+    // the convention and say why, NOT to raise dune.maxResultRows chasing a bound that does not exist.
+    //
+    // THE COUPLING IS DELIBERATE AND BORROWED, so it is named rather than left implicit:
+    // dune.maxResultRows is owned by the ENUMERATION lane (captain decision 264a moved it
+    // 20,000 -> 40,000 for enumeration reasons alone), and this convention is expressed as a fraction
+    // of it. A change on either side is therefore to be taken deliberately. Nothing auto-moves today —
+    // Stage 2's own three caps are asserted above as literals, so an enumeration-driven change to that
+    // ceiling can only loosen or tighten this convention, never move a pinned Stage 2 value.
+    const ROW_HEADROOM_DIVISOR = 100;
+    expect(windows).toBeLessThan(dune['maxResultRows']! / ROW_HEADROOM_DIVISOR);
   });
 
   it('every pinned parameter carries a stated reason, and every stated reason has a parameter', () => {

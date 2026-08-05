@@ -779,8 +779,9 @@ dev currently?"*, and the shape of the answer is the point:
   registration DECLARES the construction free, or where `--dry-run-spend` (with `--dry-run` only)
   authorised it, stating the BOUND before and the ACTUAL after in a `finally`. A figure it may not
   buy prints **UNAVAILABLE with the source and the reason** — `eligibilityUnavailableNote`, one
-  string shared by the screen's plan and the census's, never a blank, a zero or another source's
-  number. **An UNDECLARED construction counts as billed, and is never built by a plan even under the
+  wording shared by the screen's plan and the census's, never a blank, a zero or another source's
+  number. It returns **pre-wrapped lines** and its wrapper is unexported, so a consumer indents and
+  cannot pick a width — the class is removed rather than enumerated in a guard. **An UNDECLARED construction counts as billed, and is never built by a plan even under the
   opt-in**: an absence is not evidence of "free", and a spend that cannot be bounded first is not an
   authorised spend. The RUN path is untouched — it builds and pays, because it was always going to
   reach that vendor. **Nothing routes through the Dune source until Gate 3, so none of it has been

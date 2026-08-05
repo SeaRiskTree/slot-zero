@@ -31,9 +31,11 @@
  *    `build` is a thunk nobody calls until somebody is entitled to pay for it.
  * 2. **A figure only a billed construction could answer is printed as UNAVAILABLE, naming the source
  *    and the reason.** Never thrown, never omitted, never defaulted to another source's value, never
- *    dressed as a measurement. {@link eligibilityUnavailableNote} is the one sentence, so a printer
+ *    dressed as a measurement. {@link eligibilityUnavailableNote} is the one wording, so a printer
  *    cannot degrade the figure into a blank or a zero without deleting the reason with it — and a
- *    test asserts the reason is there.
+ *    test asserts the reason is there. It is handed out already wrapped at
+ *    {@link PLAN_NOTE_WIDTH}: the layout belongs to the module that owns the words, so a consumer
+ *    only indents and no printer can introduce a second width.
  * 3. **A SPENDING dry run is available behind an explicit opt-in**, and it states the BOUNDED spend
  *    BEFORE it spends and the ACTUAL after. That ordering is structural rather than remembered:
  *    {@link planEligibility} announces the bound, then builds, then announces the actual in a

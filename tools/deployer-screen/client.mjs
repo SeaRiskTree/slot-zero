@@ -242,6 +242,20 @@ export function endpointOf(path) {
   return bare;
 }
 
+/**
+ * Pacing floor for a construction that specifies none — **a fallback no caller uses, and it is
+ * deliberately NOT the live pin.**
+ *
+ * `thresholds.json` → `budget.keyedMinIntervalMs` owns the pacing a run actually uses (250 ms since
+ * captain decision 267a, re-measured on the Ultra key), and all three production constructions —
+ * `screen.mjs`, `feed.mjs`, `grade.mjs` — pass it explicitly, so nothing is paced by this constant
+ * today. The two are not rivals: the pin owns runs, this owns an argument-less construction.
+ *
+ * 6,500 ms is the superseded Free-tier burst-limit figure, kept because an unspecified default must
+ * fail in the SLOW direction — a caller that forgets gets a needlessly slow client rather than one
+ * outrunning a limiter nobody has measured for it. That asymmetry, not the tier, is the reason for
+ * the number, and it is why this sits 26× above {@link DUNE_DEFAULT_MIN_INTERVAL_MS} below.
+ */
 const DEFAULT_MIN_INTERVAL_MS = 6_500;
 const DEFAULT_TIMEOUT_MS = 30_000;
 

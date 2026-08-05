@@ -251,7 +251,7 @@ day when nothing new appears.
   *and* `prefilteredOut` wallets are folded in: a pre-filtered wallet was *seen*, and treating it as
   unseen would re-offer it every run and skip it every run, a duplicate that never converges.
 - **An unreadable or unknown-schema ledger throws.** Silently starting over would re-offer every known
-  wallet as new and spend the shared allowance re-grading them.
+  wallet as new and spend a keyed request per wallet re-grading them for verdicts already held.
 - **Gate batches drain backlog-first, FIFO by first-seen.** A run that always gated the freshest
   wallets would starve the oldest deferred ones permanently while reporting healthy yield every time.
 - **Retention is the screen's, unchanged (MadeOnSol ToS §5a(d)).** Per-token vendor records live in

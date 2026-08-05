@@ -958,6 +958,55 @@ dev currently?"*, and the shape of the answer is the point:
   drifted twice**; a test now pins them together, so move both in one commit. Current version:
   `RECORD_SCHEMA_VERSION` in `record.mjs`.
 
+## The feedback loop — the screen grading its own predictions
+
+`node tools/deployer-screen/grade.mjs`, with `prediction.mjs` (what a run claimed), `outcome.mjs`
+(the grading arithmetic and the ledger) and `thresholds.json` → `feedback_loop`. Full method in
+`tools/deployer-screen/README.md` → "The feedback loop"; the record shape is schema 16 in
+`record.mjs`. The captain's requirement: *"we do the same research in a repeatable way … then loop
+the process continuous getting better"*.
+
+- **A RUN THAT DID NOT RECORD WHAT IT PREDICTED CAN NEVER BE GRADED** — not "gradeable later",
+  never, because neither the claim nor the instant it stops being in-sample survives anywhere else.
+  Every record before schema 16 is therefore **permanently unfalsifiable**, and `grade.mjs` says so
+  today: **zero gradeable claims across all three committed records** (two refused by verdict
+  vocabulary, `runs/2026-08-04.json` because every candidate it scored reached an unmeasured
+  verdict). That is the finding, not a failure — treat it as the reason the record half exists.
+- **AN UNMEASURED VERDICT IS NOT A PREDICTION, on either side of the loop.** `prediction.mjs` routes
+  every claim through `entry.mjs` → `isDeployerAttributable`, so only the four MEASURED verdicts
+  become one; and an outcome walk that reaches an unmeasured verdict grades NOTHING and stays **out
+  of the hit rate's denominator**. Reading either as "not beatable" would let the screen score itself
+  right whenever its own budget ran out — decision 174b's failure mode wearing a hit rate. The two
+  ways a claim can be absent are kept apart and mean opposite things about spend: `not-scored`
+  (Stage 2 never ran) and `entry-unmeasured` (it ran and could not answer).
+- **THE GRADE IS OUT OF SAMPLE, AND THE BOUNDARY IS A PROOF.** Only launches created strictly after
+  the run's `finishedAtIso` are measured: Stage 2 refused every launch younger than
+  `windowMs + seekMarginMs` at the instant it chose its sample, and that instant precedes the run
+  finishing. Re-measuring the prediction's own launches would agree with itself and report a hit rate
+  near 1.0 meaning nothing, so the filter is asserted against the fetched URLs, not described.
+- **Same recipe, same bars, ONE Stage 2.** The outcome is scored at the `stage2_entry`/`stage2_cost`
+  values the PREDICTING run recorded, never at today's; a record that cannot supply them leaves its
+  claims `recipe-unusable` rather than being graded against a screen it never was. `grade.mjs` and
+  `screen.mjs` share `stage2.mjs` → `scoreLaunchRefsEntry` — **do not give the grader its own walk**,
+  because it would drift from the screen it grades and the drift would surface as a hit rate rather
+  than as a failure.
+- **The default costs nothing and the loop is idempotent.** A bare invocation is a dry run: it prints
+  the hit rate and the plan and opens no socket; `--live` is the only way to spend. A grade's identity
+  is *(source record, wallet, subject)*, so one wallet predicted by two runs is two claims; `hit` and
+  `miss` are **latched and never revised**, and an `ungraded` row waits `retryAfterDays` — so a rerun
+  the same day costs nothing while the loop still converges with no flag. Two runs over the same
+  inputs write the same bytes.
+- **Bounds are per-run and refused BEFORE the first request**, priced from each claim's own recorded
+  recipe: 6 keyed MadeOnSol requests, 540 keyless, 1,500 Solana RPC, 3 claims. A plan that does not
+  fit is refused **whole**, never truncated to fit — a Stage 2 walk cut short holds the earliest
+  entrants by slot, which is a biased sample rather than a short one. This lane issues no Dune
+  execution and no Helius credit.
+- **It re-tunes NOTHING and a test pins that.** No bar moved for it; verdicts are identical with the
+  prediction block present and absent. **Stage 3 is DEFERRED, not cancelled (captain decision 237a)**:
+  no exit claim is made or graded, and `predictions.subjectsDeferred` records that absence so a
+  grader can tell "the stage did not exist" from "the stage could not measure it". Claims are a list
+  keyed by subject, so appending `exit` later invalidates no record written under schema 16.
+
 ## The window-decay tripwire — when to STOP AND ROTATE
 
 `tools/window-decay-tripwire/` — the instrument that answers *has the window we are currently

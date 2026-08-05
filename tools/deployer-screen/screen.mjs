@@ -52,6 +52,7 @@ import {
 } from './credential.mjs';
 import { checkDuneAllowance, coverageRecordRow, enumerateCreations } from './dune.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
+import { buildPredictionBlock, summarisePredictions } from './prediction.mjs';
 import {
   RECORD_SCHEMA_VERSION,
   deriveTruncation,
@@ -1276,6 +1277,14 @@ export async function main(opts, env, out, err) {
     // arrives without anyone deciding to persist one.
     const reasons = [truncation.truncationReason, scoringShortfall].filter((r) => r !== null);
 
+    // Hoisted out of the literal below because it is now read TWICE: once as the run's own
+    // `finishedAtIso`, and once as every prediction's out-of-sample boundary. They must be the same
+    // instant to the millisecond — `prediction.mjs` derives its "a launch created after this cannot
+    // have been in the sample" proof from that identity — so they come from one `new Date()` rather
+    // than from two calls that would differ by however long the record takes to assemble.
+    const finishedAtIso = new Date().toISOString();
+    const rows = ranked.map((c) => toRecordRow(c, { madeAtIso: finishedAtIso, thresholdsVersion: T['version'] }));
+
     return {
       ranked,
       record: {
@@ -1286,7 +1295,7 @@ export async function main(opts, env, out, err) {
           'recommend, and it does NOT score EXIT — no exit signal reaches any number here.',
         thresholdsVersion: T['version'],
         startedAtIso,
-        finishedAtIso: new Date().toISOString(),
+        finishedAtIso,
         keyedRequests: stats.issued,
         keylessRequests: keyless.issued() + stage2Keyless.issued(),
         keylessRequestsStage2: stage2Keyless.issued(),
@@ -1404,7 +1413,14 @@ export async function main(opts, env, out, err) {
         },
         stage0: summariseStage0(stage0),
         limitations: LIMITATIONS,
-        candidates: ranked.map(toRecordRow),
+        // Schema 16. WHAT THIS RUN PREDICTED, counted — the recording half of the feedback loop. A
+        // run without it is permanently unfalsifiable, because neither the claim nor the instant it
+        // stops being in-sample can be reconstructed after the fact. These are CLAIMS and never
+        // results: `grade.mjs` scores them against launches made after `outOfSampleAfterIso`, and a
+        // committed record is never retro-edited to carry a grade. `prediction.mjs` owns the shape,
+        // including why `subjectsDeferred` records Stage 3's absence rather than omitting it.
+        predictions: { ...summarisePredictions(rows), outOfSampleAfterIso: finishedAtIso },
+        candidates: rows,
       },
     };
   }
@@ -1498,8 +1514,10 @@ export function partialOutPath(path) {
  * blanket sweep would delete the one identifier this record exists to carry.
  *
  * @param {import('./rank.mjs').Candidate} c
+ * @param {{ madeAtIso: string, thresholdsVersion: string | number | null }} run The run-level facts
+ *   a prediction has to carry to be self-contained: the out-of-sample boundary and the bars in force.
  */
-function toRecordRow(c) {
+function toRecordRow(c, run) {
   return {
     wallet: c.wallet,
     seededBy: c.seededBy,
@@ -1551,6 +1569,17 @@ function toRecordRow(c) {
     // hit rate over pump.fun's public fills. No mint — Stage 2 held a list of them in memory to do
     // the walk and dropped it — and no counterparty wallet address.
     entry: c.entry === null || c.entryCoverage === null ? null : toEntryRecordRow(c.entry, c.entryCoverage),
+    // Schema 16. THE EXPLICIT, SCOREABLE CLAIM — derived from the verdict directly above it and from
+    // nothing else, so this block can never disagree with the finding it restates. It reads no
+    // surface, spends no request and moves no bar; a test asserts a run's verdicts are identical
+    // with it present and absent. `prediction.mjs` owns why an unmeasured verdict yields NO claim
+    // rather than "not beatable", and why the claims are a list (Stage 3 is deferred, not cancelled).
+    prediction: buildPredictionBlock({
+      entry: c.entry,
+      madeAtIso: run.madeAtIso,
+      gateReading: c.historySource,
+      thresholdsVersion: run.thresholdsVersion,
+    }),
   };
 }
 

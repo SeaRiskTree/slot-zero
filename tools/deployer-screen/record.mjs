@@ -345,8 +345,45 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `enumerationSource` beside it. A schema-≤14 record carries no mayhem reading of any kind and
  *   one cannot be reconstructed from it: the flag was never selected, so the absence says nothing
  *   about the launches.
+ * - **16** — **a run states what it PREDICTED, in a form a later run can score.** Every candidate row
+ *   gains `prediction`, and the record gains a run-level `predictions` block;
+ *   `ENTRY_KEYS_BY_SCHEMA[16]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[16]`, `SPEND_KEYS_BY_SCHEMA[16]`,
+ *   `DUNE_KEYS_BY_SCHEMA[16]` and `CREATION_KEYS_BY_SCHEMA[16]` all equal `[15]` — no measurement
+ *   moves, and a test pins that verdicts are identical with the block present and absent.
+ *
+ *   **Why it is a version at all, when nothing measured changed.** This module's opening line already
+ *   calls run records "the prediction-grading lane's declared input", and until now no record
+ *   contained a prediction. **A run that did not record what it predicted can never be graded** —
+ *   not "gradeable later", never, because the claim and the instant it stops being in-sample cannot
+ *   be reconstructed after the fact. So every record at schema ≤15 is PERMANENTLY unfalsifiable, and
+ *   that is a property of those records rather than a shortcoming of their measurements.
+ *
+ *   **What it carries.** Per candidate: `prediction.claims`, a LIST keyed by `subject`, each entry
+ *   holding the beatable / not-beatable call, the verdict it was read off, whether that verdict was
+ *   MEASURED (`entry.mjs` → `isDeployerAttributable`), and why there is no claim when there is none.
+ *   `prediction.madeAtIso` is the run's own `finishedAtIso` and is the out-of-sample boundary; it is
+ *   copied onto every row on purpose, so one row is a self-contained claim. `prediction.gateReading`
+ *   copies `historySource` and `prediction.entryReading` names Stage 2's surface, because the two
+ *   readings behind a claim are different surfaces and this record may not be the place they get
+ *   pooled. Run level: `predictions` counts the claims, breaks the no-claim tally out BY REASON, and
+ *   declares `subjects` and `subjectsDeferred`.
+ *
+ *   **Two ways to misread it.** (1) A claim is absent for two quite different reasons and the block
+ *   keeps them apart: `not-scored` (Stage 2 never ran on this candidate) and `entry-unmeasured`
+ *   (it ran and could not answer). **Neither is a prediction of "not beatable"** — reading an
+ *   unmeasured verdict as a claim would let the screen grade itself right whenever its own budget
+ *   ran out, which is captain decision 174b's failure mode wearing a hit rate. (2) The counts are
+ *   CLAIMS, not results: nothing in a run record is ever graded. `outcome.mjs` and the ledger under
+ *   `feedback/` hold grades, and a run record is never retro-edited to carry one.
+ *
+ *   **Stage 3 is DEFERRED, not cancelled (captain decision 237a), and the shape is built for it.**
+ *   `subjectsDeferred` records `exit` as a subject this build deliberately did not predict, so a
+ *   grader can tell "the stage did not exist" from "the stage could not measure it". A later build
+ *   appends an `exit` claim to the same list and moves the subject across; **no record written under
+ *   schema 16 is invalidated by that**, which is the whole reason claims are a list rather than a
+ *   scalar. A schema that forced a reset would waste every run recorded in between.
  */
-export const RECORD_SCHEMA_VERSION = 15;
+export const RECORD_SCHEMA_VERSION = 16;
 
 /**
  * Completeness of a run, as the record can actually support.

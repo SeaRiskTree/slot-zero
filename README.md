@@ -62,6 +62,7 @@ top of this file. Answering it means screening *other* deployers, present tense.
 | **Stage 0** — local validation, no network, no key | `tools/deployer-screen/stage0.mjs` |
 | **Stage 1** — the completion-rate **gate**: keyed MadeOnSol counts, over a launch history derived from the **create** transactions rather than from who owns the tokens now (enumerated on Dune when `DUNE_API_KEY` is set, with the on-chain walk — indexed via Helius when `HELIUS_API_KEY` is set, keyless otherwise — as the fallback) | `tools/deployer-screen/screen.mjs` |
 | **Stage 2** — the keyless **entry** score: room in the opening window, what the field there achieved, and **what it cost that field to land** | `tools/deployer-screen/stage2.mjs`, `entry.mjs` |
+| **The feedback loop** — the screen grading its own predictions: every run records what it predicted, and a later run scores those claims against launches the wallets made afterwards. A bare invocation is a dry run that opens no socket; method and bounds in `tools/deployer-screen/README.md` → "The feedback loop" | `tools/deployer-screen/grade.mjs` |
 | **The candidate discovery feed** — the scheduled lane that surfaces deployer wallets this project has not seen before and queues the gate-clearing ones for the screen; scope, quota bounds and the vendor-selection ceiling in `tools/deployer-screen/FEED.md` | `tools/deployer-screen/feed.mjs` |
 | **The creation census** — the answer to that ceiling: every deployer creating in one past month, taken whole above a stated count, one keyed Dune execution per month. **3,036** for 2026-07 at ≥30 launches against the feed's 5 | `tools/creation-census/` |
 | **The window-population measurement** — how many profitable windows the tape contains, how long, how fast they close | `analysis/window-population/` |
@@ -70,8 +71,8 @@ top of this file. Answering it means screening *other* deployers, present tense.
 
 **Stage 2 scores entry and deliberately does not score exit.** Room to enter is not room to leave,
 and a single blended score cannot be read back apart, so no exit signal reaches any number Stage 2
-produces. **Stage 3 — exit — is a separate lane and is not built.** So is the prediction-grading
-loop that would read the run records under `tools/deployer-screen/runs/`.
+produces. **Stage 3 — exit — is a separate lane and is not built.** The prediction-grading loop that
+reads the run records under `tools/deployer-screen/runs/` **is**: see the feedback-loop row above.
 
 ### The known-negative control
 

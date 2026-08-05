@@ -76,6 +76,13 @@ node tools/deployer-screen/screen.mjs --help
 node tools/deployer-screen/bundling.mjs --dry-run
 node tools/deployer-screen/bundling.mjs --out tools/deployer-screen/census/$(date +%F)-bundling-census.json
 node tools/deployer-screen/bundling.mjs --help
+
+# THE FEEDBACK LOOP — how often was the screen right? A bare invocation is a DRY RUN: it reads the
+# committed run records and the grade ledger, prints the hit rate and the plan a live run would
+# spend, and opens no socket. --live is the only way to reach a provider. See "The feedback loop".
+node tools/deployer-screen/grade.mjs
+node tools/deployer-screen/grade.mjs --live
+node tools/deployer-screen/grade.mjs --help
 ```
 
 `screen.mjs`'s exit codes are distinct because the worst failure mode for a screen is an empty
@@ -612,7 +619,7 @@ Two changes, because the shape bug alone would have left the class of defect in 
 
 The run record also carries the full coverage chain — wallets seeded, prefiltered out, worth a
 request, **dropped by the candidate cap**, gated — and sets `truncated` when the cap dropped anyone.
-Run records are the future grading lane's input, so a capped run must not read as a screen of
+Run records are the grading lane's input, so a capped run must not read as a screen of
 everything enumeration found.
 
 The superseded untiered run record (`runs/2026-07-29-stage1.json`) was **deleted rather than
@@ -759,6 +766,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 13 | no new candidate ROW field, no new `entry` field, no new `entry.coverage` field, no new `spend` field and no new `creation` field: `PERSISTED_BY_SCHEMA[13]`, `ENTRY_KEYS_BY_SCHEMA[13]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[13]`, `SPEND_KEYS_BY_SCHEMA[13]` and `CREATION_KEYS_BY_SCHEMA[13]` all equal `[12]`. **What changed is that the Dune MONTHLY CREDIT CEILING is now something a run checks before it spends, rather than something it discovers by hitting.** The run-level `dune` block gains two keys. `allowance` is the verdict of `dune.mjs` → `checkDuneAllowance`, read from `POST /usage` **before the leg's first billed request** — the coverage probe included, because a result read is billed by bytes — and it carries the plan's worst case in credits, the period's `credits_used`/`credits_included` and dates, what remained, the reserve held back for the counter's lag, the verdict (`sufficient` | `tight` | `insufficient` | `unreadable`) and the reasons. `localEstimate` is what the run believes it spent, from its OWN counters at the pinned worst case per execution, and it carries a caveat string saying it is not the bill. **`allowance: null` means the run never reached Dune at all** (no key, `--no-dune`, `--ownership-only`, or nothing to gate) — it does NOT mean the check passed. **The one that will bite:** on a schema-≤12 record the absence of this block is not evidence a run had headroom; nothing checked, and a run reporting two executions may have been the one that emptied the period. That gap is what this version closes, not a defect in the older records, which are never retro-edited. |
 | 14 | no new candidate ROW field, no new `entry.coverage` field, no new `spend` field, no new `dune` field and no new `creation` field: `PERSISTED_BY_SCHEMA[14]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[14]`, `SPEND_KEYS_BY_SCHEMA[14]`, `DUNE_KEYS_BY_SCHEMA[14]` and `CREATION_KEYS_BY_SCHEMA[14]` all equal `[13]`. **`entry` gains ONE key, `roomLeftBound`, and with it the room median stops being quotable without its own incompleteness** (captain decision 208b). `entry.roomLeft.median` is taken over the launches Stage 2 SCORED, and the ones it did not score did not go missing at random — `roomIsProven` refuses create slots with no co-ordination evidence, the request cap drops the busiest windows, and the stage ceiling leaves the oldest of a plan unattempted. `roomLeftBound` is the interval the median would lie in if that hole were filled: `lo`, `hi`, `overstatementMax` (`median - lo`, the headline), `understatementMax`, `provablyOverstated` (true when `hi < median`, i.e. when completing the sample MUST lower it), the hole split into `launchesRefusedMeasured` and `launchesUnmeasured`, the refused windows' own measured room in `refusedRoomLeft`, and the sentence in `caveat`. The `stage0` block's per-control summary gains a `roomLeftBound` beside its `roomLeftMedian` for the same reason. **It is REPORTING and nothing reads it** — no verdict, bar or guard takes it as an input, `roomIsProven` is untouched and no sample-size floor moved; decisions 203c and 203d stay declined. **The one that will bite:** a schema-≤13 `entry.roomLeft.median` has NO bound and one cannot be reconstructed from the record, because `launchesRoomUnproven` says how many windows were refused and nothing about what they measured. Read an older median as a figure of unknown incompleteness rather than as a complete one — on the committed schema-12 `runs/2026-08-04.json` the difference is `0.288940` reported against `0.0008` completed. |
 | 15 | no new candidate ROW field, no new `entry` field, no new `entry.coverage` field, no new `spend` field and no new `dune` field: `PERSISTED_BY_SCHEMA[15]`, `ENTRY_KEYS_BY_SCHEMA[15]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[15]`, `SPEND_KEYS_BY_SCHEMA[15]` and `DUNE_KEYS_BY_SCHEMA[15]` all equal `[14]`. **`creation` gains THREE keys — `mayhemLaunches`, `mayhemFlagReadable` and `mayhemShare` — and with them pump.fun's mayhem-mode flag becomes something this screen records** (captain decision 227a). `pump_evt_createevent` has always carried an `is_mayhem_mode` boolean and this repo never selected it; `slot-zero-graduation-regime-remeasure` §§1.4 and 3 (held in firstmate's records, not in this repo) measured what it is worth: **27.1% of 2026-07's pump.fun launches carried it, they graduated at 4.1–4.7% against 1.8–2.1% for the rest, and they supplied 46.3% of that month's graduations** — so roughly two-thirds of the graduation-rate regime change traces to this one flag. It matters to both halves of this screen: a completion rate that cannot tell the buckets apart measures two things through one number, and pump.fun documents the mode as one in which **an AI agent trades the token** (vendor documentation, NOT verified on-chain here), which would put a house agent in a create slot Stage 2's entry model assumes holds independent snipers. `CREATION_SQL` now selects the flag as a SIXTH column. `mayhemLaunches` counts the enumerated launches carrying it; **`mayhemFlagReadable` is the share's DENOMINATOR and is not `duneLaunches`** — `pump_call_create` has no such column, so a history reaching back past `pump_evt_createevent` holds launches the flag cannot be read on, and the difference between the two fields is how many; `mayhemShare` is the quotient. **It is REPORTING and nothing reads it**: no bar, gate, rate or verdict takes it as an input, no launch is dropped or weighted for carrying it, and a test pins that verdicts are identical with the column populated, absent and malformed. Excluding mayhem launches from the competence measure (227b) and excluding mayhem-heavy deployers outright (227c) were both declined — do not read this version as a step towards either. **The one that will bite: all three are `null` on a candidate the creation walk answered, and that null is UNMEASURED, never 0%.** The flag is a column on Dune's decoded create event and the walk reads transactions and curve accounts, so read `enumerationSource` beside it — the same trap `creatorMovementUnmeasured` carries in the other direction. A schema-≤14 record carries no mayhem reading at all and one cannot be reconstructed from it. |
+| 16 | no new `entry`, `entry.coverage`, `spend`, `dune` or `creation` field: `ENTRY_KEYS_BY_SCHEMA[16]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[16]`, `SPEND_KEYS_BY_SCHEMA[16]`, `DUNE_KEYS_BY_SCHEMA[16]` and `CREATION_KEYS_BY_SCHEMA[16]` all equal `[15]`. **A run states what it PREDICTED, in a form a later run can score.** Every candidate row gains `prediction` and the record gains a run-level `predictions` block. **Why a version for something that measures nothing: a run that did not record what it predicted can NEVER be graded** — not "gradeable later", never, because neither the claim nor the instant it stops being in-sample survives anywhere else — so every record at schema <=15 is permanently unfalsifiable, and that is a property of those records rather than a shortcoming of their measurements. `prediction.claims` is a LIST keyed by `subject`, each entry holding the beatable / not-beatable call, the verdict it was read off, whether that verdict was MEASURED (`entry.mjs` -> `isDeployerAttributable`) and why there is no claim when there is none. `prediction.madeAtIso` is the run's own `finishedAtIso` and is the **out-of-sample boundary**, copied onto every row so one row is a self-contained claim; `prediction.gateReading` copies `historySource` and `prediction.entryReading` names Stage 2's surface, because the two readings behind a claim are different surfaces and this record is not where they get pooled. **Two ways to misread it.** (1) A claim is absent for two different reasons and the block keeps them apart -- `not-scored` (Stage 2 never ran on this candidate) and `entry-unmeasured` (it ran and could not answer); **neither is a prediction of "not beatable"**, because reading an unmeasured verdict as a claim would let the screen grade itself right whenever its own budget ran out, which is captain decision 174b's failure mode wearing a hit rate. (2) The counts are CLAIMS, not results -- nothing in a run record is ever graded, and a committed record is never retro-edited to carry a grade; `feedback/grades.json` holds those. **Stage 3 is deferred, not cancelled** (captain decision 237a): `predictions.subjectsDeferred` records `exit` as a subject this build deliberately did not predict, so a later build appending an exit claim to the same list invalidates no record written under 16. |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -2223,8 +2231,9 @@ position size, because our own buy counts towards it), and whether an outsider c
 first. Entry room and exit feasibility are scored **separately and never collapsed**, and no exit
 signal reaches any number Stage 2 produces. Its own lane, and it is blocked on this one.
 
-**Not built — the prediction-grading loop.** A dated immutable record per run so a later run can
-grade the screen's own hit rate. Its own lane. Run records under `runs/` are the input it will read.
+**Built — the prediction-grading loop.** Every run records what it predicted, and `grade.mjs` scores
+those claims against launches the wallets made afterwards. See
+[The feedback loop](#the-feedback-loop--the-screen-grading-its-own-predictions).
 
 **A Stage 2 run record is committed**: `runs/2026-08-02-good.json` scored 3 gate survivors on live
 fills, and `runs/2026-08-02-good-vs-elite.md` reads it. It is a **schema-3** record and it carries
@@ -2237,6 +2246,86 @@ and the live-vs-tape check above remain the keyless evidence that the walk is th
 **A second Stage 2 record is committed and it carries no verdict at all**: `runs/2026-08-04.json`
 (schema 12) returned `entry-unmeasured` on all three candidates it scored — see *"The third
 committed run"* above and `runs/2026-08-04-full-day-default.md`.
+
+## The feedback loop — the screen grading its own predictions
+
+`node tools/deployer-screen/grade.mjs`. The captain's requirement, in his own words: *"we do the
+same research in a repeatable way … then loop the process continuous getting better"*. Bounds are
+`thresholds.json` → `feedback_loop`; the shape of a claim is `prediction.mjs`, the grading arithmetic
+is `outcome.mjs`, and the ledger it keeps is `feedback/grades.json`.
+
+**Why it is an accuracy property and not a feature.** A run that did not record what it predicted can
+**never** be graded — not "gradeable later", never — because neither the claim nor the instant it
+stops being in-sample survives anywhere else. Every run committed before record schema 16 is
+therefore permanently unfalsifiable, and that is a property of those records rather than a
+shortcoming of their measurements. Run `grade.mjs` today and it says so: **zero gradeable claims
+across all three committed records**, two refused by verdict vocabulary and one — `runs/2026-08-04.json`
+— a modern record whose every scored candidate reached an unmeasured verdict.
+
+**The default costs nothing.** A bare invocation is a dry run: it reads the committed records and the
+ledger, prints the hit rate so far and the exact plan a live run would spend, and opens no socket.
+`--live` is the only way to reach a provider. So the thing a captain reruns — *is the screen getting
+better* — is free, and only measuring a new outcome costs.
+
+**What "what actually happened" means.** This repo does not trade, so the only available ground truth
+is the same instrument pointed at launches the prediction did not see: `grade.mjs` re-measures
+**Stage 2** over the deployer's post-prediction launches and compares the verdict it reaches with the
+verdict the screen predicted. Three properties keep that honest and all three are structural:
+
+- **Strictly out of sample.** Only launches created after the claim's `madeAtIso` are measured, and
+  the boundary is a *proof* rather than a convention — Stage 2 refused every launch younger than
+  `windowMs + seekMarginMs` at the instant it chose its sample, and that instant precedes the run's
+  `finishedAtIso`. A test asserts against the fetched URLs that no pre-boundary launch is ever walked.
+- **Same recipe, same bars.** The outcome is scored at the `stage2_entry` / `stage2_cost` values the
+  **predicting** run recorded, never at today's. A record that cannot supply them leaves its claims
+  `recipe-unusable` rather than being graded against a screen it never was. `scoreCandidateEntry` and
+  the grader are one implementation — `stage2.mjs` → `scoreLaunchRefsEntry` — because a grader with
+  its own copy of the walk would drift from the screen it grades and the drift would surface as a hit
+  rate rather than as a failure.
+- **An unmeasured outcome grades NOTHING.** Captain decision 174b applies on this side too: an
+  unmeasured verdict is a fact about our coverage, so the claim stays ungraded and stays **out of the
+  denominator**. Counting it as a miss would make the screen score worse the flakier pump.fun's
+  endpoint was on the day the grader happened to run. The ungraded tally is published beside the rate.
+
+**An unmeasured verdict is not a prediction either.** `prediction.mjs` routes every claim through
+`entry.mjs` → `isDeployerAttributable`, so only the four MEASURED verdicts become one. Reading
+`entry-unmeasured` as "not beatable" would let the screen score itself right whenever its own budget
+ran out — 174b's failure mode wearing a hit rate. The two ways a claim can be absent are kept apart:
+`not-scored` (Stage 2 never ran on this candidate) and `entry-unmeasured` (it ran and could not
+answer).
+
+**Idempotence, stated as the property it has to have.** Every grade has one identity — *(source
+record, wallet, subject)*, so the same wallet predicted by two runs is two claims. A `hit` or a `miss`
+is **latched** and never revised: a lane that rewrote its own past grades would be marking its own
+homework twice. An `ungraded` row is retried only after `feedback_loop.retryAfterDays` — reported as
+`awaiting-retry`, which is a **different** reason from `not-attempted` (the per-run claim cap), so a
+report never announces a ceiling that bound nothing. Two runs over the same inputs write the same
+bytes, and the ledger is written atomically through a temp file and a rename: a run killed mid-write
+leaves the old ledger intact rather than a truncated one. A ledger that exists and cannot be read —
+corrupt, or from a schema this build does not know — **refuses the run** rather than starting over,
+because a latched grade has no other copy and an empty ledger would be written straight back over it.
+
+**Every provider call is bounded, and the plan is refused before the first request.** One keyed
+MadeOnSol profile per claim (ceiling 6 — 3 claims × the client's one retry), the keyless fill walk
+against 540, and the entry-cost leg against 1,500 Solana RPC requests. The plan is priced from each
+claim's **own** recorded recipe, and a plan that does not fit is refused **whole** — never truncated
+to fit, because a Stage 2 walk cut short holds the earliest entrants by slot, which is a biased sample
+rather than a short one. `thresholds.json` → `feedback_loop.justification` owns every value, including
+the daily arithmetic (6 keyed requests of the ~200/day shared allowance) and the fact that this lane
+is operator-run rather than scheduled.
+
+**It re-tunes nothing.** No bar in `thresholds.json` moves for it — `minCompletionRate` is still 0.25,
+`minTokens` 25, `minSpanDays` 14, `minRoomLeft` 0.55 — and a test pins that a run's verdicts are
+identical with the prediction block present and absent. A lane that adjusted the screen it grades
+could not be read as evidence about that screen.
+
+**Stage 3 is deferred, not cancelled** (captain decision 237a). No exit claim is made or graded, and
+the record *declares* that absence: `predictions.subjectsDeferred` names `exit` as a subject this
+build deliberately did not predict, so a grader can tell "the stage did not exist" from "the stage
+could not measure it". Claims are a list keyed by subject, so a later build appending an exit claim
+invalidates no record written under schema 16 — a schema that forced a reset would waste every run
+recorded in between.
+
 
 ## The bundling census — a windows-only pass, and what it is sizing
 

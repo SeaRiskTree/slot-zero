@@ -4353,6 +4353,12 @@ describe('the keyless boundary holds in both directions', () => {
   PERSISTED_BY_SCHEMA[14] = PERSISTED_BY_SCHEMA[13]!;
   // Schema 15's three new keys sit inside `creation` — CREATION_KEYS_BY_SCHEMA below.
   PERSISTED_BY_SCHEMA[15] = PERSISTED_BY_SCHEMA[14]!;
+  // Schema 16 adds ONE candidate ROW key, `prediction` — the first version since 4 to do so. It is
+  // not a measurement: it restates the verdict beside it as an explicit, scoreable claim, and the
+  // reason it has to be a persisted field rather than something a grader re-derives is that a
+  // grader CANNOT re-derive it. A record without the claim and without the instant it stopped being
+  // in-sample is permanently unfalsifiable, which is why every record at schema ≤15 stays so.
+  PERSISTED_BY_SCHEMA[16] = [...PERSISTED_BY_SCHEMA[15]!, 'prediction'].sort();
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -4453,6 +4459,11 @@ describe('the keyless boundary holds in both directions', () => {
     // untouched, and that is the same boundary schemas 9 and 13 drew: no Dune value may reach a
     // Stage 2 entry number.
     15: ENTRY_KEYS_14,
+    // Schema 16 leaves `entry` alone, and that is the load-bearing fact about the feedback lane:
+    // the prediction RESTATES the verdict in this block and adds nothing to it, so a run's findings
+    // are byte-identical with the claim recorded and without it. A prediction that had needed a new
+    // measurement would show up HERE, and it would be the lane re-tuning the screen it grades.
+    16: ENTRY_KEYS_14,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -4527,6 +4538,9 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 14 is a Stage 2 reporting field. Enumeration is untouched.
     14: CREATION_KEYS_9,
     15: CREATION_KEYS_15,
+    // Schema 16 is a candidate-row field that restates a Stage 2 verdict as a claim. Enumeration is
+    // untouched, and no Dune value reaches it.
+    16: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -4574,6 +4588,8 @@ describe('the keyless boundary holds in both directions', () => {
     14: ENTRY_COVERAGE_KEYS_6,
     // Schema 15 records an enumeration column and touches no per-launch entry accounting.
     15: ENTRY_COVERAGE_KEYS_6,
+    // Schema 16 reads this block's accounting and adds nothing to it.
+    16: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -4635,6 +4651,11 @@ describe('the keyless boundary holds in both directions', () => {
     // `dune.resultBytesPerRowCeiling` — re-measured for the sixth column, not assumed — rather than
     // in this block, which counts requests and credits in three other units.
     15: SPEND_KEYS_8,
+    // Schema 16 leaves it alone, and that is the cheapest fact about the feedback lane: a run
+    // records what it predicted from measurements it had already taken, so the block buys no
+    // request, no host and no vendor quota. The GRADING half spends — on its own ceilings in
+    // `thresholds.json` -> `feedback_loop`, in its own tool, and never inside a screen run.
+    16: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -4681,6 +4702,8 @@ describe('the keyless boundary holds in both directions', () => {
     // a run-wide mayhem total would be an aggregate over candidates gated on different histories
     // from different surfaces, which is not a quantity this block could defend.
     15: DUNE_KEYS_13,
+    // Schema 16 is a Stage 2 restatement; no Dune value may reach it, the same boundary as 9 and 13.
+    16: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -4711,6 +4734,7 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 15 changes what CREATION_SQL SELECTS. The probe bounds which tables the enumeration
     // may be read over and is unchanged by a column added to one of them.
     15: DUNE_COVERAGE_KEYS_9,
+    16: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -4729,6 +4753,7 @@ describe('the keyless boundary holds in both directions', () => {
     13: DUNE_COVERAGE_TABLE_KEYS_9,
     14: DUNE_COVERAGE_TABLE_KEYS_9,
     15: DUNE_COVERAGE_TABLE_KEYS_9,
+    16: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -4749,6 +4774,7 @@ describe('the keyless boundary holds in both directions', () => {
   const RUN_LEVEL_KEYS_ADDED_BY_SCHEMA: Record<number, string[]> = {
     8: SPEND_KEYS_8.filter((k) => !SPEND_KEYS_3_TO_7.includes(k)),
     9: ['dune'],
+    16: ['predictions'],
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {

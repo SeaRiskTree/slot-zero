@@ -307,8 +307,39 @@ export function describeTransportFailure(cause) {
  * @returns {Promise<{ score: import('./entry.mjs').EntryScore, coverage: Stage2Coverage }>}
  */
 export async function scoreCandidateEntry(client, input) {
+  return scoreLaunchRefsEntry(client, { ...input, refs: toLaunchRefs(input.profile) });
+}
+
+/**
+ * The same measurement, over a launch list a caller supplies instead of a vendor profile.
+ *
+ * **Split out for the feedback loop, and it is a split rather than a second implementation.**
+ * `grade.mjs` re-measures a deployer's POST-PREDICTION launches to score what the screen predicted
+ * about it, and that grade is only worth reading if the outcome came from the same instrument as the
+ * claim — a grader with its own copy of this walk would drift from the screen it grades, and the
+ * drift would show up as a hit rate rather than as a failure. So {@link scoreCandidateEntry} is now
+ * a one-line wrapper over this and there is exactly one Stage 2.
+ *
+ * The caller supplies the refs and therefore chooses the POPULATION; every bound, gate and drop rule
+ * below is unchanged and is not the caller's to vary. In particular the eligibility gate, the
+ * per-launch request cap and `maxLaunchesPerCandidate` apply exactly as they do to a screen run, so
+ * an outcome measurement is comparable with the prediction it grades.
+ *
+ * @param {import('./pumpfun.mjs').KeylessClient} client
+ * @param {object} input
+ * @param {string} input.wallet
+ * @param {readonly import('./measure.mjs').LaunchRef[]} input.refs Newest first, as
+ *   `measure.mjs` → `toLaunchRefs` returns them.
+ * @param {number} input.nowMs
+ * @param {Stage2Thresholds} input.thresholds
+ * @param {import('./pumpfun.mjs').SolanaRpcClient | null} [input.rpc]
+ * @param {boolean} [input.preferBlockRoute]
+ * @param {(line: string) => void} [input.log]
+ * @returns {Promise<{ score: import('./entry.mjs').EntryScore, coverage: Stage2Coverage }>}
+ */
+export async function scoreLaunchRefsEntry(client, input) {
   const t = input.thresholds;
-  const refs = toLaunchRefs(input.profile);
+  const refs = [...input.refs].sort((a, b) => b.deployedAtMs - a.deployedAtMs);
 
   // A launch younger than this has not finished happening. Measuring it would read a truncated
   // opening as a quiet one.

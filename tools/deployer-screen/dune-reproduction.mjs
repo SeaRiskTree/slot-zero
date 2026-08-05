@@ -53,6 +53,7 @@
  * prints the plan and opens no socket.
  */
 
+import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -65,7 +66,7 @@ import {
   parseUsageResponse,
 } from './client.mjs';
 import { resolveDuneCredential } from './credential.mjs';
-import { assertSavedQueryMatches, executeAndRead } from './dune.mjs';
+import { assertSavedQueryMatches, executeAndRead, normaliseSql } from './dune.mjs';
 import { ENTRY_QUERY_ID, ENTRY_SQL, duneRowsToWindow, entryQueryParameters } from './dune-fills.mjs';
 import { measureLaunchEntry } from './entry.mjs';
 import { createSlotGroups } from './measure.mjs';
@@ -442,15 +443,16 @@ export function recordCustody(client) {
  *   on-chain: the wallet's real balance delta agrees with the STATEMENT on 22 of 22 and with the
  *   tape on 0.** Those 22 fills are the 12 pairs below. The transactions carry pump.fun's newer
  *   `BuyExactSolIn` instruction, which is the lead on the cause and is not established here.
- * - **384 rows where the STATEMENT returns `sol_raw = 0`**, and this is NOT a defect. 384 of them
+ * - **384 rows where the STATEMENT returns `sol_raw = 0`**, and this is NOT a defect. All 384
  *   are the whole of one launch — `maxxing`, `97nnzgv9…`, which is one of the two launches sharing
  *   that symbol and is **quoted in USDC, not SOL**: its create transaction moves 36.99 USDC and
  *   0.0189 SOL. The decoded `SwapEvent` reports the SOL amount, which is genuinely zero; the
  *   swap-api reports a SOL-EQUIVALENT valuation. They are different quantities and neither is
  *   wrong. **That launch contributes zero closed create-slot outsider pairs, so it never reaches
  *   this comparison — which is luck rather than design, and a lane scoring a non-SOL-quoted launch
- *   through the Dune source would be reading zeros as free entries.** Nine further single rows on
- *   eight other launches have the same shape. **Captain decision 295b files that hazard against the
+ *   through the Dune source would be reading zeros as free entries.** **Do not conflate 384 with the
+ *   393 rows the statement returns zero on**: the other nine are rows the tape reads as zero too, so
+ *   both sources AGREE on them and they were never disagreements. **Captain decision 295b files that hazard against the
  *   GATE 3 CUTOVER rather than here**, so this module records it and guards nothing: do not add a
  *   quote-mint filter to the statement or a drop rule to this suite on the way past.
  *
@@ -635,7 +637,13 @@ export function duneLaunchFrom(launch, rows) {
  *   would hide which side was short.
  * @property {number} rowCountDisagreements The two together.
  * @property {number} createSlotDisagreements
- * @property {number} fieldDisagreements
+ * @property {number} fieldDisagreements Launches whose Dune field holds a different number of
+ *   entrants than the tape's. Reported over EVERY entrant, including the ones
+ *   {@link REFUTED_REFERENCE_PAIRS} names, and it is the reported reading rather than the gating one.
+ * @property {number} fieldDisagreementsOnUnrefutedReferences The same count with the named pairs'
+ *   wallets removed from BOTH sides. **This is what `ok` reads**, for decision 293a's reason: a gate
+ *   that counted the enumerated exclusions would fail on exactly the tape defect the captain ruled
+ *   on, and would reverse that ruling by the back door.
  * @property {LaunchComparison[]} launches
  * @property {import('./stage0.mjs').FieldReproduction} field The bar over EVERY pair, including the
  *   one whose reference the chain refutes. Reported first and never hidden.
@@ -651,12 +659,46 @@ export function duneLaunchFrom(launch, rows) {
  */
 
 /**
+ * Do a launch's two field-entrant sets disagree in SIZE, on the entrants that may decide anything?
+ *
+ * Pure, and the seam the gate reads. `ignoringRefutedReferences` drops the wallets
+ * {@link REFUTED_REFERENCE_PAIRS} names FOR THIS MINT from both sides before counting, which is
+ * captain decision 293a one level down: the enumerated pairs are where the chain refutes the tape's
+ * own reference, so a gate that counted them would fail on the defect the captain ruled on and would
+ * reverse that ruling by the back door. Nothing else is ever dropped.
+ *
+ * @param {string} mint
+ * @param {readonly { wallet: string }[]} duneField
+ * @param {readonly { wallet: string }[]} tapeField
+ * @param {{ ignoringRefutedReferences: boolean }} opts
+ * @returns {boolean}
+ */
+export function fieldEntrantsDisagree(mint, duneField, tapeField, opts) {
+  if (!opts.ignoringRefutedReferences) return duneField.length !== tapeField.length;
+  const refuted = new Set(REFUTED_REFERENCE_PAIRS.filter((p) => p.mint === mint).map((p) => p.wallet));
+  const count = (/** @type {readonly { wallet: string }[]} */ field) =>
+    field.filter((e) => !refuted.has(e.wallet)).length;
+  return count(duneField) !== count(tapeField);
+}
+
+/**
  * Compare Dune-sourced launches against the committed tape and against `wallet_launch_pnl.csv`.
  *
- * **Three independent checks, and the third is the bar.** Row counts and create slots are the cheap
- * structural ones, and they fail loudly where the vendor and the endpoint simply disagree about what
- * happened. The field reproduction is the one that decides: it is `stage0.mjs`'s own function, over
- * the dataset's own published P&L, on every create-slot outsider pair.
+ * **Three independent checks, and every one of them GATES.** Row counts and create slots are the
+ * cheap structural ones; the field reproduction is the one that decides, being `stage0.mjs`'s own
+ * function over the dataset's own published P&L on every create-slot outsider pair. What each of the
+ * structural two does with its result is not symmetric, and the asymmetry is the point:
+ *
+ * - **A SHORT launch fails the run outright.** Short is this route's failure direction — a window
+ *   missing its tail loses late sells first, so a wallet that closed reads as open — and the AMM
+ *   shortfall that produced it once is fixed at its cause, so a recurrence is a regression.
+ * - **A LONG launch does not gate.** It says the TAPE's own walk was short, which is a finding about
+ *   the tape rather than about the statement, and it is 1 today (`Killswitch`).
+ * - **A field-entrant disagreement fails the run, counted over the unrefuted entrants.** Without it
+ *   an edit to the statement that dropped one create-slot entrant would simply shrink
+ *   `verifyFieldReproduction`'s population: not a closure mismatch, not a `missingFromCsv` (which
+ *   counts the other direction), no create slot moved — a smaller PASS. Both readings are reported;
+ *   only the unrefuted one gates, for the reason {@link fieldEntrantsDisagree} states.
  *
  * @param {string} dataDir
  * @param {readonly TapeLaunchRef[]} planned
@@ -673,6 +715,8 @@ export function compareReproduction(dataDir, planned, rowsByMint) {
   const duneLaunches = [];
   /** @type {string[]} */
   const failures = [];
+  /** @type {string[]} */
+  const fieldDisagreementMints = [];
 
   for (const launch of planned) {
     const rows = rowsByMint.get(launch.mint) ?? [];
@@ -700,6 +744,14 @@ export function compareReproduction(dataDir, planned, rowsByMint) {
       tapeRoomLeft: tape?.createSlot.roomLeft ?? null,
     };
     comparisons.push(comparison);
+    if (
+      window.usable &&
+      fieldEntrantsDisagree(launch.mint, taped?.field ?? [], tape?.field ?? [], {
+        ignoringRefutedReferences: true,
+      })
+    ) {
+      fieldDisagreementMints.push(`${launch.symbol} (${launch.mint})`);
+    }
     if (taped !== null) duneLaunches.push(taped);
     else failures.push(`${launch.symbol} (${launch.mint}): ${window.note}`);
     if (comparison.trimBound) {
@@ -720,6 +772,7 @@ export function compareReproduction(dataDir, planned, rowsByMint) {
   const fieldDisagreements = comparisons.filter(
     (c) => c.usable && c.fieldEntrants !== c.tapeFieldEntrants,
   ).length;
+  const fieldDisagreementsOnUnrefutedReferences = fieldDisagreementMints.length;
 
   const field = verifyFieldReproduction(dataDir, duneLaunches);
   const tapeField = verifyFieldReproduction(dataDir, tapeLaunches);
@@ -741,6 +794,21 @@ export function compareReproduction(dataDir, planned, rowsByMint) {
     );
   }
   if (createSlotDisagreements > 0) failures.push(`${createSlotDisagreements} launch(es) disagree about the create slot.`);
+  if (launchesDuneShort > 0) {
+    failures.push(
+      `${launchesDuneShort} launch(es) came back SHORT of the tape's own fill count. A short window ` +
+        `loses late sells first, so a wallet that closed reads as open — this is the failure ` +
+        `direction the route is written against, and it fails the run.`,
+    );
+  }
+  if (fieldDisagreementsOnUnrefutedReferences > 0) {
+    failures.push(
+      `${fieldDisagreementsOnUnrefutedReferences} launch(es) hold a different number of field ` +
+        `entrants than the tape, over the entrants the chain does not refute: ` +
+        `${fieldDisagreementMints.join(', ')}. A dropped entrant shrinks the population the field ` +
+        `reproduction is measured over rather than failing it, so it is caught here.`,
+    );
+  }
   if (!fieldOnUnrefutedReferences.ok) {
     const f = fieldOnUnrefutedReferences;
     failures.push(
@@ -768,6 +836,7 @@ export function compareReproduction(dataDir, planned, rowsByMint) {
     rowCountDisagreements,
     createSlotDisagreements,
     fieldDisagreements,
+    fieldDisagreementsOnUnrefutedReferences,
     launches: comparisons,
     field,
     fieldOnUnrefutedReferences,
@@ -897,6 +966,26 @@ export const REPRODUCTION_CAVEATS = [
   ALLOWANCE_SHARED_CAVEAT,
 ];
 
+/**
+ * The fingerprint of the statement a record was measured with.
+ *
+ * **The saved-query ID is not enough to identify what was run.** The documented deploy step keeps
+ * the SAME id across an edit — `README.md` → "Deploying a change to the committed SQL" — so a record
+ * that pins only `queryId` stays green over a statement it never saw, and every "the bar is met over
+ * 235 launches" assertion would then be describing text that no longer exists. The record therefore
+ * carries this too, and the record's test compares it against the committed `ENTRY_SQL`.
+ *
+ * It hashes {@link normaliseSql}'s output rather than the raw text, so it is the same equivalence
+ * the custody comparison uses: a reflow that `assertSavedQueryMatches` would accept does not
+ * invalidate a record, and a change of meaning does.
+ *
+ * @param {string} [sql]
+ * @returns {string} sha256, hex.
+ */
+export function entrySqlFingerprint(sql = ENTRY_SQL) {
+  return createHash('sha256').update(normaliseSql(sql), 'utf8').digest('hex');
+}
+
 export { ENTRY_QUERY_ID, ENTRY_SQL };
 
 /**
@@ -989,6 +1078,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       `(${(estimate.exportBytes / 1_000_000).toFixed(1)} MB at ${EXPORT_CREDITS_PER_MB} credits/MB)`,
   );
   say(`  saved query    ${ENTRY_QUERY_ID}, compared against the committed text BEFORE any execution`);
+  say(`  statement      sha256 ${entrySqlFingerprint()} of the normalised ENTRY_SQL`);
 
   /**
    * Report a finished comparison. Shared by the live path and the offline recompute so the two
@@ -1011,6 +1101,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     );
     say(`  PumpSwap       ${result.ammRows} row(s) across ${result.ammLaunches} launch(es) — decision 256a's union`);
     say(`  create slots   ${result.createSlotDisagreements} disagreement(s)`);
+    say(
+      `  field size     ${result.fieldDisagreementsOnUnrefutedReferences} launch(es) disagree on the ` +
+        `entrant count over the unrefuted entrants — the gating reading — against ` +
+        `${result.fieldDisagreements} over every entrant`,
+    );
     say(
       `  FIELD (all)    ${result.field.pairs} pair(s), ${result.field.closureMismatches} closure ` +
         `mismatch(es), max realised error ${result.field.maxRealisedErrorSol.toExponential(3)} SOL`,
@@ -1043,6 +1138,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
           {
             lane: 'dune-entry-reproduction',
             queryId: ENTRY_QUERY_ID,
+            entrySqlSha256: entrySqlFingerprint(),
             dataDir: args.dataDir,
             batches: batches.map((b) => ({ month: b.month, launches: b.launches.length, plannedRows: b.plannedRows })),
             estimate,

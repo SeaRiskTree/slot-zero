@@ -60,11 +60,13 @@ Those 22 fills are the 12 excluded pairs. The finding is filed as correction 11 
 `data/population-tape-2026-07-29/IMPORT.md`, **ratified as filed by captain decision 294a**; no
 dataset row was edited.
 
-**384 rows where the statement returns `sol_raw = 0`, and neither source is wrong.** They are the
+**384 rows where the statement returns `sol_raw = 0`, and neither source is wrong.** All 384 are the
 whole of one launch — `maxxing`, `97nnzgv9…`, the second of the two launches sharing that symbol —
 which is **quoted in USDC, not SOL**. The decoded `SwapEvent` reports a SOL amount that is genuinely
-zero; the trade endpoint reports a SOL-equivalent valuation. Nine further single rows elsewhere have
-the same shape. **That launch contributes zero closed create-slot outsider pairs, so it never
+zero; the trade endpoint reports a SOL-equivalent valuation. **That count is not the same as "rows
+the statement returns zero on", which is 393**: the other nine are rows the tape reads as zero too,
+so both sources agree on them and they were never disagreements — which is what makes 658 + 384 =
+1,042 the whole of the split. **That launch contributes zero closed create-slot outsider pairs, so it never
 reaches this comparison — luck, not design.** A lane scoring a non-SOL-quoted launch through the
 Dune source would read those zeros as free entries, and nothing today stops it: **captain decision
 295b files that guard against the Gate 3 cutover rather than against the statement or this suite**,
@@ -100,6 +102,21 @@ hull, 1.91 at 16.1 days — it is pinned at 10.
 statement's AMM half meant buying all 107,439 again. `--rows` and `--from-rows` exist because of
 that: a change to the *comparison* must never cost a re-fetch. The row cache is a working file and is
 deliberately **not committed** — Dune's terms are derive-and-discard.
+
+## Two fields were added to this record after the run, and neither was measured again
+
+Both are stated here rather than left to look like run output:
+
+- **`entrySqlSha256`** — sha256 of `normaliseSql(ENTRY_SQL)`, computed by
+  `dune-reproduction.mjs` → `entrySqlFingerprint` and now written by every run. It was back-filled
+  because the statement's text has not changed since the commit that carries this record, so the
+  record *was* produced by exactly this text. It exists because the saved-query **id** survives an
+  edit: without it, editing `ENTRY_SQL` leaves every assertion below green over a record describing
+  a different statement.
+- **`result.fieldDisagreementsOnUnrefutedReferences`** — the gating half of the field-entrant check,
+  added when that check was made to gate at all. It is **0 by derivation, not by re-measurement**:
+  the unfiltered count is 0 on every one of the 235 launches in this record, and the filtered
+  reading drops the same enumerated wallets from both sides, so it cannot differ here.
 
 ## Limits
 

@@ -1,6 +1,7 @@
 {
   "lane": "dune-entry-reproduction",
   "queryId": 8235460,
+  "entrySqlSha256": "087dd22c77c65094f7f52aca4d2bef1494b5c5ee29c85d971253065197e60668",
   "dataDir": "data/population-tape-2026-07-29",
   "batches": [
     {
@@ -94,6 +95,7 @@
     "rowCountDisagreements": 1,
     "createSlotDisagreements": 0,
     "fieldDisagreements": 0,
+    "fieldDisagreementsOnUnrefutedReferences": 0,
     "launches": [
       {
         "mint": "32CdQdBUxbCsLy5AUHWmyidfwhgGUr9N573NBUrDpump",

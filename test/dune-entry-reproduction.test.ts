@@ -35,12 +35,16 @@ import {
 import {
   ESTIMATED_BYTES_PER_ROW,
   NO_TRIM_SLOT_SPAN,
+  REFUTED_REFERENCE_PAIRS,
   SCAN_MARGIN_MS,
   WORST_CASE_CREDITS_PER_EXECUTION,
   type CustodyCall,
+  compareReproduction,
   custodyOrderVerdict,
   duneLaunchFrom,
+  entrySqlFingerprint,
   estimateReproductionCredits,
+  fieldEntrantsDisagree,
   parseArgs,
   planReproduction,
   readTapeLaunches,
@@ -51,6 +55,7 @@ import {
 
 const KEY = 'x'.repeat(32);
 const TOOL_DIR = join(import.meta.dirname, '..', 'tools', 'deployer-screen');
+const DATA_DIR = join(import.meta.dirname, '..', 'data', 'population-tape-2026-07-29');
 const RECORD_PATH = join(TOOL_DIR, 'measurements', '2026-08-05-dune-entry-reproduction', 'reproduction.json');
 const MINT = '13JbNUE6PUmkhda8YyfMaHqUnYYYvtq1Tgp9SJjepump';
 const OTHER_MINT = '3BhUv3FtuuqBgM1n6yYEhEvQ78dpdR99v4frjmXUpump';
@@ -156,6 +161,22 @@ function batchOf(mints: string[]) {
   ];
 }
 
+/**
+ * **These are text checks over `ENTRY_SQL`, and that cost was weighed and ACCEPTED rather than
+ * missed.** A behaviour-preserving rewrite of the statement — aliasing a table in a CTE, reflowing
+ * the projection — breaks them while changing nothing the vendor computes.
+ *
+ * They are kept because the statement is executed by a VENDOR: there is no local consumer to assert
+ * semantics against without spending credits on every test run, and the committed text is itself the
+ * custody surface — `assertSavedQueryMatches` compares this exact string against saved query 8235460
+ * before an execution is billed. What each assertion pins is a trap that cost money or a measurement
+ * to find, named so a rewrite has to meet it deliberately.
+ *
+ * **The acceptance is safe because the record now BINDS to the statement text.** `entrySqlSha256`
+ * ties the committed measurement to `normaliseSql(ENTRY_SQL)`, so an edit turns the "the bar is met
+ * over 235 launches" block below red rather than leaving it green over a statement it never saw —
+ * a stronger drift guard than any of these substrings was going to be.
+ */
 describe('the committed statement — captain decision 256a, and the arithmetic that failed a bill', () => {
   it('unions BOTH venues, because 18 launches of the tape have their tail on the AMM', () => {
     // The union is the whole reason those 18 windows are measurable. Reading the curve alone returns
@@ -421,9 +442,74 @@ describe('the row -> window path, run through the production reader', () => {
   });
 });
 
+describe('the structural checks GATE, and each one is shown FAILING', () => {
+  /** One statement row for an arbitrary mint, timestamped inside that launch's own window. */
+  function rowFor(mint: string, createdAtMs: number, over: Record<string, unknown> = {}) {
+    return row({ mint, ts_unix: Math.floor(createdAtMs / 1000), ...over });
+  }
+
+  it('a launch the statement came back SHORT on fails the run', () => {
+    // Short is the failure direction: a window missing its tail loses late sells first, so a wallet
+    // that closed reads as open. It used to be computed, reported and ignored.
+    const launch = readTapeLaunches(DATA_DIR)[0]!;
+    const result = compareReproduction(DATA_DIR, [launch], new Map([[launch.mint, []]]));
+    expect(result.launchesDuneShort).toBe(1);
+    expect(result.failures.join(' ')).toMatch(/came back SHORT/);
+    expect(result.ok).toBe(false);
+    // And LONG must not gate — that is a finding about the tape's own walk, and the committed record
+    // carries one (`Killswitch`) while reading `ok: true`, which the record block below asserts.
+  });
+
+  it('a launch holding a different number of field entrants than the tape fails the run', () => {
+    // The gap this closes: an entrant dropped by an edit to the statement does not raise a closure
+    // mismatch, does not raise `missingFromCsv` (which counts the other direction) and does not move
+    // the create slot — the population simply shrinks and the suite prints a smaller PASS.
+    const launch = readTapeLaunches(DATA_DIR).find((l) => l.symbol === 'Chungus')!;
+    const rows = [
+      rowFor(launch.mint, launch.createdAtMs),
+      rowFor(launch.mint, launch.createdAtMs, { block_slot: 140, tx_index: 2, is_buy: false, trader_id: 'c'.repeat(43) }),
+    ];
+    // `tapeFills` is set to what was returned so the SHORT gate above cannot be what fires here.
+    const result = compareReproduction(
+      DATA_DIR,
+      [{ ...launch, tapeFills: rows.length }],
+      new Map([[launch.mint, rows]]),
+    );
+    expect(result.launchesDuneShort).toBe(0);
+    expect(result.launches[0]!.usable).toBe(true);
+    expect(result.launches[0]!.tapeFieldEntrants).toBeGreaterThan(result.launches[0]!.fieldEntrants);
+    expect(result.fieldDisagreementsOnUnrefutedReferences).toBe(1);
+    expect(result.failures.join(' ')).toMatch(/different number of field entrants/);
+    expect(result.ok).toBe(false);
+  });
+
+  it('but the gate does NOT count the pairs captain decision 293a excludes', () => {
+    // The trap. The enumerated pairs are exactly where the chain refutes the TAPE's own reference,
+    // so a gate that counted them would fail on the defect 293a ruled on and reverse that ruling by
+    // the back door. Driven over a real excluded pair rather than an invented one.
+    const excluded = REFUTED_REFERENCE_PAIRS[0]!;
+    const shared = [{ wallet: 'w1' }, { wallet: 'w2' }];
+    const withExcluded = [...shared, { wallet: excluded.wallet }];
+
+    expect(fieldEntrantsDisagree(excluded.mint, shared, withExcluded, { ignoringRefutedReferences: true })).toBe(false);
+    // Reported both ways, and the UNFILTERED reading still sees it — the exclusion is disclosed, not
+    // hidden.
+    expect(fieldEntrantsDisagree(excluded.mint, shared, withExcluded, { ignoringRefutedReferences: false })).toBe(true);
+    // The exclusion is per (mint, wallet): the same wallet on another launch is not excluded.
+    expect(fieldEntrantsDisagree(OTHER_MINT, shared, withExcluded, { ignoringRefutedReferences: true })).toBe(true);
+    // And no wallet outside the enumerated set is ever dropped, whatever it does to the figure.
+    expect(
+      fieldEntrantsDisagree(excluded.mint, shared, [...shared, { wallet: 'stranger' }], {
+        ignoringRefutedReferences: true,
+      }),
+    ).toBe(true);
+  });
+});
+
 describe('the run record — the bar, met over every launch on the committed tape', () => {
   const record = JSON.parse(readFileSync(RECORD_PATH, 'utf8')) as {
     queryId: number;
+    entrySqlSha256: string;
     custody: { ok: boolean };
     result: {
       launchesPlanned: number;
@@ -437,6 +523,7 @@ describe('the run record — the bar, met over every launch on the committed tap
       rowCountDisagreements: number;
       createSlotDisagreements: number;
       fieldDisagreements: number;
+      fieldDisagreementsOnUnrefutedReferences: number;
       ok: boolean;
       field: { pairs: number; closureMismatches: number; maxRealisedErrorSol: number; missingFromCsv: number };
       fieldOnUnrefutedReferences: {
@@ -449,6 +536,18 @@ describe('the run record — the bar, met over every launch on the committed tap
       tapeField: { pairs: number; closureMismatches: number; maxRealisedErrorSol: number };
     };
   };
+
+  it('is bound to the STATEMENT TEXT, not merely to the saved-query id', () => {
+    // The documented deploy step keeps the same id across an edit, so an id alone identifies
+    // nothing: without this every assertion in this block would stay green over a record describing
+    // a statement that no longer exists. Editing ENTRY_SQL turns this red until the lane is re-run.
+    expect(record.entrySqlSha256).toBe(entrySqlFingerprint());
+    // And the fingerprint is of the CUSTODY equivalence, not of the raw bytes — the same
+    // normalisation `assertSavedQueryMatches` compares under, so a reflow the vendor comparison
+    // accepts does not invalidate a measurement.
+    expect(entrySqlFingerprint(`${ENTRY_SQL}\n\n`)).toBe(record.entrySqlSha256);
+    expect(entrySqlFingerprint(`${ENTRY_SQL}\nAND 1 = 2`)).not.toBe(record.entrySqlSha256);
+  });
 
   it('ran the committed statement against EVERY launch the tape proved coverage for', () => {
     expect(record.queryId).toBe(ENTRY_QUERY_ID);
@@ -483,7 +582,10 @@ describe('the run record — the bar, met over every launch on the committed tap
     );
     expect(record.result.tapeField.closureMismatches).toBe(0);
     expect(record.result.createSlotDisagreements).toBe(0);
+    // Both readings, and both are what `ok` was reached over: the gating one counts the entrants the
+    // chain does not refute, and on this record the two coincide.
     expect(record.result.fieldDisagreements).toBe(0);
+    expect(record.result.fieldDisagreementsOnUnrefutedReferences).toBe(0);
   });
 
   it('the exclusions are ENUMERATED, small, and the unexcluded figure ships beside them', () => {

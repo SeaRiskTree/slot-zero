@@ -290,12 +290,17 @@ across, and what is re-derivable in this repo is asserted in `test/reproduction.
    The twelve pairs are enumerated with their transactions in
    `tools/deployer-screen/dune-reproduction.mjs` → `REFUTED_REFERENCE_PAIRS`.
 
-   **(b) 393 rows where the statement returns `sol_raw = 0` and NEITHER source is wrong.** 384 of
-   them are the whole of one launch — `maxxing`, `97nnzgv9…`, the second of the two launches sharing
+   **(b) 384 rows where the statement returns `sol_raw = 0` and NEITHER source is wrong.** All 384
+   are the whole of one launch — `maxxing`, `97nnzgv9…`, the second of the two launches sharing
    that symbol — which is **quoted in USDC rather than SOL**: its create transaction moves 36.99
    USDC and 0.0189 SOL. The decoded `SwapEvent` reports the SOL amount, which is genuinely zero;
    the trade endpoint this tape was built from reports a SOL-EQUIVALENT valuation. They are
-   different quantities. Nine further single rows across eight other launches have the same shape.
+   different quantities.
+
+   **Do not conflate that count with "rows where the statement returns zero", which is 393.** The
+   other nine are rows the tape ALSO reads as zero, so both sources agree on them and they were
+   never disagreements: 393 zero-returning rows minus the 9 agreements leaves the 384 counted here,
+   and 658 + 384 = 1,042.
    **Any SOL-denominated aggregate over `97nnzgv9…` is a SOL-equivalent valuation, not SOL**, and
    that launch happens to contribute zero closed create-slot outsider pairs, so nothing published
    here rests on it.

@@ -393,9 +393,12 @@ export function planOversizedSplit(input) {
  *
  * **DEPLOY STEP: changing this text means updating saved query `8204672` in place.** The comparison
  * runs BEFORE the execution, so a mismatch is not a wrong answer — it is a terminal refusal of the
- * whole Dune leg on every run until the saved query is restored to this text. The free tier holds
- * only 10 private queries and the account holds 10, so there is no new query to create: the
- * production one is edited. `README.md` → "Deploying a change to the committed SQL" owns the step.
+ * whole Dune leg on every run until the saved query is restored to this text. The saved query is
+ * edited IN PLACE — the id is pinned here and a new one would have to be pinned, deployed and
+ * proved. **Do not restate the account's private-query count here**: it has moved in both
+ * directions inside a single day, and `ENTRY_SQL` was deployed as a fourth saved query rather than
+ * by displacing one. `README.md` → "Deploying a change to the committed SQL" owns the step and is
+ * the one place that names ids and counts.
  */
 export const CREATION_SQL = `-- slot-zero: ORIGINAL-CREATOR launch enumeration. One execution per candidate batch.
 --

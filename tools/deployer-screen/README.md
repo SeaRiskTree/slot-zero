@@ -780,10 +780,11 @@ entrant's own transaction, so `entry.caveats` carries that sentence on every pri
 the filter's whole arithmetic is: `launchesTooYoung + launchesEligible = launchRefsAvailable`, and
 `launchesPlanned + launchesDroppedByCap = launchesEligible`. `youngestEligibleAgeMs` read beside
 `minAgeMs` says whether the run exercised the eligibility boundary or sat hours above it, which the
-committed live run did and could not report. **`minAgeMs` is DERIVED, not pinned** — see "It does
-bound one other thing" below — so a record written when the chain was slower carries a smaller number
-than one written today, and the committed schema-6 records read `65000` where a run today reads
-`85000`.
+committed live run did and could not report. **`minAgeMs` is DERIVED FROM PINNED INPUTS** — the
+declared slot span at a pinned worst-case slot rate, see "It does bound one other thing" below — so a
+record carries what that derivation was worth on the day it was written. The committed schema-6
+records read `65000` where a run today reads `85000` because the bound was re-derived and its pinned
+rate raised between them, **not** because the chain moved under a live reading.
 
 **Reading `entry` across the schema-5 boundary.** `entry.launchesSampled` on schema 3 and 4 counts
 every measured window, including ones whose opening was unproven; on schema 5 it counts only the

@@ -164,9 +164,11 @@ import { redactAll, redactVendorIdentifiers } from './record.mjs';
  * @property {number} minAgeMs             The eligibility gate itself — `pumpfun.mjs` →
  *   `windowReachMs`, i.e. `windowSlotSpan` converted at a MEASURED worst-case slot rate with
  *   `windowMs` as a floor, plus `seekMarginMs` — persisted so a record PROVES the property rather
- *   than leaving it to be reconstructed from a log's seek cursors. **It is derived, not pinned**, so
- *   a record written when the chain was slower carries a different number than one written today and
- *   that is the field working. See {@link scoreCandidateEntry}.
+ *   than leaving it to be reconstructed from a log's seek cursors. **It is DERIVED FROM PINNED
+ *   INPUTS** — the declared span and a pinned worst-case slot rate — so a record carries what that
+ *   derivation was worth on the day it was written, and two records differing means the pinned rate
+ *   was RE-MEASURED AND RAISED between them, never that the chain moved under a live reading. See
+ *   {@link scoreCandidateEntry}.
  * @property {number} launchesTooYoung     Refs refused by that gate: their window had not finished
  *   happening at the moment the walk would have placed its cursor.
  * @property {number} launchesEligible     `launchRefsAvailable − launchesTooYoung`.

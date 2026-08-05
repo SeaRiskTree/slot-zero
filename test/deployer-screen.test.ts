@@ -9469,9 +9469,15 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     // gate was a hand-written `windowMs + seekMarginMs` = 65,000 ms, a DURATION describing something
     // the chain controls, while membership is 160 SLOTS. Raising it to 71,448 would have re-armed
     // the identical trap at the next drift, so the gate now derives from the span at the same
-    // measured rate the cursor uses — `pumpfun.mjs` -> `windowReachMs`, one function, two call
-    // sites. A test asserting a shortfall that no longer exists would be the same defect in mirror
-    // image, so it is gone and this is the enforcement.
+    // measured rate the cursor uses — on the swap-api source, `pumpfun.mjs` -> `windowReachMs`.
+    // NO CALL-SITE COUNT IS GIVEN HERE ANY MORE. This comment used to say "one function, two call
+    // sites"; captain decision 260a's fill-source injection moves those calls, so the count went
+    // stale with nothing failing — the same claim-outrunning-enforcement class the captain ruled
+    // on in 284a and 285a, and the reason `thresholds.json`'s `seekMarginMs`, `windowMs` and
+    // `windowSlotSpan` entries dropped the identical anchor. What is durable is that the gate IS
+    // the reach, and that is what this test reads out of a live run rather than off any module's
+    // source text. A test asserting a shortfall that no longer exists would be the same defect in
+    // mirror image, so it is gone and this is the enforcement.
     //
     // Read from a PRODUCTION run rather than by regexing `stage2.mjs` or re-typing the arithmetic.
     // A source-text assertion is satisfied by a line that is never reached, and a re-typed

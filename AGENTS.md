@@ -749,7 +749,7 @@ dev currently?"*, and the shape of the answer is the point:
   exit signal may reach an entry number.** Room to enter is not room to leave, and one blended score
   cannot be read back apart.
 - **Stage 2 spends no keyed request.** It reuses the mint list from the profile Stage 1 already paid
-  for (`measure.mjs` → `toLaunchRefs`), so the shared vendor allowance is untouched by it.
+  for (`measure.mjs` → `toLaunchRefs`), so the keyed vendor allowance is untouched by it.
 - **THE GATE'S COMPLETION RATE IS TWO DIFFERENT QUANTITIES AND A BAR ON ONE DOES NOT TRANSFER TO THE
   OTHER.** `screen.mjs` gates on the **creation-derived merged history** by default (median window
   147.1 days on the last real run's 82 candidates); `--ownership-only` and `feed.mjs` read the

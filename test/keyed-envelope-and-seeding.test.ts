@@ -272,3 +272,126 @@ describe('263b — the completion-rate bar is held at 0.25 and its two readings 
     expect(why).not.toMatch(/There is no bar that removes those two and keeps the control:/);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// 264a, END TO END — the batch that was actually refused, driven through the production reader.
+//
+// The tests above pin the ARITHMETIC. This one reproduces the 2026-08-05 failure itself: an
+// enumeration of 76 deployers returning 27,731 rows was refused WHOLE at the old 20,000 ceiling
+// and every candidate fell back to the walk. It is driven through `enumerateCreations` at the
+// bounds `thresholds.json` actually ships, with a stubbed transport and no socket, and asserts
+// the reading now SURVIVES — and, at the superseded ceiling, still refuses, so the test fails
+// before the raise and passes after it.
+
+describe('264a end to end — the 27,731-row batch is read at the shipped ceiling', () => {
+  const B58 = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+  /** 76 distinct base58-shaped deployers — the candidate count that breached the old ceiling. */
+  const WALLETS = Array.from(
+    { length: 76 },
+    (_, i) => `${B58[Math.floor(i / B58.length) + 1]}${B58[i % B58.length]}${'W'.repeat(42)}`,
+  );
+  const TOTAL_ROWS = 27_731;
+
+  const probeRows = () => {
+    const rows: unknown[] = [];
+    for (const tbl of ['evt_createevent', 'call_create']) {
+      rows.push({ tbl, metric: 'first_row', at: '2024-04-01 00:00:00.000 UTC', n: 20_571_130 });
+      rows.push({ tbl, metric: 'last_row', at: '2026-08-05 09:00:00.000 UTC', n: 20_571_130 });
+      for (let y = 2024, m = 4; y < 2026 || m <= 8; m === 12 ? ((y += 1), (m = 1)) : (m += 1)) {
+        rows.push({ tbl, metric: 'month', at: `${y}-${String(m).padStart(2, '0')}-01 00:00:00.000 UTC`, n: 1000 });
+      }
+    }
+    return rows;
+  };
+
+  /** 27,731 creation rows spread over the 76 wallets, none of them capped. */
+  const creationRows = () => {
+    const per = Math.floor(TOTAL_ROWS / WALLETS.length);
+    const counts = WALLETS.map((_, i) => per + (i < TOTAL_ROWS - per * WALLETS.length ? 1 : 0));
+    const rows: unknown[] = [];
+    WALLETS.forEach((w, i) => {
+      for (let k = 0; k < counts[i]!; k++) {
+        rows.push({
+          deployer: w,
+          mint: `${w.slice(0, 20)}${String(k).padStart(10, '0')}pump`,
+          created_at: '2026-07-01 00:00:00.000 UTC',
+          bonded: k % 5 === 0,
+          launches_total: counts[i],
+          is_mayhem_mode: null,
+        });
+      }
+    });
+    return rows;
+  };
+
+  const run = async (maxResultRows: number) => {
+    const { DuneClient } = await import('../tools/deployer-screen/client.mjs');
+    const { COVERAGE_SQL, enumerateCreations } = await import('../tools/deployer-screen/dune.mjs');
+    const rows = creationRows();
+    const body = (r: unknown[]) =>
+      new Response(
+        JSON.stringify({ result: { rows: r, metadata: { total_row_count: r.length, total_result_set_bytes: 1 } } }),
+        { status: 200 },
+      );
+    const fetchImpl = async (url: unknown) => {
+      const path = String(url).replace('https://api.dune.com/api/v1', '');
+      if (path.startsWith('/query/8204603/results')) return body(probeRows());
+      if (path.startsWith('/query/8204603')) return new Response(JSON.stringify({ query_sql: COVERAGE_SQL }), { status: 200 });
+      if (path.startsWith('/query/8204672/execute')) return new Response(JSON.stringify({ execution_id: 'e1' }), { status: 200 });
+      if (path.startsWith('/query/8204672')) return new Response(JSON.stringify({ query_sql: CREATION_SQL }), { status: 200 });
+      if (path.startsWith('/execution/e1/status'))
+        return new Response(JSON.stringify({ state: 'QUERY_STATE_COMPLETED' }), { status: 200 });
+      if (path.startsWith('/execution/e1/results')) return body(rows);
+      throw new Error(`unstubbed ${path}`);
+    };
+    const client = new DuneClient({
+      key: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6',
+      maxExecutions: T['dune'].maxExecutionsPerRun as number,
+      maxRequests: T['dune'].maxRequestsPerRun as number,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    return enumerateCreations(client, {
+      wallets: WALLETS,
+      creationQueryId: T['dune'].creationQueryId as number,
+      coverageQueryId: T['dune'].coverageQueryId as number,
+      refreshProbe: false,
+      nowMs: Date.parse('2026-08-05T12:00:00Z'),
+      bounds: {
+        pollIntervalMs: 0,
+        maxPollAttempts: T['dune'].maxPollAttempts as number,
+        maxResultRows,
+        maxCoverageLagMs: T['dune'].maxCoverageLagMs as number,
+      },
+      allowance: {
+        verdict: 'sufficient' as const,
+        ok: true,
+        worstCaseCredits: 1,
+        creditsUsed: 0,
+        creditsIncluded: 2500,
+        creditsRemaining: 2500,
+        reserveCredits: 25,
+        spendableCredits: 2475,
+        shortfallCredits: 0,
+        periodStart: '2026-07-29',
+        periodEnd: '2026-08-29',
+        readAtUtc: '2026-08-05T12:00:00.000Z',
+        reasons: [],
+        caveats: ['test fixture'],
+      },
+    });
+  };
+
+  it('keeps its Dune answer for all 76 deployers at the shipped ceiling', async () => {
+    const e = await run(dune.maxResultRows);
+    expect(e.coverage.ok).toBe(true);
+    expect(e.byWallet.size).toBe(WALLETS.length);
+    expect([...e.byWallet.values()].reduce((n, w: any) => n + w.launches, 0)).toBe(TOTAL_ROWS);
+  }, 60_000);
+
+  it('and the SAME batch is still refused whole at the superseded 20,000 ceiling', async () => {
+    // The failure this raise closed: refused whole, every candidate walking, mayhem unmeasured.
+    await expect(run(20_000)).rejects.toThrow(/above the pinned ceiling/);
+  }, 60_000);
+});

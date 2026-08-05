@@ -196,11 +196,13 @@ export class VendorRefused extends Error {
  *
  * The captain asked for the endpoint list by name and for spend to be reported concretely rather
  * than as one aggregate number, so this table is the tool's own answer rather than prose in a
- * README that can drift from the code. Only `{wallet}` scales: everything else is one call per run.
+ * README that can drift from the code. Only `{wallet}` scales per candidate: everything else is one
+ * call per tier enumerated (two by default — `seed.mjs` -> `DEFAULT_TIERS`).
  *
  * Two endpoints are deliberately absent and stay absent — `/deployer-hunter/{wallet}/tokens` is
  * bonded-only (no denominator, and it rejects `limit` above 50) and `/deployer-hunter/{wallet}/history`
- * is PRO+, which standing policy refuses.
+ * is reachable on this lane's Ultra key but serves daily snapshots of the trailing-window aggregates
+ * this tool refuses to read, so it stays absent for a design reason rather than an entitlement one.
  *
  * @type {Record<string, { role: string, costModel: string }>}
  */

@@ -444,7 +444,7 @@ export function triage(profile, gateThresholds) {
  * @typedef {object} FeedDeps
  * @property {typeof fetch} [fetchImpl] Injected for tests, exactly as `client.mjs` does. There is no
  *   code path in the test suite that reaches the real network — `test/offline-guard.ts` enforces it.
- * @property {(ms: number) => Promise<void>} [sleepImpl] Injected so the 6.5s pacing is free in tests.
+ * @property {(ms: number) => Promise<void>} [sleepImpl] Injected so the keyed pacing is free in tests.
  */
 
 /**

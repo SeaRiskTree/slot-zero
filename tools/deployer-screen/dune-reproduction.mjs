@@ -920,7 +920,11 @@ export async function checkReproductionAllowance(client, batches, nowMs) {
  * @param {number} [opts.queryId]
  * @param {string} [opts.sql]
  * @param {(line: string) => void} [opts.say]
- * @returns {Promise<{ rowsByMint: Map<string, unknown[]>, executions: number, resultBytes: number }>}
+ * @returns {Promise<{ rowsByMint: Map<string, unknown[]>, executions: number, resultBytes: number,
+ *   unplacedRows: number }>} `unplacedRows` counts rows the vendor returned for a mint this run did
+ *   not ask about, or with no readable mint at all. It is a property of the FETCH, so only a live
+ *   run can observe it; an offline recompute carries the fetching run's figure rather than
+ *   recomputing a zero it did not measure.
  */
 export async function runReproduction(client, opts) {
   const queryId = opts.queryId ?? ENTRY_QUERY_ID;
@@ -938,6 +942,7 @@ export async function runReproduction(client, opts) {
 
   /** @type {Map<string, unknown[]>} */
   const rowsByMint = new Map();
+  let unplacedRows = 0;
   for (const batch of opts.batches) {
     for (const launch of batch.launches) rowsByMint.set(launch.mint, []);
   }
@@ -947,13 +952,22 @@ export async function runReproduction(client, opts) {
     const before = client.resultBytes();
     const result = await executeAndRead(client, queryId, parameters, opts.bounds);
     for (const row of result.rows) {
-      if (typeof row !== 'object' || row === null) continue;
+      // A row for a mint this batch did not ask about — or one carrying no readable mint at all — is
+      // a statement that ignored its own predicate, and it is COUNTED rather than dropped quietly.
+      //
+      // The count is the point. This comment used to claim such a row "surfaces as a row-count
+      // disagreement", and that was false in the direction that hides the defect: an unasked mint
+      // adds no row to any launch's bucket, so every launch still matches the tape exactly and the
+      // run passes while the vendor is answering a question nobody asked. Nothing observed it.
+      // `unplacedRows` observes it, the report prints it, and a non-zero count FAILS the run.
+      if (typeof row !== 'object' || row === null) {
+        unplacedRows += 1;
+        continue;
+      }
       const mint = /** @type {Record<string, unknown>} */ (row)['mint'];
       const bucket = typeof mint === 'string' ? rowsByMint.get(mint) : undefined;
-      // A row for a mint this batch did not ask about is a statement that ignored its own predicate.
-      // It is counted as unplaced rather than dropped quietly: `compareReproduction` then sees a row
-      // count that disagrees with the tape, which is the visible failure.
-      if (bucket !== undefined) bucket.push(row);
+      if (bucket === undefined) unplacedRows += 1;
+      else bucket.push(row);
     }
     say(
       `  batch ${index + 1}/${opts.batches.length} (${batch.month}, ${batch.launches.length} launch(es)): ` +
@@ -962,7 +976,7 @@ export async function runReproduction(client, opts) {
     );
   }
 
-  return { rowsByMint, executions: client.executions(), resultBytes: client.resultBytes() };
+  return { rowsByMint, executions: client.executions(), resultBytes: client.resultBytes(), unplacedRows };
 }
 
 /**
@@ -1137,8 +1151,11 @@ if (import.meta.url === `file://${process.argv[1]}`) {
    * @param {'observed' | 'carried-from-the-fetching-run'} custodySource Which run OBSERVED the
    *   saved-query comparison. An offline recompute observed nothing and must say so rather than
    *   restate a verdict it inherited.
+   * @param {number | null} unplacedRows Rows the vendor returned for a mint this run did not ask
+   *   about. `null` means NOT OBSERVED — an offline recompute with no fetching run to carry from —
+   *   which is not the same as zero and is refused rather than read as clean.
    */
-  const report = (result, custody, spend, custodySource) => {
+  const report = (result, custody, spend, custodySource, unplacedRows) => {
     say('');
     say(`  launches       ${result.launchesMeasured} of ${result.launchesPlanned} measured`);
     say(`  rows           ${result.duneRows} from Dune against ${result.tapeRows} on the tape`);
@@ -1173,9 +1190,22 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       `  tape leg       ${result.tapeField.pairs} pair(s), ${result.tapeField.closureMismatches} closure ` +
         `mismatch(es), max realised error ${result.tapeField.maxRealisedErrorSol.toExponential(3)} SOL`,
     );
+    say(
+      `  unplaced rows  ${unplacedRows === null ? 'NOT OBSERVED (no fetching run to carry from)' : unplacedRows}` +
+        ` — rows returned for a mint this run did not ask about`,
+    );
     say(`  custody        ${custody.ok ? 'verified before the first execution' : custody.reasons.join(' ')}`);
+    // A row the statement returned for an unasked mint adds nothing to any launch's bucket, so it
+    // cannot show up as a row-count disagreement — this is the only thing that sees it.
+    const placementOk = unplacedRows === 0;
+    if (!placementOk) {
+      say(
+        `    FAILED: ${unplacedRows === null ? 'the unplaced-row count was not observed' : `${unplacedRows} row(s) came back unplaced`}` +
+          ` — the statement answered about a mint this run did not ask for, or with no readable mint.`,
+      );
+    }
     for (const failure of result.failures) say(`    FAILED: ${failure}`);
-    say(`  VERDICT        ${result.ok && custody.ok ? 'PASS' : 'FAIL'}`);
+    say(`  VERDICT        ${result.ok && custody.ok && placementOk ? 'PASS' : 'FAIL'}`);
     if (spend !== null) say(`  spend          ${JSON.stringify(spend)}`);
 
     if (args.out !== null) {
@@ -1191,6 +1221,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
             estimate,
             custody,
             custodySource,
+            unplacedRows,
             spend,
             result,
             caveats: REPRODUCTION_CAVEATS,
@@ -1201,7 +1232,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       );
       say(`  wrote          ${args.out}`);
     }
-    process.exit(result.ok && custody.ok ? 0 : 1);
+    process.exit(result.ok && custody.ok && placementOk ? 0 : 1);
   };
 
   // OFFLINE RECOMPUTE. No socket, no credential, no spend — the rows were already paid for.
@@ -1214,7 +1245,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     const { existsSync, readFileSync: read } = await import('node:fs');
     const prior =
       args.out !== null && existsSync(args.out)
-        ? /** @type {{ custody?: CustodyVerdict, spend?: object }} */ (JSON.parse(read(args.out, 'utf8')))
+        ? /** @type {{ custody?: CustodyVerdict, spend?: object, unplacedRows?: number }} */ (
+            JSON.parse(read(args.out, 'utf8'))
+          )
         : {};
     say('');
     say(`  RECOMPUTED from ${args.fromRows} — no socket was opened and nothing was spent.`);
@@ -1223,6 +1256,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       prior.custody ?? { ok: false, reasons: ['no fetching run to carry a custody verdict from'] },
       /** @type {never} */ (prior.spend ?? null),
       'carried-from-the-fetching-run',
+      // NOT recomputed. The cache holds only rows that WERE placed, so a recompute counting them
+      // would always find zero and would be reporting the shape of its own input rather than a
+      // measurement. Carried from the fetching run, and `null` — refused — when there is none.
+      typeof prior.unplacedRows === 'number' ? prior.unplacedRows : null,
     );
   }
 
@@ -1269,7 +1306,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   const { client: recorded, log } = recordCustody(client);
-  const { rowsByMint } = await runReproduction(recorded, { batches, bounds, say });
+  const { rowsByMint, unplacedRows } = await runReproduction(recorded, { batches, bounds, say });
   const custody = custodyOrderVerdict(log);
 
   // KEEP WHAT WAS PAID FOR, when asked to. The first full run of this lane spent ~530 credits, threw
@@ -1290,6 +1327,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     say(`  cached         ${lines.length} row(s) to ${args.rows} (a working file; not for committing)`);
   }
 
-  report(compareReproduction(args.dataDir, selected, rowsByMint), custody, client.stats(), 'observed');
+  report(compareReproduction(args.dataDir, selected, rowsByMint), custody, client.stats(), 'observed', unplacedRows);
 }
 /* c8 ignore stop */

@@ -29,6 +29,7 @@ import { assertSavedQueryMatches, describeExecutionError, executeAndRead } from 
 import {
   ENTRY_QUERY_ID,
   ENTRY_SQL,
+  committedEntryQuery,
   duneRowsToWindow,
   entryQueryParameters,
 } from '../tools/deployer-screen/dune-fills.mjs';
@@ -273,6 +274,31 @@ describe('the parameter builder — a mint reaches a single-quoted SQL literal',
     expect(p.scan_from).toBe('2026-04-07 13:27:09.000');
     expect(p.scan_to).toBe('2026-04-20 00:05:00.000');
   });
+
+  it('committedEntryQuery assembles the ONE-launch predicate Gate 3 will inject', () => {
+    // `committedEntryQuery` is called by nothing today — screen.mjs injects no query and the
+    // reproduction suite drives ENTRY_QUERY_ID/ENTRY_SQL/entryQueryParameters directly, because it
+    // batches many windows into one execution while this builds the single-launch predicate a
+    // production `readWindow` needs. Gate 3's wiring is its first caller.
+    //
+    // Unreached is acceptable; UNEXERCISED is not. An exported seam no test drives is the same shape
+    // as a reading computed twice and checked once — it compiles, it looks maintained, and the first
+    // caller finds out whether it works. So it is driven here, at zero cost.
+    const query = committedEntryQuery();
+    expect(query.id).toBe(ENTRY_QUERY_ID);
+    expect(query.sql).toBe(ENTRY_SQL);
+
+    const ref = { mint: MINT } as Parameters<typeof query.parameters>[0];
+    const scan = { fromMs: Date.parse('2026-04-07T13:27:09.000Z'), toMs: Date.parse('2026-04-07T13:28:14.000Z'), requests: 0 };
+    const p = query.parameters(ref, scan);
+    // ONE launch, and it is the launch asked about — batching is the caller's, never this builder's.
+    expect(p.launches).toBe(`${MINT}:1775568429000:1775568494000`);
+    // And the hull collapses onto that single window rather than widening past it.
+    expect(p.scan_from).toBe('2026-04-07 13:27:09.000');
+    expect(p.scan_to).toBe('2026-04-07 13:28:14.000');
+    // The guards travel with it: a mint that is not base58-shaped never reaches the SQL literal.
+    expect(() => query.parameters({ mint: "x'; DROP" } as typeof ref, scan)).toThrow(/base58-shaped/);
+  });
 });
 
 describe('CUSTODY — the comparison precedes the spend, and this assertion can fail', () => {
@@ -344,6 +370,38 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     expect(c.resultBytes()).toBe(0);
     expect(log.some((call) => call.kind === 'execute')).toBe(false);
     expect(custodyOrderVerdict(log).ok).toBe(true);
+  });
+
+  it('COUNTS a row returned for a mint the run did not ask about, and fails on it', async () => {
+    // The claim this closes used to be a comment saying such a row "surfaces as a row-count
+    // disagreement". It does not: an unasked mint lands in no launch's bucket, so every launch the
+    // run DID ask about still matches the tape exactly, and the run passes while the vendor answers
+    // a question nobody asked. Only a counter sees it — so the counter is shown SEEING it here,
+    // rather than pinned at the zero the real run happens to produce.
+    const asked = row();
+    const stranger = row({ mint: OTHER_MINT });
+    const noMintAtAll = row({ mint: undefined });
+    const { impl } = stub({ rows: [asked, stranger, noMintAtAll, 'not an object'] });
+    const { unplacedRows, rowsByMint } = await runReproduction(client(impl), {
+      batches: batchOf([MINT]),
+      bounds: BOUNDS,
+    });
+    // Two unplaceable rows and one unreadable one; only the asked-for mint was kept.
+    expect(unplacedRows).toBe(3);
+    expect(rowsByMint.get(MINT)).toHaveLength(1);
+    expect(rowsByMint.has(OTHER_MINT)).toBe(false);
+  });
+
+  it('places every row when the statement answers only what was asked', async () => {
+    // The other side of the same property: the counter must not fire on a well-behaved result, or a
+    // passing run would carry a permanent false alarm.
+    const { impl } = stub({ rows: [row(), row({ tx_index: 2 })] });
+    const { unplacedRows, rowsByMint } = await runReproduction(client(impl), {
+      batches: batchOf([MINT]),
+      bounds: BOUNDS,
+    });
+    expect(unplacedRows).toBe(0);
+    expect(rowsByMint.get(MINT)).toHaveLength(2);
   });
 
   it('and that refusal is not an artefact of the fixture — the same stub executes when it matches', async () => {
@@ -515,6 +573,7 @@ describe('the structural checks GATE, and each one is shown FAILING', () => {
 describe('the run record — the bar, met over every launch on the committed tape', () => {
   const record = JSON.parse(readFileSync(RECORD_PATH, 'utf8')) as {
     queryId: number;
+    unplacedRows: number | null;
     entrySqlSha256: string;
     custody: { ok: boolean };
     result: {
@@ -553,6 +612,14 @@ describe('the run record — the bar, met over every launch on the committed tap
     // accepts does not invalidate a measurement.
     expect(entrySqlFingerprint(`${ENTRY_SQL}\n\n`)).toBe(record.entrySqlSha256);
     expect(entrySqlFingerprint(`${ENTRY_SQL}\nAND 1 = 2`)).not.toBe(record.entrySqlSha256);
+  });
+
+  it('placed every row it was given — nothing came back for an unasked mint', () => {
+    // 0 by PROOF from the run's own output rather than by assumption: the run log's per-batch
+    // returned counts sum to 107,453 and the row cache it wrote holds 107,453 placed rows, so
+    // returned equals placed. The measurement README records that derivation. `null` here would
+    // mean NOT OBSERVED, which is not the same as clean and must not read as a pass.
+    expect(record.unplacedRows).toBe(0);
   });
 
   it('ran the committed statement against EVERY launch the tape proved coverage for', () => {

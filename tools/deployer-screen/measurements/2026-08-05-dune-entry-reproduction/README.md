@@ -103,9 +103,9 @@ statement's AMM half meant buying all 107,439 again. `--rows` and `--from-rows` 
 that: a change to the *comparison* must never cost a re-fetch. The row cache is a working file and is
 deliberately **not committed** — Dune's terms are derive-and-discard.
 
-## Two fields were added to this record after the run, and neither was measured again
+## Three fields were added to this record after the run, and none was measured again
 
-Both are stated here rather than left to look like run output:
+All are stated here rather than left to look like run output:
 
 - **`entrySqlSha256`** — sha256 of `normaliseSql(ENTRY_SQL)`, computed by
   `dune-reproduction.mjs` → `entrySqlFingerprint` and now written by every run. It was back-filled
@@ -136,6 +136,22 @@ Both are stated here rather than left to look like run output:
   added when that check was made to gate at all. It is **0 by derivation, not by re-measurement**:
   the unfiltered count is 0 on every one of the 235 launches in this record, and the filtered
   reading drops the same enumerated wallets from both sides, so it cannot differ here.
+
+- **`unplacedRows`** — rows the statement returned for a mint the run did not ask about, or with no
+  readable mint. Added when the counter itself was added: the code used to *claim* such a row
+  "surfaces as a row-count disagreement", which was false in the direction that hides the defect —
+  an unasked mint lands in no launch's bucket, so every launch still matches the tape and the run
+  passes while the vendor answers a question nobody asked. Nothing observed it. Now a counter does,
+  the report prints it, and a non-zero count fails the run.
+
+  It is **0 by PROOF from the run's own output, not by re-measurement and not by assumption.** The
+  run log records what the vendor returned per batch — 2,255 / 360 / 32 / 5,785 / 19,805 / 3,730 /
+  19,638 / 1,010 / 14,547 / 19,977 / 19,208 / 1,106 — which sums to **107,453**, and the row cache
+  that run wrote holds **107,453** rows, every one of them placed into a launch. Returned equals
+  placed, so nothing went unplaced. **An offline recompute cannot re-derive this**: the cache holds
+  only rows that were placed, so counting them would always yield zero and would be describing the
+  shape of its own input. `--from-rows` therefore CARRIES this figure from the fetching run's record
+  and reports `NOT OBSERVED` — refused, not zero — when there is none to carry.
 
 ## Limits
 

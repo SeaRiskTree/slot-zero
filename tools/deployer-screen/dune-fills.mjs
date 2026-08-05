@@ -603,9 +603,19 @@ export function entryQueryParameters(windows) {
 /**
  * The committed statement, ready to inject.
  *
- * **Exported, and wired to nothing.** `screen.mjs` selects the swap-api source on every run and
- * hands {@link duneFillSource} no query, so this is reachable only from the reproduction suite and
- * from whatever change convenes Gate 3. That is the same resting state the module header states.
+ * **Exported, and called by NOTHING — not even the reproduction suite.** `screen.mjs` selects the
+ * swap-api source on every run and hands {@link duneFillSource} no query, and
+ * `dune-reproduction.mjs` does not use this assembly either: it drives {@link ENTRY_QUERY_ID},
+ * {@link ENTRY_SQL} and {@link entryQueryParameters} directly, because it batches many launch
+ * windows into one execution while this builds the ONE-launch predicate a production `readWindow`
+ * needs. **Gate 3's wiring will be its first caller.**
+ *
+ * That is the correct resting state for a committed path nobody reaches — but "unreached" and
+ * "unexercised" are different things, and only the first is acceptable. An exported seam that no
+ * test ever drives is the same shape as a reading computed twice and checked once: it compiles, it
+ * looks maintained, and the first caller finds out whether it works. So
+ * `test/dune-entry-reproduction.test.ts` calls `committedEntryQuery().parameters(ref, scan)` and
+ * pins that it produces the one-launch parameter set, which keeps the seam honest at zero cost.
  *
  * @returns {DuneEntryQuery}
  */

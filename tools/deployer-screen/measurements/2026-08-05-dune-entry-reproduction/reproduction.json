@@ -76,6 +76,7 @@
     "reasons": []
   },
   "custodySource": "carried-from-the-fetching-run",
+  "unplacedRows": 0,
   "spend": {
     "requests": 84,
     "executions": 12,

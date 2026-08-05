@@ -416,6 +416,12 @@ export function recordCustody(client) {
 /**
  * Every (launch, wallet) pair on the committed tape whose reference the CHAIN refutes.
  *
+ * **CAPTAIN DECISION 293a, 2026-08-05:** the bar is judged over the pairs this constant does NOT
+ * name, on the three conditions this module already met — the exclusions stay enumerated by
+ * transaction, the unexcluded reading stays printed beside the excluded one, and closure stays
+ * checked over the whole population. The finding itself is ratified as `IMPORT.md` correction 11
+ * (decision 294a), with no dataset row edited.
+ *
  * **THIS IS NOT A TOLERANCE AND IT MUST NEVER BECOME ONE.** No bar moved, no error was rounded away
  * and no population was widened. Twelve pairs are named individually, every one of them arbitrated
  * against `api.mainnet-beta`, and {@link compareReproduction} reports the comparison BOTH WAYS —
@@ -444,7 +450,9 @@ export function recordCustody(client) {
  *   wrong. **That launch contributes zero closed create-slot outsider pairs, so it never reaches
  *   this comparison — which is luck rather than design, and a lane scoring a non-SOL-quoted launch
  *   through the Dune source would be reading zeros as free entries.** Nine further single rows on
- *   eight other launches have the same shape.
+ *   eight other launches have the same shape. **Captain decision 295b files that hazard against the
+ *   GATE 3 CUTOVER rather than here**, so this module records it and guards nothing: do not add a
+ *   quote-mint filter to the statement or a drop rule to this suite on the way past.
  *
  * ## What is NOT claimed
  *

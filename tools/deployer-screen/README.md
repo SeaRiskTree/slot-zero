@@ -1120,17 +1120,21 @@ Four things a lane touching this should know, and the last two are the expensive
   `quote_amount_in` and `quote_amount_in_with_lp_fee` matched none.
 - **The tape is what the chain disagrees with, on 658 of 107,439 fills.** Twenty-two of them reach a
   graded pair; all twenty-two were arbitrated with `getTransaction`, and the wallet's own balance
-  change agrees with the statement on 22 of 22. Filed as correction 11 in that dataset's
-  `IMPORT.md`; **no dataset row was edited**. The twelve affected pairs are enumerated in
-  `REFUTED_REFERENCE_PAIRS`, and the record ships the unexcluded reading (1.842 SOL) beside the
-  excluded one so the exclusion cannot become a tolerance.
+  change agrees with the statement on 22 of 22. **Captain decision 293a judges the bar over the
+  1,310 pairs the chain does not refute**, on three standing conditions this suite already meets:
+  the exclusions stay enumerated by transaction in `REFUTED_REFERENCE_PAIRS`, the unexcluded reading
+  (1.842 SOL) stays printed beside them, and closure stays checked over the whole 1,322 — where it
+  is 0, so no exclusion does any work on that half of the bar. **294a ratifies correction 11 in that
+  dataset's `IMPORT.md` as filed; no dataset row was edited.**
 - **A pump.fun launch can be quoted in something other than SOL, and this repo had not met one.**
   `maxxing` `97nnzgv9…` — the second of the two launches sharing that symbol — is USDC-quoted: all
   384 of its fills return `sol_raw = 0` because the `SwapEvent`'s SOL amount is genuinely zero, while
   the trade endpoint reports a SOL-equivalent valuation. Neither source is wrong; they are different
   quantities. It contributes no closed create-slot outsider pair, so nothing published rests on it —
   **luck, not design**, and a lane scoring such a launch through the Dune source would read those
-  zeros as free entries.
+  zeros as free entries. **Captain decision 295b files that guard against the Gate 3 CUTOVER rather
+  than against the statement or this suite**, so it is recorded here and enforced nowhere: do not add
+  a quote-mint filter on the way past.
 
 **Spend.** The whole-tape run costs **~495 credits** of a 2,500-credit shared month, and **~95% of it
 is result bytes** rather than compute — which inverts the assumption `stage2_entry_dune` reasons

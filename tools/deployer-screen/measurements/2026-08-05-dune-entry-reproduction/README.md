@@ -34,11 +34,14 @@ threshold, and nothing here treats it as one — it is simply where this measure
 
 **Closure is met on the whole population**: 0 mismatches over all 1,322 pairs, no exclusion involved.
 
-**The realised half reads 1,310 of the 1,322 pairs.** Twelve are excluded, and the exclusion is
-enumerated rather than described — `dune-reproduction.mjs` → `REFUTED_REFERENCE_PAIRS` names every
-one with a transaction you can re-check. It is **not a tolerance**: the unexcluded reading (1.842
-SOL) ships in the same record, so a reader who rejects the exclusion can read the number it would
-otherwise hide without rerunning anything.
+**The realised half reads 1,310 of the 1,322 pairs, by captain decision 293a**, which judges the bar
+over the pairs the chain does not refute on three standing conditions: the exclusions stay
+enumerated by transaction, the unexcluded reading stays printed beside them, and closure stays
+checked over the whole population. All three hold here. The exclusion is enumerated rather than
+described — `dune-reproduction.mjs` → `REFUTED_REFERENCE_PAIRS` names every one with a transaction
+you can re-check — and it is **not a tolerance**: the unexcluded reading (1.842 SOL) ships in the
+same record, so a reader who rejects the exclusion can read the number it would otherwise hide
+without rerunning anything.
 
 ## The twelve — the tape is what the chain disagrees with
 
@@ -54,7 +57,8 @@ statement too — on the affected rows `sol / base` contradicts the row's own `p
 cause and is not established here.
 
 Those 22 fills are the 12 excluded pairs. The finding is filed as correction 11 in
-`data/population-tape-2026-07-29/IMPORT.md`; **no dataset row was edited**.
+`data/population-tape-2026-07-29/IMPORT.md`, **ratified as filed by captain decision 294a**; no
+dataset row was edited.
 
 **384 rows where the statement returns `sol_raw = 0`, and neither source is wrong.** They are the
 whole of one launch — `maxxing`, `97nnzgv9…`, the second of the two launches sharing that symbol —
@@ -62,7 +66,9 @@ which is **quoted in USDC, not SOL**. The decoded `SwapEvent` reports a SOL amou
 zero; the trade endpoint reports a SOL-equivalent valuation. Nine further single rows elsewhere have
 the same shape. **That launch contributes zero closed create-slot outsider pairs, so it never
 reaches this comparison — luck, not design.** A lane scoring a non-SOL-quoted launch through the
-Dune source would read those zeros as free entries, and nothing today stops it.
+Dune source would read those zeros as free entries, and nothing today stops it: **captain decision
+295b files that guard against the Gate 3 cutover rather than against the statement or this suite**,
+so it is recorded here and enforced nowhere.
 
 ## One launch where the TAPE is short
 

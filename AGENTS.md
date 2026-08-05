@@ -608,14 +608,19 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   the **`user_`** one (matched 198/198 where the other two matched 0/198).
   **(2) `window/*.jsonl.gz` IS WRONG ON 658 OF 107,439 FILLS** — understating `sol` 25–40x, on
   `BuyExactSolIn` transactions; 22 of them reach a graded pair and the chain agrees with the
-  STATEMENT on 22 of 22. `IMPORT.md` correction 11 owns it, no row was edited, and the twelve
-  affected pairs are enumerated in `dune-reproduction.mjs` → `REFUTED_REFERENCE_PAIRS` with the
-  unexcluded reading (1.842 SOL) shipped beside the excluded one.
+  STATEMENT on 22 of 22. **Captain decision 293a judges the bar over the 1,310 pairs the chain does
+  not refute** on three standing conditions — the exclusions stay enumerated by transaction, the
+  unexcluded reading (1.842 SOL) stays printed beside them, and closure stays checked over the whole
+  1,322 — and **294a ratifies `IMPORT.md` correction 11 as filed, with no row edited**. The twelve
+  pairs are enumerated in `dune-reproduction.mjs` → `REFUTED_REFERENCE_PAIRS`.
   **(3) A PUMP.FUN LAUNCH CAN BE QUOTED IN SOMETHING OTHER THAN SOL** — `maxxing` `97nnzgv9…` (the
   second launch of that name) is USDC-quoted, so all 384 of its fills return `sol_raw = 0`
   legitimately while the trade endpoint reports a SOL-EQUIVALENT. It contributes no closed
   create-slot outsider pair, so nothing published rests on it — **luck, not design**, and a lane
   scoring such a launch through the Dune source would read those zeros as free entries.
+  **Captain decision 295b files that guard against the GATE 3 CUTOVER, not against the statement or
+  the reproduction** — so it is recorded here and enforced nowhere; do not add a quote-mint filter
+  in passing.
   **(4) RETRIEVAL IS ~95% OF THIS LANE'S BILL** — ~495 credits for a whole-tape run, ~4.9 of compute
   per execution against 24.7 MB of result bytes — which inverts `stage2_entry_dune`'s "the lever is
   windows scanned" without contradicting it: that block returns one row per launch and this

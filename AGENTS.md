@@ -242,9 +242,12 @@ Five things bind anything that touches it or copies from it:
   denominated in the variable that did not move, so it stayed green while ceasing to mean anything.
   **Raising the constant to 71,448 would have re-armed the identical trap** — the defect is writing a
   DURATION for something the chain controls. `stage2.mjs` and `tools/deployer-screen/bundling.mjs`
-  now both call `windowReachMs` for it, so the gate and the cursor are one number by construction; a
-  test reads it out of a live `scoreCandidateEntry` and checks it against the tape-derived rate on
-  every run. It changed no committed reading — the last real run's youngest launch was ~1.95 h old
+  therefore write no duration at all: since captain decision 260a they **ask their fill source**
+  (`fillSource.minAgeMs`), and the swap-api source answers with the same `windowReachMs` call the
+  cursor is placed with, so the gate and the cursor are still one number by construction — see the
+  260a bullet under "The deployer screen's stages" for the injection. A test reads the gate out of a
+  live `scoreCandidateEntry` and checks it against the tape-derived rate on every run. It changed no
+  committed reading — the last real run's youngest launch was ~1.95 h old
   against an 85 s gate — and the error it closed ran toward wrongly REFUSING a deployer, which is the
   permanent, invisible direction, since a graded wallet is filed and never offered again.
 - **The two clocks agree, and this was measured rather than assumed.** Dune's `created_at` is the
@@ -1083,10 +1086,10 @@ the process continuous getting better"*.
   ways a claim can be absent are kept apart and mean opposite things about spend: `not-scored`
   (Stage 2 never ran) and `entry-unmeasured` (it ran and could not answer).
 - **THE GRADE IS OUT OF SAMPLE, AND THE BOUNDARY IS A PROOF.** Only launches created strictly after
-  the run's `finishedAtIso` are measured: Stage 2 refused every launch younger than
-  `windowMs + seekMarginMs` at the instant it chose its sample, and that instant precedes the run
-  finishing. Re-measuring the prediction's own launches would agree with itself and report a hit rate
-  near 1.0 meaning nothing, so the filter is asserted against the fetched URLs, not described.
+  the run's `finishedAtIso` are measured: Stage 2 refused every launch younger than its fill
+  source's own eligibility gate at the instant it chose its sample, and that instant precedes the
+  run finishing. Re-measuring the prediction's own launches would agree with itself and report a hit
+  rate near 1.0 meaning nothing, so the filter is asserted against the fetched URLs, not described.
 - **Same recipe, same bars, ONE Stage 2.** The outcome is scored at the `stage2_entry`/`stage2_cost`
   values the PREDICTING run recorded, never at today's; a record that cannot supply them leaves its
   claims `recipe-unusable` rather than being graded against a screen it never was. `grade.mjs` and

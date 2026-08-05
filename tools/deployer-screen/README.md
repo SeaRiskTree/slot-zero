@@ -857,10 +857,10 @@ entrant's own transaction, so `entry.caveats` carries that sentence on every pri
 the filter's whole arithmetic is: `launchesTooYoung + launchesEligible = launchRefsAvailable`, and
 `launchesPlanned + launchesDroppedByCap = launchesEligible`. `youngestEligibleAgeMs` read beside
 `minAgeMs` says whether the run exercised the eligibility boundary or sat hours above it, which the
-committed live run did and could not report. **`minAgeMs` is DERIVED FROM PINNED INPUTS** — the
-declared slot span at a pinned worst-case slot rate, see "It does bound one other thing" below — so a
-record carries what that derivation was worth on the day it was written. The committed schema-6
-records read `65000` where a run today reads `85000` because the bound was re-derived and its pinned
+committed live run did and could not report. **`minAgeMs` IS THE FILL SOURCE'S OWN ANSWER, and on
+the swap-api source it is derived from pinned inputs** — the declared slot span at a pinned
+worst-case slot rate, see "It does bound one other thing" below — so a record carries what that
+derivation was worth on the day it was written. The committed schema-6 records read `65000` where a run today reads `85000` because the bound was re-derived and its pinned
 rate raised between them, **not** because the chain moved under a live reading.
 
 **Reading `entry` across the schema-5 boundary.** `entry.launchesSampled` on schema 3 and 4 counts
@@ -1854,9 +1854,10 @@ to carry `swap-api.pump.fun/v2/coins/<MINT>/trades` into `coverage.dropNotes` an
 `--out`, because `KeylessClient` formats the URL into its message — and the committed-record test
 only forbade mint-shaped *keys*, so a mint inside a sentence passed it. Two changes, both kept:
 
-- `KeylessHttpError` carries its **status as a field**, so `stage2.mjs` → `describeTransportFailure`
-  can report `HTTP 400` without repeating anything the vendor sent. Anything that is not one is
-  reduced to its constructor name.
+- `RequestFailed` carries its **status as a field** — `KeylessHttpError` is one of its subclasses —
+  so `stage2.mjs` → `describeTransportFailure` can report `HTTP 400` without repeating anything the
+  vendor sent, and without importing the source that threw. Anything that is not one is reduced to
+  its constructor name.
 - `record.mjs` → `redactVendorIdentifiers` scrubs named free-text fields on the way into a record,
   stripping URLs and base58 address runs, so containment for those fields does not rest on every
   future note-writer remembering. **Covered today, and only these:** the entry half's `rationale`,
@@ -2078,11 +2079,15 @@ governed by `roomIsProven`, and no committed check pins that.
 `ts < createdAtMs` with zero slack, and coverage is still discharged only by an explicit
 `hasMore === false` or a readable empty page. Widening the margin cannot soften either.
 
-**It does bound one other thing, and it has to: which launches are old enough to measure. That is
-the SAME bound, derived once.** `stage2.mjs` and `bundling.mjs` both skip a launch younger than
-`windowReachMs` — **85,000ms** at the pinned values, the same call the seek cursor is placed with.
-The gate has to cover the newest instant the walk reaches for, and a launch has finished happening
-exactly when that instant is in the past, so making them two expressions is what let them come apart.
+**It does bound one other thing, and it has to: which launches are old enough to measure. Neither
+`stage2.mjs` nor `bundling.mjs` derives that bound any more — they ASK their fill source
+(`fillSource.minAgeMs`), and the swap-api source answers with this same `windowReachMs` call, so on
+every run today the gate is still 85,000ms at the pinned values and still the same call the seek
+cursor is placed with.** The gate has to cover the newest instant the walk reaches for, and a launch
+has finished happening exactly when that instant is in the past, so making them two expressions is
+what let them come apart — and captain decision 260a removed the second expression from the scoring
+modules altogether, because a source whose tables LAG must answer a larger floor than its cursor
+reach. See "Where the fills come from is INJECTED, and Stage 2 names no vendor" above.
 
 **The tense matters, because this bound has now failed the same way twice.** It was once `windowMs`
 alone, which admitted a launch aged 60–65s whose tail had not happened yet — the same truncation this
@@ -2416,9 +2421,9 @@ is the same instrument pointed at launches the prediction did not see: `grade.mj
 verdict the screen predicted. Three properties keep that honest and all three are structural:
 
 - **Strictly out of sample.** Only launches created after the claim's `madeAtIso` are measured, and
-  the boundary is a *proof* rather than a convention — Stage 2 refused every launch younger than
-  `windowMs + seekMarginMs` at the instant it chose its sample, and that instant precedes the run's
-  `finishedAtIso`. A test asserts against the fetched URLs that no pre-boundary launch is ever walked.
+  the boundary is a *proof* rather than a convention — Stage 2 refused every launch younger than its
+  fill source's own eligibility gate at the instant it chose its sample, and that instant precedes
+  the run's `finishedAtIso`. A test asserts against the fetched URLs that no pre-boundary launch is ever walked.
 - **Same recipe, same bars.** The outcome is scored at the `stage2_entry` / `stage2_cost` values the
   **predicting** run recorded, never at today's. A record that cannot supply them leaves its claims
   `recipe-unusable` rather than being graded against a screen it never was. `scoreCandidateEntry` and

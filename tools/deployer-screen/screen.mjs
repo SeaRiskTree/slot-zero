@@ -1527,6 +1527,18 @@ function summariseStage0(s) {
     verdict: e.verdict,
     launchesSampled: e.launchesSampled,
     roomLeftMedian: Number(e.roomLeft.median.toFixed(4)),
+    // Schema 14, captain decision 208b: the median does not travel alone, on this surface either.
+    // Stage 0's controls run over the committed tape, where the union rule refuses nothing and the
+    // tape carries no drops — so this reads a degenerate `[median, median]` today. That is the
+    // honest reading rather than a vacuous field: it is what says the control's figures are whole,
+    // and a tape or a rule that stopped making them whole would show here rather than nowhere.
+    roomLeftBound: {
+      lo: Number(e.roomLeftBound.lo.toFixed(4)),
+      hi: Number(e.roomLeftBound.hi.toFixed(4)),
+      overstatementMax: Number(e.roomLeftBound.overstatementMax.toFixed(4)),
+      launchesMissing: e.roomLeftBound.launchesMissing,
+      launchesRefusedMeasured: e.roomLeftBound.launchesRefusedMeasured,
+    },
     fieldClosedRoundTrips: e.fieldClosedRoundTrips,
     fieldHitRateGrossOfFees: Number(e.fieldHitRateGrossOfFees.rate.toFixed(4)),
     fieldRealisedMedianSolGrossOfFees: Number(e.fieldRealisedSolGrossOfFees.median.toFixed(4)),

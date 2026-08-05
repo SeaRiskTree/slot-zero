@@ -718,6 +718,214 @@ export function roomBarRobustness(roomLeft, missing, minRoomLeft) {
 }
 
 /**
+ * @typedef {object} RoomMedianBound
+ * @property {number} median      The REPORTED median, over the scored launches only — the same
+ *   number as {@link EntryScore.roomLeft}`.median`, carried here so the figure and its bound cannot
+ *   be quoted apart. `NaN` when nothing was scored.
+ * @property {number} lo          Lowest median the COMPLETE sample could have had.
+ * @property {number} hi          Highest median the complete sample could have had.
+ * @property {number} overstatementMax  `median - lo`. How far the reported figure may sit ABOVE the
+ *   complete sample's. Non-negative by construction; `0` on a complete sample.
+ * @property {number} understatementMax `max(0, hi - median)`. The same, in the other direction.
+ * @property {boolean} provablyOverstated Whether `hi < median`, i.e. whether completing the sample
+ *   must move the median DOWN whatever the missing launches turn out to be. `false` on an empty or
+ *   complete sample, and `false` whenever the interval merely straddles the reported figure.
+ * @property {number} launchesScored          Launches the median is over.
+ * @property {number} launchesMissing         Launches planned that produced no room figure.
+ * @property {number} launchesRefusedMeasured Of those, the ones {@link roomIsProven} REFUSED —
+ *   walked, measured, and not scored. Their own room readings are the evidence `hi` uses.
+ * @property {number} launchesUnmeasured      The rest of the hole: dropped mid-walk or never
+ *   started. Nothing at all is known about their room.
+ * @property {Distribution} refusedRoomLeft   What the REFUSED launches' create slots actually
+ *   measured, over `launchesRefusedMeasured` observations. Published so a reader can see WHY the
+ *   bound lands where it does, and so a saved record can be re-derived rather than trusted. **Not
+ *   scored, not gated on, and not a room finding about the deployer** — see the direction argument
+ *   in {@link roomMedianBound}.
+ * @property {string} caveat      {@link describeRoomMedianBound} of this bound, so the sentence
+ *   travels with the numbers into every surface.
+ */
+
+/**
+ * **THE REFUSED WINDOWS' EFFECT ON THE REPORTED MEDIAN, AS AN EXPLICIT BOUND.**
+ * Captain decision 208b (with 208d folded into it as the measurement step).
+ *
+ * ## The defect it exists to state
+ *
+ * `scoreEntry` reports a median over the launches it SCORED, and the launches it did not score did
+ * not go missing at random. {@link roomIsProven} refuses a create slot the co-ordination rule marked
+ * nothing in, the request cap drops the busiest windows, and the stage ceiling leaves the oldest of
+ * a plan unattempted. A median over what survives is a real number about a sample that was selected,
+ * and nothing beside it used to say by how much that selection could have moved it. On the
+ * 2026-08-04 full-day run **18 of the 22 cleanly-walked windows were refused**, and the census
+ * separately reports **0 of 13 stranger candidates proven on all eight** — so on the stranger
+ * population this is the ordinary case, not an edge one.
+ *
+ * **This is a REPORTING function and it reaches no gate.** It does not change what `roomIsProven`
+ * refuses, it does not move a sample-size floor, and no verdict reads it. Captain decision 203
+ * declined both of those (203c and 203d) and 208b was chosen precisely because it does neither: the
+ * refusals stay, and what changes is that the figure states what they cost it.
+ *
+ * ## The two kinds of hole, and what may be assumed about each
+ *
+ * - **A REFUSED launch was walked and measured.** Its `roomLeft` exists; it is simply not scored.
+ *   And that measured value is a **strict upper bound on its true room**, structurally: the
+ *   co-ordination rule's under-recovery moves operation stake into `independentSol`, which raises
+ *   `roomLeft` (`measure.mjs` → {@link measureCreateSlot} owns the direction). The one error that
+ *   runs the other way — half (a) marking a genuine outsider that a third-party bundler put in a
+ *   shared transaction — **cannot apply to a refused launch by construction**, because a refused
+ *   launch is one where neither half marked anything at all. So a refused launch's true room lies in
+ *   `[ROOM_LEFT_RANGE.min, its own measured roomLeft]`.
+ * - **A DROPPED or never-started launch was never walked.** Nothing is known about it beyond the
+ *   algebraic support, so its true room lies in `[ROOM_LEFT_RANGE.min, ROOM_LEFT_RANGE.max]`.
+ *
+ * The median is monotone non-decreasing in every observation, so substituting each unknown by its
+ * own lower bound gives **exactly** the lowest median the complete sample could have had, and by its
+ * own upper bound **exactly** the highest. No search, no distributional assumption, no pinned
+ * margin, and therefore no new value in `thresholds.json` — the same construction
+ * {@link roomBarRobustness} uses, with the refused half's own measurement supplied in place of the
+ * algebraic ceiling.
+ *
+ * ## Why the two functions are separate, and why THIS one must not be given to the guard
+ *
+ * `roomBarRobustness` is a REFUSAL and this is a REPORT. This bound is narrower — `lo` is identical
+ * and `hi` is `<=` the guard's, since a measured value cannot exceed `ROOM_LEFT_RANGE.max` — so
+ * feeding it to the near-bar guard would make the guard refuse LESS, which is loosening a guard by
+ * the back door. The guard keeps the assumption-free interval on purpose. Nothing here is a
+ * threshold input.
+ *
+ * ## What it means, stated so a reader can use it
+ *
+ * `[lo, hi]` is where the median WOULD lie if every planned launch had produced a room figure. The
+ * reported median can sit outside it, and when `hi < median` that is the finding rather than a
+ * bug: the refused windows' own measurements put the complete-sample median strictly below what is
+ * being reported, so the reported figure provably overstates room. `overstatementMax` is the worst
+ * case of that overstatement and it is what a reader should carry beside the median.
+ *
+ * ## Measured, on committed data, both ways — because THE DIRECTION IS NOT UNIVERSAL
+ *
+ * The premise this lane was given is that refusal moves the median UP, and on the stranger
+ * population that is what was measured. It is **not** what our own tape shows, and both readings are
+ * recorded here because a one-directional correction would have been wrong.
+ *
+ * - **The stranger case.** `runs/2026-08-04.json`'s candidate scored 4 of 10 windows at a median
+ *   `0.288940`; `census/2026-08-04-proof-coverage-probe.md` walked its 6 refused windows one by one
+ *   and measured their room at `0.0000 ×3` and `0.0008 ×3`. This bound over that pair reads
+ *   **lo `0.000000`, hi `0.000800`, overstatementMax `0.288940`, provablyOverstated `true`** — the
+ *   reported median is roughly 360× the completed one. That is the harm 208b names, at full size.
+ * - **Our own tape, and it runs the OTHER way.** The committed 235 launches under the SUPERSEDED
+ *   shared-transaction-only half (the only rule that refuses anything here — the union refuses 0 of
+ *   235) give 63 rolling ten-launch windows with a hole. Completing them at their measured values
+ *   **raises** the median on 52 and lowers it on 8, median displacement `-0.0308`, range `-0.3973`
+ *   to `+0.0887`. The reason is instructive: there the rule found nothing because the operation
+ *   co-ordinated by adjacency rather than by a shared transaction, so the refused windows carry the
+ *   operation's own stake booked as outsider capital and read HIGH. Refusal is not a synonym for
+ *   near-zero room; it is a synonym for no evidence, and what that costs depends on why.
+ * - **And the bound CONTAINS the better reading on 63 of 63 of those windows** — the union's own
+ *   median over the same ten launches falls inside `[lo, hi]` every time. That is the validation
+ *   that matters, and `test/deployer-screen.test.ts` re-derives all of it from the tape on every run
+ *   rather than pinning these numbers as prose.
+ *
+ * @param {readonly number[]} scoredRoomLeft   Room figures for the launches that WERE scored.
+ * @param {readonly number[]} refusedRoomLeft  Room figures for the launches {@link roomIsProven}
+ *   refused — measured, and deliberately not scored.
+ * @param {number} unmeasuredMissing           Planned launches that produced no room figure at all:
+ *   dropped mid-walk or never started. Never negative.
+ * @returns {RoomMedianBound}
+ */
+export function roomMedianBound(scoredRoomLeft, refusedRoomLeft, unmeasuredMissing) {
+  const refused = refusedRoomLeft.filter((v) => Number.isFinite(v));
+  // A refused launch whose own reading is unusable is moved into the BLIND half rather than dropped.
+  // Dropping it would shrink the hole, which is the one direction a bound on incompleteness must
+  // never move in — it would make the figure look more complete than it is.
+  const blind =
+    Math.max(0, Math.trunc(unmeasuredMissing)) + (refusedRoomLeft.length - refused.length);
+  const missing = refused.length + blind;
+
+  const reported = median(scoredRoomLeft);
+  // Every unknown at the bottom of what it could be, and then at the top of what it could be. A
+  // refused launch's own measurement is its top; a launch nobody walked has only the support.
+  const lo = median([
+    ...scoredRoomLeft,
+    ...Array.from({ length: missing }, () => ROOM_LEFT_RANGE.min),
+  ]);
+  const hi = median([
+    ...scoredRoomLeft,
+    ...refused,
+    ...Array.from({ length: blind }, () => ROOM_LEFT_RANGE.max),
+  ]);
+
+  const bound = {
+    median: reported,
+    lo,
+    hi,
+    // `NaN` propagates rather than collapsing to 0: an empty sample has no overstatement to report,
+    // and reporting one would be the "no observations reads as none" failure `hitRate` refuses.
+    overstatementMax: reported - lo,
+    understatementMax: Number.isFinite(hi - reported) ? Math.max(0, hi - reported) : Number.NaN,
+    // Two positive comparisons so a NaN anywhere leaves this `false` — an unknown median is never
+    // reported as provably anything.
+    provablyOverstated: hi < reported,
+    launchesScored: scoredRoomLeft.length,
+    launchesMissing: missing,
+    launchesRefusedMeasured: refused.length,
+    launchesUnmeasured: blind,
+    refusedRoomLeft: distribution(refused),
+    caveat: '',
+  };
+  bound.caveat = describeRoomMedianBound(bound);
+  return bound;
+}
+
+/**
+ * The sentence that must travel with the median, wherever the median goes.
+ *
+ * Same discipline as {@link LANDING_TIP_CAVEAT} and {@link COVERAGE_ATTRIBUTION_CAVEAT}, and the
+ * reason 208b was chosen over 208a: a bound that lives in surrounding prose is a bound the figure
+ * can be quoted without. This string reaches `caveats`, every rationale that states a median, the
+ * rendered block and the run record.
+ *
+ * A COMPLETE sample gets a sentence too, rather than silence. "No window was refused" is a fact a
+ * reader needs in order to read the median at face value, and an absent caveat cannot say it.
+ *
+ * @param {RoomMedianBound} b
+ * @returns {string}
+ */
+export function describeRoomMedianBound(b) {
+  /** @param {number} n @returns {string} */
+  const at = (n) => (Number.isFinite(n) ? n.toFixed(4) : 'n/a');
+  if (b.launchesScored === 0) {
+    return (
+      'ROOM MEDIAN: NONE — no launch was scored, so there is no median and no bound on one. ' +
+      `${b.launchesMissing} planned launch(es) produced no room figure.`
+    );
+  }
+  if (b.launchesMissing === 0) {
+    return (
+      `ROOM MEDIAN ${at(b.median)} IS COMPLETE: every planned launch produced a room figure, none ` +
+      `was refused as unproven and none was dropped, so the bound on it is [${at(b.lo)}, ` +
+      `${at(b.hi)}] — the figure itself.`
+    );
+  }
+  return (
+    `ROOM MEDIAN ${at(b.median)} IS INCOMPLETE: it is taken over ${b.launchesScored} launch(es) ` +
+    `while ${b.launchesMissing} more produced no room figure ` +
+    `(${b.launchesRefusedMeasured} REFUSED as unproven and measured, ${b.launchesUnmeasured} never ` +
+    `measured at all), and they did not go missing at random. Completing the sample puts the ` +
+    `median in [${at(b.lo)}, ${at(b.hi)}], so this figure may overstate room by up to ` +
+    `${at(b.overstatementMax)}` +
+    (b.provablyOverstated
+      ? ' — and it PROVABLY overstates it, because the refused windows\' own measured room puts the ' +
+        'completed median strictly below the reported one.'
+      : '.') +
+    ' The bound is exact rather than tuned: a refused launch\'s measured room is a strict UPPER ' +
+    'bound on its true room (the co-ordination rule can only under-mark on a launch it marked ' +
+    'nothing in), an unmeasured one lies anywhere in room\'s algebraic support, and the median is ' +
+    'monotone in every observation. It is REPORTED and never gated on: no refusal is relaxed by it ' +
+    '(captain decision 208b).'
+  );
+}
+
+/**
  * @typedef {object} EntryThresholds
  * @property {number} minRoomLeft            Median room a launch set must leave.
  * @property {number} minLaunchesSampled     Launches below which no distribution is reported.
@@ -778,6 +986,12 @@ export function roomBarRobustness(roomLeft, missing, minRoomLeft) {
  *   outsiders.
  * @property {number} launchesWithNoOutsider Launches whose create slot the operation took entirely.
  * @property {Distribution} roomLeft         Across scored launches.
+ * @property {RoomMedianBound} roomLeftBound **How far the launches that produced NO room figure
+ *   could move {@link EntryScore.roomLeft}`.median`** — captain decision 208b. Always present, on
+ *   every verdict, including the ones that never reach a bar: the point of the decision is that the
+ *   FIGURE states its own incompleteness, so a surface cannot print the median without it.
+ *   {@link roomMedianBound} owns the construction and the measured evidence; it is REPORTING and no
+ *   gate reads it.
  * @property {HitRate} roomHitRate           Launches whose room clears `minRoomLeft`.
  * @property {Distribution} operationShare
  * @property {Distribution} devSol
@@ -928,7 +1142,8 @@ export function scoreEntry(launches, t, context = {}) {
   // co-ordination rule marked nothing in contributes no room figure, no field entrant and no round
   // trip — see the module header and `measure.mjs` → `roomIsProven`.
   const scored = launches.filter((l) => roomIsProven(l.createSlot));
-  const roomUnproven = launches.length - scored.length;
+  const refused = launches.filter((l) => !roomIsProven(l.createSlot));
+  const roomUnproven = refused.length;
 
   const room = scored.map((l) => l.createSlot.roomLeft);
   const field = scored.flatMap((l) => l.field);
@@ -941,6 +1156,30 @@ export function scoreEntry(launches, t, context = {}) {
 
   const roomLeft = distribution(room);
   const fieldHitRateGrossOfFees = hitRate(closed, (e) => e.realisedSolGrossOfFees > 0);
+
+  const dropped = context.launchesDropped ?? 0;
+  const clockDrops = context.mintTimeDisagreements ?? 0;
+  // THE SIZE OF THE HOLE, measured against what the walk PLANNED rather than against what it brought
+  // back, so every way a launch can fail to produce a room figure is counted once: dropped mid-walk,
+  // refused as unproven, or never started because the stage ceiling ran out before its turn. The
+  // `Math.max` is belt and braces — `launchesPlanned` is always at least `launches.length + dropped`
+  // in a real run — and it means a caller that supplies neither, or a stale one that supplies too
+  // small a plan, can never make the hole look smaller than the two causes `scoreEntry` can see for
+  // itself. Computed HERE, before anything returns, because both consumers need it on every path:
+  // the near-bar guard below (captain decision 198b) and the reported bound (208b), which must reach
+  // even the verdicts that return at the sample-size gate.
+  const missingLaunches = Math.max(
+    roomUnproven + dropped,
+    (context.launchesPlanned ?? 0) - scored.length,
+  );
+  // Captain decision 208b. REPORTING, not a gate — see {@link roomMedianBound}. The refused half of
+  // the hole hands over its OWN measured room, which is what makes the bound informative rather than
+  // the algebraic [0, 1] the guard is obliged to use.
+  const roomLeftBound = roomMedianBound(
+    room,
+    refused.map((l) => l.createSlot.roomLeft),
+    missingLaunches - roomUnproven,
+  );
 
   // The cost leg's own populations. `priced` is every create-slot entry the chain could price;
   // `closedPriced` is the subset whose WHOLE window priced, which is the only population that can
@@ -992,6 +1231,7 @@ export function scoreEntry(launches, t, context = {}) {
     adjacencyMarks: distribution(launches.map((l) => l.createSlot.adjacencyMarks)),
     launchesWithNoOutsider: scored.filter((l) => l.field.length === 0).length,
     roomLeft,
+    roomLeftBound,
     roomHitRate: hitRate(room, (v) => v >= t.minRoomLeft),
     operationShare: distribution(scored.map((l) => l.createSlot.operationShare)),
     devSol: distribution(scored.map((l) => l.createSlot.devSol)),
@@ -1020,8 +1260,11 @@ export function scoreEntry(launches, t, context = {}) {
     caveats: [],
   };
 
-  const dropped = context.launchesDropped ?? 0;
-  const clockDrops = context.mintTimeDisagreements ?? 0;
+  // FIRST, and unconditionally, because it is a statement about the headline figure itself rather
+  // than about a hazard in one of the legs. Captain decision 208b: the median must state its own
+  // incompleteness at the point of use, so a complete sample says so here too rather than leaving
+  // silence to be read as completeness.
+  score.caveats.push(roomLeftBound.caveat);
   if (roomUnproven > 0) {
     score.caveats.push(
       `${roomUnproven} of ${launches.length} measured launch(es) had NO co-ordination evidence in ` +
@@ -1126,18 +1369,14 @@ export function scoreEntry(launches, t, context = {}) {
   // candidate refused here must not go on to spend Solana RPC requests pricing a field whose room
   // reading was never decided. `scoreCandidateEntry` starts the cost leg only on
   // `entry-cost-unmeasured`, so returning an unmeasured verdict from this point is also what makes
-  // the guard free.
+  // the guard free. `missingLaunches` is computed at the top of this function; the reasoning for how
+  // the hole is counted is there.
   //
-  // The hole is measured against what the walk PLANNED, not against what it brought back, so every
-  // way a launch can go missing is counted once: dropped mid-walk, refused as unproven, or never
-  // started. The `Math.max` is belt and braces — `launchesPlanned` is always at least
-  // `launches.length + dropped` in a real run — and it means a caller that supplies neither, or a
-  // stale one that supplies too small a plan, can never make the hole look smaller than the two
-  // causes `scoreEntry` can see for itself.
-  const missingLaunches = Math.max(
-    roomUnproven + dropped,
-    (context.launchesPlanned ?? 0) - scored.length,
-  );
+  // **IT KEEPS THE ASSUMPTION-FREE INTERVAL AND MUST NOT BE HANDED `roomLeftBound`'s.** The reported
+  // bound is narrower, because a refused launch's own measurement replaces the algebraic ceiling —
+  // so giving it to the guard would make the guard refuse LESS. That is loosening a guard by the
+  // back door, which captain decision 208b explicitly does not do. A REFUSAL and a REPORT read the
+  // same hole and are entitled to different assumptions about it.
   const robustness = roomBarRobustness(room, missingLaunches, t.minRoomLeft);
   if (!robustness.decided) {
     attributeUnmeasured(score, ['room-verdict-not-robust-to-missing-launches']);
@@ -1150,9 +1389,14 @@ export function scoreEntry(launches, t, context = {}) {
       `[${fmt(robustness.lo)}, ${fmt(robustness.hi)}] — an interval that CONTAINS the ` +
       `${t.minRoomLeft} bar, so this sample does not decide which side of it this deployer is on. ` +
       `The bounds are exact: room is a share and lies in [${ROOM_LEFT_RANGE.min}, ` +
-      `${ROOM_LEFT_RANGE.max}] by construction. WHICH WAY the missing launches lean is UNMEASURED ` +
+      `${ROOM_LEFT_RANGE.max}] by construction, which is the ONLY thing this REFUSAL is entitled to ` +
+      `assume about a launch it never walked. (The ROOM MEDIAN BOUND stated after this sentence is ` +
+      `a narrower reading of the same hole, fed by the refused launches' own measurements; it is ` +
+      `REPORTED and no gate — this one included — is allowed to read it.) ` +
+      `WHICH WAY the missing launches lean is UNMEASURED ` +
       `— which is why this refuses in both directions rather than correcting in one. Read it as no ` +
-      `answer about this wallet, not as a room finding (captain decision 198b).`;
+      `answer about this wallet, not as a room finding (captain decision 198b).` +
+      ` ${roomLeftBound.caveat}`;
     return score;
   }
 
@@ -1163,7 +1407,8 @@ export function scoreEntry(launches, t, context = {}) {
       `${t.minRoomLeft} bar (p25 ${fmt(roomLeft.p25)}, p75 ${fmt(roomLeft.p75)}; ` +
       `${score.roomHitRate.hits}/${score.roomHitRate.n} launches clear it). The deployer and its own ` +
       `wallets take the bottom of their own curve, so there is nothing to enter. Read the captain's ` +
-      `way: this launch bot is well configured, and that is bad news for us.`;
+      `way: this launch bot is well configured, and that is bad news for us.` +
+      ` ${roomLeftBound.caveat}`;
     return score;
   }
 
@@ -1178,7 +1423,8 @@ export function scoreEntry(launches, t, context = {}) {
       `the opening window leaves room (median ${fmt(roomLeft.median)}), but only ${closed.length} ` +
       `closed round trip(s) across ${scored.length} scored launches — below the ${t.minFieldRoundTrips} a ` +
       `hit rate needs. The field is UNMEASURED, so whether anyone actually takes that room is ` +
-      `unknown and must not be assumed from the room figure alone.`;
+      `unknown and must not be assumed from the room figure alone.` +
+      ` ${roomLeftBound.caveat}`;
     return score;
   }
 
@@ -1189,7 +1435,8 @@ export function scoreEntry(launches, t, context = {}) {
       `BEFORE costs: ${score.fieldHitRateGrossOfFees.hits}/${score.fieldHitRateGrossOfFees.n} closed ` +
       `round trips positive (${fmt(fieldHitRateGrossOfFees.rate)}), median ` +
       `${fmt(score.fieldRealisedSolGrossOfFees.median)} SOL gross. Fees only make that worse, so this ` +
-      `is conclusive: room exists and nobody is converting it. No RPC request was spent pricing it.`;
+      `is conclusive: room exists and nobody is converting it. No RPC request was spent pricing it.` +
+      ` ${roomLeftBound.caveat}`;
     return score;
   }
 
@@ -1210,7 +1457,8 @@ export function scoreEntry(launches, t, context = {}) {
       `create-slot entries could be priced on-chain (${fmt(entryCostPriced.rate)}, below the ` +
       `${t.minPricedFraction} this reading needs). Under the captain's ruling of 2026-08-02 the fee ` +
       `is part of the entry window, so a room figure with the price of the seat unmeasured beside ` +
-      `it is NOT a finding that the window is enterable — it is the absence of one.`;
+      `it is NOT a finding that the window is enterable — it is the absence of one.` +
+      ` ${roomLeftBound.caveat}`;
     return score;
   }
 
@@ -1226,7 +1474,8 @@ export function scoreEntry(launches, t, context = {}) {
       `${fmt(entryCostPerSolStakedByLaunch.p75)}, p90 ${fmt(entryCostPerSolStakedByLaunch.p90)}; ` +
       `pooled over the ${entryCostPerSolStaked.n} individual entries it is ` +
       `${fmt(entryCostPerSolStaked.median)}), at or above the ${t.maxEntryCostPerSolStaked} bar — ` +
-      `the price of the seat consumes the opening. ${LANDING_TIP_CAVEAT}`;
+      `the price of the seat consumes the opening. ${LANDING_TIP_CAVEAT}` +
+      ` ${roomLeftBound.caveat}`;
     return score;
   }
 
@@ -1240,7 +1489,8 @@ export function scoreEntry(launches, t, context = {}) {
       `${fmt(entryCostPerSolStakedByLaunch.median)} SOL per SOL staked per launch, but only ${closedPriced.length} ` +
       `closed round trip(s) could be priced across their whole window — below the ` +
       `${t.minFieldRoundTrips} an after-cost hit rate needs. What the field actually CLEARED after ` +
-      `costs is therefore unmeasured, and an unmeasured after-cost result is not a pass.`;
+      `costs is therefore unmeasured, and an unmeasured after-cost result is not a pass.` +
+      ` ${roomLeftBound.caveat}`;
     return score;
   }
 
@@ -1256,7 +1506,8 @@ export function scoreEntry(launches, t, context = {}) {
       `${fieldHitRateNetOfMeasuredFees.hits}/${fieldHitRateNetOfMeasuredFees.n} priced round trips ` +
       `positive (${fmt(fieldHitRateNetOfMeasuredFees.rate)}), median ` +
       `${fmt(fieldRealisedSolNetOfMeasuredFees.median)} SOL. This is the leg the gross reading ` +
-      `cannot see. ${LANDING_TIP_CAVEAT}`;
+      `cannot see. ${LANDING_TIP_CAVEAT}` +
+      ` ${roomLeftBound.caveat}`;
     return score;
   }
 
@@ -1272,7 +1523,8 @@ export function scoreEntry(launches, t, context = {}) {
     `${fmt(fieldRealisedSolNetOfMeasuredFees.median)} SOL NET OF MEASURED FEES against ` +
     `${fmt(score.fieldRealisedSolGrossOfFees.median)} gross. ` +
     `NOT a recommendation and NOT a profit claim: ${LANDING_TIP_CAVEAT} Exit feasibility is ` +
-    `unmeasured entirely. This means the exit question is worth asking, and nothing more.`;
+    `unmeasured entirely. This means the exit question is worth asking, and nothing more.` +
+    ` ${roomLeftBound.caveat}`;
   return score;
 }
 

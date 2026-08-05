@@ -226,6 +226,31 @@ function distLine(label, d, dp = 3) {
   );
 }
 
+/**
+ * The room median's own incompleteness, in one line, for a surface that prints the median.
+ *
+ * Captain decision 208b's requirement is that the FIGURE states it, so this is deliberately terse
+ * enough to sit on the same screen as the number rather than being a paragraph a reader skips. The
+ * full sentence — the construction, the assumptions and the "reported, never gated on" rule — is
+ * `entry.mjs` → `describeRoomMedianBound`, and it reaches this block anyway through `e.caveats`.
+ *
+ * @param {import('./entry.mjs').RoomMedianBound} b
+ * @returns {string}
+ */
+function roomBoundLine(b) {
+  if (b.launchesScored === 0) return 'no launch scored, so there is no median and no bound on one';
+  if (b.launchesMissing === 0) {
+    return `bound [${num(b.lo, 4)}, ${num(b.hi, 4)}] — COMPLETE: no window refused, none dropped`;
+  }
+  return (
+    `bound [${num(b.lo, 4)}, ${num(b.hi, 4)}] over the ${b.launchesMissing} window(s) with NO room ` +
+    `figure (${b.launchesRefusedMeasured} refused, measuring a median ` +
+    `${num(b.refusedRoomLeft.median, 4)}; ${b.launchesUnmeasured} never measured) — this median may ` +
+    `OVERSTATE room by up to ${num(b.overstatementMax, 4)}` +
+    (b.provablyOverstated ? ', and provably does' : '')
+  );
+}
+
 /** @returns {string} */
 function distHeader() {
   return (
@@ -267,6 +292,13 @@ export function renderEntry(e, coverage) {
   L.push(`      ENTRY ROOM — how much of its own opening window the deployer leaves`);
   L.push(distHeader());
   L.push(distLine('room left', e.roomLeft));
+  // IMMEDIATELY UNDER THE FIGURE IT BOUNDS, captain decision 208b — not further down the block and
+  // not in the caveat list alone. The median above is over the launches that were SCORED, and the
+  // refused ones are not a random sample of the rest; this is how far completing them could move it.
+  // Reported, never gated on.
+  for (const [i, line] of wrap(roomBoundLine(e.roomLeftBound), 100).entries()) {
+    L.push(`      ${i === 0 ? '^' : ' '} ${line}`);
+  }
   L.push(distLine('operation share', e.operationShare));
   L.push(distLine('dev buy (SOL)', e.devSol));
   L.push(distLine('its own cohort (SOL)', e.coordinatedSol));
@@ -633,6 +665,11 @@ export function renderStage0(r, vendorReadings) {
       `  ${pad(label, 52)} ${pad(e.verdict.toUpperCase(), 24)} ` +
         `room ${num(e.roomLeft.median, 3)} over ${e.launchesSampled} launches`,
     );
+    // The bound travels with THIS median too (captain decision 208b). On the committed tape it reads
+    // COMPLETE — our subject is proven 235/235 under the union rule and its tape carries no walk
+    // drops — and printing that is the point: a reader sees that the figure is whole rather than
+    // inferring it from silence, and a future tape that stops being whole says so here.
+    L.push(`      ^ ${roomBoundLine(e.roomLeftBound)}`);
   }
   L.push('');
   L.push('  And here is the trap, on the one wallet where we hold the answer:');

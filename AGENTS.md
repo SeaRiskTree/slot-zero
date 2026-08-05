@@ -731,6 +731,28 @@ dev currently?"*, and the shape of the answer is the point:
   the argument and its figures**; `tools/deployer-screen/README.md` → "A sample two launches short
   does not get to decide a bar it cannot reach" carries the consequences. Cite them rather than
   restating the figures.
+- **THE ROOM MEDIAN NOW STATES ITS OWN INCOMPLETENESS, AND THE BOUND IS A REPORT THAT NO GATE READS**
+  (captain decision 208b, schema 14; 208d folded in as its measurement step). The median is over the
+  launches that were SCORED and the rest did not go missing at random, so `EntryScore.roomLeftBound`
+  sits beside `roomLeft` on every score: the interval the median would lie in if the hole were
+  filled, `overstatementMax` as the headline, `provablyOverstated` when completing it MUST lower the
+  figure, the hole split into refused-and-measured versus never-measured, and the refused windows'
+  own `refusedRoomLeft`. It reaches the run record, the rendered block on the line under `room left`,
+  every rationale that states a median, and `caveats` — 208b was chosen over 208a precisely so the
+  figure cannot be quoted without it. **`roomIsProven` is UNTOUCHED and no floor moved**: 203c and
+  203d stay declined, and a sibling lane established the missing evidence does not exist to be got,
+  so these refusals are correct answers being described rather than a gap being closed. **The one
+  trap: the bound is NARROWER than `roomBarRobustness`'s and must never be handed to it** — a refused
+  launch's own measurement replaces the algebraic ceiling, so giving it to the guard would make the
+  guard refuse less. **The DIRECTION is not universal and a one-way correction would be wrong**: on
+  the 2026-08-04 stranger it runs UP and large (median 0.288940 reported against 0.0008 completed),
+  on our own tape under the superseded shared-transaction half it runs the other way on 52 of 63
+  windows, because there the refused windows carry the operation's own adjacency-co-ordinated stake
+  and read HIGH. **Refusal means no evidence, not near-zero room.** `entry.mjs` → `roomMedianBound`
+  owns the construction, the argument and the figures — including the 63-of-63 validation that the
+  bound contains the union's better reading — and
+  `tools/deployer-screen/README.md` → "The room median states its own incompleteness" carries the
+  consequences. Cite them rather than restating the numbers.
 - **Entry cost is recovered from the chain, and the signatures are free.** Every `Fill` carries its
   transaction, so `measure.mjs` → `walletTransactions` and `entry.mjs` → `entryCostTargets` name the
   transactions to price with no discovery step; `pumpfun.mjs` → `parseTransactionCosts` reads
@@ -864,10 +886,12 @@ dev currently?"*, and the shape of the answer is the point:
   nothing against a ~85 SOL dev buy, so `coordinatedWallets = 0` is TRUE there rather than blind.
   One deployer's own create transaction is in **no Jito bundle on 9 of 9** windows. **A funding
   graph** is out of budget by two orders of magnitude and **a recurrence rule** is already refused
-  (`roomIsProven` names it). What is left is the CONSEQUENCE of refusing them — the refusal drops
-  near-zero room readings and moves the median UP toward enterable — and that question belongs to
-  `slot-zero-guard-unproven-upper-bound`, because every answer to it has the shape of the 203d the
-  captain declined.
+  (`roomIsProven` names it). The CONSEQUENCE of refusing them is now measured and REPORTED beside
+  every room median by decision 208b (bullet above; `entry.mjs` → `roomMedianBound` owns it) — and
+  read that bullet before quoting the census record's "the refusal moves the room reading up, toward
+  enterable": it holds on these stranger windows and **not universally**. What still belongs to
+  `slot-zero-guard-unproven-upper-bound` is only turning a refusal into a verdict, because every
+  answer to that has the shape of the 203d the captain declined.
 - **Stage 0's era-2 constant is `0.771`, not the published `0.768`** (decision 135c). `0.768` is the
   rank-43/44 order statistic of an 89-launch series whose median is `0.7708`; three recipes agree,
   including `analysis/window-population/measure.mjs`. **Never widen that tolerance instead** — it was

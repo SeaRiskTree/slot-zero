@@ -41,8 +41,15 @@ No agent, no build step, no dependencies. Node 20+.
 # Local validation only. No network, no key, no quota. Always safe to run.
 node tools/deployer-screen/screen.mjs --stage0
 
-# Show exactly what a real run would fetch, and fetch nothing.
+# Show exactly what a real run would fetch, and fetch nothing. FREE, and it ALWAYS prints the plan:
+# a figure that could only be had by BUILDING a fill source whose construction is billed is printed
+# as UNAVAILABLE with the reason, never thrown and never replaced by another source's number.
 node tools/deployer-screen/screen.mjs --dry-run
+
+# The same plan, authorised to BUILD a billed fill source so it can state those figures. It prints
+# the bounded spend before spending and the actual after. Today's source is free to build, so this
+# buys nothing and says so; it exists for the Gate 3 cutover. See "The dry run is SPLIT" below.
+node tools/deployer-screen/screen.mjs --dry-run --dry-run-spend
 
 # A real run. Needs a key (see below). Stage 2 is ON by default. Leave --candidates unset: the
 # default grades everything enumeration surfaces, up to the budget. Passing a number below the
@@ -987,7 +994,8 @@ and a `CostSource` now:
 | `swapapi-fills.mjs` | pump.fun's keyless trade endpoint wearing the contract. **This is what every run reads**, unchanged in every bound, cursor, tripwire and drop rule. |
 | `rpc-costs.mjs` | `api.mainnet-beta`/Helius wearing the cost contract. The whole-block probe and its per-candidate latch moved in here, because which route is worth a request is a property of that endpoint. |
 | `dune-fills.mjs` | the Dune source. Committed, and **nothing routes through it in a run** — see below. |
-| `screen.mjs` | `ENTRY_FILL_SOURCE_KIND` and `selectEntryFillSource` — the ONE selection site, which 156a already names as the one place both sides meet. |
+| `plan-source.mjs` | the PLAN path's half of the contract (captain decision 286c) — what building a source costs, declared before anything is built, and how a dry run asks for a figure it may not pay for. Reachable from no scoring module. See "The dry run is SPLIT so it can be both free and honest" below. |
+| `screen.mjs` | `ENTRY_FILL_SOURCE_KIND`, `resolveEntryFillSource` and `selectEntryFillSource` — the ONE selection site, which 156a already names as the one place both sides meet. |
 
 `stage2.mjs`, `entry.mjs`, `measure.mjs`, `stage0.mjs` and `rank.mjs` import **no source
 implementation at all**, directly or transitively, and none of them may read a source kind.
@@ -1055,6 +1063,47 @@ name nor a quantity in the other unit would still pass, and the test names that 
 
 `grade.mjs` builds the same two sources the screen does, so there is still exactly one Stage 2 and
 the grader cannot drift from the screen it grades.
+
+### The dry run is SPLIT so it can be both free and honest
+
+Captain decision 286c, 2026-08-05. Captain decisions 281a/284a/285a made the plan report the
+eligibility bound the **selected** fill source actually applies, rather than re-deriving it locally
+and claiming the two were one number. That is what makes the plan honest, and its cost arrives with
+it: asking a source anything means the source must EXIST, and `dune-fills.mjs` cannot be built
+without the trade tables' own coverage assessment — captain decision 257a's observed watermark —
+whose result read is **billed**. So from the Gate 3 cutover a Dune dry run could only
+
+- **spend**, and `--dry-run` stops costing nothing, which is the one thing an operator runs it to
+  find out; or
+- **throw**, and `--dry-run` stops always showing the plan, withholding a page of free and correct
+  figures because one line needs a purchase.
+
+The captain refused both. `plan-source.mjs` is the split:
+
+| what | where |
+|---|---|
+| SELECTION, with no network call | `screen.mjs` → `resolveEntryFillSource`. It resolves a registration — data — and refuses an unsupplied kind exactly as `selectEntryFillSource` always did. `selectEntryFillSource` is now that plus the `build()` the RUN path always wants. |
+| CONSTRUCTION, only where it is free or authorised | `plan-source.mjs` → `planEligibility`. The default plan never calls a billed constructor, and a test drives it with a stub whose constructor fails the test if it is ever reached. |
+| the figure it could not have | printed as **UNAVAILABLE**, naming the source and the reason, by `plan-source.mjs` → `eligibilityUnavailableNote` — one string, used by both plan surfaces, so they cannot drift and so a change degrading it into a blank or a zero has to delete the function. |
+| the spending plan | `--dry-run-spend`, with `--dry-run` only. It states the **bounded** spend before spending and the **actual** after; the order is a property of `planEligibility` rather than of the caller's memory, and the actual is reported in a `finally`, because a construction that failed half-way still spent. |
+
+**An undeclared construction is treated as billed, never as free.** A registry entry that says
+nothing about what building it costs is an absence, and reading an absence as a benign value is the
+failure this repo names in three other places (`covered.fromMs` of `0` read as a 56-year window;
+`bonded` absent read as "did not bond"; a wallet with no enumeration row read as zero launches). It
+is never built by a plan, **including under the opt-in** — there is no bound to state first, and a
+spend that cannot be bounded first is not an authorised spend.
+
+**The RUN path did not move.** A real run builds its source and pays whatever that costs: it was
+always going to reach that vendor, and the eligibility answer is an input to a measurement rather
+than a line on a preview. The census (`bundling.mjs`) routes its plan through the same helper and
+declares its source free — it is keyless throughout, captain decision 173a's property of the tree —
+so it ships **no** spending opt-in rather than one that could only ever be inert.
+
+**What the split does NOT claim.** Nothing routes through the Dune fill source until Gate 3, so no
+part of this has been exercised against the real source and it must not be. The default free path is
+proven with a stub constructor; the opt-in path is proven by what it announces, not by letting it
+spend.
 
 ### 1. Entry room
 

@@ -769,6 +769,25 @@ dev currently?"*, and the shape of the answer is the point:
   `tools/deployer-screen/README.md` → "Where the fills come from is INJECTED" owns it, including
   what the change does **not** claim — after the cutover a Dune value *will* reach `entry.roomLeft`;
   what survives is that nothing deciding anything knows which vendor produced its input.
+- **A DRY RUN IS FREE AND ALWAYS PRINTS THE PLAN, AND THOSE TWO STOPPED BEING COMPATIBLE — SO THE
+  CAPTAIN SPLIT IT** (decision 286c). 281a/284a/285a made the plan state the eligibility bound the
+  SELECTED source applies instead of re-deriving it; asking a source anything needs the source to
+  EXIST, and the Dune one cannot be built without a **billed** coverage probe. So a Dune dry run
+  could only SPEND (and stop being a preview) or THROW (and withhold a page of free, correct
+  figures). Neither. `screen.mjs` → `resolveEntryFillSource` now **selects without building** —
+  registry entries are data — and `plan-source.mjs` → `planEligibility` builds only where the
+  registration DECLARES the construction free, or where `--dry-run-spend` (with `--dry-run` only)
+  authorised it, stating the BOUND before and the ACTUAL after in a `finally`. A figure it may not
+  buy prints **UNAVAILABLE with the source and the reason** — `eligibilityUnavailableNote`, one
+  string shared by the screen's plan and the census's, never a blank, a zero or another source's
+  number. **An UNDECLARED construction counts as billed, and is never built by a plan even under the
+  opt-in**: an absence is not evidence of "free", and a spend that cannot be bounded first is not an
+  authorised spend. The RUN path is untouched — it builds and pays, because it was always going to
+  reach that vendor. **Nothing routes through the Dune source until Gate 3, so none of it has been
+  exercised against the real source and it must not be**: the free path is proven with a stub
+  constructor that fails the test if it is called, the opt-in by what it announces.
+  `tools/deployer-screen/README.md` → "The dry run is SPLIT so it can be both free and honest" owns
+  it.
 - **THE 156a BOUNDARY IS GUARDED BY TWO ASSERTIONS NOW, AND THE OLD ONE CANNOT FAIL** (captain
   decision 261a). `test/deployer-screen.test.ts` → "NO Dune value can reach a Stage 2 entry number or
   Stage 3" is a deny-list on the literal filename `./dune.mjs`, and **one hop of indirection defeats

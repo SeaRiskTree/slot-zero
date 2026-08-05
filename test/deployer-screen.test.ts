@@ -120,7 +120,22 @@ import {
 import { COST_SOURCE_KINDS, assertCostWalkAccounted } from '../tools/deployer-screen/cost-source.mjs';
 import { swapApiFillSource } from '../tools/deployer-screen/swapapi-fills.mjs';
 import { rpcCostSource } from '../tools/deployer-screen/rpc-costs.mjs';
-import { ENTRY_FILL_SOURCE_KIND, selectEntryFillSource } from '../tools/deployer-screen/screen.mjs';
+import {
+  ENTRY_FILL_SOURCE_KIND,
+  planEntryEligibility,
+  resolveEntryFillSource,
+  selectEntryFillSource,
+} from '../tools/deployer-screen/screen.mjs';
+import {
+  billedConstruction,
+  eligibilityFloorMs,
+  eligibilityFloorSeconds,
+  eligibilityUnavailableNote,
+  freeConstruction,
+  planEligibility,
+  registrationOf,
+  undeclaredConstruction,
+} from '../tools/deployer-screen/plan-source.mjs';
 import {
   duneFillSource,
   duneRowsToWindow,
@@ -1606,7 +1621,8 @@ describe('the CLI contract', () => {
       stage2: true,
       maxScored: T['stage2_entry'].maxCandidatesScored,
       entryThresholds: T['stage2_entry'],
-      entryMinAgeMs: windowReachMs(T['stage2_entry']),
+      entryEligibility: { known: true, kind: 'swap-api', minAgeMs: windowReachMs(T['stage2_entry']), billed: false } as const,
+      spendAuthorised: false,
       keyDescription: null,
       rpcEndpoint: resolveSolanaRpcEndpoint({}),
       indexedWalk: T['creation_walk_helius'],
@@ -1679,7 +1695,8 @@ describe('the CLI contract', () => {
       stage2: false,
       maxScored: 0,
       entryThresholds: T['stage2_entry'],
-      entryMinAgeMs: windowReachMs(T['stage2_entry']),
+      entryEligibility: { known: true, kind: 'swap-api', minAgeMs: windowReachMs(T['stage2_entry']), billed: false } as const,
+      spendAuthorised: false,
       keyDescription: null,
       rpcEndpoint: resolveSolanaRpcEndpoint({}),
       indexedWalk: T['creation_walk_helius'],
@@ -1711,6 +1728,7 @@ describe('the CLI contract', () => {
       stage2: true,
       maxScored: T['stage2_entry'].maxCandidatesScored,
       entryThresholds: T['stage2_entry'],
+      spendAuthorised: false,
       keyDescription: null,
       rpcEndpoint: resolveSolanaRpcEndpoint({}),
       indexedWalk: T['creation_walk_helius'],
@@ -1721,10 +1739,14 @@ describe('the CLI contract', () => {
       duneRefreshProbe: false,
     };
     const reach = windowReachMs(T['stage2_entry']);
-    expect(renderDryRun({ ...plan, entryMinAgeMs: reach })).toContain(`walked until it is ${reach / 1000}s old`);
+    /** @see PlanEligibility — a known floor carries its source's provenance with it. */
+    const answers = (minAgeMs: number) => ({ known: true, kind: 'swap-api', minAgeMs, billed: false }) as const;
+    expect(renderDryRun({ ...plan, entryEligibility: answers(reach) })).toContain(
+      `walked until it is ${reach / 1000}s old`,
+    );
     // A LAGGING SOURCE, the case Gate 3 introduces: the printed gate follows the source, and the
     // reach it is derived from stays where it is.
-    const lagged = renderDryRun({ ...plan, entryMinAgeMs: reach + 240_000 });
+    const lagged = renderDryRun({ ...plan, entryEligibility: answers(reach + 240_000) });
     expect(lagged).toContain(`walked until it is ${(reach + 240_000) / 1000}s old`);
     expect(lagged).toContain(`The seek reaches ${reach / 1000}s`);
 
@@ -11470,6 +11492,316 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     expect(FILL_SOURCE_KINDS).toContain(ENTRY_FILL_SOURCE_KIND);
     expect(selectEntryFillSource('swap-api', { 'swap-api': () => swapApi })).toBe(swapApi);
     expect(() => selectEntryFillSource('dune', { 'swap-api': () => swapApi })).toThrow(/refuses rather than/);
+    // AND SELECTION RESOLVES WITHOUT BUILDING (captain decision 286c). The refusal is a property of
+    // the CHOICE, so it has to hold on the half that never constructs — otherwise the plan path
+    // would have to build a source to find out it was asked for one this run cannot supply.
+    expect(() => resolveEntryFillSource('dune', { 'swap-api': () => swapApi })).toThrow(/refuses rather than/);
+    let built = 0;
+    const resolved = resolveEntryFillSource('swap-api', {
+      'swap-api': () => {
+        built += 1;
+        return swapApi;
+      },
+    });
+    expect(built).toBe(0);
+    expect(resolved.build()).toBe(swapApi);
+    expect(built).toBe(1);
+  });
+
+  describe('286c — the dry run is SPLIT so it can be both free and honest', () => {
+    // WHY THIS BLOCK EXISTS. Captain decisions 281a/284a/285a made the plan report the eligibility
+    // bound the SELECTED fill source actually applies, rather than re-deriving it locally and
+    // claiming the two were one number. Its honest cost: asking a source anything means the source
+    // must EXIST, and the Dune source cannot be built without a BILLED coverage probe. So from the
+    // Gate 3 cutover a Dune dry run could only SPEND — and `--dry-run` stops costing nothing — or
+    // THROW, and `--dry-run` stops always showing the plan, withholding a page of free, correct
+    // figures because one line needs a purchase. The captain refused both and chose the split.
+    //
+    // NOTHING ROUTES THROUGH THE DUNE FILL SOURCE UNTIL GATE 3, so every Dune case below is driven
+    // through the production seam with a STUB registry. That is not a weaker test than an end-to-end
+    // one: the property is "the default path does not call the constructor", and a stub whose
+    // constructor fails the test states it exactly, where a real source could only ever show that
+    // one particular constructor was not called on one particular day.
+
+    const T = loadThresholds()['stage2_entry'] as never;
+    const BOUNDS = entryFillBounds(T, Date.parse('2026-08-05T12:00:00Z'));
+    const LAG_MS = 600_000;
+
+    /** A source that answers, so a constructor that IS allowed to run has something to return. */
+    const duneStub = () =>
+      ({
+        ...swapApiFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 })),
+        kind: 'dune' as const,
+        minAgeMs: async () => LAG_MS,
+      });
+
+    /** The declaration a Gate 3 registry would carry, in the shape 286c reads. */
+    const duneConstruction = () =>
+      billedConstruction('dune', {
+        why:
+          'building it runs the decoded trade tables\' coverage probe, whose result read is billed ' +
+          'by bytes.',
+        bound: 'at most 1 execution and 2.0 billed credits',
+        actual: () => '1 execution, 1.8 billed credits',
+      });
+
+    it('the DEFAULT dry run neither spends nor throws when the selected source is Dune', async () => {
+      // THE CENTRAL PIN. A constructor that would spend is registered, the default (unauthorised)
+      // plan path is driven, and the constructor must never be reached — so the test fails by
+      // throwing from inside the thing under test rather than by an assertion nobody wrote.
+      let constructed = 0;
+      const announced: string[] = [];
+      const eligibility = await planEntryEligibility(
+        'dune',
+        {
+          dune: {
+            construction: duneConstruction(),
+            build: () => {
+              constructed += 1;
+              throw new Error('a default dry run must NEVER construct a billed fill source');
+            },
+          },
+        },
+        { bounds: BOUNDS, spendAuthorised: false, announce: (l) => announced.push(l) },
+      );
+      expect(constructed).toBe(0);
+      // Not thrown, and not silently empty: an ANSWER that says it has no number.
+      expect(eligibility.known).toBe(false);
+      // And it announced nothing, because announcing a bound is what precedes a spend.
+      expect(announced).toEqual([]);
+    });
+
+    it('the unavailable figure says WHY, names the source, and is never a blank or a zero', () => {
+      // An unavailable figure that reads like a measured one is the exact defect this whole stretch
+      // of work removed, so the WORD is not the requirement — the reason is. A future change that
+      // degraded this into an empty string or a `0` has to delete the function that produces it.
+      const eligibility = {
+        known: false as const,
+        kind: 'dune' as const,
+        why: 'building it runs the trade tables\' coverage probe, whose result read is billed.',
+        authorisedBy: '--dry-run-spend',
+      };
+      const note = eligibilityUnavailableNote(eligibility).join(' ');
+      expect(note).toContain('UNAVAILABLE');
+      expect(note).toContain('dune');
+      expect(note).toContain('coverage probe');
+      expect(note).toContain('--dry-run-spend');
+      // NOT MEASURED and NOT ZERO, said in those words, because both readings are available to a
+      // hurried reader and both are wrong in a direction nothing downstream contradicts.
+      expect(note).toMatch(/NOT MEASURED/);
+      expect(note).toMatch(/NOT ZERO/);
+      expect(note).toMatch(/NOT ANOTHER SOURCE'S NUMBER/);
+      // The inline forms carry no number either — no `0ms`, no `NaN`, no empty slot.
+      expect(eligibilityFloorMs(eligibility)).toBe('UNAVAILABLE');
+      expect(eligibilityFloorSeconds(eligibility)).toBe('UNAVAILABLE');
+      // And a KNOWN figure carries no note at all, so the two cases cannot blur.
+      expect(eligibilityUnavailableNote({ known: true, kind: 'swap-api', minAgeMs: 85_000, billed: false })).toEqual([]);
+    });
+
+    it('the plan PRINTS that unavailable figure with its reason, and prints everything else', () => {
+      // Criteria 1 and 2 on the rendered surface: a complete plan, with the one figure it could not
+      // have for free labelled and explained in place rather than omitted.
+      const TH = loadThresholds();
+      const plan = {
+        seedPlan: [],
+        maxCandidates: 12,
+        maxKeyedRequests: 45,
+        consistency: false,
+        maxKeylessRequests: TH['budget'].maxKeylessRequests,
+        historySource: 'creation-derived' as const,
+        creationWalk: TH['creation_walk'],
+        costBounds: TH['stage2_cost'],
+        stage2: true,
+        maxScored: TH['stage2_entry'].maxCandidatesScored,
+        entryThresholds: TH['stage2_entry'],
+        spendAuthorised: false,
+        keyDescription: null,
+        rpcEndpoint: resolveSolanaRpcEndpoint({}),
+        indexedWalk: TH['creation_walk_helius'],
+        worstCaseCredits: 0,
+        dune: TH['dune'],
+        duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
+        usingDune: true,
+        duneRefreshProbe: false,
+      };
+      const text = renderDryRun({
+        ...plan,
+        entryEligibility: {
+          known: false,
+          kind: 'dune',
+          why: 'building it runs the trade tables\' coverage probe, whose result read is billed.',
+          authorisedBy: '--dry-run-spend',
+        },
+      });
+      expect(text).toContain('HOW OLD IS UNAVAILABLE IN THIS PLAN');
+      expect(text).toContain('coverage probe');
+      expect(text).toContain('--dry-run-spend');
+      // NOT OMITTED AND NOT SUBSTITUTED: no plausible-looking floor appears in that slot.
+      expect(text).not.toMatch(/walked until it is \S+ old/);
+      // AND THE REST OF THE PLAN IS ALL THERE. Withholding a page of free, correct figures because
+      // one line needs a purchase is the failure the split exists to avoid, so this is asserted
+      // against the same landmarks the free-plan test uses.
+      const worstCase =
+        TH['stage2_entry'].maxCandidatesScored *
+        TH['stage2_entry'].maxLaunchesPerCandidate *
+        TH['stage2_entry'].maxRequestsPerLaunch;
+      expect(text).toContain(String(worstCase));
+      expect(text).toMatch(/WHOLE exposure/i);
+      expect(text).toMatch(/THE PRICE OF THE SEAT/);
+      expect(text).toMatch(/KEYED — Dune, CREATION ENUMERATION/);
+      expect(text).toMatch(/LANDING TIP PAID IN A SEPARATE TRANSACTION/);
+      // And the request line follows the SELECTED source rather than naming a host this run would
+      // never reach — a plan describing a swap-api walk while Stage 2 read Dune reads exactly as
+      // confidently as a true one.
+      expect(text).not.toContain('swap-api.pump.fun/v2/coins');
+      expect(text).toContain('The fills come from the dune source');
+      expect(renderDryRun({ ...plan, entryEligibility: { known: true, kind: 'swap-api', minAgeMs: 85_000, billed: false } }))
+        .toContain('swap-api.pump.fun/v2/coins');
+    });
+
+    it('the OPT-IN states its BOUNDED spend before spending and the ACTUAL after', async () => {
+      // Criterion 3, and the ORDER is the property — a bound stated after the purchase is not a
+      // bound. It is asserted as a sequence rather than as two `toContain`s, and the constructor
+      // writes into the same log, so nothing can slip between them unobserved.
+      const log: string[] = [];
+      const eligibility = await planEntryEligibility(
+        'dune',
+        {
+          dune: {
+            construction: duneConstruction(),
+            build: () => {
+              log.push('BUILD');
+              return duneStub();
+            },
+          },
+        },
+        { bounds: BOUNDS, spendAuthorised: true, announce: (l) => log.push(l) },
+      );
+      expect(log[0]).toContain('AUTHORISED SPEND');
+      expect(log[0]).toContain('--dry-run-spend');
+      expect(log[1]).toBe('  BOUND, before anything is spent: at most 1 execution and 2.0 billed credits');
+      expect(log[2]).toBe('BUILD');
+      expect(log[3]).toBe('  ACTUAL, after: 1 execution, 1.8 billed credits');
+      expect(log).toHaveLength(4);
+      // And the figure it bought is the SOURCE'S answer, not a second derivation of it.
+      expect(eligibility).toEqual({ known: true, kind: 'dune', minAgeMs: LAG_MS, billed: true });
+    });
+
+    it('a construction that fails half-way still reports what it spent', async () => {
+      // A spend reported only on success is a spend that goes missing exactly when it is most
+      // surprising — the probe that ran, was billed, and then refused the reading.
+      const log: string[] = [];
+      await expect(
+        planEntryEligibility(
+          'dune',
+          {
+            dune: {
+              construction: duneConstruction(),
+              build: () => {
+                throw new Error('the coverage probe refused the trade tables');
+              },
+            },
+          },
+          { bounds: BOUNDS, spendAuthorised: true, announce: (l) => log.push(l) },
+        ),
+      ).rejects.toThrow(/coverage probe refused/);
+      expect(log.at(-1)).toBe('  ACTUAL, after: 1 execution, 1.8 billed credits');
+    });
+
+    it('an UNDECLARED construction is never built by a plan, authorisation or not', async () => {
+      // The fail-safe direction, chosen on purpose. A registry entry that says nothing about what
+      // building it costs is an ABSENCE, and reading an absence as a benign value is the failure
+      // this repo names in three other places — `covered.fromMs` of 0 read as a 56-year window,
+      // `bonded` absent read as "did not bond", a wallet with no enumeration row read as zero
+      // launches. There is also no bound to state before spending, so no authorisation can cover
+      // it: a spend that cannot be bounded first is not an authorised spend.
+      for (const spendAuthorised of [false, true]) {
+        let constructed = 0;
+        const eligibility = await planEntryEligibility(
+          'dune',
+          {
+            dune: () => {
+              constructed += 1;
+              throw new Error('a plan must never build an undeclared construction');
+            },
+          },
+          { bounds: BOUNDS, spendAuthorised, announce: () => {} },
+        );
+        expect(constructed).toBe(0);
+        expect(eligibility.known).toBe(false);
+        if (eligibility.known) throw new Error('unreachable');
+        // It names no flag, because offering one would tell the operator to try what cannot work.
+        expect(eligibility.authorisedBy).toBeNull();
+        expect(eligibilityUnavailableNote(eligibility).join(' ')).toContain('declaring what building it costs');
+      }
+      // A bare thunk is what "undeclared" means concretely, and the run path still accepts one —
+      // building is all it does with them, and what that costs is not its question.
+      expect(registrationOf('dune', () => duneStub()).construction.cost).toBe('undeclared');
+      expect(undeclaredConstruction('dune').cost).toBe('undeclared');
+    });
+
+    it('a FREE construction is built and asked, exactly as it was before the split', async () => {
+      // The split must not cost the property 281a/284a/285a bought. Today's source is free to
+      // build, so the default plan still carries the source's own answer and nothing is announced.
+      const log: string[] = [];
+      const eligibility = await planEligibility({
+        registration: {
+          construction: freeConstruction('swap-api', 'built from a keyless client'),
+          build: () => swapApiFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 })),
+        },
+        bounds: BOUNDS,
+        spendAuthorised: false,
+        authorisedBy: '--dry-run-spend',
+        announce: (l) => log.push(l),
+      });
+      expect(log).toEqual([]);
+      expect(eligibility).toEqual({ known: true, kind: 'swap-api', minAgeMs: windowReachMs(T), billed: false });
+    });
+
+    it('the CLI carries the opt-in, refuses it outside a dry run, and the default stays free', async () => {
+      // END TO END on the path that exists today. The selected source is free to build, so the
+      // authorisation has nothing to buy — and the banner says THAT rather than claiming a spend,
+      // because an authorisation is permission and never evidence.
+      expect(parseArgs(['--dry-run-spend'])).toEqual({
+        ok: false,
+        message: '--dry-run-spend only means anything with --dry-run',
+      });
+      const parsed = parseArgs(['--dry-run', '--dry-run-spend']);
+      if (!parsed.ok) throw new Error('unreachable');
+      expect(parsed.opts.dryRunSpend).toBe(true);
+      const lines: string[] = [];
+      const code = await main(parsed.opts, {}, (l) => lines.push(l), () => {});
+      expect(code).toBe(0);
+      const text = lines.join('\n');
+      expect(text).toContain('DRY RUN, SPEND AUTHORISED');
+      expect(text).toContain('the authorisation bought nothing');
+      // The default is still the free banner, and neither path fetched anything.
+      const plain = parseArgs(['--dry-run']);
+      if (!plain.ok) throw new Error('unreachable');
+      expect(plain.opts.dryRunSpend).toBe(false);
+      const free: string[] = [];
+      expect(await main(plain.opts, {}, (l) => free.push(l), () => {})).toBe(0);
+      expect(free.join('\n')).toContain('DRY RUN — nothing was fetched.');
+    }, 60_000);
+
+    it('the RUN path is untouched: it builds its source and pays whatever that costs', () => {
+      // Criterion 5. The split is about the PLAN path, and the run path's two steps — select, then
+      // ask, then guard — are pinned as source text because a refactor that quietly routed the run
+      // through `planEligibility` would inherit a refusal the run must never have: a real run was
+      // always going to reach that vendor.
+      const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+      expect(screen).toMatch(/entryFillSource = selectEntryFillSource\(ENTRY_FILL_SOURCE_KIND, entryFillSources\);/);
+      expect(screen).toMatch(/entryMinAgeMs = await entryFillSource\.minAgeMs\(entryFillBounds\(entryThresholds, Date\.now\(\)\)\);/);
+      expect(screen).toMatch(/assertMinAgeUsable\(entryFillSource, entryMinAgeMs\);/);
+      // And the plan path is the ONLY caller of the split, so nothing else can acquire its refusal.
+      expect(screen.match(/planEntryEligibility\(/g)).toHaveLength(2); // the definition and the one call
+      // `plan-source.mjs` is reachable from no scoring module — the allow-list above pins that
+      // exhaustively — and it is a PLAN module, so it must stay out of the measurement path.
+      for (const module of ['entry.mjs', 'stage2.mjs', 'stage0.mjs', 'measure.mjs', 'rank.mjs']) {
+        const text = readFileSync(join(TOOL_DIR, module), 'utf8');
+        expect(text, `${module} must not import the plan path`).not.toMatch(/plan-source\.mjs/);
+      }
+    });
   });
 
   it('a source may not claim a usable window without the coverage proof', () => {

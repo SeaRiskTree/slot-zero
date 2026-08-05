@@ -57,6 +57,13 @@ maxKeyedRequestsPerRun 15  x  runsPerDayAssumed 6  =  90 of the ~200/day Free-ti
 default gateBatch 6 ->  9  x  6                    =  54
 ```
 
+**That denominator is SUPERSEDED**: as of 2026-08-05 the MadeOnSol key is ULTRA and EXCLUSIVE to
+slot-zero — 100,000 requests/day, resetting at 00:00Z — while this arithmetic, and every bound it
+reads, is still sized for the old Free tier of ~200/day shared, and re-sizing them is open captain
+work. The arithmetic itself is unchanged and the lane is **not** unbounded: `feed.maxKeyedRequestsPerRun`
+still refuses before the first request, so the "deliberately a minority share" argument below is now
+much stronger than when it was written, not weaker.
+
 A **minority share**, leaving ≥110 requests a day for `screen.mjs`, which is the lane that actually
 answers the captain's question. `runsPerDayAssumed` is **not enforced** — nothing here can read a cron
 table — so it is recorded in `thresholds.json` → `feed` precisely so that a schedule contradicting it

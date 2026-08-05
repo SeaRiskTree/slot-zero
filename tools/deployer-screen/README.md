@@ -472,11 +472,18 @@ set -a; . /path/to/your/.env; set +a
 
 ### `MADEONSOL_API_KEY` — required
 
-Free-tier keys expire every 30 days. An expired key exits `4` with a message that says so, rather
-than producing an empty ranking. Get one at <https://madeonsol.com/developer>.
+**As of 2026-08-05 this key is ULTRA and EXCLUSIVE to slot-zero — 100,000 requests/day, resetting
+at 00:00Z — while every bound below is still sized for the old Free tier of ~200/day shared, and
+re-sizing them is open captain work.**
 
-**Free tier only.** Paid tiers are refused standing policy, so nothing here may need Pro, Ultra or
-Business. A `403` is treated as a bug to report, not as a prompt to upgrade.
+Free-tier keys expire every 30 days; **whether that 30-day expiry applies on Ultra is UNVERIFIED
+here**. Either way an expired key exits `4` with a message that says so, rather than producing an
+empty ranking. Get one at <https://madeonsol.com/developer>.
+
+**This credential is on Ultra by captain decision (2026-08-05) and is this research lane's alone.**
+The standing policy of refusing paid tiers still governs every *other* credential this tool reads —
+none of them may need a paid plan — but it no longer describes this one. A `403` here is still
+treated as a bug to report, not as a prompt to upgrade.
 
 ### `HELIUS_API_KEY` — optional, and its absence is a supported configuration
 
@@ -1434,6 +1441,13 @@ in [`bundling.mjs`](./bundling.mjs) for the same question on our own subject.
 ## Bounds
 
 Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
+
+**The two MadeOnSol rows below name the tier the bound was DERIVED under, not the tier in force.**
+As of 2026-08-05 the MadeOnSol key is ULTRA and EXCLUSIVE to slot-zero — 100,000 requests/day,
+resetting at 00:00Z — while the 200 ceiling, the 195 cap and the 6.5s pacing are all still sized for
+the old Free tier of ~200/day shared; re-sizing them is open captain work, and `thresholds.json`'s
+own `budget` and `feed` justifications still carry the superseded free-tier wording, which is a
+fenced lane's to correct.
 
 | bound | value | why |
 |---|---|---|

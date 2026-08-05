@@ -71,7 +71,7 @@ import {
   readCreatorHistory,
 } from './pumpfun.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
-import { renderDryRun, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
+import { renderDryRun, renderMayhemShare, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
 import { addDropReasons, emptyDropReasons, scoreCandidateEntry, toEntryRecordRow, totalDrops } from './stage2.mjs';
 import {
   buildSeedPlan,
@@ -851,6 +851,19 @@ export async function main(opts, env, out, err) {
         /** @type {string[]} */
         const duneFallbackReasons = useDune ? [] : (fromDune?.reasons ?? []);
         const duneLaunches = fromDune === null ? null : fromDune.launches;
+        // 227a's observation, and it is scoped to the route that ANSWERED this candidate.
+        // `is_mayhem_mode` is a column on the decoded create event; the creation walk reads
+        // transactions and curve accounts and never sees it, so a walk-sourced candidate reports
+        // the flag as UNMEASURED rather than as absent — the same distinction
+        // `creatorMovementUnmeasured` draws for the other direction of that trade.
+        //
+        // It is gated on `useDune` rather than on Dune having returned rows, so the share's
+        // denominator is always drawn from the history the gate actually read. A REFUSED Dune
+        // reading does hold mayhem evidence, and publishing it here would be publishing a share
+        // over the prefix or the out-of-coverage slice that got the reading refused in the first
+        // place — a figure whose incompleteness the record could not state, next to an
+        // `enumerationSource` naming a different surface. This value is read nowhere above.
+        const mayhem = useDune && fromDune !== null ? fromDune.mayhem : null;
 
         let rpcTicks = 0;
         // ONE per-candidate ceiling either way, in whichever unit the endpoint bills in. The
@@ -1031,6 +1044,19 @@ export async function main(opts, env, out, err) {
           duneLaunches,
           duneFallbackReasons,
           creatorMovementUnmeasured: merged.creatorMovementUnmeasured,
+          // CAPTAIN DECISION 227a — pump.fun's mayhem-mode flag, RECORDED and REPORTED, reaching
+          // no bar and no verdict. All three are `null` on a candidate the Dune enumeration did not
+          // answer for, and that is the same distinction `creatorMovementUnmeasured` already draws
+          // one line up: the creation walk reads a transaction, not a decoded create event, so it
+          // measures NOTHING here. A `0` would say "this wallet launches no mayhem tokens", which
+          // is a claim no walk-sourced reading is entitled to make.
+          // `mayhemFlagReadable` is the share's DENOMINATOR and is persisted rather than derived:
+          // it is not `duneLaunches`, because a history reaching back past `pump_evt_createevent`
+          // picks up rows from `pump_call_create`, which has no such column. The unreadable count
+          // is the difference between the two, both on this block.
+          mayhemLaunches: mayhem === null ? null : mayhem.mayhem,
+          mayhemFlagReadable: mayhem === null ? null : mayhem.launches,
+          mayhemShare: mayhem === null ? null : mayhem.share,
         };
 
         if (!opts.json) {
@@ -1042,6 +1068,10 @@ export async function main(opts, env, out, err) {
               `+${merged.listedOutsideWindow} carried over — via ${creation.enumerationSource}, ` +
               `stopped on ${walk.stopReason}`,
           );
+          // 227a, on the line under the counts and on EVERY candidate — an exposure that only
+          // printed when it was non-zero would leave a reader unable to tell "no mayhem launches"
+          // from "nobody looked", which is the distinction the whole field exists to carry.
+          for (const line of renderMayhemShare(creation, '      ')) out(line);
           for (const r of duneFallbackReasons) out(`      ^ DUNE READING REFUSED, walked instead: ${r}`);
           if (notMeasured.length > 0) {
             out(`      ^ READING NOT MEASURED — verdict ${verdict}, not a rejection: ${notMeasured.join('; ')}`);

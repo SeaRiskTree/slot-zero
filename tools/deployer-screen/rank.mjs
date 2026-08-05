@@ -178,6 +178,21 @@ export function applyGate(input, t) {
  *   does not report a current creator. `movedCreator` says nothing about these — the Dune
  *   enumeration answers who created a mint and whether it completed, and nothing about who owns the
  *   curve today. Do not add the two.
+ * @property {number | null} mayhemLaunches How many of this candidate's enumerated launches carry
+ *   pump.fun's `is_mayhem_mode` flag — captain decision 227a, and an OBSERVATION. Nothing in this
+ *   module or any other reads it: it reaches no gate, bar, rate or verdict, and no launch is
+ *   dropped or weighted for carrying it. `dune.mjs` → `MAYHEM_OBSERVATION_ONLY` owns the rule and
+ *   the evidence behind it.
+ * @property {number | null} mayhemFlagReadable The share's DENOMINATOR — launches the flag was
+ *   readable on. **Not `duneLaunches`**: `pump_call_create` has no such column, so a history
+ *   reaching back past `pump_evt_createevent` holds launches with nothing to read, and the
+ *   difference between these two fields is how many.
+ * @property {number | null} mayhemShare `mayhemLaunches / mayhemFlagReadable`.
+ *
+ *   **All three are `null` on a candidate the creation WALK answered, and `null` is UNMEASURED,
+ *   never 0%.** The flag is a column on Dune's decoded create event; the walk reads transactions
+ *   and curve accounts and cannot see it. This is `creatorMovementUnmeasured`'s trap running the
+ *   other way — there the Dune route is the blind one — so read `enumerationSource` beside both.
  */
 
 /**

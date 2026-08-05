@@ -22,7 +22,7 @@ import { buildPath, ENDPOINT_ROLES } from './client.mjs';
 // The per-deployer cap's arithmetic, imported rather than restated: a dry run that printed a bound
 // the query does not apply would be worse than printing none. It is arithmetic over a pinned
 // threshold — no Dune-derived value crosses this import.
-import { LAUNCH_CAP_FLOOR, duneSpendPlan, launchCapPerWallet } from './dune.mjs';
+import { LAUNCH_CAP_FLOOR, MAYHEM_OBSERVATION_ONLY, duneSpendPlan, launchCapPerWallet } from './dune.mjs';
 import { estimatePlanCredits } from './client.mjs';
 import { LANDING_TIP_CAVEAT } from './entry.mjs';
 // The reach the plan quotes is DERIVED, never a second copy of the formula: an operator reads this
@@ -140,8 +140,8 @@ const DUNE_MONTHLY_CREDITS = 2_500;
  * and at 20) while only the bytes scale. 0.1 is the per-deployer figure at the candidate cap, where
  * the fixed scan is amortised over 195 wallets and the per-row bytes are the whole marginal cost: 195
  * deployers at a median ~50 launches is ~0.95 MB, about 19 credits of export plus ~1 of compute.
- * The 46,718 bytes above were measured at FOUR columns; `CREATION_SQL` now selects five, whose
- * per-row cost is bounded rather than measured — see `DUNE_BYTES_PER_ROW_CEILING` below.
+ * The 46,718 bytes above were measured at FOUR columns; `CREATION_SQL` now selects six, whose
+ * per-row cost has been re-measured — see `DUNE_BYTES_PER_ROW_CEILING` below.
  * Quoted beside the ceiling for the same reason the Helius median is — they differ by 40x, and
  * printing only one of them misleads in whichever direction it was chosen.
  */
@@ -151,11 +151,12 @@ const DUNE_EXPECTED_CREDITS_PER_CANDIDATE = 0.1;
  * An UPPER BOUND on the bytes one enumeration row costs, in bytes.
  *
  * **97 is a MEASUREMENT and it was taken at FOUR columns** (482 rows, 46,718 bytes, 2026-08-03).
- * `CREATION_SQL` now selects five: `launches_total` is what makes its per-deployer cap detectable
- * instead of silent. The fifth column's cost has NOT been measured on this account, so it is bounded
- * by arithmetic rather than invented — the widest a JSON row can carry it is the key plus a count
- * with more digits than pump.fun has mints, about 24 bytes. 121 is therefore a ceiling that the next
- * real run should REPLACE with a measurement, not a figure anyone has observed.
+ * `CREATION_SQL` now selects six: `launches_total` is what makes its per-deployer cap detectable
+ * instead of silent, and `is_mayhem_mode` is captain decision 227a's recorded-and-reported flag.
+ * That six-column shape has been MEASURED at both read shapes — 105.92 bytes/row batch-shaped and
+ * 105.91 for one wallet — so 121 still holds and does not move. Its headroom is now 15.08 bytes,
+ * less than one more boolean column is worth, so a SEVENTH column must re-measure and raise the
+ * pin rather than lean on a margin that is gone. `CREATION-DERIVED.md` §8.2c owns every figure.
  */
 const DUNE_BYTES_PER_ROW_CEILING = 121;
 
@@ -457,6 +458,59 @@ export function renderDropTally(total, by, indent) {
     L.push(`${indent}   clock assumption has broken and the measurement is not resting on what we think.`);
   }
   return L;
+}
+
+/**
+ * The mayhem-mode share, as ONE sentence written in ONE place — captain decision 227a.
+ *
+ * Every surface that summarises a candidate prints this: `screen.mjs`'s live line, this module's
+ * gate-passed block and the same block's gate-failed sibling. It is a formatter and nothing more:
+ * it reads three fields off a `creation` block and returns a line, and no caller may branch on what
+ * it returns. See `dune.mjs` → `MAYHEM_OBSERVATION_ONLY`.
+ *
+ * **`null` prints as UNMEASURED, never as 0%.** The share is `null` on every candidate the creation
+ * walk answered, because `is_mayhem_mode` is a column on Dune's decoded create event and the walk
+ * reads transactions. A "0%" there would be this screen asserting a wallet launches no mayhem
+ * tokens on the strength of having used a surface that cannot see the flag.
+ *
+ * The DENOMINATOR is stated rather than left to be inferred: it is the launches the flag was
+ * READABLE on, which is not the launch count printed beside it whenever `pump_call_create` supplied
+ * rows the newer event table has none of.
+ *
+ * @param {{ mayhemLaunches: number | null, mayhemFlagReadable: number | null,
+ *   mayhemShare: number | null, duneLaunches?: number | null, enumerationSource?: string } | null}
+ *   creation
+ * @param {string} indent
+ * @returns {string[]} One line, or none when there is no creation reading at all.
+ */
+export function renderMayhemShare(creation, indent) {
+  if (creation === null) return [];
+  const { mayhemLaunches, mayhemFlagReadable, mayhemShare } = creation;
+  if (mayhemLaunches === null || mayhemFlagReadable === null) {
+    return [
+      `${indent}mayhem mode: UNMEASURED — the ${creation.enumerationSource ?? 'walk'} enumeration ` +
+        `does not read the flag. NOT a reading of 0%.`,
+    ];
+  }
+  if (mayhemShare === null || mayhemFlagReadable === 0) {
+    // A different null from the one above, and it is told apart because only this one is a fact
+    // about the WALLET: the route does read the flag, and none of this wallet's enumerated launches
+    // carried a readable one.
+    return [
+      `${indent}mayhem mode: UNMEASURED — the flag was readable on none of this wallet's ` +
+        `enumerated launches. NOT a reading of 0%.`,
+    ];
+  }
+  // The unreadable count is `duneLaunches - mayhemFlagReadable`, both on this same block, and it is
+  // printed rather than left to be subtracted — a denominator smaller than the launch count beside
+  // it reads as an error unless the gap is named.
+  const unreadable =
+    typeof creation.duneLaunches === 'number' ? Math.max(0, creation.duneLaunches - mayhemFlagReadable) : 0;
+  return [
+    `${indent}mayhem mode: ${mayhemLaunches} of ${mayhemFlagReadable} launch(es) the flag was ` +
+      `readable on = ${pct(mayhemShare)}` +
+      `${unreadable > 0 ? `, ${unreadable} unreadable` : ''} — RECORDED, reaching no bar (227a)`,
+  ];
 }
 
 /**
@@ -900,6 +954,10 @@ export function renderStage1(run) {
             `${c.creation.notCreatedByWallet} acquired, ${c.creation.movedCreator} creator moved); ` +
             `+${c.creation.listedOutsideWindow} carried over from the listing`,
         );
+        // Captain decision 227a, printed on EVERY gate survivor rather than only where the share is
+        // non-zero: this list is what a later decision reads to size the screen's mayhem exposure,
+        // and a wallet that is silent here would be indistinguishable from one measured at zero.
+        for (const line of renderMayhemShare(c.creation, '      ')) L.push(line);
         // A walk that covered nothing gets its own sentence rather than the general one with a
         // hole where the date should be. "Before null" tells a reader nothing, and the state it
         // stands for — the reading falls back to the ownership listing, with no window to correct
@@ -1027,6 +1085,9 @@ export function renderStage1(run) {
       if (c.creation !== null && c.creation.listingUnmeasuredNote !== null) {
         L.push(`      · ownership listing unread: ${c.creation.listingUnmeasuredNote}`);
       }
+      // 227a. An unjudged wallet is still a candidate this run enumerated, and its mayhem exposure
+      // is a fact about the launches rather than about the gate that could not decide over them.
+      for (const line of renderMayhemShare(c.creation, '      · ')) L.push(line);
     }
   }
 
@@ -1058,11 +1119,19 @@ export function renderStage1(run) {
             `ownership-listed launches before it`,
         );
       }
+      // 227a here too. A rejected wallet's mayhem exposure is what tells a later decision whether
+      // this bar is being applied to two different populations through one number — the confounder
+      // §3 of `slot-zero-graduation-regime-remeasure` names (held in firstmate's records, not in
+      // this repo) — and that question is answered from the REJECTIONS as much as the survivors.
+      for (const line of renderMayhemShare(c.creation, '      · ')) L.push(line);
       if (c.historySource === 'ownership-only') {
         L.push('      · OWNERSHIP-ONLY run: this rejection was computed on the biased reading');
       }
     }
   }
+
+  L.push('');
+  for (const line of wrap(MAYHEM_OBSERVATION_ONLY, 78)) L.push(`  ! ${line}`);
 
   L.push('');
   L.push('='.repeat(78));
@@ -1270,7 +1339,7 @@ export function renderDryRun(plan) {
       L.push('  ONE EXECUTION FOR THE WHOLE BATCH, and that is the cost model rather than a');
       L.push('  convenience: the table scan costs nearly the same for 5 wallets as for 20, so the');
       L.push('  per-deployer price falls as the batch grows. What scales is BYTES RETURNED, which');
-      L.push('  is why the SQL selects five columns and no more, and why the rows a single deployer');
+      L.push('  is why the SQL selects six columns and no more, and why the rows a single deployer');
       L.push('  may contribute are CAPPED. The cap is per DEPLOYER, not per batch: one');
       L.push('  industrial-spam wallet used to carry the whole result past the row ceiling and send');
       L.push('  EVERY candidate to the walk. Now that wallet walks alone and the rest keep Dune.');

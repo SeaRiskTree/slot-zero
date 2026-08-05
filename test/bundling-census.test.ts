@@ -30,6 +30,7 @@ import {
   censusFillSource,
   loadThresholds,
   parseArgs,
+  planCensusEligibility,
   renderDryRun,
   renderSubjectEraTrend,
   renderSummary,
@@ -38,7 +39,11 @@ import {
 } from '../tools/deployer-screen/bundling.mjs';
 import type { CandidateBundling } from '../tools/deployer-screen/bundling.mjs';
 import { KeylessClient, windowReachMs } from '../tools/deployer-screen/pumpfun.mjs';
-import { ENTRY_FILL_SOURCE_KIND, selectEntryFillSource } from '../tools/deployer-screen/screen.mjs';
+import {
+  ENTRY_FILL_SOURCE_KIND,
+  SWAP_API_CONSTRUCTION,
+  selectEntryFillSource,
+} from '../tools/deployer-screen/screen.mjs';
 import { planEligibility } from '../tools/deployer-screen/plan-source.mjs';
 import { swapApiFillSource } from '../tools/deployer-screen/swapapi-fills.mjs';
 import { entryFillBounds } from '../tools/deployer-screen/stage2.mjs';
@@ -421,6 +426,69 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
     expect(eligibility.known).toBe(false);
     // And the census's own plan path is the one that passes `false`, not a caller that might not.
     expect(CENSUS_SOURCE).toContain('spendAuthorised: false');
+
+    // AND THAT IS ASSERTED THROUGH THE CENSUS'S OWN SEAM, not only as a literal. `main` routes its
+    // dry run through `planCensusEligibility`, which takes the registration and supplies the rest,
+    // so driving it with a constructor that throws states the property observably: a billed source
+    // is never built here, and the plan still prints its page.
+    let builtByCensus = 0;
+    const announced: string[] = [];
+    const censusEligibility = await planCensusEligibility(
+      {
+        construction: {
+          kind: 'dune',
+          cost: 'billed',
+          why: 'building it runs a billed coverage probe.',
+          bound: 'at most 1 execution',
+          actual: () => 'nothing',
+        },
+        build: () => {
+          builtByCensus += 1;
+          throw new Error('the census plan must never construct a billed fill source');
+        },
+      },
+      { bounds: entryFillBounds(ENTRY, NOW), announce: (l) => announced.push(l) },
+    );
+    expect(builtByCensus).toBe(0);
+    expect(censusEligibility.known).toBe(false);
+    // Nothing was announced, because announcing a bound is what precedes a spend.
+    expect(announced).toEqual([]);
+    // The plan still prints, in full, with the one figure it could not have labelled in place.
+    const stillPrints = renderDryRun({
+      cohortSize: 82,
+      cohortCap: T['bundling_census'].maxCohortSize,
+      maxCandidates: T['bundling_census'].maxCandidatesSurveyed,
+      census: T['bundling_census'],
+      entry: ENTRY,
+      entryEligibility: censusEligibility,
+      listingIntervalMs: T['budget'].keylessMinIntervalMs,
+    });
+    expect(stillPrints).toContain('eligibility floor UNAVAILABLE');
+    expect(stillPrints).toContain('KEYED SPEND: 0');
+    expect(stillPrints).toContain(PREDICATE_CAVEAT);
+  });
+
+  it('the census and the screen declare the SAME construction for the same source', () => {
+    // WHY THIS EXISTS. `CENSUS_FILL_CONSTRUCTION` and `screen.mjs`'s `SWAP_API_CONSTRUCTION` are two
+    // declarations of what building the one swap-api fill source costs, and they must stay one
+    // claim. They cannot be deduped into a single module: `bundling.mjs` may not import
+    // `screen.mjs`, which would put the Dune client and the credential reader in this census's
+    // import graph and break captain decision 173a's "spends zero keyed requests" property of the
+    // tree — the empty credential allow-list this file enforces. A TEST may import both, so the
+    // comparison lives here and nowhere else.
+    //
+    // What a drift would cost: the plan path reads DECLARATIONS, not implementations. If the source
+    // ever stops being free to build and only one copy is updated, the stale copy still claiming
+    // 'free' silently permits a plan-time spend — the exact defect class captain decision 286c
+    // exists to remove, arriving through the one door a declaration cannot close.
+    expect(CENSUS_FILL_CONSTRUCTION.kind).toBe(SWAP_API_CONSTRUCTION.kind);
+    expect(CENSUS_FILL_CONSTRUCTION.cost).toBe(SWAP_API_CONSTRUCTION.cost);
+    expect(CENSUS_FILL_CONSTRUCTION.why).toBe(SWAP_API_CONSTRUCTION.why);
+    expect(CENSUS_FILL_CONSTRUCTION.bound).toBe(SWAP_API_CONSTRUCTION.bound);
+    // `actual` is a FUNCTION, so comparing the objects would compare it by reference and fail on
+    // identity rather than on drift — two copies in two modules can never be the same reference.
+    // What has to agree is what it SAYS, so it is called.
+    expect(CENSUS_FILL_CONSTRUCTION.actual()).toBe(SWAP_API_CONSTRUCTION.actual());
   });
 
   it('rejects bad input rather than guessing, and the caps can only be lowered', () => {

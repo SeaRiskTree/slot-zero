@@ -1748,7 +1748,7 @@ describe('the CLI contract', () => {
     // reach it is derived from stays where it is.
     const lagged = renderDryRun({ ...plan, entryEligibility: answers(reach + 240_000) });
     expect(lagged).toContain(`walked until it is ${(reach + 240_000) / 1000}s old`);
-    expect(lagged).toContain(`The seek reaches ${reach / 1000}s`);
+    expect(lagged).toContain(`The swap-api seek reaches ${reach / 1000}s`);
 
     // AND THE WIRING: the number the CLI prints is the one the source it selected returned. Driving
     // the real dry run is what ties the two ends together — a renderer taking the right argument
@@ -11657,6 +11657,45 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       expect(text).toContain('The fills come from the dune source');
       expect(renderDryRun({ ...plan, entryEligibility: { known: true, kind: 'swap-api', minAgeMs: 85_000, billed: false } }))
         .toContain('swap-api.pump.fun/v2/coins');
+
+      // NOT ONLY THE REQUEST LINE. The host name in the section header, the shed rate beside the
+      // pacing and the page distribution measured over the 127 committed launches are all swap-api
+      // measurements, and a single substring pin on the URL is what let them survive a round here.
+      // Under another source each is stated as UNAVAILABLE, naming the source it was measured on,
+      // and NEVER replaced by an invented figure for the selected one.
+      for (const claim of ['pump.fun fill tape', 'swap-api ONLY', 'p50 6 pages', 'p95 9, max 17', 'The swap-api seek reaches']) {
+        expect(text, `${claim} is a swap-api measurement and must not print under a dune source`).not.toContain(claim);
+      }
+      expect(text).toContain('Fill tape from the dune source');
+      // The notes are wrapped to the plan's column width, so they are read as prose rather than as
+      // lines — the sentence is the contract, not where it happens to break.
+      const prose = text.replace(/\s+/g, ' ');
+      expect(prose).toContain('pages per launch (p50/p90/p95/max) and the shed rate: UNAVAILABLE');
+      expect(prose).toContain('measured on the swap-api source and describes only it');
+      expect(prose).toContain('the TYPICAL wall clock, which needs a pages-per-launch median: UNAVAILABLE');
+      // And no plausible number is substituted for the ones it cannot have.
+      expect(text).not.toMatch(/p50 \d+ pages/);
+      expect(text).not.toMatch(/sheds ~\d+%/);
+      // THE CEILINGS, WORST CASES AND CAVEATS BIND WHICHEVER SOURCE ANSWERS, so they print in BOTH
+      // cases — withholding a page of free, correct figures is the failure the split exists to
+      // avoid, and a rewiring that dropped them would be that failure by another route.
+      const swapApiText = renderDryRun({
+        ...plan,
+        entryEligibility: { known: true, kind: 'swap-api', minAgeMs: 85_000, billed: false },
+      });
+      for (const claim of ['pump.fun fill tape', 'swap-api ONLY', 'p50 6 pages', 'p95 9, max 17', 'The swap-api seek reaches']) {
+        expect(swapApiText, `${claim} must still print for the source it was measured on`).toContain(claim);
+      }
+      for (const both of [text, swapApiText]) {
+        expect(both.replace(/\s+/g, ' ')).toContain(
+          `stage ceiling ${TH['stage2_entry'].maxKeylessRequests}, enforced on its own client`,
+        );
+        expect(both).toContain(String(worstCase));
+        expect(both).toMatch(/WHOLE exposure/i);
+        expect(both).toMatch(/THE PRICE OF THE SEAT/);
+        expect(both).toMatch(/LANDING TIP PAID IN A SEPARATE TRANSACTION/);
+        expect(both).toContain(`Window measured: ${TH['stage2_entry'].windowSlotSpan} SLOTS`);
+      }
     });
 
     it('the OPT-IN states its BOUNDED spend before spending and the ACTUAL after', async () => {
@@ -11783,6 +11822,40 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       expect(await main(plain.opts, {}, (l) => free.push(l), () => {})).toBe(0);
       expect(free.join('\n')).toContain('DRY RUN — nothing was fetched.');
     }, 60_000);
+
+    it('the RUN path builds a BILLED or UNDECLARED source that a plan would refuse', async () => {
+      // THE OBSERVABLE HALF of criterion 5, driven through the same registry seam the rest of this
+      // block uses. The plan path refuses to build a billed or an undeclared construction; the run
+      // path must build BOTH, because a real run was always going to reach that vendor and what the
+      // construction costs is not its question. Asserting that as a pair is what makes "the split is
+      // about the plan path" a property rather than a sentence: a refactor that routed the run
+      // through `planEligibility` would inherit the refusal and fail here.
+      for (const declared of [true, false]) {
+        let constructed = 0;
+        const build = () => {
+          constructed += 1;
+          return duneStub();
+        };
+        // BILLED when declared, and a bare thunk otherwise — which is what "undeclared" means
+        // concretely. A plan refuses both; a run builds both.
+        const sources = declared ? { dune: { construction: duneConstruction(), build } } : { dune: build };
+        // The RUN path: built, and the source's own answer available from it.
+        const source = selectEntryFillSource('dune', sources);
+        expect(constructed).toBe(1);
+        expect(source.kind).toBe('dune');
+        expect(await source.minAgeMs(BOUNDS)).toBe(LAG_MS);
+        // The PLAN path, same registry, same instant: refused without building, and it says why.
+        constructed = 0;
+        const eligibility = await planEntryEligibility('dune', sources, {
+          bounds: BOUNDS,
+          spendAuthorised: false,
+          announce: () => {},
+        });
+        expect(constructed).toBe(0);
+        expect(eligibility.known).toBe(false);
+        expect(eligibilityUnavailableNote(eligibility).join(' ')).toContain('UNAVAILABLE');
+      }
+    });
 
     it('the RUN path is untouched: it builds its source and pays whatever that costs', () => {
       // Criterion 5. The split is about the PLAN path, and the run path's two steps — select, then

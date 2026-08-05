@@ -295,3 +295,36 @@ export function eligibilityUnavailableNote(eligibility) {
           `other figure on this page is unaffected.`),
   ];
 }
+
+/**
+ * THE SAME SENTENCE FOR A FIGURE THAT WAS MEASURED ON A SOURCE THIS PLAN IS NOT USING.
+ *
+ * The eligibility floor is not the only thing on a plan page that belongs to one vendor. A page
+ * count, a shed rate, a pacing justification and a cursor geometry are all measurements taken
+ * against ONE fill source, and after a cutover every one of them describes a walk the run will
+ * never do. Re-printing such a figure under another source is the same defect as re-deriving a
+ * bound the vendor controls: it reads exactly as confidently as a true one, and nothing downstream
+ * contradicts it. Substituting a plausible number for the selected source would be worse still —
+ * none has been measured, and an invented figure is not an absence, it is a false measurement.
+ *
+ * So the vocabulary is shared with {@link eligibilityUnavailableNote} rather than reinvented per
+ * printer: same words, same three refusals, one place to degrade.
+ *
+ * @param {object} spec
+ * @param {string} spec.figure What the plan cannot state, named as the reader would name it.
+ * @param {import('./fill-source.mjs').FillSourceKind} spec.measuredOn The source the figure was
+ *   measured against, and therefore the only source it describes.
+ * @param {import('./fill-source.mjs').FillSourceKind} spec.selected The source this run actually
+ *   reads its fills from.
+ * @returns {string[]}
+ */
+export function sourceFigureUnavailableNote(spec) {
+  if (spec.measuredOn === spec.selected) return [];
+  return [
+    `${spec.figure}: UNAVAILABLE — NOT MEASURED, NOT ZERO, AND NOT ANOTHER SOURCE'S NUMBER. That ` +
+      `figure was measured on the ${spec.measuredOn} source and describes only it; this run's ` +
+      `fills come from the ${spec.selected} source, against which nothing here has been measured. ` +
+      `The ceilings, worst cases and caveats on this page bind whichever source answers and are ` +
+      `unaffected.`,
+  ];
+}

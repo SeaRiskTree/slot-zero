@@ -230,6 +230,38 @@ export const CENSUS_FILL_CONSTRUCTION = freeConstruction(
     'request, credit or credential is involved in building it or in asking it.',
 );
 
+/**
+ * THE CENSUS'S PLAN ELIGIBILITY, and the reason it is a named function rather than four lines
+ * inside `main`.
+ *
+ * It is the seam captain decision 286c has to be testable at on this side, exactly as `screen.mjs` →
+ * `planEntryEligibility` is on the other: the REGISTRATION is what a test substitutes, and a
+ * constructor that fails the test if it is ever called is what proves this pass's plan path never
+ * builds a source that would spend. Driving `planEligibility` directly would prove the helper works
+ * and say nothing about what `bundling.mjs` routes through.
+ *
+ * `spendAuthorised` is a constant here, not a parameter. This pass is keyless throughout — captain
+ * decision 173a's property of the tree — so it ships no spending opt-in rather than one that could
+ * only ever be inert, and there is no caller who could pass `true`.
+ *
+ * @param {import('./plan-source.mjs').FillSourceRegistration} registration
+ * @param {object} opts
+ * @param {import('./fill-source.mjs').FillSourceBounds} opts.bounds
+ * @param {(line: string) => void} opts.announce
+ * @returns {Promise<import('./plan-source.mjs').PlanEligibility>}
+ */
+export async function planCensusEligibility(registration, opts) {
+  return planEligibility({
+    registration,
+    bounds: opts.bounds,
+    // NOTHING TO AUTHORISE, and therefore no flag to name: offering one would tell an operator to
+    // try something this tool does not have.
+    spendAuthorised: false,
+    authorisedBy: null,
+    announce: opts.announce,
+  });
+}
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
 const DEFAULT_DATA_DIR = join(REPO_ROOT, 'data', 'population-tape-2026-07-29');
@@ -1340,14 +1372,8 @@ export async function main(opts, out, err) {
     /** @type {import('./plan-source.mjs').PlanEligibility} */
     let entryEligibility;
     try {
-      entryEligibility = await planEligibility({
-        registration: entryFillRegistration,
+      entryEligibility = await planCensusEligibility(entryFillRegistration, {
         bounds: entryFillBounds(entry, Date.now()),
-        // NOTHING TO AUTHORISE. This pass is keyless throughout and spends zero keyed requests —
-        // captain decision 173a's property of the tree — so it ships no spending opt-in rather than
-        // one that could only ever be inert.
-        spendAuthorised: false,
-        authorisedBy: null,
         announce: (line) => out(line),
       });
     } catch (cause) {

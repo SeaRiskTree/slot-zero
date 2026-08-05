@@ -1087,6 +1087,18 @@ The captain refused both. `plan-source.mjs` is the split:
 | the figure it could not have | printed as **UNAVAILABLE**, naming the source and the reason, by `plan-source.mjs` → `eligibilityUnavailableNote` — one string, used by both plan surfaces, so they cannot drift and so a change degrading it into a blank or a zero has to delete the function. |
 | the spending plan | `--dry-run-spend`, with `--dry-run` only. It states the **bounded** spend before spending and the **actual** after; the order is a property of `planEligibility` rather than of the caller's memory, and the actual is reported in a `finally`, because a construction that failed half-way still spent. |
 
+**Every claim on that page that was measured on ONE source is labelled with it, and is UNAVAILABLE
+under another** (standing ruling 285a). The request line was only the first: the host name in the
+Stage 2 header, the pages-per-launch distribution (p50 6 / p90 8 / p95 9 / max 17 over the 127
+committed launches), the ~25% shed rate the pacing floor was sized against, the typical wall clock
+that multiplies that median, and the cursor reach are **all swap-api measurements**. Under another
+source each prints through `plan-source.mjs` → `sourceFigureUnavailableNote` — the same vocabulary
+and the same three refusals as the eligibility note, naming the source the figure was measured on —
+and **none is replaced by an invented figure for the selected source**: no Dune pacing, shed rate or
+page cost has been measured, and a plausible number is worse than an absence. The ceilings, worst
+cases and caveats are arithmetic over pinned thresholds, bind whichever source answers, and print in
+both cases.
+
 **An undeclared construction is treated as billed, never as free.** A registry entry that says
 nothing about what building it costs is an absence, and reading an absence as a benign value is the
 failure this repo names in three other places (`covered.fromMs` of `0` read as a 56-year window;
@@ -1098,7 +1110,12 @@ spend that cannot be bounded first is not an authorised spend.
 always going to reach that vendor, and the eligibility answer is an input to a measurement rather
 than a line on a preview. The census (`bundling.mjs`) routes its plan through the same helper and
 declares its source free — it is keyless throughout, captain decision 173a's property of the tree —
-so it ships **no** spending opt-in rather than one that could only ever be inert.
+so it ships **no** spending opt-in rather than one that could only ever be inert. That declaration
+is a second copy of `screen.mjs` → `SWAP_API_CONSTRUCTION` and **must stay one claim**: the census
+may not import the screen (that would put the Dune client and the credential reader in its import
+graph), so `test/bundling-census.test.ts` imports both and fails the build if they ever differ. A
+stale copy still claiming "free" would silently permit a plan-time spend, which is the one door a
+declaration cannot close.
 
 **What the split does NOT claim.** Nothing routes through the Dune fill source until Gate 3, so no
 part of this has been exercised against the real source and it must not be. The default free path is

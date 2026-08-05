@@ -223,8 +223,14 @@ export function resolveEntryFillSource(kind, sources) {
  * see `plan-source.mjs`. The claim is checkable in one line: the source is built from a
  * `KeylessClient` that has already been constructed, and its eligibility answer is its own cursor
  * reach, which is arithmetic over pinned thresholds. No socket, no allowance, no credential.
+ *
+ * **EXPORTED SO THE CENSUS'S COPY CANNOT DRIFT FROM IT** (captain decision 290b). `bundling.mjs`
+ * declares the same construction for the same source and may not import this module — that would put
+ * the Dune client and the credential reader in the census's import graph, and captain decision 173a's
+ * "spends zero keyed requests" is a property of the tree. A test imports both and fails the build if
+ * the two ever differ, which is the only place that comparison can live.
  */
-const SWAP_API_CONSTRUCTION = freeConstruction(
+export const SWAP_API_CONSTRUCTION = freeConstruction(
   'swap-api',
   'it is built from a keyless client and answers eligibility from its own cursor reach, so no ' +
     'request, credit or credential is involved in building it or in asking it.',

@@ -31,7 +31,11 @@ import { windowReachMs } from './pumpfun.mjs';
 // The plan's own vocabulary for a figure it could not have for free — captain decision 286c. Built
 // there rather than here so the screen's plan and the census's cannot drift, and so a change that
 // degraded an UNAVAILABLE into a blank or a zero would have to delete the function that says why.
-import { eligibilityFloorSeconds, eligibilityUnavailableNote } from './plan-source.mjs';
+import {
+  eligibilityFloorSeconds,
+  eligibilityUnavailableNote,
+  sourceFigureUnavailableNote,
+} from './plan-source.mjs';
 import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
 
@@ -1256,12 +1260,33 @@ export function renderDryRun(plan) {
   const t = plan.entryThresholds;
   if (plan.stage2) {
     const worstCase = plan.maxScored * t.maxLaunchesPerCandidate * t.maxRequestsPerLaunch;
-    L.push('KEYLESS — STAGE 2, the ENTRY score. pump.fun fill tape, for gate survivors only:');
+    // EVERY CLAIM MEASURED ON ONE SOURCE IS LABELLED WITH IT, AND IS UNAVAILABLE UNDER ANOTHER
+    // (standing ruling 285a). The request line was the first of them; the host name in the header,
+    // the page distribution, the shed rate and the cursor geometry are the rest. None may be
+    // re-printed as though it held for a source it was never measured against, and none may be
+    // replaced by an invented figure for that source — no Dune pacing, shed rate or page cost has
+    // been measured, and a plausible number is worse than an absence.
+    const fromSwapApi = plan.entryEligibility.kind === 'swap-api';
+    /** @param {string} figure */
+    const notMeasuredHere = (figure) => {
+      for (const note of sourceFigureUnavailableNote({
+        figure,
+        measuredOn: 'swap-api',
+        selected: plan.entryEligibility.kind,
+      })) {
+        for (const line of wrap(note, 74)) L.push(`    ${line}`);
+      }
+    };
+    L.push(
+      fromSwapApi
+        ? 'KEYLESS — STAGE 2, the ENTRY score. pump.fun fill tape (swap-api), for gate survivors only:'
+        : `STAGE 2, the ENTRY score. Fill tape from the ${plan.entryEligibility.kind} source, for gate survivors only:`,
+    );
     // THE REQUEST LINE BELONGS TO THE SELECTED SOURCE, so it is printed only for the source that
     // makes it. Under the Gate 3 cutover this block described a swap-api walk while Stage 2 read
     // Dune — a plan naming a host the run would never reach, which is the same class of stale claim
     // as a re-derived bound and reads as confidently as a true one.
-    if (plan.entryEligibility.kind === 'swap-api') {
+    if (fromSwapApi) {
       L.push('  GET https://swap-api.pump.fun/v2/coins/{mint}/trades?limit=' + `${t.tradePageLimit}&cursor=0-{seekFromMs}`);
     } else {
       L.push(`  The fills come from the ${plan.entryEligibility.kind} source. Its per-request shape is that`);
@@ -1276,9 +1301,13 @@ export function renderDryRun(plan) {
     L.push(`  survivors scored              up to ${plan.maxScored}  (pinned cap ${t.maxCandidatesScored})`);
     L.push(`  launches per survivor         up to ${t.maxLaunchesPerCandidate}`);
     L.push(`  requests per launch           up to ${t.maxRequestsPerLaunch}, RETRIES INCLUDED`);
-    L.push(`                                (measured at this ${windowReachMs(t) / 1000}s reach over the 127 committed`);
-    L.push('                                launches whose tape outlives it: p50 6 pages, p90 8,');
-    L.push('                                p95 9, max 17; ~25% shed rate)');
+    if (fromSwapApi) {
+      L.push(`                                (measured on the swap-api source at this ${windowReachMs(t) / 1000}s reach`);
+      L.push('                                over the 127 committed launches whose tape outlives');
+      L.push('                                it: p50 6 pages, p90 8, p95 9, max 17; ~25% shed rate)');
+    } else {
+      notMeasuredHere('pages per launch (p50/p90/p95/max) and the shed rate');
+    }
     L.push(
       `  WORST CASE                    ${plan.maxScored} x ${t.maxLaunchesPerCandidate} x ` +
         `${t.maxRequestsPerLaunch} = ${worstCase} request(s)`,
@@ -1290,15 +1319,29 @@ export function renderDryRun(plan) {
     const typicalRequests = plan.maxScored * t.maxLaunchesPerCandidate * 6;
     /** @param {number} requests */
     const minutes = (requests) => Math.round((requests * t.keylessMinIntervalMs) / 60_000);
-    L.push(
-      `  pacing                        ${t.keylessMinIntervalMs / 1000}s between requests, ` +
-        `swap-api ONLY (this host sheds ~25%)`,
-    );
-    L.push(
-      `  TIME                          about ${minutes(typicalRequests)} min typical ` +
-        `(~6 requests/launch, this walk's p50 over those 127 launches), ` +
-        `about ${minutes(worstCase)} min worst case`,
-    );
+    if (fromSwapApi) {
+      L.push(
+        `  pacing                        ${t.keylessMinIntervalMs / 1000}s between requests, ` +
+          `swap-api ONLY (this host sheds ~25%)`,
+      );
+      L.push(
+        `  TIME                          about ${minutes(typicalRequests)} min typical ` +
+          `(~6 requests/launch, this walk's p50 over those 127 launches), ` +
+          `about ${minutes(worstCase)} min worst case`,
+      );
+    } else {
+      // The interval is a PINNED bound this stage enforces on its own keyless client, so it still
+      // prints; what does not travel is the shed rate it was sized against, which is one host's.
+      L.push(
+        `  pacing                        ${t.keylessMinIntervalMs / 1000}s between requests on this ` +
+          `stage's own keyless client, a pinned floor`,
+      );
+      notMeasuredHere("the shed rate that floor was sized against, which is the swap-api host's");
+      // The worst case is arithmetic over pinned ceilings and binds whichever source answers. The
+      // TYPICAL is not: it multiplies a pages-per-launch median measured on one walk.
+      L.push(`  TIME                          about ${minutes(worstCase)} min worst case at that pacing`);
+      notMeasuredHere('the TYPICAL wall clock, which needs a pages-per-launch median');
+    }
     L.push(
       worstCase <= t.maxKeylessRequests
         ? '  The worst case is at or under the ceiling, so the plan above is the WHOLE exposure.'
@@ -1306,10 +1349,20 @@ export function renderDryRun(plan) {
     );
     L.push('  A launch is only started when a full page-cap of headroom remains, so no launch is');
     L.push(`  ever abandoned half-walked. Window measured: ${t.windowSlotSpan} SLOTS from the create`);
-    L.push(`  slot — the chain's own ordering, not the vendor's clock. The seek reaches ${windowReachMs(t) / 1000}s`);
-    L.push(`  past the mint: that same ${t.windowSlotSpan} slots at a measured worst-case rate, plus ${t.seekMarginMs / 1000}s of`);
-    L.push('  clock slack, so an early vendor mint time cannot truncate the tail; that');
-    L.push('  margin is a cursor hint and never a tolerance on the pre-mint drop. A launch is not');
+    L.push("  slot — the chain's own ordering, not the vendor's clock.");
+    if (fromSwapApi) {
+      L.push(`  The swap-api seek reaches ${windowReachMs(t) / 1000}s past the mint: that same ${t.windowSlotSpan} slots at a`);
+      L.push(`  measured worst-case rate, plus ${t.seekMarginMs / 1000}s of clock slack, so an early vendor mint`);
+      L.push('  time cannot truncate the tail; that margin is a cursor hint and never a');
+      L.push('  tolerance on the pre-mint drop.');
+    } else {
+      // The cursor geometry is the walk's own, and the else-branch at the top of this block has
+      // already said the selected source's per-request shape is not restated here. Printing the
+      // swap-api's reach under another source would contradict that in the same breath.
+      L.push(`  How the ${plan.entryEligibility.kind} source reaches that window is its own cursor geometry and`);
+      L.push('  is NOT restated here, for the reason the request line above gives.');
+    }
+    L.push('  A launch is not');
     if (plan.entryEligibility.known) {
       L.push(
         `  walked until it is ${eligibilityFloorSeconds(plan.entryEligibility)} old — the gate the fill source itself applies, ` +
@@ -1336,7 +1389,10 @@ export function renderDryRun(plan) {
     L.push('');
     L.push('  Fees are part of the entry window (captain, 2026-08-02), so a room figure without the');
     L.push('  price of the seat beside it is not an answer to "is this enterable". The signatures');
-    L.push('  come free with fills Stage 2 already parsed — no vendor request, no extra swap-api page.');
+    L.push(
+      '  come free with fills Stage 2 already parsed — no vendor request, no extra page from the ' +
+        `${plan.entryEligibility.kind} source.`,
+    );
     L.push('');
     L.push(`  requests per candidate        up to ${c.maxRpcRequestsPerCandidate}`);
     L.push(

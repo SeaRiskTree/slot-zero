@@ -211,6 +211,7 @@ import {
   unmeasuredBecause,
   unmeasuredNoSource,
 } from '../tools/deployer-screen/record.mjs';
+import { ENTRY_PREDICTION_READING } from '../tools/deployer-screen/prediction.mjs';
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
 
@@ -9672,6 +9673,21 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
       // The gate in force today would have refused nothing that run measured.
       expect(b.youngestRefAgeMs).toBeGreaterThanOrEqual(coverage.minAgeMs);
     }
+  });
+
+  it('and the RECORDED reading states this reach, so raising the slot rate cannot leave it stale', () => {
+    // `prediction.mjs` -> `ENTRY_PREDICTION_READING` is embedded verbatim into every schema 16/17
+    // run record, and records are never retro-edited — so a figure pinned in that sentence is a
+    // figure that outlives the value it describes. It names the reach, and the reach is derived from
+    // `windowSlotSpan` at `MAX_MS_PER_SLOT`, which this repo expects to RAISE when the chain's slot
+    // rate is re-measured against a newer tape.
+    //
+    // So the sentence is checked against the DERIVATION rather than against a literal typed here.
+    // When the pin moves, this fails and the recorded wording becomes a deliberate decision — which
+    // is the point, because the string's text is the captain's to change, not a fix round's.
+    // Asserting on it is legitimate for the same reason the record's key set is: it is an owned
+    // serialized contract, not a proxy for whether some other code works.
+    expect(ENTRY_PREDICTION_READING).toContain(`${REACH.toLocaleString('en-US')}ms at the pinned values`);
   });
 
   it('and BOTH callers derive it, so the census still measures the launches the screen would score', () => {

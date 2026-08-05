@@ -46,8 +46,9 @@
  *
  * {@link PredictionBlock.madeAtIso} is the run's own `finishedAtIso`, and that choice is a proof
  * rather than a convention. Stage 2 refuses any launch younger than its fill source's own
- * `minAgeMs` — on the swap-api source `pumpfun.mjs` → `windowReachMs`, 85,000ms at the pinned
- * values — at the moment it decides eligibility, and that decision happened
+ * `minAgeMs` — on the swap-api source `pumpfun.mjs` → `windowReachMs`, which owns that figure and
+ * derives it from the slot span at a measured worst-case rate — at the moment it decides
+ * eligibility, and that decision happened
  * before the run finished — so **every launch in the sample was created strictly before
  * `finishedAtIso`**. A launch created after it is therefore provably out of sample, with no
  * assumption about clocks, ordering or how long the run took. `outcome.mjs` filters on exactly that.

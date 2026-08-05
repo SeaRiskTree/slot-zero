@@ -1820,8 +1820,9 @@ describe('the CLI contract', () => {
     // comment claimed otherwise. The two halves are checked to be able to fire below, against the
     // other block's own live text rather than against an invented sentence.
     //
-    // The parameter names are taken from the OTHER lane's live key set rather than written out here,
-    // so if one is renamed this assertion fails rather than silently stopping to fire.
+    // The parameter names are written out below, and each one is then asserted to still resolve to a
+    // live pin on the lane that owns it — so a rename fails here rather than silently stopping the
+    // ban from firing.
     const swapCostParams = ['maxRequestsPerLaunch', 'maxKeylessRequests'] as const;
     const duneCostParams = [
       'maxResultRows',

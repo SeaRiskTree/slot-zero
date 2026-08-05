@@ -5,8 +5,12 @@
  *
  * Three credentials live here and they are unrelated to each other:
  *
- * - `MADEONSOL_API_KEY` — the Free-tier vendor key the competence gate runs on. Metered at ~200
- *   requests/day, shared with whatever else holds it, and expiring every 30 days.
+ * - `MADEONSOL_API_KEY` — the vendor key the competence gate runs on. **Ultra tier and EXCLUSIVE to
+ *   slot-zero since 2026-08-05** (captain): metered at 100,000 requests/day resetting at 00:00Z,
+ *   and shared with nothing. It was Free tier, ~200/day and shared, which is the tier every bound
+ *   in this tool was originally sized against; captain decision 267a re-derived them and
+ *   `thresholds.json` → `budget` owns the result. **Whether the Free tier's 30-day key expiry
+ *   applies on Ultra is UNVERIFIED** — see {@link classifyAuthFailure}, which is where it matters.
  * - `DUNE_API_KEY` — the Free-tier key the **creation enumeration** runs on, which since captain
  *   decision 156a is the PRIMARY answer to "which mints did this wallet create". **Optional**: with
  *   it absent the enumeration falls back to the Solana RPC creation walk below and every number is
@@ -30,8 +34,12 @@
  *   malformed key and a rejected key are three different sentences, and the caller exits
  *   non-zero on all three.
  *
- * Free-tier keys expire every 30 days and nothing local can see an expiry date, so expiry is
- * only observable as a rejection at request time — see {@link classifyAuthFailure}.
+ * Nothing local can see an expiry date on any of the three, so expiry is only ever observable as a
+ * rejection at request time — see {@link classifyAuthFailure}. On MadeOnSol the Free tier expired
+ * keys every 30 days; **whether that still holds on Ultra is UNVERIFIED here and is neither assumed
+ * nor deleted**, because both errors are costly in opposite directions: dropping it would leave a
+ * 401 with no likely cause named, and keeping it as fact would send an operator to reissue a key
+ * that is working. It is stated as unverified wherever it is stated at all.
  */
 
 /** Environment variable the MadeOnSol key is read from. The only one. */
@@ -98,8 +106,12 @@ export function resolveKey(env) {
       reason: 'missing',
       description: null,
       message:
-        `${KEY_ENV_VAR} is not set. This tool needs a MadeOnSol **Free tier** API key.\n` +
-        `  Get one at https://madeonsol.com/developer (free, no card), then point the tool\n` +
+        `${KEY_ENV_VAR} is not set. This tool needs a MadeOnSol API key.\n` +
+        `  This lane's key is **Ultra** and exclusive to slot-zero — 100,000 requests/day — and the\n` +
+        `  pinned bounds are sized against that. No ENDPOINT this tool calls needs a paid tier, but\n` +
+        `  a full default run now plans 201 keyed requests, so on a ~200/day Free-tier key it would\n` +
+        `  have to be bounded with --candidates.\n` +
+        `  Get one at https://madeonsol.com/developer, then point the tool\n` +
         `  at it without copying it into this repository:\n` +
         `      export ${KEY_ENV_VAR}="$(your-secret-manager read madeonsol)"\n` +
         `  or, if it already lives in a dotenv file outside the repo:\n` +
@@ -464,9 +476,12 @@ export function resolveDuneCredential(env) {
  * exhausted quota both stop the run, but they call for opposite responses — renew the key
  * versus wait for the window — and a tool that blurs them wastes a day.
  *
- * Free-tier keys expire every 30 days, which is why `401` leads with expiry rather than with
- * "invalid": on this vendor, on this tier, an expired key is much the likelier cause than a
- * wrong one.
+ * `401` still leads with expiry rather than with "invalid" — but it now says the expiry is
+ * UNVERIFIED on this tier rather than asserting it. The Free tier expired keys every 30 days, which
+ * made expiry much the likelier cause of a 401; **nothing has verified that on Ultra**, and neither
+ * error is free. Deleting the clause leaves a 401 with no likely cause named; keeping it as fact
+ * sends an operator to reissue a key that is working. So the message names both readings and puts
+ * the cheap check (re-export, then reissue) first.
  *
  * @param {number} status
  * @param {string} [bodyExcerpt] A short, already-truncated excerpt of the response body.
@@ -480,9 +495,10 @@ export function classifyAuthFailure(status, bodyExcerpt) {
       kind: 'expired-or-revoked',
       message:
         `HTTP 401 — the vendor rejected the key.\n` +
-        `  On MadeOnSol's Free tier keys expire every 30 days, so the most likely cause is\n` +
-        `  **expiry**, not a wrong value. Issue a fresh key at https://madeonsol.com/developer\n` +
-        `  and re-export ${KEY_ENV_VAR}.\n` +
+        `  MadeOnSol's Free tier expired keys every 30 days. This lane's key is **Ultra** and\n` +
+        `  WHETHER THAT EXPIRY APPLIES HERE IS UNVERIFIED, so treat expiry as likely but not\n` +
+        `  established: first re-export ${KEY_ENV_VAR} in case the value was lost or truncated,\n` +
+        `  then issue a fresh key at https://madeonsol.com/developer if it still 401s.\n` +
         `  This is NOT a negative result: no deployer was screened.${tail}`,
     };
   }
@@ -492,10 +508,11 @@ export function classifyAuthFailure(status, bodyExcerpt) {
       kind: 'wrong-tier',
       message:
         `HTTP 403 — the key is recognised but not entitled to this endpoint.\n` +
-        `  This tool is designed for the **Free tier** only and must never need Pro, Ultra or\n` +
-        `  Business. A 403 therefore means either the key was downgraded, or an endpoint that\n` +
-        `  used to be free is now gated. Do not "fix" this by upgrading the plan — paid tiers are\n` +
-        `  refused standing policy. Report it instead.\n` +
+        `  Every endpoint this tool calls is reachable on the **Free tier**, and this lane's key is\n` +
+        `  **Ultra** (captain, 2026-08-05), so a 403 here should be impossible. It therefore means\n` +
+        `  the key was downgraded or revoked, or the vendor moved a formerly-free endpoint behind a\n` +
+        `  plan. Either way it is a BUG TO REPORT, not a prompt to upgrade: the tier is the\n` +
+        `  captain's to set and no run may widen it.\n` +
         `  This is NOT a negative result: no deployer was screened.${tail}`,
     };
   }
@@ -505,8 +522,14 @@ export function classifyAuthFailure(status, bodyExcerpt) {
       kind: 'quota-exhausted',
       message:
         `HTTP 429 — rate-limited or out of daily quota.\n` +
-        `  The Free tier allows roughly 200 requests/day and 10/minute, and the allowance is\n` +
-        `  SHARED with whatever else uses this key. Wait for the window to reset and rerun; the\n` +
+        `  This lane's key is **Ultra**: 100,000 requests/day, resetting at 00:00Z, and EXCLUSIVE\n` +
+        `  to slot-zero, so nothing else is spending it. A full run plans ~201 requests, and a\n` +
+        `  ladder measured 2026-08-05 shed nothing even back-to-back — so a 429 here is a surprise\n` +
+        `  and worth reading the vendor's own counter for rather than waiting it out blind:\n` +
+        `      curl -sD- -o/dev/null -H "authorization: Bearer $${KEY_ENV_VAR}" \\\n` +
+        `        'https://madeonsol.com/api/v1/deployer-hunter/leaderboard?sort=total_bonded&limit=1' \\\n` +
+        `        | grep -i ratelimit\n` +
+        `  x-ratelimit-remaining and x-ratelimit-reset say whether the day is actually spent. The\n` +
         `  screen is stateless, so a rerun costs no more than the first run did.\n` +
         `  This is NOT a negative result: the run stopped early.${tail}`,
     };

@@ -16,11 +16,14 @@
  *
  * ## 2. The default path spends nothing
  *
- * A run is a **dry run unless `--live` is passed**. This lane is meant to run on a schedule forever
- * against a key shared with production, so the safe path has to be the one an operator gets by
- * typing the command wrong. Its per-run keyed cost is pinned in `thresholds.json` → `feed` and
- * refused before the first request if the plan does not fit: **3 enumeration + at most `--gate`
- * profile requests, and nothing else is keyed.** It spends no keyless request at all.
+ * A run is a **dry run unless `--live` is passed**. This lane is meant to run on a schedule forever,
+ * so the safe path has to be the one an operator gets by typing the command wrong — and that
+ * argument does not weaken now the key is Ultra and exclusive to slot-zero, because what a cron
+ * spends unreviewed was never only about the size of the allowance. Its per-run keyed cost is pinned
+ * in `thresholds.json` → `feed` and refused before the first request if the plan does not fit:
+ * **6 enumeration + at most `--gate` profile requests, and nothing else is keyed** — 6 and not 3
+ * since captain decision 262a made the seeding tiered (`seed.mjs` → `DEFAULT_TIERS`). It spends no
+ * keyless request at all.
  *
  * ## 3. It grades on the CHEAP reading, and that reading is biased in BOTH directions at once
  *
@@ -61,7 +64,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
+import { BoundedClient, CeilingReached, MADEONSOL_DAILY_REQUESTS, VendorRefused } from './client.mjs';
 import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import {
   ALL_UNMEASURED_MIN_GATED,
@@ -526,9 +529,15 @@ export async function main(opts, env, out, err, deps = {}) {
     out('');
     out(`  keyed plan            ${seedPlan.length} enumeration + up to ${gateBatch} gate = ${worstCaseKeyed} request(s)`);
     out(`  per-run ceiling       ${maxKeyed} (thresholds.json -> feed.maxKeyedRequestsPerRun)`);
+    // THE DENOMINATOR IS THE VENDOR'S DAY, NOT budget.maxKeyedRequests. It used to be the latter,
+    // which read correctly only while that ceiling happened to BE the daily allowance — at Ultra it
+    // is a per-run ceiling of 402 and printing a share against it would have understated this lane's
+    // headroom by ~250x while looking exactly as authoritative.
+    const dailyWorstCase = worstCaseKeyed * feedT.runsPerDayAssumed;
     out(
       `  assumed daily cost    ${worstCaseKeyed} x ${feedT.runsPerDayAssumed} run(s)/day = ` +
-        `${worstCaseKeyed * feedT.runsPerDayAssumed} of the ~${budgetT.maxKeyedRequests}/day allowance`,
+        `${dailyWorstCase} of the ${MADEONSOL_DAILY_REQUESTS.toLocaleString('en-US')}/day allowance ` +
+        `(${((dailyWorstCase / MADEONSOL_DAILY_REQUESTS) * 100).toFixed(3)}%, Ultra and exclusive to this lane)`,
     );
     out('  keyless plan          NONE. This lane spends no keyless request and touches no Solana RPC.');
     const disabled = unmeasuredAlarmDisabledWarning(gateBatch);

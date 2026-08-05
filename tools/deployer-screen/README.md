@@ -473,17 +473,28 @@ set -a; . /path/to/your/.env; set +a
 ### `MADEONSOL_API_KEY` — required
 
 **As of 2026-08-05 this key is ULTRA and EXCLUSIVE to slot-zero — 100,000 requests/day, resetting
-at 00:00Z — while every bound below is still sized for the old Free tier of ~200/day shared, and
-re-sizing them is open captain work.**
+at 00:00Z, read off `x-ratelimit-limit` rather than off a pricing page.** Captain decision **267a**
+re-derived every bound that used to be sized against the old Free tier of ~200/day shared; the
+[Bounds](#bounds) table below carries the results and each `thresholds.json` → `budget`
+justification names the constraint that now fixes its value.
 
-Free-tier keys expire every 30 days; **whether that 30-day expiry applies on Ultra is UNVERIFIED
-here**. Either way an expired key exits `4` with a message that says so, rather than producing an
-empty ranking. Get one at <https://madeonsol.com/developer>.
+**The 30-day Free-tier key expiry is UNVERIFIED on Ultra and is neither assumed nor deleted.** It is
+stated as unverified wherever it is stated at all, including in the `401` message itself, which now
+puts the cheap check (re-export) ahead of the expensive one (reissue). Either way a rejected key
+exits `4` with a message saying so, rather than producing an empty ranking. Get one at
+<https://madeonsol.com/developer>.
 
 **This credential is on Ultra by captain decision (2026-08-05) and is this research lane's alone.**
 The standing policy of refusing paid tiers still governs every *other* credential this tool reads —
 none of them may need a paid plan — but it no longer describes this one. A `403` here is still
-treated as a bug to report, not as a prompt to upgrade.
+treated as a bug to report, not as a prompt to upgrade: no endpoint this tool calls needs a paid
+tier, so a 403 means the key was downgraded or the vendor gated something that was free.
+
+**One endpoint changed status and the reason it is skipped changed with it.**
+`/deployer-hunter/{wallet}/history` was PRO+ and unreachable; the Ultra key answers it `200`
+(measured 2026-08-05). It is still **not requested**, now for a design reason rather than an
+entitlement one: it returns daily snapshots of `bonding_rate` / `total_deployed` /
+`recent_bond_rate`, the trailing-window aggregates this tool refuses to read at any single instant.
 
 ### `HELIUS_API_KEY` — optional, and its absence is a supported configuration
 
@@ -580,8 +591,44 @@ limitation, and the enumeration is shaped around what their endpoints actually r
   2,660/100, then 4,324/89. All graded `cold`.
 
 So enumeration runs over `recent-bonds` (best seed — a deployer there is bonding curves *now*),
-`alerts`, and `leaderboard?sort=total_bonded`, and a `--tier` filter is how you reach the population
-the gate is designed for.
+`alerts`, and `leaderboard?sort=total_bonded`.
+
+### The seeding is TIERED by default — captain decision 262a
+
+**Since 2026-08-05 a default run issues each of those three endpoints once per tier for `good` and
+`elite`** — six enumeration requests, not three (`seed.mjs` → `DEFAULT_TIERS`). It was untiered.
+The evidence is `runs/2026-08-05-seed-comparison.md`, which ran both seedings the same day, on the
+same code, at an unmoved `minCompletionRate` of 0.25:
+
+| | untiered | tiered (`good` + `elite`) |
+|---|---|---|
+| candidates gated | 76 | 69 + 59, pools **disjoint** that day |
+| **admitted** | **2** | **27** (14 + 13) |
+| admitted-set relation | a strict **subset** of the tiered one | ⊇ untiered, plus 25 more |
+| median (vendor page − gate reading) | 0.0000 | 0.0000 |
+
+So untiered **forfeited 25 candidates and gained none** — a dominance relation rather than a
+trade-off, which is why this is a default and not a flag.
+
+**It is NOT rate flattery, and reading it that way gets the mechanism wrong.** Tiering does not
+admit more wallets by inflating the number the bar reads: the page-minus-gate median is `0.0000` on
+all three pools and all three admitted sets, because the two readings are *identical* below the
+70-record page cap and diverge in both directions above it. What tiering changes is **selection** —
+**27 of 27** tiered admissions were reachable through `leaderboard:total_bonded` against **0 of 2**
+untiered ones, which came through `alerts`. That imports the vendor's own ranking into the pool, and
+**nothing measures whether vendor rank predicts `roomLeft`**. That correlation is the obvious next
+question and has not been run.
+
+**What the default forfeits, stated because no count in a run will show it.** `tier` is another
+trailing window, like `bonding_rate`: membership is unstable and the tiers are not disjoint, so a
+deployer worth screening but graded `moderate` today is invisible to a default run. It is reachable
+with `--tier moderate`. **The untiered seeding itself is no longer reachable from the CLI** — it
+takes `tiers: null` passed to `buildSeedPlan`, which no flag does — so the untiered pool of
+2026-08-05 is reproducible from the committed records under
+`measurements/2026-08-05-seed-comparison/` and not from a flag.
+
+`--tier <t>` still overrides the pair with a single tier, and it is how you reach a population the
+default does not cover.
 
 > **Superseded observation, no committed artefact.** An untiered run was seen to surface active spam
 > deployers launching 70 tokens in under four days at 1–7% completion, all of which the gate
@@ -1442,26 +1489,26 @@ in [`bundling.mjs`](./bundling.mjs) for the same question on our own subject.
 
 Enforced in code, with no flag that disables one. Pinned in `thresholds.json`.
 
-**The two MadeOnSol rows below name the tier the bound was DERIVED under, not the tier in force.**
-As of 2026-08-05 the MadeOnSol key is ULTRA and EXCLUSIVE to slot-zero — 100,000 requests/day,
-resetting at 00:00Z — while the 200 ceiling, the 195 cap and the 6.5s pacing are all still sized for
-the old Free tier of ~200/day shared; re-sizing them is open captain work, and `thresholds.json`'s
-own `budget` and `feed` justifications still carry the superseded free-tier wording, which is a
-fenced lane's to correct.
+**The MadeOnSol rows below are RE-DERIVED against the Ultra tier — captain decision 267a,
+2026-08-05.** The key is 100,000 requests/day and exclusive to slot-zero, so the daily allowance has
+stopped being what binds this tool, and each row names the constraint that replaced it. **The
+upgrade on its own widened nothing**: the candidate cap did not move, and the two ceilings that did
+move were forced by arithmetic rather than chosen.
 
 | bound | value | why |
 |---|---|---|
-| keyed request ceiling | 200 | The **whole** MadeOnSol Free-tier daily allowance. Captain's instruction, 2026-08-02: there is no free substitute for this data, so spend the allowance when spending it gets results. The earlier ceiling of 45 was this tool's own quarter-allowance caution and is **withdrawn** — do not re-derive it. |
-| candidate cap | 195 | 200 − 3 enumeration − 2 retry headroom. It is what the allowance leaves, not a judgement about how many deployers are worth grading, and it is above what the three seeds can surface — so a **default run grades everything it surfaces**. |
-| over-budget plan | refused before the first request | `3 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. **The keyless plan is refused the same way**, and it matters more: the keyless work happens *after* the keyed allowance is spent, so a ceiling discovered half-way through wastes quota that was already paid. |
-| keyed pacing | 6.5s between request starts | Free tier bursts at ~10/min, and the allowance is **shared** with whatever else holds this key. |
+| keyed request ceiling | 402 | **No longer an allowance figure.** 2 × (6 enumeration + 195 candidates) — the plan's **one-retry worst case**, since a keyed request is retried at most once and every attempt counts. It was 200, the whole Free-tier day; at 100,000 exclusive an allowance-derived ceiling would refuse nothing, and a bound that cannot refuse is not a bound. It **had** to move: a default plan now costs 6 + 195 = 201 and would have been refused at 200. The old 2-request headroom could not absorb three transport failures at the end of a full run; this cannot be breached by a plan the tool admitted. |
+| candidate cap | 195 | **Unchanged in value, completely re-derived — the coincidence is worth saying out loud.** It was `200 − 3 − 2`, what the keyed day left over; that derivation is void. It is now the largest cap fitting the ceilings already pinned without moving a second threshold: the keyless `frontend-api-v3` ceiling binds at `floor(1,365 / 7 pages a candidate) = 195` exactly, the Helius run ceiling allows 211, and enumeration can reach at most 300 rows. The highest distinct yield ever observed is **128** (2026-08-05, good 69 + elite 59, disjoint pools), so a **default run still grades everything it surfaces**. |
+| over-budget plan | refused before the first request | `6 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. **The keyless plan is refused the same way**, and it matters more: the keyless work happens *after* the keyed requests are spent, so a ceiling discovered half-way through wastes what was already paid. |
+| keyed pacing | 250ms between request starts | **Re-measured on Ultra rather than carried across, and the measurement retired the old constraint.** 6.5s existed for a ~10/min Free-tier burst limit. A ladder at 6,500 / 2,000 / 500 / **0** ms shed **nothing at any rung**, and 60 back-to-back requests (≈183/min sustained) shed nothing either — which a 10/min limiter refuses at request 11. The gate's own endpoint behaved the same (30 back-to-back, 0 shed). What binds is **response latency**: p50 312ms leaderboard, 182ms profile. So 250ms is a courtesy floor, not a shed-avoidance figure, and the keyed leg of a full run goes from ~21 minutes to **~50 seconds**. Limits: one day, ~150 requests, serial only — nothing here probed concurrency. |
+| feed per-run keyed ceiling | 18 | 6 enumeration + `maxGateBatch` 12. Forced by the tiered default; it was 15 at 3 enumeration requests. The daily arithmetic is 18 × 6 runs = **108 of 100,000 (0.108%)**, where it used to be 90 of ~200. **The bound is kept anyway**: a cron is the one caller no human reviews before each spend, and an unbounded lane against a 100,000-request day is still unbounded. |
 | keyless request ceiling, `frontend-api-v3` only | 1,400 | One client serves **two** passes on this host and the ceiling has to cover both. The gate reads the ownership listing it merges the creation window with, up to 4 pages **per candidate** — 195 × 4 = 780 — and `--consistency` then costs up to 3 pages per gate survivor, of which every candidate can be one: 195 × 3 = 585. So 1,365 worst case, and the remaining 35 are retry headroom. The earlier 600 was justified on the consistency pass alone and was already exceeded by gating at the default candidate cap. It does not lean harder on pump.fun — the pacing below is unchanged, so what it buys is wall clock. |
 | keyless pacing, `frontend-api-v3` only | 2.0s | A **conservative carry-over, not a measurement of this host**: the ~0.5 req/s figure it was originally justified by was measured on `api.mainnet-beta.solana.com`, and the June report's own spend table records both pump.fun hosts as *not contacted*. It is kept because `frontend-api-v3` has shed nothing here, and it bounds a shared public resource rather than expressing our own caution, so the MadeOnSol relaxation does not touch it. The fill host is paced separately — see below. |
 | requests in flight | **1**, serialised | Not a pool of one — a queue, so two callers cannot race. |
 | retries | 1 keyed / 2 keyless, and **every attempt counts against the ceiling** | A retry spends a shared resource exactly as a first try does — but a 429, a 5xx or a timeout means the request was not served, so re-issuing it is nearer to one successful request than to two. Without it the caller re-runs the whole walk, which is worse for pump.fun too. A 4xx that is not a 429 is never retried: it is the endpoint's considered answer. |
 | Dune executions, creation enumeration | **2 per run** (1 enumeration + at most 1 probe refresh) | `thresholds.json` → `dune`, and the unit is the point: **an execution is billed whether or not it succeeds and is never retried**, so this is the bound on the only unrecoverable Dune spend. ONE execution serves the whole candidate batch — the table scan costs nearly the same for 5 wallets as for 20, so what scales is bytes returned, not wallets. |
 | Dune requests, creation enumeration | 100 per run | Separate from the execution ceiling because it bounds a different thing: polling and result reads bound the wall clock and the polite use of a shared free-tier host, not the money. 2 × (1 SQL verification + 1 execute + 40 status polls + 1 results read) = 86, plus the credit guard's one `POST /usage` and its single retry = 88, leaving 12 of retry headroom. A real run spends about **8**. |
-| Dune result rows | 20,000 per read, and **at most `greatest(500, floor(19999 / <deployers in the batch>))` rows per deployer inside the SQL** | Results are billed at ~20 credits/MB and that is ~71% of the bill. The **~97 bytes/row** measurement was taken at FOUR columns; `CREATION_SQL` selects **six** today, and captain decision 227a's sixth column was the occasion to **re-measure rather than assume the ceiling survived it** — **105.92 bytes/row** batch-shaped (488 rows, five wallets) and **105.91** for one wallet (252 rows), so ≤121 bytes/row still holds and the pin does not move. This ceiling is ≤~2.42 MB (~48 credits), and it is **no longer unobserved** — but its headroom is now 15.08 bytes, less than one more boolean column is worth (~23), so **a seventh column must re-measure and raise it** rather than lean on a margin that is gone. A 195-candidate run at a median ~50-launch history is ~0.95 MB (~20 credits), i.e. roughly 125 full-cap runs against the free 2,500/month, unchanged by the cap. The read ceiling **refuses rather than pages** and is now the **backstop** behind the per-deployer cap, not the first line of defence; it stays reachable at roughly 40 wallets of 500+ launches in one batch, since the rows bound is `max(19,999, <deployers> × 500)` rather than 19,999 by construction. The allowance is **shared**, and what a run may spend against it is checked before the first request — see [The monthly credit ceiling](#the-monthly-credit-ceiling--what-it-is-and-what-it-cannot-see). `thresholds.json` → `dune.justification.maxResultRows` and [CREATION-DERIVED.md §8.2b](./CREATION-DERIVED.md) own the rows arithmetic; [§8.2c](./CREATION-DERIVED.md) owns the byte re-measurement above. |
+| Dune result rows | 40,000 per read, and **at most `greatest(500, floor(19999 / <deployers in the batch>))` rows per deployer inside the SQL** | Results are billed at ~20 credits/MB and that is ~71% of the bill. The **~97 bytes/row** measurement was taken at FOUR columns; `CREATION_SQL` selects **six** today, and captain decision 227a's sixth column was the occasion to **re-measure rather than assume the ceiling survived it** — **105.92 bytes/row** batch-shaped (488 rows, five wallets) and **105.91** for one wallet (252 rows), so ≤121 bytes/row still holds and the pin does not move. This ceiling is ≤~4.84 MB (~97 credits) since captain decision **264a** raised it 20,000 → 40,000, and it is **no longer unobserved** — but its headroom is now 15.08 bytes, less than one more boolean column is worth (~23), so **a seventh column must re-measure and raise it** rather than lean on a margin that is gone. A 195-candidate run at a median ~50-launch history is ~0.95 MB (~20 credits), i.e. roughly 125 full-cap runs against the free 2,500/month, unchanged by the cap. The read ceiling **refuses rather than pages** and is now the **backstop** behind the per-deployer cap, not the first line of defence; it stays reachable at roughly **80** wallets of 500+ launches in one batch, since the rows bound is `max(19,999, <deployers> × 500)` rather than 19,999 by construction. **264a raised it because the backstop fired on a real run**: 76 deployers returned **27,731** rows against the old 20,000 and were refused whole, costing that leg **232,937 Helius credits and 4,105 RPC requests** against 1,924 and 33 for the leg that kept its Dune answer — and its mayhem reading entirely, `mayhemShare` null on 76 of 76, which is UNMEASURED and never 0%. **The SQL is untouched**: `SQL_ROW_CEILING` stays 19,999 and the two are now pinned as an INEQUALITY rather than an equality, so **no saved-query deploy is needed** and this raise cannot leave the Dune leg refusing terminally. The allowance is **shared**, and what a run may spend against it is checked before the first request — see [The monthly credit ceiling](#the-monthly-credit-ceiling--what-it-is-and-what-it-cannot-see). `thresholds.json` → `dune.justification.maxResultRows` and [CREATION-DERIVED.md §8.2b](./CREATION-DERIVED.md) own the rows arithmetic; [§8.2c](./CREATION-DERIVED.md) owns the byte re-measurement above. |
 | Dune coverage staleness | 6 h | The probe cannot vouch for a period it does not reach, and the recent end is where a live screen looks. Dune's own freshness is ~3–4 minutes, so this bounds OUR cache, not the vendor: the probe defaults to a free cached read. Staleness is the one refusal asking again can fix, so it re-executes the probe **once**; a structural refusal (a missing table, a month with no rows) is not retried. |
 | Solana RPC ceiling, keyless creation walk | 100 requests **per candidate** | `thresholds.json` → `creation_walk`. Governs the creation-derived walk **when no Helius key is present**. Whichever bound bites is recorded per candidate. |
 | Helius credit ceiling, indexed creation walk | **5,200 credits per candidate**, 1,100,000 per run | `thresholds.json` → `creation_walk_helius`, and the unit is the point — this provider bills by transactions **returned**, so a request ceiling cannot bound it. 5,200 clears the largest complete history measured (49,367 succeeded transactions = 4,940 credits) **plus the per-page guard**, which demands 100 credits for the page and 11 more reserved for the curve-classification pass — at 5,000 that guard stopped the walk after 49 pages, truncating the very wallet the ceiling was sized against. The per-candidate median is 320. The run ceiling makes the default plan admissible at 195 × 5,200 = 1,014,000 and is 11% of the monthly allowance, so **nine worst-case full-cap runs fit in a month** and the expected cost of one is ~0.62%. **The two move together**: the run ceiling is checked before the first request, so raising the per-candidate one alone would refuse every default plan. A plan that does not fit is **refused before the first request**, exactly like the keyed and keyless plans. A page is only started when a whole page's worst case still fits, so the ceiling is exact and never overshot. |

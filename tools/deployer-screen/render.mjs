@@ -18,7 +18,7 @@
  * second state is the single output this tool exists to make impossible.
  */
 
-import { buildPath, ENDPOINT_ROLES } from './client.mjs';
+import { MADEONSOL_DAILY_REQUESTS, buildPath, ENDPOINT_ROLES } from './client.mjs';
 // The per-deployer cap's arithmetic, imported rather than restated: a dry run that printed a bound
 // the query does not apply would be worse than printing none. It is arithmetic over a pinned
 // threshold — no Dune-derived value crosses this import.
@@ -815,7 +815,7 @@ export function renderStage1(run) {
   L.push('='.repeat(78));
   L.push('');
   L.push(`run started        ${run.startedAtIso}`);
-  L.push(`keyed requests     ${run.keyedRequests}  (MadeOnSol, Free tier)`);
+  L.push(`keyed requests     ${run.keyedRequests}  (MadeOnSol, Ultra — ${MADEONSOL_DAILY_REQUESTS.toLocaleString('en-US')}/day, exclusive to this lane)`);
   L.push(
     `keyless requests   ${run.keylessRequests}  (pump.fun)` +
       (run.keylessShed === undefined ? '' : `, ${run.keylessShed} shed and retried`),
@@ -1388,7 +1388,7 @@ export function renderDryRun(plan) {
       );
       L.push(
         `  bytes                         at most ~${((readableRows * DUNE_BYTES_PER_ROW_CEILING) / 1_000_000).toFixed(2)} MB ` +
-          `(<=${DUNE_BYTES_PER_ROW_CEILING} bytes/row: 97 MEASURED at four columns, +24 arithmetic for the fifth)`,
+          `(<=${DUNE_BYTES_PER_ROW_CEILING} bytes/row: 105.92 MEASURED at the six columns CREATION_SQL selects today)`,
       );
       L.push(
         `  EXPECTED                      about ${(DUNE_EXPECTED_CREDITS_PER_CANDIDATE * plan.maxCandidates).toFixed(1)} credits at the candidate cap ` +
@@ -1553,7 +1553,11 @@ export function renderDryRun(plan) {
   L.push('');
   L.push('NOT REQUESTED, deliberately:');
   L.push('  /deployer-hunter/{wallet}/tokens   — bonded-only, so it has no denominator at all.');
-  L.push('  /deployer-hunter/{wallet}/history  — PRO+. This tool is Free tier only.');
+  L.push('  /deployer-hunter/{wallet}/history  — REACHABLE on this key and still not asked for: it');
+  L.push('     returns daily snapshots of bonding_rate / total_deployed / recent_bond_rate, the');
+  L.push('     trailing-window aggregates this tool refuses to read at any single instant. It was');
+  L.push('     PRO+ and out of reach on the Free tier; the Ultra key answers it 200 (measured');
+  L.push('     2026-08-05). The reason it is not requested is now a DESIGN reason, not entitlement.');
   L.push('');
   L.push('='.repeat(78));
   for (const line of LIMITATIONS) L.push(line);

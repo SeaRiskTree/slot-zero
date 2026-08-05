@@ -38,14 +38,18 @@ node tools/deployer-screen/feed.mjs --help
 
 ## What one run costs — the whole quota story
 
-**Keyed (MadeOnSol, shared with the production allowance): 3 enumeration requests + at most `--gate`
+**Keyed (MadeOnSol, Ultra and exclusive to slot-zero): 6 enumeration requests + at most `--gate`
 profile requests. Nothing else in this lane is keyed.**
 
 | leg | cost | bound |
 |---|---|---|
-| enumeration | **3** requests — `recent-bonds`, `alerts`, `leaderboard` | the seed plan's own length |
+| enumeration | **6** requests — `recent-bonds`, `alerts`, `leaderboard`, once per tier for `good` and `elite` | the seed plan's own length |
 | triage | **1 per new wallet gated**, at most `--gate` | `feed.gateBatch`, capped by `feed.maxGateBatch` |
-| **per run** | **3 + `--gate`; default 9, worst case 15** | `feed.maxKeyedRequestsPerRun`, refused before the first request |
+| **per run** | **6 + `--gate`; default 12, worst case 18** | `feed.maxKeyedRequestsPerRun`, refused before the first request |
+
+Enumeration costs 6 and not 3 because **captain decision 262a made the seeding tiered by default**
+(`seed.mjs` → `DEFAULT_TIERS`); `feed.maxKeyedRequestsPerRun` moved 15 → 18 with it, or every run
+would be refused before its first request at `6 + 12 = 18 > 15`.
 
 **Keyless: none.** This lane does not walk the fill tape and does not touch Solana RPC. That is not
 an oversight — see [Why the gate here reads ownership](#why-the-gate-here-reads-ownership-and-what-that-costs).
@@ -53,22 +57,24 @@ an oversight — see [Why the gate here reads ownership](#why-the-gate-here-read
 **The daily arithmetic**, which is the reason a forever-schedule is allowed at all:
 
 ```
-maxKeyedRequestsPerRun 15  x  runsPerDayAssumed 6  =  90 of the ~200/day Free-tier allowance
-default gateBatch 6 ->  9  x  6                    =  54
+maxKeyedRequestsPerRun 18  x  runsPerDayAssumed 6  =  108 of the 100,000/day allowance  (0.108%)
+default gateBatch 6 -> 12  x  6                    =   72                               (0.072%)
 ```
 
-**That denominator is SUPERSEDED**: as of 2026-08-05 the MadeOnSol key is ULTRA and EXCLUSIVE to
-slot-zero — 100,000 requests/day, resetting at 00:00Z — while this arithmetic, and every bound it
-reads, is still sized for the old Free tier of ~200/day shared, and re-sizing them is open captain
-work. The arithmetic itself is unchanged and the lane is **not** unbounded: `feed.maxKeyedRequestsPerRun`
-still refuses before the first request, so the "deliberately a minority share" argument below is now
-much stronger than when it was written, not weaker.
+**The denominator moved by 500× and the arithmetic is restated against it** — captain decision
+**267a**, 2026-08-05: the MadeOnSol key is ULTRA and EXCLUSIVE to slot-zero, 100,000 requests/day
+resetting at 00:00Z, where it was ~200/day and shared. So this lane's worst case is **0.108% of the
+day** where it used to be 45% of it, and `screen.mjs` is left ≥99,892 requests rather than ≥110.
 
-A **minority share**, leaving ≥110 requests a day for `screen.mjs`, which is the lane that actually
-answers the captain's question. `runsPerDayAssumed` is **not enforced** — nothing here can read a cron
+**The bounds are kept anyway, and that is the point rather than an oversight.** The argument for
+bounding a forever-lane was never only the size of the allowance: a scheduled consumer must state
+its cost in advance and be refused when it exceeds it, because a cron is the one caller no human
+reviews before each spend. An unbounded lane against a 100,000-request day is still unbounded. The
+ceiling therefore moved **only where the tiered plan forced it** (15 → 18) and nowhere else — the
+upgrade bought no widening. `runsPerDayAssumed` is **not enforced** — nothing here can read a cron
 table — so it is recorded in `thresholds.json` → `feed` precisely so that a schedule contradicting it
-is contradicting a written figure. **Raising the cadence without lowering the per-run ceiling is how
-this lane silently becomes the allowance's largest consumer.**
+is contradicting a written figure. **Raising the cadence without lowering the per-run ceiling is
+still how this lane silently becomes the largest consumer of a day nothing here tracks across runs.**
 
 Three structural guarantees back the numbers rather than describing them:
 

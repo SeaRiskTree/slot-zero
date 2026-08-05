@@ -40,6 +40,7 @@ import {
   DuneClient,
   DuneRefused,
   ENDPOINT_ROLES,
+  MADEONSOL_DAILY_REQUESTS,
   RequestFailed,
   UnparseableResponse,
   VendorRefused,
@@ -358,12 +359,23 @@ describe('credential handling', () => {
 
     const tier = classifyAuthFailure(403);
     expect(tier?.kind).toBe('wrong-tier');
-    // It must not suggest paying: paid tiers are refused standing policy.
-    expect(tier?.message).toMatch(/refused standing policy/);
+    // It must still not suggest paying — but the reason changed with the tier. This lane's key is
+    // Ultra by captain decision (2026-08-05), so "paid tiers are refused standing policy" stopped
+    // being true of it; what survives is that the tier is the CAPTAIN'S to set and a 403 is a bug
+    // to report rather than a prompt for a run to upgrade itself.
+    expect(tier?.message).toMatch(/BUG TO REPORT, not a prompt to upgrade/);
+    expect(tier?.message).toMatch(/no run may widen it/);
 
     const quota = classifyAuthFailure(429);
     expect(quota?.kind).toBe('quota-exhausted');
-    expect(quota?.message).toMatch(/SHARED/);
+    // It used to say the allowance was SHARED, which stopped being true when the key went Ultra and
+    // EXCLUSIVE (captain, 2026-08-05). The actionable content moved with it: at 100,000/day against
+    // a ~201-request run a 429 is a surprise rather than an expected exhaustion, so the message
+    // names the vendor's own counter — which nothing in this repository reads — instead of telling
+    // an operator to wait out a window that is probably not the cause.
+    expect(quota?.message).toMatch(/EXCLUSIVE/);
+    expect(quota?.message).toMatch(/x-ratelimit-remaining/);
+    expect(quota?.message).not.toMatch(/SHARED/);
 
     // Every terminal failure must deny being a negative result.
     for (const f of [expired, tier, quota]) {
@@ -1168,24 +1180,36 @@ describe('enumeration', () => {
     // Measured 2026-07-29: sort=bonding_rate DESC returns 1-for-1 wallets last active in May 2024,
     // and sort=total_bonded DESC returns 8518-deployed/127-bonded spam. A first run seeded only
     // from the leaderboard gated twelve wallets that were all a single token.
+    // TIERED BY DEFAULT since captain decision 262a: each endpoint once per tier in DEFAULT_TIERS,
+    // ordered best-seed-first and tier-second so a lowered --max-requests privileges neither tier.
     const plan = buildSeedPlan({ limit: 20 });
-    expect(plan.map((p) => p.path)).toEqual([
-      '/deployer-hunter/recent-bonds',
-      '/deployer-hunter/alerts',
-      '/deployer-hunter/leaderboard',
+    expect(plan.map((p) => p.label)).toEqual([
+      'recent-bonds:good',
+      'recent-bonds:elite',
+      'alerts:good',
+      'alerts:elite',
+      'leaderboard:total_bonded:good',
+      'leaderboard:total_bonded:elite',
     ]);
     // recent-bonds leads: a deployer listed there is bonding curves NOW.
     expect(plan[0]?.path).toContain('recent-bonds');
     // bonding_rate is never used as a sort — that ordering is what surfaces the n=1 flukes.
     expect(JSON.stringify(plan)).not.toContain('"sort":"bonding_rate"');
-    expect(plan[2]?.query['sort']).toBe('total_bonded');
+    expect(plan[4]?.query['sort']).toBe('total_bonded');
+    // The superseded untiered seeding is still constructible, and only by asking for it explicitly.
+    expect(buildSeedPlan({ limit: 20, tiers: null }).map((p) => p.path)).toEqual([
+      '/deployer-hunter/recent-bonds',
+      '/deployer-hunter/alerts',
+      '/deployer-hunter/leaderboard',
+    ]);
   });
 
   it('clamps each endpoint to its own documented maximum', () => {
+    // Indices are per (endpoint, tier) since 262a: 0-1 recent-bonds, 2-3 alerts, 4-5 leaderboard.
     const plan = buildSeedPlan({ limit: 999 });
     expect(plan[0]?.query['limit']).toBe(50); // recent-bonds
-    expect(plan[1]?.query['limit']).toBe(100); // alerts
-    expect(plan[2]?.query['limit']).toBe(50); // leaderboard
+    expect(plan[2]?.query['limit']).toBe(100); // alerts
+    expect(plan[4]?.query['limit']).toBe(50); // leaderboard
   });
 
   it('threads a tier filter into every query and into the provenance label', () => {
@@ -1725,20 +1749,26 @@ describe('the CLI contract', () => {
     }
   });
 
-  it('bounds every run in the pinned budget — the FULL free-tier daily allowance, and no more', () => {
+  it('bounds every run in the pinned budget — re-derived for Ultra, and still a bound', () => {
     const b = loadThresholds()['budget'];
-    // Captain's instruction 2026-08-02: spend the whole allowance when spending it gets results.
-    // The bound is the allowance itself (~200/day), not a fraction of it — but it is still a bound.
-    expect(b.maxKeyedRequests).toBeLessThanOrEqual(200);
-    expect(b.maxKeyedRequests).toBeGreaterThan(100);
+    // CAPTAIN DECISION 267a: the keyed ceiling is no longer the daily allowance. The MadeOnSol key
+    // is Ultra and exclusive at 100,000/day, so an allowance-derived ceiling would refuse nothing —
+    // and a bound that cannot refuse is not a bound. It is the plan's ONE-RETRY worst case instead.
+    const enumerationCost = buildSeedPlan({ limit: 50 }).length;
+    expect(b.maxKeyedRequests).toBe(2 * (enumerationCost + b.maxCandidates));
     // The enumeration requests plus the candidate cap must fit under the ceiling, or a default run
     // would be arranged to die at the ceiling rather than to finish. The cost is taken from the
-    // plan rather than written as 3, so a fourth enumeration query fails this instead of quietly
-    // making a no-flag invocation refuse itself.
-    const enumerationCost = buildSeedPlan({ limit: 50 }).length;
+    // plan rather than written as a literal, so an extra enumeration query fails this instead of
+    // quietly making a no-flag invocation refuse itself. At the old 200 this already failed: the
+    // tiered default costs 6 and 6 + 195 = 201.
     expect(enumerationCost + b.maxCandidates).toBeLessThanOrEqual(b.maxKeyedRequests);
-    // The burst limit is the vendor's, not our caution, so relaxing the daily bounds never moves it.
-    expect(b.keyedMinIntervalMs).toBeGreaterThanOrEqual(6_000); // Free tier bursts at ~10/min
+    // Still a real ceiling rather than a number so large it cannot bite: a full run's worst case
+    // must sit well inside a single day of the vendor's allowance, and the ceiling well inside it.
+    expect(b.maxKeyedRequests).toBeLessThan(MADEONSOL_DAILY_REQUESTS / 100);
+    // The keyed pacing was RE-MEASURED on Ultra rather than carried across (267a). The ~10/min
+    // Free-tier burst limit it was sized for shed nothing at any rung down to 0ms on the new tier,
+    // so 6.5s bought nothing; what remains is a courtesy floor at or below measured latency.
+    expect(b.keyedMinIntervalMs).toBe(250);
     expect(b.keylessMinIntervalMs).toBeGreaterThanOrEqual(2_000); // conservative carry-over, frontend-api-v3
   });
 
@@ -1822,8 +1852,11 @@ describe('spend is reported concretely, by endpoint', () => {
     ]);
     // Only the gate scales with the candidate count; everything else is one call per run.
     expect(ENDPOINT_ROLES['/deployer-hunter/{wallet}']?.costModel).toMatch(/per candidate/);
+    // One per TIER since captain decision 262a made the seeding tiered by default — two by default,
+    // one under `--tier <t>`. The distinction is what keeps the printed endpoint table agreeing
+    // with the plan `buildSeedPlan` actually builds.
     for (const e of ['/deployer-hunter/alerts', '/deployer-hunter/leaderboard', '/deployer-hunter/recent-bonds']) {
-      expect(ENDPOINT_ROLES[e]?.costModel).toBe('1 per run');
+      expect(ENDPOINT_ROLES[e]?.costModel).toBe('1 per tier enumerated (2 by default)');
     }
     // tokens/ is bonded-only and history/ is PRO+; neither may appear as a thing we call.
     expect(Object.keys(ENDPOINT_ROLES).some((e) => e.endsWith('/tokens') || e.endsWith('/history'))).toBe(false);
@@ -3485,7 +3518,13 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     // the 195-candidate cap, which would truncate the subject deployer (247) and 4q4GKBpV (152) on
     // every full run, i.e. exactly the largest and most gate-relevant wallets.
     const ceiling = (loadThresholds()['dune'] as { maxResultRows: number }).maxResultRows;
-    expect(SQL_ROW_CEILING).toBe(ceiling - 1);
+    // AN INEQUALITY, NOT AN EQUALITY, since captain decision 264a raised the reader's ceiling
+    // 20,000 -> 40,000 and deliberately left this literal at 19,999. The equality was a DERIVATION;
+    // the safety property is that a result honouring the derived half of the cap can never sit ON
+    // its own `?limit=`, and 19,999 < 40,000 satisfies that more strongly than 19,999 < 20,000 did.
+    // Freezing it means the raise needs NO saved-query deploy, so it cannot leave the Dune leg
+    // refusing terminally — see dune.mjs -> SQL_ROW_CEILING.
+    expect(SQL_ROW_CEILING).toBeLessThanOrEqual(ceiling - 1);
     // The SQL carries both numbers as literals, because a saved Dune query cannot read
     // thresholds.json. If they ever disagree with these the saved query applies a cap this tool
     // does not report, so the mirrored arithmetic is guarded rather than trusted.
@@ -3493,9 +3532,11 @@ describe('a per-wallet reading is refused at the launch level too', () => {
       `greatest(${LAUNCH_CAP_FLOOR}, cast(floor(${SQL_ROW_CEILING}.0 / greatest(count(DISTINCT wallet), 1)) AS bigint))`,
     );
     // THE BOUND THAT NOW HOLDS, and it is not "19,999 by construction": above 39 deployers the
-    // floor binds and the SQL may return more rows than the reader accepts — which the reader then
-    // refuses whole, the same fallback as before the cap existed. Claiming the tighter bound in
-    // prose would be claiming something the code does not do.
+    // floor binds and the SQL may return more rows than the SHARE-OUT would have allowed, and above
+    // 80 more than the READER accepts — which the reader then refuses whole, the same fallback as
+    // before the cap existed. The two crossovers are different numbers since captain decision 264a
+    // raised the reader's ceiling to 40,000, and only the second one refuses anything. Claiming the
+    // tighter bound in prose would be claiming something the code does not do.
     for (const n of [1, 5, 39, 40, 72, 195, 1000]) {
       expect(n * launchCapPerWallet(n)).toBeLessThanOrEqual(Math.max(SQL_ROW_CEILING, n * LAUNCH_CAP_FLOOR));
       expect(launchCapPerWallet(n)).toBeGreaterThanOrEqual(LAUNCH_CAP_FLOOR);
@@ -3511,7 +3552,10 @@ describe('a per-wallet reading is refused at the launch level too', () => {
     expect(launchCapPerWallet(5)).toBe(3999);
     // Never zero, whatever it is handed: a cap of 0 would return nothing and read as "no rows".
     expect(launchCapPerWallet(1_000_000)).toBe(LAUNCH_CAP_FLOOR);
-    expect(launchCapPerWallet(0)).toBe(ceiling - 1);
+    // The degenerate batch gets the SQL's own literal, which is no longer `ceiling - 1` — see the
+    // inequality above. It reads SQL_ROW_CEILING rather than the threshold precisely so this mirror
+    // can never name a cap the deployed query does not apply.
+    expect(launchCapPerWallet(0)).toBe(SQL_ROW_CEILING);
   });
 
   it('keeps the MOST RECENT launches when the cap truncates a deployer', () => {

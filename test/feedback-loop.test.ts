@@ -1200,7 +1200,9 @@ describe('this lane grades the screen and never re-tunes it', () => {
     expect(stage2).toMatch(
       /return scoreLaunchRefsEntry\(fillSource, \{ \.\.\.input, refs: toLaunchRefs\(input\.profile\) \}\)/,
     );
-    // And the grader builds the same sources the screen does, rather than reaching for a walk.
+    // And the grader builds the same sources the screen does, rather than reaching for a walk. These
+    // two source-text pins are DELIBERATE and captain-reviewed on 2026-08-05; the behavioural
+    // coverage of the shared Stage 2 sits alongside them rather than instead of them.
     expect(grade).toMatch(/from '\.\/swapapi-fills\.mjs'/);
     expect(grade).toMatch(/from '\.\/rpc-costs\.mjs'/);
   });

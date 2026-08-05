@@ -9048,7 +9048,23 @@ function namedImportsFrom(text: string, module: string): string[] {
   // point is that the symbol list stops being exhaustive, not which symbol was taken.
   const wholeModule = new RegExp(`import\\s+(?:\\*\\s*as\\s+\\w+|\\w+)\\s*(?:,[^;]*?)?from\\s*${spec}`, 'g');
   const namespaced = [...code.matchAll(wholeModule)].length > 0 ? ['*'] : [];
-  return [...new Set([...taken, ...namespaced])].sort();
+  // AND THE TWO HALVES OF THE GUARD MUST AGREE ABOUT WHAT LOADING MEANS. `localModuleLoads` counts
+  // every executable specifier — static, dynamic or required — because an extractor anchored on one
+  // SYNTAX has the same hole one level down; a symbol half that only understood `import … from`
+  // would let `const { DuneClient } = await import('./client.mjs')` report the pinned pair, add no
+  // module edge and pass. So this half derives its notion of a load from the SAME scan: every
+  // specifier occurrence the static forms below do not account for is a load whose symbols cannot be
+  // enumerated, and it reports the sentinel. Over-reporting is the safe direction — the list this
+  // feeds is an exhaustive equality, so it fails loudly and is settled on purpose.
+  const staticForms = new RegExp(
+    `import\\s*(?:(?:\\*\\s*as\\s+\\w+|\\w+|\\{[^}]*\\})(?:\\s*,\\s*\\{[^}]*\\})?\\s*from\\s*)?${spec}`,
+    'g',
+  );
+  const occurrences = localModuleLoads(text).includes(module)
+    ? [...code.matchAll(new RegExp(spec, 'g'))].length
+    : 0;
+  const opaque = occurrences > [...code.matchAll(staticForms)].length ? ['*'] : [];
+  return [...new Set([...taken, ...namespaced, ...opaque])].sort();
 }
 
 function localModuleLoads(text: string): string[] {
@@ -9490,6 +9506,10 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
         /const minAgeMs = t\.windowMs \+ t\.seekMarginMs;/,
       );
     }
+    // The three source-text pins below are DELIBERATE and captain-reviewed on 2026-08-05: they are
+    // cheap belt-and-braces that name which file owns the derivation, and the behavioural coverage
+    // (a stub source with a distinctive answer driven through `censusCandidate` and through the
+    // production `scoreLaunchRefsEntry`) sits ALONGSIDE them rather than instead of them.
     const swapApi = readFileSync(join(TOOL_DIR, 'swapapi-fills.mjs'), 'utf8');
     expect(swapApi, 'swapapi-fills.mjs does not derive the gate').toMatch(/windowReachMs\(\{/);
     // `bundling.mjs` ASKS now too, for the reason its own comment gives: the census is a finding
@@ -11434,6 +11454,21 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     ]);
     // A namespace import of a DIFFERENT module is not this module's business.
     expect(namedImportsFrom("import * as M from './measure.mjs';", 'client.mjs')).toEqual([]);
+    // AND A DYNAMIC LOAD IS A LOAD. `localModuleLoads` has understood this since the module half was
+    // defeated by one hop; a symbol half that only understood `import … from` would let a scoring
+    // module keep its pinned static import and take `DuneClient` beside it in a syntax the other
+    // half already sees. Both halves now read the same scan, so they cannot disagree again.
+    expect(namedImportsFrom("const { DuneClient } = await import('./client.mjs');", 'client.mjs')).toEqual(['*']);
+    expect(namedImportsFrom('const C = require("./client.mjs");', 'client.mjs')).toEqual(['*']);
+    expect(
+      namedImportsFrom(
+        "import { CeilingReached, RequestFailed } from './client.mjs';\n" +
+          "const { DuneClient } = await import('./client.mjs');",
+        'client.mjs',
+      ),
+    ).toEqual(['*', 'CeilingReached', 'RequestFailed']);
+    // A side-effect import takes no binding, so it is a load without a symbol and stays quiet.
+    expect(namedImportsFrom("import './client.mjs';", 'client.mjs')).toEqual([]);
     // And what `stage2.mjs` actually takes today is exactly the pinned pair.
     const stage2 = readFileSync(join(TOOL_DIR, 'stage2.mjs'), 'utf8');
     expect(namedImportsFrom(stage2, 'client.mjs')).toEqual(['CeilingReached', 'RequestFailed']);

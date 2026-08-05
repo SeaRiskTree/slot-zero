@@ -997,6 +997,7 @@ OPTIONS
 
 EXIT CODES
   0 ok    2 usage    6 a keyless ceiling was reached mid-run (the record is still written)
+  7 the fill source cannot answer the eligibility floor, so nothing was surveyed
 `;
 
 /**
@@ -1228,7 +1229,7 @@ export function renderDryRun(plan) {
   return L.join('\n');
 }
 
-const EXIT = { ok: 0, usage: 2, ceiling: 6 };
+const EXIT = { ok: 0, usage: 2, ceiling: 6, upstream: 7 };
 
 /**
  * @param {CensusOptions} opts
@@ -1298,10 +1299,24 @@ export async function main(opts, out, err) {
     },
   });
   const entryFillSource = censusFillSource(fillClient);
-  const entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entry, Date.now()));
-  // The plan prints this figure, so it is guarded before it is printed — `screen.mjs` guards its own
-  // plan path at the same point and for the same reason.
-  assertMinAgeUsable(entryFillSource, entryMinAgeMs);
+  // The plan prints this figure and the survey FILTERS on it, so it is guarded before either — a
+  // non-finite floor fails every `age >= minAgeMs` and reports `launchesEligible: 0` for every
+  // candidate, a census of nothing indistinguishable from a cohort that had no eligible launch. The
+  // refusal is caught here rather than left to escape `main`, which would return Node's exit 1 — a
+  // code not in the `EXIT` map — and print the message as a crash. `screen.mjs` guards its own plan
+  // path at the same point and for the same reason.
+  /** @type {number} */
+  let entryMinAgeMs;
+  try {
+    entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entry, Date.now()));
+    assertMinAgeUsable(entryFillSource, entryMinAgeMs);
+  } catch (cause) {
+    err('');
+    err('Refusing to start: the census has no usable fill source.');
+    err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
+    err('  Nothing was requested, so no quota was spent.');
+    return EXIT.upstream;
+  }
 
   if (opts.dryRun) {
     out(

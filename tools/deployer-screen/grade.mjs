@@ -68,6 +68,8 @@ import {
 } from './outcome.mjs';
 import { extractPredictions } from './prediction.mjs';
 import { KeylessClient, SolanaRpcClient } from './pumpfun.mjs';
+import { rpcCostSource } from './rpc-costs.mjs';
+import { swapApiFillSource } from './swapapi-fills.mjs';
 import { toLaunchRefs } from './measure.mjs';
 import { exitForRefusal, loadThresholds } from './screen.mjs';
 import { scoreLaunchRefsEntry } from './stage2.mjs';
@@ -384,13 +386,20 @@ export async function measureOutcome(clients, p, recipe, nowMs, log) {
 
   const rpc = clients.rpcFor(recipe.cost['maxRpcRequestsPerCandidate'], recipe.cost['rpcMinIntervalMs']);
   const keyless = clients.keylessFor(recipe.keylessRetryBackoffMs);
-  const { score, coverage } = await scoreLaunchRefsEntry(keyless, {
+  // The SOURCES the predicting run measured on, not today's. This lane is pinned to issue no Dune
+  // execution and no Helius credit, so both are the keyless/RPC pair unconditionally — and they are
+  // constructed here rather than inside Stage 2 for captain decision 260a's reason: one Stage 2,
+  // and it names no vendor.
+  const { score, coverage } = await scoreLaunchRefsEntry(swapApiFillSource(keyless), {
     wallet: p.wallet,
     refs: after,
     nowMs,
     thresholds: /** @type {import('./stage2.mjs').Stage2Thresholds} */ (recipe.entry),
-    rpc,
-    preferBlockRoute: recipe.cost['preferBlockRoute'] ?? true,
+    // `null` when the run-level RPC ceiling is already spent, and it stays null rather than
+    // becoming a source over a client that cannot spend: no cost source disables the leg, which is
+    // what leaves the claim ungraded instead of graded on an unmeasured cost.
+    costSource:
+      rpc === null ? null : rpcCostSource(rpc, { preferBlockRoute: recipe.cost['preferBlockRoute'] ?? true }),
     log,
   });
 

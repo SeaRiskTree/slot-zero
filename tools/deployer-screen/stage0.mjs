@@ -63,6 +63,7 @@ import { entryCostTargets, measureLaunchEntry, priceLaunchEntry, scoreEntry } fr
 import {
   CURVE_INITIAL_PRICE_SOL,
   CURVE_K,
+  LAMPORTS_PER_SOL,
   blockTxIndex,
   createSlotGroups,
   measureCompletion,
@@ -72,7 +73,6 @@ import {
   roomIsProven,
   solBetweenPrices,
 } from './measure.mjs';
-import { LAMPORTS_PER_SOL } from './pumpfun.mjs';
 import { applyGate, verdictFor } from './rank.mjs';
 
 /** The deployer the whole dataset is about. `src/cohort.ts` carries the same constant. */
@@ -397,7 +397,7 @@ export function verifyFieldReproduction(dataDir, launches) {
  * wallet) it carries the transaction's whole fee attributed to its payer and the named wallet's real
  * lamport change. That is the same pair of quantities `pumpfun.mjs` → `parseTransactionCosts` pulls
  * out of a `getTransaction` response, so projecting the table onto {@link
- * import('./pumpfun.mjs').TransactionCosts} lets **the live attach function run over committed
+ * import('./cost-source.mjs').TransactionCosts} lets **the live attach function run over committed
  * ground truth** rather than over a re-implementation of it. One code path, two sources — the same
  * arrangement that makes the room and field legs testable offline.
  *
@@ -407,7 +407,7 @@ export function verifyFieldReproduction(dataDir, launches) {
  * costs coverage and can never fabricate a figure.
  *
  * @param {string} dataDir
- * @returns {Map<string, import('./pumpfun.mjs').TransactionCosts>} By transaction signature.
+ * @returns {Map<string, import('./cost-source.mjs').TransactionCosts>} By transaction signature.
  */
 export function readOnChainCosts(dataDir) {
   const rows = parseCsv(readFileSync(join(dataDir, 'onchain_create_slot_pnl.csv'), 'utf8'));
@@ -420,7 +420,7 @@ export function readOnChainCosts(dataDir) {
   const iFee = col('fee_lamports');
   const iDelta = col('sol_delta_lamports');
 
-  /** @type {Map<string, import('./pumpfun.mjs').TransactionCosts>} */
+  /** @type {Map<string, import('./cost-source.mjs').TransactionCosts>} */
   const byTx = new Map();
   for (const r of rows.slice(1)) {
     if (r.length <= Math.max(iFee, iDelta)) continue;
@@ -555,7 +555,7 @@ export function verifyOnChainCostReproduction(dataDir, launches, t) {
     // The same all-or-nothing rule a live walk applies, one level up: only the transactions the
     // table actually carries are handed over, and `priceLaunchEntry` refuses any wallet whose set
     // is incomplete.
-    /** @type {Map<string, import('./pumpfun.mjs').TransactionCosts>} */
+    /** @type {Map<string, import('./cost-source.mjs').TransactionCosts>} */
     const available = new Map();
     for (const target of targets) {
       const costs = onChain.get(target.tx);

@@ -172,6 +172,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CeilingReached } from './client.mjs';
+import { assertMinAgeUsable } from './fill-source.mjs';
 import { measureCompletion, measureCreateSlot, median, percentile, roomIsProven } from './measure.mjs';
 // `windowReachMs` is IMPORTED, never re-derived: the dry run below prints the reach and the cost of
 // the walk it authorises, and a plan that keeps its own copy of the walk's arithmetic is a plan that
@@ -187,7 +188,25 @@ import {
 } from './pumpfun.mjs';
 import { applyGate, verdictFor } from './rank.mjs';
 import { measureSubjectLaunches } from './stage0.mjs';
-import { describeTransportFailure } from './stage2.mjs';
+import { describeTransportFailure, entryFillBounds } from './stage2.mjs';
+import { swapApiFillSource } from './swapapi-fills.mjs';
+
+/**
+ * The fill source this census asks for its eligibility gate.
+ *
+ * **Keyless by construction, which is why it is built here rather than selected.** The screen
+ * resolves its source through `screen.mjs` → `selectEntryFillSource`, and importing that module
+ * would put the Dune client and the credential reader in this census's import graph — captain
+ * decision 173a's "a windows-only pass spending zero keyed requests" is a property of the tree, and
+ * `test/bundling-census.test.ts` holds it. So the tie to the screen's own choice is asserted in that
+ * test against `ENTRY_FILL_SOURCE_KIND` rather than expressed as an import here.
+ *
+ * @param {KeylessClient} client
+ * @returns {import('./fill-source.mjs').FillSource}
+ */
+export function censusFillSource(client) {
+  return swapApiFillSource(client);
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
@@ -491,20 +510,33 @@ export function buildCohort(toolDir = HERE) {
  * @param {number} input.mintTimeBackdateMs `thresholds.json` → `bundling_census`. See
  *   {@link MINT_TIME_BACKDATE_CAVEAT}: the two vendors' clocks disagree by up to ~2s in the one
  *   direction that deletes a create slot, and this is what makes that survivable.
+ * @param {import('./fill-source.mjs').FillSource} [input.fillSource] Who answers ELIGIBILITY, and
+ *   nothing else — the walk below is this census's own. Absent means {@link censusFillSource}.
  * @param {(line: string) => void} [input.log]
  * @returns {Promise<BundlingWalk>}
  */
 export async function censusCandidate(client, input) {
   const t = input.entry;
-  // The SAME derivation `stage2.mjs` gates on, by the same function call rather than by a second
-  // copy of the arithmetic — the doc above claims this pass measures "the launches Stage 2 would
-  // have scored", and a local `windowMs + seekMarginMs` made that claim false the moment the
-  // screen's gate moved. `roomIsProven` is called here for the same reason.
-  const minAgeMs = windowReachMs({
-    windowMs: t.windowMs,
-    seekMarginMs: t.seekMarginMs,
-    windowSlotSpan: t.windowSlotSpan,
-  });
+  // THE GATE IS ASKED OF A FILL SOURCE, exactly as `stage2.mjs` asks it — not derived here. The doc
+  // above claims this pass measures "the launches Stage 2 would have scored", and that claim is only
+  // true while the two ask the same question of the same kind of vendor: captain decision 257a made
+  // "has this launch finished happening" the SOURCE's to answer, so a `windowReachMs` call here
+  // would be the arithmetic one particular source happens to use rather than the screen's gate.
+  // The source is constructed by {@link censusFillSource} rather than resolved through
+  // `screen.mjs` → `selectEntryFillSource`, because importing that module would pull the Dune
+  // client and the credential reader into this census's import graph and captain decision 173a's
+  // "a windows-only pass spending zero keyed requests" is load-bearing. The tie to the screen's own
+  // choice is asserted in `test/bundling-census.test.ts` instead, against
+  // `ENTRY_FILL_SOURCE_KIND`. `roomIsProven` is called rather than copied for the same reason.
+  const fillSource = input.fillSource ?? censusFillSource(client);
+  const minAgeMs = await fillSource.minAgeMs(entryFillBounds(t, input.nowMs));
+  // Held to the contract at the point of consumption, the same way `screen.mjs` holds its own plan
+  // path and `stage2.mjs` holds the run. THE CONSEQUENCE HERE IS WORSE THAN A BAD PRINTED LINE: a
+  // non-finite answer used as this filter makes EVERY launch ineligible, so the census would report
+  // zero eligible launches — a measurement of nothing wearing a measurement's clothes — rather than
+  // refusing. `fill-source.mjs` → `assertMinAgeUsable` says it is the backstop for a source that
+  // forgets; a call site that skips it is a place that claim is not true.
+  assertMinAgeUsable(fillSource, minAgeMs);
   const eligible = input.refs.filter((r) => input.nowMs - r.deployedAtMs >= minAgeMs);
   const planned = eligible.slice(0, t.maxLaunchesPerCandidate);
 
@@ -965,6 +997,7 @@ OPTIONS
 
 EXIT CODES
   0 ok    2 usage    6 a keyless ceiling was reached mid-run (the record is still written)
+  7 the fill source cannot answer the eligibility floor, so nothing was surveyed
 `;
 
 /**
@@ -1063,6 +1096,10 @@ export function loadThresholds() {
  * @param {number} plan.maxCandidates
  * @param {Record<string, any>} plan.census
  * @param {import('./stage2.mjs').Stage2Thresholds} plan.entry
+ * @param {number} plan.entryMinAgeMs THE CENSUS'S OWN FILL SOURCE'S ANSWER, asked of it by the
+ *   caller — never re-derived here. Captain decision 257a made "has this launch finished happening"
+ *   the source's to answer, so a floor computed a second time in this printer would go on agreeing
+ *   with the pass it describes right up until the day it did not.
  * @param {number} plan.listingIntervalMs
  * @returns {string}
  */
@@ -1073,8 +1110,10 @@ export function renderDryRun(plan) {
   const listingMin = Math.round((listingWorst * plan.listingIntervalMs) / 60_000);
   const fillMin = Math.round((fillWorst * plan.entry.keylessMinIntervalMs) / 60_000);
   // DERIVED FROM THE WALK, NOT DESCRIBED. `readLaunchWindow` will seek exactly this far, because
-  // this is the function it calls to decide that. See {@link MEASURED_PAGE_COST} for why the page
-  // cost beside it is checked against the reach rather than simply printed.
+  // this is the function it calls to decide that — the census walks its own windows, so the REACH
+  // is still ours to derive. The eligibility FLOOR is not: it arrives as `plan.entryMinAgeMs`. See
+  // {@link MEASURED_PAGE_COST} for why the page cost beside it is checked against the reach rather
+  // than simply printed.
   const reachMs = windowReachMs(plan.entry);
   const spanReachMs = Math.ceil(plan.entry.windowSlotSpan * MAX_MS_PER_SLOT);
   const reachBase = spanReachMs >= plan.entry.windowMs
@@ -1168,14 +1207,15 @@ export function renderDryRun(plan) {
   L.push(
     `    windowMs ${plan.entry.windowMs}, seekMarginMs ${plan.entry.seekMarginMs}, ` +
       `windowSlotSpan ${plan.entry.windowSlotSpan}, tradePageLimit ${plan.entry.tradePageLimit}, ` +
-      `eligibility floor ${reachMs}ms, seek reach ${reachMs}ms.`,
+      `eligibility floor ${plan.entryMinAgeMs}ms, seek reach ${reachMs}ms.`,
   );
-  L.push('    THE LAST TWO ARE ONE BOUND, DERIVED ONCE: both are pumpfun.mjs -> windowReachMs, the');
+  L.push('    THE FLOOR IS THE GATE THE FILL SOURCE ITSELF APPLIES, never a second number derived');
+  L.push('    here; the REACH is this walk\'s own cursor, pumpfun.mjs -> windowReachMs, the');
   L.push('    windowSlotSpan converted at a MEASURED worst-case slot rate with windowMs as a floor,');
-  L.push('    plus clock slack. They used to be two numbers — a hand-written windowMs + seekMarginMs');
-  L.push('    for eligibility against a span-derived reach — and the chain drifted the gap open to');
-  L.push('    20s with nothing failing. A launch is old enough exactly when the cursor\'s own bound');
-  L.push('    is in the past, so it is the same call and cannot come apart again.');
+  L.push('    plus clock slack. They are the same number for the swap-api source this census reads,');
+  L.push('    and a source whose tables LAG answers a larger floor — which is why the floor is asked');
+  L.push('    rather than computed. The floor used to be a hand-written windowMs + seekMarginMs against');
+  L.push('    a span-derived reach, and the chain drifted that gap open to 20s with nothing failing.');
   L.push('');
   L.push('WHAT IT WILL NOT DO: no entry score, no room figure, no field, no entry cost, no verdict.');
   L.push('');
@@ -1189,7 +1229,7 @@ export function renderDryRun(plan) {
   return L.join('\n');
 }
 
-const EXIT = { ok: 0, usage: 2, ceiling: 6 };
+const EXIT = { ok: 0, usage: 2, ceiling: 6, upstream: 7 };
 
 /**
  * @param {CensusOptions} opts
@@ -1245,8 +1285,51 @@ export async function main(opts, out, err) {
     return EXIT.usage;
   }
 
+  // Its OWN client and its OWN ceiling, for the reason `screen.mjs` gives for Stage 2's: a different
+  // host with different pacing, and neither leg may eat the other's budget or exceed what the dry
+  // run printed. It is built ABOVE the dry-run branch because THE PLAN MUST STATE THE FLOOR THE
+  // SOURCE ITSELF WILL APPLY — asking it costs no request, and a plan that derived that duration
+  // again would be the second expression captain decision 144a's rule is about.
+  const fillClient = new KeylessClient({
+    maxRequests: census.maxKeylessRequests,
+    minIntervalMs: entry.keylessMinIntervalMs,
+    retryBackoffMs: entry.keylessRetryBackoffMs ?? [],
+    onRequest: (url) => {
+      if (!opts.json) out(`  → GET ${url}`);
+    },
+  });
+  const entryFillSource = censusFillSource(fillClient);
+  // The plan prints this figure and the survey FILTERS on it, so it is guarded before either — a
+  // non-finite floor fails every `age >= minAgeMs` and reports `launchesEligible: 0` for every
+  // candidate, a census of nothing indistinguishable from a cohort that had no eligible launch. The
+  // refusal is caught here rather than left to escape `main`, which would return Node's exit 1 — a
+  // code not in the `EXIT` map — and print the message as a crash. `screen.mjs` guards its own plan
+  // path at the same point and for the same reason.
+  /** @type {number} */
+  let entryMinAgeMs;
+  try {
+    entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entry, Date.now()));
+    assertMinAgeUsable(entryFillSource, entryMinAgeMs);
+  } catch (cause) {
+    err('');
+    err('Refusing to start: the census has no usable fill source.');
+    err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
+    err('  Nothing was requested, so no quota was spent.');
+    return EXIT.upstream;
+  }
+
   if (opts.dryRun) {
-    out(renderDryRun({ cohortSize: cohort.length, cohortCap, maxCandidates, census, entry, listingIntervalMs }));
+    out(
+      renderDryRun({
+        cohortSize: cohort.length,
+        cohortCap,
+        maxCandidates,
+        census,
+        entry,
+        entryMinAgeMs,
+        listingIntervalMs,
+      }),
+    );
     return EXIT.ok;
   }
 
@@ -1258,18 +1341,6 @@ export async function main(opts, out, err) {
       if (!opts.json) out(`  → GET ${url}`);
     },
   });
-  // Its OWN client and its OWN ceiling, for the reason `screen.mjs` gives for Stage 2's: a different
-  // host with different pacing, and neither leg may eat the other's budget or exceed what the dry
-  // run printed.
-  const fillClient = new KeylessClient({
-    maxRequests: census.maxKeylessRequests,
-    minIntervalMs: entry.keylessMinIntervalMs,
-    retryBackoffMs: entry.keylessRetryBackoffMs ?? [],
-    onRequest: (url) => {
-      if (!opts.json) out(`  → GET ${url}`);
-    },
-  });
-
   /** @type {CandidateBundling[]} */
   const rows = [];
   /** @type {{ wallet: string, verdict: string, reason: string }[]} */
@@ -1359,6 +1430,7 @@ export async function main(opts, out, err) {
     for (const s of toSurvey) {
       if (!opts.json) out(`  ${s.member.wallet}`);
       const result = await censusCandidate(fillClient, {
+        fillSource: entryFillSource,
         refs: s.refs,
         nowMs: Date.now(),
         entry,

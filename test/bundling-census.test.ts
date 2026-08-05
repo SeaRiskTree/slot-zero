@@ -26,6 +26,7 @@ import {
   PREDICATE_CAVEAT,
   buildCohort,
   censusCandidate,
+  censusFillSource,
   loadThresholds,
   parseArgs,
   renderDryRun,
@@ -36,6 +37,9 @@ import {
 } from '../tools/deployer-screen/bundling.mjs';
 import type { CandidateBundling } from '../tools/deployer-screen/bundling.mjs';
 import { KeylessClient, windowReachMs } from '../tools/deployer-screen/pumpfun.mjs';
+import { ENTRY_FILL_SOURCE_KIND, selectEntryFillSource } from '../tools/deployer-screen/screen.mjs';
+import { swapApiFillSource } from '../tools/deployer-screen/swapapi-fills.mjs';
+import { entryFillBounds } from '../tools/deployer-screen/stage2.mjs';
 import type { Stage2Thresholds } from '../tools/deployer-screen/stage2.mjs';
 
 const CENSUS_SOURCE = readFileSync(
@@ -313,6 +317,7 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
       maxCandidates: T['bundling_census'].maxCandidatesSurveyed,
       census: T['bundling_census'],
       entry: ENTRY,
+      entryMinAgeMs: windowReachMs(ENTRY),
       listingIntervalMs: T['budget'].keylessMinIntervalMs,
     });
     expect(text).toContain('KEYED SPEND: 0');
@@ -329,6 +334,27 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
     expect(text).toContain(OWNERSHIP_LIST_CAVEAT);
     expect(text).toContain(DROPPED_WINDOW_CAVEAT);
     expect(text).toContain(MINT_TIME_BACKDATE_CAVEAT);
+
+    // THE PLAN STATES THE FLOOR ITS OWN SOURCE ANSWERS, and the reach stays the walk's. They are
+    // one number for the swap-api source this census reads, so proving the plan is not deriving the
+    // floor itself takes a source that answers something else — the run path's pin below could not
+    // see this printer, which is how a stale claim survived a round here.
+    const lagged = renderDryRun({
+      cohortSize: 82,
+      cohortCap: T['bundling_census'].maxCohortSize,
+      maxCandidates: T['bundling_census'].maxCandidatesSurveyed,
+      census: T['bundling_census'],
+      entry: ENTRY,
+      entryMinAgeMs: windowReachMs(ENTRY) + 240_000,
+      listingIntervalMs: T['budget'].keylessMinIntervalMs,
+    });
+    expect(text).toContain(`eligibility floor ${windowReachMs(ENTRY)}ms, seek reach ${windowReachMs(ENTRY)}ms.`);
+    expect(lagged).toContain(
+      `eligibility floor ${windowReachMs(ENTRY) + 240_000}ms, seek reach ${windowReachMs(ENTRY)}ms.`,
+    );
+    // And the plan no longer claims the two are one call, because for a lagging source they are not.
+    expect(lagged).not.toContain('THE LAST TWO ARE ONE BOUND');
+    expect(lagged).toContain('THE FLOOR IS THE GATE THE FILL SOURCE ITSELF APPLIES');
   });
 
   it('rejects bad input rather than guessing, and the caps can only be lowered', () => {
@@ -480,6 +506,76 @@ describe('it measures bundling and nothing else', () => {
     expect(floor).toBeGreaterThan(ENTRY.windowMs + ENTRY.seekMarginMs);
     expect((await at(ENTRY.windowMs + ENTRY.seekMarginMs)).launchesEligible).toBe(0);
     expect((await at(floor)).launchesEligible).toBe(1);
+  });
+
+  it('ASKS a fill source for that floor, and it is the kind the screen selects', async () => {
+    // The census's whole value is that it cannot drift from the pass it reports on, and captain
+    // decision 257a moved "has this launch finished happening" out of the arithmetic and into the
+    // VENDOR. So a `windowReachMs` call here would no longer be the screen's gate — it would be the
+    // duration one particular source happens to answer with.
+    //
+    // Proven by making the two disagree: a source answering an hour refuses a launch the reach
+    // admits, so a re-derivation in `bundling.mjs` fails this.
+    const floor = windowReachMs(ENTRY);
+    const stub = {
+      ...censusFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 })),
+      minAgeMs: async () => floor + 3_600_000,
+    };
+    const { client, urls } = scriptedClient([page({ createSlot: 500, bundles: 1, loneWallets: 1 })]);
+    const refused = await censusCandidate(client, {
+      refs: [{ mint: 'YOUNG', deployedAtMs: NOW - floor }],
+      nowMs: NOW,
+      entry: ENTRY,
+      mintTimeBackdateMs: BACKDATE,
+      fillSource: stub,
+    });
+    expect(refused.launchesEligible).toBe(0);
+    expect(urls).toEqual([]);
+
+    // AND THE TIE TO THE SCREEN, which is what stops the two answering to different vendors. The
+    // census builds its source rather than importing `selectEntryFillSource` — that module carries
+    // the Dune client and the credential reader, and this pass spends zero keyed requests — so the
+    // agreement is asserted here instead: same provenance, same answer, on the same bounds.
+    const keyless = () => new KeylessClient({ maxRequests: 1, minIntervalMs: 0 });
+    const census = censusFillSource(keyless());
+    const screen = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, {
+      'swap-api': () => swapApiFillSource(keyless()),
+    });
+    expect(census.kind).toBe(ENTRY_FILL_SOURCE_KIND);
+    const bounds = entryFillBounds(ENTRY, NOW);
+    expect(await census.minAgeMs(bounds)).toBe(await screen.minAgeMs(bounds));
+    expect(census.issued()).toBe(0);
+  });
+
+  it('REFUSES a source whose floor is not a duration, rather than counting zero eligible launches', async () => {
+    // The consequence here is worse than the bad printed line the same guard stops on the screen's
+    // plan. This floor is used as a FILTER: a non-finite answer makes every launch fail
+    // `age >= minAgeMs`, so the census would report `launchesEligible: 0` for every candidate — a
+    // census of nothing, indistinguishable from a cohort that genuinely had no eligible launch, and
+    // wrong in the direction that publishes a finding rather than refusing to. `assertMinAgeUsable`
+    // is documented as the backstop for a source that forgets; a call site that skipped it was a
+    // place that claim was not true.
+    const { client, urls } = scriptedClient([page({ createSlot: 500, bundles: 1, loneWallets: 1 })]);
+    const refs = [{ mint: 'OLD', deployedAtMs: NOW - 86_400_000 }];
+    const withFloor = async (minAgeMs: number) =>
+      censusCandidate(client, {
+        refs,
+        nowMs: NOW,
+        entry: ENTRY,
+        mintTimeBackdateMs: BACKDATE,
+        fillSource: {
+          ...censusFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 })),
+          minAgeMs: async () => minAgeMs,
+        },
+      });
+
+    await expect(withFloor(Number.POSITIVE_INFINITY)).rejects.toThrow(/not a duration/);
+    await expect(withFloor(Number.NaN)).rejects.toThrow(/not a duration/);
+    // It throws INSTEAD of measuring, so the silent zero-eligible reading is unreachable and the
+    // walk never starts.
+    expect(urls).toEqual([]);
+    // A real duration still measures, so the guard refuses nothing it should not.
+    expect((await withFloor(windowReachMs(ENTRY))).launchesEligible).toBe(1);
   });
 
   it('caps the sample at Stage 2\'s own per-candidate launch cap', async () => {

@@ -68,6 +68,7 @@ import {
 } from '../tools/deployer-screen/dune.mjs';
 import {
   CURVE_INITIAL_PRICE_SOL,
+  LAMPORTS_PER_SOL,
   blockTxIndex,
   createSlotGroups,
   measureCompletion,
@@ -105,10 +106,27 @@ import type { EntryScore, EntryThresholds, UnmeasuredCause } from '../tools/depl
 import {
   emptyCostCoverage,
   emptyDropReasons,
+  entryFillBounds,
   scoreCandidateEntry,
+  scoreLaunchRefsEntry,
   toEntryRecordRow,
 } from '../tools/deployer-screen/stage2.mjs';
 import type { Stage2Coverage } from '../tools/deployer-screen/stage2.mjs';
+import {
+  FILL_SOURCE_KINDS,
+  assertMinAgeUsable,
+  assertWindowUsable,
+} from '../tools/deployer-screen/fill-source.mjs';
+import { COST_SOURCE_KINDS, assertCostWalkAccounted } from '../tools/deployer-screen/cost-source.mjs';
+import { swapApiFillSource } from '../tools/deployer-screen/swapapi-fills.mjs';
+import { rpcCostSource } from '../tools/deployer-screen/rpc-costs.mjs';
+import { ENTRY_FILL_SOURCE_KIND, selectEntryFillSource } from '../tools/deployer-screen/screen.mjs';
+import {
+  duneFillSource,
+  duneRowsToWindow,
+  parseDuneTradeRow,
+  rebuildSid,
+} from '../tools/deployer-screen/dune-fills.mjs';
 import {
   CREATE_SLOT_COHORT,
   measureSubjectLaunches,
@@ -132,7 +150,6 @@ import {
 import {
   KeylessClient,
   KeylessHttpError,
-  LAMPORTS_PER_SOL,
   MAX_MS_PER_SLOT,
   MEASURED_MAX_MS_PER_SLOT,
   RpcCredentialRejected,
@@ -1588,6 +1605,7 @@ describe('the CLI contract', () => {
       stage2: true,
       maxScored: T['stage2_entry'].maxCandidatesScored,
       entryThresholds: T['stage2_entry'],
+      entryMinAgeMs: windowReachMs(T['stage2_entry']),
       keyDescription: null,
       rpcEndpoint: resolveSolanaRpcEndpoint({}),
       indexedWalk: T['creation_walk_helius'],
@@ -1660,6 +1678,7 @@ describe('the CLI contract', () => {
       stage2: false,
       maxScored: 0,
       entryThresholds: T['stage2_entry'],
+      entryMinAgeMs: windowReachMs(T['stage2_entry']),
       keyDescription: null,
       rpcEndpoint: resolveSolanaRpcEndpoint({}),
       indexedWalk: T['creation_walk_helius'],
@@ -1672,6 +1691,55 @@ describe('the CLI contract', () => {
     expect(off).toMatch(/STAGE 2 DISABLED/);
     expect(off).toMatch(/nothing about whether a window is enterable/);
   });
+
+  it('the plan states the gate the SELECTED SOURCE answers, never one it derives itself', async () => {
+    // Captain decision 260a moved the eligibility gate to `fillSource.minAgeMs`, and a plan that
+    // re-derived that duration would be a second expression that merely agrees — the shape captain
+    // decision 144a names, and the one it has already cost this repo twice. Proven by making the
+    // two disagree: a source answering a distinctive duration must move the printed line.
+    const T = loadThresholds();
+    const plan = {
+      seedPlan: [],
+      maxCandidates: 12,
+      maxKeyedRequests: 45,
+      consistency: false,
+      maxKeylessRequests: T['budget'].maxKeylessRequests,
+      historySource: 'creation-derived' as const,
+      creationWalk: T['creation_walk'],
+      costBounds: T['stage2_cost'],
+      stage2: true,
+      maxScored: T['stage2_entry'].maxCandidatesScored,
+      entryThresholds: T['stage2_entry'],
+      keyDescription: null,
+      rpcEndpoint: resolveSolanaRpcEndpoint({}),
+      indexedWalk: T['creation_walk_helius'],
+      worstCaseCredits: 0,
+      dune: T['dune'],
+      duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
+      usingDune: true,
+      duneRefreshProbe: false,
+    };
+    const reach = windowReachMs(T['stage2_entry']);
+    expect(renderDryRun({ ...plan, entryMinAgeMs: reach })).toContain(`walked until it is ${reach / 1000}s old`);
+    // A LAGGING SOURCE, the case Gate 3 introduces: the printed gate follows the source, and the
+    // reach it is derived from stays where it is.
+    const lagged = renderDryRun({ ...plan, entryMinAgeMs: reach + 240_000 });
+    expect(lagged).toContain(`walked until it is ${(reach + 240_000) / 1000}s old`);
+    expect(lagged).toContain(`The seek reaches ${reach / 1000}s`);
+
+    // AND THE WIRING: the number the CLI prints is the one the source it selected returned. Driving
+    // the real dry run is what ties the two ends together — a renderer taking the right argument
+    // proves nothing if `screen.mjs` computes that argument a second way. It opens no socket.
+    const parsed = parseArgs(['--dry-run']);
+    if (!parsed.ok) throw new Error('unreachable');
+    const lines: string[] = [];
+    const code = await main(parsed.opts, {}, (l) => lines.push(l), () => {});
+    expect(code).toBe(0);
+    const source = swapApiFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 }));
+    const answered = await source.minAgeMs(entryFillBounds(T['stage2_entry'] as never, Date.now()));
+    expect(lines.join('\n')).toContain(`walked until it is ${answered / 1000}s old`);
+    expect(source.issued()).toBe(0);
+  }, 60_000);
 
   it('ships pinned thresholds, with Stage 2 active and every provider bound tied together', () => {
     const T = loadThresholds();
@@ -5098,6 +5166,133 @@ describe('the keyless boundary holds in both directions', () => {
     const screen = all.get('tools/deployer-screen/screen.mjs') ?? '';
     const stage2Call = screen.slice(screen.indexOf('await scoreCandidateEntry('));
     expect(stage2Call.slice(0, 600)).not.toMatch(/dune|Dune/);
+  });
+
+  it('a scoring module imports only from a declared pure set — 156a, enforced rather than spelled', () => {
+    // ADDED BESIDE THE ASSERTION ABOVE, 2026-08-05, captain decision 261a. That one is untouched
+    // and stays as the record of 156a's intent. This one tests the property.
+    //
+    // WHY IT WAS NEEDED. The assertion above names `dune.mjs` and checks five modules for a literal
+    // `from './dune.mjs'`. Measured by the boundary proposal: a module importing `dune.mjs` and
+    // imported BY `stage2.mjs` passed the whole 403-test file, twice — once named `probe-fills.mjs`
+    // and once named `dune-costs.mjs`, which is the name captain decision 255b step (3) itself
+    // prescribes. ONE HOP defeated it, because the regex is anchored on a filename rather than on a
+    // property. A deny-list of one name was exhaustive when `dune.mjs` was the only Dune module
+    // that existed; it silently stopped being exhaustive, which is this repo's recurring defect —
+    // a claim outrunning its enforcement, and a guard that cannot fail when the world changes is
+    // not a guard (`stage2.mjs` says so about a different one).
+    //
+    // AND THE CLAIM ITSELF CHANGED. Once a Dune fill source exists, "no Dune value reaches a Stage
+    // 2 entry number" is FALSE BY DESIGN — a Dune fill reaching `entry.roomLeft` is the programme.
+    // What must stay true is the thing that claim was protecting: NO MODULE THAT DECIDES ANYTHING
+    // MAY KNOW WHICH VENDOR PRODUCED THE FILLS IT DECIDES ON. A module that can tell is one
+    // refactor away from a bar that differs by source, and that failure is invisible — a wrongly
+    // refused deployer is filed and never offered again.
+    const all = readAll(TOOL_DIR, 'tools/deployer-screen/');
+    /** Every local module a module LOADS, deduped — see {@link localModuleLoads}. */
+    const importsOf = (file: string): string[] => localModuleLoads(all.get(`tools/deployer-screen/${file}`) ?? '');
+
+    /**
+     * EXHAUSTIVE. Adding ANY import to a scoring module means coming back here on purpose — no
+     * wildcard, no per-module exception, the same discipline the credential list below is held to.
+     * An allow-list fails on a NEW import; a deny-list fails only on a known-bad one, which is
+     * exactly how `dune-costs.mjs` walked through the assertion above.
+     */
+    const SCORING_IMPORTS: Record<string, string[]> = {
+      'measure.mjs': [], // the pure core imports nothing, and must not start
+      'rank.mjs': [],
+      'entry.mjs': ['measure.mjs'],
+      'stage0.mjs': ['entry.mjs', 'measure.mjs', 'rank.mjs'],
+      // `client.mjs` for the ceiling and transport error types, `record.mjs` for redaction, and the
+      // two CONTRACTS — which are importable only because they can never carry a vendor value, and
+      // that is asserted below rather than assumed. No source implementation, and no transport
+      // module that is one: the swap-api walk and the RPC cost walk both arrive by injection.
+      'stage2.mjs': ['client.mjs', 'cost-source.mjs', 'entry.mjs', 'fill-source.mjs', 'measure.mjs', 'record.mjs'],
+    };
+    for (const [module, allowed] of Object.entries(SCORING_IMPORTS)) {
+      expect((all.get(`tools/deployer-screen/${module}`) ?? '').length, `${module} must exist`).toBeGreaterThan(0);
+      expect(importsOf(module), `${module}'s local imports`).toEqual([...allowed].sort());
+    }
+
+    /**
+     * AND WHICH SYMBOLS, because the module list is one granularity too coarse for `client.mjs`.
+     * That module exports `DuneClient` beside the ceiling and transport error types `stage2.mjs`
+     * wants, so `import { DuneClient, CeilingReached, RequestFailed } from './client.mjs'` adds NO
+     * module edge: the allow-list above still matches, the closure below never fires because
+     * `client.mjs` is not a vendor module, and nothing reads a `kind`. That is 261a's one-hop
+     * indirection one granularity down. EXHAUSTIVE in the same idiom — no wildcard, no per-module
+     * exception, and a module absent from this list may take nothing from `client.mjs` at all.
+     */
+    const SCORING_CLIENT_SYMBOLS: Record<string, string[]> = {
+      'stage2.mjs': ['CeilingReached', 'RequestFailed'],
+    };
+    for (const module of Object.keys(SCORING_IMPORTS)) {
+      const taken = namedImportsFrom(all.get(`tools/deployer-screen/${module}`) ?? '', 'client.mjs');
+      expect(taken, `${module}'s symbols from client.mjs`).toEqual([...(SCORING_CLIENT_SYMBOLS[module] ?? [])].sort());
+    }
+
+    // TRANSITIVE, and this is the half that catches a name nobody has thought of yet. The allow-list
+    // above pins the direct edges; this closes over them, so a module reachable from a scoring
+    // module at ANY depth is covered whatever it is called. `dune-costs.mjs` under `stage2.mjs`
+    // fails on both counts; `record.mjs` growing a `dune.mjs` import fails on this one alone.
+    const closureOf = (root: string): Set<string> => {
+      const seen = new Set<string>();
+      const queue = [root];
+      while (queue.length > 0) {
+        const file = queue.pop()!;
+        for (const dep of importsOf(file)) {
+          if (seen.has(dep)) continue;
+          seen.add(dep);
+          queue.push(dep);
+        }
+      }
+      return seen;
+    };
+    /** Every module that reaches a vendor, by name. A module importing one of these joins the set. */
+    const VENDOR_MODULES = new Set(['dune.mjs', 'pumpfun.mjs', 'creation.mjs', 'seed.mjs']);
+    for (const [file, text] of all) {
+      const local = file.slice('tools/deployer-screen/'.length);
+      const loads = new Set(localModuleLoads(text));
+      if (!local.includes('/') && [...VENDOR_MODULES].some((v) => loads.has(v))) {
+        VENDOR_MODULES.add(local);
+      }
+    }
+    for (const module of Object.keys(SCORING_IMPORTS)) {
+      const reachable = [...closureOf(module)].filter((m) => VENDOR_MODULES.has(m));
+      expect(reachable, `${module} must reach no vendor module, at any depth`).toEqual([]);
+    }
+
+    // AND NOT IN A TYPE POSITION EITHER. A JSDoc `import('./pumpfun.mjs').X` erases at runtime and
+    // so cannot carry a vendor value — but it is a scoring module NAMING a vendor, which is the
+    // property this block states, and it is invisible to everything above because the extractor
+    // reads the executable half. It is also how a contract typedef stays parked in the transport
+    // module that first wrote it, leaving that module's alias load-bearing for a scoring module.
+    for (const module of Object.keys(SCORING_IMPORTS)) {
+      const text = all.get(`tools/deployer-screen/${module}`) ?? '';
+      const named = [...new Set([...text.matchAll(/import\(['"]\.\/([\w.-]+\.mjs)['"]\)/g)].map((m) => m[1]!))];
+      expect(named.filter((m) => VENDOR_MODULES.has(m)), `${module} must name no vendor module in a type`).toEqual([]);
+    }
+
+    // The two contracts are importable by a scoring module ONLY because they can never carry a
+    // vendor value. That is asserted, not assumed: a runtime import is the one thing that could put
+    // one there, and a JSDoc type reference erases and cannot.
+    for (const contract of ['fill-source.mjs', 'cost-source.mjs']) {
+      const text = all.get(`tools/deployer-screen/${contract}`) ?? '';
+      expect(text.length, `${contract} must exist`).toBeGreaterThan(0);
+      expect(text, `${contract} must import nothing at runtime`).not.toMatch(/^\s*import\s/m);
+    }
+
+    // AND NO SCORING MODULE MAY BRANCH ON PROVENANCE, whatever the field ends up called. This is
+    // the property that actually matters and that no import check of any kind can express: the
+    // import graph stays clean whether or not `entry.mjs` reads `window.kind`, and reading it is
+    // what lets a bar drift toward a source. `kind` is recorded and reported and read by nothing —
+    // captain decision 227a's posture for `is_mayhem_mode`, one layer down.
+    for (const module of Object.keys(SCORING_IMPORTS)) {
+      const code = executableHalf(all.get(`tools/deployer-screen/${module}`) ?? '');
+      expect(code, `${module} must not read a source kind`).not.toMatch(
+        /entrySource|enumerationSource|\.kind\b|kind\s*===\s*['"](?:dune|swap-api|solana-rpc)['"]/,
+      );
+    }
   });
 
   it('the composed Helius URL is built in one place and stored nowhere', () => {
@@ -8801,6 +8996,82 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
  * gap to 20,000 ms with every assertion here still green — the cursor's coverage was enforced and
  * the gate's was not. None of the three implies the others.
  */
+/**
+ * A source file with its comments stripped.
+ *
+ * Several assertions here are about what a file DOES, and every one of those files also explains in
+ * prose what it does not do any more. Making documentation unwritable is not a structural property,
+ * so the rule is applied to the executable half — the same distinction the credential assertion
+ * below draws.
+ */
+function executableHalf(text: string): string {
+  return text
+    .split('\n')
+    .filter((l) => {
+      const t = l.trimStart();
+      return !t.startsWith('*') && !t.startsWith('//') && !t.startsWith('/**') && !t.startsWith('/*');
+    })
+    .join('\n');
+}
+
+/**
+ * Every sibling module a file LOADS, by name, deduped and sorted.
+ *
+ * **Loading is the property, not `import … from`.** The allow-list this feeds exists because a
+ * deny-list anchored on one filename was defeated by one hop of indirection; an extractor anchored
+ * on one SYNTAX has the same hole one level down. `await import('./dune.mjs')` and a `createRequire`
+ * load are both a scoring module reaching a vendor, and neither writes the word `from`. So the scan
+ * is over every `'./<name>.mjs'` specifier in the EXECUTABLE half — static, dynamic or required —
+ * and prose describing an import cannot add or hide an edge.
+ *
+ * It is deliberately broader than "an import": any executable mention of a sibling module counts,
+ * which can only over-report. The list it feeds is an exhaustive equality, so an over-report fails
+ * loudly and is settled on purpose rather than silently allowed.
+ */
+function namedImportsFrom(text: string, module: string): string[] {
+  const code = executableHalf(text);
+  const spec = `['"\`]\\./${module.replace('.', '\\.')}['"\`]`;
+  // The optional prefix is what makes `import C, { CeilingReached } from …` report BOTH halves
+  // rather than only the `*` sentinel below — a combined form must not hide the braced names.
+  const pattern = new RegExp(`import\\s*(?:(?:\\*\\s*as\\s+\\w+|\\w+)\\s*,\\s*)?\\{([^}]*)\\}\\s*from\\s*${spec}`, 'g');
+  const taken = [...code.matchAll(pattern)].flatMap((m) =>
+    m[1]!
+      .split(',')
+      .map((s) => s.trim().split(/\s+as\s+/)[0]!.trim())
+      .filter((s) => s !== ''),
+  );
+  // A NAMESPACE OR DEFAULT IMPORT TAKES EVERYTHING AND NAMES NOTHING, so a braced-only extractor
+  // reports `[]` for `import * as C from './client.mjs'` and the exhaustive equality above PASSES
+  // while `C.DuneClient` sits in the module. That is the same hole one syntax over — the third time
+  // in this guard's short life (static-only, then module-granular, now braced-only), which is why
+  // it is reported as a distinct sentinel rather than expanded to the module's export list: the
+  // point is that the symbol list stops being exhaustive, not which symbol was taken.
+  const wholeModule = new RegExp(`import\\s+(?:\\*\\s*as\\s+\\w+|\\w+)\\s*(?:,[^;]*?)?from\\s*${spec}`, 'g');
+  const namespaced = [...code.matchAll(wholeModule)].length > 0 ? ['*'] : [];
+  // AND THE TWO HALVES OF THE GUARD MUST AGREE ABOUT WHAT LOADING MEANS. `localModuleLoads` counts
+  // every executable specifier — static, dynamic or required — because an extractor anchored on one
+  // SYNTAX has the same hole one level down; a symbol half that only understood `import … from`
+  // would let `const { DuneClient } = await import('./client.mjs')` report the pinned pair, add no
+  // module edge and pass. So this half derives its notion of a load from the SAME scan: every
+  // specifier occurrence the static forms below do not account for is a load whose symbols cannot be
+  // enumerated, and it reports the sentinel. Over-reporting is the safe direction — the list this
+  // feeds is an exhaustive equality, so it fails loudly and is settled on purpose.
+  const staticForms = new RegExp(
+    `import\\s*(?:(?:\\*\\s*as\\s+\\w+|\\w+|\\{[^}]*\\})(?:\\s*,\\s*\\{[^}]*\\})?\\s*from\\s*)?${spec}`,
+    'g',
+  );
+  const occurrences = localModuleLoads(text).includes(module)
+    ? [...code.matchAll(new RegExp(spec, 'g'))].length
+    : 0;
+  const opaque = occurrences > [...code.matchAll(staticForms)].length ? ['*'] : [];
+  return [...new Set([...taken, ...namespaced, ...opaque])].sort();
+}
+
+function localModuleLoads(text: string): string[] {
+  const code = executableHalf(text);
+  return [...new Set([...code.matchAll(/['"`]\.\/([\w.-]+\.mjs)['"`]/g)].map((m) => m[1]!))].sort();
+}
+
 describe('the seek cursor reaches the whole declared slot window, at a MEASURED slot rate', () => {
   const T = loadThresholds()['stage2_entry'] as Record<string, number>;
   const REPO_ROOT = join(TOOL_DIR, '..', '..');
@@ -9138,7 +9409,7 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
       sleepImpl: async () => {},
     });
     const mintedAt = Date.parse('2026-07-01T00:00:00Z');
-    const { coverage } = await scoreCandidateEntry(client, {
+    const { coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
       wallet: 'dev',
       profile: { pump_tokens: [{ mint: `M${'1'.repeat(42)}pump`, created_timestamp: mintedAt, complete: true }] },
       nowMs: mintedAt, // zero seconds old: nothing is planned, so nothing is fetched
@@ -9218,13 +9489,50 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     // `bundling.mjs` carried a byte-identical copy of the old sum while its own doc claimed it
     // reused Stage 2's gate. That claim is what makes the census a finding ABOUT the screen, so the
     // copy is deleted the same way `roomIsProven` was: by calling the function.
-    for (const file of ['stage2.mjs', 'bundling.mjs']) {
+    //
+    // WHERE THE FUNCTION IS CALLED FROM MOVED, 2026-08-05, and the property did not. Captain
+    // decision 260a made the gate a question asked of the injected fill source, so `stage2.mjs`
+    // reads `await fillSource.minAgeMs(bounds)` and the swap-api source is the one that calls
+    // `windowReachMs` — because a source whose tables LAG must answer from an observed watermark
+    // instead (captain decision 257a), which is a question `stage2.mjs` could not ask while the
+    // duration was written there. So the file checked for the derivation is the SOURCE now. The
+    // hand-written-sum ban is unchanged and still covers every one of them, and the identity that
+    // matters — this gate IS the cursor's own reach, to the millisecond — is asserted above out of
+    // a live `scoreCandidateEntry` rather than off source text, which is the stronger of the two
+    // checks and is untouched.
+    for (const file of ['stage2.mjs', 'bundling.mjs', 'swapapi-fills.mjs']) {
       const src = readFileSync(join(TOOL_DIR, file), 'utf8');
       expect(src, `${file} still hand-writes the gate`).not.toMatch(
         /const minAgeMs = t\.windowMs \+ t\.seekMarginMs;/,
       );
-      expect(src, `${file} does not derive the gate`).toMatch(/const minAgeMs = windowReachMs\(\{/);
     }
+    // The three source-text pins below are DELIBERATE and captain-reviewed on 2026-08-05: they are
+    // cheap belt-and-braces that name which file owns the derivation, and the behavioural coverage
+    // (a stub source with a distinctive answer driven through `censusCandidate` and through the
+    // production `scoreLaunchRefsEntry`) sits ALONGSIDE them rather than instead of them.
+    const swapApi = readFileSync(join(TOOL_DIR, 'swapapi-fills.mjs'), 'utf8');
+    expect(swapApi, 'swapapi-fills.mjs does not derive the gate').toMatch(/windowReachMs\(\{/);
+    // `bundling.mjs` ASKS now too, for the reason its own comment gives: the census is a finding
+    // ABOUT the screen, and a `windowReachMs` call there would be the arithmetic one source happens
+    // to use rather than the gate the screen applies. `test/bundling-census.test.ts` drives that
+    // from a stub source with a distinctive answer and ties the source's kind to the screen's.
+    const bundling = readFileSync(join(TOOL_DIR, 'bundling.mjs'), 'utf8');
+    expect(bundling, 'bundling.mjs must ask the source for the gate').toMatch(
+      /const minAgeMs = await fillSource\.minAgeMs\(/,
+    );
+    // And `stage2.mjs` no longer derives it AT ALL — it asks. A scoring module that kept its own
+    // derivation would be a second answer to the same question, which is how this expression
+    // drifted the first two times.
+    const stage2 = readFileSync(join(TOOL_DIR, 'stage2.mjs'), 'utf8');
+    expect(stage2, 'stage2.mjs must ask the source for the gate').toMatch(
+      /const minAgeMs = await fillSource\.minAgeMs\(bounds\);/,
+    );
+    // Over the EXECUTABLE half only, the same rule the keyed-surface and credential assertions
+    // apply: the rule is about code, and that file's prose still has to be able to explain the
+    // derivation it no longer performs.
+    expect(executableHalf(stage2), 'stage2.mjs must not derive the gate itself').not.toMatch(
+      /windowReachMs/,
+    );
   });
 });
 
@@ -9290,7 +9598,7 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
       fetchImpl,
       sleepImpl: async () => {},
     });
-    const { score, coverage } = await scoreCandidateEntry(client, {
+    const { score, coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
       wallet: 'dev',
       profile: profile(40),
       nowMs: NOW,
@@ -9428,12 +9736,12 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
       sleepImpl: async () => {},
     });
     const rpc = forbiddenRpc();
-    const { score, coverage } = await scoreCandidateEntry(client, {
+    const { score, coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
       wallet: 'dev',
       profile: profile(8),
       nowMs: NOW,
       thresholds: T as never,
-      rpc,
+      costSource: rpcCostSource(rpc),
     });
     expect(coverage.launchesUsable).toBe(8);
     expect(score.verdict).toBe('entry-room-absent');
@@ -9490,12 +9798,12 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
       sleepImpl: async () => {},
     });
 
-    const { score, coverage } = await scoreCandidateEntry(client, {
+    const { score, coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
       wallet: 'dev',
       profile: profile(8),
       nowMs: NOW,
       thresholds: T as never,
-      rpc,
+      costSource: rpcCostSource(rpc),
     });
 
     expect(coverage.cost.ran).toBe(true);
@@ -9611,12 +9919,12 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
       sleepImpl: async () => {},
     });
 
-    const { score, coverage } = await scoreCandidateEntry(client, {
+    const { score, coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
       wallet: 'dev',
       profile: profile(8),
       nowMs: NOW,
       thresholds: T as never,
-      rpc,
+      costSource: rpcCostSource(rpc),
     });
 
     expect(coverage.cost.ran).toBe(true);
@@ -9693,12 +10001,12 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
       sleepImpl: async () => {},
     });
 
-    const partial = await scoreCandidateEntry(client2, {
+    const partial = await scoreCandidateEntry(swapApiFillSource(client2), {
       wallet: 'dev',
       profile: profile(8),
       nowMs: NOW,
       thresholds: T as never,
-      rpc: rpc2,
+      costSource: rpcCostSource(rpc2),
     });
 
     expect(partial.coverage.cost.ran).toBe(true);
@@ -9765,13 +10073,12 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
       sleepImpl: async () => {},
     });
 
-    const { score, coverage } = await scoreCandidateEntry(client, {
+    const { score, coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
       wallet: 'dev',
       profile: profile(8),
       nowMs: NOW,
       thresholds: T as never,
-      rpc,
-      preferBlockRoute: false,
+      costSource: rpcCostSource(rpc, { preferBlockRoute: false }),
     });
 
     expect(coverage.cost.ran).toBe(true);
@@ -9826,7 +10133,7 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     }) as unknown as typeof fetch;
 
     const client = new KeylessClient({ maxRequests: 400, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
-    const { score, coverage } = await scoreCandidateEntry(client, {
+    const { score, coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
       wallet: 'dev',
       profile: profile(8),
       nowMs: NOW,
@@ -9850,7 +10157,7 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     // Room for exactly two full launches and a remainder too small for a third.
     const budget = (T.maxRequestsPerLaunch as number) * 2 + 3;
     const client = new KeylessClient({ maxRequests: budget, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
-    const { coverage } = await scoreCandidateEntry(client, {
+    const { coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
       wallet: 'dev',
       profile: profile(20),
       nowMs: NOW,
@@ -9870,7 +10177,7 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
   it('skips launches younger than the window, which have not finished happening', async () => {
     const { fetchImpl } = insatiable();
     const client = new KeylessClient({ maxRequests: 200, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
-    const { coverage } = await scoreCandidateEntry(client, {
+    const { coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
       wallet: 'dev',
       profile: profile(3),
       nowMs: CREATED + 10_000, // the newest launch is 10s old against a 60s window
@@ -9890,7 +10197,7 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     // `launchesDroppedByCap` now that captain decision 190a has moved the cap to 10.
     const { fetchImpl } = insatiable();
     const client = new KeylessClient({ maxRequests: 400, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
-    const { coverage } = await scoreCandidateEntry(client, {
+    const { coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
       wallet: 'dev',
       profile: profile((T.maxLaunchesPerCandidate as number) + 4),
       nowMs: CREATED + GATE_MS - 1,
@@ -9948,7 +10255,7 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
       [GATE_MS, 1], // the cursor's own bound is in the past, so the walk may start
     ];
     for (const [ageMs, attempted] of cases) {
-      const { coverage } = await scoreCandidateEntry(client(), {
+      const { coverage } = await scoreCandidateEntry(swapApiFillSource(client()), {
         wallet: 'dev',
         profile: profile(1),
         nowMs: CREATED + ageMs,
@@ -9970,9 +10277,18 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     // left behind then repeated it. The rate half lives in "the seek cursor reaches the whole
     // declared slot window, at a MEASURED slot rate", re-derived from the committed tapes on every
     // run; what stays here is that the tool asks the derivation rather than carrying a number.
+    //
+    // THIRD SUPERSESSION, 2026-08-05, captain decision 260a, and it is a generalisation rather than
+    // a relaxation: the gate is now asked of the injected fill source, because "has this launch
+    // finished happening" is the VENDOR'S to answer and a source whose tables lag answers it from an
+    // observed watermark (captain decision 257a). So `stage2.mjs` must carry NO derivation of its
+    // own — not the sum, not the function — and the swap-api source must carry the derivation. A
+    // scoring module holding a second answer to this question is exactly what drifted twice.
     const src = readFileSync(join(TOOL_DIR, 'stage2.mjs'), 'utf8');
-    expect(src).toMatch(/const minAgeMs = windowReachMs\(\{/);
+    expect(src).toMatch(/const minAgeMs = await fillSource\.minAgeMs\(bounds\);/);
     expect(src).not.toMatch(/const minAgeMs = t\.windowMs \+ t\.seekMarginMs;/);
+    expect(executableHalf(src)).not.toMatch(/windowReachMs/);
+    expect(readFileSync(join(TOOL_DIR, 'swapapi-fills.mjs'), 'utf8')).toMatch(/return windowReachMs\(\{/);
     // And it is strictly more than each bound it replaces, which is what those two regressions were.
     expect(GATE_MS).toBeGreaterThan(T.windowMs as number);
     expect(GATE_MS).toBeGreaterThan((T.windowMs as number) + (T.seekMarginMs as number));
@@ -10340,7 +10656,7 @@ describe('what a Stage 2 run record may persist', () => {
     const client = new KeylessClient({ maxRequests: 400, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
     const T = loadThresholds()['stage2_entry'] as Record<string, number>;
 
-    const { score, coverage } = await scoreCandidateEntry(client, {
+    const { score, coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
       wallet: 'dev',
       profile: {
         pump_tokens: [
@@ -10899,5 +11215,430 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
     // On this wallet the after-cost field is still 0.64 positive at a median +0.05 SOL net, so the
     // net leg does NOT veto it. The refusal at the pinned bar is ROOM's, and only room's.
     expect(loosened.costCheck.netHitRate).toBeGreaterThan(0.5);
+  });
+});
+
+describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
+  // Captain decision 260a. The import allow-list above proves the modules cannot NAME a source;
+  // these prove the seam actually carries one, in both directions — the swap-api that every run
+  // reads today, and a Dune source that reaches `entry.roomLeft` without any scoring module
+  // learning it did.
+  const T = loadThresholds()['stage2_entry'] as Record<string, number>;
+  const MINT = 'MINTaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaapump';
+  const CREATED = Date.parse('2026-07-15T16:36:36Z');
+  const BOUNDS = {
+    windowMs: T.windowMs as number,
+    seekMarginMs: T.seekMarginMs as number,
+    windowSlotSpan: T.windowSlotSpan as number,
+    maxRequestsPerLaunch: T.maxRequestsPerLaunch as number,
+    tradePageLimit: T.tradePageLimit as number,
+    nowMs: CREATED + 3_600_000,
+  };
+  const SCAN = { fromMs: CREATED - (T.seekMarginMs as number), toMs: CREATED + 85_000, requests: 1 };
+
+  /** One decoded trade row in the projection's shape. */
+  const row = (over: Record<string, unknown> = {}) => ({
+    block_slot: 433099188,
+    tx_index: 1124,
+    outer_instruction_index: 5,
+    inner_instruction_index: 7,
+    tx_id: 'tx-dev',
+    trader_id: 'DEV',
+    is_buy: 1,
+    venue: 'pump',
+    sol_raw: '85000000000',
+    token_raw: '1000000000000',
+    ts_unix: Math.floor(CREATED / 1000),
+    ...over,
+  });
+
+  it('this run reads the swap-api, and the selector REFUSES rather than substituting', () => {
+    // The resting state, pinned. Gate 3 is the cutover and it has not been convened, so a committed
+    // Dune path nothing routes through is correct — and a run that quietly measured on a different
+    // vendor than it was asked to would report itself complete and be wrong in the one direction
+    // nothing observes, which is why the selector throws instead of falling back.
+    expect(ENTRY_FILL_SOURCE_KIND).toBe('swap-api');
+    // The kind lists are EXHAUSTIVE — a third source means coming back to them on purpose, the same
+    // discipline the credential list is held to — so every implementation must be named in one.
+    const swapApi = swapApiFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 }));
+    expect(FILL_SOURCE_KINDS).toContain(swapApi.kind);
+    expect(FILL_SOURCE_KINDS).toContain(ENTRY_FILL_SOURCE_KIND);
+    expect(selectEntryFillSource('swap-api', { 'swap-api': () => swapApi })).toBe(swapApi);
+    expect(() => selectEntryFillSource('dune', { 'swap-api': () => swapApi })).toThrow(/refuses rather than/);
+  });
+
+  it('a source may not claim a usable window without the coverage proof', () => {
+    // The contract guard, and it is what stops "return a LaunchWindow" from being a shape a new
+    // source satisfies by filling the fields in optimistically. A source's genuine bad luck is
+    // `usable: false` with a reason and is counted; a source ASSERTING coverage it never proved is
+    // a bug, and it must be loud because the window it returns is measurable-looking and wrong.
+    const honest = duneRowsToWindow([row()], {
+      mint: MINT,
+      createdAtMs: CREATED,
+      windowSlotSpan: T.windowSlotSpan as number,
+      scan: SCAN,
+    });
+    expect(honest.usable).toBe(true);
+    expect(() => assertWindowUsable(honest)).not.toThrow();
+    expect(() => assertWindowUsable({ ...honest, reachedCreateSlot: false })).toThrow(/never proved/);
+    expect(() => assertWindowUsable({ ...honest, hitRequestCap: true })).toThrow(/its own request cap/);
+    expect(() => assertWindowUsable({ ...honest, unparsedRows: 3 })).toThrow(/could not be read/);
+    expect(() => assertWindowUsable({ ...honest, fills: [] })).toThrow(/holds no fills/);
+    expect(() => assertWindowUsable({ ...honest, mintTimeDisagreement: true })).toThrow(/older than the declared mint/);
+    // And an unusable window must still say WHY. A silent drop is the one thing this stage counts.
+    expect(() => assertWindowUsable({ ...honest, usable: false, dropReason: null })).toThrow(/no drop reason/);
+    expect(() => assertWindowUsable({ ...honest, kind: 'made-up' as never })).toThrow(/unknown provenance/);
+  });
+
+  it('a Dune window proves coverage by OBSERVING the boundary, and refuses when it cannot', () => {
+    const build = (rows: unknown[], scan = SCAN) =>
+      duneRowsToWindow(rows, { mint: MINT, createdAtMs: CREATED, windowSlotSpan: T.windowSlotSpan as number, scan });
+
+    // 1. A scan that never looked older than the mint proves nothing — an absence of older rows is
+    //    only evidence if the vendor was asked. This is the truncated backwards walk in a costume.
+    expect(build([row()], { ...SCAN, fromMs: CREATED }).dropReason).toBe('coverage-unproven');
+
+    // 2. A pre-mint row is a DISAGREEMENT, not coverage. Zero slack, the same as the swap-api walk:
+    //    a positive skew of one millisecond deletes the entire create slot.
+    expect(build([row({ ts_unix: Math.floor(CREATED / 1000) - 2 })]).dropReason).toBe('mint-time-disagreement');
+
+    // 3. An unreadable row makes the launch unusable, never merely smaller — and the venue is
+    //    MANDATORY, because captain decision 256a's union is what makes the graduation-spanning
+    //    windows measurable and silently calling a `pump_amm` fill a curve fill would move roomLeft.
+    expect(parseDuneTradeRow(row({ venue: undefined }))).toBeNull();
+    expect(parseDuneTradeRow(row({ is_buy: undefined }))).toBeNull();
+    expect(parseDuneTradeRow(row({ trader_id: '' }))).toBeNull();
+    expect(build([row(), row({ venue: 'amm' })]).dropReason).toBe('unparsed-rows');
+
+    // 4. No bonding-curve buy means no create slot to anchor on.
+    expect(build([row({ is_buy: 0 })]).dropReason).toBe('no-fills');
+
+    // 5. WITHIN-SLOT ORDERING. `inner_instruction_index` is constant inside a transaction; the
+    //    discriminator between three bundled wallets is `outer_instruction_index` (Gate 1 §5.2).
+    //    The key must therefore be decided by the key, not by the vendor's arrival order.
+    const bundled = [
+      row({ tx_index: 1125, tx_id: 'tx-bundle', trader_id: 'C', outer_instruction_index: 9 }),
+      row({ tx_index: 1125, tx_id: 'tx-bundle', trader_id: 'A', outer_instruction_index: 5 }),
+      row({ tx_index: 1125, tx_id: 'tx-bundle', trader_id: 'B', outer_instruction_index: 7 }),
+    ];
+    const shuffled = build([...bundled].reverse().concat([row()]));
+    const ordered = build([row(), ...bundled]);
+    expect(shuffled.fills.map((f) => f.sid)).toEqual(ordered.fills.map((f) => f.sid));
+    expect(ordered.fills.map((f) => f.wallet)).toEqual(['DEV', 'A', 'B', 'C']);
+    expect(ordered.fills[0]!.sid).toBe(rebuildSid(433099188, 1124, 0));
+
+    // 6. `priceSol` is NaN and NaN means UNMEASURED. A `0` there is a PLAUSIBLE wrong value, which
+    //    is the category this repo refuses everywhere else.
+    expect(Number.isNaN(ordered.fills[0]!.priceSol)).toBe(true);
+  });
+
+  it('the Dune source gates on an OBSERVED WATERMARK, and refuses every window until 258b lands its statement', async () => {
+    // Captain decision 257a: Dune's tables lag the chain by longer than the swap-api gate, and a
+    // launch queried before its fills are decoded returns well-formed, complete-looking and SHORT.
+    // The lag is not written down — it is read off the tables — and an unreadable watermark refuses
+    // EVERYTHING rather than reading a missing lag as no lag.
+    const client = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 1,
+      maxRequests: 5,
+      minIntervalMs: 0,
+      fetchImpl: (async () => {
+        throw new Error('a refused window must cost no request');
+      }) as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const bounds = { pollIntervalMs: 0, maxPollAttempts: 3, maxResultRows: 100 };
+    const source = (coverage: unknown) =>
+      duneFillSource(client, {
+        bounds,
+        coverage: coverage as never,
+        query: null,
+        maxRequests: 5,
+      });
+
+    const REACH = windowReachMs({
+      windowMs: T.windowMs as number,
+      seekMarginMs: T.seekMarginMs as number,
+      windowSlotSpan: T.windowSlotSpan as number,
+    });
+    // A watermark 10 minutes behind the clock means a launch must be 10 minutes older than the
+    // swap-api would require. No literal lag appears anywhere on this path.
+    const lagged = { ok: true, toMs: BOUNDS.nowMs - 600_000 };
+    await expect(source(lagged).minAgeMs(BOUNDS)).resolves.toBe(600_000 + REACH);
+    // No watermark, or a refused coverage reading, means the source CANNOT BE BUILT. It used to be
+    // built and answer `Infinity`, and that did not stay inside the comparison: Stage 2 persists
+    // this figure as `entry.coverage.minAgeMs`, whose contract declares it a number, and
+    // `JSON.stringify(Infinity)` is `null` — so a run would have saved itself a MISSING gate and
+    // rendered `younger than Infinityms`. There is no honest finite answer either (a written
+    // duration for something the vendor controls is captain decision 144a's defect), so the
+    // refusal is stated where it can be: at construction, i.e. at the selection site.
+    expect(() => source(null)).toThrow(/no observed watermark/);
+    expect(() => source({ ok: false, toMs: BOUNDS.nowMs, reasons: ['the probe refused.'] })).toThrow(
+      /the coverage probe refused the trade tables/,
+    );
+    expect(() => source({ ok: true, toMs: null })).toThrow(/no newest covered instant/);
+    // And the refusal surfaces at `selectEntryFillSource`, which is where a run says it cannot
+    // measure on the source it was asked for — never as a launch-level drop or a measured verdict.
+    expect(() => selectEntryFillSource('dune', { dune: () => source(null) })).toThrow(/cannot be built/);
+
+    // And with no committed statement it refuses the window with a sentence naming the decision
+    // that owns one, rather than returning a window it cannot vouch for. It spends nothing.
+    const refused = await source(lagged).readWindow({ mint: MINT, deployedAtMs: CREATED }, BOUNDS);
+    expect(refused.usable).toBe(false);
+    expect(refused.dropReason).toBe('coverage-unproven');
+    expect(refused.note).toMatch(/258b/);
+    expect(client.issued()).toBe(0);
+  });
+
+  it('a persisted eligibility gate is a DURATION, and a source answering otherwise is refused loudly', async () => {
+    // The backstop, for the source nobody has written yet. `entry.coverage.minAgeMs` is a number by
+    // the run record's versioned contract and is rendered as one, so a non-finite answer reaches a
+    // saved record as `null` — a missing gate that reads as an absence rather than as a refusal.
+    // The Dune source refuses to be built instead (above); this holds a FUTURE source to it, and a
+    // guard that cannot fail is not a guard.
+    expect(() => assertMinAgeUsable({ kind: 'dune' }, 85_000)).not.toThrow();
+    expect(() => assertMinAgeUsable({ kind: 'dune' }, 0)).not.toThrow();
+    expect(() => assertMinAgeUsable({ kind: 'dune' }, Number.POSITIVE_INFINITY)).toThrow(/not a duration/);
+    expect(() => assertMinAgeUsable({ kind: 'dune' }, Number.NaN)).toThrow(/not a duration/);
+    expect(() => assertMinAgeUsable({ kind: 'dune' }, -1)).toThrow(/not a duration/);
+
+    // Through the production Stage 2, because the guard is only worth anything at the one point
+    // every source passes: a source answering `Infinity` never reaches the eligibility filter.
+    const dishonest = {
+      ...swapApiFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 })),
+      minAgeMs: async () => Number.POSITIVE_INFINITY,
+    };
+    await expect(
+      scoreLaunchRefsEntry(dishonest as never, {
+        wallet: 'dev',
+        refs: [{ mint: MINT, deployedAtMs: CREATED }],
+        nowMs: BOUNDS.nowMs,
+        thresholds: { ...T, minLaunchesSampled: 1 } as never,
+      }),
+    ).rejects.toThrow(/not a duration/);
+
+    // And the gate the swap-api DOES answer survives the record's own serialisation as a number,
+    // which is the thing `Infinity` silently would not have.
+    const honest = swapApiFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 }));
+    const { coverage } = await scoreLaunchRefsEntry(honest, {
+      wallet: 'dev',
+      refs: [],
+      nowMs: BOUNDS.nowMs,
+      thresholds: { ...T, minLaunchesSampled: 1 } as never,
+    });
+    expect(JSON.parse(JSON.stringify({ minAgeMs: coverage.minAgeMs })).minAgeMs).toBe(coverage.minAgeMs);
+    expect(Number.isFinite(coverage.minAgeMs)).toBe(true);
+  });
+
+  it('the import allow-list sees WHICH SYMBOLS come from client.mjs, not only that it is imported', () => {
+    // The hole this closes, driven through the extractor the allow-list itself runs on: taking
+    // `DuneClient` from `client.mjs` inside a scoring module adds no module edge, so every other
+    // half of that assertion stays green. `stage2.mjs` may take the ceiling and transport error
+    // types and nothing else, and the list is exhaustive, so a third symbol means coming back.
+    const probe = "import { DuneClient, CeilingReached, RequestFailed } from './client.mjs';";
+    expect(namedImportsFrom(probe, 'client.mjs')).toEqual(['CeilingReached', 'DuneClient', 'RequestFailed']);
+    expect(namedImportsFrom(probe, 'client.mjs')).not.toEqual(['CeilingReached', 'RequestFailed']);
+    // Aliasing does not hide it, and prose describing the import cannot add one.
+    expect(namedImportsFrom("import { DuneClient as C } from './client.mjs';", 'client.mjs')).toEqual(['DuneClient']);
+    expect(namedImportsFrom("// import { DuneClient } from './client.mjs'\n", 'client.mjs')).toEqual([]);
+    // AND A WHOLE-MODULE IMPORT TAKES EVERYTHING WHILE NAMING NOTHING. A braced-only extractor
+    // reports `[]` for these, which is indistinguishable from "imports the module and takes no
+    // symbol" and would pass the exhaustive equality with `C.DuneClient` sitting in the file. They
+    // report the `*` sentinel instead, so the equality fails on a module whose symbol list does not
+    // declare it — the same hole as the dynamic-import one above, one syntax over.
+    expect(namedImportsFrom("import * as C from './client.mjs';", 'client.mjs')).toEqual(['*']);
+    expect(namedImportsFrom("import C from './client.mjs';", 'client.mjs')).toEqual(['*']);
+    expect(namedImportsFrom("import C, { CeilingReached } from './client.mjs';", 'client.mjs')).toEqual([
+      '*',
+      'CeilingReached',
+    ]);
+    // A namespace import of a DIFFERENT module is not this module's business.
+    expect(namedImportsFrom("import * as M from './measure.mjs';", 'client.mjs')).toEqual([]);
+    // AND A DYNAMIC LOAD IS A LOAD. `localModuleLoads` has understood this since the module half was
+    // defeated by one hop; a symbol half that only understood `import … from` would let a scoring
+    // module keep its pinned static import and take `DuneClient` beside it in a syntax the other
+    // half already sees. Both halves now read the same scan, so they cannot disagree again.
+    expect(namedImportsFrom("const { DuneClient } = await import('./client.mjs');", 'client.mjs')).toEqual(['*']);
+    expect(namedImportsFrom('const C = require("./client.mjs");', 'client.mjs')).toEqual(['*']);
+    expect(
+      namedImportsFrom(
+        "import { CeilingReached, RequestFailed } from './client.mjs';\n" +
+          "const { DuneClient } = await import('./client.mjs');",
+        'client.mjs',
+      ),
+    ).toEqual(['*', 'CeilingReached', 'RequestFailed']);
+    // A side-effect import takes no binding, so it is a load without a symbol and stays quiet.
+    expect(namedImportsFrom("import './client.mjs';", 'client.mjs')).toEqual([]);
+    // And what `stage2.mjs` actually takes today is exactly the pinned pair.
+    const stage2 = readFileSync(join(TOOL_DIR, 'stage2.mjs'), 'utf8');
+    expect(namedImportsFrom(stage2, 'client.mjs')).toEqual(['CeilingReached', 'RequestFailed']);
+  });
+
+  it('the import allow-list sees a DYNAMIC load, not only a static one', () => {
+    // Captain decision 261a's own failure shape, one level down: the allow-list above was defeated
+    // by one hop of indirection because it named a file; an extractor anchored on `import … from`
+    // is defeated by one change of SYNTAX. `await import('./dune.mjs')` and a `createRequire` load
+    // are both a scoring module reaching a vendor. This drives the extractor the allow-list and its
+    // transitive closure both run on, so both halves see those edges.
+    expect(localModuleLoads("import { x } from './measure.mjs';")).toEqual(['measure.mjs']);
+    expect(localModuleLoads("const d = await import('./dune.mjs');")).toEqual(['dune.mjs']);
+    expect(localModuleLoads('const d = await import("./dune-costs.mjs");')).toEqual(['dune-costs.mjs']);
+    expect(localModuleLoads("const require = createRequire(import.meta.url);\nrequire('./dune.mjs');")).toEqual([
+      'dune.mjs',
+    ]);
+    expect(localModuleLoads("import './side-effect.mjs';")).toEqual(['side-effect.mjs']);
+    // Prose can neither add an edge nor hide one: the scan is over the executable half.
+    expect(localModuleLoads("// import x from './dune.mjs'\n * see './dune.mjs'\nimport './a.mjs';")).toEqual([
+      'a.mjs',
+    ]);
+  });
+
+  it('a DUNE fill source reaches entry.roomLeft by injection, and no scoring module can tell', async () => {
+    // THE POINT OF THE WHOLE PROVIDER, end to end through the production `scoreLaunchRefsEntry`:
+    // a Dune-sourced window is measured by the same `measure.mjs`/`entry.mjs` the swap-api walk
+    // feeds, and nothing between the source and the verdict names a vendor.
+    const SQL = 'SELECT 1 -- slot-zero entry statement, decision 258b owns the real one';
+    const rows = [
+      row(),
+      row({ tx_index: 1125, tx_id: 'tx-b', trader_id: 'OUT1', outer_instruction_index: 5, sol_raw: '15000000000' }),
+      row({ tx_index: 1125, tx_id: 'tx-b', trader_id: 'OUT2', outer_instruction_index: 7, sol_raw: '5000000000' }),
+    ];
+    const fetchImpl = vi.fn(async (input: unknown, init: RequestInit) => {
+      const url = String(input);
+      if (init.method === 'POST') return new Response(JSON.stringify({ execution_id: 'e1' }), { status: 200 });
+      if (url.includes('/query/4242') && !url.includes('results')) {
+        return new Response(JSON.stringify({ query_sql: SQL }), { status: 200 });
+      }
+      if (url.includes('/status')) {
+        return new Response(JSON.stringify({ state: 'QUERY_STATE_COMPLETED' }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          result: { rows, metadata: { total_row_count: rows.length, total_result_set_bytes: 300 } },
+          execution_ended_at: '2026-07-15T16:40:00Z',
+        }),
+        { status: 200 },
+      );
+    });
+    const client = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const source = duneFillSource(client, {
+      bounds: { pollIntervalMs: 0, maxPollAttempts: 3, maxResultRows: 100 },
+      coverage: { ok: true, toMs: BOUNDS.nowMs } as never,
+      query: { id: 4242, sql: SQL, parameters: () => ({ mint: MINT }) },
+      maxRequests: 20,
+    });
+
+    // Selected the way `screen.mjs` selects, and handed to the production Stage 2 unchanged.
+    const chosen = selectEntryFillSource('dune', { dune: () => source });
+    const { score, coverage } = await scoreLaunchRefsEntry(chosen, {
+      wallet: 'dev',
+      refs: [{ mint: MINT, deployedAtMs: CREATED }],
+      nowMs: BOUNDS.nowMs,
+      thresholds: { ...T, minLaunchesSampled: 1 } as never,
+    });
+
+    expect(coverage.launchesUsable).toBe(1);
+    expect(coverage.launchesDropped).toBe(0);
+    // The measurement itself: 85 SOL dev buy against 20 SOL of others in one bundled transaction,
+    // so the room left to a newcomer is the others' share of the non-deployer stake.
+    expect(score.devSol.median).toBeCloseTo(85, 6);
+    expect(score.roomLeft.n).toBe(1);
+    expect(score.launchesRoomUnproven).toBe(0);
+    // The saved query was compared BEFORE the execution was spent — a browser-edited statement is
+    // a measurement input, so a disagreement must cost nothing.
+    const paths = fetchImpl.mock.calls.map((c) => String(c[0]));
+    expect(paths.findIndex((p) => p.includes('/query/4242') && !p.includes('execute'))).toBeLessThan(
+      paths.findIndex((p) => p.includes('execute')),
+    );
+  });
+
+  it('a window reports what it COST, comparison request included', async () => {
+    // `LaunchWindow.requests` is "requests it cost, including retries of shed ones", and the
+    // saved-query comparison is one of them: it is spent by this read, on this launch, before the
+    // execution. Snapshotting the counter after it made the per-launch progress line under-report
+    // by one every time — a small number, and the same class as any count that means less than its
+    // name. Proven against the client's own counter rather than against a literal.
+    const SQL = 'SELECT 1 -- committed entry statement';
+    const rows = [row()];
+    const client = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: (async (input: unknown, init: RequestInit) => {
+        const url = String(input);
+        if (init.method === 'POST') return new Response(JSON.stringify({ execution_id: 'e1' }), { status: 200 });
+        if (url.includes('/query/4242') && !url.includes('results')) {
+          return new Response(JSON.stringify({ query_sql: SQL }), { status: 200 });
+        }
+        if (url.includes('/status')) {
+          return new Response(JSON.stringify({ state: 'QUERY_STATE_COMPLETED' }), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({
+            result: { rows, metadata: { total_row_count: rows.length, total_result_set_bytes: 300 } },
+            execution_ended_at: '2026-07-15T16:40:00Z',
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const source = duneFillSource(client, {
+      bounds: { pollIntervalMs: 0, maxPollAttempts: 3, maxResultRows: 100 },
+      coverage: { ok: true, toMs: BOUNDS.nowMs } as never,
+      query: { id: 4242, sql: SQL, parameters: () => ({ mint: MINT }) },
+      maxRequests: 20,
+    });
+    const window = await source.readWindow({ mint: MINT, deployedAtMs: CREATED }, BOUNDS);
+    expect(window.usable).toBe(true);
+    expect(client.issued()).toBeGreaterThan(1);
+    expect(window.requests).toBe(client.issued());
+  });
+
+  it('the cost source is injected too, and the route latch lives with the vendor', async () => {
+    // Captain decision 260a extends the same discipline to the entry-cost leg that decision 255b
+    // moves to Dune, because `entryCostPerSolStakedByLaunch` gates `entry-cost-prohibitive` — a
+    // Stage 2 entry VERDICT. `stage2.mjs` imports neither implementation; the whole-block probe and
+    // its per-candidate latch are properties of `api.mainnet-beta` and live with it.
+    let blocks = 0;
+    const rpc = new SolanaRpcClient({
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: (async (_url: unknown, init: RequestInit) => {
+        const body = JSON.parse(String(init.body)) as { method: string };
+        if (body.method === 'getBlock') {
+          blocks += 1;
+          return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: null }), { status: 200 });
+      }) as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const source = rpcCostSource(rpc, { preferBlockRoute: true });
+    expect(source.kind).toBe('solana-rpc');
+    expect(COST_SOURCE_KINDS).toContain(source.kind);
+    const targets = [
+      { tx: 'tx-1', slot: 10, wallets: [{ wallet: 'A', quotedSol: 1 }] },
+      { tx: 'tx-2', slot: 10, wallets: [{ wallet: 'B', quotedSol: 2 }] },
+    ];
+    const first = await source.priceLaunch({ transactions: targets, createSlot: 10 });
+    expect(first.blockRouteTried).toBe(true);
+    expect(blocks).toBe(1);
+    // The probe answered once and the answer is latched for the rest of the candidate: a second
+    // launch does not pay to rediscover that the block route does not serve this client.
+    const second = await source.priceLaunch({ transactions: targets, createSlot: 10 });
+    expect(second.blockRouteTried).toBe(false);
+    expect(blocks).toBe(1);
+    // And the accounting guard holds a source to counters that reconcile.
+    expect(() => assertCostWalkAccounted(first, targets.length)).not.toThrow();
+    expect(() => assertCostWalkAccounted({ ...first, viaBlock: 5 }, targets.length)).toThrow(/routes account for/);
   });
 });

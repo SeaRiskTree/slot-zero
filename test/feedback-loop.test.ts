@@ -1194,6 +1194,16 @@ describe('this lane grades the screen and never re-tunes it', () => {
     expect(grade).toMatch(/import \{ scoreLaunchRefsEntry \} from '\.\/stage2\.mjs'/);
     const stage2 = readFileSync(join(__dirname, '..', 'tools', 'deployer-screen', 'stage2.mjs'), 'utf8');
     // `scoreCandidateEntry` is now a wrapper over the shared implementation rather than a twin.
-    expect(stage2).toMatch(/return scoreLaunchRefsEntry\(client, \{ \.\.\.input, refs: toLaunchRefs\(input\.profile\) \}\)/);
+    // The first argument became the injected fill source rather than a transport client (captain
+    // decision 260a); the property this pins — one Stage 2, reached through one module — is
+    // unchanged, and the wrapper still forwards everything it was given.
+    expect(stage2).toMatch(
+      /return scoreLaunchRefsEntry\(fillSource, \{ \.\.\.input, refs: toLaunchRefs\(input\.profile\) \}\)/,
+    );
+    // And the grader builds the same sources the screen does, rather than reaching for a walk. These
+    // two source-text pins are DELIBERATE and captain-reviewed on 2026-08-05; the behavioural
+    // coverage of the shared Stage 2 sits alongside them rather than instead of them.
+    expect(grade).toMatch(/from '\.\/swapapi-fills\.mjs'/);
+    expect(grade).toMatch(/from '\.\/rpc-costs\.mjs'/);
   });
 });

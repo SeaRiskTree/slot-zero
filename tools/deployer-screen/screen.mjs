@@ -72,9 +72,19 @@ import {
   readCreatedHistoryIndexed,
   readCreatorHistory,
 } from './pumpfun.mjs';
+import { rpcCostSource } from './rpc-costs.mjs';
+import { assertMinAgeUsable } from './fill-source.mjs';
+import { swapApiFillSource } from './swapapi-fills.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderMayhemShare, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
-import { addDropReasons, emptyDropReasons, scoreCandidateEntry, toEntryRecordRow, totalDrops } from './stage2.mjs';
+import {
+  addDropReasons,
+  emptyDropReasons,
+  entryFillBounds,
+  scoreCandidateEntry,
+  toEntryRecordRow,
+  totalDrops,
+} from './stage2.mjs';
 import {
   buildSeedPlan,
   mergeSeeds,
@@ -116,6 +126,59 @@ const LISTING_PAGES_FOR_MERGE = 4;
  * every 25 seconds, plus the first request of each candidate so a walk is seen to start at all.
  */
 const RPC_HEARTBEAT_EVERY = 10;
+
+/**
+ * Which fill source Stage 2 runs on. **`swap-api`, and the cutover is not this lane's.**
+ *
+ * Captain decision 260a built the source-agnostic provider so that a Dune fill source *can* reach
+ * Stage 2 by injection. The captain's programme cuts over at **Gate 3**, which has not been
+ * convened, so this run reads pump.fun's keyless trade endpoint exactly as it did before the
+ * provider existed. A committed Dune path that nothing routes through is the correct resting state,
+ * not an unfinished one — the same posture captain decision 258b states for its committed SQL.
+ *
+ * @type {import('./fill-source.mjs').FillSourceKind}
+ */
+export const ENTRY_FILL_SOURCE_KIND = 'swap-api';
+
+/**
+ * Choose the fill source, from constructors the caller supplies.
+ *
+ * **It refuses rather than falls back**, and that is the whole reason it is a function. A selector
+ * that quietly used the swap-api when asked for a source it had no constructor for is how a cutover
+ * reports itself done while nothing moved: every number would be a swap-api number, every record
+ * would say the run succeeded, and the only evidence would be an absence. This repo has the same
+ * shape on the record twice already — a guard denominated in the variable that did not move, and a
+ * `0` sentinel read as a 56-year window.
+ *
+ * The constructors are thunks so that a source is only built when it is selected. Building the
+ * unselected one would be harmless today and would stop being harmless the moment a source's
+ * constructor spends something to find out what it can vouch for.
+ *
+ * **A constructor may itself refuse, and that refusal surfaces HERE rather than as a measurement.**
+ * A source that cannot answer eligibility — the Dune route with no readable watermark — throws from
+ * its own constructor, so this site is where "we cannot run Stage 2 on the source we were asked
+ * for" is stated. The alternative is a source that exists and answers `Infinity`, which travels: it
+ * is persisted as `entry.coverage.minAgeMs`, where `JSON.stringify` writes it as `null`, and
+ * rendered as a duration. `fill-source.mjs` → `assertMinAgeUsable` is the backstop that fails on a
+ * future source which forgets this.
+ *
+ * @param {import('./fill-source.mjs').FillSourceKind} kind
+ * @param {Partial<Record<import('./fill-source.mjs').FillSourceKind,
+ *   () => import('./fill-source.mjs').FillSource>>} sources
+ * @returns {import('./fill-source.mjs').FillSource}
+ */
+export function selectEntryFillSource(kind, sources) {
+  const build = sources[kind];
+  if (build === undefined) {
+    throw new Error(
+      `Stage 2 was asked for a ${kind} fill source and this run carries no constructor for one. ` +
+        `It refuses rather than substituting another source: a run that silently measured on a ` +
+        `different vendor than it was asked to would report itself complete and be wrong in the ` +
+        `one direction nothing observes.`,
+    );
+  }
+  return build();
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
@@ -601,6 +664,56 @@ export async function main(opts, env, out, err) {
   // on the walk, and a run where it does not is exactly the run this ceiling was sized for.
   const resolution = resolveKey(env);
 
+  // Stage 2 gets its OWN ceiling on its OWN client, so the fill walk and the consistency walk
+  // cannot eat each other's budget and neither can silently exceed what the dry run printed.
+  const stage2Keyless = new KeylessClient({
+    maxRequests: entryThresholds.maxKeylessRequests,
+    // Its OWN pacing, not `budget.keylessMinIntervalMs`, because it reaches a different host. At the
+    // 2s that host-agnostic value would impose, swap-api shed half this run's launches to 429 and the
+    // verdict degraded to `entry-unmeasured`; 7s walked all of them. The consistency walk on
+    // frontend-api-v3 keeps 2s — it has shed nothing, so it is not slowed for another host's fault.
+    minIntervalMs: entryThresholds.keylessMinIntervalMs,
+    // The fill endpoint sheds about a quarter of what it is asked for — measured on the committed
+    // tape's own build metadata — so a walk without retry cannot finish. Every attempt still counts
+    // against the ceiling, so this widens no bound.
+    retryBackoffMs: entryThresholds.keylessRetryBackoffMs ?? [],
+    onRequest: (url) => {
+      if (!opts.json) out(`  → GET ${url}`);
+    },
+  });
+
+  // THE ONE PLACE A FILL SOURCE IS CHOSEN (captain decision 260a). Everything downstream —
+  // `stage2.mjs`, `entry.mjs`, `measure.mjs`, `rank.mjs` — receives the source and never names one.
+  // See {@link selectEntryFillSource} for what this run resolves to and why. It is selected here,
+  // above the dry-run branch, because THE PLAN MUST STATE THE GATE THE SOURCE ITSELF WILL APPLY:
+  // a plan that re-derived that duration would be a second expression that merely agrees, which is
+  // captain decision 144a's defect and the reason the gate was injected in the first place.
+  // Selecting costs nothing — a source is built from its transport, and neither source opens a
+  // socket to say how old a launch must be.
+  //
+  // BOTH STEPS CAN REFUSE, AND A REFUSAL IS A REPORTED OUTCOME RATHER THAN A STACK TRACE. A source
+  // whose constructor cannot vouch for itself, or one answering an eligibility that is not a
+  // duration, stops the run here — the site whose whole job is to say "we cannot run Stage 2 on the
+  // source we were asked for". Escaping `main` would return Node's exit 1, which is not in the
+  // `EXIT` map, and print the message as a crash.
+  /** @type {import('./fill-source.mjs').FillSource} */
+  let entryFillSource;
+  /** @type {number} */
+  let entryMinAgeMs;
+  try {
+    entryFillSource = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, {
+      'swap-api': () => swapApiFillSource(stage2Keyless),
+    });
+    entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entryThresholds, Date.now()));
+    assertMinAgeUsable(entryFillSource, entryMinAgeMs);
+  } catch (cause) {
+    err('');
+    err('Refusing to start: Stage 2 has no usable fill source.');
+    err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
+    err('  Nothing was requested, so no quota was spent.');
+    return EXIT.upstream;
+  }
+
   if (opts.dryRun) {
     out('');
     out(
@@ -613,6 +726,7 @@ export async function main(opts, env, out, err) {
         stage2: opts.stage2,
         maxScored,
         entryThresholds,
+        entryMinAgeMs,
         historySource,
         creationWalk: T['creation_walk'],
         costBounds,
@@ -664,24 +778,6 @@ export async function main(opts, env, out, err) {
   const keyless = new KeylessClient({
     maxRequests: budget.maxKeylessRequests,
     minIntervalMs: budget.keylessMinIntervalMs,
-    onRequest: (url) => {
-      if (!opts.json) out(`  → GET ${url}`);
-    },
-  });
-
-  // Stage 2 gets its OWN ceiling on its OWN client, so the fill walk and the consistency walk
-  // cannot eat each other's budget and neither can silently exceed what the dry run printed.
-  const stage2Keyless = new KeylessClient({
-    maxRequests: entryThresholds.maxKeylessRequests,
-    // Its OWN pacing, not `budget.keylessMinIntervalMs`, because it reaches a different host. At the
-    // 2s that host-agnostic value would impose, swap-api shed half this run's launches to 429 and the
-    // verdict degraded to `entry-unmeasured`; 7s walked all of them. The consistency walk on
-    // frontend-api-v3 keeps 2s — it has shed nothing, so it is not slowed for another host's fault.
-    minIntervalMs: entryThresholds.keylessMinIntervalMs,
-    // The fill endpoint sheds about a quarter of what it is asked for — measured on the committed
-    // tape's own build metadata — so a walk without retry cannot finish. Every attempt still counts
-    // against the ceiling, so this widens no bound.
-    retryBackoffMs: entryThresholds.keylessRetryBackoffMs ?? [],
     onRequest: (url) => {
       if (!opts.json) out(`  → GET ${url}`);
     },
@@ -1194,13 +1290,12 @@ export async function main(opts, env, out, err) {
                 },
               }),
         });
-        const { score, coverage } = await scoreCandidateEntry(stage2Keyless, {
+        const { score, coverage } = await scoreCandidateEntry(entryFillSource, {
           wallet: c.wallet,
           profile: profiles.get(c.wallet),
           nowMs: Date.now(),
           thresholds: entryThresholds,
-          rpc: costRpc,
-          preferBlockRoute: costBounds.preferBlockRoute,
+          costSource: rpcCostSource(costRpc, { preferBlockRoute: costBounds.preferBlockRoute }),
           log: opts.json ? undefined : (line) => out(line),
         });
         rpcRequests += costRpc.issued();

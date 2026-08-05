@@ -857,10 +857,10 @@ entrant's own transaction, so `entry.caveats` carries that sentence on every pri
 the filter's whole arithmetic is: `launchesTooYoung + launchesEligible = launchRefsAvailable`, and
 `launchesPlanned + launchesDroppedByCap = launchesEligible`. `youngestEligibleAgeMs` read beside
 `minAgeMs` says whether the run exercised the eligibility boundary or sat hours above it, which the
-committed live run did and could not report. **`minAgeMs` is DERIVED FROM PINNED INPUTS** — the
-declared slot span at a pinned worst-case slot rate, see "It does bound one other thing" below — so a
-record carries what that derivation was worth on the day it was written. The committed schema-6
-records read `65000` where a run today reads `85000` because the bound was re-derived and its pinned
+committed live run did and could not report. **`minAgeMs` IS THE FILL SOURCE'S OWN ANSWER, and on
+the swap-api source it is derived from pinned inputs** — the declared slot span at a pinned
+worst-case slot rate, see "It does bound one other thing" below — so a record carries what that
+derivation was worth on the day it was written. The committed schema-6 records read `65000` where a run today reads `85000` because the bound was re-derived and its pinned
 rate raised between them, **not** because the chain moved under a live reading.
 
 **Reading `entry` across the schema-5 boundary.** `entry.launchesSampled` on schema 3 and 4 counts
@@ -972,6 +972,69 @@ For version 2 onwards the pairing to read is:
 Three measurements per candidate, over that candidate's own most recent launches. The first two are
 free — arithmetic over fills already in hand — and the third is not, so the first two run first and
 a deployer that fails either is refused before one Solana RPC request is spent on it.
+
+### Where the fills come from is INJECTED, and Stage 2 names no vendor
+
+Captain decision 260a, 2026-08-05. `stage2.mjs` used to import `readLaunchWindow` and
+`windowReachMs` from `pumpfun.mjs` and `readCreateSlotCosts` beside them, which made the swap-api
+and the Solana RPC **compile-time properties of a scoring module**. They arrive as a `FillSource`
+and a `CostSource` now:
+
+| module | role |
+|---|---|
+| `fill-source.mjs` | the CONTRACT — `FillSource`, `FILL_SOURCE_KINDS`, the `LaunchWindow` coverage vocabulary, `assertWindowUsable` and `assertMinAgeUsable`. **Imports nothing at runtime**, which is what makes it safe for a scoring module to import, and a test asserts that rather than trusting it. The eligibility guard is the reason a source that cannot read its watermark refuses to be BUILT, at `screen.mjs` → `selectEntryFillSource`: `entry.coverage.minAgeMs` is persisted and rendered as a number, so a non-finite answer would reach a saved record as `null` — a missing gate rather than a refusal — and a written constant would be captain decision 144a's defect verbatim. |
+| `cost-source.mjs` | the same for the cost leg — `CostSource`, `TransactionCosts`, `CostWalkResult`, `assertCostWalkAccounted`. |
+| `swapapi-fills.mjs` | pump.fun's keyless trade endpoint wearing the contract. **This is what every run reads**, unchanged in every bound, cursor, tripwire and drop rule. |
+| `rpc-costs.mjs` | `api.mainnet-beta`/Helius wearing the cost contract. The whole-block probe and its per-candidate latch moved in here, because which route is worth a request is a property of that endpoint. |
+| `dune-fills.mjs` | the Dune source. Committed, and **nothing routes through it in a run** — see below. |
+| `screen.mjs` | `ENTRY_FILL_SOURCE_KIND` and `selectEntryFillSource` — the ONE selection site, which 156a already names as the one place both sides meet. |
+
+`stage2.mjs`, `entry.mjs`, `measure.mjs`, `stage0.mjs` and `rank.mjs` import **no source
+implementation at all**, directly or transitively, and none of them may read a source kind.
+
+Two consequences are worth stating in full.
+
+**The eligibility gate is now a question asked of the source, and captain decision 257a forces
+that independently.** "Has this launch finished happening?" is the vendor's to answer: the swap-api
+answers with its own cursor reach (`windowReachMs`, to the millisecond, exactly as before), and a
+source whose tables LAG must answer from an observed watermark. This is the third time that
+expression has moved and the second time the lesson was the same one — captain decision 144a's
+*the defect is writing a DURATION for something someone else controls* — so it is not written down
+in a scoring module any more at all.
+
+**Provenance is recorded and read by nothing.** Every window carries `kind`; no bar, gate, rate or
+verdict reads it, and the added boundary assertion pins that no scoring module branches on it. This
+is captain decision 227a's `is_mayhem_mode` posture one layer down. Persisting `kind` to the run
+record is the schema-bump lane's, not this one's: nothing in a committed record moved.
+
+**What this does NOT claim.** After the cutover a Dune value WILL reach `entry.roomLeft` — that is
+the programme, and any account of this change that says otherwise is describing the import graph and
+calling it the architecture. What survives is the narrower and stronger property: **no module that
+decides anything knows which vendor produced the fills it decides on.** That is the property whose
+loss lets a bar drift toward a source, silently and in the invisible direction, since a graded
+wallet is filed and never offered again.
+
+### The Dune fill source is committed and nothing routes through it
+
+`ENTRY_FILL_SOURCE_KIND` is `'swap-api'` on every run. The cutover is **Gate 3**, which has not been
+convened, and a committed path nobody calls is the correct resting state — the same posture captain
+decision 258b states for its committed SQL. `selectEntryFillSource` **refuses** a kind it has no
+constructor for rather than falling back, because a run that quietly measured on a different vendor
+than it was asked to would report itself complete and be wrong in the one direction nothing
+observes.
+
+What `dune-fills.mjs` holds is the row → window assembly and its coverage proof: the boundary is
+**observed** by scanning wider than the window at both ends, a scan that never looked older than the
+declared mint is refused `coverage-unproven`, the pre-mint tripwire keeps the swap-api walk's zero
+slack, ordering is recovered as `tx_index` then `outer_instruction_index` (Gate 1 §5.2 — the obvious
+mapping onto `inner_instruction_index` is wrong), rows are sorted by the key before anything is
+summed, the venue column is mandatory rather than defaulted, and `priceSol` is **NaN, meaning
+unmeasured**, never `0`. What it does NOT hold is the entry SQL and its pinned saved-query id
+(captain decision 258b) or any price or ceiling (255b): the statement is injected, and **absent
+means refuse every window**.
+
+`grade.mjs` builds the same two sources the screen does, so there is still exactly one Stage 2 and
+the grader cannot drift from the screen it grades.
 
 ### 1. Entry room
 
@@ -1791,9 +1854,10 @@ to carry `swap-api.pump.fun/v2/coins/<MINT>/trades` into `coverage.dropNotes` an
 `--out`, because `KeylessClient` formats the URL into its message — and the committed-record test
 only forbade mint-shaped *keys*, so a mint inside a sentence passed it. Two changes, both kept:
 
-- `KeylessHttpError` carries its **status as a field**, so `stage2.mjs` → `describeTransportFailure`
-  can report `HTTP 400` without repeating anything the vendor sent. Anything that is not one is
-  reduced to its constructor name.
+- `RequestFailed` carries its **status as a field** — `KeylessHttpError` is one of its subclasses —
+  so `stage2.mjs` → `describeTransportFailure` can report `HTTP 400` without repeating anything the
+  vendor sent, and without importing the source that threw. Anything that is not one is reduced to
+  its constructor name.
 - `record.mjs` → `redactVendorIdentifiers` scrubs named free-text fields on the way into a record,
   stripping URLs and base58 address runs, so containment for those fields does not rest on every
   future note-writer remembering. **Covered today, and only these:** the entry half's `rationale`,
@@ -2015,11 +2079,15 @@ governed by `roomIsProven`, and no committed check pins that.
 `ts < createdAtMs` with zero slack, and coverage is still discharged only by an explicit
 `hasMore === false` or a readable empty page. Widening the margin cannot soften either.
 
-**It does bound one other thing, and it has to: which launches are old enough to measure. That is
-the SAME bound, derived once.** `stage2.mjs` and `bundling.mjs` both skip a launch younger than
-`windowReachMs` — **85,000ms** at the pinned values, the same call the seek cursor is placed with.
-The gate has to cover the newest instant the walk reaches for, and a launch has finished happening
-exactly when that instant is in the past, so making them two expressions is what let them come apart.
+**It does bound one other thing, and it has to: which launches are old enough to measure. Neither
+`stage2.mjs` nor `bundling.mjs` derives that bound any more — they ASK their fill source
+(`fillSource.minAgeMs`), and the swap-api source answers with this same `windowReachMs` call, so on
+every run today the gate is still 85,000ms at the pinned values and still the same call the seek
+cursor is placed with.** The gate has to cover the newest instant the walk reaches for, and a launch
+has finished happening exactly when that instant is in the past, so making them two expressions is
+what let them come apart — and captain decision 260a removed the second expression from the scoring
+modules altogether, because a source whose tables LAG must answer a larger floor than its cursor
+reach. See "Where the fills come from is INJECTED, and Stage 2 names no vendor" above.
 
 **The tense matters, because this bound has now failed the same way twice.** It was once `windowMs`
 alone, which admitted a launch aged 60–65s whose tail had not happened yet — the same truncation this
@@ -2353,9 +2421,9 @@ is the same instrument pointed at launches the prediction did not see: `grade.mj
 verdict the screen predicted. Three properties keep that honest and all three are structural:
 
 - **Strictly out of sample.** Only launches created after the claim's `madeAtIso` are measured, and
-  the boundary is a *proof* rather than a convention — Stage 2 refused every launch younger than
-  `windowMs + seekMarginMs` at the instant it chose its sample, and that instant precedes the run's
-  `finishedAtIso`. A test asserts against the fetched URLs that no pre-boundary launch is ever walked.
+  the boundary is a *proof* rather than a convention — Stage 2 refused every launch younger than its
+  fill source's own eligibility gate at the instant it chose its sample, and that instant precedes
+  the run's `finishedAtIso`. A test asserts against the fetched URLs that no pre-boundary launch is ever walked.
 - **Same recipe, same bars.** The outcome is scored at the `stage2_entry` / `stage2_cost` values the
   **predicting** run recorded, never at today's. A record that cannot supply them leaves its claims
   `recipe-unusable` rather than being graded against a screen it never was. `scoreCandidateEntry` and

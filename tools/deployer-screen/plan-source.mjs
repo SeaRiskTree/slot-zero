@@ -310,6 +310,16 @@ export function eligibilityUnavailableNote(eligibility) {
  * So the vocabulary is shared with {@link eligibilityUnavailableNote} rather than reinvented per
  * printer: same words, same three refusals, one place to degrade.
  *
+ * **The closing sentence is narrow on purpose, and it used to overstate.** It said the ceilings,
+ * worst cases and caveats on the page "bind whichever source answers", which is more than this
+ * string can know: the Stage 2 plan's ceiling, pacing floor, request worst case and wall clock are
+ * all bounds this stage enforces on its OWN KEYLESS CLIENT, and a source billed in executions and
+ * credits would not be governed by that client at all. They still print — withholding them is the
+ * failure the split exists to avoid — but the sentence now says what they are rather than claiming
+ * universality. A shared honesty string that overstates is worse than a specific one, because it is
+ * quoted everywhere. See `render.mjs` → `renderDryRun`'s Stage 2 block for the recorded Gate 3
+ * residual this narrowing leaves standing.
+ *
  * @param {object} spec
  * @param {string} spec.figure What the plan cannot state, named as the reader would name it.
  * @param {import('./fill-source.mjs').FillSourceKind} spec.measuredOn The source the figure was
@@ -324,7 +334,8 @@ export function sourceFigureUnavailableNote(spec) {
     `${spec.figure}: UNAVAILABLE — NOT MEASURED, NOT ZERO, AND NOT ANOTHER SOURCE'S NUMBER. That ` +
       `figure was measured on the ${spec.measuredOn} source and describes only it; this run's ` +
       `fills come from the ${spec.selected} source, against which nothing here has been measured. ` +
-      `The ceilings, worst cases and caveats on this page bind whichever source answers and are ` +
-      `unaffected.`,
+      `The ceilings, worst cases and caveats on this page are the ones this stage enforces on its ` +
+      `OWN client today, they are what binds a keyless-sourced walk, and they still print — a ` +
+      `source billed in other units would not be governed by them.`,
   ];
 }

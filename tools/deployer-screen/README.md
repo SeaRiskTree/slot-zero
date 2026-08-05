@@ -1096,8 +1096,21 @@ source each prints through `plan-source.mjs` → `sourceFigureUnavailableNote` �
 and the same three refusals as the eligibility note, naming the source the figure was measured on —
 and **none is replaced by an invented figure for the selected source**: no Dune pacing, shed rate or
 page cost has been measured, and a plausible number is worse than an absence. The ceilings, worst
-cases and caveats are arithmetic over pinned thresholds, bind whichever source answers, and print in
-both cases.
+cases and caveats are arithmetic over pinned thresholds and print in both cases, because withholding
+them is the failure the split exists to avoid.
+
+**KNOWN RESIDUAL, recorded rather than rewired — trigger: the Gate 3 cutover.** The Stage 2 figures
+that keep printing under every source — the stage keyless ceiling, the pacing floor, the request
+worst case and the wall clock derived from that floor — are bounds this stage enforces on its **own
+keyless client**. They are correct today only because the fills come from a keyless HTTP client; a
+Dune fill source would issue executions and credits and would not be governed by that client at all.
+They must stay on the page regardless (a plan must always be complete), so what is owed at the
+cutover is the same `measuredOn` labelling the page distribution, shed rate, pacing justification and
+typical wall clock already received, plus whatever bound the Dune source's own transport enforces in
+their place. Owner: whoever lands Gate 3. `render.mjs` → `renderDryRun`'s Stage 2 block carries the
+same note in place. `sourceFigureUnavailableNote`'s closing sentence was narrowed for exactly this
+reason: it used to claim those bounds "bind whichever source answers", which is more than it can
+know.
 
 **An undeclared construction is treated as billed, never as free.** A registry entry that says
 nothing about what building it costs is an absence, and reading an absence as a benign value is the

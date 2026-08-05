@@ -1167,7 +1167,8 @@ export function renderDryRun(plan) {
   const fillMin = Math.round((fillWorst * plan.entry.keylessMinIntervalMs) / 60_000);
   // DERIVED FROM THE WALK, NOT DESCRIBED. `readLaunchWindow` will seek exactly this far, because
   // this is the function it calls to decide that — the census walks its own windows, so the REACH
-  // is still ours to derive. The eligibility FLOOR is not: it arrives as `plan.entryMinAgeMs`. See
+  // is still ours to derive. The eligibility FLOOR is not: it arrives as `plan.entryEligibility`,
+  // the source's own answer or a stated absence, and is printed through `eligibilityFloorMs`. See
   // {@link MEASURED_PAGE_COST} for why the page cost beside it is checked against the reach rather
   // than simply printed.
   const reachMs = windowReachMs(plan.entry);

@@ -1211,9 +1211,22 @@ export function renderDryRun(plan) {
     if (plan.entryEligibility.known && plan.entryEligibility.billed) {
       L.push('Building the fill source was authorised to spend; the bound it was given and what it');
       L.push('actually cost are stated above. Nothing else here was fetched.');
-    } else {
+    } else if (plan.entryEligibility.known) {
       L.push('Building the selected fill source costs nothing, so the authorisation bought nothing');
       L.push('and nothing was fetched. This page is what a plain --dry-run prints.');
+    } else {
+      // THE THIRD BRANCH IS THE POINT (captain decision 286c). Under this flag an eligibility figure
+      // can only be absent because the construction DECLARED NOTHING, and an undeclared cost printed
+      // as "costs nothing" is an absence read as a benign value — the failure the split exists to
+      // remove, and a self-contradiction on a page whose eligibility line correctly says UNAVAILABLE.
+      // Unknown reads as unknown, names why, and states no cost either way.
+      L.push('The selected fill source declared NO COST for building it, so this plan did NOT build');
+      L.push('it: nothing was fetched, and NOTHING CAN BE SAID ABOUT WHAT BUILDING IT WOULD HAVE');
+      L.push('COST. An authorisation cannot cover a spend that can state no bound. Same reason, same');
+      L.push('words, as the figure it withholds further down:');
+      for (const note of eligibilityUnavailableNote(plan.entryEligibility)) {
+        for (const line of wrap(note, 76)) L.push(`  ${line}`);
+      }
     }
   } else {
     L.push('DRY RUN — nothing was fetched. This is exactly what a real run would request.');
@@ -1266,6 +1279,19 @@ export function renderDryRun(plan) {
     // re-printed as though it held for a source it was never measured against, and none may be
     // replaced by an invented figure for that source — no Dune pacing, shed rate or page cost has
     // been measured, and a plausible number is worse than an absence.
+    //
+    // KNOWN RESIDUAL, RECORDED RATHER THAN REWIRED, TRIGGER: THE GATE 3 CUTOVER. The four figures
+    // below that KEEP printing under every source — the stage keyless ceiling, the pacing floor,
+    // the request WORST CASE and the wall clock derived from that floor — are bounds this stage
+    // enforces on its OWN KEYLESS CLIENT. They are correct today only because the fills come from a
+    // keyless HTTP client; a Dune fill source would issue executions and credits and would not be
+    // governed by that client at all. They must NOT be suppressed or labelled unavailable — a plan
+    // must always be complete, and withholding a ceiling is the failure this split exists to avoid
+    // — so what is owed at the cutover is the same `measuredOn` labelling the page distribution,
+    // shed rate, pacing justification and typical wall clock already received here, plus whatever
+    // bound the Dune source's own transport enforces in its place. Owner: whoever lands Gate 3;
+    // `tools/deployer-screen/README.md` → "The dry run is SPLIT so it can be both free and honest"
+    // carries the same residual for a reader who never opens this file.
     const fromSwapApi = plan.entryEligibility.kind === 'swap-api';
     /** @param {string} figure */
     const notMeasuredHere = (figure) => {
@@ -1362,24 +1388,25 @@ export function renderDryRun(plan) {
       L.push(`  How the ${plan.entryEligibility.kind} source reaches that window is its own cursor geometry and`);
       L.push('  is NOT restated here, for the reason the request line above gives.');
     }
-    L.push('  A launch is not');
     if (plan.entryEligibility.known) {
       L.push(
-        `  walked until it is ${eligibilityFloorSeconds(plan.entryEligibility)} old — the gate the fill source itself applies, ` +
-          `never a second number derived here, so the`,
+        `  A launch is not walked until it is ${eligibilityFloorSeconds(plan.entryEligibility)} old — the gate the fill source ` +
+          `itself applies,`,
       );
-      L.push('  gate cannot fall behind the cursor when the chain slows. Pinned keyless');
+      L.push('  never a second number derived here, so the gate cannot fall behind the cursor when');
+      L.push('  the chain slows.');
     } else {
       // NEVER THROWN, NEVER OMITTED, NEVER DEFAULTED TO ANOTHER SOURCE'S VALUE — captain decision
       // 286c. The reach printed two lines up is this walk's own geometry and stays; the FLOOR is
       // the vendor's and is simply not here, said in those words.
-      L.push('  walked until it is old enough, and HOW OLD IS UNAVAILABLE IN THIS PLAN:');
+      L.push('  A launch is not walked until it is old enough, and');
+      L.push('  HOW OLD IS UNAVAILABLE IN THIS PLAN:');
       for (const note of eligibilityUnavailableNote(plan.entryEligibility)) {
         for (const line of wrap(note, 74)) L.push(`    ${line}`);
       }
-      L.push('  Every other figure on this page is free of that and stands. Pinned keyless');
+      L.push('  Every other figure on this page is free of that and stands.');
     }
-    L.push('  pacing, one request in flight.');
+    L.push('  Pinned keyless pacing, one request in flight.');
     L.push('');
 
     const c = plan.costBounds;

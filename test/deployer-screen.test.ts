@@ -11698,6 +11698,143 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       }
     });
 
+    it('the SPEND-AUTHORISED banner splits three ways, and UNKNOWN reads as unknown', () => {
+      // The banner reads the FIGURE'S OWN STATE, never the flag, and the third branch is the point:
+      // an UNDECLARED construction is an ABSENCE, and printing it as "costs nothing" is an absence
+      // read as a benign value — the failure 286c exists to remove, and a self-contradiction on a
+      // page whose eligibility line correctly says UNAVAILABLE. Today's kind is 'swap-api' and it
+      // declares free, so the other two branches are unreachable from the CLI; they are first-class
+      // designed cases (the run-path registry still accepts bare thunks, which `registrationOf`
+      // turns into an undeclared construction) and are driven here so they cannot rot.
+      const TH = loadThresholds();
+      const plan = {
+        seedPlan: [],
+        maxCandidates: 12,
+        maxKeyedRequests: 45,
+        consistency: false,
+        maxKeylessRequests: TH['budget'].maxKeylessRequests,
+        historySource: 'creation-derived' as const,
+        creationWalk: TH['creation_walk'],
+        costBounds: TH['stage2_cost'],
+        stage2: true,
+        maxScored: TH['stage2_entry'].maxCandidatesScored,
+        entryThresholds: TH['stage2_entry'],
+        spendAuthorised: true,
+        keyDescription: null,
+        rpcEndpoint: resolveSolanaRpcEndpoint({}),
+        indexedWalk: TH['creation_walk_helius'],
+        worstCaseCredits: 0,
+        dune: TH['dune'],
+        duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
+        usingDune: true,
+        duneRefreshProbe: false,
+      };
+
+      // (1) KNOWN and BILLED — the construction spent, and the banner points at the bound and the
+      // actual that `planEligibility` announced above it.
+      const billed = renderDryRun({
+        ...plan,
+        entryEligibility: { known: true, kind: 'dune', minAgeMs: 900_000, billed: true },
+      });
+      expect(billed).toContain('DRY RUN, SPEND AUTHORISED');
+      expect(billed).toContain('Building the fill source was authorised to spend');
+      expect(billed).toContain('actually cost are stated above');
+      expect(billed).not.toContain('costs nothing');
+
+      // (2) KNOWN and FREE — the authorisation bought nothing, said as a claim about the purchase
+      // that never happened rather than as silence.
+      const free = renderDryRun({
+        ...plan,
+        entryEligibility: { known: true, kind: 'swap-api', minAgeMs: 85_000, billed: false },
+      });
+      expect(free).toContain('DRY RUN, SPEND AUTHORISED');
+      expect(free).toContain('the authorisation bought nothing');
+      expect(free).not.toContain('authorised to spend;');
+
+      // (3) UNKNOWN — the branch the finding was about. It must NAME THE REASON, claim no cost in
+      // either direction, and offer no zero standing in for one.
+      const undeclared = renderDryRun({
+        ...plan,
+        entryEligibility: {
+          known: false,
+          kind: 'dune',
+          why: undeclaredConstruction('dune').why,
+          authorisedBy: null,
+        },
+      });
+      // The banner is everything above the second rule, so the assertion cannot be sensitive to
+      // where the shared note happens to wrap.
+      const bannerLines = undeclared.split('\n');
+      const closes = bannerLines.indexOf('='.repeat(78), 1);
+      expect(closes).toBeGreaterThan(1);
+      const banner = bannerLines.slice(0, closes).join(' ').replace(/\s+/g, ' ');
+      expect(banner).toContain('DRY RUN, SPEND AUTHORISED');
+      expect(banner).toContain('declared NO COST');
+      expect(banner).toContain('NOTHING CAN BE SAID ABOUT WHAT BUILDING IT WOULD HAVE COST');
+      // The established vocabulary, not a third way of saying it: the same note the eligibility line
+      // further down prints, so the page cannot contradict itself.
+      expect(banner).toContain('UNAVAILABLE — NOT MEASURED, NOT ZERO');
+      expect(banner).toContain('without declaring what building it costs');
+      // NEVER 'costs nothing', never a zero, never silence.
+      expect(banner).not.toContain('costs nothing');
+      expect(banner).not.toContain('bought nothing');
+      expect(banner).not.toMatch(/\d/);
+      // And the rest of the plan still prints — withholding it is the failure the split avoids.
+      expect(undeclared).toMatch(/THE PRICE OF THE SEAT/);
+      expect(undeclared).toContain('HOW OLD IS UNAVAILABLE IN THIS');
+    });
+
+    it('the eligibility sentence is rendered whole, in both the known and the unknown branch', () => {
+      // The operator-facing plan surface: a sentence that breaks mid-clause across an `L.push`
+      // boundary reads as truncated output rather than as prose, and this page is the one an
+      // operator reads before authorising a spend.
+      const TH = loadThresholds();
+      const plan = {
+        seedPlan: [],
+        maxCandidates: 12,
+        maxKeyedRequests: 45,
+        consistency: false,
+        maxKeylessRequests: TH['budget'].maxKeylessRequests,
+        historySource: 'creation-derived' as const,
+        creationWalk: TH['creation_walk'],
+        costBounds: TH['stage2_cost'],
+        stage2: true,
+        maxScored: TH['stage2_entry'].maxCandidatesScored,
+        entryThresholds: TH['stage2_entry'],
+        spendAuthorised: false,
+        keyDescription: null,
+        rpcEndpoint: resolveSolanaRpcEndpoint({}),
+        indexedWalk: TH['creation_walk_helius'],
+        worstCaseCredits: 0,
+        dune: TH['dune'],
+        duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
+        usingDune: true,
+        duneRefreshProbe: false,
+      };
+      const known = renderDryRun({
+        ...plan,
+        entryEligibility: { known: true, kind: 'swap-api', minAgeMs: 85_000, billed: false },
+      });
+      const unknown = renderDryRun({
+        ...plan,
+        entryEligibility: {
+          known: false,
+          kind: 'dune',
+          why: 'building it runs the trade tables\' coverage probe, whose result read is billed.',
+          authorisedBy: '--dry-run-spend',
+        },
+      });
+      for (const text of [known, unknown]) {
+        // No line is the orphan fragment on its own, in either branch.
+        expect(text.split('\n').map((l) => l.trim())).not.toContain('A launch is not');
+        expect(text.replace(/\s+/g, ' ')).toContain('A launch is not walked until it is');
+      }
+      expect(known.replace(/\s+/g, ' ')).toContain('A launch is not walked until it is 85s old');
+      expect(unknown.replace(/\s+/g, ' ')).toContain(
+        'A launch is not walked until it is old enough, and HOW OLD IS UNAVAILABLE IN THIS PLAN:',
+      );
+    });
+
     it('the OPT-IN states its BOUNDED spend before spending and the ACTUAL after', async () => {
       // Criterion 3, and the ORDER is the property — a bound stated after the purchase is not a
       // bound. It is asserted as a sequence rather than as two `toContain`s, and the constructor

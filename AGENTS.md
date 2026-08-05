@@ -565,8 +565,14 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   permits 38,000 rows, the batch returned **27,731** against the pinned 20,000 ceiling, and the
   reading was refused **whole** — `dune.rowsReturned: 0`, `dune.coverage: null`,
   `enumerationSource: "helius"` on all 76. This is the arithmetic `maxResultRows`'s justification
-  states in advance (the rows bound is `max(19,999, deployers × 500)`, so **above 39 deployers it can
-  exceed the ceiling**) biting for the first time. **Two consequences.** It cost that leg **232,937
+  states in advance (the rows bound is `max(19,999, deployers × 500)`) biting for the first time.
+  **CAPTAIN DECISION 264a HAS SINCE RAISED THE CEILING 20,000 → 40,000**, which covers that batch and
+  moves the crossover from above 40 deployers to **above 80**; `?limit=40000` was verified accepted
+  by the vendor before the value moved. **The SQL was NOT touched**: `SQL_ROW_CEILING` stays 19,999
+  and the two are now pinned as an INEQUALITY rather than an equality, deliberately — the equality
+  was a derivation, the safety property is the inequality, and freezing the literal means the raise
+  needs **no saved-query deploy** and so cannot leave the Dune leg refusing terminally. The ceiling
+  stays genuinely reachable, so it is still a backstop. **Two consequences.** It cost that leg **232,937
   Helius credits and 4,105 RPC requests** against 1,924 and 33 for a 69-deployer leg that kept its
   Dune answer; and **a walk-sourced leg has NO mayhem reading at all** — `mayhemShare` null on 76 of
   76, UNMEASURED and never 0%. Mitigation for a run that wants its Dune answer is `--candidates`
@@ -681,11 +687,33 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
   → "Two of the three seeds used to yield nothing, silently" owns the field's semantics.
 - **NO LONGER FREE TIER, AND NO LONGER SHARED — the key is ULTRA and EXCLUSIVE to slot-zero**
   (captain, 2026-08-05). Measured the same day from the response headers: `x-ratelimit-limit`
-  **100,000**/day, resetting at **00:00Z**. The old facts were ~200/day, shared, and they are what
-  every bound in `thresholds.json` is still sized against — **`budget.maxKeyedRequests` is still 200
-  per run and was deliberately NOT raised** by the lane that measured this, so a run still refuses a
-  plan over 200 and a full-cap run is still 198. Do not read the new ceiling as authorisation to
-  widen anything; that is a captain decision. `/{wallet}/history` is still PRO+.
+  **100,000**/day, resetting at **00:00Z**. **Captain decision 267a has now RE-DERIVED every bound
+  that used to rest on the old ~200/day shared figure** (`thresholds.json` 6.0.0), and the shape of
+  that re-derivation is the thing to carry: the allowance stopped being what binds this tool, so
+  each value is now fixed by the constraint that replaced it, and each `justification` names which.
+  `budget.maxKeyedRequests` 200 → **402** — no longer an allowance figure but the plan's ONE-RETRY
+  worst case, `2 × (6 enumeration + 195 candidates)`; it was FORCED, since a tiered default plan
+  costs 201 and would be refused at 200. `budget.maxCandidates` is **unchanged at 195 and completely
+  re-derived** — `floor(1,365 / 7 pages a candidate)` from `maxKeylessRequests`, which is now the
+  tightest ceiling; **the matching integer is a coincidence, not continuity.** `keyedMinIntervalMs`
+  6,500 → **250**, re-measured (below). **The upgrade authorised NO widening on its own** — 195 did
+  not move for it, and reading 100,000 as licence to raise a bound is still a captain decision.
+  **`/{wallet}/history` is NO LONGER out of reach**: it was PRO+, the Ultra key answers it `200`
+  (measured 2026-08-05), and it is still not requested — the reason changed from entitlement to
+  design, since it serves daily snapshots of the trailing aggregates this tool refuses to read.
+- **THE ~10/MINUTE BURST LIMIT DOES NOT DESCRIBE THIS TIER, AND THAT IS WHY 267a REQUIRED A
+  RE-MEASUREMENT RATHER THAN A CARRY-ACROSS.** `keyedMinIntervalMs` was 6,500 ms because the Free
+  tier burst at ~10/min, recorded as *"the vendor's rate limit, not our caution"* — exactly the kind
+  of claim that goes stale invisibly when a tier changes. Measured 2026-08-05, one request in
+  flight: a ladder at 6,500 / 2,000 / 500 / **0** ms shed **nothing at any rung**, and **60
+  back-to-back requests (≈183/minute sustained) shed nothing either**, which a 10/min limiter
+  refuses at request 11. The gate's own endpoint behaved the same (30 back-to-back, 0 shed), and
+  `x-ratelimit-used` advanced by exactly 30 — **the counter is per-request and GLOBAL across
+  endpoints**. What binds is response latency (p50 312 ms leaderboard, 182 ms profile), so 250 ms is
+  a courtesy floor rather than a shed-avoidance figure. Consequence: the keyed leg of a full run
+  goes ~21 min → **~50 s**, and a full default run ~19.2 h → **~18.9 h**. **The measurement is one
+  day, ~150 requests and SERIAL ONLY — it says nothing about concurrency.**
+  `tools/deployer-screen/measurements/2026-08-05-ultra-keyed-envelope/` owns it and its limits.
 - **THE VENDOR SENDS ITS DAILY COUNTER ON EVERY RESPONSE AND NOTHING HERE READS IT.**
   `x-ratelimit-remaining` / `x-ratelimit-used` / `x-ratelimit-reset` are on the wire.
   `budget.maxKeyedRequests` bounds ONE RUN and the tool is stateless between runs, so N legs of
@@ -696,9 +724,9 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
   header before a multi-leg session** (`runs/2026-08-05-seed-comparison.md` → "Spend" has the
   one-line curl) rather than assuming the day is yours.
 - **Spend the whole MadeOnSol daily allowance when a run will answer something** (captain, 2026-08-02:
-  there is no free substitute for this data, so hoarding it buys nothing). The screen's pinned bounds
-  are the full ~200/day (unchanged by the 2026-08-05 Ultra upgrade above); the earlier
-  quarter-allowance ceiling is withdrawn, so do not re-derive it.
+  there is no free substitute for this data, so hoarding it buys nothing). The earlier
+  quarter-allowance ceiling is withdrawn, so do not re-derive it. **What the bounds are sized against
+  is no longer the allowance at all** — see 267a above; a full run is ~201 requests, 0.2% of the day.
   The "if it gets results" conditional binds — no sweeps, no idle retries. **MadeOnSol only**:
   SolanaTracker/CoinGecko keys are production-shared and unchanged, as is keyless pump.fun
   pacing. **Helius is NO LONGER production-shared** — captain, 2026-08-03: that key is this research
@@ -1105,7 +1133,14 @@ its `README.md`; every number reproduces from `node tools/window-decay-tripwire/
 
 `tools/deployer-screen/runs/2026-08-05-seed-comparison.md` (captain decision 232c) runs the screen on
 the untiered default seeds and on `--tier good`/`--tier elite`, same day, same code, at an unmoved
-`minCompletionRate` of 0.25. Three records back it, held at
+`minCompletionRate` of 0.25. **THE SEEDING HAS SINCE BEEN CHOSEN AND IT IS TIERED — captain decision
+262a, 2026-08-05.** A default plan is now `good` + `elite`, six enumeration requests rather than
+three (`tools/deployer-screen/seed.mjs` → `DEFAULT_TIERS`), on the dominance argument below: the
+untiered admitted set is a strict SUBSET, so untiered forfeited 25 candidates and gained none.
+**`--tier <t>` still narrows to one tier; the untiered seeding no longer reaches any CLI** and is
+reproducible only from the committed records. Read the four bullets below as the evidence FOR that
+default rather than as an open question — but the third is now a live cost of the default, not an
+observation about a flag. Three records back it, held at
 `tools/deployer-screen/measurements/2026-08-05-seed-comparison/` and **not** under `runs/`: they are
 the 2026-08-05 measurement whose schema number was superseded — schema-15 candidate rows plus a
 run-level `predictions` block that only exists at 17, under the name `declaredPredictions`, so no
@@ -1136,8 +1171,14 @@ owns the statement. **The seeding was NOT chosen — that is the captain's.** Fo
   and 0.9429 against the control's 0.5429, exactly as stated — but on the **gate reading**, which is
   what the bar is compared against, they read **0.3089 and 0.3303 against the control's 0.4325**, so
   a bar in **(0.3303, 0.4325]** removes both and keeps the control. n = 2 artefacts, one control, one
-  day. **FILED, NOT ACTED ON** — no bar moved and `thresholds.json` was not touched; it is a captain
-  decision, and it is the same class of defect 231a was raised to fix, one level in.
+  day. **THE BAR IS STILL 0.25 AND STILL UNMOVED, BUT `thresholds.json` IS NO LONGER SILENT ABOUT
+  IT** — captain decision 263b, 2026-08-05, a TEXT correction that changes no value.
+  `minCompletionRate`'s justification used to quote the artefacts on the vendor page and the control
+  on both readings inside one sentence, then conclude *"there is no bar that removes those two and
+  keeps the control"* — a claim true of neither reading on its own. It now states the two readings
+  apart and records the (0.3303, 0.4325] band with its limits attached. **Acting on it is still a
+  captain decision and 263b explicitly declines to**: n = 2 artefacts and one control, one day, and
+  the band's lower edge sits 0.1022 below a control whose own month-to-month rates span 0.256.
 
 Stage 2 answered on this population where it had not before: **10 measured `entry-room-absent`
 verdicts** across the three legs against 0 on the 2026-08-04 run, **no `entry-open-after-costs`**, and
@@ -1181,10 +1222,14 @@ supersedes the re-open monitor (captain, 2026-08-02: *a competent dev will not r
   what makes keeping the feed on the vendor page defensible — **never compare or pool the two
   without reading `gateReading` first.** `tools/deployer-screen/FEED.md` → "Why the gate here reads
   ownership, and what that costs" is the long form.
-- **Bounds are per-run and pinned in `thresholds.json` → `feed`: 3 enumeration + at most `--gate`
-  keyed requests, zero keyless, and `--live` is required to spend anything.** The daily arithmetic
-  (15 × 6 = 90 of ~200) is deliberately a minority share; raising the cadence without lowering the
-  per-run ceiling makes this lane the allowance's largest consumer.
+- **Bounds are per-run and pinned in `thresholds.json` → `feed`: 6 enumeration + at most `--gate`
+  keyed requests, zero keyless, and `--live` is required to spend anything.** 6 and not 3 since
+  captain decision 262a made the seeding tiered, which forced `maxKeyedRequestsPerRun` 15 → 18. The
+  daily arithmetic is now **18 × 6 = 108 of 100,000 (0.108%)**, not 90 of ~200 — the denominator
+  moved by 500x and 267a restated the share against it. **The bounds were kept anyway and that is
+  the point**: a cron is the one caller no human reviews before each spend, so an unbounded lane
+  against a 100,000-request day is still unbounded, and raising the cadence without lowering the
+  per-run ceiling still makes this lane the largest consumer of a day nothing here tracks.
 - **Exit 9 means the feed is dry or broken, not quiet** — a seed serving rows we read no wallet from,
   every seed inert, every gated profile unreadable (needs ≥2 gated, so `--gate 1` disarms it), or 3
   consecutive live, completed runs with no new wallet.

@@ -815,6 +815,15 @@ dev currently?"*, and the shape of the answer is the point:
   min to ~49/147 min typical/worst, the cost leg's run-level RPC worst case goes 1,500 to 3,500
   requests, and a full default run's worst case goes ~16.4 h to ~19.2 h.
   `thresholds.json` → `stage2_entry.justification.maxCandidatesScored` owns all of it.
+- **THOSE THREE SAMPLING CAPS ARE SOURCE-SCOPED SINCE `thresholds.json` 6.1.0, so 7 / 8 / 10 are the
+  SWAP-API source's request arithmetic and nothing else's.** The Dune fill source carries its own
+  three in `stage2_entry_dune` — 7 / 20 / 22, derived in CREDITS for windows scanned — and its
+  `maxCandidatesScored` of 7 is a coincidence rather than continuity. **Nothing reads that block**:
+  Gate 3 has not been convened and `screen.mjs` selects `'swap-api'` on every run, so every live
+  number is still `stage2_entry`'s. Every evidence bar (`minRoomLeft`, the field bars, the cost bar)
+  stays in `stage2_entry` and governs both sources, and a test forbids either justification from
+  describing the other's cost arithmetic. Each block's `justification` owns its own derivation —
+  including that the Dune floor of 20 makes a verdict HARDER to reach, not easier.
 - **"Enterable" means enterable AFTER what it costs to enter, and `entry-room-present` no longer
   exists.** Fees are inside the entry window (captain, 2026-08-02) and the field's after-cost result
   ships with them (decision 136b). The strongest verdict is now `entry-open-after-costs`; two new

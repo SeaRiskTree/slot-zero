@@ -1033,6 +1033,17 @@ unmeasured**, never `0`. What it does NOT hold is the entry SQL and its pinned s
 (captain decision 258b) or any price or ceiling (255b): the statement is injected, and **absent
 means refuse every window**.
 
+**The three sampling caps are source-scoped, and the Dune source's live in `thresholds.json` →
+`stage2_entry_dune`** (6.1.0, the captain's ruling of 2026-08-05). The swap-api walk pays in
+**requests** per launch page and the Dune source pays **credits** for windows **scanned**, so one
+shared set would have been justified by one cost model and merely *carried* on the other source.
+That block holds `maxCandidatesScored` 7, `minLaunchesSampled` 20 and `maxLaunchesPerCandidate` 22
+and nothing else — every evidence bar stays in `stage2_entry` and governs both sources — and, like
+`dune-fills.mjs` itself, **nothing reads it until Gate 3**. Its `justification` entries own each
+derivation, including why the matching `maxCandidatesScored` of 7 is a coincidence rather than
+continuity and why the floor of 20 makes a verdict **harder** to reach; a test asserts that neither
+block's justification describes the other's cost arithmetic.
+
 `grade.mjs` builds the same two sources the screen does, so there is still exactly one Stage 2 and
 the grader cannot drift from the screen it grades.
 
@@ -1779,6 +1790,14 @@ entry measurement. Everything it fetches is pump.fun's free tape.
 | **requests per launch, retries included** | 18 |
 | stage ceiling, on its own client | **1,260** |
 | pacing, `swap-api` only | **7.0s** |
+
+**The first three rows are the SWAP-API fill source's own caps and are pinned as such** —
+`thresholds.json` **6.1.0** source-scoped the three sampling caps, so `stage2_entry`'s 7 / 8 / 10 are
+derived from this source's request arithmetic and the Dune source carries its own three in
+`stage2_entry_dune` (see [The Dune fill source is committed and nothing routes through
+it](#the-dune-fill-source-is-committed-and-nothing-routes-through-it)). Every **evidence** bar —
+`minRoomLeft`, the field bars, the cost bar — stays in `stage2_entry` and governs both sources.
+`ENTRY_FILL_SOURCE_KIND` is `'swap-api'` on every run, so this table is what every run applies.
 
 The two launch bounds are **deliberately unequal** — captain decision 190a, 2026-08-04. The stage
 plans 10 launches and needs 8 of them scored, so a candidate absorbs **two** dropped launches before

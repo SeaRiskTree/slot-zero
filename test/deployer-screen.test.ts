@@ -1810,6 +1810,13 @@ describe('the CLI contract', () => {
       // Neither may NAME the other's cost parameters. The word "request" is deliberately NOT banned
       // from the Dune entries — each uses it exactly once, to disclaim it — so what is asserted is
       // the arithmetic's own named terms, which is the thing that would actually be borrowed.
+      //
+      // THE LIMIT OF THIS CHECK, so the prose claim is not read as stronger enforcement than it is:
+      // it asserts VOCABULARY, not arithmetic. A Dune entry that named no swap-api parameter while
+      // describing a request product would still pass. That is acceptable because `justification` is
+      // an explicitly owned text contract here (same idiom as 'every pinned parameter carries a
+      // stated reason'), and because the value-level half of the scoping is asserted semantically in
+      // the next test. Both blocks' prose now claims only this narrow half.
       expect(jDune[k], `stage2_entry_dune.justification.${k} borrows swap-api arithmetic`).not.toMatch(
         /maxRequestsPerLaunch|maxKeylessRequests/,
       );
@@ -1835,7 +1842,10 @@ describe('the CLI contract', () => {
 
     expect(d['minLaunchesSampled']).toBe(20); // era B, n = 20 — the only raise this repo has evidence for
     expect(d['maxLaunchesPerCandidate']).toBe(22);
-    expect(d['maxCandidatesScored']).toBe(7);
+    // 7 -> 14, captain decision 289b. 14 is the larger of the two per-run survivor counts the
+    // 2026-08-05 seed comparison recorded (14 good, 13 elite); the pooled 27 was declined because it
+    // is sized to a population the discovery widening will move. Interim, not terminal.
+    expect(d['maxCandidatesScored']).toBe(14);
 
     // The floor must stay BELOW the cap or a single dropped launch costs the whole candidate's
     // verdict, and the gap is TWO on both sources — captain decision 190a's argument, re-derived here
@@ -1846,10 +1856,16 @@ describe('the CLI contract', () => {
 
     // Windows scanned is the lever, and this is the number the ~64 credits/run rests on.
     const windows = d['maxCandidatesScored']! * d['maxLaunchesPerCandidate']!;
-    expect(windows).toBe(154);
+    expect(windows).toBe(308);
     // ROWS RETURNED IS NOT THE LEVER, and the headroom is what says so: one row per planned launch,
     // against a ceiling two orders of magnitude above it. If this ever stopped holding, the block
     // comment's derivation would be sized on the wrong quantity.
+    //
+    // AND IT IS A LIVE TRIPWIRE ON THE NEXT RAISE, not just a sanity check. The bound is 400 windows,
+    // so at the pinned cap of 22 launches a scoring cap of 18 (396) is the LAST that passes and 27
+    // (594) does not. Above ~18 candidates the ROW ceiling binds before the credit budget does, so the
+    // widened-pool derivation captain decision 289b defers to must either move dune.maxResultRows or
+    // justify sitting under it. stage2_entry_dune.justification.maxCandidatesScored states this.
     expect(windows).toBeLessThan(dune['maxResultRows']! / 100);
   });
 

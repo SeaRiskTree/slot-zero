@@ -691,7 +691,8 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
 - **NO LONGER FREE TIER, AND NO LONGER SHARED — the key is ULTRA and EXCLUSIVE to slot-zero**
   (captain, 2026-08-05). Measured the same day from the response headers: `x-ratelimit-limit`
   **100,000**/day, resetting at **00:00Z**. **Captain decision 267a has now RE-DERIVED every bound
-  that used to rest on the old ~200/day shared figure** (`thresholds.json` 6.0.0), and the shape of
+  that used to rest on the old ~200/day shared figure** (`thresholds.json` 6.0.0 — a version citation
+  here names where a value LANDED and is never bumped to track the file's current version), and the shape of
   that re-derivation is the thing to carry: the allowance stopped being what binds this tool, so
   each value is now fixed by the constraint that replaced it, and each `justification` names which.
   `budget.maxKeyedRequests` 200 → **402** — no longer an allowance figure but the plan's ONE-RETRY
@@ -817,12 +818,20 @@ dev currently?"*, and the shape of the answer is the point:
   `thresholds.json` → `stage2_entry.justification.maxCandidatesScored` owns all of it.
 - **THOSE THREE SAMPLING CAPS ARE SOURCE-SCOPED SINCE `thresholds.json` 6.1.0, so 7 / 8 / 10 are the
   SWAP-API source's request arithmetic and nothing else's.** The Dune fill source carries its own
-  three in `stage2_entry_dune` — 7 / 20 / 22, derived in CREDITS for windows scanned — and its
-  `maxCandidatesScored` of 7 is a coincidence rather than continuity. **Nothing reads that block**:
+  three in `stage2_entry_dune` — **14 / 20 / 22** since captain decision 289b, derived in CREDITS for
+  windows scanned (308 windows, ~128 credits a run, ~19 runs against the shared 2,500-credit month).
+  The two `maxCandidatesScored` were the same integer until 289b and the coincidence had to be
+  disclaimed in prose; now the values themselves show the scoping. **14 is INTERIM, not terminal** —
+  27 would serve the whole pooled survivor set but is sized to today's population, so the final size
+  gets derived against the widened discovery pool. **Nothing reads that block**:
   Gate 3 has not been convened and `screen.mjs` selects `'swap-api'` on every run, so every live
   number is still `stage2_entry`'s. Every evidence bar (`minRoomLeft`, the field bars, the cost bar)
   stays in `stage2_entry` and governs both sources, and a test forbids either justification from
-  describing the other's cost arithmetic. Each block's `justification` owns its own derivation —
+  NAMING the other's cost parameters (vocabulary, not arithmetic — the test says so itself).
+  **A Gate 3 wiring MUST record the source-scoped caps**: `screen.mjs` files `stage2_entry`
+  unconditionally and `grade.mjs` reads `minLaunchesSampled`/`maxLaunchesPerCandidate` back out of
+  it, and those are exactly the two keys that differ, so scoring through Dune while recording
+  `stage2_entry` files a recipe the run never applied. A test pins that they genuinely disagree. Each block's `justification` owns its own derivation —
   including that the Dune floor of 20 makes a verdict HARDER to reach, not easier.
 - **"Enterable" means enterable AFTER what it costs to enter, and `entry-room-present` no longer
   exists.** Fees are inside the entry window (captain, 2026-08-02) and the field's after-cost result

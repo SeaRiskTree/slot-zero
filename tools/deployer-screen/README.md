@@ -115,7 +115,13 @@ count, understates its *bonded* count by more, and therefore **scores the better
 that creates 20, bonds 9, then hands on 3 of the winners reads as 17 launches / 6 bonded = 35%
 instead of the true 45%. A gate set at 40% rejects it — and **a false rejection is invisible**: the
 wallet is dropped, never researched, and nothing downstream contradicts it. A false *acceptance* at
-least gets caught by the beatability screen later. The bias runs the wrong way.
+least gets caught by the beatability screen later. That direction of the bias runs the wrong way.
+
+**It is not the only direction, and the reading is not a one-way conservative filter.** Measured
+over one run's 82 candidates, the vendor page's *rate* reads **higher** than the creation-derived
+gate's more often than lower, because the page is a success-biased short window rather than merely a
+short one. `FEED.md` → "It is biased in BOTH directions at once" is the owner of both directions and
+their measured counts; read it before calling this reading conservative.
 
 ### The premise, observed rather than inherited
 
@@ -318,8 +324,9 @@ Four rules keep that window from claiming more than it covers.
   100 requests against 1,000-entry pages — has no floor at all. The record says so with
   `coveredFromIso: null` and `coveredDays: 0`, and the merge then treats **every** listed row as
   outside the window and carries it over unchanged. The whole reading falls back to the ownership
-  listing, which is biased towards rejection by a measured ~0 launches (`CREATION-DERIVED.md`) and
-  honest. The creates the walk did prove are still counted; what an empty window withdraws is only
+  listing, whose launch COUNT is biased towards rejection by a measured ~0 launches
+  (`CREATION-DERIVED.md`) and honest — its *rate* is biased the other way, see `FEED.md` → "It is
+  biased in BOTH directions at once". The creates the walk did prove are still counted; what an empty window withdraws is only
   the right to call a listed token the walk never saw *acquired*. This encoding replaces a `0` floor
   that read as 1970: a 56-year window containing every timestamp, under which one live wallet's
   30 launches / 20 bonded / `gate-passed` became 2 / 0 / `gate-failed` with an ordinary rationale.

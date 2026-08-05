@@ -303,10 +303,11 @@ export function coveredBoundMs(ms) {
  *   is still a lower bound and the record has to keep saying so.
  * - **An EMPTY window** — `covered.fromMs === null`, a walk that stopped before finishing one
  *   signature page — is the degenerate case of "outside", not a special case: every listed row is
- *   outside it, so the reading falls all the way back to the ownership listing. Biased towards
- *   rejection, by a measured ~0 launches (`CREATION-DERIVED.md`), and honest. The creates the walk
- *   *did* prove are still in `records`; what an empty window withdraws is only the right to call a
- *   listed token the walk never saw "acquired".
+ *   outside it, so the reading falls all the way back to the ownership listing. Its launch COUNT is
+ *   biased towards rejection, by a measured ~0 launches (`CREATION-DERIVED.md`), and honest; its
+ *   RATE is biased the other way (`FEED.md` → "It is biased in BOTH directions at once"). The
+ *   creates the walk *did* prove are still in `records`; what an empty window withdraws is only
+ *   the right to call a listed token the walk never saw "acquired".
  *
  * Merging rather than replacing is what keeps this honest under a truncated walk: a walk that
  * covered two days would otherwise turn a 200-launch history into a 4-launch one and fail the

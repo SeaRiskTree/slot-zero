@@ -540,7 +540,11 @@ has no denominator, and the gate never touches it.
 
 The one surface of theirs that carries both outcomes is `profile.pump_tokens`, verified at **67/67
 exact agreement** with our tape on the completion flag, with zero of our in-window launches missing.
-That, and only that, is what the rate is computed from.
+That, and only that, is what the rate is computed from **on the vendor reading** — the leg
+`--ownership-only` runs and `feed.mjs` grade on. It is not `screen.mjs`'s default, which gates on
+the creation-derived merged history ([Which history the gate
+counts](#which-history-the-gate-counts)); `thresholds.json` → `stage1_gate.justification.minCompletionRate`
+owns which reading each bar is measured on.
 
 Two further sharp edges, both measured 2026-07-29:
 

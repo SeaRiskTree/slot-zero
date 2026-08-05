@@ -701,6 +701,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 11 | no new candidate ROW field, no new `entry.coverage` field, no new `spend` field and no new `dune` field: `PERSISTED_BY_SCHEMA[11]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[11]`, `SPEND_KEYS_BY_SCHEMA[11]` and `DUNE_KEYS_BY_SCHEMA[11]` all equal `[10]`. **What changed is the CO-ORDINATION RULE: it became a UNION** (captain decision 182a) of the existing shared-transaction rule, unchanged, and the deployer-anchored contiguous block-index run at step 1. `entry` gains `runTx` (transactions in that run, anchor included) and `adjacencyMarks` (wallets the run marked that the shared-transaction rule did not) beside `bundledTx` and `maxWalletsInOneTx`. It costs no request, no host and no vendor quota — `sid` is already on every fill the walk fetched. **THE ONE THAT WILL BITE: a schema-≤10 `entry.roomLeft` is not comparable with a schema-11 one, and the older figure is the HIGHER of the two.** A wallet that rode the deployer's bundle without ever sharing a transaction used to be counted as an outsider, so its stake sat in `independentSol` and inflated `roomLeft`; `sharedTx ⊆ union` by construction, so the correction can only move a room reading DOWN. `adjacencyMarks` is the size of what the union added per launch, and therefore the measure of what an older record's room figure was carrying. On the committed tape it removes **180 create-slot wallet-instances from the field** (1,502 → 1,322) and **every one of the 180 is a NAMED cohort wallet** — so a schema-≤10 record's field figures, `outsidersPerLaunch`, `fieldEntrants` and every P&L distribution built on them were partly measuring the operation's own wallets as competitors. `launchesRoomUnproven` changes meaning the same way — it counts launches NEITHER half marked anything in, and on the committed tape the refusal falls from 60 of 235 launches to 0. **No bar was relaxed**: decision 134a's refusal is untouched and `minLaunchesSampled`/`maxLaunchesPerCandidate` are unmoved (decision 141a stands); the rule sees more, so it refuses less. **The `stage0` block is not comparable across the boundary either, and a published constant moved**: `stage2SeamReproduction`'s era-2 entry reads `n: 89, nRoomUnproven: 0` at a measured share of **0.770796** where a schema-5..10 record reads `n: 86, nRoomUnproven: 3` at **0.769153** — the published `0.771` it is compared against is UNCHANGED and the measured figure moved towards it, the structural and named-cohort estimators becoming the same number to six decimals over the full 89. `rollingRoom` goes from `unmeasured: 81, present: 53, absent: 94` to `unmeasured: 0, present: 88, absent: 140`, `falsePositives: 0` on both sides. The block gains `adjacencyRuns`, the tripwire on the `sid` block-index signal, persisted because that signal fails SILENTLY and towards refusal. The correction is recorded in `data/population-tape-2026-07-29/IMPORT.md` → "Corrections"; `report.md` and the dataset README are a primary record and are not edited. |
 | 12 | no new key ANYWHERE: `PERSISTED_BY_SCHEMA[12]`, `ENTRY_KEYS_BY_SCHEMA[12]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[12]`, `SPEND_KEYS_BY_SCHEMA[12]`, `DUNE_KEYS_BY_SCHEMA[12]` and `CREATION_KEYS_BY_SCHEMA[12]` all equal `[11]`. **What changed is the DOMAIN of an existing field: `entry.unmeasuredCause` gains a seventh value, `room-verdict-not-robust-to-missing-launches`** (captain decision 198b). The version is bumped precisely because no key-set assertion can see this — a consumer that enumerated the six causes would otherwise meet a seventh with nothing saying so, which is the same hole schema 10 exists to close one level up. **What it means.** Decision 190a decoupled `maxLaunchesPerCandidate` (10) from `minLaunchesSampled` (8), so a candidate keeps its verdict after losing up to two launches — and the missing ones are chosen by DROP CAUSE, not at random: the request cap takes the busiest windows and `roomIsProven` takes the ones with no co-ordination evidence. `entry.mjs` → `roomBarRobustness` now refuses a room verdict whenever completing that hole could have put the median on the other side of `minRoomLeft`, in EITHER direction, because the direction of the bias is unmeasured. **No `thresholds.json` value moved and no new one was pinned** — the interval is the sample's own reachable median range under `measure.mjs` → `ROOM_LEFT_RANGE`, which is algebraic. **Two ways to misread it.** (1) It is NOT a sample-size cause: `entry.launchesSampled` on such a record is at or ABOVE `minLaunchesSampled`, where every `too-few-*` record sits below it — the candidate had enough windows and was refused anyway. (2) A schema-≤11 record's *absence* of this cause is not evidence its sample was robust; the guard did not exist, so a schema-11 `entry-room-absent` or `entry-open-after-costs` reached over 8 of 10 launches is exactly the shape 198b refuses today and is not comparable with a schema-12 one. Committed records are never retro-edited, so the older reading stays legal — what it cannot do is stand in for a guarded one. |
 | 13 | no new candidate ROW field, no new `entry` field, no new `entry.coverage` field, no new `spend` field and no new `creation` field: `PERSISTED_BY_SCHEMA[13]`, `ENTRY_KEYS_BY_SCHEMA[13]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[13]`, `SPEND_KEYS_BY_SCHEMA[13]` and `CREATION_KEYS_BY_SCHEMA[13]` all equal `[12]`. **What changed is that the Dune MONTHLY CREDIT CEILING is now something a run checks before it spends, rather than something it discovers by hitting.** The run-level `dune` block gains two keys. `allowance` is the verdict of `dune.mjs` → `checkDuneAllowance`, read from `POST /usage` **before the leg's first billed request** — the coverage probe included, because a result read is billed by bytes — and it carries the plan's worst case in credits, the period's `credits_used`/`credits_included` and dates, what remained, the reserve held back for the counter's lag, the verdict (`sufficient` | `tight` | `insufficient` | `unreadable`) and the reasons. `localEstimate` is what the run believes it spent, from its OWN counters at the pinned worst case per execution, and it carries a caveat string saying it is not the bill. **`allowance: null` means the run never reached Dune at all** (no key, `--no-dune`, `--ownership-only`, or nothing to gate) — it does NOT mean the check passed. **The one that will bite:** on a schema-≤12 record the absence of this block is not evidence a run had headroom; nothing checked, and a run reporting two executions may have been the one that emptied the period. That gap is what this version closes, not a defect in the older records, which are never retro-edited. |
+| 14 | no new candidate ROW field, no new `entry.coverage` field, no new `spend` field, no new `dune` field and no new `creation` field: `PERSISTED_BY_SCHEMA[14]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[14]`, `SPEND_KEYS_BY_SCHEMA[14]`, `DUNE_KEYS_BY_SCHEMA[14]` and `CREATION_KEYS_BY_SCHEMA[14]` all equal `[13]`. **`entry` gains ONE key, `roomLeftBound`, and with it the room median stops being quotable without its own incompleteness** (captain decision 208b). `entry.roomLeft.median` is taken over the launches Stage 2 SCORED, and the ones it did not score did not go missing at random — `roomIsProven` refuses create slots with no co-ordination evidence, the request cap drops the busiest windows, and the stage ceiling leaves the oldest of a plan unattempted. `roomLeftBound` is the interval the median would lie in if that hole were filled: `lo`, `hi`, `overstatementMax` (`median - lo`, the headline), `understatementMax`, `provablyOverstated` (true when `hi < median`, i.e. when completing the sample MUST lower it), the hole split into `launchesRefusedMeasured` and `launchesUnmeasured`, the refused windows' own measured room in `refusedRoomLeft`, and the sentence in `caveat`. The `stage0` block's per-control summary gains a `roomLeftBound` beside its `roomLeftMedian` for the same reason. **It is REPORTING and nothing reads it** — no verdict, bar or guard takes it as an input, `roomIsProven` is untouched and no sample-size floor moved; decisions 203c and 203d stay declined. **The one that will bite:** a schema-≤13 `entry.roomLeft.median` has NO bound and one cannot be reconstructed from the record, because `launchesRoomUnproven` says how many windows were refused and nothing about what they measured. Read an older median as a figure of unknown incompleteness rather than as a complete one — on the committed schema-12 `runs/2026-08-04.json` the difference is `0.288940` reported against `0.0008` completed. |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -1033,6 +1034,68 @@ cannot exercise the guard at all**. Stage 0 staying green — both halves of the
 included — is a consequence of that, not evidence the guard was checked against it. The behaviour is
 pinned by unit fixtures instead, and the limit is asserted rather than left to be assumed
 (`test/deployer-screen.test.ts` → *"the committed tape CANNOT exercise this guard"*).
+
+#### The room median states its own incompleteness — the bound beside it
+
+Captain **decision 208b**, with 208d folded in as its first step. The guard above refuses a verdict
+the hole could have flipped. This is the other half of the same problem, and it applies to **every**
+score rather than only the near-bar ones: the median is reported over the launches that were
+**scored**, and the ones that were not did not go missing at random. `roomIsProven` refuses the
+create slots with no co-ordination evidence, the request cap drops the busiest windows, and the stage
+ceiling leaves the oldest of a plan unattempted. On the 2026-08-04 full-day run **18 of the 22
+cleanly-walked windows were refused**; the bundling census separately reports **0 of 13 stranger
+candidates proven on all eight**. On the stranger population this is the ordinary case.
+
+`entry.mjs` → `roomMedianBound` is the owner — the construction, the direction argument and the
+committed-data measurement are all in its doc, and the figures should be read there rather than
+restated here. What the reader needs from this file is the shape and the four rules.
+
+**It is a REPORT and no gate reads it.** No verdict, bar or guard takes it as an input; `roomIsProven`
+is untouched and no sample-size floor moved. Captain decision 203 declined **203c** (lower the floor)
+and **203d** (pad a refused launch's room and use it), and 208b was chosen because it does neither.
+The refusals stay, and what changes is that the figure says what they cost it. A sibling lane has
+since established that the missing evidence **does not exist to be got** — those create slots are
+participant-poor rather than evidence-poor (`census/2026-08-04-proof-coverage-probe.md`) — so the
+refusals are correct answers, and this describes their consequence rather than trying to remove them.
+
+**The bound is narrower than the guard's, and must never be handed to it.** A refused launch was
+walked and measured, so its own reading replaces the algebraic ceiling `roomBarRobustness` is obliged
+to use. Feeding this interval to the guard would make the guard refuse *less* — loosening a guard by
+the back door. A refusal and a report read the same hole and are entitled to different assumptions
+about it; `test/deployer-screen.test.ts` → *"IT IS A REPORT AND NEVER A GATE"* pins the two apart.
+
+**It appears beside the figure, not near it.** The run record's `entry.roomLeftBound` sits next to
+`entry.roomLeft`; the rendered block prints it on the line immediately under `room left`; every
+rationale that states a room median states the bound in the same sentence; and it is in
+`entry.caveats`. That is the whole point of 208b over 208a — a bound in surrounding prose is a bound
+the figure can be quoted without.
+
+**A complete sample gets a sentence too.** Silence is not a way to say "nothing is missing", because
+a reader cannot tell it from a field that was never computed. A whole sample reports a degenerate
+`[median, median]` and says so — which is what Stage 0's controls print, our subject being proven
+235/235 with no walk drops.
+
+**What the committed data says about the size of it, and about its DIRECTION.** Both readings are on
+record because the direction is *not* universal, and a one-directional correction would have been
+wrong:
+
+- **On the stranger windows the direction is UP, and large.** `runs/2026-08-04.json`'s scored
+  candidate reports a median `0.288940` over 4 windows with 6 refused;
+  `census/2026-08-04-proof-coverage-probe.md` walked those six and measured their room at
+  `0.0000`–`0.0008`. Completing the sample puts the median at `0.0008`. The reported figure is
+  roughly 360× the completed one, and it provably overstates.
+- **On our own tape it runs the other way.** The union rule refuses nothing here, so the only source
+  of real refusals is the superseded shared-transaction half (60 of 235). Over its 63 ten-launch
+  windows with a hole, completing at the refused windows' own measurements **raises** the median on
+  52 and lowers it on 8. The reason is worth knowing: there the rule found nothing because the
+  operation co-ordinated by *adjacency*, so the refused windows carry its own stake booked as
+  outsider capital and read high. **Refusal means no evidence, not near-zero room** — what it costs
+  depends on why.
+- **And the bound contains the better reading on 63 of 63 of those windows.** The union's own median
+  over the same launches falls inside `[lo, hi]` every time, which is the validation that the
+  "measured room on a refused launch is an upper bound on its true room" claim rests on. All of it is
+  re-derived from the tape on every test run rather than pinned as prose
+  (`test/deployer-screen.test.ts` → *"MEASURED ON THE COMMITTED TAPE"*).
 
 ### 2. The field
 

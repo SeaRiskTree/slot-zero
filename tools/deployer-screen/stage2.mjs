@@ -660,6 +660,30 @@ export function toEntryRecordRow(s, coverage) {
     adjacencyMarks: dist(s.adjacencyMarks),
     launchesWithNoOutsider: s.launchesWithNoOutsider,
     roomLeft: dist(s.roomLeft),
+    // Schema 14, captain decision 208b. THE MEDIAN ABOVE IS OVER THE LAUNCHES THAT WERE SCORED, and
+    // the ones that were not did not go missing at random — so this sits beside it and says how far
+    // completing the sample could move it, in both directions, with the refused launches' own
+    // measured room as the evidence. It is REPORTING: no verdict, bar or guard reads it, and
+    // `roomIsProven` is untouched. Without it a saved record carries a median a reader cannot audit,
+    // because `launchesRoomUnproven` alone says how many windows were refused and nothing about what
+    // they measured. `entry.mjs` → `roomMedianBound` owns the construction and the evidence.
+    roomLeftBound: {
+      median: round(s.roomLeftBound.median),
+      lo: round(s.roomLeftBound.lo),
+      hi: round(s.roomLeftBound.hi),
+      overstatementMax: round(s.roomLeftBound.overstatementMax),
+      understatementMax: round(s.roomLeftBound.understatementMax),
+      provablyOverstated: s.roomLeftBound.provablyOverstated,
+      launchesScored: s.roomLeftBound.launchesScored,
+      launchesMissing: s.roomLeftBound.launchesMissing,
+      launchesRefusedMeasured: s.roomLeftBound.launchesRefusedMeasured,
+      launchesUnmeasured: s.roomLeftBound.launchesUnmeasured,
+      refusedRoomLeft: dist(s.roomLeftBound.refusedRoomLeft),
+      // Free text, so it goes through the same boundary every other sentence here does — even though
+      // it is template-generated from counts today. The point is that containment must not depend on
+      // a future edit remembering.
+      caveat: redactVendorIdentifiers(s.roomLeftBound.caveat),
+    },
     roomHitRate: hit(s.roomHitRate),
     operationShare: dist(s.operationShare),
     devSol: dist(s.devSol),

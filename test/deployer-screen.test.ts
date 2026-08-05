@@ -94,6 +94,7 @@ import {
   measureLaunchEntry,
   priceLaunchEntry,
   roomBarRobustness,
+  roomMedianBound,
   scoreEntry,
 } from '../tools/deployer-screen/entry.mjs';
 import type { EntryScore, EntryThresholds, UnmeasuredCause } from '../tools/deployer-screen/entry.mjs';
@@ -4067,6 +4068,8 @@ describe('the keyless boundary holds in both directions', () => {
   PERSISTED_BY_SCHEMA[12] = PERSISTED_BY_SCHEMA[11]!;
   // Schema 13's two new keys sit inside the run-level `dune` block — DUNE_KEYS_BY_SCHEMA below.
   PERSISTED_BY_SCHEMA[13] = PERSISTED_BY_SCHEMA[12]!;
+  // Schema 14's one new key sits inside `entry` — ENTRY_KEYS_BY_SCHEMA below.
+  PERSISTED_BY_SCHEMA[14] = PERSISTED_BY_SCHEMA[13]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -4133,6 +4136,10 @@ describe('the keyless boundary holds in both directions', () => {
   // launch, and `adjacencyMarks` is the only field that says how much of the operation a
   // schema-≤10 `roomLeft` was booking as outsider capital.
   const ENTRY_KEYS_11 = [...ENTRY_KEYS_10, 'runTx', 'adjacencyMarks'];
+  // Schema 14: captain decision 208b. The median is over the launches that were SCORED and the rest
+  // did not go missing at random, so the figure now carries how far completing them could move it.
+  // REPORTING only — no verdict, bar or guard reads it, and `roomIsProven` is untouched.
+  const ENTRY_KEYS_14 = [...ENTRY_KEYS_11, 'roomLeftBound'];
   const ENTRY_KEYS_BY_SCHEMA: Record<number, string[]> = {
     3: ENTRY_KEYS_3_AND_4,
     4: ENTRY_KEYS_3_AND_4,
@@ -4154,6 +4161,11 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 13 is a vendor-allowance guard and no Dune value may reach a Stage 2 entry number,
     // which is the same boundary schema 9 drew.
     13: ENTRY_KEYS_11,
+    // Schema 14: the room median carries its own bound (captain decision 208b). A schema-≤13
+    // `roomLeft.median` has no bound and one CANNOT be reconstructed from the record —
+    // `launchesRoomUnproven` says how many windows were refused and nothing about what they
+    // measured — which is the gap this key closes.
+    14: ENTRY_KEYS_14,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -4218,6 +4230,8 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 13 gates whether the enumeration runs at all; it does not change what a run that DID
     // enumerate records per candidate.
     13: CREATION_KEYS_9,
+    // Schema 14 is a Stage 2 reporting field. Enumeration is untouched.
+    14: CREATION_KEYS_9,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -4260,6 +4274,9 @@ describe('the keyless boundary holds in both directions', () => {
     12: ENTRY_COVERAGE_KEYS_6,
     // Schema 13 is about a vendor allowance and touches no per-launch accounting.
     13: ENTRY_COVERAGE_KEYS_6,
+    // Schema 14's one new key sits on `entry` itself; the bound READS this block's `launchesPlanned`
+    // accounting, exactly as schema 12's guard does, and adds nothing to it.
+    14: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -4310,6 +4327,11 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 13 leaves it alone because Dune is not in this block and never was: it is a fourth
     // vendor in a fourth unit, and the credit ceiling lands where the rest of that unit lives.
     13: SPEND_KEYS_8,
+    // Schema 14 leaves it alone, and that is a load-bearing fact rather than bookkeeping: captain
+    // decision 208b reports what the refusals already cost the median, from measurements the walk had
+    // already taken. It buys no request, no host and no vendor quota. A "bound" that needed a walk to
+    // fill the hole would show up HERE, and it would be 203d wearing a report's clothes.
+    14: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -4350,6 +4372,8 @@ describe('the keyless boundary holds in both directions', () => {
     11: DUNE_KEYS_9,
     12: DUNE_KEYS_9,
     13: DUNE_KEYS_13,
+    // Schema 14 is a Stage 2 reporting field, and no Dune value may reach a Stage 2 entry number.
+    14: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -4375,6 +4399,8 @@ describe('the keyless boundary holds in both directions', () => {
     12: DUNE_COVERAGE_KEYS_9,
     // Schema 13 adds two SIBLINGS of `coverage`, not fields inside it.
     13: DUNE_COVERAGE_KEYS_9,
+    // Schema 14 is a Stage 2 reporting field and touches nothing Dune reads or writes.
+    14: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -4391,6 +4417,7 @@ describe('the keyless boundary holds in both directions', () => {
     11: DUNE_COVERAGE_TABLE_KEYS_9,
     12: DUNE_COVERAGE_TABLE_KEYS_9,
     13: DUNE_COVERAGE_TABLE_KEYS_9,
+    14: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -7386,6 +7413,289 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
       expect(r).toBeGreaterThanOrEqual(ROOM_LEFT_RANGE.min);
       expect(r).toBeLessThanOrEqual(ROOM_LEFT_RANGE.max);
     }
+  });
+
+  // CAPTAIN DECISION 208b — the room median states its own incompleteness, at the point of use.
+  //
+  // The median is over the launches Stage 2 SCORED, and the ones it did not score were selected by
+  // drop cause: `roomIsProven` refuses the create slots with no co-ordination evidence, the request
+  // cap takes the busiest windows, the stage ceiling leaves the oldest of a plan unattempted. On the
+  // 2026-08-04 full-day run 18 of the 22 cleanly-walked windows were refused. `entry.mjs` →
+  // `roomMedianBound` owns the construction and the direction argument; these pin that it is
+  // PRESENT wherever the median is, that it MOVES with the refusals, and — the part most likely to
+  // rot — that it stays a REPORT and never becomes a gate.
+
+  it('a COMPLETE sample says so: the bound collapses onto the figure and overstates by 0', () => {
+    // Silence is not an acceptable way to say "nothing is missing" — a reader cannot tell it from a
+    // field that was never computed. A whole sample carries a degenerate bound and a sentence.
+    const s = scoreEntry(manyPriced(10, 0.7, [1, 1, -0.2]), ENTRY_T, { launchesPlanned: 10 });
+    const b = s.roomLeftBound;
+    expect(b.median).toBeCloseTo(0.7, 12);
+    expect(b.lo).toBeCloseTo(0.7, 12);
+    expect(b.hi).toBeCloseTo(0.7, 12);
+    expect(b.overstatementMax).toBeCloseTo(0, 12);
+    expect(b.understatementMax).toBeCloseTo(0, 12);
+    expect(b.provablyOverstated).toBe(false);
+    expect(b.launchesMissing).toBe(0);
+    expect(b.refusedRoomLeft.n).toBe(0);
+    expect(b.caveat).toMatch(/IS COMPLETE/);
+    expect(s.caveats).toContain(b.caveat);
+    // And the verdict is untouched by any of it. This is reporting.
+    expect(s.verdict).toBe('entry-open-after-costs');
+  });
+
+  it('THE DEFECT ITSELF: refusing near-zero windows moves the median UP, and the bound says by how much', () => {
+    // The shape captain decision 208b was written against, and the shape the 2026-08-04 run met on a
+    // stranger: the refused windows are the ones with no room in them, so dropping them lifts the
+    // reported figure towards "enterable" while nothing beside it says so.
+    const roomy = manyPriced(8, 0.7, [1, 1, -0.2]);
+    const whole = scoreEntry(roomy, ENTRY_T, { launchesPlanned: 8 });
+    expect(whole.roomLeft.median).toBeCloseTo(0.7, 6);
+    expect(whole.roomLeftBound.overstatementMax).toBeCloseTo(0, 12);
+
+    // Now hand it the same eight PLUS eight refused windows measuring essentially nothing.
+    const s = scoreEntry([...roomy, ...manyUnbundled(8, 0.01, [1, 1, -0.2])], ENTRY_T);
+    const b = s.roomLeftBound;
+    expect(s.launchesSampled).toBe(8);
+    expect(s.launchesRoomUnproven).toBe(8);
+    // The reported median has not moved — the partition is untouched, which is decision 134a still
+    // standing — and that is precisely the problem this bound exists to state.
+    expect(s.roomLeft.median).toBeCloseTo(0.7, 6);
+    expect(b.median).toBeCloseTo(0.7, 6);
+    expect(b.launchesRefusedMeasured).toBe(8);
+    expect(b.launchesUnmeasured).toBe(0);
+    expect(b.refusedRoomLeft.n).toBe(8);
+    expect(b.refusedRoomLeft.median).toBeCloseTo(0.01, 6);
+    // Completing the sample puts the median at the boundary between the refused windows and the
+    // scored ones: 0.355 at their own measurements — (0.01 + 0.7) / 2, the mid pair of the completed
+    // sixteen — and 0.35 at their floor. BOTH endpoints sit below the reported 0.7, so the figure
+    // does not merely risk overstating room, it PROVABLY overstates it, by up to 0.35.
+    expect(b.lo).toBeCloseTo(0.35, 12);
+    expect(b.hi).toBeCloseTo(0.355, 6);
+    expect(b.hi).toBeLessThan(b.median);
+    expect(b.provablyOverstated).toBe(true);
+    expect(b.overstatementMax).toBeCloseTo(0.35, 12);
+    expect(b.understatementMax).toBeCloseTo(0, 12);
+    expect(b.caveat).toMatch(/IS INCOMPLETE/);
+    expect(b.caveat).toMatch(/PROVABLY overstates/);
+  });
+
+  it('IT MOVES IN THE RIGHT DIRECTION AS REFUSALS INCREASE, and is monotone in the hole', () => {
+    // The property the decision actually asks for: more refused windows must never make the figure
+    // look MORE complete than it is. Asserted as a monotone sweep rather than at one point, because
+    // a bound that happened to be right for one hole size and not for another is not a bound.
+    const scored = manyPriced(8, 0.7, [1, 1, -0.2]);
+    let previousOverstatement = -1;
+    let previousLo = Number.POSITIVE_INFINITY;
+    for (let refusals = 0; refusals <= 8; refusals++) {
+      const b = scoreEntry(
+        [...scored, ...manyUnbundled(refusals, 0.01, [1, 1, -0.2])],
+        ENTRY_T,
+      ).roomLeftBound;
+      expect(b.launchesRefusedMeasured).toBe(refusals);
+      expect(b.median).toBeCloseTo(0.7, 6);
+      // Never negative, never shrinking, and the worst-case floor never rises.
+      expect(b.overstatementMax).toBeGreaterThanOrEqual(previousOverstatement);
+      expect(b.lo).toBeLessThanOrEqual(previousLo + 1e-12);
+      // The bound must always CONTAIN the completion at the refused windows' own measurements —
+      // which is `hi` by construction — and `lo` must never exceed it.
+      expect(b.lo).toBeLessThanOrEqual(b.hi + 1e-12);
+      previousOverstatement = b.overstatementMax;
+      previousLo = b.lo;
+    }
+    // Eight refusals against eight scored launches drag the completed median down to the boundary
+    // between the two groups, so the worst case is half the gap. Non-trivial, which is what makes
+    // the sweep above a measurement rather than a tautology.
+    expect(previousOverstatement).toBeCloseTo(0.35, 12);
+  });
+
+  it('a hole nobody WALKED is bounded by the support, and the two halves are counted apart', () => {
+    // The other kind of hole. A refused launch was measured and hands over its own reading; a
+    // dropped or never-started one hands over nothing, so only room's algebraic support applies and
+    // `hi` goes to the ceiling. Conflating the two would let a walk failure borrow the evidence of a
+    // refusal it has nothing to do with.
+    // `straddlingTheBar` rather than a uniform fixture: a uniform sample's median does not move
+    // however many launches go missing, so it cannot show either endpoint doing anything.
+    const s = scoreEntry([...straddlingTheBar(), ...manyUnbundled(2, 0.01, [1, 1, -0.2])], ENTRY_T, {
+      launchesDropped: 3,
+      launchesPlanned: 13,
+    });
+    const b = s.roomLeftBound;
+    expect(b.median).toBeCloseTo(0.55, 12);
+    expect(b.launchesMissing).toBe(5);
+    expect(b.launchesRefusedMeasured).toBe(2);
+    expect(b.launchesUnmeasured).toBe(3);
+    // Three unknown launches at the ceiling pull `hi` above the reported median; five at the floor
+    // pull `lo` below it. The interval straddles, so nothing is PROVABLY overstated — and saying so
+    // is the honest answer rather than a weaker version of the previous test.
+    expect(b.lo).toBeCloseTo(0.45, 12);
+    expect(b.hi).toBeCloseTo(0.65, 12);
+    expect(b.provablyOverstated).toBe(false);
+    expect(b.understatementMax).toBeCloseTo(0.1, 12);
+    expect(b.overstatementMax).toBeCloseTo(0.1, 12);
+    expect(b.caveat).toMatch(/2 REFUSED as unproven and measured, 3 never measured at all/);
+  });
+
+  it('IT IS A REPORT AND NEVER A GATE — the same hole, and the guard keeps its own wider interval', () => {
+    // THE THING MOST LIKELY TO GO WRONG LATER. The reported bound is narrower than
+    // `roomBarRobustness`'s, because a refused launch's own measurement replaces the algebraic
+    // ceiling. Handing it to the near-bar guard would make the guard refuse LESS, which is loosening
+    // a guard by the back door — captain decision 203 declined 203c and 203d and 208b was chosen
+    // because it does neither. So: same hole, guard interval never narrower, and no verdict moves.
+    const launches = [...straddlingTheBar(), ...manyUnbundled(2, 0.01, [1, 1, -0.2])];
+    const s = scoreEntry(launches, ENTRY_T);
+    const guard = roomBarRobustness(
+      launches.filter((l) => roomIsProven(l.createSlot)).map((l) => l.createSlot.roomLeft),
+      2,
+      ENTRY_T.minRoomLeft,
+    );
+    expect(s.roomLeftBound.lo).toBeCloseTo(guard.lo, 12);
+    expect(s.roomLeftBound.hi).toBeLessThanOrEqual(guard.hi + 1e-12);
+    expect(s.roomLeftBound.hi).toBeLessThan(guard.hi);
+    // The guard still refuses on ITS interval, which contains the bar. If the bound had reached the
+    // guard, `hi` of 0.55 would have decided it and this candidate would have shipped a verdict.
+    expect(guard.decided).toBe(false);
+    expect(s.verdict).toBe('entry-unmeasured');
+    expect(s.unmeasuredCause).toBe('room-verdict-not-robust-to-missing-launches');
+
+    // And no refusal count is a threshold: the identical launches with the refused pair removed
+    // score exactly as they did before this field existed.
+    const untouched = scoreEntry(straddlingTheBar(), ENTRY_T);
+    expect(untouched.verdict).toBe('entry-open-after-costs');
+    expect(untouched.roomLeftBound.overstatementMax).toBeCloseTo(0, 12);
+  });
+
+  it('reaches the RUN RECORD, the rendered block and every rationale that states a median', () => {
+    // 208b over 208a: the FIGURE states its own incompleteness, so it cannot be quoted without the
+    // caveat. A bound that lived only in a README would be the option the captain did not take.
+    const s = scoreEntry([...manyPriced(8, 0.7, [1, 1, -0.2]), ...manyUnbundled(2, 0.01, [1, 1, -0.2])], ENTRY_T);
+    expect(s.verdict).toBe('entry-open-after-costs');
+    expect(s.rationale).toMatch(/median room left 0\.700/);
+    expect(s.rationale).toMatch(/ROOM MEDIAN 0\.7000 IS INCOMPLETE/);
+    expect(s.caveats).toContain(s.roomLeftBound.caveat);
+
+    const row = toEntryRecordRow(s, emptyEntryCoverage());
+    expect(row.roomLeftBound.median).toBeCloseTo(row.roomLeft.median as number, 6);
+    expect(row.roomLeftBound.launchesRefusedMeasured).toBe(2);
+    expect(row.roomLeftBound.refusedRoomLeft.n).toBe(2);
+    expect(row.roomLeftBound.caveat).toMatch(/IS INCOMPLETE/);
+    // Persisted as OUR arithmetic and nothing else: counts and quantiles, no mint and no wallet.
+    expect(JSON.stringify(row.roomLeftBound)).not.toMatch(/[1-9A-HJ-NP-Za-km-z]{32,44}/);
+
+    const lines = renderEntry(s, null).join('\n').split('\n');
+    // Anchored on the ENTRY ROOM table rather than on the first mention of the words: the rationale
+    // above it now states the median too, which is the point of the change.
+    const table = lines.findIndex((l) => l.includes('ENTRY ROOM'));
+    expect(table).toBeGreaterThan(-1);
+    const roomLine = lines.findIndex((l, i) => i > table && l.includes('room left'));
+    expect(roomLine).toBeGreaterThan(-1);
+    // IMMEDIATELY under the figure it bounds, not further down the block. The sentence wraps, so the
+    // anchor is the first continuation line and the claim is checked across the wrapped block.
+    expect(lines[roomLine + 1]).toMatch(/^ {6}\^ bound \[/);
+    expect(lines.slice(roomLine + 1, roomLine + 4).join(' ')).toMatch(/may OVERSTATE room by up to/);
+  });
+
+  it('MEASURED ON THE COMMITTED TAPE: the bound contains the better reading on every window', () => {
+    // STEP ONE of the decision — 208d, folded in — done against committed data rather than asserted.
+    // The union rule refuses NOTHING on our subject's tape, so the only way to generate real
+    // refusals here is the SUPERSEDED shared-transaction-only half, which refuses 60 of 235. That
+    // gives real refused windows with real measured room AND a better reading of the same launches
+    // (the union's) to check the bound against.
+    const tapeDir = join(TOOL_DIR, '..', '..', 'data', 'population-tape-2026-07-29');
+    const rows = measureSubjectLaunches(tapeDir)
+      .map((l) => {
+        const groups = createSlotGroups(l.fills)!;
+        return {
+          date: l.dateIso,
+          union: tallyCreateSlot(groups).measurement,
+          shared: tallyCreateSlot({ ...groups, coordinated: groups.coordinatedBySharedTx }).measurement,
+        };
+      })
+      .sort((a, b) => (a.date < b.date ? -1 : 1));
+    expect(rows).toHaveLength(235);
+    expect(rows.filter((r) => !roomIsProven(r.shared))).toHaveLength(60);
+
+    const W = (loadThresholds()['stage2_entry'] as Record<string, number>)['maxLaunchesPerCandidate']!;
+    let windowsWithAHole = 0;
+    let containsTheBetterReading = 0;
+    let raisedByCompletion = 0;
+    let loweredByCompletion = 0;
+    for (let i = 0; i + W <= rows.length; i++) {
+      const w = rows.slice(i, i + W);
+      const scored = w.filter((r) => roomIsProven(r.shared)).map((r) => r.shared.roomLeft);
+      const refused = w.filter((r) => !roomIsProven(r.shared)).map((r) => r.shared.roomLeft);
+      if (scored.length === 0 || refused.length === 0) continue;
+      windowsWithAHole += 1;
+      const b = roomMedianBound(scored, refused, 0);
+      // THE VALIDATION THAT MATTERS. The union's own median over the SAME launches is the better
+      // reading of what the complete sample was worth, and it must fall inside the interval. If it
+      // ever did not, the claim that a refused launch's measured room is an upper bound on its true
+      // room would be false, and the whole construction with it.
+      const better = median(w.map((r) => r.union.roomLeft));
+      if (better >= b.lo - 1e-12 && better <= b.hi + 1e-12) containsTheBetterReading += 1;
+      if (b.hi > b.median + 1e-12) raisedByCompletion += 1;
+      if (b.hi < b.median - 1e-12) loweredByCompletion += 1;
+      // And the interval is well formed on every window, whatever the direction.
+      expect(b.lo).toBeLessThanOrEqual(b.hi + 1e-12);
+      expect(b.overstatementMax).toBeGreaterThanOrEqual(0);
+    }
+    expect(windowsWithAHole).toBe(63);
+    expect(containsTheBetterReading).toBe(63);
+
+    // AND THE DIRECTION IS NOT UNIVERSAL, which is why the bound is two-sided and why a
+    // one-directional correction would have been wrong. On the STRANGER windows the 2026-08-04 run
+    // met, refusal lifted the median (`census/2026-08-04-proof-coverage-probe.md`: six refused
+    // windows measuring 0.0000-0.0008 against four scored at a median 0.2889). Here it does the
+    // opposite on 52 of 63, because our own subject's refused windows are the pre-March launches
+    // where the operation co-ordinated by ADJACENCY — so the shared-transaction half books its stake
+    // as outsider capital and those windows read HIGH. Refusal means no evidence, not near-zero room.
+    expect(raisedByCompletion).toBe(52);
+    expect(loweredByCompletion).toBe(8);
+  });
+
+  it('THE STRANGER CASE, re-derived from the two committed artefacts that hold it', () => {
+    // The magnitude 208b names, from committed data and not from prose. `runs/2026-08-04.json` is a
+    // schema-12 record: it carries the reported median and the refusal COUNT, and — this is the gap
+    // schema 14 closes — nothing about what those refused windows measured. That was recovered by
+    // `census/2026-08-04-proof-coverage-probe.md`, which walked all six one by one.
+    const record = JSON.parse(
+      readFileSync(join(TOOL_DIR, 'runs', '2026-08-04.json'), 'utf8'),
+    ) as {
+      candidates: {
+        entry: {
+          launchesRoomUnproven: number;
+          roomLeft: { n: number; min: number; max: number; p25: number; p75: number; median: number };
+        } | null;
+      }[];
+    };
+    const scoredRow = record.candidates
+      .map((c) => c.entry)
+      .find((e): e is NonNullable<typeof e> => e !== null && e.roomLeft.n === 4)!;
+    expect(scoredRow.launchesRoomUnproven).toBe(6);
+
+    // The four order statistics, recovered exactly from the committed quantiles — n = 4, so p25 and
+    // p75 are linear interpolations that invert. Recovered rather than retyped, so a record edited
+    // under this test's feet cannot leave it asserting a fixture.
+    const { min: a, max: d, p25, p75, median: m } = scoredRow.roomLeft;
+    const b1 = a + (p25 - a) / 0.75;
+    const c1 = (p75 - 0.25 * d) / 0.75;
+    const scored = [a, b1, c1, d];
+    expect(median(scored)).toBeCloseTo(m, 6);
+    expect(m).toBeCloseTo(0.28894, 5);
+
+    // The probe's own table, as committed prose — read from the file so the two cannot drift.
+    const probe = readFileSync(join(TOOL_DIR, 'census', '2026-08-04-proof-coverage-probe.md'), 'utf8');
+    expect(probe).toContain('| `roomLeft` | 0.0000 | 0.0000 | 0.0000 | 0.0008 | 0.0008 | 0.0008 |');
+    const refused = [0, 0, 0, 0.0008, 0.0008, 0.0008];
+
+    const bound = roomMedianBound(scored, refused, 0);
+    expect(bound.launchesRefusedMeasured).toBe(6);
+    expect(bound.lo).toBeCloseTo(0, 12);
+    expect(bound.hi).toBeCloseTo(0.0008, 12);
+    expect(bound.provablyOverstated).toBe(true);
+    // The headline: the reported median is 0.2889 and completing the sample puts it at 0.0008. That
+    // is the harm captain decision 208b names, at full size, on a real run.
+    expect(bound.overstatementMax).toBeCloseTo(0.28894, 5);
   });
 });
 

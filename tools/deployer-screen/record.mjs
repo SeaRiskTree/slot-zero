@@ -287,8 +287,36 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   evidence that a run had headroom. Nothing checked. A schema-12 run that reports two executions
  *   may have been the run that emptied the period, and no committed record can say — which is
  *   exactly the gap this version closes rather than a shortcoming of the older ones.
+ * - **14** — **the room median states its own incompleteness** (captain decision 208b). `entry` gains
+ *   one key, `roomLeftBound`; `PERSISTED_BY_SCHEMA[14]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[14]`,
+ *   `SPEND_KEYS_BY_SCHEMA[14]`, `DUNE_KEYS_BY_SCHEMA[14]` and `CREATION_KEYS_BY_SCHEMA[14]` all
+ *   equal `[13]`. The `stage0` block's per-control summary also gains a `roomLeftBound` beside its
+ *   `roomLeftMedian`.
+ *
+ *   **What it carries and why.** `entry.roomLeft.median` is taken over the launches Stage 2 SCORED,
+ *   and the ones it did not score did not go missing at random: `roomIsProven` refuses the create
+ *   slots with no co-ordination evidence, the request cap drops the busiest windows, and the stage
+ *   ceiling leaves the oldest of a plan unattempted. `roomLeftBound` is the interval the median
+ *   would lie in if the hole were filled — `lo`/`hi`, with `overstatementMax` (`median - lo`) as the
+ *   headline, `provablyOverstated` when `hi < median`, the split of the hole into
+ *   `launchesRefusedMeasured` and `launchesUnmeasured`, the refused windows' OWN measured room in
+ *   `refusedRoomLeft`, and the sentence in `caveat`. `entry.mjs` → `roomMedianBound` owns the
+ *   construction, the direction argument and the committed-data measurement behind it.
+ *
+ *   **It is REPORTING and nothing reads it.** No verdict, bar or guard takes it as an input;
+ *   `roomIsProven` is untouched and no sample-size floor moved. Captain decision 203 declined both
+ *   of those (203c, 203d) and 208b was chosen because it does neither.
+ *
+ *   **The one that will bite a reader: a schema-≤13 `entry.roomLeft.median` has no bound and one
+ *   cannot be reconstructed from the record.** `launchesRoomUnproven` says how MANY windows were
+ *   refused and nothing at all about what they measured, which is exactly the gap this closes — so
+ *   an older record's median must be read as a figure of unknown incompleteness, not as a complete
+ *   one. On the committed schema-12 `runs/2026-08-04.json` that is not hypothetical: its scored
+ *   candidate reports a median `0.288940` over 4 windows with 6 refused, and the six were separately
+ *   walked in `census/2026-08-04-proof-coverage-probe.md` at a room of `0.0000`–`0.0008`, which puts
+ *   the completed median at `0.0008`. The record could not say so; a schema-14 one does.
  */
-export const RECORD_SCHEMA_VERSION = 13;
+export const RECORD_SCHEMA_VERSION = 14;
 
 /**
  * Completeness of a run, as the record can actually support.

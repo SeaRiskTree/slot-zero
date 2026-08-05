@@ -423,6 +423,16 @@ export const MAX_MS_PER_SLOT = 500;
  * slack against a vendor mint time running early — and is added on top rather than doing double
  * duty.
  *
+ * **IT IS ALSO STAGE 2'S ELIGIBILITY GATE, and that is one function rather than two agreeing
+ * numbers.** `stage2.mjs` and `bundling.mjs` both call this to decide a launch is old enough to
+ * measure, because "has this launch finished happening" and "how far past the mint must the cursor
+ * reach" are the same instant. They were separately written for a while — the gate as a hand-typed
+ * `windowMs + seekMarginMs` — and 144a moved this reach without moving that sum, after which the
+ * chain drifted the gap open to 20,000 ms while every test stayed green. So the gate now derives
+ * here and moves when this moves. **Raising a duration constant is what NOT to do if this is ever
+ * short again**; the span and the measured rate are the inputs, and both are re-derived from the
+ * committed tapes by `test/deployer-screen.test.ts` on every run.
+ *
  * **It is still a cursor hint and never a proof tolerance.** Widening the reach cannot soften the
  * pre-mint tripwire or the coverage obligation in {@link readLaunchWindow}, and it cannot change
  * which fills count: membership stays with {@link windowFilter}, so every extra row this fetches

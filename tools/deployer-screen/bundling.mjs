@@ -496,7 +496,15 @@ export function buildCohort(toolDir = HERE) {
  */
 export async function censusCandidate(client, input) {
   const t = input.entry;
-  const minAgeMs = t.windowMs + t.seekMarginMs;
+  // The SAME derivation `stage2.mjs` gates on, by the same function call rather than by a second
+  // copy of the arithmetic — the doc above claims this pass measures "the launches Stage 2 would
+  // have scored", and a local `windowMs + seekMarginMs` made that claim false the moment the
+  // screen's gate moved. `roomIsProven` is called here for the same reason.
+  const minAgeMs = windowReachMs({
+    windowMs: t.windowMs,
+    seekMarginMs: t.seekMarginMs,
+    windowSlotSpan: t.windowSlotSpan,
+  });
   const eligible = input.refs.filter((r) => input.nowMs - r.deployedAtMs >= minAgeMs);
   const planned = eligible.slice(0, t.maxLaunchesPerCandidate);
 
@@ -1160,12 +1168,14 @@ export function renderDryRun(plan) {
   L.push(
     `    windowMs ${plan.entry.windowMs}, seekMarginMs ${plan.entry.seekMarginMs}, ` +
       `windowSlotSpan ${plan.entry.windowSlotSpan}, tradePageLimit ${plan.entry.tradePageLimit}, ` +
-      `eligibility floor ${plan.entry.windowMs + plan.entry.seekMarginMs}ms, seek reach ${reachMs}ms.`,
+      `eligibility floor ${reachMs}ms, seek reach ${reachMs}ms.`,
   );
-  L.push('    THE LAST TWO ARE DIFFERENT BOUNDS AND THE GAP IS KNOWN: eligibility still asks');
-  L.push('    windowMs + seekMarginMs, which is shorter than the reach and shorter than the span it');
-  L.push('    gates on. That residual is stage2.mjs\'s and another lane\'s; it is stated here so the');
-  L.push('    two numbers above are not read as one.');
+  L.push('    THE LAST TWO ARE ONE BOUND, DERIVED ONCE: both are pumpfun.mjs -> windowReachMs, the');
+  L.push('    windowSlotSpan converted at a MEASURED worst-case slot rate with windowMs as a floor,');
+  L.push('    plus clock slack. They used to be two numbers — a hand-written windowMs + seekMarginMs');
+  L.push('    for eligibility against a span-derived reach — and the chain drifted the gap open to');
+  L.push('    20s with nothing failing. A launch is old enough exactly when the cursor\'s own bound');
+  L.push('    is in the past, so it is the same call and cannot come apart again.');
   L.push('');
   L.push('WHAT IT WILL NOT DO: no entry score, no room figure, no field, no entry cost, no verdict.');
   L.push('');

@@ -195,10 +195,14 @@ const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
  * A Stage 2 coverage block with nothing in it, for tests about the record's SHAPE rather than its
  * numbers. Spread and overridden rather than restated, so a schema that grows a field breaks the
  * assertions that care and not the ones that do not.
+ *
+ * `minAgeMs` is DERIVED even here, because it is derived in the tool: a literal would be a duration
+ * this file asserts and nothing computes, which is the defect the eligibility block exists to keep
+ * out.
  */
 const emptyEntryCoverage = (): Stage2Coverage => ({
   launchRefsAvailable: 0,
-  minAgeMs: 65_000,
+  minAgeMs: windowReachMs(loadThresholds()['stage2_entry'] as never),
   launchesTooYoung: 0,
   launchesEligible: 0,
   launchesPlanned: 0,
@@ -8537,11 +8541,15 @@ describe('readLaunchWindow — coverage is a proof obligation, not an assumption
  * denominated in a rate this repo has MEASURED, and it re-derives that measurement from the
  * committed tapes on every run so the constant cannot go stale in silence the same way.
  *
- * Two independent obligations, deliberately kept apart:
+ * Three independent obligations, deliberately kept apart:
  *   1. the pinned rate still bounds the tape, with the stated margin left over;
- *   2. the reach that rate produces provably covers every committed launch's WHOLE declared window.
+ *   2. the reach that rate produces provably covers every committed launch's WHOLE declared window;
+ *   3. Stage 2's ELIGIBILITY gate is that same reach, read out of a live run.
  * (1) can hold while (2) fails if the span is widened, and (2) can hold on today's tape while (1)
- * fails on a slower one. Both are needed and neither implies the other.
+ * fails on a slower one. (3) is the one that was missing and is why this block grew: the gate was a
+ * separately hand-written duration, 144a moved the reach without it, and the chain then drifted the
+ * gap to 20,000 ms with every assertion here still green — the cursor's coverage was enforced and
+ * the gate's was not. None of the three implies the others.
  */
 describe('the seek cursor reaches the whole declared slot window, at a MEASURED slot rate', () => {
   const T = loadThresholds()['stage2_entry'] as Record<string, number>;
@@ -8858,32 +8866,115 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
     expect(windowReachMs({ windowMs: 300_000, seekMarginMs: 5_000, windowSlotSpan: 160 })).toBe(305_000);
   });
 
-  it('THE ELIGIBILITY GATE IS A SECOND BOUND AND IT IS STILL SHORT — pinned, not claimed fixed', () => {
-    // `stage2.mjs` -> `minAgeMs = t.windowMs + t.seekMarginMs` refuses a launch whose measured
-    // window has not finished happening yet. It is denominated in the SAME nominal-400 arithmetic
-    // this block just removed from the cursor, and it is outside this lane's file ownership, so it
-    // is pinned here as a MEASURED residual rather than described as covered. The repo's recurring
-    // defect is a claim that outruns its enforcement; this is the enforcement for what was NOT
-    // fixed.
+  it('THE ELIGIBILITY GATE IS THE SAME BOUND, derived — read out of a live run, not off the source', async () => {
+    // WHAT THIS REPLACES, because the replacement is the finding. This test used to be called `THE
+    // ELIGIBILITY GATE IS A SECOND BOUND AND IT IS STILL SHORT` and it PINNED the shortfall: the
+    // gate was a hand-written `windowMs + seekMarginMs` = 65,000 ms, a DURATION describing something
+    // the chain controls, while membership is 160 SLOTS. Raising it to 71,448 would have re-armed
+    // the identical trap at the next drift, so the gate now derives from the span at the same
+    // measured rate the cursor uses — `pumpfun.mjs` -> `windowReachMs`, one function, two call
+    // sites. A test asserting a shortfall that no longer exists would be the same defect in mirror
+    // image, so it is gone and this is the enforcement.
     //
-    // Direction of the error: a launch admitted early is measured over a window whose tail has not
-    // happened, so its late sells are missing and its field reads WORSE. The field leg is veto-only,
-    // so that biases toward refusing a deployer, never toward calling one enterable. It is the safe
-    // direction, which is why it is a residual and not a blocker.
-    const gate = readFileSync(join(TOOL_DIR, 'stage2.mjs'), 'utf8');
-    expect(gate).toMatch(/const minAgeMs = t\.windowMs \+ t\.seekMarginMs;/);
-    const minAgeMs = (T.windowMs as number) + (T.seekMarginMs as number);
+    // Read from a PRODUCTION run rather than by regexing `stage2.mjs` or re-typing the arithmetic.
+    // A source-text assertion is satisfied by a line that is never reached, and a re-typed
+    // expression is the second count this lane exists to delete.
+    const client = new KeylessClient({
+      maxRequests: 1,
+      minIntervalMs: 0,
+      fetchImpl: (async () => {
+        throw new Error('no launch is eligible, so no request may be issued');
+      }) as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const mintedAt = Date.parse('2026-07-01T00:00:00Z');
+    const { coverage } = await scoreCandidateEntry(client, {
+      wallet: 'dev',
+      profile: { pump_tokens: [{ mint: `M${'1'.repeat(42)}pump`, created_timestamp: mintedAt, complete: true }] },
+      nowMs: mintedAt, // zero seconds old: nothing is planned, so nothing is fetched
+      thresholds: loadThresholds()['stage2_entry'] as never,
+    });
+    expect(coverage.launchesTooYoung).toBe(1);
+    expect(coverage.launchesAttempted).toBe(0);
 
-    // Against the MEASURED worst case the gate is short by this much, and the tape says a launch
-    // really does trade that late. If either number moves, this fails and the residual gets re-read.
-    const measuredSpanMs = Math.ceil(SPAN * MEASURED_MAX_MS_PER_SLOT);
-    expect(measuredSpanMs).toBe(71_448);
-    expect(minAgeMs).toBeLessThan(measuredSpanMs);
-    expect(measuredSpanMs - minAgeMs).toBe(6_448);
+    // (1) IT IS THE CURSOR'S OWN REACH. Not "close to", not "at least" — the same number, because a
+    // launch has finished happening exactly when the instant the cursor seeks to is in the past.
+    // Two quantities that merely agree today are what drifted apart last time.
+    expect(coverage.minAgeMs).toBe(REACH);
 
-    // Against the reach now in force it is shorter still: a launch may be admitted 20 s before the
-    // cursor's own bound is in the past, so the seek runs into the future by up to that much.
-    expect(REACH - minAgeMs).toBe(20_000);
+    // (2) IT COVERS THE DECLARED SPAN AT THE RATE THE TAPES MEASURE, re-derived here rather than
+    // quoted, so a future tape recording a slower chain fails this instead of quietly outrunning it.
+    // This is the assertion the deleted `windowSlotSpan x 400 <= windowMs + seekMarginMs` could not
+    // make: its rate was a literal, so the world could move and it could not.
+    const observedMaxRate = Math.max(
+      ...tapedWindows().map((L) => L.msPerSlot).filter((r): r is number => r !== null),
+    );
+    expect(coverage.minAgeMs).toBeGreaterThanOrEqual(Math.ceil(SPAN * observedMaxRate));
+    expect(coverage.minAgeMs).toBeGreaterThanOrEqual(Math.ceil(SPAN * MEASURED_MAX_MS_PER_SLOT));
+
+    // (3) AND IT COVERS WHAT THE TAPES ACTUALLY DID, which is the empirical form of the same
+    // obligation and fails independently of the rate fit. A launch admitted at exactly the gate must
+    // have had its whole measured window in the past; `ts` is whole seconds FLOORED, so a fill can
+    // be up to 999 ms later than the tape records and the gate must clear the newest in-window fill
+    // by more than that.
+    const short = tapedWindows()
+      .map((L) => ({ L, needs: Math.max(...L.inWindow.map((f) => L.tsByTx.get(f.tx) as number)) - L.createdAtMs }))
+      .filter((x) => x.needs + 1_000 > coverage.minAgeMs);
+    expect(short.map((x) => `${x.L.symbol} still trading at +${x.needs}ms`)).toEqual([]);
+
+    // (4) THE BOUND IT REPLACES, pinned so a revert to a hand-written duration fails here. At the
+    // measured maximum the 160-slot span alone is 71,448 ms, so the old sum was 6,448 ms short of
+    // the span and 20,000 ms short of the reach — a launch could be admitted 20 s before the
+    // cursor's own bound was in the past. Direction of that error, for the record: an early-admitted
+    // launch loses its late sells and its field reads WORSE, and the field leg is veto-only, so it
+    // biased toward refusing a deployer rather than toward calling one enterable. Safe direction,
+    // permanent and invisible consequence — a graded wallet is filed and never offered again.
+    const supersededSum = (T.windowMs as number) + (T.seekMarginMs as number);
+    expect(supersededSum).toBe(65_000);
+    expect(Math.ceil(SPAN * MEASURED_MAX_MS_PER_SLOT) - supersededSum).toBe(6_448);
+    expect(coverage.minAgeMs - supersededSum).toBe(20_000);
+
+    // (5) NOTHING ABOUT WHAT IS MEASURED MOVED. The gate says WHEN a launch may be walked;
+    // membership is `windowFilter`'s and `windowSlotSpan`'s alone, and the window is the same 160
+    // slots it was. This is the constraint a later widening would breach first.
+    expect(SPAN).toBe(160);
+    const trimmed = windowFilter(
+      [fill({ slot: 100 }), fill({ slot: 100 + SPAN, side: 'sell' }), fill({ slot: 101 + SPAN, side: 'sell' })],
+      SPAN,
+    );
+    expect(trimmed.map((f) => f.slot)).toEqual([100, 100 + SPAN]);
+
+    // (6) AND IT MOVED NO COMMITTED READING, checked against the record rather than asserted. A
+    // stricter gate admits fewer launches, so the honest question is which ones it would have taken
+    // away. `runs/2026-08-04.json` is the only committed record carrying the eligibility block
+    // (schema 6+): three candidates, 178 launch refs, `launchesTooYoung` 0. `youngestRefAgeMs` is the
+    // MINIMUM age over a candidate's refs, so one comparison per candidate settles all of them — the
+    // youngest launch any of them offered was 1.95 h old, ~82x the new gate. The record is NOT
+    // retro-edited: its `minAgeMs: 65000` is what that run actually applied.
+    const committed = JSON.parse(readFileSync(join(TOOL_DIR, 'runs', '2026-08-04.json'), 'utf8')) as {
+      candidates: { entry: { coverage: { minAgeMs: number; launchesTooYoung: number; youngestRefAgeMs: number | null } } | null }[];
+    };
+    const blocks = committed.candidates.map((c) => c.entry?.coverage).filter((c) => c !== undefined && c !== null);
+    expect(blocks.length).toBe(3);
+    for (const b of blocks) {
+      expect(b.minAgeMs).toBe(supersededSum); // what that run applied, left as written
+      expect(b.launchesTooYoung).toBe(0);
+      // The gate in force today would have refused nothing that run measured.
+      expect(b.youngestRefAgeMs).toBeGreaterThanOrEqual(coverage.minAgeMs);
+    }
+  });
+
+  it('and BOTH callers derive it, so the census still measures the launches the screen would score', () => {
+    // `bundling.mjs` carried a byte-identical copy of the old sum while its own doc claimed it
+    // reused Stage 2's gate. That claim is what makes the census a finding ABOUT the screen, so the
+    // copy is deleted the same way `roomIsProven` was: by calling the function.
+    for (const file of ['stage2.mjs', 'bundling.mjs']) {
+      const src = readFileSync(join(TOOL_DIR, file), 'utf8');
+      expect(src, `${file} still hand-writes the gate`).not.toMatch(
+        /const minAgeMs = t\.windowMs \+ t\.seekMarginMs;/,
+      );
+      expect(src, `${file} does not derive the gate`).toMatch(/const minAgeMs = windowReachMs\(\{/);
+    }
   });
 });
 
@@ -8891,6 +8982,18 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
   const T = loadThresholds()['stage2_entry'] as Record<string, number>;
   const CREATED = Date.parse('2026-07-28T12:00:00Z');
   const NOW = CREATED + 3_600_000;
+  /**
+   * The eligibility gate, DERIVED the way `stage2.mjs` derives it rather than re-typed. Every age
+   * fixture below is expressed against this, so a change to the span or the measured slot rate moves
+   * these tests with the tool instead of leaving them asserting a duration nothing computes any
+   * more. The block `the seek cursor reaches the whole declared slot window, at a MEASURED slot
+   * rate` owns whether this derivation is the RIGHT one; here it is only the arithmetic in force.
+   */
+  const GATE_MS = windowReachMs({
+    windowMs: T.windowMs as number,
+    seekMarginMs: T.seekMarginMs as number,
+    windowSlotSpan: T.windowSlotSpan as number,
+  });
 
   const profile = (n: number) => ({
     pump_tokens: Array.from({ length: n }, (_, i) => ({
@@ -8989,7 +9092,11 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     };
     return (async (url: string | URL) => {
       const cursorMs = Number(String(new URL(String(url)).searchParams.get('cursor')).split('-')[1]);
-      const createdMs = cursorMs - 65_000;
+      // Recover the mint instant the walk was asked about by undoing the SAME derivation the walk
+      // applied. This was a hardcoded 65,000 and had been silently wrong since captain decision 144a
+      // widened the reach — harmless here only because every row it builds still lands inside the
+      // window either way, which is exactly how a stale duration survives.
+      const createdMs = cursorMs - GATE_MS;
       return {
         ok: true,
         status: 200,
@@ -9536,11 +9643,11 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     const { coverage } = await scoreCandidateEntry(client, {
       wallet: 'dev',
       profile: profile((T.maxLaunchesPerCandidate as number) + 4),
-      nowMs: CREATED + (T.windowMs as number) + (T.seekMarginMs as number) - 1,
+      nowMs: CREATED + GATE_MS - 1,
       thresholds: T as never,
     });
 
-    expect(coverage.minAgeMs).toBe((T.windowMs as number) + (T.seekMarginMs as number));
+    expect(coverage.minAgeMs).toBe(GATE_MS);
     expect(coverage.launchRefsAvailable).toBe((T.maxLaunchesPerCandidate as number) + 4);
     expect(coverage.launchesTooYoung).toBe(1);
     expect(coverage.launchesEligible).toBe((T.maxLaunchesPerCandidate as number) + 3);
@@ -9567,26 +9674,28 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     expect(row.coverage.youngestEligibleAgeMs).toBe(coverage.youngestEligibleAgeMs);
   });
 
-  it('and younger than windowMs + seekMarginMs, which is MORE than windowMs and still not enough', async () => {
-    // The gap this closes. Eligibility asked only for `windowMs`, so a launch aged 60-65s passed
-    // "has finished happening" while part of its measured window had not happened yet — the same
-    // tail truncation `seekMarginMs` exists to prevent, arriving from the future side, and silent in
-    // the worst way: an absent tail reads as a quiet one.
+  it('and younger than the CURSOR\'S OWN REACH, which is more than windowMs and more than the old sum', async () => {
+    // Two gaps, closed one after the other, and the boundary is walked across both.
     //
-    // IT IS NO LONGER THE CURSOR'S BOUND, and the title used to say it was. Since captain decision
-    // 144a the cursor is denominated in `windowSlotSpan` at a measured slot rate and reaches 85,000
-    // ms, while this gate is still the nominal-400 arithmetic at 65,000. The residual is measured
-    // and pinned in "the seek cursor reaches the whole declared slot window" above; what follows
-    // pins the gate that exists, not the one that should.
+    // FIRST: eligibility once asked only for `windowMs`, so a launch aged 60-65s passed "has
+    // finished happening" while part of its measured window had not happened yet — the same tail
+    // truncation `seekMarginMs` exists to prevent, arriving from the future side, and silent in the
+    // worst way, because an absent tail reads as a quiet one.
+    //
+    // SECOND: the fix for that was the hand-written sum `windowMs + seekMarginMs`, correct only
+    // while the cursor was also 65,000 ms. Captain decision 144a moved the cursor to a span-derived
+    // reach and the sum stayed put, so the same truncation reopened from the same side — up to 20 s
+    // of it — with every test green. The gate is `windowReachMs` now, so the boundary below is
+    // derived from the span and the measured slot rate and moves when they do.
     const { fetchImpl } = insatiable();
     const client = () =>
       new KeylessClient({ maxRequests: 200, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
-    const cursorMs = (T.windowMs as number) + (T.seekMarginMs as number);
 
     const cases: [number, number][] = [
-      [T.windowMs as number, 0], // exactly the old bound, which used to admit it
-      [cursorMs - 1, 0], // one millisecond short of the cursor
-      [cursorMs, 1], // the cursor is in the past, so the walk may start
+      [T.windowMs as number, 0], // the first bound, which used to admit it
+      [(T.windowMs as number) + (T.seekMarginMs as number), 0], // the second, which also used to
+      [GATE_MS - 1, 0], // one millisecond short of the cursor
+      [GATE_MS, 1], // the cursor's own bound is in the past, so the walk may start
     ];
     for (const [ageMs, attempted] of cases) {
       const { coverage } = await scoreCandidateEntry(client(), {
@@ -9600,20 +9709,23 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     }
   });
 
-  it('and the gate is the SUM, not windowMs alone — asserted on the source so it cannot drift back', () => {
-    // SUPERSEDED IN PART, and the supersession is the lesson. This test used to also assert
-    // `windowSlotSpan × 400ms <= windowMs + seekMarginMs` — 64,000 <= 65,000 — and conclude that
-    // one gate covered both bounds. It was true and it went out of validity anyway: the span never
-    // moved, the CHAIN did, from a p50 of 389.0 ms/slot in 2025-12 to 418.0 in 2026-07 with a
+  it('and the gate is DERIVED, not a duration — so it cannot drift back to a hand-written sum', () => {
+    // TWICE SUPERSEDED, and the supersessions are the lesson. This test first asserted the gate was
+    // `windowMs` plus the margin rather than `windowMs` alone. It then also asserted
+    // `windowSlotSpan × 400ms <= windowMs + seekMarginMs` — 64,000 <= 65,000 — and concluded that
+    // one bound covered both quantities. That was true and went out of validity anyway: the span
+    // never moved, the CHAIN did, from a p50 of 389.0 ms/slot in 2025-12 to 418.0 in 2026-07 with a
     // measured maximum of 446.5409. A guard denominated in a nominal constant cannot fail when the
-    // world drifts past it, which is how captain decision 144a's defect survived. The rate half now
-    // lives in "the seek cursor reaches the whole declared slot window, at a MEASURED slot rate",
-    // re-derived from the committed tapes; what stays here is the half that is about the SOURCE.
-    expect(readFileSync(join(TOOL_DIR, 'stage2.mjs'), 'utf8')).toMatch(
-      /const minAgeMs = t\.windowMs \+ t\.seekMarginMs;/,
-    );
-    // And it is strictly more than `windowMs`, which is the regression this gate was added for.
-    expect((T.windowMs as number) + (T.seekMarginMs as number)).toBeGreaterThan(T.windowMs as number);
+    // world drifts past it, which is how captain decision 144a's defect survived — and the sum it
+    // left behind then repeated it. The rate half lives in "the seek cursor reaches the whole
+    // declared slot window, at a MEASURED slot rate", re-derived from the committed tapes on every
+    // run; what stays here is that the tool asks the derivation rather than carrying a number.
+    const src = readFileSync(join(TOOL_DIR, 'stage2.mjs'), 'utf8');
+    expect(src).toMatch(/const minAgeMs = windowReachMs\(\{/);
+    expect(src).not.toMatch(/const minAgeMs = t\.windowMs \+ t\.seekMarginMs;/);
+    // And it is strictly more than each bound it replaces, which is what those two regressions were.
+    expect(GATE_MS).toBeGreaterThan(T.windowMs as number);
+    expect(GATE_MS).toBeGreaterThan((T.windowMs as number) + (T.seekMarginMs as number));
   });
 
   it('reads the mint list from the profile Stage 1 already paid for — no second vendor call', () => {

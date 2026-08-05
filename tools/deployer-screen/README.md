@@ -779,8 +779,12 @@ entrant's own transaction, so `entry.caveats` carries that sentence on every pri
 `maxLaunchesPerCandidate` cap, so **do not infer one** — the numbers are not in there. From schema 6
 the filter's whole arithmetic is: `launchesTooYoung + launchesEligible = launchRefsAvailable`, and
 `launchesPlanned + launchesDroppedByCap = launchesEligible`. `youngestEligibleAgeMs` read beside
-`minAgeMs` says whether the run exercised the 65s boundary or sat hours above it, which the committed
-live run did and could not report.
+`minAgeMs` says whether the run exercised the eligibility boundary or sat hours above it, which the
+committed live run did and could not report. **`minAgeMs` is DERIVED FROM PINNED INPUTS** — the
+declared slot span at a pinned worst-case slot rate, see "It does bound one other thing" below — so a
+record carries what that derivation was worth on the day it was written. The committed schema-6
+records read `65000` where a run today reads `85000` because the bound was re-derived and its pinned
+rate raised between them, **not** because the chain moved under a live reading.
 
 **Reading `entry` across the schema-5 boundary.** `entry.launchesSampled` on schema 3 and 4 counts
 every measured window, including ones whose opening was unproven; on schema 5 it counts only the
@@ -1923,31 +1927,58 @@ governed by `roomIsProven`, and no committed check pins that.
 `ts < createdAtMs` with zero slack, and coverage is still discharged only by an explicit
 `hasMore === false` or a readable empty page. Widening the margin cannot soften either.
 
-**It does bound one other thing, and it has to: which launches are old enough to measure.**
-`stage2.mjs` skips a launch younger than `windowMs + seekMarginMs` — **65s**, not 60s. The gate has
-to cover the newest instant the walk reaches for. Gating on `windowMs` alone admitted a launch aged
-60–65s whose tail had not happened yet — the same truncation this margin exists to prevent, arriving
-from the future side, and silent in the same way, because an absent tail reads as a quiet one.
+**It does bound one other thing, and it has to: which launches are old enough to measure. That is
+the SAME bound, derived once.** `stage2.mjs` and `bundling.mjs` both skip a launch younger than
+`windowReachMs` — **85,000ms** at the pinned values, the same call the seek cursor is placed with.
+The gate has to cover the newest instant the walk reaches for, and a launch has finished happening
+exactly when that instant is in the past, so making them two expressions is what let them come apart.
 
-**That gate no longer covers the seek cursor, and the tense matters.** It once did: the cursor was
-also at 65s and the 160-slot span was reckoned at a nominal 400ms/slot (64.0s), so one bound covered
-both. Since captain decision 144a the cursor is `windowReachMs`, denominated in the span's own unit
-at a measured worst-case slot rate — **85,000ms** — while this gate stays at 65,000ms; and at the
-measured 446.55ms/slot maximum the span alone is 71,448ms, leaving the gate **6,448ms short**. That
-is a known residual owned by another lane, pinned with its direction of error (it biases toward
-refusing a deployer, never toward calling one enterable) by the test `THE ELIGIBILITY GATE IS A
-SECOND BOUND AND IT IS STILL SHORT`.
+**The tense matters, because this bound has now failed the same way twice.** It was once `windowMs`
+alone, which admitted a launch aged 60–65s whose tail had not happened yet — the same truncation this
+margin exists to prevent, arriving from the future side, and silent in the same way, because an
+absent tail reads as a quiet one. It then became the hand-written sum `windowMs + seekMarginMs` =
+65,000ms, correct only while the cursor was also 65,000ms and the 160-slot span was reckoned at a
+nominal 400ms/slot (64.0s). Captain decision 144a moved the cursor to `windowReachMs` and left the
+sum behind, and the chain drifted past the nominal rate unaided: at the measured 446.55ms/slot
+maximum the span alone is 71,448ms, so the sum ran **6,448ms short of the span and 20,000ms short of
+the reach** — a launch could be admitted 20s before the cursor's own bound was in the past.
+
+**Raising the constant to 71,448 would have re-armed the identical trap**, because the defect was
+never the number: it was writing a *duration* for something the chain controls. The gate derives from
+`windowSlotSpan` at a measured worst-case slot rate now — a **pinned** rate, so the gate moves only
+when that rate is re-measured against a newer committed tape and the pin is raised. What the
+derivation buys is that a chain slowing past the pin **fails the tape-derived guard loudly** rather
+than silently widening the gap again, and that raising the pin moves the gate and the seek cursor
+together, because they are one call. That shortfall's direction of error was the safe one — an early-admitted launch loses its
+late sells, so its field reads *worse*, and the field leg is veto-only — but it is the class of false
+rejection that is permanent and invisible, since a graded wallet is filed and never offered again.
+
+**What the correction cost in eligible launches: nothing, on every committed observation.** A
+stricter gate admits fewer launches, so the question is which ones it takes away, and the answer is
+checked against the records rather than asserted. `runs/2026-08-04.json` — the only committed record
+carrying the eligibility block — holds **3 candidates and 178 launch refs, `launchesTooYoung` 0**,
+with `youngestRefAgeMs` of 1.95 h, 12.12 h and 61.7 days: the youngest launch any candidate offered
+was ~82× the new 85,000ms gate, so **0 of 178 change status**. The bundling census
+(`census/2026-08-03-bundling-census.md`, 14 candidates / 112 windows) samples ages with a **minimum
+of 0.27 days ≈ 6.5 h**, so its eligible set is unchanged too. The 20,000ms the gate moves only ever
+binds on a launch between 65.000s and 85.000s old at the moment it is judged, which nothing observed
+here has been. A test pins the run-record half of that; the committed records themselves are **not**
+retro-edited, and their `minAgeMs: 65000` is what those runs actually applied.
 
 The old assertion `windowSlotSpan × 400ms ≤ windowMs + seekMarginMs` **no longer exists**: it was
 denominated in the variable that did not move — the span never changed, the chain's slot rate did —
-so it stayed true and went out of validity with nothing failing. Coverage is now enforced by the
-describe block `the seek cursor reaches the whole declared slot window, at a MEASURED slot rate` in
-`test/deployer-screen.test.ts`, which re-derives the slot rate from the committed tapes on every run
-and asserts the reach covers the whole declared span. Widening the span still fails loudly, through
-that block rather than through the nominal-400 inequality.
+so it stayed true and went out of validity with nothing failing. That is this repo's recurring
+defect, a claim outrunning its enforcement. Coverage is enforced by the describe block `the seek
+cursor reaches the whole declared slot window, at a MEASURED slot rate` in
+`test/deployer-screen.test.ts`, which re-derives the slot rate from the committed tapes on every run,
+asserts the reach covers the whole declared span, and asserts the eligibility gate **is** that reach —
+read out of a live `scoreCandidateEntry` rather than off the source text. Widening the span still
+fails loudly, through that block rather than through the nominal-400 inequality.
 
 **And from schema 6 the filter is readable from the record itself, not only from a log.**
-`entry.coverage` carries `minAgeMs` (the 65s gate), `launchesTooYoung`, `launchesEligible`,
+`entry.coverage` carries `minAgeMs` (the derived gate, **85,000ms today and `65000` on the committed
+schema-6 records**, which is the derivation working rather than a disagreement), `launchesTooYoung`,
+`launchesEligible`,
 `launchesPlanned` and `launchesDroppedByCap`, so the three quite different reasons a launch went
 unmeasured — too young, dropped by our own per-candidate cap, or never reached — are separate
 numbers rather than one gap between `launchRefsAvailable` and `launchesAttempted`. It also carries

@@ -233,10 +233,20 @@ Five things bind anything that touches it or copies from it:
   446.55 ms/slot maximum — **read the bound, not the median.** What is still open is only the
   re-derivation: the ~63.5 s figure and the "~3.5 s wider than the tape's 60 s windows" claim resting
   on it belong to a separate consolidation lane, so read them as an underestimate and do not patch
-  them in passing. **Two bounds still reach forward from the mint and they are NOT the same number:**
-  the seek reach is 85,000 ms while `stage2.mjs`'s eligibility gate is still `windowMs +
-  seekMarginMs` = 65,000 ms, 6,448 ms short of the span. That shortfall is a knowingly shipped
-  residual, pinned by a test, and closing it is another lane's decision.
+  them in passing. **The two bounds that reach forward from the mint are now ONE derivation, and the
+  second failure is the lesson to carry, not the first.** Stage 2's eligibility gate — "is this
+  launch old enough to have finished happening" — was a hand-written `windowMs + seekMarginMs` =
+  65,000 ms that 144a's own fix left behind: 6,448 ms short of the span at the measured rate and
+  20,000 ms short of the reach, so a launch could be admitted 20 s before the cursor's own bound was
+  in the past, and the guard on it (`windowSlotSpan × 400 ms <= windowMs + seekMarginMs`) was
+  denominated in the variable that did not move, so it stayed green while ceasing to mean anything.
+  **Raising the constant to 71,448 would have re-armed the identical trap** — the defect is writing a
+  DURATION for something the chain controls. `stage2.mjs` and `tools/deployer-screen/bundling.mjs`
+  now both call `windowReachMs` for it, so the gate and the cursor are one number by construction; a
+  test reads it out of a live `scoreCandidateEntry` and checks it against the tape-derived rate on
+  every run. It changed no committed reading — the last real run's youngest launch was ~1.95 h old
+  against an 85 s gate — and the error it closed ran toward wrongly REFUSING a deployer, which is the
+  permanent, invisible direction, since a graded wallet is filed and never offered again.
 - **The two clocks agree, and this was measured rather than assumed.** Dune's `created_at` is the
   chain's block time; every fill's `ts` is the vendor's. `getBlockTime(createSlot)` equals the window
   sidecar's `created_timestamp` on **12 of 12** launches spread over 2025-12 → 2026-07 — skew 0 ms,

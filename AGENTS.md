@@ -801,7 +801,9 @@ dev currently?"*, and the shape of the answer is the point:
   duration for something someone else controls*, and 257a's watermark requires exactly this
   inversion). `ENTRY_FILL_SOURCE_KIND` is `'swap-api'`: **the Dune path is committed and nothing
   routes through it**, which is the correct resting state until Gate 3, and `dune-fills.mjs` refuses
-  every window until decision 258b lands its statement. No record field, bar or verdict moved.
+  every window it is handed no statement for — the statement itself is now committed there and
+  measured (see the Dune section's entry-statement bullet), which did not wire it. No record field,
+  bar or verdict moved.
   `tools/deployer-screen/README.md` → "Where the fills come from is INJECTED" owns it, including
   what the change does **not** claim — after the cutover a Dune value *will* reach `entry.roomLeft`;
   what survives is that nothing deciding anything knows which vendor produced its input.

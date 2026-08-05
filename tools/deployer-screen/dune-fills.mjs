@@ -384,7 +384,8 @@ export function duneRowsToWindow(rows, opts) {
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number }} opts.bounds
  * @param {import('./dune.mjs').CoverageAssessment | null} opts.coverage The trade tables' own
  *   coverage assessment — **the observed watermark**, and the only thing that answers eligibility on
- *   this route. `null`, or an assessment that refused, means NOTHING is eligible.
+ *   this route. `null`, an assessment that refused, or one carrying no `toMs` means this source
+ *   CANNOT BE BUILT: see the throw below.
  * @param {DuneEntryQuery | null} [opts.query] Absent means every window is refused; see the module
  *   header.
  * @param {number} opts.maxRequests This source's own request ceiling, so `remaining()` can answer
@@ -392,9 +393,42 @@ export function duneRowsToWindow(rows, opts) {
  *   client because `DuneClient` does not publish its ceiling, and a source that could not answer
  *   `remaining()` would silently disable that reservation.
  * @returns {import('./fill-source.mjs').FillSource}
+ * @throws when the watermark is unreadable — the source refuses to exist rather than to answer.
  */
 export function duneFillSource(client, opts) {
   const query = opts.query ?? null;
+
+  // AN UNREADABLE WATERMARK REFUSES THE SOURCE, NOT EACH LAUNCH. Eligibility on this route is
+  // `nowMs − watermark`, so with no watermark there is no answer — and both ways of pretending
+  // otherwise are failures this repo has already paid for. A written constant is captain decision
+  // 144a's defect verbatim, a duration for something the vendor controls. `Infinity` is a
+  // plausible-looking refusal that does not stay inside the comparison: Stage 2 persists this
+  // figure as `entry.coverage.minAgeMs`, whose versioned contract declares it a number, and
+  // `JSON.stringify(Infinity)` is `null` — so a run would save itself a MISSING gate and render
+  // `younger than Infinityms`, an unknown wearing a measurement's clothes.
+  //
+  // So the refusal is stated where it can be: here, at construction, which is
+  // `screen.mjs` → `selectEntryFillSource` — the one place a source is chosen, and already the one
+  // place a source that cannot be supplied is refused rather than substituted. Stage 2 is then
+  // never handed a source that cannot answer, and `minAgeMs` is total and finite for every source
+  // that exists. `fill-source.mjs` → `assertMinAgeUsable` holds a future source to the same rule.
+  const watermarkMs = opts.coverage !== null && opts.coverage.ok ? opts.coverage.toMs : null;
+  if (watermarkMs === null || !Number.isFinite(watermarkMs)) {
+    const why =
+      opts.coverage === null
+        ? 'this run carries no coverage assessment for the decoded trade tables'
+        : opts.coverage.ok
+          ? 'the coverage assessment established no newest covered instant'
+          : `the coverage probe refused the trade tables: ${opts.coverage.reasons.join(' ')}`;
+    throw new Error(
+      `the Dune fill source cannot be built: ${why}, so there is no observed watermark and no ` +
+        `answer to "has this launch finished happening". Captain decision 257a requires that ` +
+        `answer to come from the vendor's own tables, and captain decision 144a forbids writing a ` +
+        `duration for it instead — so this source refuses to exist rather than admit launches ` +
+        `against tables that cannot vouch for any of them. The refusal is the run's to report; it ` +
+        `is not a launch-level drop.`,
+    );
+  }
 
   return {
     kind: 'dune',
@@ -415,16 +449,15 @@ export function duneFillSource(client, opts) {
      * themselves, and the only duration in the sum is the window's own reach, which is the
      * launch's geometry rather than the vendor's schedule.
      *
-     * **An unreadable watermark refuses everything.** `Infinity` makes every launch too young,
-     * which is a run that measures nothing — the safe direction. Reading a missing watermark as
-     * zero lag would admit every launch against tables that cannot vouch for any of them.
+     * **An unreadable watermark has already been refused** — by the constructor above, so this is
+     * total and finite. Reading a missing watermark as zero lag would admit every launch against
+     * tables that cannot vouch for any of them; answering `Infinity` would put a non-number into a
+     * figure that is persisted and rendered as one.
      *
      * @param {import('./fill-source.mjs').FillSourceBounds} bounds
      * @returns {Promise<number>}
      */
     async minAgeMs(bounds) {
-      const watermarkMs = opts.coverage !== null && opts.coverage.ok ? opts.coverage.toMs : null;
-      if (watermarkMs === null) return Number.POSITIVE_INFINITY;
       const lagMs = Math.max(0, bounds.nowMs - watermarkMs);
       return (
         lagMs +

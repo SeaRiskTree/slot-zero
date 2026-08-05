@@ -982,7 +982,7 @@ and a `CostSource` now:
 
 | module | role |
 |---|---|
-| `fill-source.mjs` | the CONTRACT — `FillSource`, `FILL_SOURCE_KINDS`, the `LaunchWindow` coverage vocabulary, and `assertWindowUsable`. **Imports nothing at runtime**, which is what makes it safe for a scoring module to import, and a test asserts that rather than trusting it. |
+| `fill-source.mjs` | the CONTRACT — `FillSource`, `FILL_SOURCE_KINDS`, the `LaunchWindow` coverage vocabulary, `assertWindowUsable` and `assertMinAgeUsable`. **Imports nothing at runtime**, which is what makes it safe for a scoring module to import, and a test asserts that rather than trusting it. The eligibility guard is the reason a source that cannot read its watermark refuses to be BUILT, at `screen.mjs` → `selectEntryFillSource`: `entry.coverage.minAgeMs` is persisted and rendered as a number, so a non-finite answer would reach a saved record as `null` — a missing gate rather than a refusal — and a written constant would be captain decision 144a's defect verbatim. |
 | `cost-source.mjs` | the same for the cost leg — `CostSource`, `TransactionCosts`, `CostWalkResult`, `assertCostWalkAccounted`. |
 | `swapapi-fills.mjs` | pump.fun's keyless trade endpoint wearing the contract. **This is what every run reads**, unchanged in every bound, cursor, tripwire and drop rule. |
 | `rpc-costs.mjs` | `api.mainnet-beta`/Helius wearing the cost contract. The whole-block probe and its per-candidate latch moved in here, because which route is worth a request is a property of that endpoint. |

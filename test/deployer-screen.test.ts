@@ -111,7 +111,11 @@ import {
   toEntryRecordRow,
 } from '../tools/deployer-screen/stage2.mjs';
 import type { Stage2Coverage } from '../tools/deployer-screen/stage2.mjs';
-import { FILL_SOURCE_KINDS, assertWindowUsable } from '../tools/deployer-screen/fill-source.mjs';
+import {
+  FILL_SOURCE_KINDS,
+  assertMinAgeUsable,
+  assertWindowUsable,
+} from '../tools/deployer-screen/fill-source.mjs';
 import { COST_SOURCE_KINDS, assertCostWalkAccounted } from '../tools/deployer-screen/cost-source.mjs';
 import { swapApiFillSource } from '../tools/deployer-screen/swapapi-fills.mjs';
 import { rpcCostSource } from '../tools/deployer-screen/rpc-costs.mjs';
@@ -5133,11 +5137,8 @@ describe('the keyless boundary holds in both directions', () => {
     // refactor away from a bar that differs by source, and that failure is invisible — a wrongly
     // refused deployer is filed and never offered again.
     const all = readAll(TOOL_DIR, 'tools/deployer-screen/');
-    /** Every local import a module makes, in file order and deduped. */
-    const importsOf = (file: string): string[] => {
-      const text = all.get(`tools/deployer-screen/${file}`) ?? '';
-      return [...new Set([...text.matchAll(/from\s+['"]\.\/([\w.-]+\.mjs)['"]/g)].map((m) => m[1]!))].sort();
-    };
+    /** Every local module a module LOADS, deduped — see {@link localModuleLoads}. */
+    const importsOf = (file: string): string[] => localModuleLoads(all.get(`tools/deployer-screen/${file}`) ?? '');
 
     /**
      * EXHAUSTIVE. Adding ANY import to a scoring module means coming back here on purpose — no
@@ -5182,7 +5183,8 @@ describe('the keyless boundary holds in both directions', () => {
     const VENDOR_MODULES = new Set(['dune.mjs', 'pumpfun.mjs', 'creation.mjs', 'seed.mjs']);
     for (const [file, text] of all) {
       const local = file.slice('tools/deployer-screen/'.length);
-      if (!local.includes('/') && [...VENDOR_MODULES].some((v) => text.includes(`from './${v}'`))) {
+      const loads = new Set(localModuleLoads(text));
+      if (!local.includes('/') && [...VENDOR_MODULES].some((v) => loads.has(v))) {
         VENDOR_MODULES.add(local);
       }
     }
@@ -8932,6 +8934,25 @@ function executableHalf(text: string): string {
     .join('\n');
 }
 
+/**
+ * Every sibling module a file LOADS, by name, deduped and sorted.
+ *
+ * **Loading is the property, not `import … from`.** The allow-list this feeds exists because a
+ * deny-list anchored on one filename was defeated by one hop of indirection; an extractor anchored
+ * on one SYNTAX has the same hole one level down. `await import('./dune.mjs')` and a `createRequire`
+ * load are both a scoring module reaching a vendor, and neither writes the word `from`. So the scan
+ * is over every `'./<name>.mjs'` specifier in the EXECUTABLE half — static, dynamic or required —
+ * and prose describing an import cannot add or hide an edge.
+ *
+ * It is deliberately broader than "an import": any executable mention of a sibling module counts,
+ * which can only over-report. The list it feeds is an exhaustive equality, so an over-report fails
+ * loudly and is settled on purpose rather than silently allowed.
+ */
+function localModuleLoads(text: string): string[] {
+  const code = executableHalf(text);
+  return [...new Set([...code.matchAll(/['"`]\.\/([\w.-]+\.mjs)['"`]/g)].map((m) => m[1]!))].sort();
+}
+
 describe('the seek cursor reaches the whole declared slot window, at a MEASURED slot rate', () => {
   const T = loadThresholds()['stage2_entry'] as Record<string, number>;
   const REPO_ROOT = join(TOOL_DIR, '..', '..');
@@ -11215,9 +11236,21 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     // swap-api would require. No literal lag appears anywhere on this path.
     const lagged = { ok: true, toMs: BOUNDS.nowMs - 600_000 };
     await expect(source(lagged).minAgeMs(BOUNDS)).resolves.toBe(600_000 + REACH);
-    // No watermark, or a refused coverage reading, means NOTHING is eligible — the safe direction.
-    await expect(source(null).minAgeMs(BOUNDS)).resolves.toBe(Number.POSITIVE_INFINITY);
-    await expect(source({ ok: false, toMs: BOUNDS.nowMs }).minAgeMs(BOUNDS)).resolves.toBe(Number.POSITIVE_INFINITY);
+    // No watermark, or a refused coverage reading, means the source CANNOT BE BUILT. It used to be
+    // built and answer `Infinity`, and that did not stay inside the comparison: Stage 2 persists
+    // this figure as `entry.coverage.minAgeMs`, whose contract declares it a number, and
+    // `JSON.stringify(Infinity)` is `null` — so a run would have saved itself a MISSING gate and
+    // rendered `younger than Infinityms`. There is no honest finite answer either (a written
+    // duration for something the vendor controls is captain decision 144a's defect), so the
+    // refusal is stated where it can be: at construction, i.e. at the selection site.
+    expect(() => source(null)).toThrow(/no observed watermark/);
+    expect(() => source({ ok: false, toMs: BOUNDS.nowMs, reasons: ['the probe refused.'] })).toThrow(
+      /the coverage probe refused the trade tables/,
+    );
+    expect(() => source({ ok: true, toMs: null })).toThrow(/no newest covered instant/);
+    // And the refusal surfaces at `selectEntryFillSource`, which is where a run says it cannot
+    // measure on the source it was asked for — never as a launch-level drop or a measured verdict.
+    expect(() => selectEntryFillSource('dune', { dune: () => source(null) })).toThrow(/cannot be built/);
 
     // And with no committed statement it refuses the window with a sentence naming the decision
     // that owns one, rather than returning a window it cannot vouch for. It spends nothing.
@@ -11226,6 +11259,65 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     expect(refused.dropReason).toBe('coverage-unproven');
     expect(refused.note).toMatch(/258b/);
     expect(client.issued()).toBe(0);
+  });
+
+  it('a persisted eligibility gate is a DURATION, and a source answering otherwise is refused loudly', async () => {
+    // The backstop, for the source nobody has written yet. `entry.coverage.minAgeMs` is a number by
+    // the run record's versioned contract and is rendered as one, so a non-finite answer reaches a
+    // saved record as `null` — a missing gate that reads as an absence rather than as a refusal.
+    // The Dune source refuses to be built instead (above); this holds a FUTURE source to it, and a
+    // guard that cannot fail is not a guard.
+    expect(() => assertMinAgeUsable({ kind: 'dune' }, 85_000)).not.toThrow();
+    expect(() => assertMinAgeUsable({ kind: 'dune' }, 0)).not.toThrow();
+    expect(() => assertMinAgeUsable({ kind: 'dune' }, Number.POSITIVE_INFINITY)).toThrow(/not a duration/);
+    expect(() => assertMinAgeUsable({ kind: 'dune' }, Number.NaN)).toThrow(/not a duration/);
+    expect(() => assertMinAgeUsable({ kind: 'dune' }, -1)).toThrow(/not a duration/);
+
+    // Through the production Stage 2, because the guard is only worth anything at the one point
+    // every source passes: a source answering `Infinity` never reaches the eligibility filter.
+    const dishonest = {
+      ...swapApiFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 })),
+      minAgeMs: async () => Number.POSITIVE_INFINITY,
+    };
+    await expect(
+      scoreLaunchRefsEntry(dishonest as never, {
+        wallet: 'dev',
+        refs: [{ mint: MINT, deployedAtMs: CREATED }],
+        nowMs: BOUNDS.nowMs,
+        thresholds: { ...T, minLaunchesSampled: 1 } as never,
+      }),
+    ).rejects.toThrow(/not a duration/);
+
+    // And the gate the swap-api DOES answer survives the record's own serialisation as a number,
+    // which is the thing `Infinity` silently would not have.
+    const honest = swapApiFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 }));
+    const { coverage } = await scoreLaunchRefsEntry(honest, {
+      wallet: 'dev',
+      refs: [],
+      nowMs: BOUNDS.nowMs,
+      thresholds: { ...T, minLaunchesSampled: 1 } as never,
+    });
+    expect(JSON.parse(JSON.stringify({ minAgeMs: coverage.minAgeMs })).minAgeMs).toBe(coverage.minAgeMs);
+    expect(Number.isFinite(coverage.minAgeMs)).toBe(true);
+  });
+
+  it('the import allow-list sees a DYNAMIC load, not only a static one', () => {
+    // Captain decision 261a's own failure shape, one level down: the allow-list above was defeated
+    // by one hop of indirection because it named a file; an extractor anchored on `import … from`
+    // is defeated by one change of SYNTAX. `await import('./dune.mjs')` and a `createRequire` load
+    // are both a scoring module reaching a vendor. This drives the extractor the allow-list and its
+    // transitive closure both run on, so both halves see those edges.
+    expect(localModuleLoads("import { x } from './measure.mjs';")).toEqual(['measure.mjs']);
+    expect(localModuleLoads("const d = await import('./dune.mjs');")).toEqual(['dune.mjs']);
+    expect(localModuleLoads('const d = await import("./dune-costs.mjs");')).toEqual(['dune-costs.mjs']);
+    expect(localModuleLoads("const require = createRequire(import.meta.url);\nrequire('./dune.mjs');")).toEqual([
+      'dune.mjs',
+    ]);
+    expect(localModuleLoads("import './side-effect.mjs';")).toEqual(['side-effect.mjs']);
+    // Prose can neither add an edge nor hide one: the scan is over the executable half.
+    expect(localModuleLoads("// import x from './dune.mjs'\n * see './dune.mjs'\nimport './a.mjs';")).toEqual([
+      'a.mjs',
+    ]);
   });
 
   it('a DUNE fill source reaches entry.roomLeft by injection, and no scoring module can tell', async () => {

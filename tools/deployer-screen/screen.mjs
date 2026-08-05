@@ -146,6 +146,14 @@ export const ENTRY_FILL_SOURCE_KIND = 'swap-api';
  * unselected one would be harmless today and would stop being harmless the moment a source's
  * constructor spends something to find out what it can vouch for.
  *
+ * **A constructor may itself refuse, and that refusal surfaces HERE rather than as a measurement.**
+ * A source that cannot answer eligibility — the Dune route with no readable watermark — throws from
+ * its own constructor, so this site is where "we cannot run Stage 2 on the source we were asked
+ * for" is stated. The alternative is a source that exists and answers `Infinity`, which travels: it
+ * is persisted as `entry.coverage.minAgeMs`, where `JSON.stringify` writes it as `null`, and
+ * rendered as a duration. `fill-source.mjs` → `assertMinAgeUsable` is the backstop that fails on a
+ * future source which forgets this.
+ *
  * @param {import('./fill-source.mjs').FillSourceKind} kind
  * @param {Partial<Record<import('./fill-source.mjs').FillSourceKind,
  *   () => import('./fill-source.mjs').FillSource>>} sources

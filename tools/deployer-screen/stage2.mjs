@@ -76,7 +76,7 @@
 import { CeilingReached, RequestFailed } from './client.mjs';
 import { assertCostWalkAccounted } from './cost-source.mjs';
 import { entryCostTargets, measureLaunchEntry, priceLaunchEntry, scoreEntry } from './entry.mjs';
-import { assertWindowUsable } from './fill-source.mjs';
+import { assertMinAgeUsable, assertWindowUsable } from './fill-source.mjs';
 import { toLaunchRefs } from './measure.mjs';
 import { redactAll, redactVendorIdentifiers } from './record.mjs';
 
@@ -413,6 +413,9 @@ export async function scoreLaunchRefsEntry(fillSource, input) {
   // `launchesTooYoung`, `launchesEligible`, `launchesPlanned` and `launchesDroppedByCap` make the
   // filter's whole arithmetic readable from the record itself.
   const minAgeMs = await fillSource.minAgeMs(bounds);
+  // One enforcement point holds every source to the contract, exactly as `assertWindowUsable` does
+  // below: a gate that is not a duration would be persisted and rendered as one.
+  assertMinAgeUsable(fillSource, minAgeMs);
   const ages = refs.map((r) => input.nowMs - r.deployedAtMs);
   const eligible = refs.filter((r) => input.nowMs - r.deployedAtMs >= minAgeMs);
   const planned = eligible.slice(0, t.maxLaunchesPerCandidate);

@@ -130,6 +130,10 @@ export const FILL_SOURCE_KINDS = Object.freeze(['swap-api', 'dune']);
  *   for something someone else controls**. The swap-api answers from its own cursor reach; the Dune
  *   route must answer from an observed vendor watermark (captain decision 257a), which is the same
  *   question asked of a vendor whose tables lag. Neither answer is written down at the call site.
+ *
+ *   **It must be TOTAL and FINITE** — see {@link assertMinAgeUsable}. A source that cannot answer
+ *   refuses to be BUILT, at the one selection site, rather than answering `Infinity` and letting a
+ *   non-number travel into a record field the contract declares as a number.
  * @property {(ref: import('./measure.mjs').LaunchRef, bounds: FillSourceBounds)
  *   => Promise<SourcedLaunchWindow>} readWindow
  *   Fetch one launch's window. Returns the coverage contract, never a bare fill array.
@@ -137,6 +141,44 @@ export const FILL_SOURCE_KINDS = Object.freeze(['swap-api', 'dune']);
  * @property {() => number} remaining Requests left under this source's own ceiling. Stage 2 reserves
  *   a whole launch's worth before starting one, so a window is never walked half-way.
  */
+
+/**
+ * Refuse an eligibility answer that is not a duration.
+ *
+ * **A source that cannot say how old a launch must be must refuse to EXIST, not answer `Infinity`.**
+ * There is no honest finite answer to "has this launch finished happening" when the vendor cannot
+ * say, and there is no honest non-finite one either: `minAgeMs` is reported as
+ * `entry.coverage.minAgeMs`, which the versioned run record declares a number and `render.mjs`
+ * prints. `JSON.stringify(Infinity)` is `null`, so an unreadable watermark would reach a saved
+ * record as a MISSING gate and a rendered line as `younger than Infinityms` — an unknown wearing a
+ * measurement's clothes, which is the shape this repo refuses everywhere else (`covered.fromMs ===
+ * null` means covered nothing, never since-the-epoch). Substituting a large constant is worse
+ * still: that is captain decision 144a's defect exactly, a written duration for something the
+ * vendor controls.
+ *
+ * So the refusal happens where it can be stated — a source whose eligibility is unanswerable throws
+ * from its own constructor, at `screen.mjs` → `selectEntryFillSource`, the one place a source is
+ * chosen and already the one place a missing source is refused. This guard is what makes that
+ * structural rather than remembered: it fails on a FUTURE source that reintroduces a non-finite
+ * answer, in the same spirit as {@link assertWindowUsable}, and a guard that cannot fail is not a
+ * guard.
+ *
+ * @param {{ kind: FillSourceKind }} source The source itself, so the message can name it. The
+ *   consumer therefore never spells a provenance: reading `kind` for a sentence belongs here, in the
+ *   contract, exactly as {@link assertWindowUsable} reads it.
+ * @param {number} minAgeMs
+ * @returns {void}
+ */
+export function assertMinAgeUsable(source, minAgeMs) {
+  if (typeof minAgeMs === 'number' && Number.isFinite(minAgeMs) && minAgeMs >= 0) return;
+  throw new Error(
+    `the ${source.kind} fill source answered eligibility with ${String(minAgeMs)}, ` +
+      `which is not a duration. "How old must a launch be before this source can answer for it" has ` +
+      `no honest non-finite answer: the figure is persisted as \`entry.coverage.minAgeMs\` and ` +
+      `rendered, so a non-finite one reaches a saved record as a missing gate. A source that cannot ` +
+      `read what it needs must refuse to be built at all, so nothing is ever measured on it.`,
+  );
+}
 
 /**
  * Refuse a window that claims coverage it has not proved.

@@ -11686,8 +11686,8 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         expect(text, `${claim} is a swap-api measurement and must not print under a dune source`).not.toContain(claim);
       }
       expect(text).toContain('Fill tape from the dune source');
-      // The notes are wrapped to the plan's column width, so they are read as prose rather than as
-      // lines — the sentence is the contract, not where it happens to break.
+      // The notes arrive pre-wrapped at `PLAN_NOTE_WIDTH`, so they are read as prose rather than as
+      // lines — the sentence is the contract, not where the module broke it.
       const prose = text.replace(/\s+/g, ' ');
       expect(prose).toContain('pages per launch (p50/p90/p95/max) and the shed rate: UNAVAILABLE');
       expect(prose).toContain('measured on the swap-api source and describes only it');
@@ -12224,9 +12224,10 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       // exactly the case this guard fires in.
       expect(failed.why).toContain('the ACTUAL line above states what it cost, or that the cost itself could not be read');
       expect(failLog.join(' ').replace(/\s+/g, ' ')).toContain('THE SPEND WAS MADE AND WHAT IT COST COULD NOT BE READ');
-      // AND IT IS LAID OUT AS PROSE, at the width both plan surfaces wrap their shared sentences
-      // to — a ~430-character runaway line on the page an operator reads before authorising a
-      // spend is the shape this branch just removed from the census.
+      // AND IT IS LAID OUT AS PROSE, pre-wrapped at `PLAN_NOTE_WIDTH` by the module that owns every
+      // shared plan sentence, so a surface only indents it — a ~430-character runaway line on the
+      // page an operator reads before authorising a spend is the shape this branch just removed
+      // from the census.
       const actualLines = failLog.slice(failLog.findIndex((l) => l.includes('ACTUAL, after:')));
       expect(actualLines.length).toBeGreaterThan(1);
       for (const line of actualLines) expect(line.length).toBeLessThanOrEqual(PLAN_NOTE_WIDTH + 2);

@@ -394,9 +394,10 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
     expect(flowed).toContain('dune fill source');
     expect(flowed).toContain('coverage probe');
     // AND IT IS LAID OUT LIKE EVERY OTHER LINE OF THE BLOCK IT SITS IN. The sentence is shared with
-    // `screen.mjs` → `renderDryRun` so the two plan surfaces cannot drift in what they say; each
-    // still wraps it to its own width, and pushed whole it is one ~450-character runaway line
-    // through the middle of the WINDOW PARAMETERS block.
+    // `screen.mjs` → `renderDryRun` so the two plan surfaces cannot drift in what they say, and the
+    // module that owns those words owns their layout too: it hands out lines already wrapped at
+    // `PLAN_NOTE_WIDTH` and this surface only indents them. Pushed whole it would be one
+    // ~450-character runaway line through the middle of the WINDOW PARAMETERS block.
     const all = text.split('\n');
     const start = all.findIndex((l) => l.includes('NOT MEASURED, NOT ZERO'));
     const noteLines = all.slice(start, start + all.slice(start).findIndex((l) => l.trim() === ''));

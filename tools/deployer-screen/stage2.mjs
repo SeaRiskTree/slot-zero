@@ -205,7 +205,7 @@ function noDrops() {
   };
 }
 
-/** @type {Record<import('./pumpfun.mjs').LaunchWindowDropReason, keyof Stage2DropReasons>} */
+/** @type {Record<import('./fill-source.mjs').LaunchWindowDropReason, keyof Stage2DropReasons>} */
 const DROP_REASON_KEY = {
   'mint-time-disagreement': 'mintTimeDisagreement',
   'coverage-unproven': 'coverageUnproven',
@@ -297,6 +297,31 @@ export function describeTransportFailure(cause) {
  *
  * ## The source is INJECTED, and this module names no vendor
  *
+ * The bounds Stage 2 hands its fill source, from the pinned thresholds and the injected clock.
+ *
+ * **Exported so the PLAN and the RUN ask the same source the same question.** `--dry-run` prints the
+ * eligibility gate, and that figure must be the one the selected source will actually apply — not a
+ * re-derivation that happens to agree today. `screen.mjs` builds the bounds with this and asks
+ * `minAgeMs` for the number it prints; a second construction of these bounds would be the same class
+ * of drift one level down, since a source reading a bound the plan omitted would be answering a
+ * different question from the one the run asks.
+ *
+ * @param {Stage2Thresholds} t
+ * @param {number} nowMs
+ * @returns {import('./fill-source.mjs').FillSourceBounds}
+ */
+export function entryFillBounds(t, nowMs) {
+  return {
+    windowMs: t.windowMs,
+    seekMarginMs: t.seekMarginMs,
+    windowSlotSpan: t.windowSlotSpan,
+    maxRequestsPerLaunch: t.maxRequestsPerLaunch,
+    tradePageLimit: t.tradePageLimit,
+    nowMs,
+  };
+}
+
+/**
  * Captain decision 260a. Stage 2 used to import `readLaunchWindow` and `windowReachMs` from
  * `pumpfun.mjs` and `readCreateSlotCosts` beside them, which made the swap-api and the Solana RPC
  * **compile-time properties of a scoring module**. They arrive as a {@link
@@ -350,15 +375,7 @@ export async function scoreCandidateEntry(fillSource, input) {
  */
 export async function scoreLaunchRefsEntry(fillSource, input) {
   const t = input.thresholds;
-  /** @type {import('./fill-source.mjs').FillSourceBounds} */
-  const bounds = {
-    windowMs: t.windowMs,
-    seekMarginMs: t.seekMarginMs,
-    windowSlotSpan: t.windowSlotSpan,
-    maxRequestsPerLaunch: t.maxRequestsPerLaunch,
-    tradePageLimit: t.tradePageLimit,
-    nowMs: input.nowMs,
-  };
+  const bounds = entryFillBounds(t, input.nowMs);
   const refs = [...input.refs].sort((a, b) => b.deployedAtMs - a.deployedAtMs);
 
   // A launch younger than this has not finished happening. Measuring it would read a truncated

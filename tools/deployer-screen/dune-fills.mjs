@@ -510,9 +510,10 @@ export function duneFillSource(client, opts) {
 
       // BEFORE anything is billed. A saved query is editable from a browser and its answer is a
       // measurement input, so a repo/vendor disagreement refuses the leg terminally and costs
-      // nothing — the same order `dune.mjs`'s enumeration is held to.
-      await assertSavedQueryMatches(client, query.id, query.sql);
+      // nothing — the same order `dune.mjs`'s enumeration is held to. It costs a REQUEST though,
+      // and the count below spans it: `requests` is what the read cost, not what its last leg cost.
       const issuedBefore = client.issued();
+      await assertSavedQueryMatches(client, query.id, query.sql);
       const result = await executeAndRead(client, query.id, query.parameters(ref, scan), opts.bounds);
       scan.requests = client.issued() - issuedBefore;
 

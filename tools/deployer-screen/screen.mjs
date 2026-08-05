@@ -76,7 +76,14 @@ import { rpcCostSource } from './rpc-costs.mjs';
 import { swapApiFillSource } from './swapapi-fills.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderMayhemShare, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
-import { addDropReasons, emptyDropReasons, scoreCandidateEntry, toEntryRecordRow, totalDrops } from './stage2.mjs';
+import {
+  addDropReasons,
+  emptyDropReasons,
+  entryFillBounds,
+  scoreCandidateEntry,
+  toEntryRecordRow,
+  totalDrops,
+} from './stage2.mjs';
 import {
   buildSeedPlan,
   mergeSeeds,
@@ -656,6 +663,37 @@ export async function main(opts, env, out, err) {
   // on the walk, and a run where it does not is exactly the run this ceiling was sized for.
   const resolution = resolveKey(env);
 
+  // Stage 2 gets its OWN ceiling on its OWN client, so the fill walk and the consistency walk
+  // cannot eat each other's budget and neither can silently exceed what the dry run printed.
+  const stage2Keyless = new KeylessClient({
+    maxRequests: entryThresholds.maxKeylessRequests,
+    // Its OWN pacing, not `budget.keylessMinIntervalMs`, because it reaches a different host. At the
+    // 2s that host-agnostic value would impose, swap-api shed half this run's launches to 429 and the
+    // verdict degraded to `entry-unmeasured`; 7s walked all of them. The consistency walk on
+    // frontend-api-v3 keeps 2s — it has shed nothing, so it is not slowed for another host's fault.
+    minIntervalMs: entryThresholds.keylessMinIntervalMs,
+    // The fill endpoint sheds about a quarter of what it is asked for — measured on the committed
+    // tape's own build metadata — so a walk without retry cannot finish. Every attempt still counts
+    // against the ceiling, so this widens no bound.
+    retryBackoffMs: entryThresholds.keylessRetryBackoffMs ?? [],
+    onRequest: (url) => {
+      if (!opts.json) out(`  → GET ${url}`);
+    },
+  });
+
+  // THE ONE PLACE A FILL SOURCE IS CHOSEN (captain decision 260a). Everything downstream —
+  // `stage2.mjs`, `entry.mjs`, `measure.mjs`, `rank.mjs` — receives the source and never names one.
+  // See {@link selectEntryFillSource} for what this run resolves to and why. It is selected here,
+  // above the dry-run branch, because THE PLAN MUST STATE THE GATE THE SOURCE ITSELF WILL APPLY:
+  // a plan that re-derived that duration would be a second expression that merely agrees, which is
+  // captain decision 144a's defect and the reason the gate was injected in the first place.
+  // Selecting costs nothing — a source is built from its transport, and neither source opens a
+  // socket to say how old a launch must be.
+  const entryFillSource = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, {
+    'swap-api': () => swapApiFillSource(stage2Keyless),
+  });
+  const entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entryThresholds, Date.now()));
+
   if (opts.dryRun) {
     out('');
     out(
@@ -668,6 +706,7 @@ export async function main(opts, env, out, err) {
         stage2: opts.stage2,
         maxScored,
         entryThresholds,
+        entryMinAgeMs,
         historySource,
         creationWalk: T['creation_walk'],
         costBounds,
@@ -719,24 +758,6 @@ export async function main(opts, env, out, err) {
   const keyless = new KeylessClient({
     maxRequests: budget.maxKeylessRequests,
     minIntervalMs: budget.keylessMinIntervalMs,
-    onRequest: (url) => {
-      if (!opts.json) out(`  → GET ${url}`);
-    },
-  });
-
-  // Stage 2 gets its OWN ceiling on its OWN client, so the fill walk and the consistency walk
-  // cannot eat each other's budget and neither can silently exceed what the dry run printed.
-  const stage2Keyless = new KeylessClient({
-    maxRequests: entryThresholds.maxKeylessRequests,
-    // Its OWN pacing, not `budget.keylessMinIntervalMs`, because it reaches a different host. At the
-    // 2s that host-agnostic value would impose, swap-api shed half this run's launches to 429 and the
-    // verdict degraded to `entry-unmeasured`; 7s walked all of them. The consistency walk on
-    // frontend-api-v3 keeps 2s — it has shed nothing, so it is not slowed for another host's fault.
-    minIntervalMs: entryThresholds.keylessMinIntervalMs,
-    // The fill endpoint sheds about a quarter of what it is asked for — measured on the committed
-    // tape's own build metadata — so a walk without retry cannot finish. Every attempt still counts
-    // against the ceiling, so this widens no bound.
-    retryBackoffMs: entryThresholds.keylessRetryBackoffMs ?? [],
     onRequest: (url) => {
       if (!opts.json) out(`  → GET ${url}`);
     },
@@ -1211,12 +1232,6 @@ export async function main(opts, env, out, err) {
 
     // ---- Stage 2 — ENTRY. Keyless, and it spends no keyed request at all. -----------------
     if (opts.stage2) {
-      // THE ONE PLACE A FILL SOURCE IS CHOSEN (captain decision 260a). Everything downstream —
-      // `stage2.mjs`, `entry.mjs`, `measure.mjs`, `rank.mjs` — receives the source and never names
-      // one. See {@link selectEntryFillSource} for what this run resolves to and why.
-      const entryFillSource = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, {
-        'swap-api': () => swapApiFillSource(stage2Keyless),
-      });
       const survivors = candidates.filter((c) => c.verdict === 'gate-passed');
       const toScore = survivors.slice(0, maxScored);
       scoringTruncatedBy = survivors.length - toScore.length;

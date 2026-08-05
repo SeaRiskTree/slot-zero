@@ -106,6 +106,7 @@ import type { EntryScore, EntryThresholds, UnmeasuredCause } from '../tools/depl
 import {
   emptyCostCoverage,
   emptyDropReasons,
+  entryFillBounds,
   scoreCandidateEntry,
   scoreLaunchRefsEntry,
   toEntryRecordRow,
@@ -1604,6 +1605,7 @@ describe('the CLI contract', () => {
       stage2: true,
       maxScored: T['stage2_entry'].maxCandidatesScored,
       entryThresholds: T['stage2_entry'],
+      entryMinAgeMs: windowReachMs(T['stage2_entry']),
       keyDescription: null,
       rpcEndpoint: resolveSolanaRpcEndpoint({}),
       indexedWalk: T['creation_walk_helius'],
@@ -1676,6 +1678,7 @@ describe('the CLI contract', () => {
       stage2: false,
       maxScored: 0,
       entryThresholds: T['stage2_entry'],
+      entryMinAgeMs: windowReachMs(T['stage2_entry']),
       keyDescription: null,
       rpcEndpoint: resolveSolanaRpcEndpoint({}),
       indexedWalk: T['creation_walk_helius'],
@@ -1688,6 +1691,55 @@ describe('the CLI contract', () => {
     expect(off).toMatch(/STAGE 2 DISABLED/);
     expect(off).toMatch(/nothing about whether a window is enterable/);
   });
+
+  it('the plan states the gate the SELECTED SOURCE answers, never one it derives itself', async () => {
+    // Captain decision 260a moved the eligibility gate to `fillSource.minAgeMs`, and a plan that
+    // re-derived that duration would be a second expression that merely agrees — the shape captain
+    // decision 144a names, and the one it has already cost this repo twice. Proven by making the
+    // two disagree: a source answering a distinctive duration must move the printed line.
+    const T = loadThresholds();
+    const plan = {
+      seedPlan: [],
+      maxCandidates: 12,
+      maxKeyedRequests: 45,
+      consistency: false,
+      maxKeylessRequests: T['budget'].maxKeylessRequests,
+      historySource: 'creation-derived' as const,
+      creationWalk: T['creation_walk'],
+      costBounds: T['stage2_cost'],
+      stage2: true,
+      maxScored: T['stage2_entry'].maxCandidatesScored,
+      entryThresholds: T['stage2_entry'],
+      keyDescription: null,
+      rpcEndpoint: resolveSolanaRpcEndpoint({}),
+      indexedWalk: T['creation_walk_helius'],
+      worstCaseCredits: 0,
+      dune: T['dune'],
+      duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
+      usingDune: true,
+      duneRefreshProbe: false,
+    };
+    const reach = windowReachMs(T['stage2_entry']);
+    expect(renderDryRun({ ...plan, entryMinAgeMs: reach })).toContain(`walked until it is ${reach / 1000}s old`);
+    // A LAGGING SOURCE, the case Gate 3 introduces: the printed gate follows the source, and the
+    // reach it is derived from stays where it is.
+    const lagged = renderDryRun({ ...plan, entryMinAgeMs: reach + 240_000 });
+    expect(lagged).toContain(`walked until it is ${(reach + 240_000) / 1000}s old`);
+    expect(lagged).toContain(`The seek reaches ${reach / 1000}s`);
+
+    // AND THE WIRING: the number the CLI prints is the one the source it selected returned. Driving
+    // the real dry run is what ties the two ends together — a renderer taking the right argument
+    // proves nothing if `screen.mjs` computes that argument a second way. It opens no socket.
+    const parsed = parseArgs(['--dry-run']);
+    if (!parsed.ok) throw new Error('unreachable');
+    const lines: string[] = [];
+    const code = await main(parsed.opts, {}, (l) => lines.push(l), () => {});
+    expect(code).toBe(0);
+    const source = swapApiFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 }));
+    const answered = await source.minAgeMs(entryFillBounds(T['stage2_entry'] as never, Date.now()));
+    expect(lines.join('\n')).toContain(`walked until it is ${answered / 1000}s old`);
+    expect(source.issued()).toBe(0);
+  }, 60_000);
 
   it('ships pinned thresholds, with Stage 2 active and every provider bound tied together', () => {
     const T = loadThresholds();
@@ -5191,6 +5243,17 @@ describe('the keyless boundary holds in both directions', () => {
     for (const module of Object.keys(SCORING_IMPORTS)) {
       const reachable = [...closureOf(module)].filter((m) => VENDOR_MODULES.has(m));
       expect(reachable, `${module} must reach no vendor module, at any depth`).toEqual([]);
+    }
+
+    // AND NOT IN A TYPE POSITION EITHER. A JSDoc `import('./pumpfun.mjs').X` erases at runtime and
+    // so cannot carry a vendor value — but it is a scoring module NAMING a vendor, which is the
+    // property this block states, and it is invisible to everything above because the extractor
+    // reads the executable half. It is also how a contract typedef stays parked in the transport
+    // module that first wrote it, leaving that module's alias load-bearing for a scoring module.
+    for (const module of Object.keys(SCORING_IMPORTS)) {
+      const text = all.get(`tools/deployer-screen/${module}`) ?? '';
+      const named = [...new Set([...text.matchAll(/import\(['"]\.\/([\w.-]+\.mjs)['"]\)/g)].map((m) => m[1]!))];
+      expect(named.filter((m) => VENDOR_MODULES.has(m)), `${module} must name no vendor module in a type`).toEqual([]);
     }
 
     // The two contracts are importable by a scoring module ONLY because they can never carry a
@@ -11384,6 +11447,50 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     expect(paths.findIndex((p) => p.includes('/query/4242') && !p.includes('execute'))).toBeLessThan(
       paths.findIndex((p) => p.includes('execute')),
     );
+  });
+
+  it('a window reports what it COST, comparison request included', async () => {
+    // `LaunchWindow.requests` is "requests it cost, including retries of shed ones", and the
+    // saved-query comparison is one of them: it is spent by this read, on this launch, before the
+    // execution. Snapshotting the counter after it made the per-launch progress line under-report
+    // by one every time — a small number, and the same class as any count that means less than its
+    // name. Proven against the client's own counter rather than against a literal.
+    const SQL = 'SELECT 1 -- committed entry statement';
+    const rows = [row()];
+    const client = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: (async (input: unknown, init: RequestInit) => {
+        const url = String(input);
+        if (init.method === 'POST') return new Response(JSON.stringify({ execution_id: 'e1' }), { status: 200 });
+        if (url.includes('/query/4242') && !url.includes('results')) {
+          return new Response(JSON.stringify({ query_sql: SQL }), { status: 200 });
+        }
+        if (url.includes('/status')) {
+          return new Response(JSON.stringify({ state: 'QUERY_STATE_COMPLETED' }), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({
+            result: { rows, metadata: { total_row_count: rows.length, total_result_set_bytes: 300 } },
+            execution_ended_at: '2026-07-15T16:40:00Z',
+          }),
+          { status: 200 },
+        );
+      }) as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const source = duneFillSource(client, {
+      bounds: { pollIntervalMs: 0, maxPollAttempts: 3, maxResultRows: 100 },
+      coverage: { ok: true, toMs: BOUNDS.nowMs } as never,
+      query: { id: 4242, sql: SQL, parameters: () => ({ mint: MINT }) },
+      maxRequests: 20,
+    });
+    const window = await source.readWindow({ mint: MINT, deployedAtMs: CREATED }, BOUNDS);
+    expect(window.usable).toBe(true);
+    expect(client.issued()).toBeGreaterThan(1);
+    expect(window.requests).toBe(client.issued());
   });
 
   it('the cost source is injected too, and the route latch lives with the vendor', async () => {

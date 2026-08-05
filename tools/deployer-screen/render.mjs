@@ -1157,6 +1157,11 @@ export function renderStage1(run) {
  * @param {boolean} plan.stage2
  * @param {number} plan.maxScored
  * @param {import('./stage2.mjs').Stage2Thresholds} plan.entryThresholds
+ * @param {number} plan.entryMinAgeMs **THE SELECTED FILL SOURCE'S OWN ANSWER**, asked of it by
+ *   `screen.mjs` — never re-derived here. The plan states how old a launch must be before it is
+ *   walked, and only the vendor that will do the reading can answer that (captain decision 257a);
+ *   a figure computed a second time in the renderer is the shape captain decision 144a names, and
+ *   it would go on agreeing with the run right up until the day it did not.
  * @param {'creation-derived' | 'ownership-only'} plan.historySource
  * @param {{ maxRpcRequestsPerCandidate: number, rpcMinIntervalMs: number }} plan.creationWalk
  * @param {{ maxRpcRequestsPerCandidate: number, rpcMinIntervalMs: number, preferBlockRoute: boolean }} plan.costBounds
@@ -1270,7 +1275,7 @@ export function renderDryRun(plan) {
     L.push(`  past the mint: that same ${t.windowSlotSpan} slots at a measured worst-case rate, plus ${t.seekMarginMs / 1000}s of`);
     L.push('  clock slack, so an early vendor mint time cannot truncate the tail; that');
     L.push('  margin is a cursor hint and never a tolerance on the pre-mint drop. A launch is not');
-    L.push(`  walked until it is ${windowReachMs(t) / 1000}s old — the SAME derivation, not a second number, so the`);
+    L.push(`  walked until it is ${plan.entryMinAgeMs / 1000}s old — the SAME derivation, not a second number, so the`);
     L.push('  gate cannot fall behind the cursor when the chain slows. Pinned keyless');
     L.push('  pacing, one request in flight.');
     L.push('');

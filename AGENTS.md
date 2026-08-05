@@ -544,21 +544,24 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   day by decision 187a taking one of the free slots: **9 saved queries, 3 production and 6 retired
   scratch probes** — and re-listed 2026-08-05 at **10, the cap**, a sibling lane having taken the
   last free slot for a scratch probe. Retiring the retired scratch ids is queued work, so the number
-  moves in both directions — **re-list rather than quote it**; these two corrections one day apart
-  are an instance of exactly why. **At the cap there is no slot for a throwaway**, so a lane that
-  needs to validate new SQL either archives a retired probe first or deploys to the production id and
-  measures through it. The three production queries
+  moves in both directions — **re-list rather than quote it**; three corrections inside two days are
+  an instance of exactly why, because the SAME DAY it read 10 it re-listed again at **3** once those
+  probes were archived, and the entry-reproduction lane then created a fourth. **At the cap there is
+  no slot for a throwaway**, so a lane that needs to validate new SQL either archives a retired probe
+  first or deploys to the production id and measures through it. The four production queries
   are deployed in place: `8204672` enumeration and `8204603` coverage, whose SQL is committed in
-  `dune.mjs`, and `8214953` creation census, whose SQL is committed in
+  `dune.mjs`, `8235460` the Stage 2 opening-window fill tape, whose SQL is committed in
+  `tools/deployer-screen/dune-fills.mjs` → `ENTRY_SQL` and whose id is pinned beside it as
+  `ENTRY_QUERY_ID`, and `8214953` creation census, whose SQL is committed in
   `tools/arrival-rate-walk/cohort.mjs` → `COHORT_SQL` and whose runner is
   `tools/creation-census/run.mjs`. Each lane's `assertSavedQueryMatches` compares the committed text
   before spending an execution, because a saved
-  query is editable from a browser and its answer is a gate input. **EDITING ANY OF THE THREE SQL
+  query is editable from a browser and its answer is a gate input. **EDITING ANY OF THE FOUR SQL
   TEXTS IN THIS
   REPO IS HALF THE CHANGE: the saved query must be updated IN PLACE or the next real run refuses
   the whole Dune leg terminally** — the comparison happens before the execution.
   `tools/deployer-screen/README.md` →
-  "Deploying a change to the committed SQL" owns the step for the screen's two and names which id
+  "Deploying a change to the committed SQL" owns the step for the screen's three and names which id
   goes with which text; `tools/creation-census/README.md` owns it for `8214953`.
   **Nothing tracks the month ACROSS runs** — each run checks the ceiling itself (bullet above) and
   then forgets; the tools are stateless between runs. Auth is the `X-Dune-API-Key`
@@ -590,6 +593,34 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   it completed, and nothing about who owns the curve today. `CurveState.creator` is `null` there,
   `mergeHistories` counts `creatorMovementUnmeasured`, and a schema-≤8 record's `movedCreator: 0` —
   which means the walk read every curve and none had moved — is not the same number.
+- **THE STAGE 2 ENTRY STATEMENT IS NOW A MEASUREMENT RATHER THAN A CLAIM, AND IT FOUND A DEFECT IN
+  THE COMMITTED TAPE.** `dune-fills.mjs` → `ENTRY_SQL` (saved query `8235460`, custody as
+  `CREATION_SQL`'s) ran against all **235** taped launches through this repo's own production
+  functions: 235 measured, 0 create-slot disagreements, 0 launches short, **10,476 PumpSwap fills
+  across the 18 graduation-spanning launches — the tape's own count** — 0 closure mismatches over all
+  1,322 pairs, and a max realised error of **5.000e-7 SOL, the IDENTICAL figure the tape-sourced leg
+  produces**. `tools/deployer-screen/measurements/2026-08-05-dune-entry-reproduction/` owns every
+  number and its limits; `test/dune-entry-reproduction.test.ts` asserts them. Four things bind:
+  **(1) THE AMM HALF IS THE DECODED PROGRAM EVENTS, NOT `dex_solana`** — `pumpswap_solana.base_trades`
+  is a view over a backfill that inner-joins each swap to an SPL transfer and silently drops the
+  misses, measured at **5,444 of 10,476** AMM fills while missing zero curve fills;
+  `pumpdotfun_solana.pump_amm_evt_buyevent`/`sellevent` have no such join, and the quote column is
+  the **`user_`** one (matched 198/198 where the other two matched 0/198).
+  **(2) `window/*.jsonl.gz` IS WRONG ON 658 OF 107,439 FILLS** — understating `sol` 25–40x, on
+  `BuyExactSolIn` transactions; 22 of them reach a graded pair and the chain agrees with the
+  STATEMENT on 22 of 22. `IMPORT.md` correction 11 owns it, no row was edited, and the twelve
+  affected pairs are enumerated in `dune-reproduction.mjs` → `REFUTED_REFERENCE_PAIRS` with the
+  unexcluded reading (1.842 SOL) shipped beside the excluded one.
+  **(3) A PUMP.FUN LAUNCH CAN BE QUOTED IN SOMETHING OTHER THAN SOL** — `maxxing` `97nnzgv9…` (the
+  second launch of that name) is USDC-quoted, so all 384 of its fills return `sol_raw = 0`
+  legitimately while the trade endpoint reports a SOL-EQUIVALENT. It contributes no closed
+  create-slot outsider pair, so nothing published rests on it — **luck, not design**, and a lane
+  scoring such a launch through the Dune source would read those zeros as free entries.
+  **(4) RETRIEVAL IS ~95% OF THIS LANE'S BILL** — ~495 credits for a whole-tape run, ~4.9 of compute
+  per execution against 24.7 MB of result bytes — which inverts `stage2_entry_dune`'s "the lever is
+  windows scanned" without contradicting it: that block returns one row per launch and this
+  statement returns every fill. `--rows`/`--from-rows` exist because the first run discarded its rows
+  and a correction then cost a second full fetch.
 - **ToS reviewed 2026-08-03** (`CREATION-DERIVED.md` §8.7): no conflict. The scraping ban is on the
   Site, not the SQL API; the addendum forbids substituting for or competing with Dune, which internal
   research does not. `derive and discard` applies unchanged.

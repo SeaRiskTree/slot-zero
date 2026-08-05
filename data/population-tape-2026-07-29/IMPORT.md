@@ -37,7 +37,7 @@ for size other than the two directories named above.
 
 ## Corrections
 
-Later evidence has contradicted the imported prose ten times. **The originals stay unmodified** —
+Later evidence has contradicted the imported record eleven times. **The originals stay unmodified** —
 that is what makes this directory a primary record — so the corrections live here, and this
 is the file to add to when it happens again. The first two come from
 `kol-cohort-vs-outsider-funding/report.md` (2026-07-29, read-only, keyless, zero metered
@@ -256,6 +256,54 @@ across, and what is re-derivable in this repo is asserted in `test/reproduction.
    identical per-launch `adjacencyMarks` on every one — **0 differences** — and feeding the report's
    own launch ordering into the identical replay reproduces its 84/144 exactly. `report.md` and that
    report are primary records and are not edited; this entry is the correction.
+
+11. **`window/*.jsonl.gz` carries a WRONG `sol` on 658 of its 107,439 fills (0.61%), and this is the
+   first correction that lands on a COLUMN rather than on prose.** Found 2026-08-05 by
+   `tools/deployer-screen/dune-reproduction.mjs`, which ran the screen's committed Dune entry
+   statement over all 235 taped launches and compared every fill. The two sources agree on the token
+   amount on **107,439 of 107,439** rows and disagree on the SOL amount on **1,042**, in two shapes
+   that must not be conflated:
+
+   **(a) 658 rows where THIS FILE is wrong, understating `sol` by factors of ~25–40.** Three
+   independent things say so, and the first is decisive:
+
+   - **The chain.** Of those 658, **22 reach a create-slot outsider's realised P&L**. All 22 were
+     arbitrated with `getTransaction` on `api.mainnet-beta`: the trading wallet's own lamport
+     balance change agrees with the statement's figure on **22 of 22** and with this file's on
+     **0**. Example — `CympZjku…` / `pekN74ko…`, transaction
+     `5pV9eNiyMxR9…`: this file records a 0.072133332 SOL buy, the statement 1.913860914, and the
+     wallet's balance moves **−1.939904256 SOL**, which is the larger quote plus fee and rent.
+   - **This file's OWN price column.** On every affected row `sol / base` contradicts the row's own
+     `psol` by the same 25–40x, while `psol × base` lands on the statement's figure. Unaffected rows
+     agree within a couple of percent.
+   - **The wallets' own round trips.** The affected fills would make several of them 25x+ returns
+     inside a single slot on a curve that had not moved.
+
+   The affected transactions carry pump.fun's newer `BuyExactSolIn` instruction. **That is a lead,
+   not an established cause**, and only the 22 were checked on-chain — the other 636 share the shape
+   and the internal contradiction, which is evidence rather than proof.
+
+   **The consequence travels to `wallet_launch_pnl.csv`**, which is a projection of these tapes: its
+   `realised_sol` is wrong for the **12 (mint, wallet) pairs** those 22 fills belong to. The largest
+   error is 1.84 SOL, on `CympZjku…` / `pekN74ko…`. `closed_in_window` is NOT affected on any of
+   them — closure is decided on token residuals and the token amounts are correct throughout.
+   The twelve pairs are enumerated with their transactions in
+   `tools/deployer-screen/dune-reproduction.mjs` → `REFUTED_REFERENCE_PAIRS`.
+
+   **(b) 393 rows where the statement returns `sol_raw = 0` and NEITHER source is wrong.** 384 of
+   them are the whole of one launch — `maxxing`, `97nnzgv9…`, the second of the two launches sharing
+   that symbol — which is **quoted in USDC rather than SOL**: its create transaction moves 36.99
+   USDC and 0.0189 SOL. The decoded `SwapEvent` reports the SOL amount, which is genuinely zero;
+   the trade endpoint this tape was built from reports a SOL-EQUIVALENT valuation. They are
+   different quantities. Nine further single rows across eight other launches have the same shape.
+   **Any SOL-denominated aggregate over `97nnzgv9…` is a SOL-equivalent valuation, not SOL**, and
+   that launch happens to contribute zero closed create-slot outsider pairs, so nothing published
+   here rests on it.
+
+   **No row in this directory is edited** — the never-reformat rule is absolute, and that is what
+   makes this a primary record. `test/dune-entry-reproduction.test.ts` asserts the committed
+   measurement, and `tools/deployer-screen/measurements/2026-08-05-dune-entry-reproduction/` holds
+   it in full, including the unexcluded reading.
 
 The funding investigation also settles `report.md` §10.3 — **both `5brv79eF…` and `EgQX9R3Q…` are
 genuine outsiders, confidence high** — and strengthens §7's "the six create-slot wallets are

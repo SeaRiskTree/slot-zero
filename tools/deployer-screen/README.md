@@ -90,6 +90,15 @@ node tools/deployer-screen/bundling.mjs --help
 node tools/deployer-screen/grade.mjs
 node tools/deployer-screen/grade.mjs --live
 node tools/deployer-screen/grade.mjs --help
+
+# THE DUNE ENTRY STATEMENT, RUN AGAINST THE COMMITTED TAPE. Also a DRY RUN by default: it prints
+# the batch plan and its credit estimate and opens no socket. --live SPENDS, and it is the most
+# expensive thing in this directory — ~530 credits of a 2,500-credit shared month, almost all of it
+# result bytes. Read "The reproduction" below before running it; the committed answer is already in
+# measurements/2026-08-05-dune-entry-reproduction/ and a test asserts it.
+node tools/deployer-screen/dune-reproduction.mjs
+node tools/deployer-screen/dune-reproduction.mjs --mints <mint>          # price a change cheaply first
+node tools/deployer-screen/dune-reproduction.mjs --live --out <path> --rows <cache>
 ```
 
 `screen.mjs`'s exit codes are distinct because the worst failure mode for a screen is an empty
@@ -251,14 +260,23 @@ answer for anybody.
 
 | what changed | saved query to update, in place |
 |---|---|
-| `CREATION_SQL` | **`8204672`** — the enumeration |
-| `COVERAGE_SQL` | **`8204603`** — the coverage probe |
+| `CREATION_SQL` (`dune.mjs`) | **`8204672`** — the enumeration |
+| `COVERAGE_SQL` (`dune.mjs`) | **`8204603`** — the coverage probe |
+| `ENTRY_SQL` (`dune-fills.mjs`) | **`8235460`** — the opening-window fill tape |
 
-The ids are pinned in `thresholds.json` → `dune`. **There is no new query to create**: the free tier
-allows 10 private queries and the account holds 10, which is why both production queries were
-upgraded in place rather than added. Paste the committed text verbatim — comments included, since
-`normaliseSql` compares everything but line endings and trailing whitespace, and the comments are
-where the traps are written down.
+The first two ids are pinned in `thresholds.json` → `dune`; `ENTRY_SQL`'s is pinned beside the text
+it belongs to, as `dune-fills.mjs` → `ENTRY_QUERY_ID`. Paste the committed text verbatim — comments
+included, since `normaliseSql` compares everything but line endings and trailing whitespace, and the
+comments are where the traps are written down.
+
+**The private-query slots are NOT full, and the claim that they were is what this line used to
+say.** The free tier allows 10 and this section stated the account held 10, so a new statement had
+to displace an existing one. Re-listed 2026-08-05 with `GET /api/v1/queries?limit=100` — free of
+credits, though not of the key — and the account held **three**: the two above and the creation
+census's `8214953`. A sibling lane's retired scratch probes had been archived since the count was
+last written down. `ENTRY_SQL` was therefore created as a **fourth** query rather than displacing
+one. The number moves in both directions, which is exactly why `AGENTS.md` says re-list rather than
+quote it; treat the figure in this paragraph the same way.
 
 **Spend.** Free tier, 2,500 credits/month, **shared**, and only 10 private queries. **A failed
 execution is still billed and is terminal — `DuneClient.execute` is the one call in this repository
@@ -1037,9 +1055,15 @@ declared mint is refused `coverage-unproven`, the pre-mint tripwire keeps the sw
 slack, ordering is recovered as `tx_index` then `outer_instruction_index` (Gate 1 §5.2 — the obvious
 mapping onto `inner_instruction_index` is wrong), rows are sorted by the key before anything is
 summed, the venue column is mandatory rather than defaulted, and `priceSol` is **NaN, meaning
-unmeasured**, never `0`. What it does NOT hold is the entry SQL and its pinned saved-query id
-(captain decision 258b) or any price or ceiling (255b): the statement is injected, and **absent
-means refuse every window**.
+unmeasured**, never `0`. It does NOT hold any price or ceiling (255b).
+
+**It now DOES hold the statement.** `ENTRY_SQL` and `ENTRY_QUERY_ID` (saved query **`8235460`**) are
+committed there, with `committedEntryQuery()` assembling them into the `DuneEntryQuery` this module
+already knew how to read. Committing the text did **not** wire it: `screen.mjs` still selects the
+swap-api source and hands this source no statement, so `opts.query` is still injected and **absent
+still refuses every window**. What changed is that the statement has been run against every launch
+on the committed tape and now carries the same custody `CREATION_SQL` does — see
+[the reproduction](#the-reproduction--the-statement-run-against-every-launch-on-the-tape).
 
 **The three sampling caps are source-scoped, and the Dune source's live in `thresholds.json` →
 `stage2_entry_dune`** (6.1.0, the captain's ruling of 2026-08-05). The swap-api walk pays in
@@ -1063,6 +1087,56 @@ name nor a quantity in the other unit would still pass, and the test names that 
 
 `grade.mjs` builds the same two sources the screen does, so there is still exactly one Stage 2 and
 the grader cannot drift from the screen it grades.
+
+### The reproduction — the statement run against every launch on the tape
+
+**Gate 3 precondition 1, 2026-08-05.** `node tools/deployer-screen/dune-reproduction.mjs` runs
+`ENTRY_SQL` against all **235** launches the committed population tape proved coverage for and
+compares the result — through `duneRowsToWindow` → `measureLaunchEntry` → `verifyFieldReproduction`,
+the production functions, not a re-implementation — against the dataset's own `wallet_launch_pnl.csv`.
+That is what promotes the statement from a claim to **the measurement**, which is why it also gains
+the custody `CREATION_SQL` has. The record and the long form are
+[`measurements/2026-08-05-dune-entry-reproduction/`](measurements/2026-08-05-dune-entry-reproduction/README.md);
+`test/dune-entry-reproduction.test.ts` asserts it. Cite them rather than restating the figures.
+
+**235 of 235 measured, 0 create-slot disagreements, 0 launches short, 10,476 PumpSwap fills across
+the 18 graduation-spanning launches — exactly the tape's own — 0 closure mismatches over all 1,322
+pairs, and a max realised error of 5.000e-7 SOL, which is the IDENTICAL figure the tape-sourced leg
+produces.** Not "inside the bar": the same number.
+
+Four things a lane touching this should know, and the last two are the expensive ones:
+
+- **Custody precedes the spend, and the assertion that says so is shown FAILING.**
+  `custodyOrderVerdict` is a predicate over a recorded call log, and the test drives it twice — over
+  the production runner, and over a deliberately execute-first runner built from the same two
+  primitives, where it must refuse. An assertion that cannot fail is the defect this repo keeps
+  finding.
+- **The AMM half reads the decoded program events, and that was MEASURED rather than chosen.** The
+  first whole-tape run read `pumpswap_solana.base_trades` — dex_solana's model, a view over a
+  backfill that inner-joins each swap to a matching SPL transfer and drops the ones that do not
+  match — and got **5,444 of 10,476** AMM fills, 48% short, on all 18 launches, while missing zero
+  curve fills. `pumpdotfun_solana.pump_amm_evt_buyevent`/`sellevent` have no such join. The quote
+  column is the `user_` one: it matched the tape on 198 of 198 fills of one launch where
+  `quote_amount_in` and `quote_amount_in_with_lp_fee` matched none.
+- **The tape is what the chain disagrees with, on 658 of 107,439 fills.** Twenty-two of them reach a
+  graded pair; all twenty-two were arbitrated with `getTransaction`, and the wallet's own balance
+  change agrees with the statement on 22 of 22. Filed as correction 11 in that dataset's
+  `IMPORT.md`; **no dataset row was edited**. The twelve affected pairs are enumerated in
+  `REFUTED_REFERENCE_PAIRS`, and the record ships the unexcluded reading (1.842 SOL) beside the
+  excluded one so the exclusion cannot become a tolerance.
+- **A pump.fun launch can be quoted in something other than SOL, and this repo had not met one.**
+  `maxxing` `97nnzgv9…` — the second of the two launches sharing that symbol — is USDC-quoted: all
+  384 of its fills return `sol_raw = 0` because the `SwapEvent`'s SOL amount is genuinely zero, while
+  the trade endpoint reports a SOL-equivalent valuation. Neither source is wrong; they are different
+  quantities. It contributes no closed create-slot outsider pair, so nothing published rests on it —
+  **luck, not design**, and a lane scoring such a launch through the Dune source would read those
+  zeros as free entries.
+
+**Spend.** The whole-tape run costs **~495 credits** of a 2,500-credit shared month, and **~95% of it
+is result bytes** rather than compute — which inverts the assumption `stage2_entry_dune` reasons
+from, without contradicting it: that block returns one aggregated row per launch and this statement
+returns every fill. `--rows` caches what was paid for and `--from-rows` recomputes the comparison
+offline, because the first run threw its rows away and a correction then cost a second full fetch.
 
 ### The dry run is SPLIT so it can be both free and honest
 

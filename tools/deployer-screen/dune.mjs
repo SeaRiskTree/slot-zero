@@ -1391,11 +1391,41 @@ async function readResult(client, path, bounds) {
 }
 
 /**
+ * What Dune said went wrong with an execution, in one clause, from its own status body.
+ *
+ * Defensive on every field for the reason the rest of this module is: the shape is discovered rather
+ * than documented, and a reader that assumed `error.message` was a string would throw a TypeError
+ * from inside the reporting path and replace a billed execution's reason with a stack trace. An
+ * absent reason is SAID, never elided — "Dune gave no reason" is itself information about a bill.
+ *
+ * @param {unknown} status The `/execution/{id}/status` body.
+ * @returns {string} A sentence, always non-empty.
+ */
+export function describeExecutionError(status) {
+  const error = field(status, 'error');
+  const message = field(error, 'message');
+  const type = field(error, 'type');
+  const parts = [];
+  if (typeof type === 'string' && type !== '') parts.push(type);
+  if (typeof message === 'string' && message !== '') parts.push(message);
+  if (parts.length === 0) return 'Dune returned no reason for the failure.';
+  return `${parts.join(' — ')}.`;
+}
+
+/**
  * Run a saved query and wait for it.
  *
  * **The execution is issued exactly once.** A failed or cancelled execution is reported, never
  * retried: it is billed either way, and a second one buys a second bill for the same answer.
  * Polling is retried, because a poll is a read and a failed read costs nothing.
+ *
+ * **AND WHEN IT FAILS, THE VENDOR'S OWN REASON TRAVELS WITH THE REFUSAL.** It used to be dropped:
+ * the throw named the state and nothing else, so an operator who had just paid for a failed
+ * execution had to go and ask Dune separately what it had objected to — money spent and the result
+ * withheld, which is exactly the shape captain ruling 292a names. Dune puts a `{type, message}`
+ * under `error` on the status body, and it is the difference between "your statement overflowed an
+ * integer" and a state name. It is read defensively and its absence is said rather than papered
+ * over, because a failure whose reason is missing is still a failure that must be reportable.
  *
  * @param {import('./client.mjs').DuneClient} client
  * @param {number} queryId
@@ -1414,8 +1444,9 @@ export async function executeAndRead(client, queryId, parameters, bounds) {
     }
     if (state === 'QUERY_STATE_FAILED' || state === 'QUERY_STATE_CANCELLED' || state === 'QUERY_STATE_EXPIRED') {
       throw new DuneRefused(
-        `Dune execution of query ${queryId} ended ${String(state)}. It is billed either way and it is ` +
-          `NOT retried — the creation enumeration falls back to the Solana RPC walk for this run.`,
+        `Dune execution of query ${queryId} ended ${String(state)}: ${describeExecutionError(status)} It is ` +
+          `billed either way and it is NOT retried — the creation enumeration falls back to the Solana ` +
+          `RPC walk for this run.`,
         { status: null, terminal: true },
       );
     }

@@ -106,8 +106,15 @@ const DEFAULT_RUNS_DIR = join(HERE, 'runs');
  * **2** adds `alarm.unmeasuredConditionArmed`. Bumped rather than added silently for the reason the
  * field itself exists: in a schema-1 record the field's absence is indistinguishable from a run that
  * had the alarm armed, so a reader with no version could not tell a disarmed run from an older one.
+ *
+ * **3** changes what `spend.dailyAllowance` MEANS. Under schema 2 it held the per-run keyed ceiling
+ * (`budget.maxKeyedRequests` — 402 after captain decision 267a, and mislabelled a daily allowance);
+ * under schema 3 it holds the vendor's actual day, `MADEONSOL_DAILY_REQUESTS` (100,000). Bumped
+ * rather than corrected in place because the two quantities differ by ~250x while both being
+ * well-formed request counts, so a reader holding a schema-2 record has nothing in the record itself
+ * that would tell them which one they have — a version is exactly how that is said.
  */
-export const FEED_RECORD_SCHEMA_VERSION = 2;
+export const FEED_RECORD_SCHEMA_VERSION = 3;
 
 const EXIT = {
   ok: 0,
@@ -220,8 +227,8 @@ EXIT CODES
 export function parseFeedArgs(argv) {
   /** @type {FeedOptions} */
   const opts = {
-    // **Dry by default.** A scheduled lane against a shared credential does not get to have its
-    // spending path be the one you reach by forgetting a flag.
+    // **Dry by default.** A scheduled lane — the one caller no human reviews before each spend —
+    // does not get to have its spending path be the one you reach by forgetting a flag.
     live: false,
     bootstrap: false,
     gate: null,
@@ -776,7 +783,8 @@ export async function main(opts, env, out, err, deps = {}) {
    * Persist the ledger, assemble the record, render and optionally write.
    *
    * One path for both the completed and the aborted case, so a run that stopped early still updates
-   * the memory it paid for. Re-learning those wallets would cost the shared allowance twice.
+   * the memory it paid for. Re-learning those wallets would spend a keyed request twice for one
+   * answer.
    *
    * @param {number | null} abortCode The exit code an aborted run is returning, or `null` when the
    *   run completed. Marks the run row incomplete and drives the wording; the decision to abort was

@@ -78,8 +78,9 @@ still how this lane silently becomes the largest consumer of a day nothing here 
 
 Three structural guarantees back the numbers rather than describing them:
 
-- **The default path is a dry run.** `--live` is required to spend. A scheduled lane against a shared
-  credential does not get to have its spending path be the one you reach by forgetting a flag.
+- **The default path is a dry run.** `--live` is required to spend. A scheduled lane — the one caller
+  no human reviews before each spend — does not get to have its spending path be the one you reach by
+  forgetting a flag.
 - **A plan that does not fit is refused before the first request**, with nothing spent
   (`planFeedRun`). `--gate` can only ever *lower* the pinned batch.
 - **One `BoundedClient`, one ceiling.** Every provider call in this lane goes through it, and

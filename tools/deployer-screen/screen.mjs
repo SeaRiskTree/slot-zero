@@ -152,8 +152,9 @@ OPTIONS
                       being what binds). A plan whose worst case does not fit under the ceiling is
                       refused before the first request (exit 2).
   --tier <t>          Enumerate ONE tier: elite|good|moderate|rising|cold. The default is TIERED
-                      already: 'good' + 'elite', six enumeration requests (captain decision 262a).
-                      This narrows to three; it does not turn tiering on.
+                      already — the pinned tier set in seed.mjs -> DEFAULT_TIERS, 'good' + 'elite'
+                      (captain decision 262a). This NARROWS that to one tier; it does not turn
+                      tiering on, and the dry-run plan prints the exact enumeration cost.
   --no-stage2         Skip entry scoring. Stage 1 only — the competence gate on its own, which
                       answers nothing about whether a window is enterable.
   --score <n>         Max gate survivors to score in Stage 2. Cannot exceed the pinned cap.

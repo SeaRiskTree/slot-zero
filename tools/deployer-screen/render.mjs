@@ -32,9 +32,11 @@ import { windowReachMs } from './pumpfun.mjs';
 // there rather than here so the screen's plan and the census's cannot drift, and so a change that
 // degraded an UNAVAILABLE into a blank or a zero would have to delete the function that says why.
 import {
+  PLAN_NOTE_WIDTH,
   eligibilityFloorSeconds,
   eligibilityUnavailableNote,
   sourceFigureUnavailableNote,
+  wrapPlanNote,
 } from './plan-source.mjs';
 import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
@@ -1219,8 +1221,9 @@ export function renderDryRun(plan) {
       L.push('nothing was fetched. This plan states no eligibility floor, so there was nothing here');
       L.push('worth buying one for.');
     } else if (plan.entryEligibility.known && plan.entryEligibility.billed) {
-      L.push('Building the fill source was authorised to spend; the bound it was given and what it');
-      L.push('actually cost are stated above. Nothing else here was fetched.');
+      L.push('Building the fill source was authorised to spend; the bound it was given is stated');
+      L.push('above, and the ACTUAL line beside it states what it cost or that the cost itself');
+      L.push('could not be read. Nothing else here was fetched.');
     } else if (plan.entryEligibility.known) {
       L.push('Building the selected fill source costs nothing, so the authorisation bought nothing');
       L.push('and nothing was fetched. This page is what a plain --dry-run prints.');
@@ -1238,9 +1241,10 @@ export function renderDryRun(plan) {
       // reason on a page whose own note directly below says what actually happened.
       if (plan.entryEligibility.spent === true) {
         L.push('The selected fill source WAS built under this authorisation and the spend was MADE —');
-        L.push('the bound and what it actually cost are stated above — and the construction then');
-        L.push('FAILED, so the figure it was bought for is UNAVAILABLE. The page is printed in full');
-        L.push('rather than withheld on top of the spend. Same reason, same words, below:');
+        L.push('the bound is stated above, and the ACTUAL line beside it states what it cost or that');
+        L.push('the cost itself could not be read — and the construction then FAILED, so the figure');
+        L.push('it was bought for is UNAVAILABLE. The page is printed in full rather than withheld on');
+        L.push('top of the spend. Same reason, same words, below:');
       } else if (plan.entryEligibility.authorisedBy === null) {
         L.push('The selected fill source declared NOTHING about what building it costs, so this plan');
         L.push('did NOT build it: nothing was fetched, and NOTHING CAN BE SAID ABOUT WHAT BUILDING IT');
@@ -1252,7 +1256,7 @@ export function renderDryRun(plan) {
         L.push('figure it withholds further down, including what would authorise the purchase:');
       }
       for (const note of eligibilityUnavailableNote(plan.entryEligibility)) {
-        for (const line of wrap(note, 76)) L.push(`  ${line}`);
+        for (const line of wrapPlanNote(note, PLAN_NOTE_WIDTH)) L.push(`  ${line}`);
       }
     }
   } else {
@@ -1339,7 +1343,7 @@ export function renderDryRun(plan) {
         measuredOn: 'swap-api',
         selected: eligibility.kind,
       })) {
-        for (const line of wrap(note, 74)) L.push(`    ${line}`);
+        for (const line of wrapPlanNote(note, PLAN_NOTE_WIDTH)) L.push(`    ${line}`);
       }
     };
     L.push(
@@ -1443,7 +1447,7 @@ export function renderDryRun(plan) {
       L.push('  A launch is not walked until it is old enough, and');
       L.push('  HOW OLD IS UNAVAILABLE IN THIS PLAN:');
       for (const note of eligibilityUnavailableNote(eligibility)) {
-        for (const line of wrap(note, 74)) L.push(`    ${line}`);
+        for (const line of wrapPlanNote(note, PLAN_NOTE_WIDTH)) L.push(`    ${line}`);
       }
       L.push('  Every other figure on this page is free of that and stands.');
     }

@@ -127,6 +127,7 @@ import {
   resolveEntryFillSource,
   selectEntryFillSource,
 } from '../tools/deployer-screen/screen.mjs';
+import { renderDryRun as renderCensusDryRun } from '../tools/deployer-screen/bundling.mjs';
 import {
   PLAN_NOTE_WIDTH,
   billedConstruction,
@@ -136,7 +137,9 @@ import {
   freeConstruction,
   planEligibility,
   registrationOf,
+  sourceFigureUnavailableNote,
   undeclaredConstruction,
+  wrapPlanNote,
 } from '../tools/deployer-screen/plan-source.mjs';
 import {
   duneFillSource,
@@ -11755,7 +11758,9 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       });
       expect(billed).toContain('DRY RUN, SPEND AUTHORISED');
       expect(billed).toContain('Building the fill source was authorised to spend');
-      expect(billed).toContain('actually cost are stated above');
+      expect(billed.replace(/\s+/g, ' ')).toContain(
+        'the ACTUAL line beside it states what it cost or that the cost itself could not be read',
+      );
       expect(billed).not.toContain('costs nothing');
 
       // (2) KNOWN and FREE — the authorisation bought nothing, said as a claim about the purchase
@@ -11827,6 +11832,165 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       expect(head).toContain('Pass --dry-run-spend to authorise that spend');
       expect(head).not.toContain('costs nothing');
       expect(head).not.toContain('bought nothing');
+    });
+
+    it('the banner never claims a cost figure the ACTUAL line does not carry', async () => {
+      // THE SAME SELF-CONTRADICTION AS THE DEGRADED `why` HAD, ONE LEVEL UP — and this one is
+      // reachable through the SUCCESSFUL construction too, because an unreadable counter leaves
+      // `known: true` standing. A banner that promises "what it actually cost is stated above"
+      // over a line reading THE COST COULD NOT BE READ is a page disagreeing with itself, which is
+      // the defect class this whole lane removes. Both branches are driven end to end here: the
+      // eligibility comes out of `planEligibility` with a throwing `actual()`, and the very lines
+      // it announced are checked against the banner rendered from its result.
+      const TH = loadThresholds();
+      const plan = {
+        seedPlan: [],
+        maxCandidates: 12,
+        maxKeyedRequests: 45,
+        consistency: false,
+        maxKeylessRequests: TH['budget'].maxKeylessRequests,
+        historySource: 'creation-derived' as const,
+        creationWalk: TH['creation_walk'],
+        costBounds: TH['stage2_cost'],
+        stage2: true,
+        maxScored: TH['stage2_entry'].maxCandidatesScored,
+        entryThresholds: TH['stage2_entry'],
+        spendAuthorised: true,
+        keyDescription: null,
+        rpcEndpoint: resolveSolanaRpcEndpoint({}),
+        indexedWalk: TH['creation_walk_helius'],
+        worstCaseCredits: 0,
+        dune: TH['dune'],
+        duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
+        usingDune: true,
+        duneRefreshProbe: false,
+      };
+      const T = loadThresholds()['stage2_entry'] as never;
+      const bounds = entryFillBounds(T, Date.parse('2026-08-05T12:00:00Z'));
+      const unreadable = () => {
+        throw new Error('the credit balance endpoint returned no readable counter.');
+      };
+      const construction = () =>
+        billedConstruction('dune', {
+          why: 'building it runs a billed coverage probe.',
+          bound: 'at most 1 execution and 2.0 billed credits',
+          actual: unreadable,
+        });
+
+      for (const [label, build] of [
+        ['the construction SUCCEEDED', () => ({
+          ...swapApiFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 })),
+          kind: 'dune' as const,
+          minAgeMs: async () => 600_000,
+        })],
+        ['the construction FAILED', () => {
+          throw new Error('the coverage probe refused the trade tables.');
+        }],
+      ] as const) {
+        const announced: string[] = [];
+        const eligibility = await planEligibility({
+          registration: { construction: construction(), build },
+          bounds,
+          spendAuthorised: true,
+          authorisedBy: '--dry-run-spend',
+          announce: (l) => announced.push(l),
+        });
+        const spend = announced.join(' ').replace(/\s+/g, ' ');
+        // The line the banner points at, in the state that makes the old wording false.
+        expect(spend, label).toContain('ACTUAL, after: UNREADABLE — THE SPEND WAS MADE AND WHAT IT COST COULD NOT BE READ');
+        expect(spend, label).not.toMatch(/ACTUAL, after: \d/);
+
+        const text = renderDryRun({ ...plan, entryEligibility: eligibility });
+        const lines = text.split('\n');
+        const banner = lines.slice(0, lines.indexOf('='.repeat(78), 1)).join(' ').replace(/\s+/g, ' ');
+        expect(banner, label).toContain('DRY RUN, SPEND AUTHORISED');
+        // THE POINTER SURVIVES — the reader still needs to know where that information is — but it
+        // promises only what the line can deliver, in both sub-cases.
+        expect(banner, label).toContain('the ACTUAL line beside it states what it cost or that the cost itself could not be read');
+        expect(banner, label).not.toContain('what it actually cost are stated above');
+        expect(banner, label).not.toContain('what it actually cost is stated above');
+      }
+    });
+
+    it('every printer wraps a SHARED plan sentence at the ONE shared width', async () => {
+      // `PLAN_NOTE_WIDTH` claims the shared sentences are laid out at one width, so that "the two
+      // plan surfaces print the same sentence" is a claim about what a reader SEES and not only
+      // about what a string holds. A claim outrunning its enforcement is a named recurring defect
+      // here, and this is the enforcement: every surface that prints a shared note is rendered and
+      // its line breaks compared against the shared wrap. A printer that reintroduces a second
+      // width fails this even when the right margins happen to coincide, because the BREAKS move.
+      const TH = loadThresholds();
+      /** Where the shared note's own line breaks fall, whatever the printer indents it by. */
+      const breaksOf = (text: string, note: string) => {
+        const want = wrapPlanNote(note, PLAN_NOTE_WIDTH);
+        const lines = text.split('\n').map((l) => l.trim());
+        const at = lines.indexOf(want[0]!);
+        expect(at, `the note's first line is not rendered at the shared width:\n${text}`).toBeGreaterThanOrEqual(0);
+        return lines.slice(at, at + want.length);
+      };
+
+      const unavailable = {
+        known: false as const,
+        kind: 'dune' as const,
+        why: 'building it runs the decoded trade tables\' coverage probe, whose result read is billed by bytes.',
+        authorisedBy: '--dry-run-spend',
+      };
+      const note = eligibilityUnavailableNote(unavailable)[0]!;
+      const want = wrapPlanNote(note, PLAN_NOTE_WIDTH);
+      expect(want.length).toBeGreaterThan(1);
+
+      const screenPlan = {
+        seedPlan: [],
+        maxCandidates: 12,
+        maxKeyedRequests: 45,
+        consistency: false,
+        maxKeylessRequests: TH['budget'].maxKeylessRequests,
+        historySource: 'creation-derived' as const,
+        creationWalk: TH['creation_walk'],
+        costBounds: TH['stage2_cost'],
+        stage2: true,
+        maxScored: TH['stage2_entry'].maxCandidatesScored,
+        entryThresholds: TH['stage2_entry'],
+        keyDescription: null,
+        rpcEndpoint: resolveSolanaRpcEndpoint({}),
+        indexedWalk: TH['creation_walk_helius'],
+        worstCaseCredits: 0,
+        dune: TH['dune'],
+        duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
+        usingDune: true,
+        duneRefreshProbe: false,
+        entryEligibility: unavailable,
+      };
+      // (1) the screen's Stage 2 block, and (2) the spend-authorised banner, which used to wrap the
+      // same sentence two columns wider than everyone else.
+      expect(breaksOf(renderDryRun({ ...screenPlan, spendAuthorised: false }), note)).toEqual(want);
+      expect(breaksOf(renderDryRun({ ...screenPlan, spendAuthorised: true }), note)).toEqual(want);
+
+      // (3) the census's plan surface, the other half of the "cannot drift" claim.
+      const censusText = renderCensusDryRun({
+        cohortSize: 82,
+        cohortCap: TH['bundling_census'].maxCohortSize,
+        maxCandidates: TH['bundling_census'].maxCandidatesSurveyed,
+        census: TH['bundling_census'],
+        entry: TH['stage2_entry'],
+        entryEligibility: unavailable,
+        listingIntervalMs: TH['budget'].keylessMinIntervalMs,
+      });
+      expect(breaksOf(censusText, note)).toEqual(want);
+
+      // (4) THE OTHER SHARED SENTENCE, printed by the screen when a figure was measured on a source
+      // this run is not using. Same vocabulary, so it must be the same layout too.
+      const figureNote = sourceFigureUnavailableNote({
+        figure: 'pages per launch (p50/p90/p95/max) and the shed rate',
+        measuredOn: 'swap-api',
+        selected: 'dune',
+      })[0]!;
+      const measured = renderDryRun({
+        ...screenPlan,
+        spendAuthorised: false,
+        entryEligibility: { known: true, kind: 'dune', minAgeMs: 600_000, billed: true },
+      });
+      expect(breaksOf(measured, figureNote)).toEqual(wrapPlanNote(figureNote, PLAN_NOTE_WIDTH));
     });
 
     it('the eligibility sentence is rendered whole, in both the known and the unknown branch', () => {

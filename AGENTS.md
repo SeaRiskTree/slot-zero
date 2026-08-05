@@ -829,7 +829,10 @@ dev currently?"*, and the shape of the answer is the point:
   Gate 3 has not been convened and `screen.mjs` selects `'swap-api'` on every run, so every live
   number is still `stage2_entry`'s. Every evidence bar (`minRoomLeft`, the field bars, the cost bar)
   stays in `stage2_entry` and governs both sources, and a test forbids either justification from
-  NAMING the other's cost parameters (vocabulary, not arithmetic — the test says so itself).
+  NAMING the other's cost parameters **or stating a QUANTITY in the other's unit** — a credit figure
+  on the swap-api side, a request figure on the Dune side — while a bare mention used to disclaim the
+  other unit is deliberately allowed on both sides (vocabulary and cross-unit figures, not the
+  arithmetic itself — the test says so itself).
   **A Gate 3 wiring MUST record the source-scoped caps**: `screen.mjs` files `stage2_entry`
   unconditionally and `grade.mjs` reads `minLaunchesSampled`/`maxLaunchesPerCandidate` back out of
   it, and those are exactly the two keys that differ, so scoring through Dune while recording

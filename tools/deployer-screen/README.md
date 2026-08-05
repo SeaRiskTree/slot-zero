@@ -1047,8 +1047,10 @@ the terminal size gets derived against the widened discovery pool — and why th
 verdict **harder** to reach, not easier. `stage2_entry_dune` is the **single owner** of those three
 values: `stage2_entry`'s own justifications point at it and restate none of them, so when 289b's
 interim size is superseded that block is the one edit site. A test asserts that neither block's
-justification NAMES the other's cost parameters, which is vocabulary rather than arithmetic and says
-so itself.
+justification NAMES the other's cost parameters **nor states a QUANTITY in the other's unit** — a
+credit figure on the swap-api side, a request figure on the Dune side — while a bare mention of the
+other unit, used to disclaim it, is deliberately allowed on both sides. That is vocabulary rather
+than arithmetic and the test says so itself.
 
 `grade.mjs` builds the same two sources the screen does, so there is still exactly one Stage 2 and
 the grader cannot drift from the screen it grades.

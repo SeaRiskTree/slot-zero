@@ -1896,16 +1896,21 @@ describe('the CLI contract', () => {
     //
     // WHAT THIS BOUND IS, stated exactly, because it is easy to misread as a vendor limit: 400 windows
     // is a SELF-IMPOSED HEADROOM CONVENTION OF THIS TEST — one hundredth of the row ceiling, chosen so
-    // the derivation stays two orders of magnitude clear of a quantity it is not sized on. THE VENDOR
-    // CEILING IS NOWHERE NEAR: at one row per planned launch, dune.maxResultRows 40,000 is not reached
-    // until 40,000 / 22 = ~1,818 candidates, so rows returned genuinely bind nothing at any cap this
-    // lane will plausibly consider.
+    // the derivation stays two orders of magnitude clear of a quantity it is not sized on. THE
+    // ENUMERATION LANE'S ROW CEILING IS NOWHERE NEAR: at one row per planned launch, dune.maxResultRows
+    // 40,000 is not reached until 40,000 / 22 = ~1,818 candidates, so rows returned genuinely bind
+    // nothing at any cap this lane will plausibly consider. That 40,000 is REPO-OWNED — the ?limit=
+    // this repo sends, pinned by captain decision 264a for enumeration reasons — and the VENDOR's own
+    // ceiling is UNMEASURED: 40,000 was verified accepted, and nothing here has looked for what would
+    // be refused.
     //
     // IT IS STILL A LIVE TRIPWIRE ON THE NEXT RAISE, and knowing whose bound it is decides what to do
     // when it fires. At the pinned cap of 22 launches, a scoring cap of 18 (396 windows) is the LAST
     // that passes and 27 (594) does not. So the widened-pool derivation captain decision 289b defers
-    // to will meet THIS CONVENTION, not a vendor ceiling: the decision it faces is whether to relax
-    // the convention and say why, NOT to raise dune.maxResultRows chasing a bound that does not exist.
+    // to meets TWO REPO DECISIONS AND NO EXTERNAL BOUND, and the one that binds first is THIS
+    // CONVENTION: relax it and say why, NOT raise dune.maxResultRows chasing a bound that does not
+    // exist. That value is the enumeration lane's and is sized in BYTES rather than rows, so a Stage 2
+    // sampling question is no reason to touch it.
     //
     // THE COUPLING IS DELIBERATE AND BORROWED, so it is named rather than left implicit:
     // dune.maxResultRows is owned by the ENUMERATION lane (captain decision 264a moved it

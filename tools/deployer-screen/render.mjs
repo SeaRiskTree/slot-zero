@@ -22,7 +22,7 @@ import { buildPath, ENDPOINT_ROLES } from './client.mjs';
 // The per-deployer cap's arithmetic, imported rather than restated: a dry run that printed a bound
 // the query does not apply would be worse than printing none. It is arithmetic over a pinned
 // threshold — no Dune-derived value crosses this import.
-import { LAUNCH_CAP_FLOOR, duneSpendPlan, launchCapPerWallet } from './dune.mjs';
+import { LAUNCH_CAP_FLOOR, MAYHEM_OBSERVATION_ONLY, duneSpendPlan, launchCapPerWallet } from './dune.mjs';
 import { estimatePlanCredits } from './client.mjs';
 import { LANDING_TIP_CAVEAT } from './entry.mjs';
 // The reach the plan quotes is DERIVED, never a second copy of the formula: an operator reads this
@@ -1128,6 +1128,9 @@ export function renderStage1(run) {
       }
     }
   }
+
+  L.push('');
+  for (const line of wrap(MAYHEM_OBSERVATION_ONLY, 78)) L.push(`  ! ${line}`);
 
   L.push('');
   L.push('='.repeat(78));

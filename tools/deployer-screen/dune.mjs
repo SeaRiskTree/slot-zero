@@ -802,8 +802,13 @@ export function assessCoverage(input) {
 /**
  * The one sentence that says what the mayhem flag is FOR, and what it is forbidden to do.
  *
- * It reaches this module's parser, {@link summariseMayhem}'s output and the run record, because a
- * count sitting beside a gate's inputs reads like one of them unless it says otherwise.
+ * WHERE IT ACTUALLY GOES, and it claims nothing beyond this: it is the rule this module's reading
+ * of `is_mayhem_mode` and {@link summariseMayhem} are written to, and it is printed VERBATIM once
+ * per run in `render.mjs` → `renderStage1`'s legend, because a count sitting beside a gate's inputs
+ * reads like one of them unless it says otherwise. It is NOT persisted on the run record: the
+ * per-candidate `creation` block carries the three numbers and `renderMayhemShare`'s own short
+ * "RECORDED, reaching no bar (227a)" suffix carries the pointer, so the sentence is stated once
+ * for a reader rather than repeated on every row.
  *
  * **Captain decision 227a**, on the evidence of `slot-zero-graduation-regime-remeasure` → `report.md`
  * §1.4 and §3 (held in firstmate's records, not in this repo — see `CLAUDE.md` → "Citing a report

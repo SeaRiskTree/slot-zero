@@ -76,7 +76,12 @@
 import { CeilingReached } from './client.mjs';
 import { entryCostTargets, measureLaunchEntry, priceLaunchEntry, scoreEntry } from './entry.mjs';
 import { toLaunchRefs } from './measure.mjs';
-import { KeylessHttpError, readCreateSlotCosts, readLaunchWindow } from './pumpfun.mjs';
+// `windowReachMs` is IMPORTED and is the eligibility gate ITSELF, not merely the walk's cursor.
+// The gate asks "has this launch finished happening"; the cursor asks "how far past the mint must I
+// seek". Those are the SAME INSTANT, so they are the same function call and cannot drift apart —
+// which is exactly what they did while the gate carried its own hand-written `windowMs +
+// seekMarginMs`. See {@link scoreCandidateEntry}.
+import { KeylessHttpError, readCreateSlotCosts, readLaunchWindow, windowReachMs } from './pumpfun.mjs';
 import { redactAll, redactVendorIdentifiers } from './record.mjs';
 
 /**
@@ -156,9 +161,12 @@ import { redactAll, redactVendorIdentifiers } from './record.mjs';
 /**
  * @typedef {object} Stage2Coverage
  * @property {number} launchRefsAvailable  Launches the vendor profile offered.
- * @property {number} minAgeMs             The eligibility gate itself, `windowMs + seekMarginMs`,
- *   persisted so a record PROVES the property rather than leaving it to be reconstructed from a
- *   log's seek cursors. See {@link scoreCandidateEntry}.
+ * @property {number} minAgeMs             The eligibility gate itself — `pumpfun.mjs` →
+ *   `windowReachMs`, i.e. `windowSlotSpan` converted at a MEASURED worst-case slot rate with
+ *   `windowMs` as a floor, plus `seekMarginMs` — persisted so a record PROVES the property rather
+ *   than leaving it to be reconstructed from a log's seek cursors. **It is derived, not pinned**, so
+ *   a record written when the chain was slower carries a different number than one written today and
+ *   that is the field working. See {@link scoreCandidateEntry}.
  * @property {number} launchesTooYoung     Refs refused by that gate: their window had not finished
  *   happening at the moment the walk would have placed its cursor.
  * @property {number} launchesEligible     `launchRefsAvailable − launchesTooYoung`.
@@ -303,32 +311,38 @@ export async function scoreCandidateEntry(client, input) {
   // A launch younger than this has not finished happening. Measuring it would read a truncated
   // opening as a quiet one.
   //
-  // THE BOUND IS `windowMs + seekMarginMs`, NOT `windowMs`, and the difference is a real defect
-  // rather than tidiness. The gate has to cover the NEWEST INSTANT THE WALK REACHES FOR. Gating on
-  // `windowMs` alone admitted a launch aged 60–65s whose tail had not happened yet: exactly the
-  // truncation `seekMarginMs` exists to prevent, arriving from the other side, and silent, because
-  // an absent tail reads as a quiet one.
+  // THE BOUND IS THE WALK'S OWN REACH, AND IT IS THE SAME FUNCTION CALL — not a second count that
+  // happens to agree. The gate has to cover the NEWEST INSTANT THE WALK REACHES FOR, which is
+  // exactly what `windowReachMs` computes, so asking it is the only way the two cannot come apart.
   //
-  // HISTORY, and read the tense: this bound WAS the same 65s the seek cursor used, which was then
-  // placed at `createdAtMs + windowMs + seekMarginMs`, and the measured 160-slot span was reckoned
-  // at a nominal 400ms/slot (64.0s), so the one gate covered both quantities. NEITHER HALF OF THAT
-  // STILL HOLDS. Since captain decision 144a the cursor is `pumpfun.mjs` → `windowReachMs`,
-  // denominated in the span's own unit at a MEASURED worst-case slot rate — 85,000ms at the pinned
-  // values — while this gate stays at 65,000ms; and at the measured 446.55ms/slot maximum the span
-  // itself is 71,448ms, so this gate is 6,448ms short of it. That shortfall is a KNOWN residual
-  // owned by another lane, not something this expression covers: it is pinned, with its direction
-  // of error, by the test `THE ELIGIBILITY GATE IS A SECOND BOUND AND IT IS STILL SHORT`.
+  // HISTORY, and read the tense, because this expression has now failed the same way TWICE. It was
+  // once `windowMs` alone, which admitted a launch aged 60–65s whose tail had not happened yet:
+  // exactly the truncation `seekMarginMs` exists to prevent, arriving from the other side, and
+  // silent, because an absent tail reads as a quiet one. It then became the hand-written sum
+  // `windowMs + seekMarginMs` = 65,000ms, which was correct only while the seek cursor was ALSO
+  // 65,000ms and the 160-slot span was reckoned at a nominal 400ms/slot (64.0s). Captain decision
+  // 144a moved the cursor to `windowReachMs` and left this sum behind, and the chain then drifted
+  // past the nominal rate on its own: at the measured 446.55ms/slot maximum the span alone is
+  // 71,448ms, so the sum ran 6,448ms short of the span and 20,000ms short of the reach — a launch
+  // could be admitted 20s before the cursor's own bound was in the past. **Raising the constant to
+  // 71,448 would have re-armed the identical trap**, because the defect was never the number: it
+  // was writing a DURATION for something the chain controls. It is derived now, in the span's own
+  // unit at a measured worst-case slot rate, so when the chain slows again this moves by itself.
   //
   // This does not give `windowMs` a third job or move membership off `windowSlotSpan` — see
-  // `thresholds.json` → `stage2_entry.justification.windowMs`.
+  // `thresholds.json` → `stage2_entry.justification.windowMs`. Nothing here widens what is
+  // MEASURED: it changes only WHEN a launch is judged old enough to measure, and membership stays
+  // `windowFilter`'s and `windowSlotSpan`'s alone.
   //
   // The old assertion `windowSlotSpan × 400ms <= windowMs + seekMarginMs` NO LONGER EXISTS: it was
   // denominated in the variable that did not move — the span never changed, the chain's slot rate
-  // did — so it stayed true and went out of validity with nothing failing. What enforces the
-  // coverage now is the describe block `the seek cursor reaches the whole declared slot window, at
-  // a MEASURED slot rate` in `test/deployer-screen.test.ts`, which re-derives the slot rate from
-  // the committed tapes on every run and asserts the reach covers the whole declared span. Widening
-  // the span still fails loudly, through that block rather than through the nominal-400 inequality.
+  // did — so it stayed true and went out of validity with nothing failing. That is this repo's
+  // recurring defect, a claim outrunning its enforcement, and a guard that cannot fail when the
+  // world changes is not a guard. What enforces the coverage now is the describe block `the seek
+  // cursor reaches the whole declared slot window, at a MEASURED slot rate` in
+  // `test/deployer-screen.test.ts`, which re-derives the slot rate from the committed tapes on
+  // every run, asserts the reach covers the whole declared span, and asserts THIS gate is that same
+  // reach — reading it out of a live `scoreCandidateEntry` rather than off the source text.
   //
   // **The counts below are persisted, and that is the point of computing them here.** Before
   // schema 6 a record carried `launchRefsAvailable` and `launchesAttempted` and nothing between
@@ -337,7 +351,11 @@ export async function scoreCandidateEntry(client, input) {
   // the gate above was observable only by reading seek cursors out of a run log. `minAgeMs`,
   // `launchesTooYoung`, `launchesEligible`, `launchesPlanned` and `launchesDroppedByCap` make the
   // filter's whole arithmetic readable from the record itself.
-  const minAgeMs = t.windowMs + t.seekMarginMs;
+  const minAgeMs = windowReachMs({
+    windowMs: t.windowMs,
+    seekMarginMs: t.seekMarginMs,
+    windowSlotSpan: t.windowSlotSpan,
+  });
   const ages = refs.map((r) => input.nowMs - r.deployedAtMs);
   const eligible = refs.filter((r) => input.nowMs - r.deployedAtMs >= minAgeMs);
   const planned = eligible.slice(0, t.maxLaunchesPerCandidate);

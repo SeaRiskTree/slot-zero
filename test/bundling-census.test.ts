@@ -35,7 +35,7 @@ import {
   summariseCensus,
 } from '../tools/deployer-screen/bundling.mjs';
 import type { CandidateBundling } from '../tools/deployer-screen/bundling.mjs';
-import { KeylessClient } from '../tools/deployer-screen/pumpfun.mjs';
+import { KeylessClient, windowReachMs } from '../tools/deployer-screen/pumpfun.mjs';
 import type { Stage2Thresholds } from '../tools/deployer-screen/stage2.mjs';
 
 const CENSUS_SOURCE = readFileSync(
@@ -451,12 +451,35 @@ describe('it measures bundling and nothing else', () => {
   });
 
   it('applies Stage 2\'s own eligibility floor, so a launch too young to have finished is skipped', async () => {
+    // DERIVED from `windowReachMs`, exactly as `censusCandidate` derives it, because the floor is no
+    // longer a duration either side may hand-write. It used to be `windowMs + seekMarginMs` in both
+    // files; the screen's moved to the span-derived reach and a local copy here would have left this
+    // census measuring a different set of launches than the pass it is a finding about.
+    const floor = windowReachMs(ENTRY);
+    const at = async (ageMs: number) =>
+      censusCandidate(scriptedClient([page({ createSlot: 500, bundles: 1, loneWallets: 1 })]).client, {
+        refs: [{ mint: 'YOUNG', deployedAtMs: NOW - ageMs }],
+        nowMs: NOW,
+        entry: ENTRY,
+        mintTimeBackdateMs: BACKDATE,
+      });
+
     const { client, urls } = scriptedClient([page({ createSlot: 500, bundles: 1, loneWallets: 1 })]);
-    const tooYoung = [{ mint: 'YOUNG', deployedAtMs: NOW - (ENTRY.windowMs + ENTRY.seekMarginMs - 1) }];
-    const result = await censusCandidate(client, { refs: tooYoung, nowMs: NOW, entry: ENTRY, mintTimeBackdateMs: BACKDATE });
+    const result = await censusCandidate(client, {
+      refs: [{ mint: 'YOUNG', deployedAtMs: NOW - (floor - 1) }],
+      nowMs: NOW,
+      entry: ENTRY,
+      mintTimeBackdateMs: BACKDATE,
+    });
     expect(result.launchesEligible).toBe(0);
     expect(result.launchesAttempted).toBe(0);
     expect(urls).toEqual([]);
+
+    // And the floor really is the screen's, not merely at least as strict: the old sum is now
+    // REFUSED here, which is the assertion that fails if either file grows its own copy again.
+    expect(floor).toBeGreaterThan(ENTRY.windowMs + ENTRY.seekMarginMs);
+    expect((await at(ENTRY.windowMs + ENTRY.seekMarginMs)).launchesEligible).toBe(0);
+    expect((await at(floor)).launchesEligible).toBe(1);
   });
 
   it('caps the sample at Stage 2\'s own per-candidate launch cap', async () => {

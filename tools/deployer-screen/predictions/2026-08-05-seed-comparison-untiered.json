@@ -1,0 +1,99 @@
+{
+  "documentVersion": 1,
+  "lane": "slot-zero-widened-run-seed-comparison (captain decision 232c)",
+  "leg": "untiered — the default seeds, no --tier filter",
+  "madeAtIso": "2026-08-05T04:46:12.000Z",
+  "basis": "Written and committed BEFORE the run, from the committed record of the only prior untiered default run (runs/2026-08-04.json, schema 12, complete, 82 candidates, gated 2026-08-04T21:09Z) and from thresholds.json -> stage1_gate.justification.minCompletionRate. No figure here is taken from a run that has not happened. The bar is 0.25 and is held, not tuned: captain decision 231a, and this lane may not move it.",
+  "predictions": [
+    {
+      "id": "U1-pool-size",
+      "statement": "The untiered pool gates between 55 and 110 candidates.",
+      "reading": "not-a-rate",
+      "metric": "coverage.gated",
+      "comparator": "between",
+      "value": [55, 110],
+      "rationale": "The prior untiered run surfaced 128 distinct wallets from three full 50-row pages, prefiltered 46 and gated 82 with the candidate cap never binding. The three seeds are recency feeds and a volume leaderboard, all of which slide day to day, so the count moves — but nothing about the enumeration changed, so a reading far outside this band would say the vendor's surface moved rather than that the pool did."
+    },
+    {
+      "id": "U2-admitted-count",
+      "statement": "The untiered leg admits between 1 and 8 candidates at minCompletionRate 0.25.",
+      "reading": "gate",
+      "metric": "derived:gatePassedCount",
+      "comparator": "between",
+      "value": [1, 8],
+      "rationale": "4 of 82 on the prior run. This is the headline number the comparison exists to produce and it is predicted narrowly on purpose: a reading outside it means the untiered seeds are not the stable population the prior run made them look."
+    },
+    {
+      "id": "U3-pool-is-spam",
+      "statement": "The untiered pool's median completion rate on the GATE reading is below 0.10.",
+      "reading": "gate",
+      "metric": "derived:medianGateCompletionRate",
+      "comparator": "<",
+      "value": 0.1,
+      "rationale": "0.021645 on the prior run, where 50 of the 60 rate failures read under 4%. An untiered default pool is dominated by the total_bonded leaderboard, whose top is industrial spam — 8,518 deployed / 127 bonded is the recorded extreme. This is the claim that the untiered leg screens a genuinely unselected population rather than a curated one."
+    },
+    {
+      "id": "U4-eligibility-not-the-bar",
+      "statement": "At least 40 candidates clear minTokens and minSpanDays, so the rate bar — not the sample-size bars — is what decides the untiered leg's admissions.",
+      "reading": "gate",
+      "metric": "derived:gateEligibleCount",
+      "comparator": ">=",
+      "value": 40,
+      "rationale": "66 of 82 on the prior run. It matters because a bar comparison is only meaningful over the population the bar actually judges: if eligibility collapsed, the 0.25 bar would be admitting out of a pool it never saw and the comparison would be about minTokens instead."
+    },
+    {
+      "id": "U5-admissions-not-vendor-flattered",
+      "statement": "On the untiered leg's ADMITTED candidates, the median of (vendor-page rate minus gate-reading rate) lies between -0.10 and +0.15 — the untiered admissions are not systematically ones the vendor's own surface flatters.",
+      "reading": "gate",
+      "metric": "derived:admittedMedianVendorMinusGateRate",
+      "comparator": "between",
+      "value": [-0.1, 0.15],
+      "rationale": "-0.007757 on the prior run's four admitted wallets (+0.693, -0.042, -0.016, 0.000). This is the operational form of the captain's question 4: a positive gap means the wallet looks better on the surface the vendor ranks it by than on what it actually created, i.e. we are importing their view; a gap at or below zero means the wallet is under-picked by that surface and the creation-derived reading is what found it. Stated as an interval rather than a sign because one of the four prior admissions (yHCxHBEa, +0.693) is a page-capped artefact and a repeat of it would drag a four-wallet median."
+    },
+    {
+      "id": "U6-readings-rarely-disagree",
+      "statement": "The two readings produce a different verdict for at most 6 untiered candidates.",
+      "reading": "not-a-rate",
+      "metric": "derived:verdictChangedCount",
+      "comparator": "<=",
+      "value": 6,
+      "rationale": "2 of 82 on the prior run. Most of an untiered pool fails on both readings by an order of magnitude, so the reading a bar is measured on should barely matter here — which is exactly what should NOT hold on the tiered legs, and the contrast is the finding."
+    },
+    {
+      "id": "U7-stage2-still-cannot-answer",
+      "statement": "At most 1 scored candidate reaches a MEASURED entry verdict.",
+      "reading": "not-a-rate",
+      "metric": "derived:measuredEntryVerdictCount",
+      "comparator": "<=",
+      "value": 1,
+      "rationale": "0 of 3 on the prior run, and 0 of 13 strangers proven on all eight windows in census/2026-08-03-bundling-census.md. The scoring cap has since gone 3 -> 7, so more candidates are reached; nothing about the co-ordination evidence on strangers has changed, and unproven windows were 18 of the 22 walked cleanly. A reading above 1 would mean the cap, not the evidence, was the binding constraint — which the prior run explicitly says it was not."
+    },
+    {
+      "id": "U8-dune-answers",
+      "statement": "The Dune enumeration leg is used rather than refused.",
+      "reading": "not-a-rate",
+      "metric": "dune.used",
+      "comparator": "==",
+      "value": true,
+      "rationale": "The prior run fell back to the Helius walk whole: its cached coverage probe was stale, the one permitted re-execution of query 8204603 ended QUERY_STATE_FAILED, and a failed execution is billed and never retried. The brief states the saved query is deployed to the six-column SQL and the leg works from main again. This prediction is how that claim gets tested rather than assumed, and it is the one whose failure costs the mayhem-share reading on every candidate."
+    },
+    {
+      "id": "U9-control-absent",
+      "statement": "The known-negative control 7ufmve7Z... is NOT in the untiered pool.",
+      "reading": "not-a-rate",
+      "metric": null,
+      "comparator": null,
+      "value": null,
+      "rationale": "No seed surfaced it on the prior untiered run, so that run carried no live control and said so. Graded by looking for the wallet in candidates[].wallet. If it IS present the untiered leg gains a live control and the comparison gets stronger, so this is a prediction whose failure is good news — which is worth recording precisely because that asymmetry is invisible after the fact."
+    },
+    {
+      "id": "U10-legs-barely-overlap",
+      "statement": "The untiered leg's ADMITTED set and the tiered legs' (good union elite) admitted set share at most 2 wallets.",
+      "reading": "not-a-rate",
+      "metric": null,
+      "comparator": null,
+      "value": null,
+      "rationale": "Cross-leg, so no single record resolves it: graded by intersecting candidates[].wallet where verdict == 'gate-passed' across this run record and the two tiered ones. The committed prior runs share 6 wallets of 82 at the POOL level and 1 (2N7qg9a3) among gate-passers, which is what the brief's 'share only 6 wallets out of 82' names. Admitted sets are smaller than pools, so the admitted overlap should be smaller still."
+    }
+  ]
+}

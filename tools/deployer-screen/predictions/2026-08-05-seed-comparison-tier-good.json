@@ -1,0 +1,90 @@
+{
+  "documentVersion": 1,
+  "lane": "slot-zero-widened-run-seed-comparison (captain decision 232c)",
+  "leg": "tiered — --tier good, the first half of the good/elite seeding",
+  "madeAtIso": "2026-08-05T04:46:12.000Z",
+  "basis": "Written and committed BEFORE the run, from runs/2026-08-02-good.json (schema 3, 65 candidates) and runs/2026-07-29-elite.json (schema 1, 12 candidates). BOTH OF THOSE PREDATE THE CREATION-DERIVED READING — schema 4 is where it arrives — so every rate in them is the VENDOR 70-RECORD PAGE and none of them is a gate-reading figure. Predictions below that name the gate reading are therefore projections across a reading boundary, not restatements, and they say so. The bar is 0.25 and is held, not tuned: captain decision 231a.",
+  "predictions": [
+    {
+      "id": "G1-pool-size",
+      "statement": "The --tier good pool gates between 25 and 90 candidates.",
+      "reading": "not-a-rate",
+      "metric": "coverage.gated",
+      "comparator": "between",
+      "value": [25, 90],
+      "rationale": "65 on 2026-08-02 from 150 rows. The tier filter is applied to all three seeds, and tier membership is itself a trailing window — 7ufmve7Z... read elite on 2026-07-29 and good four days later with its own numbers essentially unchanged — so the pool is less stable than the untiered one and the band is wider in proportion."
+    },
+    {
+      "id": "G2-admitted-count-falls-against-the-vendor-reading",
+      "statement": "The --tier good leg admits between 1 and 8 candidates at 0.25 on the GATE reading — fewer than the 10 the same tier admitted on 2026-08-02 against the vendor page.",
+      "reading": "gate",
+      "metric": "derived:gatePassedCount",
+      "comparator": "between",
+      "value": [1, 8],
+      "rationale": "The prior tier-good run admitted 10 of 65, but it graded on the vendor 70-record page, which is success-biased: ownership is a sellable position and the ones worth handing on are the winners. Four of those ten read exactly 70 tokens, i.e. page-capped, and a page-capped listing is the shape that produced yHCxHBEa...'s 1.0000-against-0.3071. Moving the same population to the creation-derived denominator should therefore admit FEWER, and this is the prediction that says so with a number."
+    },
+    {
+      "id": "G3-tiered-pool-sits-higher-on-the-gate-reading",
+      "statement": "The --tier good pool's median completion rate on the GATE reading exceeds 0.08 — an order of magnitude above the untiered pool's.",
+      "reading": "gate",
+      "metric": "derived:medianGateCompletionRate",
+      "comparator": ">",
+      "value": 0.08,
+      "rationale": "The untiered pool reads 0.021645 on this reading. The tier-good pool read 0.3684 on the VENDOR PAGE, and the one wallet where both readings exist fell by a factor of 3.3 across the boundary (1.0000 -> 0.3071), which puts a naive projection near 0.11. 0.08 is set below that projection because the factor is measured on the single most page-capped wallet in the repo and is likely to be the extreme rather than the median. THIS IS A PROJECTION ACROSS A READING BOUNDARY AND IS THE RISKIEST PREDICTION IN THIS DOCUMENT."
+    },
+    {
+      "id": "G4-vendor-page-reads-far-higher",
+      "statement": "The --tier good pool's median rate on the VENDOR PAGE exceeds 0.25.",
+      "reading": "vendor-page",
+      "metric": "derived:medianVendorPageCompletionRate",
+      "comparator": ">",
+      "value": 0.25,
+      "rationale": "0.3684 on 2026-08-02, on the same surface. Named as a vendor-page prediction and kept apart from G3 deliberately: the pair is what makes the reading gap measurable on one run instead of inferred across two, which is what the prior evidence could not do."
+    },
+    {
+      "id": "G5-admissions-are-vendor-flattered",
+      "statement": "On the --tier good leg's ADMITTED candidates, the median of (vendor-page rate minus gate-reading rate) exceeds +0.05.",
+      "reading": "gate",
+      "metric": "derived:admittedMedianVendorMinusGateRate",
+      "comparator": ">",
+      "value": 0.05,
+      "rationale": "The captain's question 4, as a number. A tier is assigned by the vendor from the same surface the vendor page reports, so a tier filter selects wallets that surface likes — and 4 of the prior run's 10 admissions were page-capped at 70 records, the shape that makes the page overstate. The untiered leg's companion prediction U5 puts the same statistic in [-0.10, +0.15]; if BOTH hold, the seeding decides whether the screen is importing the vendor's ranking, which is the finding the captain is buying."
+    },
+    {
+      "id": "G6-readings-disagree-more-here",
+      "statement": "The two readings produce a different verdict for at least 3 --tier good candidates.",
+      "reading": "not-a-rate",
+      "metric": "derived:verdictChangedCount",
+      "comparator": ">=",
+      "value": 3,
+      "rationale": "2 of 82 on the untiered leg. A tiered pool is concentrated exactly where the two readings can differ — wallets with enough visible success to be tiered at all — so which reading the bar is measured on should matter here in a way it does not there. This is the same claim as G5 in a discrete unit, and the two can fail independently."
+    },
+    {
+      "id": "G7-control-present-and-admitted",
+      "statement": "The known-negative control 7ufmve7Z... is in the --tier good pool AND is admitted at 0.25.",
+      "reading": "gate",
+      "metric": null,
+      "comparator": null,
+      "value": null,
+      "rationale": "It was surfaced by all three seeds under tier=good on 2026-08-02 and gate-passed there at 0.5286 on the vendor page; thresholds.json records it at 0.4325 on the gate reading, comfortably above 0.25. Graded by finding the wallet in candidates[] and reading its verdict. Its admission is the ceiling every bar argument in 231a rests on, so a tiered leg that admits it is a leg where the ceiling is live rather than offline in Stage 0."
+    },
+    {
+      "id": "G8-dune-answers",
+      "statement": "The Dune enumeration leg is used rather than refused.",
+      "reading": "not-a-rate",
+      "metric": "dune.used",
+      "comparator": "==",
+      "value": true,
+      "rationale": "Same claim as U8, tested independently because the leg is checked per run and a coverage probe that goes stale between runs would refuse one and not the other."
+    },
+    {
+      "id": "G9-stage2-still-cannot-answer",
+      "statement": "At most 2 scored candidates reach a MEASURED entry verdict.",
+      "reading": "not-a-rate",
+      "metric": "derived:measuredEntryVerdictCount",
+      "comparator": "<=",
+      "value": 2,
+      "rationale": "Looser than the untiered leg's U7 because a tiered pool has more gate survivors to score and the scoring cap is now 7. The census read 0 of 13 strangers proven on all eight windows, and 6 of 14 were permanently unscoreable; nothing since has changed what co-ordination evidence a stranger's create slot carries."
+    }
+  ]
+}

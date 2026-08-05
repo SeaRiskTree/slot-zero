@@ -1092,9 +1092,10 @@ under another** (standing ruling 285a). The request line was only the first: the
 Stage 2 header, the pages-per-launch distribution (p50 6 / p90 8 / p95 9 / max 17 over the 127
 committed launches), the ~25% shed rate the pacing floor was sized against, the typical wall clock
 that multiplies that median, and the cursor reach are **all swap-api measurements**. Under another
-source each prints through `plan-source.mjs` → `sourceFigureUnavailableNote` — the same vocabulary
-and the same three refusals as the eligibility note, naming the source the figure was measured on —
-and **none is replaced by an invented figure for the selected source**: no Dune pacing, shed rate or
+source each prints through `plan-source.mjs` → `sourceFigureUnavailableNote` — the same vocabulary,
+the same three refusals and the same **PRE-WRAPPED LINES** at `PLAN_NOTE_WIDTH` as the eligibility
+note, naming the source the figure was measured on, so here too a printer indents what it is given
+and cannot choose a width — and **none is replaced by an invented figure for the selected source**: no Dune pacing, shed rate or
 page cost has been measured, and a plausible number is worse than an absence. The ceilings, worst
 cases and caveats are arithmetic over pinned thresholds and print in both cases, because withholding
 them is the failure the split exists to avoid.

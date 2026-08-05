@@ -301,9 +301,10 @@ export async function planEligibility(input) {
     // one, exactly as the eligibility figure itself does.
     if (construction.cost === 'billed') {
       // Short status lines stay one line, which is what they are; a stated absence is PROSE and is
-      // laid out like the prose beside it, at the width both plan surfaces wrap their shared note
-      // to. A sentence that runs off the page reads as broken output on the one page an operator
-      // reads before authorising a spend.
+      // laid out like the prose beside it — pre-wrapped HERE at PLAN_NOTE_WIDTH, like every other
+      // shared sentence this module hands out, so a plan surface only indents what it is given and
+      // no printer picks a width. A sentence that runs off the page reads as broken output on the
+      // one page an operator reads before authorising a spend.
       for (const line of wrapPlanNote(`ACTUAL, after: ${actualSpend(construction)}`, PLAN_NOTE_WIDTH)) {
         input.announce(`  ${line}`);
       }
@@ -436,7 +437,7 @@ export function eligibilityUnavailableNote(eligibility) {
 }
 
 /**
- * THE SAME SENTENCE FOR A FIGURE THAT WAS MEASURED ON A SOURCE THIS PLAN IS NOT USING.
+ * THE SAME NOTE FOR A FIGURE THAT WAS MEASURED ON A SOURCE THIS PLAN IS NOT USING.
  *
  * The eligibility floor is not the only thing on a plan page that belongs to one vendor. A page
  * count, a shed rate, a pacing justification and a cursor geometry are all measurements taken
@@ -447,15 +448,17 @@ export function eligibilityUnavailableNote(eligibility) {
  * none has been measured, and an invented figure is not an absence, it is a false measurement.
  *
  * So the vocabulary is shared with {@link eligibilityUnavailableNote} rather than reinvented per
- * printer: same words, same three refusals, one place to degrade.
+ * printer: same words, same three refusals, one place to degrade. **The layout is shared with it
+ * too — the return is PRE-WRAPPED LINES, not a sentence**, laid out at {@link PLAN_NOTE_WIDTH} by
+ * the module that owns the words, so a consumer only indents them and no printer picks a width.
  *
  * **The closing sentence is narrow on purpose, and it used to overstate.** It said the ceilings,
  * worst cases and caveats on the page "bind whichever source answers", which is more than this
- * string can know: the Stage 2 plan's ceiling, pacing floor, request worst case and wall clock are
+ * note can know: the Stage 2 plan's ceiling, pacing floor, request worst case and wall clock are
  * all bounds this stage enforces on its OWN KEYLESS CLIENT, and a source billed in executions and
  * credits would not be governed by that client at all. They still print — withholding them is the
  * failure the split exists to avoid — but the sentence now says what they are rather than claiming
- * universality. A shared honesty string that overstates is worse than a specific one, because it is
+ * universality. A shared honesty note that overstates is worse than a specific one, because it is
  * quoted everywhere. See `render.mjs` → `renderDryRun`'s Stage 2 block for the recorded Gate 3
  * residual this narrowing leaves standing.
  *

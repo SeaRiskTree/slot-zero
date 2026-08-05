@@ -9030,14 +9030,25 @@ function executableHalf(text: string): string {
  */
 function namedImportsFrom(text: string, module: string): string[] {
   const code = executableHalf(text);
-  const pattern = new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*['"\`]\\./${module.replace('.', '\\.')}['"\`]`, 'g');
+  const spec = `['"\`]\\./${module.replace('.', '\\.')}['"\`]`;
+  // The optional prefix is what makes `import C, { CeilingReached } from …` report BOTH halves
+  // rather than only the `*` sentinel below — a combined form must not hide the braced names.
+  const pattern = new RegExp(`import\\s*(?:(?:\\*\\s*as\\s+\\w+|\\w+)\\s*,\\s*)?\\{([^}]*)\\}\\s*from\\s*${spec}`, 'g');
   const taken = [...code.matchAll(pattern)].flatMap((m) =>
     m[1]!
       .split(',')
       .map((s) => s.trim().split(/\s+as\s+/)[0]!.trim())
       .filter((s) => s !== ''),
   );
-  return [...new Set(taken)].sort();
+  // A NAMESPACE OR DEFAULT IMPORT TAKES EVERYTHING AND NAMES NOTHING, so a braced-only extractor
+  // reports `[]` for `import * as C from './client.mjs'` and the exhaustive equality above PASSES
+  // while `C.DuneClient` sits in the module. That is the same hole one syntax over — the third time
+  // in this guard's short life (static-only, then module-granular, now braced-only), which is why
+  // it is reported as a distinct sentinel rather than expanded to the module's export list: the
+  // point is that the symbol list stops being exhaustive, not which symbol was taken.
+  const wholeModule = new RegExp(`import\\s+(?:\\*\\s*as\\s+\\w+|\\w+)\\s*(?:,[^;]*?)?from\\s*${spec}`, 'g');
+  const namespaced = [...code.matchAll(wholeModule)].length > 0 ? ['*'] : [];
+  return [...new Set([...taken, ...namespaced])].sort();
 }
 
 function localModuleLoads(text: string): string[] {
@@ -11410,6 +11421,19 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     // Aliasing does not hide it, and prose describing the import cannot add one.
     expect(namedImportsFrom("import { DuneClient as C } from './client.mjs';", 'client.mjs')).toEqual(['DuneClient']);
     expect(namedImportsFrom("// import { DuneClient } from './client.mjs'\n", 'client.mjs')).toEqual([]);
+    // AND A WHOLE-MODULE IMPORT TAKES EVERYTHING WHILE NAMING NOTHING. A braced-only extractor
+    // reports `[]` for these, which is indistinguishable from "imports the module and takes no
+    // symbol" and would pass the exhaustive equality with `C.DuneClient` sitting in the file. They
+    // report the `*` sentinel instead, so the equality fails on a module whose symbol list does not
+    // declare it — the same hole as the dynamic-import one above, one syntax over.
+    expect(namedImportsFrom("import * as C from './client.mjs';", 'client.mjs')).toEqual(['*']);
+    expect(namedImportsFrom("import C from './client.mjs';", 'client.mjs')).toEqual(['*']);
+    expect(namedImportsFrom("import C, { CeilingReached } from './client.mjs';", 'client.mjs')).toEqual([
+      '*',
+      'CeilingReached',
+    ]);
+    // A namespace import of a DIFFERENT module is not this module's business.
+    expect(namedImportsFrom("import * as M from './measure.mjs';", 'client.mjs')).toEqual([]);
     // And what `stage2.mjs` actually takes today is exactly the pinned pair.
     const stage2 = readFileSync(join(TOOL_DIR, 'stage2.mjs'), 'utf8');
     expect(namedImportsFrom(stage2, 'client.mjs')).toEqual(['CeilingReached', 'RequestFailed']);

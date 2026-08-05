@@ -172,6 +172,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CeilingReached } from './client.mjs';
+import { assertMinAgeUsable } from './fill-source.mjs';
 import { measureCompletion, measureCreateSlot, median, percentile, roomIsProven } from './measure.mjs';
 // `windowReachMs` is IMPORTED, never re-derived: the dry run below prints the reach and the cost of
 // the walk it authorises, and a plan that keeps its own copy of the walk's arithmetic is a plan that
@@ -529,6 +530,13 @@ export async function censusCandidate(client, input) {
   // `ENTRY_FILL_SOURCE_KIND`. `roomIsProven` is called rather than copied for the same reason.
   const fillSource = input.fillSource ?? censusFillSource(client);
   const minAgeMs = await fillSource.minAgeMs(entryFillBounds(t, input.nowMs));
+  // Held to the contract at the point of consumption, the same way `screen.mjs` holds its own plan
+  // path and `stage2.mjs` holds the run. THE CONSEQUENCE HERE IS WORSE THAN A BAD PRINTED LINE: a
+  // non-finite answer used as this filter makes EVERY launch ineligible, so the census would report
+  // zero eligible launches — a measurement of nothing wearing a measurement's clothes — rather than
+  // refusing. `fill-source.mjs` → `assertMinAgeUsable` says it is the backstop for a source that
+  // forgets; a call site that skips it is a place that claim is not true.
+  assertMinAgeUsable(fillSource, minAgeMs);
   const eligible = input.refs.filter((r) => input.nowMs - r.deployedAtMs >= minAgeMs);
   const planned = eligible.slice(0, t.maxLaunchesPerCandidate);
 
@@ -1291,6 +1299,9 @@ export async function main(opts, out, err) {
   });
   const entryFillSource = censusFillSource(fillClient);
   const entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entry, Date.now()));
+  // The plan prints this figure, so it is guarded before it is printed — `screen.mjs` guards its own
+  // plan path at the same point and for the same reason.
+  assertMinAgeUsable(entryFillSource, entryMinAgeMs);
 
   if (opts.dryRun) {
     out(

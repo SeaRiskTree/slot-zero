@@ -547,6 +547,37 @@ describe('it measures bundling and nothing else', () => {
     expect(census.issued()).toBe(0);
   });
 
+  it('REFUSES a source whose floor is not a duration, rather than counting zero eligible launches', async () => {
+    // The consequence here is worse than the bad printed line the same guard stops on the screen's
+    // plan. This floor is used as a FILTER: a non-finite answer makes every launch fail
+    // `age >= minAgeMs`, so the census would report `launchesEligible: 0` for every candidate — a
+    // census of nothing, indistinguishable from a cohort that genuinely had no eligible launch, and
+    // wrong in the direction that publishes a finding rather than refusing to. `assertMinAgeUsable`
+    // is documented as the backstop for a source that forgets; a call site that skipped it was a
+    // place that claim was not true.
+    const { client, urls } = scriptedClient([page({ createSlot: 500, bundles: 1, loneWallets: 1 })]);
+    const refs = [{ mint: 'OLD', deployedAtMs: NOW - 86_400_000 }];
+    const withFloor = async (minAgeMs: number) =>
+      censusCandidate(client, {
+        refs,
+        nowMs: NOW,
+        entry: ENTRY,
+        mintTimeBackdateMs: BACKDATE,
+        fillSource: {
+          ...censusFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 })),
+          minAgeMs: async () => minAgeMs,
+        },
+      });
+
+    await expect(withFloor(Number.POSITIVE_INFINITY)).rejects.toThrow(/not a duration/);
+    await expect(withFloor(Number.NaN)).rejects.toThrow(/not a duration/);
+    // It throws INSTEAD of measuring, so the silent zero-eligible reading is unreachable and the
+    // walk never starts.
+    expect(urls).toEqual([]);
+    // A real duration still measures, so the guard refuses nothing it should not.
+    expect((await withFloor(windowReachMs(ENTRY))).launchesEligible).toBe(1);
+  });
+
   it('caps the sample at Stage 2\'s own per-candidate launch cap', async () => {
     const { client } = scriptedClient([page({ createSlot: 500, bundles: 1, loneWallets: 1 })]);
     const result = await censusCandidate(client, {

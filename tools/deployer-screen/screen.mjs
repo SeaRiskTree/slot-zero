@@ -213,7 +213,18 @@ export function resolveEntryFillSource(kind, sources) {
         `one direction nothing observes.`,
     );
   }
-  return registrationOf(kind, entry);
+  const registration = registrationOf(kind, entry);
+  if (registration.construction.kind !== kind) {
+    throw new Error(
+      `Stage 2 was asked for a ${kind} fill source and this run's registration declares itself ` +
+        `${registration.construction.kind}. It refuses rather than resolving one: a plan LABELS ` +
+        `every figure it prints with this kind — which page distribution, which shed rate, which ` +
+        `pacing justification and which cursor geometry describe the walk — so a declaration that ` +
+        `disagrees with its key would mislabel every one of them, which is standing ruling 285a's ` +
+        `defect arriving through the label itself, the one route the labelling cannot catch.`,
+    );
+  }
+  return registration;
 }
 
 /**

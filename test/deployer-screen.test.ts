@@ -122,6 +122,7 @@ import { swapApiFillSource } from '../tools/deployer-screen/swapapi-fills.mjs';
 import { rpcCostSource } from '../tools/deployer-screen/rpc-costs.mjs';
 import {
   ENTRY_FILL_SOURCE_KIND,
+  SWAP_API_CONSTRUCTION,
   planEntryEligibility,
   resolveEntryFillSource,
   selectEntryFillSource,
@@ -11506,6 +11507,21 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     expect(built).toBe(0);
     expect(resolved.build()).toBe(swapApi);
     expect(built).toBe(1);
+    // AND THE DECLARATION'S OWN KIND MUST AGREE WITH THE KEY IT WAS FOUND UNDER. `registrationOf`
+    // supplies the key for a bare thunk, but a registration object supplies its own — and the plan
+    // LABELS every source-measured figure it prints by that kind, so a mistyped declaration would
+    // print swap-api page counts, shed rate and cursor geometry under a Dune run. That is 285a's
+    // defect arriving through the label itself, the one route the labelling cannot catch.
+    expect(() =>
+      resolveEntryFillSource('swap-api', {
+        'swap-api': { construction: freeConstruction('dune', 'mistyped'), build: () => swapApi },
+      }),
+    ).toThrow(/declares itself dune/);
+    expect(
+      resolveEntryFillSource('swap-api', {
+        'swap-api': { construction: SWAP_API_CONSTRUCTION, build: () => swapApi },
+      }).construction.kind,
+    ).toBe('swap-api');
   });
 
   describe('286c — the dry run is SPLIT so it can be both free and honest', () => {
@@ -11782,6 +11798,29 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       // And the rest of the plan still prints — withholding it is the failure the split avoids.
       expect(undeclared).toMatch(/THE PRICE OF THE SEAT/);
       expect(undeclared).toContain('HOW OLD IS UNAVAILABLE IN THIS');
+
+      // (3b) THE OTHER PRODUCER OF `known: false` — a BILLED construction this plan was not
+      // authorised to build. It names an authorising flag where the undeclared one cannot, and the
+      // banner must READ THAT FROM THE FIGURE rather than infer a cause from `spendAuthorised`:
+      // asserting "declared NO COST" here would contradict the note printed directly underneath,
+      // which tells the operator what to pass. Unreachable while screen.mjs feeds one flag to both.
+      const unauthorised = renderDryRun({
+        ...plan,
+        entryEligibility: {
+          known: false,
+          kind: 'dune',
+          why: 'building it runs the trade tables\' coverage probe, whose result read is billed.',
+          authorisedBy: '--dry-run-spend',
+        },
+      });
+      const lines = unauthorised.split('\n');
+      const head = lines.slice(0, lines.indexOf('='.repeat(78), 1)).join(' ').replace(/\s+/g, ' ');
+      expect(head).toContain('DRY RUN, SPEND AUTHORISED');
+      expect(head).not.toContain('declared NO COST');
+      expect(head).toContain('WHAT BUILDING IT WOULD HAVE COST IS UNSTATED HERE');
+      expect(head).toContain('Pass --dry-run-spend to authorise that spend');
+      expect(head).not.toContain('costs nothing');
+      expect(head).not.toContain('bought nothing');
     });
 
     it('the eligibility sentence is rendered whole, in both the known and the unknown branch', () => {

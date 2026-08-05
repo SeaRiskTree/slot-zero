@@ -1215,15 +1215,26 @@ export function renderDryRun(plan) {
       L.push('Building the selected fill source costs nothing, so the authorisation bought nothing');
       L.push('and nothing was fetched. This page is what a plain --dry-run prints.');
     } else {
-      // THE THIRD BRANCH IS THE POINT (captain decision 286c). Under this flag an eligibility figure
-      // can only be absent because the construction DECLARED NOTHING, and an undeclared cost printed
-      // as "costs nothing" is an absence read as a benign value — the failure the split exists to
+      // THE UNKNOWN BRANCHES ARE THE POINT (captain decision 286c). An absent figure printed as
+      // "costs nothing" is an absence read as a benign value — the failure the split exists to
       // remove, and a self-contradiction on a page whose eligibility line correctly says UNAVAILABLE.
       // Unknown reads as unknown, names why, and states no cost either way.
-      L.push('The selected fill source declared NO COST for building it, so this plan did NOT build');
-      L.push('it: nothing was fetched, and NOTHING CAN BE SAID ABOUT WHAT BUILDING IT WOULD HAVE');
-      L.push('COST. An authorisation cannot cover a spend that can state no bound. Same reason, same');
-      L.push('words, as the figure it withholds further down:');
+      //
+      // WHICH unknown is read from the FIGURE, never from the flag. `known: false` has two
+      // producers — an UNDECLARED construction, which can state no bound and so names no
+      // authorising flag, and a BILLED one this plan was not authorised to build, which names one.
+      // Inferring the first from `spendAuthorised` would assert a false reason on a page whose own
+      // note directly below says what would authorise the purchase.
+      if (plan.entryEligibility.authorisedBy === null) {
+        L.push('The selected fill source declared NO COST for building it, so this plan did NOT build');
+        L.push('it: nothing was fetched, and NOTHING CAN BE SAID ABOUT WHAT BUILDING IT WOULD HAVE');
+        L.push('COST. An authorisation cannot cover a spend that can state no bound. Same reason, same');
+        L.push('words, as the figure it withholds further down:');
+      } else {
+        L.push('The selected fill source was NOT built by this plan, so nothing was fetched for it and');
+        L.push('WHAT BUILDING IT WOULD HAVE COST IS UNSTATED HERE. Same reason, same words, as the');
+        L.push('figure it withholds further down, including what would authorise the purchase:');
+      }
       for (const note of eligibilityUnavailableNote(plan.entryEligibility)) {
         for (const line of wrap(note, 76)) L.push(`  ${line}`);
       }
@@ -1317,8 +1328,9 @@ export function renderDryRun(plan) {
     } else {
       L.push(`  The fills come from the ${plan.entryEligibility.kind} source. Its per-request shape is that`);
       L.push('  source\'s own and is NOT restated here — a plan that kept a copy would go on');
-      L.push('  describing the walk it was written against. The ceilings below are this stage\'s and');
-      L.push('  bind whichever source answers.');
+      L.push('  describing the walk it was written against. The ceilings below still print and are');
+      L.push('  the ones this stage enforces on its OWN keyless client today — a source billed in');
+      L.push('  executions and credits is not governed by that client.');
     }
     L.push('');
     L.push('  This stage spends NO KEYED REQUEST. The mint list comes from the profile Stage 1 has');
@@ -1363,8 +1375,9 @@ export function renderDryRun(plan) {
           `stage's own keyless client, a pinned floor`,
       );
       notMeasuredHere("the shed rate that floor was sized against, which is the swap-api host's");
-      // The worst case is arithmetic over pinned ceilings and binds whichever source answers. The
-      // TYPICAL is not: it multiplies a pages-per-launch median measured on one walk.
+      // The worst case is arithmetic over the ceilings this stage enforces on its own keyless
+      // client, and it still prints; see the residual recorded above for what it does NOT describe.
+      // The TYPICAL is weaker again: it multiplies a pages-per-launch median measured on one walk.
       L.push(`  TIME                          about ${minutes(worstCase)} min worst case at that pacing`);
       notMeasuredHere('the TYPICAL wall clock, which needs a pages-per-launch median');
     }

@@ -5,9 +5,21 @@ Captain decision 232c. Run the widened screen on **both** seedings at
 of seeding returns to the captain.
 
 **STATUS: INCOMPLETE — one leg started and was stopped, two never started.** This document records
-what was measured before the stop, the ceiling that caused it, and what the measurement costs, so
-that whatever the captain decides is decided against numbers rather than against an estimate. It is
+what was measured before the stop, the ceiling that caused it, and what the measurement costs. It is
 not the comparison, and nothing in it answers questions 1–5 of the brief.
+
+**CAPTAIN DECISION 239a, 2026-08-05: run it across two allowance days, TRIMMING NOTHING.** Leg B
+first — `--tier good` (~68) plus `--tier elite` (62) = **130 keyed** — then leg A untiered (**85**)
+on the following allowance day. Capping the legs with `--candidates` to fit one day, and dropping one
+tiered half, were both **refused**: *a comparison sampled by a quota rather than by the question is
+the same defect in smaller form.* That is the same rule the screen already applies to its own
+verdicts — an unmeasured candidate is not a measured one — applied a level up, to the population.
+
+**And the hard rule 239a attaches to both legs: read `x-ratelimit-remaining` before beginning, and
+refuse to start a leg that cannot finish inside what is actually left.** Never start what cannot
+complete. The cap is **shared**, so the figure can fall between two runs with this lane doing
+nothing — which is exactly what produced the stop recorded below. A full 200 is never to be assumed
+at a reset; it is to be read.
 
 ## The stop, and it is not the ceiling this repo already enforces
 
@@ -190,18 +202,28 @@ curl -sD - -o /dev/null -H "authorization: Bearer $MADEONSOL_API_KEY" \
   | grep -i x-ratelimit
 ```
 
-Two things about the ordering, both of which cost nothing to get right and are expensive to get
-wrong:
+### The ordering 239a settled, and the one thing it costs
 
-- **Run the two tiered halves adjacent to each other.** They are one leg of the comparison, and tier
-  membership is a trailing window — `7ufmve7Z…` read elite on 2026-07-29 and good four days later
-  with its own numbers essentially unchanged. Splitting them across a reset makes leg B two
-  populations rather than one.
-- **Straddle the 00:00Z reset rather than spanning a day.** Leg B (elite 62 + good ~68 = ~130) late
-  in one UTC day and leg A (~85) immediately after the reset puts the two legs hours apart instead of
-  a day apart, which is the closest the 200/day cap allows them to be. It also depends on the shared
-  key being quiet, which today it was not — hence the check above before each leg rather than a plan
-  fixed in advance.
+- **Leg B first, both halves on the same allowance day.** They are one leg of the comparison, and
+  tier membership is a trailing window — `7ufmve7Z…` read elite on 2026-07-29 and good four days
+  later with its own numbers essentially unchanged. Splitting them across a reset would make leg B
+  two populations rather than one. At 62 + ~68 = ~130 they fit one day with ~70 to spare, which is
+  under leg A's ~85 — which is why leg A goes to the next day rather than the same one.
+- **Leg A on the following allowance day, untrimmed at ~85.**
+- **Start each leg EARLY in its day rather than late.** An earlier draft of this file recommended
+  straddling the 00:00Z reset — leg B late in one day, leg A minutes after the reset — because it
+  puts the two legs hours apart instead of a day apart, which is better for comparability. **That is
+  superseded, and deliberately.** It optimises the wrong risk: the shared key drained 153 of 200
+  between 00:00Z and 04:50Z on 2026-08-05 with this lane doing nothing, so a leg held back until late
+  in its day is a leg that may find nothing left to run on. Under 239a's hard rule that leg does not
+  start at all, and a leg that cannot run is worse than two legs a day apart.
+- **The cost of that ordering, stated rather than buried:** the two legs are measured about a day
+  apart, so between them the vendor's pools slide, tier membership moves, and any wallet that
+  launched in between changes its own reading. Both legs still run at the same bar
+  (`minCompletionRate` 0.25, unmoved) against the same code, so the comparison is sound; what it
+  cannot claim is that the two populations were photographed at the same instant. The report must say
+  so where it states the overlap figure, since a shared wallet that moved tiers overnight is a real
+  way the overlap can read low for a reason that is not about seeding.
 
 Also worth passing to whoever runs it: consider `--dune-refresh-probe` on the **first** leg only. It
 costs one billed execution (~0.75 credits) and moves the probe's last row up to the run, which is

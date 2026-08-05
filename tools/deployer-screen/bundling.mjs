@@ -186,6 +186,12 @@ import {
   readLaunchWindow,
   windowReachMs,
 } from './pumpfun.mjs';
+import {
+  eligibilityFloorMs,
+  eligibilityUnavailableNote,
+  freeConstruction,
+  planEligibility,
+} from './plan-source.mjs';
 import { applyGate, verdictFor } from './rank.mjs';
 import { measureSubjectLaunches } from './stage0.mjs';
 import { describeTransportFailure, entryFillBounds } from './stage2.mjs';
@@ -206,6 +212,54 @@ import { swapApiFillSource } from './swapapi-fills.mjs';
  */
 export function censusFillSource(client) {
   return swapApiFillSource(client);
+}
+
+/**
+ * What building {@link censusFillSource} costs: nothing, declared rather than assumed.
+ *
+ * Captain decision 286c: the plan path reads DECLARATIONS, not implementations, and an undeclared
+ * construction is refused rather than read as free. This census is keyless throughout — the empty
+ * credential allow-list in `test/creation-census.test.ts`'s sibling for this tool is a property of
+ * the tree — so there is nothing here for an opt-in to authorise, and its plan passes
+ * `spendAuthorised: false` unconditionally. If a future census source ever bills to be built, this
+ * declaration is the one line that has to change and the plan will print UNAVAILABLE until it does.
+ */
+export const CENSUS_FILL_CONSTRUCTION = freeConstruction(
+  'swap-api',
+  'it is built from a keyless client and answers eligibility from its own cursor reach, so no ' +
+    'request, credit or credential is involved in building it or in asking it.',
+);
+
+/**
+ * THE CENSUS'S PLAN ELIGIBILITY, and the reason it is a named function rather than four lines
+ * inside `main`.
+ *
+ * It is the seam captain decision 286c has to be testable at on this side, exactly as `screen.mjs` →
+ * `planEntryEligibility` is on the other: the REGISTRATION is what a test substitutes, and a
+ * constructor that fails the test if it is ever called is what proves this pass's plan path never
+ * builds a source that would spend. Driving `planEligibility` directly would prove the helper works
+ * and say nothing about what `bundling.mjs` routes through.
+ *
+ * `spendAuthorised` is a constant here, not a parameter. This pass is keyless throughout — captain
+ * decision 173a's property of the tree — so it ships no spending opt-in rather than one that could
+ * only ever be inert, and there is no caller who could pass `true`.
+ *
+ * @param {import('./plan-source.mjs').FillSourceRegistration} registration
+ * @param {object} opts
+ * @param {import('./fill-source.mjs').FillSourceBounds} opts.bounds
+ * @param {(line: string) => void} opts.announce
+ * @returns {Promise<import('./plan-source.mjs').PlanEligibility>}
+ */
+export async function planCensusEligibility(registration, opts) {
+  return planEligibility({
+    registration,
+    bounds: opts.bounds,
+    // NOTHING TO AUTHORISE, and therefore no flag to name: offering one would tell an operator to
+    // try something this tool does not have.
+    spendAuthorised: false,
+    authorisedBy: null,
+    announce: opts.announce,
+  });
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -1096,10 +1150,12 @@ export function loadThresholds() {
  * @param {number} plan.maxCandidates
  * @param {Record<string, any>} plan.census
  * @param {import('./stage2.mjs').Stage2Thresholds} plan.entry
- * @param {number} plan.entryMinAgeMs THE CENSUS'S OWN FILL SOURCE'S ANSWER, asked of it by the
- *   caller — never re-derived here. Captain decision 257a made "has this launch finished happening"
- *   the source's to answer, so a floor computed a second time in this printer would go on agreeing
- *   with the pass it describes right up until the day it did not.
+ * @param {import('./plan-source.mjs').PlanEligibility} plan.entryEligibility THE CENSUS'S OWN FILL
+ *   SOURCE'S ANSWER, OR A STATED ABSENCE — asked of it by the caller, never re-derived here. Captain
+ *   decision 257a made "has this launch finished happening" the source's to answer, so a floor
+ *   computed a second time in this printer would go on agreeing with the pass it describes right up
+ *   until the day it did not. Captain decision 286c adds the absence: a source that could only
+ *   answer by being built at a cost prints UNAVAILABLE with the reason, never a substitute number.
  * @param {number} plan.listingIntervalMs
  * @returns {string}
  */
@@ -1111,7 +1167,8 @@ export function renderDryRun(plan) {
   const fillMin = Math.round((fillWorst * plan.entry.keylessMinIntervalMs) / 60_000);
   // DERIVED FROM THE WALK, NOT DESCRIBED. `readLaunchWindow` will seek exactly this far, because
   // this is the function it calls to decide that — the census walks its own windows, so the REACH
-  // is still ours to derive. The eligibility FLOOR is not: it arrives as `plan.entryMinAgeMs`. See
+  // is still ours to derive. The eligibility FLOOR is not: it arrives as `plan.entryEligibility`,
+  // the source's own answer or a stated absence, and is printed through `eligibilityFloorMs`. See
   // {@link MEASURED_PAGE_COST} for why the page cost beside it is checked against the reach rather
   // than simply printed.
   const reachMs = windowReachMs(plan.entry);
@@ -1207,7 +1264,7 @@ export function renderDryRun(plan) {
   L.push(
     `    windowMs ${plan.entry.windowMs}, seekMarginMs ${plan.entry.seekMarginMs}, ` +
       `windowSlotSpan ${plan.entry.windowSlotSpan}, tradePageLimit ${plan.entry.tradePageLimit}, ` +
-      `eligibility floor ${plan.entryMinAgeMs}ms, seek reach ${reachMs}ms.`,
+      `eligibility floor ${eligibilityFloorMs(plan.entryEligibility)}, seek reach ${reachMs}ms.`,
   );
   L.push('    THE FLOOR IS THE GATE THE FILL SOURCE ITSELF APPLIES, never a second number derived');
   L.push('    here; the REACH is this walk\'s own cursor, pumpfun.mjs -> windowReachMs, the');
@@ -1216,6 +1273,10 @@ export function renderDryRun(plan) {
   L.push('    and a source whose tables LAG answers a larger floor — which is why the floor is asked');
   L.push('    rather than computed. The floor used to be a hand-written windowMs + seekMarginMs against');
   L.push('    a span-derived reach, and the chain drifted that gap open to 20s with nothing failing.');
+  // NEVER A BLANK AND NEVER A ZERO — captain decision 286c. A floor this plan could not have for
+  // free says so in place, names the source that owes it and the reason, and leaves every other
+  // parameter above standing.
+  for (const line of eligibilityUnavailableNote(plan.entryEligibility)) L.push(`    ${line}`);
   L.push('');
   L.push('WHAT IT WILL NOT DO: no entry score, no room figure, no field, no entry cost, no verdict.');
   L.push('');
@@ -1287,9 +1348,7 @@ export async function main(opts, out, err) {
 
   // Its OWN client and its OWN ceiling, for the reason `screen.mjs` gives for Stage 2's: a different
   // host with different pacing, and neither leg may eat the other's budget or exceed what the dry
-  // run printed. It is built ABOVE the dry-run branch because THE PLAN MUST STATE THE FLOOR THE
-  // SOURCE ITSELF WILL APPLY — asking it costs no request, and a plan that derived that duration
-  // again would be the second expression captain decision 144a's rule is about.
+  // run printed.
   const fillClient = new KeylessClient({
     maxRequests: census.maxKeylessRequests,
     minIntervalMs: entry.keylessMinIntervalMs,
@@ -1298,13 +1357,53 @@ export async function main(opts, out, err) {
       if (!opts.json) out(`  → GET ${url}`);
     },
   });
-  const entryFillSource = censusFillSource(fillClient);
-  // The plan prints this figure and the survey FILTERS on it, so it is guarded before either — a
-  // non-finite floor fails every `age >= minAgeMs` and reports `launchesEligible: 0` for every
-  // candidate, a census of nothing indistinguishable from a cohort that had no eligible launch. The
-  // refusal is caught here rather than left to escape `main`, which would return Node's exit 1 — a
-  // code not in the `EXIT` map — and print the message as a crash. `screen.mjs` guards its own plan
-  // path at the same point and for the same reason.
+  // THE SOURCE IS REGISTERED, NOT YET BUILT (captain decision 286c). The plan below asks it for the
+  // floor because THE PLAN MUST STATE THE FLOOR THE SOURCE ITSELF WILL APPLY — a plan that derived
+  // that duration again would be the second expression captain decision 144a's rule is about — but
+  // it asks through `planEligibility`, which will not build a source whose construction bills. This
+  // census's source is keyless and declares itself free, so nothing changes here today; what the
+  // shape buys is that a future source which bills cannot make a census dry run spend by accident.
+  /** @type {import('./plan-source.mjs').FillSourceRegistration} */
+  const entryFillRegistration = {
+    construction: CENSUS_FILL_CONSTRUCTION,
+    build: () => censusFillSource(fillClient),
+  };
+
+  if (opts.dryRun) {
+    /** @type {import('./plan-source.mjs').PlanEligibility} */
+    let entryEligibility;
+    try {
+      entryEligibility = await planCensusEligibility(entryFillRegistration, {
+        bounds: entryFillBounds(entry, Date.now()),
+        announce: (line) => out(line),
+      });
+    } catch (cause) {
+      err('');
+      err('Refusing to plan: the census has no usable fill source.');
+      err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
+      err('  Nothing was requested, so no quota was spent.');
+      return EXIT.upstream;
+    }
+    out(
+      renderDryRun({
+        cohortSize: cohort.length,
+        cohortCap,
+        maxCandidates,
+        census,
+        entry,
+        entryEligibility,
+        listingIntervalMs,
+      }),
+    );
+    return EXIT.ok;
+  }
+
+  const entryFillSource = entryFillRegistration.build();
+  // The survey FILTERS on this figure, so it is guarded before it is used — a non-finite floor fails
+  // every `age >= minAgeMs` and reports `launchesEligible: 0` for every candidate, a census of
+  // nothing indistinguishable from a cohort that had no eligible launch. The refusal is caught here
+  // rather than left to escape `main`, which would return Node's exit 1 — a code not in the `EXIT`
+  // map — and print the message as a crash. `screen.mjs` guards its own run path the same way.
   /** @type {number} */
   let entryMinAgeMs;
   try {
@@ -1316,21 +1415,6 @@ export async function main(opts, out, err) {
     err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
     err('  Nothing was requested, so no quota was spent.');
     return EXIT.upstream;
-  }
-
-  if (opts.dryRun) {
-    out(
-      renderDryRun({
-        cohortSize: cohort.length,
-        cohortCap,
-        maxCandidates,
-        census,
-        entry,
-        entryMinAgeMs,
-        listingIntervalMs,
-      }),
-    );
-    return EXIT.ok;
   }
 
   const startedAtIso = new Date().toISOString();

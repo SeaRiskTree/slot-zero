@@ -41,8 +41,15 @@ No agent, no build step, no dependencies. Node 20+.
 # Local validation only. No network, no key, no quota. Always safe to run.
 node tools/deployer-screen/screen.mjs --stage0
 
-# Show exactly what a real run would fetch, and fetch nothing.
+# Show exactly what a real run would fetch, and fetch nothing. FREE, and it ALWAYS prints the plan:
+# a figure that could only be had by BUILDING a fill source whose construction is billed is printed
+# as UNAVAILABLE with the reason, never thrown and never replaced by another source's number.
 node tools/deployer-screen/screen.mjs --dry-run
+
+# The same plan, authorised to BUILD a billed fill source so it can state those figures. It prints
+# the bounded spend before spending and the actual after. Today's source is free to build, so this
+# buys nothing and says so; it exists for the Gate 3 cutover. See "The dry run is SPLIT" below.
+node tools/deployer-screen/screen.mjs --dry-run --dry-run-spend
 
 # A real run. Needs a key (see below). Stage 2 is ON by default. Leave --candidates unset: the
 # default grades everything enumeration surfaces, up to the budget. Passing a number below the
@@ -987,7 +994,8 @@ and a `CostSource` now:
 | `swapapi-fills.mjs` | pump.fun's keyless trade endpoint wearing the contract. **This is what every run reads**, unchanged in every bound, cursor, tripwire and drop rule. |
 | `rpc-costs.mjs` | `api.mainnet-beta`/Helius wearing the cost contract. The whole-block probe and its per-candidate latch moved in here, because which route is worth a request is a property of that endpoint. |
 | `dune-fills.mjs` | the Dune source. Committed, and **nothing routes through it in a run** — see below. |
-| `screen.mjs` | `ENTRY_FILL_SOURCE_KIND` and `selectEntryFillSource` — the ONE selection site, which 156a already names as the one place both sides meet. |
+| `plan-source.mjs` | the PLAN path's half of the contract (captain decision 286c) — what building a source costs, declared before anything is built, and how a dry run asks for a figure it may not pay for. Reachable from no scoring module. See "The dry run is SPLIT so it can be both free and honest" below. |
+| `screen.mjs` | `ENTRY_FILL_SOURCE_KIND`, `resolveEntryFillSource` and `selectEntryFillSource` — the ONE selection site, which 156a already names as the one place both sides meet. |
 
 `stage2.mjs`, `entry.mjs`, `measure.mjs`, `stage0.mjs` and `rank.mjs` import **no source
 implementation at all**, directly or transitively, and none of them may read a source kind.
@@ -1055,6 +1063,114 @@ name nor a quantity in the other unit would still pass, and the test names that 
 
 `grade.mjs` builds the same two sources the screen does, so there is still exactly one Stage 2 and
 the grader cannot drift from the screen it grades.
+
+### The dry run is SPLIT so it can be both free and honest
+
+Captain decision 286c, 2026-08-05. Captain decisions 281a/284a/285a made the plan report the
+eligibility bound the **selected** fill source actually applies, rather than re-deriving it locally
+and claiming the two were one number. That is what makes the plan honest, and its cost arrives with
+it: asking a source anything means the source must EXIST, and `dune-fills.mjs` cannot be built
+without the trade tables' own coverage assessment — captain decision 257a's observed watermark —
+whose result read is **billed**. So from the Gate 3 cutover a Dune dry run could only
+
+- **spend**, and `--dry-run` stops costing nothing, which is the one thing an operator runs it to
+  find out; or
+- **throw**, and `--dry-run` stops always showing the plan, withholding a page of free and correct
+  figures because one line needs a purchase.
+
+The captain refused both. `plan-source.mjs` is the split:
+
+| what | where |
+|---|---|
+| SELECTION, with no network call | `screen.mjs` → `resolveEntryFillSource`. It resolves a registration — data — and refuses an unsupplied kind exactly as `selectEntryFillSource` always did. `selectEntryFillSource` is now that plus the `build()` the RUN path always wants. |
+| CONSTRUCTION, only where it is free or authorised | `plan-source.mjs` → `planEligibility`. The default plan never calls a billed constructor, and a test drives it with a stub whose constructor fails the test if it is ever reached. |
+| the figure it could not have | printed as **UNAVAILABLE**, naming the source and the reason, by `plan-source.mjs` → `eligibilityUnavailableNote` — one wording, used by both plan surfaces, so they cannot drift and so a change degrading it into a blank or a zero has to delete the function. It hands out **PRE-WRAPPED LINES** at `PLAN_NOTE_WIDTH`, and the wrapper is not exported: a consumer indents what it is given and cannot choose a second width, so a printer added later inherits the layout instead of enumerating itself into a guard. |
+| the spending plan | `--dry-run-spend`, with `--dry-run` only. It states the **bounded** spend before spending and the **actual** after; the order is a property of `planEligibility` rather than of the caller's memory, and the actual is reported in a `finally`, because a construction that failed half-way still spent. **A cost that cannot be READ is a stated absence, never a propagation** — a real billed source reads its actual out of the transport's own counters (Dune's credit accounting), and a rejection thrown from that `finally` would replace the whole plan's outcome and hand the caller a refusal, i.e. the money gone AND the page withheld. So `actualSpend` never throws: it prints that the spend was made and what it cost could not be read, which is an UNKNOWN and not a zero. |
+
+**Every claim on that page that was measured on ONE source is labelled with it, and is UNAVAILABLE
+under another** (standing ruling 285a). The request line was only the first: the host name in the
+Stage 2 header, the pages-per-launch distribution (p50 6 / p90 8 / p95 9 / max 17 over the 127
+committed launches), the ~25% shed rate the pacing floor was sized against, the typical wall clock
+that multiplies that median, and the cursor reach are **all swap-api measurements**. Under another
+source each prints through `plan-source.mjs` → `sourceFigureUnavailableNote` — the same vocabulary,
+the same three refusals and the same **PRE-WRAPPED LINES** at `PLAN_NOTE_WIDTH` as the eligibility
+note, naming the source the figure was measured on, so here too a printer indents what it is given
+and cannot choose a width — and **none is replaced by an invented figure for the selected source**: no Dune pacing, shed rate or
+page cost has been measured, and a plausible number is worse than an absence. The ceilings, worst
+cases and caveats are arithmetic over pinned thresholds and print in both cases, because withholding
+them is the failure the split exists to avoid.
+
+**KNOWN RESIDUAL, recorded rather than rewired — trigger: the Gate 3 cutover.** The Stage 2 figures
+that keep printing under every source — the stage keyless ceiling, the pacing floor, the request
+worst case and the wall clock derived from that floor — are bounds this stage enforces on its **own
+keyless client**. They are correct today only because the fills come from a keyless HTTP client; a
+Dune fill source would issue executions and credits and would not be governed by that client at all.
+They must stay on the page regardless (a plan must always be complete), so what is owed at the
+cutover is the same `measuredOn` labelling the page distribution, shed rate, pacing justification and
+typical wall clock already received, plus whatever bound the Dune source's own transport enforces in
+their place. Owner: whoever lands Gate 3. `render.mjs` → `renderDryRun`'s Stage 2 block carries the
+same note in place. `sourceFigureUnavailableNote`'s closing sentence was narrowed for exactly this
+reason: it used to claim those bounds "bind whichever source answers", which is more than it can
+know.
+
+**WHICH REFUSALS SURVIVE, AND THE DISCRIMINATOR IS WHETHER MONEY WAS SPENT.** A construction can
+fail, and what that failure already cost decides whether it stops the plan:
+
+- **Nothing was spent** — the kind is unsupplied and this run carries no constructor for it, a FREE
+  construction could not be built, or a billed one had no authorisation and so was never built at
+  all. The refusal STANDS: `screen.mjs` prints `Refusing to plan: Stage 2 has no usable fill source`
+  and exits `7`. It cost nothing, and a plan that quietly omitted its own subject would be worse
+  than a stated refusal.
+- **An authorised spend was MADE and the construction then failed** — the refusal does NOT stand.
+  Propagating it would take the money *and* withhold the page, which is both of the outcomes 286c
+  refused arriving together, so the promise that a dry run always shows the plan binds harder.
+  `planEligibility` degrades to `known: false` carrying the failure as its `why` and marked
+  `spent: true`; the `finally` still announces what it cost — or that the cost itself could not be
+  read — the banner says the spend was made and the construction failed, and the eligibility line
+  prints UNAVAILABLE naming the failure.
+
+**Only a plan that will PRINT the figure may buy it.** The eligibility floor is rendered inside the
+Stage 2 block and nowhere else, so `--no-stage2` consults no source at all and `entryEligibility`
+arrives as `null` — a third state meaning *not asked*, distinct from *asked and refused*. The banner
+says so in those words rather than claiming the construction was free, which is not something that
+page found out. Otherwise the `--no-stage2` plan is unchanged.
+
+**That gate is the PLAN path's and makes no claim about the RUN path — trigger: the Gate 3 cutover,
+status: filed, deliberately not fixed here.** A real run builds its source unconditionally, outside
+any `--no-stage2` guard, while the source and its floor are consumed only inside the block that
+scores candidates. So under a future billed construction `screen.mjs --no-stage2` would run the
+billed coverage probe for a source it never reads, and would refuse the whole run (exit `7`) for an
+unbuildable source Stage 2 was never going to use. Harmless today — the selected source is free to
+build — and the run path's behaviour is frozen for this change, so it is filed as its own item
+against the cutover rather than fixed in this lane.
+
+**An undeclared construction is treated as billed, never as free.** A registry entry that says
+nothing about what building it costs is an absence, and reading an absence as a benign value is the
+failure this repo names in three other places (`covered.fromMs` of `0` read as a 56-year window;
+`bonded` absent read as "did not bond"; a wallet with no enumeration row read as zero launches). It
+is never built by a plan, **including under the opt-in** — there is no bound to state first, and a
+spend that cannot be bounded first is not an authorised spend. **The banner reads UNKNOWN there, not
+"costs nothing"**: under the opt-in it is split by what the figure itself records rather than by the
+flag — the authorised spend that was made, the billed construction that was not authorised, and the
+undeclared one, which says in place that nothing can be said about what building it would have cost.
+A benign default in that last branch would be the same absence-read-as-a-value one line above,
+contradicting the UNAVAILABLE the eligibility line on the same page prints.
+
+**The RUN path did not move.** A real run builds its source and pays whatever that costs: it was
+always going to reach that vendor, and the eligibility answer is an input to a measurement rather
+than a line on a preview. The census (`bundling.mjs`) routes its plan through the same helper and
+declares its source free — it is keyless throughout, captain decision 173a's property of the tree —
+so it ships **no** spending opt-in rather than one that could only ever be inert. That declaration
+is a second copy of `screen.mjs` → `SWAP_API_CONSTRUCTION` and **must stay one claim**: the census
+may not import the screen (that would put the Dune client and the credential reader in its import
+graph), so `test/bundling-census.test.ts` imports both and fails the build if they ever differ. A
+stale copy still claiming "free" would silently permit a plan-time spend, which is the one door a
+declaration cannot close.
+
+**What the split does NOT claim.** Nothing routes through the Dune fill source until Gate 3, so no
+part of this has been exercised against the real source and it must not be. The default free path is
+proven with a stub constructor; the opt-in path is proven by what it announces, not by letting it
+spend.
 
 ### 1. Entry room
 

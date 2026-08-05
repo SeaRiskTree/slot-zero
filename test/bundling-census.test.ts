@@ -20,6 +20,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
+  CENSUS_FILL_CONSTRUCTION,
   DROPPED_WINDOW_CAVEAT,
   MINT_TIME_BACKDATE_CAVEAT,
   OWNERSHIP_LIST_CAVEAT,
@@ -29,6 +30,7 @@ import {
   censusFillSource,
   loadThresholds,
   parseArgs,
+  planCensusEligibility,
   renderDryRun,
   renderSubjectEraTrend,
   renderSummary,
@@ -37,7 +39,12 @@ import {
 } from '../tools/deployer-screen/bundling.mjs';
 import type { CandidateBundling } from '../tools/deployer-screen/bundling.mjs';
 import { KeylessClient, windowReachMs } from '../tools/deployer-screen/pumpfun.mjs';
-import { ENTRY_FILL_SOURCE_KIND, selectEntryFillSource } from '../tools/deployer-screen/screen.mjs';
+import {
+  ENTRY_FILL_SOURCE_KIND,
+  SWAP_API_CONSTRUCTION,
+  selectEntryFillSource,
+} from '../tools/deployer-screen/screen.mjs';
+import { planEligibility } from '../tools/deployer-screen/plan-source.mjs';
 import { swapApiFillSource } from '../tools/deployer-screen/swapapi-fills.mjs';
 import { entryFillBounds } from '../tools/deployer-screen/stage2.mjs';
 import type { Stage2Thresholds } from '../tools/deployer-screen/stage2.mjs';
@@ -317,7 +324,7 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
       maxCandidates: T['bundling_census'].maxCandidatesSurveyed,
       census: T['bundling_census'],
       entry: ENTRY,
-      entryMinAgeMs: windowReachMs(ENTRY),
+      entryEligibility: { known: true, kind: 'swap-api', minAgeMs: windowReachMs(ENTRY), billed: false } as const,
       listingIntervalMs: T['budget'].keylessMinIntervalMs,
     });
     expect(text).toContain('KEYED SPEND: 0');
@@ -345,7 +352,7 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
       maxCandidates: T['bundling_census'].maxCandidatesSurveyed,
       census: T['bundling_census'],
       entry: ENTRY,
-      entryMinAgeMs: windowReachMs(ENTRY) + 240_000,
+      entryEligibility: { known: true, kind: 'swap-api', minAgeMs: windowReachMs(ENTRY) + 240_000, billed: false } as const,
       listingIntervalMs: T['budget'].keylessMinIntervalMs,
     });
     expect(text).toContain(`eligibility floor ${windowReachMs(ENTRY)}ms, seek reach ${windowReachMs(ENTRY)}ms.`);
@@ -355,6 +362,148 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
     // And the plan no longer claims the two are one call, because for a lagging source they are not.
     expect(lagged).not.toContain('THE LAST TWO ARE ONE BOUND');
     expect(lagged).toContain('THE FLOOR IS THE GATE THE FILL SOURCE ITSELF APPLIES');
+  });
+
+  it('a floor this plan could not have for free prints UNAVAILABLE with its reason', async () => {
+    // Captain decision 286c, on the census's own plan surface. This pass is keyless throughout —
+    // captain decision 173a's "zero keyed requests" is a property of the tree — so its source
+    // DECLARES itself free and nothing here can print the unavailable form today. What the
+    // declaration buys is that a future source which bills to be built cannot make a census dry run
+    // spend by accident: it would print UNAVAILABLE, and this is what that looks like.
+    expect(CENSUS_FILL_CONSTRUCTION.cost).toBe('free');
+    expect(CENSUS_FILL_CONSTRUCTION.kind).toBe(ENTRY_FILL_SOURCE_KIND);
+
+    const text = renderDryRun({
+      cohortSize: 82,
+      cohortCap: T['bundling_census'].maxCohortSize,
+      maxCandidates: T['bundling_census'].maxCandidatesSurveyed,
+      census: T['bundling_census'],
+      entry: ENTRY,
+      entryEligibility: {
+        known: false,
+        kind: 'dune',
+        why: 'building it runs the trade tables\' coverage probe, whose result read is billed.',
+        authorisedBy: null,
+      },
+      listingIntervalMs: T['budget'].keylessMinIntervalMs,
+    });
+    // The word alone is not the requirement — the REASON is, and the source that owes the answer.
+    expect(text).toContain('eligibility floor UNAVAILABLE');
+    const flowed = text.replace(/\s+/g, ' ');
+    expect(flowed).toContain('NOT MEASURED, NOT ZERO');
+    expect(flowed).toContain('dune fill source');
+    expect(flowed).toContain('coverage probe');
+    // AND IT IS LAID OUT LIKE EVERY OTHER LINE OF THE BLOCK IT SITS IN. The sentence is shared with
+    // `screen.mjs` → `renderDryRun` so the two plan surfaces cannot drift in what they say, and the
+    // module that owns those words owns their layout too: it hands out lines already wrapped at
+    // `PLAN_NOTE_WIDTH` and this surface only indents them. Pushed whole it would be one
+    // ~450-character runaway line through the middle of the WINDOW PARAMETERS block.
+    const all = text.split('\n');
+    const start = all.findIndex((l) => l.includes('NOT MEASURED, NOT ZERO'));
+    const noteLines = all.slice(start, start + all.slice(start).findIndex((l) => l.trim() === ''));
+    expect(noteLines.length).toBeGreaterThan(1);
+    for (const line of noteLines) expect(line.length).toBeLessThanOrEqual(80);
+    // NEVER A BLANK AND NEVER A ZERO in that slot, and every other parameter still printed.
+    expect(text).not.toMatch(/eligibility floor (?:0|NaN|undefined|null|)ms/);
+    expect(text).toContain(`seek reach ${windowReachMs(ENTRY)}ms.`);
+    expect(text).toContain('KEYED SPEND: 0');
+    expect(text).toContain(PREDICATE_CAVEAT);
+
+    // AND THE PLAN PATH REFUSES TO BUILD A BILLED SOURCE, which is what makes that line reachable
+    // by anything other than a hand-built argument. The census ships no spending opt-in, so its
+    // plan passes `spendAuthorised: false` unconditionally and a constructor that would spend is
+    // never called — asserted with a constructor that fails the test if it ever is.
+    let constructed = 0;
+    const eligibility = await planEligibility({
+      registration: {
+        construction: {
+          kind: 'dune',
+          cost: 'billed',
+          why: 'building it runs a billed coverage probe.',
+          bound: 'at most 1 execution',
+          actual: () => 'nothing',
+        },
+        build: () => {
+          constructed += 1;
+          throw new Error('the census plan must never construct a billed fill source');
+        },
+      },
+      bounds: entryFillBounds(ENTRY, NOW),
+      spendAuthorised: false,
+      authorisedBy: null,
+      announce: () => {},
+    });
+    expect(constructed).toBe(0);
+    expect(eligibility.known).toBe(false);
+    // And the census's own plan path is the one that passes `false`, not a caller that might not.
+    // CAPTAIN DECISION 287c KEEPS THIS SOURCE-TEXT PIN. It is deliberate cheap insurance standing
+    // BESIDE the behavioural test immediately below, which drives `planCensusEligibility` with a
+    // constructor that fails if it is ever called and proves the same property observably. Removing
+    // the pin is the captain's call, not a cleanup — add beside it, never replace it.
+    expect(CENSUS_SOURCE).toContain('spendAuthorised: false');
+
+    // AND THAT IS ASSERTED THROUGH THE CENSUS'S OWN SEAM, not only as a literal. `main` routes its
+    // dry run through `planCensusEligibility`, which takes the registration and supplies the rest,
+    // so driving it with a constructor that throws states the property observably: a billed source
+    // is never built here, and the plan still prints its page.
+    let builtByCensus = 0;
+    const announced: string[] = [];
+    const censusEligibility = await planCensusEligibility(
+      {
+        construction: {
+          kind: 'dune',
+          cost: 'billed',
+          why: 'building it runs a billed coverage probe.',
+          bound: 'at most 1 execution',
+          actual: () => 'nothing',
+        },
+        build: () => {
+          builtByCensus += 1;
+          throw new Error('the census plan must never construct a billed fill source');
+        },
+      },
+      { bounds: entryFillBounds(ENTRY, NOW), announce: (l) => announced.push(l) },
+    );
+    expect(builtByCensus).toBe(0);
+    expect(censusEligibility.known).toBe(false);
+    // Nothing was announced, because announcing a bound is what precedes a spend.
+    expect(announced).toEqual([]);
+    // The plan still prints, in full, with the one figure it could not have labelled in place.
+    const stillPrints = renderDryRun({
+      cohortSize: 82,
+      cohortCap: T['bundling_census'].maxCohortSize,
+      maxCandidates: T['bundling_census'].maxCandidatesSurveyed,
+      census: T['bundling_census'],
+      entry: ENTRY,
+      entryEligibility: censusEligibility,
+      listingIntervalMs: T['budget'].keylessMinIntervalMs,
+    });
+    expect(stillPrints).toContain('eligibility floor UNAVAILABLE');
+    expect(stillPrints).toContain('KEYED SPEND: 0');
+    expect(stillPrints).toContain(PREDICATE_CAVEAT);
+  });
+
+  it('the census and the screen declare the SAME construction for the same source', () => {
+    // WHY THIS EXISTS. `CENSUS_FILL_CONSTRUCTION` and `screen.mjs`'s `SWAP_API_CONSTRUCTION` are two
+    // declarations of what building the one swap-api fill source costs, and they must stay one
+    // claim. They cannot be deduped into a single module: `bundling.mjs` may not import
+    // `screen.mjs`, which would put the Dune client and the credential reader in this census's
+    // import graph and break captain decision 173a's "spends zero keyed requests" property of the
+    // tree — the empty credential allow-list this file enforces. A TEST may import both, so the
+    // comparison lives here and nowhere else.
+    //
+    // What a drift would cost: the plan path reads DECLARATIONS, not implementations. If the source
+    // ever stops being free to build and only one copy is updated, the stale copy still claiming
+    // 'free' silently permits a plan-time spend — the exact defect class captain decision 286c
+    // exists to remove, arriving through the one door a declaration cannot close.
+    expect(CENSUS_FILL_CONSTRUCTION.kind).toBe(SWAP_API_CONSTRUCTION.kind);
+    expect(CENSUS_FILL_CONSTRUCTION.cost).toBe(SWAP_API_CONSTRUCTION.cost);
+    expect(CENSUS_FILL_CONSTRUCTION.why).toBe(SWAP_API_CONSTRUCTION.why);
+    expect(CENSUS_FILL_CONSTRUCTION.bound).toBe(SWAP_API_CONSTRUCTION.bound);
+    // `actual` is a FUNCTION, so comparing the objects would compare it by reference and fail on
+    // identity rather than on drift — two copies in two modules can never be the same reference.
+    // What has to agree is what it SAYS, so it is called.
+    expect(CENSUS_FILL_CONSTRUCTION.actual()).toBe(SWAP_API_CONSTRUCTION.actual());
   });
 
   it('rejects bad input rather than guessing, and the caps can only be lowered', () => {

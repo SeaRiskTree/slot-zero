@@ -74,6 +74,7 @@ import {
 } from './pumpfun.mjs';
 import { rpcCostSource } from './rpc-costs.mjs';
 import { assertMinAgeUsable } from './fill-source.mjs';
+import { freeConstruction, planEligibility, registrationOf } from './plan-source.mjs';
 import { swapApiFillSource } from './swapapi-fills.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderMayhemShare, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
@@ -162,14 +163,49 @@ export const ENTRY_FILL_SOURCE_KIND = 'swap-api';
  * rendered as a duration. `fill-source.mjs` → `assertMinAgeUsable` is the backstop that fails on a
  * future source which forgets this.
  *
+ * **SELECTION AND CONSTRUCTION ARE TWO STEPS NOW** (captain decision 286c). {@link
+ * resolveEntryFillSource} does the choosing and touches nothing; this function is that plus the
+ * `build()` the RUN path always wants. The split exists because the PLAN path must be able to
+ * resolve a source — to name it, and to say what asking it would cost — without building one, since
+ * building the Dune source needs a billed coverage probe. Nothing about the run path moved.
+ *
  * @param {import('./fill-source.mjs').FillSourceKind} kind
- * @param {Partial<Record<import('./fill-source.mjs').FillSourceKind,
- *   () => import('./fill-source.mjs').FillSource>>} sources
+ * @param {FillSourceRegistry} sources
  * @returns {import('./fill-source.mjs').FillSource}
  */
 export function selectEntryFillSource(kind, sources) {
-  const build = sources[kind];
-  if (build === undefined) {
+  return resolveEntryFillSource(kind, sources).build();
+}
+
+/**
+ * Every entry source this run could be asked for, and — where the registrar said — what building
+ * each one costs.
+ *
+ * A bare thunk is still accepted and still means "build it this way"; it declares nothing about
+ * cost, and `plan-source.mjs` → {@link registrationOf} treats an absent declaration as UNDECLARED
+ * rather than as free. That is the fail-safe direction: the run path builds either way, and the plan
+ * path refuses to find out by spending.
+ *
+ * @typedef {Partial<Record<import('./fill-source.mjs').FillSourceKind,
+ *   import('./plan-source.mjs').FillSourceRegistration
+ *     | (() => import('./fill-source.mjs').FillSource)>>} FillSourceRegistry
+ */
+
+/**
+ * CHOOSE the fill source without building it. **This resolves with no network call, ever.**
+ *
+ * It is the half of {@link selectEntryFillSource} the dry run may use: a plan has to know which
+ * source it is describing, and it must not construct one to find out. The refusal is unchanged and
+ * lives here, because refusing a kind this run has no constructor for is a property of the CHOICE
+ * rather than of the construction.
+ *
+ * @param {import('./fill-source.mjs').FillSourceKind} kind
+ * @param {FillSourceRegistry} sources
+ * @returns {import('./plan-source.mjs').FillSourceRegistration}
+ */
+export function resolveEntryFillSource(kind, sources) {
+  const entry = sources[kind];
+  if (entry === undefined) {
     throw new Error(
       `Stage 2 was asked for a ${kind} fill source and this run carries no constructor for one. ` +
         `It refuses rather than substituting another source: a run that silently measured on a ` +
@@ -177,7 +213,73 @@ export function selectEntryFillSource(kind, sources) {
         `one direction nothing observes.`,
     );
   }
-  return build();
+  const registration = registrationOf(kind, entry);
+  if (registration.construction.kind !== kind) {
+    throw new Error(
+      `Stage 2 was asked for a ${kind} fill source and this run's registration declares itself ` +
+        `${registration.construction.kind}. It refuses rather than resolving one: a plan LABELS ` +
+        `every figure it prints with this kind — which page distribution, which shed rate, which ` +
+        `pacing justification and which cursor geometry describe the walk — so a declaration that ` +
+        `disagrees with its key would mislabel every one of them, which is standing ruling 285a's ` +
+        `defect arriving through the label itself, the one route the labelling cannot catch.`,
+    );
+  }
+  return registration;
+}
+
+/**
+ * What building the swap-api fill source costs: nothing, and this is where that is declared.
+ *
+ * It is stated rather than assumed because the plan path reads declarations, not implementations —
+ * see `plan-source.mjs`. The claim is checkable in one line: the source is built from a
+ * `KeylessClient` that has already been constructed, and its eligibility answer is its own cursor
+ * reach, which is arithmetic over pinned thresholds. No socket, no allowance, no credential.
+ *
+ * **EXPORTED SO THE CENSUS'S COPY CANNOT DRIFT FROM IT** (captain decision 290b). `bundling.mjs`
+ * declares the same construction for the same source and may not import this module — that would put
+ * the Dune client and the credential reader in the census's import graph, and captain decision 173a's
+ * "spends zero keyed requests" is a property of the tree. A test imports both and fails the build if
+ * the two ever differ, which is the only place that comparison can live.
+ */
+export const SWAP_API_CONSTRUCTION = freeConstruction(
+  'swap-api',
+  'it is built from a keyless client and answers eligibility from its own cursor reach, so no ' +
+    'request, credit or credential is involved in building it or in asking it.',
+);
+
+/**
+ * The flag that authorises a dry run to build a billed source, named once so the plan's own
+ * unavailable line can tell an operator what to do next rather than describing a capability without
+ * saying how to reach it.
+ */
+const DRY_RUN_SPEND_FLAG = '--dry-run-spend';
+
+/**
+ * THE PLAN'S ELIGIBILITY ANSWER: resolve the source, and ask it only where that is free or the
+ * operator has authorised the purchase.
+ *
+ * It exists as a named function rather than four lines inside `main` because it is the seam captain
+ * decision 286c has to be testable at: the registry is what a test substitutes, and a stub whose
+ * constructor throws is what proves the default path never builds a billed source. A test driving
+ * `planEligibility` alone would prove the helper works and say nothing about whether `screen.mjs`
+ * routes through it.
+ *
+ * @param {import('./fill-source.mjs').FillSourceKind} kind
+ * @param {FillSourceRegistry} sources
+ * @param {object} opts
+ * @param {import('./fill-source.mjs').FillSourceBounds} opts.bounds
+ * @param {boolean} opts.spendAuthorised
+ * @param {(line: string) => void} opts.announce
+ * @returns {Promise<import('./plan-source.mjs').PlanEligibility>}
+ */
+export async function planEntryEligibility(kind, sources, opts) {
+  return planEligibility({
+    registration: resolveEntryFillSource(kind, sources),
+    bounds: opts.bounds,
+    spendAuthorised: opts.spendAuthorised,
+    authorisedBy: DRY_RUN_SPEND_FLAG,
+    announce: opts.announce,
+  });
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -201,7 +303,15 @@ const USAGE = `deployer-screen — competence gate + ENTRY score for pump.fun de
 
 MODES
   --stage0            Run only the local validation. No network, no key, no quota. Always safe.
-  --dry-run           Print exactly what a real run would fetch, and fetch nothing.
+  --dry-run           Print exactly what a real run would fetch, and fetch nothing. FREE, and it
+                      ALWAYS prints the plan: a figure that could only be had by BUILDING a fill
+                      source whose construction is billed is printed as UNAVAILABLE, naming the
+                      source and the reason, never thrown and never quietly replaced by another
+                      source's number.
+  --dry-run-spend     With --dry-run only. Authorise the plan to BUILD a billed fill source so it
+                      can state those figures. It prints the BOUNDED spend before spending and the
+                      ACTUAL after. Today's selected source is free to build, so this authorises a
+                      purchase there is nothing to make; it exists for the Gate 3 cutover.
   (default)           Stage 0, then Stage 1 (enumerate + gate), then Stage 2 (score entry room and
                       the field, keyless). Stage 0 must pass first.
 
@@ -305,6 +415,7 @@ export function parseArgs(argv) {
   const opts = {
     stage0Only: false,
     dryRun: false,
+    dryRunSpend: false,
     candidates: null,
     maxRequests: null,
     tier: undefined,
@@ -346,6 +457,9 @@ export function parseArgs(argv) {
         break;
       case '--dry-run':
         opts.dryRun = true;
+        break;
+      case '--dry-run-spend':
+        opts.dryRunSpend = true;
         break;
       case '--consistency':
         opts.consistency = true;
@@ -417,6 +531,13 @@ export function parseArgs(argv) {
     }
   }
 
+  // **The opt-in only opts into something inside a dry run.** Outside one it would read as an
+  // authorisation the run never asked for and never consults, and a flag that is silently inert is
+  // how an operator comes to believe they authorised something they did not. Captain decision 286c.
+  if (opts.dryRunSpend && !opts.dryRun) {
+    return { ok: false, message: '--dry-run-spend only means anything with --dry-run' };
+  }
+
   return { ok: true, opts };
 }
 
@@ -424,6 +545,10 @@ export function parseArgs(argv) {
  * @typedef {object} Options
  * @property {boolean} stage0Only
  * @property {boolean} dryRun
+ * @property {boolean} dryRunSpend Authorise the DRY RUN to build a fill source whose construction is
+ *   billed, so the plan can state the figures only that construction can answer. Captain decision
+ *   286c: without it a dry run is free and prints those figures as UNAVAILABLE with the reason; with
+ *   it the bound is stated before the spend and the actual after. Requires `--dry-run`.
  * @property {number | null} candidates
  * @property {number | null} maxRequests
  * @property {string | undefined} tier
@@ -684,37 +809,64 @@ export async function main(opts, env, out, err) {
 
   // THE ONE PLACE A FILL SOURCE IS CHOSEN (captain decision 260a). Everything downstream —
   // `stage2.mjs`, `entry.mjs`, `measure.mjs`, `rank.mjs` — receives the source and never names one.
-  // See {@link selectEntryFillSource} for what this run resolves to and why. It is selected here,
-  // above the dry-run branch, because THE PLAN MUST STATE THE GATE THE SOURCE ITSELF WILL APPLY:
-  // a plan that re-derived that duration would be a second expression that merely agrees, which is
-  // captain decision 144a's defect and the reason the gate was injected in the first place.
-  // Selecting costs nothing — a source is built from its transport, and neither source opens a
-  // socket to say how old a launch must be.
+  // See {@link selectEntryFillSource} for what this run resolves to and why.
   //
-  // BOTH STEPS CAN REFUSE, AND A REFUSAL IS A REPORTED OUTCOME RATHER THAN A STACK TRACE. A source
-  // whose constructor cannot vouch for itself, or one answering an eligibility that is not a
-  // duration, stops the run here — the site whose whole job is to say "we cannot run Stage 2 on the
-  // source we were asked for". Escaping `main` would return Node's exit 1, which is not in the
-  // `EXIT` map, and print the message as a crash.
-  /** @type {import('./fill-source.mjs').FillSource} */
-  let entryFillSource;
-  /** @type {number} */
-  let entryMinAgeMs;
-  try {
-    entryFillSource = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, {
-      'swap-api': () => swapApiFillSource(stage2Keyless),
-    });
-    entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entryThresholds, Date.now()));
-    assertMinAgeUsable(entryFillSource, entryMinAgeMs);
-  } catch (cause) {
-    err('');
-    err('Refusing to start: Stage 2 has no usable fill source.');
-    err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
-    err('  Nothing was requested, so no quota was spent.');
-    return EXIT.upstream;
-  }
+  // **THE REGISTRY IS DATA AND RESOLVING IT COSTS NOTHING** (captain decision 286c). Each entry
+  // carries a constructor AND a declaration of what running that constructor costs, so the dry-run
+  // branch below can name the source, and say what asking it would cost, without building one. That
+  // matters from the Gate 3 cutover on: the Dune source cannot be built without a BILLED coverage
+  // probe, so a plan that built its source to describe it would either spend or throw, and the
+  // captain refused both.
+  /** @type {FillSourceRegistry} */
+  const entryFillSources = {
+    'swap-api': { construction: SWAP_API_CONSTRUCTION, build: () => swapApiFillSource(stage2Keyless) },
+  };
 
   if (opts.dryRun) {
+    // THE PLAN MUST STATE THE GATE THE SOURCE ITSELF WILL APPLY — a plan that re-derived that
+    // duration would be a second expression that merely agrees, which is captain decision 144a's
+    // defect and the reason the gate was injected in the first place (281a/284a/285a). What 286c
+    // adds is the other half of the same honesty: where the source cannot be ASKED for free, the
+    // plan says so in place and prints everything else, rather than spending or refusing to print.
+    /** @type {import('./plan-source.mjs').PlanEligibility | null} */
+    let entryEligibility = null;
+    // ONLY A PLAN THAT WILL PRINT THE FIGURE MAY BUY IT. The eligibility floor is rendered inside
+    // the Stage 2 block and nowhere else, so under `--no-stage2` the source is not consulted at
+    // all — otherwise the opt-in could authorise a bounded purchase of a number that appears on no
+    // page.
+    //
+    // THIS GATE IS ABOUT THE PLAN PATH ONLY AND MAKES NO CLAIM ABOUT THE RUN PATH. The run path
+    // builds its source UNCONDITIONALLY — `selectEntryFillSource` below, outside any `opts.stage2`
+    // guard — while `entryFillSource` and `entryMinAgeMs` are consumed only inside the
+    // `if (opts.stage2)` block that scores candidates. That is a KNOWN GAP, not an oversight:
+    // under a future billed construction a real `--no-stage2` run WOULD run the billed coverage
+    // probe for a source it never reads, and WOULD refuse the whole run with `EXIT.upstream` for
+    // an unbuildable source Stage 2 was never going to use. It is harmless today because the
+    // selected source is free to build. It is FILED AGAINST THE GATE 3 CUTOVER as its own item and
+    // is deliberately not fixed here, because the run path's behaviour is frozen for this change.
+    if (opts.stage2) {
+      try {
+        entryEligibility = await planEntryEligibility(ENTRY_FILL_SOURCE_KIND, entryFillSources, {
+          bounds: entryFillBounds(entryThresholds, Date.now()),
+          spendAuthorised: opts.dryRunSpend,
+          // The bound and the actual land ABOVE the plan, in the order they happen, so an operator
+          // reading top to bottom sees what was authorised before they see what it bought.
+          announce: (line) => out(line),
+        });
+      } catch (cause) {
+        // A source this run has no constructor for, or one that could not be built where NOTHING
+        // WAS SPENT, stops the PLAN — the site whose whole job is to say "we cannot describe Stage
+        // 2 on the source we were asked for". Escaping `main` would return Node's exit 1, which is
+        // not in the `EXIT` map, and print the message as a crash. A failure AFTER an authorised
+        // spend never reaches here: `planEntryEligibility` degrades it to a stated absence rather
+        // than taking the money and the page both.
+        err('');
+        err('Refusing to plan: Stage 2 has no usable fill source.');
+        err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
+        err('  Nothing else was requested.');
+        return EXIT.upstream;
+      }
+    }
     out('');
     out(
       renderDryRun({
@@ -726,7 +878,8 @@ export async function main(opts, env, out, err) {
         stage2: opts.stage2,
         maxScored,
         entryThresholds,
-        entryMinAgeMs,
+        entryEligibility,
+        spendAuthorised: opts.dryRunSpend,
         historySource,
         creationWalk: T['creation_walk'],
         costBounds,
@@ -741,6 +894,30 @@ export async function main(opts, env, out, err) {
       }),
     );
     return EXIT.ok;
+  }
+
+  // ---- the RUN path, unchanged by 286c ----------------------------------------------------
+  // A real run builds its source and pays whatever that costs: it was always going to reach that
+  // vendor, and the eligibility answer is an input to a measurement rather than a line on a preview.
+  //
+  // BOTH STEPS CAN REFUSE, AND A REFUSAL IS A REPORTED OUTCOME RATHER THAN A STACK TRACE. A source
+  // whose constructor cannot vouch for itself, or one answering an eligibility that is not a
+  // duration, stops the run here — the site whose whole job is to say "we cannot run Stage 2 on the
+  // source we were asked for".
+  /** @type {import('./fill-source.mjs').FillSource} */
+  let entryFillSource;
+  /** @type {number} */
+  let entryMinAgeMs;
+  try {
+    entryFillSource = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, entryFillSources);
+    entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entryThresholds, Date.now()));
+    assertMinAgeUsable(entryFillSource, entryMinAgeMs);
+  } catch (cause) {
+    err('');
+    err('Refusing to start: Stage 2 has no usable fill source.');
+    err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
+    err('  Nothing was requested, so no quota was spent.');
+    return EXIT.upstream;
   }
 
   if (!resolution.ok) {

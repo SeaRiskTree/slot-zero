@@ -28,6 +28,14 @@ import { LANDING_TIP_CAVEAT } from './entry.mjs';
 // The reach the plan quotes is DERIVED, never a second copy of the formula: an operator reads this
 // block before authorising a run, so it has to describe the walk `readLaunchWindow` will actually do.
 import { windowReachMs } from './pumpfun.mjs';
+// The plan's own vocabulary for a figure it could not have for free — captain decision 286c. Built
+// there rather than here so the screen's plan and the census's cannot drift, and so a change that
+// degraded an UNAVAILABLE into a blank or a zero would have to delete the function that says why.
+import {
+  eligibilityFloorSeconds,
+  eligibilityUnavailableNote,
+  sourceFigureUnavailableNote,
+} from './plan-source.mjs';
 import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
 
@@ -1157,11 +1165,19 @@ export function renderStage1(run) {
  * @param {boolean} plan.stage2
  * @param {number} plan.maxScored
  * @param {import('./stage2.mjs').Stage2Thresholds} plan.entryThresholds
- * @param {number} plan.entryMinAgeMs **THE SELECTED FILL SOURCE'S OWN ANSWER**, asked of it by
- *   `screen.mjs` — never re-derived here. The plan states how old a launch must be before it is
- *   walked, and only the vendor that will do the reading can answer that (captain decision 257a);
- *   a figure computed a second time in the renderer is the shape captain decision 144a names, and
- *   it would go on agreeing with the run right up until the day it did not.
+ * @param {import('./plan-source.mjs').PlanEligibility | null} plan.entryEligibility **THE SELECTED FILL
+ *   SOURCE'S OWN ANSWER, OR A STATED ABSENCE**, resolved by `screen.mjs` — never re-derived here.
+ *   The plan states how old a launch must be before it is walked, and only the vendor that will do
+ *   the reading can answer that (captain decision 257a); a figure computed a second time in the
+ *   renderer is the shape captain decision 144a names, and it would go on agreeing with the run
+ *   right up until the day it did not. Captain decision 286c adds the other half: where the source
+ *   cannot be asked without a billed construction, this arrives as `known: false` and the line
+ *   below prints UNAVAILABLE with the source and the reason, never a substitute number. **`null`
+ *   means NO SOURCE WAS CONSULTED AT ALL** — `--no-stage2`, where this page prints no eligibility
+ *   floor anywhere, so buying one would be a spend with no reader. It is a third state rather than
+ *   an absent figure: "not asked" and "asked and refused" are different things to say.
+ * @param {boolean} plan.spendAuthorised Whether this dry run was authorised to build a billed fill
+ *   source. It changes the banner, because "nothing was fetched" stops being true.
  * @param {'creation-derived' | 'ownership-only'} plan.historySource
  * @param {{ maxRpcRequestsPerCandidate: number, rpcMinIntervalMs: number }} plan.creationWalk
  * @param {{ maxRpcRequestsPerCandidate: number, rpcMinIntervalMs: number, preferBlockRoute: boolean }} plan.costBounds
@@ -1189,7 +1205,59 @@ export function renderStage1(run) {
 export function renderDryRun(plan) {
   const L = [];
   L.push('='.repeat(78));
-  L.push('DRY RUN — nothing was fetched. This is exactly what a real run would request.');
+  if (plan.spendAuthorised) {
+    // THE BANNER MUST NOT OUTLIVE ITS OWN TRUTH, in either direction. Under the opt-in, building
+    // the fill source was ALLOWED to spend, so "nothing was fetched" may be false — and an
+    // authorisation is permission rather than evidence, so claiming a spend that never happened is
+    // the same defect mirrored. It reads the figure's own `billed`, not the flag.
+    L.push('DRY RUN, SPEND AUTHORISED — this is exactly what a real run would request.');
+    if (plan.entryEligibility === null) {
+      // Stage 2 is off, so no source was consulted and the authorisation had nothing to buy. It is
+      // stated as "not asked" rather than as "free": whether building it would have cost anything
+      // is not something this page found out, and claiming either way would be inventing an answer.
+      L.push('Stage 2 is OFF, so no fill source was consulted and the authorisation bought nothing:');
+      L.push('nothing was fetched. This plan states no eligibility floor, so there was nothing here');
+      L.push('worth buying one for.');
+    } else if (plan.entryEligibility.known && plan.entryEligibility.billed) {
+      L.push('Building the fill source was authorised to spend; the bound it was given is stated');
+      L.push('above, and the ACTUAL line beside it states what it cost or that the cost itself');
+      L.push('could not be read. Nothing else here was fetched.');
+    } else if (plan.entryEligibility.known) {
+      L.push('Building the selected fill source costs nothing, so the authorisation bought nothing');
+      L.push('and nothing was fetched. This page is what a plain --dry-run prints.');
+    } else {
+      // THE UNKNOWN BRANCHES ARE THE POINT (captain decision 286c). An absent figure printed as
+      // "costs nothing" is an absence read as a benign value — the failure the split exists to
+      // remove, and a self-contradiction on a page whose eligibility line correctly says UNAVAILABLE.
+      // Unknown reads as unknown, names why, and states no cost either way.
+      //
+      // WHICH unknown is read from the FIGURE, never from the flag. `known: false` has three
+      // producers — an UNDECLARED construction, which can state no bound and so names no
+      // authorising flag; a BILLED one this plan was not authorised to build, which names one; and
+      // an authorised billed one that was built, BILLED and then failed, which is the only absence
+      // that cost something. Inferring any of them from `spendAuthorised` would assert a false
+      // reason on a page whose own note directly below says what actually happened.
+      if (plan.entryEligibility.spent === true) {
+        L.push('The selected fill source WAS built under this authorisation and the spend was MADE —');
+        L.push('the bound is stated above, and the ACTUAL line beside it states what it cost or that');
+        L.push('the cost itself could not be read — and the construction then FAILED, so the figure');
+        L.push('it was bought for is UNAVAILABLE. The page is printed in full rather than withheld on');
+        L.push('top of the spend. Same reason, same words, below:');
+      } else if (plan.entryEligibility.authorisedBy === null) {
+        L.push('The selected fill source declared NOTHING about what building it costs, so this plan');
+        L.push('did NOT build it: nothing was fetched, and NOTHING CAN BE SAID ABOUT WHAT BUILDING IT');
+        L.push('WOULD HAVE COST. An authorisation cannot cover a spend that can state no bound. Same');
+        L.push('reason, same words, as the figure it withholds further down:');
+      } else {
+        L.push('The selected fill source was NOT built by this plan, so nothing was fetched for it and');
+        L.push('WHAT BUILDING IT WOULD HAVE COST IS UNSTATED HERE. Same reason, same words, as the');
+        L.push('figure it withholds further down, including what would authorise the purchase:');
+      }
+      for (const line of eligibilityUnavailableNote(plan.entryEligibility)) L.push(`  ${line}`);
+    }
+  } else {
+    L.push('DRY RUN — nothing was fetched. This is exactly what a real run would request.');
+  }
   L.push('='.repeat(78));
   L.push('');
 
@@ -1232,8 +1300,65 @@ export function renderDryRun(plan) {
   const t = plan.entryThresholds;
   if (plan.stage2) {
     const worstCase = plan.maxScored * t.maxLaunchesPerCandidate * t.maxRequestsPerLaunch;
-    L.push('KEYLESS — STAGE 2, the ENTRY score. pump.fun fill tape, for gate survivors only:');
-    L.push('  GET https://swap-api.pump.fun/v2/coins/{mint}/trades?limit=' + `${t.tradePageLimit}&cursor=0-{seekFromMs}`);
+    // EVERY CLAIM MEASURED ON ONE SOURCE IS LABELLED WITH IT, AND IS UNAVAILABLE UNDER ANOTHER
+    // (standing ruling 285a). The request line was the first of them; the host name in the header,
+    // the page distribution, the shed rate and the cursor geometry are the rest. None may be
+    // re-printed as though it held for a source it was never measured against, and none may be
+    // replaced by an invented figure for that source — no Dune pacing, shed rate or page cost has
+    // been measured, and a plausible number is worse than an absence.
+    //
+    // KNOWN RESIDUAL, RECORDED RATHER THAN REWIRED, TRIGGER: THE GATE 3 CUTOVER. The four figures
+    // below that KEEP printing under every source — the stage keyless ceiling, the pacing floor,
+    // the request WORST CASE and the wall clock derived from that floor — are bounds this stage
+    // enforces on its OWN KEYLESS CLIENT. They are correct today only because the fills come from a
+    // keyless HTTP client; a Dune fill source would issue executions and credits and would not be
+    // governed by that client at all. They must NOT be suppressed or labelled unavailable — a plan
+    // must always be complete, and withholding a ceiling is the failure this split exists to avoid
+    // — so what is owed at the cutover is the same `measuredOn` labelling the page distribution,
+    // shed rate, pacing justification and typical wall clock already received here, plus whatever
+    // bound the Dune source's own transport enforces in its place. Owner: whoever lands Gate 3;
+    // `tools/deployer-screen/README.md` → "The dry run is SPLIT so it can be both free and honest"
+    // carries the same residual for a reader who never opens this file.
+    // A page that prints this block is a page that asked the source, so the caller resolved one.
+    // The invariant is asserted rather than defaulted: substituting a kind here is how a
+    // swap-api-measured figure would come to be printed under another source.
+    const eligibility = plan.entryEligibility;
+    if (eligibility === null) {
+      throw new Error(
+        'renderDryRun was asked to print the Stage 2 block with no fill-source eligibility ' +
+          'resolved. That block LABELS every figure it prints by the selected source, so it cannot ' +
+          'be rendered without one, and defaulting the label is how a figure measured on one ' +
+          'vendor comes to be printed under another.',
+      );
+    }
+    const fromSwapApi = eligibility.kind === 'swap-api';
+    /** @param {string} figure */
+    const notMeasuredHere = (figure) => {
+      const note = sourceFigureUnavailableNote({
+        figure,
+        measuredOn: 'swap-api',
+        selected: eligibility.kind,
+      });
+      for (const line of note) L.push(`    ${line}`);
+    };
+    L.push(
+      fromSwapApi
+        ? 'KEYLESS — STAGE 2, the ENTRY score. pump.fun fill tape (swap-api), for gate survivors only:'
+        : `STAGE 2, the ENTRY score. Fill tape from the ${eligibility.kind} source, for gate survivors only:`,
+    );
+    // THE REQUEST LINE BELONGS TO THE SELECTED SOURCE, so it is printed only for the source that
+    // makes it. Under the Gate 3 cutover this block described a swap-api walk while Stage 2 read
+    // Dune — a plan naming a host the run would never reach, which is the same class of stale claim
+    // as a re-derived bound and reads as confidently as a true one.
+    if (fromSwapApi) {
+      L.push('  GET https://swap-api.pump.fun/v2/coins/{mint}/trades?limit=' + `${t.tradePageLimit}&cursor=0-{seekFromMs}`);
+    } else {
+      L.push(`  The fills come from the ${eligibility.kind} source. Its per-request shape is that`);
+      L.push('  source\'s own and is NOT restated here — a plan that kept a copy would go on');
+      L.push('  describing the walk it was written against. The ceilings below still print and are');
+      L.push('  the ones this stage enforces on its OWN keyless client today — a source billed in');
+      L.push('  executions and credits is not governed by that client.');
+    }
     L.push('');
     L.push('  This stage spends NO KEYED REQUEST. The mint list comes from the profile Stage 1 has');
     L.push('  already paid for, so the shared vendor allowance is untouched by everything below.');
@@ -1241,9 +1366,13 @@ export function renderDryRun(plan) {
     L.push(`  survivors scored              up to ${plan.maxScored}  (pinned cap ${t.maxCandidatesScored})`);
     L.push(`  launches per survivor         up to ${t.maxLaunchesPerCandidate}`);
     L.push(`  requests per launch           up to ${t.maxRequestsPerLaunch}, RETRIES INCLUDED`);
-    L.push(`                                (measured at this ${windowReachMs(t) / 1000}s reach over the 127 committed`);
-    L.push('                                launches whose tape outlives it: p50 6 pages, p90 8,');
-    L.push('                                p95 9, max 17; ~25% shed rate)');
+    if (fromSwapApi) {
+      L.push(`                                (measured on the swap-api source at this ${windowReachMs(t) / 1000}s reach`);
+      L.push('                                over the 127 committed launches whose tape outlives');
+      L.push('                                it: p50 6 pages, p90 8, p95 9, max 17; ~25% shed rate)');
+    } else {
+      notMeasuredHere('pages per launch (p50/p90/p95/max) and the shed rate');
+    }
     L.push(
       `  WORST CASE                    ${plan.maxScored} x ${t.maxLaunchesPerCandidate} x ` +
         `${t.maxRequestsPerLaunch} = ${worstCase} request(s)`,
@@ -1255,15 +1384,30 @@ export function renderDryRun(plan) {
     const typicalRequests = plan.maxScored * t.maxLaunchesPerCandidate * 6;
     /** @param {number} requests */
     const minutes = (requests) => Math.round((requests * t.keylessMinIntervalMs) / 60_000);
-    L.push(
-      `  pacing                        ${t.keylessMinIntervalMs / 1000}s between requests, ` +
-        `swap-api ONLY (this host sheds ~25%)`,
-    );
-    L.push(
-      `  TIME                          about ${minutes(typicalRequests)} min typical ` +
-        `(~6 requests/launch, this walk's p50 over those 127 launches), ` +
-        `about ${minutes(worstCase)} min worst case`,
-    );
+    if (fromSwapApi) {
+      L.push(
+        `  pacing                        ${t.keylessMinIntervalMs / 1000}s between requests, ` +
+          `swap-api ONLY (this host sheds ~25%)`,
+      );
+      L.push(
+        `  TIME                          about ${minutes(typicalRequests)} min typical ` +
+          `(~6 requests/launch, this walk's p50 over those 127 launches), ` +
+          `about ${minutes(worstCase)} min worst case`,
+      );
+    } else {
+      // The interval is a PINNED bound this stage enforces on its own keyless client, so it still
+      // prints; what does not travel is the shed rate it was sized against, which is one host's.
+      L.push(
+        `  pacing                        ${t.keylessMinIntervalMs / 1000}s between requests on this ` +
+          `stage's own keyless client, a pinned floor`,
+      );
+      notMeasuredHere("the shed rate that floor was sized against, which is the swap-api host's");
+      // The worst case is arithmetic over the ceilings this stage enforces on its own keyless
+      // client, and it still prints; see the residual recorded above for what it does NOT describe.
+      // The TYPICAL is weaker again: it multiplies a pages-per-launch median measured on one walk.
+      L.push(`  TIME                          about ${minutes(worstCase)} min worst case at that pacing`);
+      notMeasuredHere('the TYPICAL wall clock, which needs a pages-per-launch median');
+    }
     L.push(
       worstCase <= t.maxKeylessRequests
         ? '  The worst case is at or under the ceiling, so the plan above is the WHOLE exposure.'
@@ -1271,16 +1415,36 @@ export function renderDryRun(plan) {
     );
     L.push('  A launch is only started when a full page-cap of headroom remains, so no launch is');
     L.push(`  ever abandoned half-walked. Window measured: ${t.windowSlotSpan} SLOTS from the create`);
-    L.push(`  slot — the chain's own ordering, not the vendor's clock. The seek reaches ${windowReachMs(t) / 1000}s`);
-    L.push(`  past the mint: that same ${t.windowSlotSpan} slots at a measured worst-case rate, plus ${t.seekMarginMs / 1000}s of`);
-    L.push('  clock slack, so an early vendor mint time cannot truncate the tail; that');
-    L.push('  margin is a cursor hint and never a tolerance on the pre-mint drop. A launch is not');
-    L.push(
-      `  walked until it is ${plan.entryMinAgeMs / 1000}s old — the gate the fill source itself applies, ` +
-        `never a second number derived here, so the`,
-    );
-    L.push('  gate cannot fall behind the cursor when the chain slows. Pinned keyless');
-    L.push('  pacing, one request in flight.');
+    L.push("  slot — the chain's own ordering, not the vendor's clock.");
+    if (fromSwapApi) {
+      L.push(`  The swap-api seek reaches ${windowReachMs(t) / 1000}s past the mint: that same ${t.windowSlotSpan} slots at a`);
+      L.push(`  measured worst-case rate, plus ${t.seekMarginMs / 1000}s of clock slack, so an early vendor mint`);
+      L.push('  time cannot truncate the tail; that margin is a cursor hint and never a');
+      L.push('  tolerance on the pre-mint drop.');
+    } else {
+      // The cursor geometry is the walk's own, and the else-branch at the top of this block has
+      // already said the selected source's per-request shape is not restated here. Printing the
+      // swap-api's reach under another source would contradict that in the same breath.
+      L.push(`  How the ${eligibility.kind} source reaches that window is its own cursor geometry and`);
+      L.push('  is NOT restated here, for the reason the request line above gives.');
+    }
+    if (eligibility.known) {
+      L.push(
+        `  A launch is not walked until it is ${eligibilityFloorSeconds(eligibility)} old — the gate the fill source ` +
+          `itself applies,`,
+      );
+      L.push('  never a second number derived here, so the gate cannot fall behind the cursor when');
+      L.push('  the chain slows.');
+    } else {
+      // NEVER THROWN, NEVER OMITTED, NEVER DEFAULTED TO ANOTHER SOURCE'S VALUE — captain decision
+      // 286c. The reach printed two lines up is this walk's own geometry and stays; the FLOOR is
+      // the vendor's and is simply not here, said in those words.
+      L.push('  A launch is not walked until it is old enough, and');
+      L.push('  HOW OLD IS UNAVAILABLE IN THIS PLAN:');
+      for (const line of eligibilityUnavailableNote(eligibility)) L.push(`    ${line}`);
+      L.push('  Every other figure on this page is free of that and stands.');
+    }
+    L.push('  Pinned keyless pacing, one request in flight.');
     L.push('');
 
     const c = plan.costBounds;
@@ -1290,7 +1454,10 @@ export function renderDryRun(plan) {
     L.push('');
     L.push('  Fees are part of the entry window (captain, 2026-08-02), so a room figure without the');
     L.push('  price of the seat beside it is not an answer to "is this enterable". The signatures');
-    L.push('  come free with fills Stage 2 already parsed — no vendor request, no extra swap-api page.');
+    L.push(
+      '  come free with fills Stage 2 already parsed — no vendor request, no extra page from the ' +
+        `${eligibility.kind} source.`,
+    );
     L.push('');
     L.push(`  requests per candidate        up to ${c.maxRpcRequestsPerCandidate}`);
     L.push(

@@ -1275,7 +1275,10 @@ export function renderDryRun(plan) {
     L.push(`  past the mint: that same ${t.windowSlotSpan} slots at a measured worst-case rate, plus ${t.seekMarginMs / 1000}s of`);
     L.push('  clock slack, so an early vendor mint time cannot truncate the tail; that');
     L.push('  margin is a cursor hint and never a tolerance on the pre-mint drop. A launch is not');
-    L.push(`  walked until it is ${plan.entryMinAgeMs / 1000}s old — the SAME derivation, not a second number, so the`);
+    L.push(
+      `  walked until it is ${plan.entryMinAgeMs / 1000}s old — the gate the fill source itself applies, ` +
+        `never a second number derived here, so the`,
+    );
     L.push('  gate cannot fall behind the cursor when the chain slows. Pinned keyless');
     L.push('  pacing, one request in flight.');
     L.push('');

@@ -73,6 +73,7 @@ import {
   readCreatorHistory,
 } from './pumpfun.mjs';
 import { rpcCostSource } from './rpc-costs.mjs';
+import { assertMinAgeUsable } from './fill-source.mjs';
 import { swapApiFillSource } from './swapapi-fills.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderMayhemShare, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
@@ -693,6 +694,7 @@ export async function main(opts, env, out, err) {
     'swap-api': () => swapApiFillSource(stage2Keyless),
   });
   const entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entryThresholds, Date.now()));
+  assertMinAgeUsable(entryFillSource, entryMinAgeMs);
 
   if (opts.dryRun) {
     out('');

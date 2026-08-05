@@ -1817,8 +1817,8 @@ describe('the CLI contract', () => {
     // The quantity half is what gives the parameter half its reach. A borrowed derivation does not
     // have to name a parameter to be borrowed — the sibling block states its whole credit derivation
     // in bare figures — so a parameter-name ban alone would miss the realistic borrow while its
-    // comment claimed otherwise. The two halves are checked to be able to fire below, against the
-    // other block's own live text rather than against an invented sentence.
+    // comment claimed otherwise. Each half is therefore proven able to fire ON ITS OWN below, so
+    // neither can silently stop firing behind the other in the combined predicate.
     //
     // The parameter names are written out below, and each one is then asserted to still resolve to a
     // live pin on the lane that owns it — so a rename fails here rather than silently stopping the
@@ -1840,21 +1840,58 @@ describe('the CLI contract', () => {
     const borrowsDune = (text: string) => duneCostTerms.test(text) || creditQuantity.test(text);
     const borrowsSwap = (text: string) => swapCostTerms.test(text) || requestQuantity.test(text);
 
-    // THE CHECK CAN FIRE, DEMONSTRATED RATHER THAN ASSERTED: each side's ban is run against the
-    // other block's OWN justification, which states that side's real derivation in that side's real
-    // unit. If either predicate stopped catching the genuine article, these two lines fail.
+    // THE CHECK CAN FIRE, DEMONSTRATED RATHER THAN ASSERTED, AND EACH HALF SEPARATELY. Each side's
+    // ban is run against the other block's OWN justification — real text stating that side's real
+    // derivation in that side's real unit, not an invented sentence. The combined predicate is an
+    // OR, so running it on the whole text would let the parameter half mask the quantity half: the
+    // swap-api entries all name maxRequestsPerLaunch, and the OR would short-circuit there while a
+    // broken requestQuantity went unnoticed. So each half is exercised on text the other half
+    // cannot match, derived from the live justification by removing what the other half sees.
+    const stripRequestQuantities = (t: string) => t.replace(/[\d.,]+\s*requests?/gi, 'requests');
+    const stripCreditQuantities = (t: string) => t.replace(/[\d.,]+\s*credits?/gi, 'credits');
+    const stripSwapParams = (t: string) => t.replace(new RegExp(swapCostParams.join('|'), 'g'), 'the cap');
+    const stripDuneParams = (t: string) => t.replace(new RegExp(duneCostParams.join('|'), 'g'), 'the ceiling');
+
     for (const k of CAPS) {
-      expect(borrowsDune(jDune[k]!), `the Dune ban must catch stage2_entry_dune's own ${k}`).toBe(true);
-      expect(borrowsSwap(jSwap[k]!), `the swap-api ban must catch stage2_entry's own ${k}`).toBe(true);
+      // The swap-api side's real arithmetic, with its request FIGURES reduced to the bare word that
+      // both sides may use. Only the parameter half can still see it.
+      const swapNamesOnly = stripRequestQuantities(jSwap[k]!);
+      expect(requestQuantity.test(swapNamesOnly), `${k}: the bare unit word is not a quantity`).toBe(false);
+      expect(swapCostTerms.test(swapNamesOnly), `${k}: the swap parameter half fires alone`).toBe(true);
+      expect(borrowsSwap(swapNamesOnly)).toBe(true);
+
+      // The same text with its parameter NAMES removed — the realistic borrow, a derivation stated
+      // in figures alone. Only the quantity half can still see it.
+      const swapFiguresOnly = stripSwapParams(jSwap[k]!);
+      expect(swapCostTerms.test(swapFiguresOnly), `${k}: no swap parameter name survives`).toBe(false);
+      expect(requestQuantity.test(swapFiguresOnly), `${k}: the request quantity half fires alone`).toBe(true);
+      expect(borrowsSwap(swapFiguresOnly)).toBe(true);
+
+      // The Dune mirror: its whole credit derivation is stated in figures and names none of the four
+      // banned parameters, which is exactly why the quantity half exists.
+      const duneFiguresOnly = stripDuneParams(jDune[k]!);
+      expect(duneCostTerms.test(duneFiguresOnly), `${k}: no Dune parameter name survives`).toBe(false);
+      expect(creditQuantity.test(duneFiguresOnly), `${k}: the credit quantity half fires alone`).toBe(true);
+      expect(borrowsDune(duneFiguresOnly)).toBe(true);
     }
+
+    // And the Dune parameter half, which only one entry exercises — it is the one that reasons about
+    // the enumeration lane's row ceiling.
+    const duneNamesOnly = stripCreditQuantities(jDune['maxCandidatesScored']!);
+    expect(creditQuantity.test(duneNamesOnly)).toBe(false);
+    expect(duneCostTerms.test(duneNamesOnly), 'the Dune parameter half fires alone').toBe(true);
+    expect(borrowsDune(duneNamesOnly)).toBe(true);
 
     for (const k of CAPS) {
       // THE LIMIT OF THIS CHECK, so the prose claim is not read as stronger enforcement than it is:
-      // it asserts VOCABULARY, not arithmetic. A Dune entry that named no swap-api parameter while
-      // describing a request product would still pass. That is acceptable because `justification` is
-      // an explicitly owned text contract here (same idiom as 'every pinned parameter carries a
-      // stated reason'), and because the value-level half of the scoping is asserted semantically in
-      // the next test. Both blocks' prose now claims only this narrow half.
+      // it reaches the other lane's PARAMETER NAMES and number-adjacent uses of its UNIT, and a bare
+      // mention of that unit — used to disclaim it — is deliberately allowed on both sides. What it
+      // does NOT reach is a borrow phrased with neither: a request product written as "six page
+      // fetches a launch" names no parameter and states no request figure, and would pass. That
+      // residual is acceptable because `justification` is an explicitly owned text contract here
+      // (same idiom as 'every pinned parameter carries a stated reason'), and because the
+      // value-level half of the scoping is asserted semantically in the next test. Both blocks'
+      // prose claims exactly this and no more.
       expect(borrowsSwap(jDune[k]!), `stage2_entry_dune.justification.${k} borrows swap-api arithmetic`).toBe(
         false,
       );

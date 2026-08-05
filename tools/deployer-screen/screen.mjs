@@ -1271,7 +1271,7 @@ export async function main(opts, env, out, err) {
       err(
         `  Every gate reading after this point would have silently fallen back to the ownership ` +
           `listing while the record still said historySource "${historySource}", so the run stops ` +
-          `instead. The rest of the shared MadeOnSol daily allowance is unspent.`,
+          `instead. The rest of the MadeOnSol daily allowance is unspent.`,
       );
     }
 

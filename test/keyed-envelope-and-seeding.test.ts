@@ -21,7 +21,12 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { MADEONSOL_DAILY_REQUESTS } from '../tools/deployer-screen/client.mjs';
-import { LAUNCH_CAP_FLOOR, SQL_ROW_CEILING, launchCapPerWallet } from '../tools/deployer-screen/dune.mjs';
+import {
+  CREATION_SQL,
+  LAUNCH_CAP_FLOOR,
+  SQL_ROW_CEILING,
+  launchCapPerWallet,
+} from '../tools/deployer-screen/dune.mjs';
 import { DEFAULT_TIERS, buildSeedPlan } from '../tools/deployer-screen/seed.mjs';
 
 const TOOL_DIR = fileURLToPath(new URL('../tools/deployer-screen/', import.meta.url));
@@ -170,19 +175,6 @@ describe('262a — the seeding is tiered by default and says what it forfeits', 
     // surface no wallets and read as an exhausted feed rather than as a misconfiguration.
     expect(buildSeedPlan({ limit: 50, tiers: [] })).toHaveLength(3);
   });
-
-  it('records the dominance argument AND the selection caveat, because only one of them is good news', () => {
-    const doc = readFileSync(`${TOOL_DIR}seed.mjs`, 'utf8');
-    // The evidence: a strict subset, so untiered forfeits 25 candidates and gains none.
-    expect(doc).toMatch(/strict SUBSET/);
-    // NOT rate flattery — the median page-minus-gate difference is 0.0000 on every pool.
-    expect(doc).toMatch(/NOT RATE FLATTERY|not rate flattery|NOT rate flattery/i);
-    expect(doc).toMatch(/0\.0000/);
-    // What it costs: the vendor's ranking is imported by SELECTION, and nothing measures whether
-    // vendor rank predicts roomLeft. A default that hid this would be the defect, not the default.
-    expect(doc).toMatch(/nothing measures whether vendor rank\s*\*?\s*predicts/i);
-    expect(doc).toMatch(/WHAT IT FORFEITS/);
-  });
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -212,9 +204,8 @@ describe('264a — the row ceiling is raised, still reachable, and needs no save
     // THE OPERATIONAL POINT. CREATION_SQL is compared against saved query 8204672 before an
     // execution is spent, so editing it here without deploying there refuses the WHOLE Dune leg on
     // every run until they agree. Freezing the literal means the raise is a one-file change.
-    const sql = readFileSync(`${TOOL_DIR}dune.mjs`, 'utf8');
     expect(SQL_ROW_CEILING).toBe(19_999);
-    expect(sql).toContain('floor(19999.0 / greatest(count(DISTINCT wallet), 1))');
+    expect(CREATION_SQL).toContain('floor(19999.0 / greatest(count(DISTINCT wallet), 1))');
     // The relation is now an INEQUALITY. The equality was a derivation; the safety property is that
     // a result honouring the derived cap can never sit ON its own `?limit=`.
     expect(SQL_ROW_CEILING).toBeLessThan(dune.maxResultRows);

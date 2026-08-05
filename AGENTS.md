@@ -1145,7 +1145,8 @@ observation about a flag. Three records back it, held at
 the 2026-08-05 measurement whose schema number was superseded — schema-15 candidate rows plus a
 run-level `predictions` block that only exists at 17, under the name `declaredPredictions`, so no
 version describes them and they are not the grading lane's contract. That directory's `README.md`
-owns the statement. **The seeding was NOT chosen — that is the captain's.** Four things bind any lane that touches the gate or the feed:
+owns the statement. **The seeding question is CLOSED — 262a chose tiered, and reopening it is the
+captain's.** Four things bind any lane that touches the gate or the feed:
 
 - **THE BAR'S ROLE INVERTS BETWEEN THE SEEDINGS, so an argument about 0.25 is an argument about the
   UNTIERED pool only.** Untiered: 59 of 76 candidates are eligible on `minTokens`+`minSpanDays` and

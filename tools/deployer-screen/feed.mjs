@@ -822,7 +822,7 @@ export async function main(opts, env, out, err, deps = {}) {
         gateBatch,
         assumedRunsPerDay: feedT.runsPerDayAssumed,
         assumedDailyWorstCaseKeyed: worstCaseKeyed * feedT.runsPerDayAssumed,
-        dailyAllowance: budgetT.maxKeyedRequests,
+        dailyAllowance: MADEONSOL_DAILY_REQUESTS,
         endpoints: client.stats().byEndpoint,
       },
       seeds: seedYields.map((s) => ({
@@ -1017,7 +1017,10 @@ export function renderFeedRun(record) {
   lines.push(
     `  SPEND  ${record['keyedRequests']} keyed request(s) of a ${record['spend'].keyedCeiling} per-run ceiling; ` +
       `0 keyless. Assumed daily worst case ` +
-      `${record['spend'].assumedDailyWorstCaseKeyed} of ~${record['spend'].dailyAllowance}.`,
+      `${record['spend'].assumedDailyWorstCaseKeyed} of the ` +
+      `${record['spend'].dailyAllowance.toLocaleString('en-US')}/day allowance ` +
+      `(${((record['spend'].assumedDailyWorstCaseKeyed / record['spend'].dailyAllowance) * 100).toFixed(3)}%, ` +
+      `Ultra and exclusive to this lane).`,
   );
 
   const queue = record['queue'];

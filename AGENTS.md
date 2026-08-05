@@ -684,6 +684,15 @@ dev currently?"*, and the shape of the answer is the point:
   cannot be read back apart.
 - **Stage 2 spends no keyed request.** It reuses the mint list from the profile Stage 1 already paid
   for (`measure.mjs` → `toLaunchRefs`), so the shared vendor allowance is untouched by it.
+- **THE GATE'S COMPLETION RATE IS TWO DIFFERENT QUANTITIES AND A BAR ON ONE DOES NOT TRANSFER TO THE
+  OTHER.** `screen.mjs` gates on the **creation-derived merged history** by default (median window
+  147.1 days on the last real run's 82 candidates); `--ownership-only` and `feed.mjs` read the
+  **vendor 70-record page**, a shorter and success-biased window (median span 3.4 days there, one
+  wallet reading 1.0000 against 0.3071 on the gate reading). `stage1_gate.minCompletionRate` is
+  **0.25 measured on the gate reading** — captain decision 231a holds the value and its
+  `justification` in `thresholds.json` owns the ceiling (`7ufmve7Z…` reads 0.4325 there, so a higher
+  bar excludes the control), the sweep and the false-rejection asymmetry. Cite it rather than
+  restating the figures, and name the reading whenever this bar is described.
 - **A pinned value's `justification` must name the measurement the CALL SITE applies it to, and a
   test now pins that every parameter has one** (`test/deployer-screen.test.ts` → "every pinned
   parameter carries a stated reason"). The 2026-08-02 provenance audit found three justifications

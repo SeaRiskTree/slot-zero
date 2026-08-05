@@ -49,8 +49,8 @@
  *   7  upstream or transport failure.
  */
 
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { BoundedClient, CeilingReached, VendorRefused } from './client.mjs';
@@ -59,6 +59,7 @@ import { readRunRecords } from './ledger.mjs';
 import {
   dueForMeasurement,
   emptyGradeLedger,
+  GRADE_LEDGER_VERSION,
   gradeKeyOf,
   gradeOne,
   mergeGrades,
@@ -218,6 +219,24 @@ export const REQUIRED_ENTRY_RECIPE = Object.freeze([
 export const REQUIRED_COST_RECIPE = Object.freeze(['maxRpcRequestsPerCandidate', 'rpcMinIntervalMs']);
 
 /**
+ * Entry-recipe keys that are SCHEDULES rather than numbers, checked for their own shape.
+ *
+ * `keylessRetryBackoffMs` is as load-bearing as any bar above it and is not a bar: its LENGTH is
+ * what `pumpfun.mjs` → `attemptsPerRequest` reserves against `maxRequestsPerLaunch`, so a claim
+ * graded under a different schedule walks a different number of pages per launch and can drop a
+ * launch the predicting screen kept. It is an array, so {@link REQUIRED_ENTRY_RECIPE}'s
+ * typeof-number test would pass it silently — hence its own list rather than a widened check there.
+ *
+ * @type {readonly string[]}
+ */
+export const REQUIRED_ENTRY_RECIPE_SCHEDULES = Object.freeze(['keylessRetryBackoffMs']);
+
+/** @param {unknown} value @returns {boolean} */
+function isBackoffSchedule(value) {
+  return Array.isArray(value) && value.every((n) => typeof n === 'number' && Number.isFinite(n) && n >= 0);
+}
+
+/**
  * Price one claim's outcome measurement from the recipe THAT CLAIM was made under.
  *
  * The whole point of returning `usable: false` with a reason rather than falling back: an outcome
@@ -226,7 +245,7 @@ export const REQUIRED_COST_RECIPE = Object.freeze(['maxRpcRequestsPerCandidate',
  * @param {import('./prediction.mjs').ExtractedPrediction} p
  * @param {number} keylessMinIntervalFloorMs
  * @returns {{ usable: true, keyless: number, rpc: number, keyed: number, keylessMinIntervalMs: number,
- *   entry: Record<string, any>, cost: Record<string, any> }
+ *   keylessRetryBackoffMs: readonly number[], entry: Record<string, any>, cost: Record<string, any> }
  *   | { usable: false, reason: string }}
  */
 export function priceClaim(p, keylessMinIntervalFloorMs) {
@@ -234,6 +253,7 @@ export function priceClaim(p, keylessMinIntervalFloorMs) {
   const cost = /** @type {Record<string, any>} */ (p.stage2Cost ?? {});
   const missing = [
     ...REQUIRED_ENTRY_RECIPE.filter((k) => typeof entry[k] !== 'number'),
+    ...REQUIRED_ENTRY_RECIPE_SCHEDULES.filter((k) => !isBackoffSchedule(entry[k])),
     ...REQUIRED_COST_RECIPE.filter((k) => typeof cost[k] !== 'number'),
   ];
   if (missing.length > 0) {
@@ -256,6 +276,10 @@ export function priceClaim(p, keylessMinIntervalFloorMs) {
     // Never faster than either pin. A record written under a faster pacing pin cannot make this lane
     // outrun a host that sheds a quarter of what it is asked for.
     keylessMinIntervalMs: Math.max(keylessMinIntervalFloorMs, entry['keylessMinIntervalMs'] ?? 0),
+    // Applied as recorded, never widened or shortened: unlike the pacing floor this is not a
+    // courtesy to the host but part of the walk's own arithmetic, and changing it grades the claim
+    // on a different sample of launches.
+    keylessRetryBackoffMs: /** @type {readonly number[]} */ (entry['keylessRetryBackoffMs']),
     entry,
     cost,
   };
@@ -304,7 +328,10 @@ export function planFits(priced, bounds) {
  *
  * @param {object} clients
  * @param {BoundedClient} clients.keyed
- * @param {KeylessClient} clients.keyless
+ * @param {(retryBackoffMs: readonly number[]) => KeylessClient} clients.keylessFor
+ *   The fill walk's client for THIS claim's recorded retry schedule. The schedule is part of the
+ *   walk's arithmetic — its length is what each request reserves against `maxRequestsPerLaunch` —
+ *   so a claim measured under a different one is measured over a different sample of launches.
  * @param {(rpcCeiling: number, minIntervalMs: number) => SolanaRpcClient | null} clients.rpcFor
  *   `null` when the run-level RPC ceiling is already spent. The cost leg is then disabled and the
  *   verdict cannot be better than `entry-cost-unmeasured`, so the claim goes ungraded — which is the
@@ -356,7 +383,8 @@ export async function measureOutcome(clients, p, recipe, nowMs, log) {
   }
 
   const rpc = clients.rpcFor(recipe.cost['maxRpcRequestsPerCandidate'], recipe.cost['rpcMinIntervalMs']);
-  const { score, coverage } = await scoreLaunchRefsEntry(clients.keyless, {
+  const keyless = clients.keylessFor(recipe.keylessRetryBackoffMs);
+  const { score, coverage } = await scoreLaunchRefsEntry(keyless, {
     wallet: p.wallet,
     refs: after,
     nowMs,
@@ -383,32 +411,75 @@ export async function measureOutcome(clients, p, recipe, nowMs, log) {
   };
 }
 
-/** @param {string} path @returns {ReturnType<typeof emptyGradeLedger>} */
+/**
+ * Read the grade ledger, or start one.
+ *
+ * **An ABSENT file is a first run. A file that EXISTS and cannot be read is a refusal**, and the two
+ * are not the same event — the same rule `ledger.mjs` → `loadLedger` applies to the feed's memory,
+ * for a sharper reason here. A `hit` or a `miss` is latched and never revised, so it is the only
+ * copy of that evidence; returning an empty ledger for an unreadable one would let the very next
+ * `--live` run write it back over every settled grade, and the loop would silently restart from
+ * nothing while reporting a clean rate. A schema this build does not know is refused for the same
+ * reason: a ledger is migrated deliberately, never rebuilt by a run that happened to be next.
+ *
+ * @param {string} path
+ * @returns {ReturnType<typeof emptyGradeLedger>}
+ * @throws {Error} if the file exists and is not a ledger this build can read.
+ */
 export function loadGradeLedger(path) {
+  /** @type {string} */
+  let text;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch {
+    return emptyGradeLedger();
+  }
+
   /** @type {unknown} */
   let parsed;
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8'));
-  } catch {
-    // An absent ledger is the first run, not an error. A CORRUPT one is treated the same way and
-    // that is deliberate in only one direction: nothing is deleted, because the file is never
-    // written except by --live, so an unreadable ledger surfaces as "no grades" on a free dry run
-    // before any live run could overwrite it.
-    return emptyGradeLedger();
+    parsed = JSON.parse(text);
+  } catch (cause) {
+    throw new Error(
+      `The grade ledger at ${path} is not readable JSON (${cause instanceof Error ? cause.message : String(cause)}). ` +
+        `Refusing to start over: a hit or a miss is latched and never revised, so an empty ledger ` +
+        `here would be written back over every settled grade by the next --live run. Restore the ` +
+        `file or point --ledger elsewhere.`,
+    );
   }
-  if (typeof parsed !== 'object' || parsed === null) return emptyGradeLedger();
+  if (typeof parsed !== 'object' || parsed === null) {
+    throw new Error(`The grade ledger at ${path} is not an object. Refusing to overwrite it with an empty one.`);
+  }
   const l = /** @type {Record<string, any>} */ (parsed);
-  return {
-    ...emptyGradeLedger(),
-    ...l,
-    grades: typeof l['grades'] === 'object' && l['grades'] !== null ? l['grades'] : {},
-  };
+  if (l['schemaVersion'] !== GRADE_LEDGER_VERSION) {
+    throw new Error(
+      `The grade ledger at ${path} declares schemaVersion ${String(l['schemaVersion'])}; this build ` +
+        `reads ${GRADE_LEDGER_VERSION}. Grade ledgers are never retro-fitted — migrate it ` +
+        `deliberately rather than letting a run rebuild it from nothing.`,
+    );
+  }
+  if (typeof l['grades'] !== 'object' || l['grades'] === null) {
+    throw new Error(`The grade ledger at ${path} carries no readable "grades" block.`);
+  }
+  return { ...emptyGradeLedger(), ...l, grades: l['grades'] };
 }
 
-/** @param {string} path @param {ReturnType<typeof emptyGradeLedger>} ledger */
+/**
+ * Persist the grade ledger, **atomically**.
+ *
+ * Written to a temp file in the same directory and renamed over the target, so a run killed
+ * mid-write cannot leave a truncated ledger behind at all — `rename` within one directory is atomic,
+ * and the alternative failure is the one {@link loadGradeLedger} then has to refuse.
+ *
+ * @param {string} path
+ * @param {ReturnType<typeof emptyGradeLedger>} ledger
+ */
 export function saveGradeLedger(path, ledger) {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`, 'utf8');
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
+  const tmp = join(dir, `.${basename(path)}.tmp-${process.pid}`);
+  writeFileSync(tmp, `${JSON.stringify(ledger, null, 2)}\n`, 'utf8');
+  renameSync(tmp, path);
 }
 
 /**
@@ -450,7 +521,17 @@ export async function main(opts, env, out, err, deps = {}) {
 
   const records = readRunRecords(resolve(opts.runsDir));
   const { predictions, refused } = extractPredictions(records);
-  const ledger = loadGradeLedger(resolve(opts.ledgerPath));
+  // Terminal for the run, on the dry-run path too: a ledger this build cannot read is refused
+  // before anything is planned, rather than degrading into a run that would write over it.
+  /** @type {ReturnType<typeof emptyGradeLedger>} */
+  let ledger;
+  try {
+    ledger = loadGradeLedger(resolve(opts.ledgerPath));
+  } catch (cause) {
+    err('');
+    err(cause instanceof Error ? cause.message : String(cause));
+    return EXIT.usage;
+  }
   const nowMs = deps.nowMs ?? Date.now();
   const nowIso = new Date(nowMs).toISOString();
 
@@ -518,19 +599,34 @@ export async function main(opts, env, out, err, deps = {}) {
       ...(deps.sleepImpl === undefined ? {} : { sleepImpl: deps.sleepImpl }),
       ...(opts.json ? {} : { onRequest: (/** @type {string} */ path) => out(`  keyed: ${path}`) }),
     });
-    // One keyless client for the whole run, carrying the run-level ceiling. Per-claim pacing is the
-    // slowest of the pins involved, so a mixed batch runs at the safest rate rather than the first
-    // claim's — see `priceClaim`.
+    // Pacing is the slowest of the pins involved, so a mixed batch runs at the safest rate rather
+    // than the first claim's — see `priceClaim`.
     const keylessMinIntervalMs = Math.max(
       F.keylessMinIntervalMs,
       ...priced.filter((x) => x.usable).map((x) => /** @type {any} */ (x).keylessMinIntervalMs),
     );
-    const keyless = new KeylessClient({
-      maxRequests: F.maxKeylessRequests,
-      minIntervalMs: keylessMinIntervalMs,
-      ...(deps.keylessFetchImpl === undefined ? {} : { fetchImpl: deps.keylessFetchImpl }),
-      ...(deps.sleepImpl === undefined ? {} : { sleepImpl: deps.sleepImpl }),
-    });
+    // One keyless client PER RETRY SCHEDULE — normally one for the whole run, because every claim in
+    // a batch usually records the same pin. A claim is walked at the schedule its own run recorded,
+    // and the run-level ceiling still binds across all of them: each client is created with only
+    // what is left, so the total cannot exceed `maxKeylessRequests` however the batch is composed.
+    /** @type {Map<string, KeylessClient>} */
+    const keylessClients = new Map();
+    const keylessSpent = () => [...keylessClients.values()].reduce((n, c) => n + c.issued(), 0);
+    /** @param {readonly number[]} retryBackoffMs @returns {KeylessClient} */
+    const keylessFor = (retryBackoffMs) => {
+      const key = JSON.stringify(retryBackoffMs);
+      const existing = keylessClients.get(key);
+      if (existing !== undefined) return existing;
+      const client = new KeylessClient({
+        maxRequests: Math.max(0, F.maxKeylessRequests - keylessSpent()),
+        minIntervalMs: keylessMinIntervalMs,
+        retryBackoffMs,
+        ...(deps.keylessFetchImpl === undefined ? {} : { fetchImpl: deps.keylessFetchImpl }),
+        ...(deps.sleepImpl === undefined ? {} : { sleepImpl: deps.sleepImpl }),
+      });
+      keylessClients.set(key, client);
+      return client;
+    };
     // Every cost-leg client this run creates, so the run-level RPC spend is read off the CLIENTS
     // rather than off the outcomes. A claim that threw mid-walk still spent, and counting only what
     // reached a result would let an abandoned walk's requests fall outside the ceiling.
@@ -575,7 +671,7 @@ export async function main(opts, env, out, err, deps = {}) {
         }
         if (!opts.json) out(`  ${p.wallet} — predicted ${p.claim} on ${p.madeAtIso} (${p.source})`);
         const { outcome, refusal } = await measureOutcome(
-          { keyed, keyless, rpcFor },
+          { keyed, keylessFor, rpcFor },
           p,
           recipe,
           nowMs,
@@ -607,7 +703,7 @@ export async function main(opts, env, out, err, deps = {}) {
     const merged = mergeGrades(ledger, rows, nowIso);
     saveGradeLedger(resolve(opts.ledgerPath), merged.ledger);
     report['measured'] = rows.length;
-    report['spend'] = { keyed: keyed.stats().issued, keyless: keyless.issued(), rpc: rpcSpent() };
+    report['spend'] = { keyed: keyed.stats().issued, keyless: keylessSpent(), rpc: rpcSpent() };
     report['ledgerAdded'] = merged.added;
     report['ledgerUpdated'] = merged.updated;
     // A settled grade is never revised. A non-zero count here means something re-offered one, which

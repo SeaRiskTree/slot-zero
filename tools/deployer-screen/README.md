@@ -2265,9 +2265,13 @@ answer).
 **Idempotence, stated as the property it has to have.** Every grade has one identity — *(source
 record, wallet, subject)*, so the same wallet predicted by two runs is two claims. A `hit` or a `miss`
 is **latched** and never revised: a lane that rewrote its own past grades would be marking its own
-homework twice. An `ungraded` row is retried only after `feedback_loop.retryAfterDays`, so a rerun the
-same day costs nothing while the loop still converges with no flag to remember. Two runs over the same
-inputs write the same bytes.
+homework twice. An `ungraded` row is retried only after `feedback_loop.retryAfterDays` — reported as
+`awaiting-retry`, which is a **different** reason from `not-attempted` (the per-run claim cap), so a
+report never announces a ceiling that bound nothing. Two runs over the same inputs write the same
+bytes, and the ledger is written atomically through a temp file and a rename: a run killed mid-write
+leaves the old ledger intact rather than a truncated one. A ledger that exists and cannot be read —
+corrupt, or from a schema this build does not know — **refuses the run** rather than starting over,
+because a latched grade has no other copy and an empty ledger would be written straight back over it.
 
 **Every provider call is bounded, and the plan is refused before the first request.** One keyed
 MadeOnSol profile per claim (ceiling 6 — 3 claims × the client's one retry), the keyless fill walk

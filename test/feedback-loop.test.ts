@@ -22,7 +22,7 @@
  * as the rest of this suite does.
  */
 
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -37,14 +37,18 @@ import {
   planFits,
   priceClaim,
   REQUIRED_ENTRY_RECIPE,
+  REQUIRED_ENTRY_RECIPE_SCHEDULES,
+  saveGradeLedger,
 } from '../tools/deployer-screen/grade.mjs';
 import {
   dueForMeasurement,
   emptyGradeLedger,
   gradeKeyOf,
   gradeOne,
+  GRADE_LEDGER_VERSION,
   mergeGrades,
   summariseGrades,
+  UNGRADED_REASONS,
 } from '../tools/deployer-screen/outcome.mjs';
 import {
   DEFERRED_SUBJECTS,
@@ -432,12 +436,14 @@ describe('THE OUT-OF-SAMPLE FILTER — without it the hit rate means nothing', (
 
   const clientsFor = (fetchImpl: typeof fetch, profile: unknown) => ({
     keyed: { getJson: async () => profile } as never,
-    keyless: new KeylessClient({
-      maxRequests: F['maxKeylessRequests']!,
-      minIntervalMs: 0,
-      fetchImpl,
-      sleepImpl: async () => {},
-    }),
+    keylessFor: (retryBackoffMs: readonly number[]) =>
+      new KeylessClient({
+        maxRequests: F['maxKeylessRequests']!,
+        minIntervalMs: 0,
+        retryBackoffMs,
+        fetchImpl,
+        sleepImpl: async () => {},
+      }),
     rpcFor: () =>
       new SolanaRpcClient({
         maxRequests: 10,
@@ -510,6 +516,103 @@ describe('THE OUT-OF-SAMPLE FILTER — without it the hit rate means nothing', (
     expect(mints).toHaveLength(0);
     const row = gradeOne(claimFixture() as never, outcome, refusal, '2026-08-01T00:00:00.000Z');
     expect(row.state).toBe('ungraded');
+  });
+
+  it('walks at the RETRY SCHEDULE the predicting run recorded, not at this build`s default', async () => {
+    // Same-recipe-same-bars reaches the retry schedule too: its length is what each request reserves
+    // against `maxRequestsPerLaunch`, so a claim walked at a schedule its own run never used is
+    // walked over a different sample of launches — and nothing in the output would say so.
+    const attempts = async (schedule: readonly number[]) => {
+      let calls = 0;
+      const fetchImpl = (async () => {
+        calls += 1;
+        throw new Error('shed');
+      }) as unknown as typeof fetch;
+      const recipe = priceClaim(
+        claimFixture({ stage2Entry: { ...S2, keylessRetryBackoffMs: schedule } }) as never,
+        F['keylessMinIntervalMs']!,
+      );
+      const clients = {
+        keyed: { getJson: async () => straddlingProfile(0, 1) } as never,
+        keylessFor: (retryBackoffMs: readonly number[]) =>
+          new KeylessClient({ maxRequests: 100, minIntervalMs: 0, retryBackoffMs, fetchImpl, sleepImpl: async () => {} }),
+        rpcFor: () => null,
+      };
+      await measureOutcome(clients as never, claimFixture({ outOfSampleAfterMs: BOUNDARY }) as never, recipe as never, NOW);
+      return calls;
+    };
+    expect(await attempts([])).toBe(1);
+    expect(await attempts([1, 1])).toBe(3);
+  });
+});
+
+describe('the grade ledger is the only copy of a latched grade, so it is never silently replaced', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'slot-zero-grade-ledger-'));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const settled = () =>
+    mergeGrades(
+      emptyGradeLedger(),
+      [gradeOne(claimFixture() as never, outcomeFixture('entry-room-absent'), null, '2026-07-01T00:00:00.000Z')],
+      '2026-07-01T00:00:00.000Z',
+    ).ledger;
+
+  it('an ABSENT ledger is a first run and proceeds', () => {
+    expect(loadGradeLedger(join(dir, 'nope.json')).grades).toEqual({});
+  });
+
+  it('a CORRUPT ledger refuses, naming the file, rather than starting over', () => {
+    // The failure this closes: a hit or a miss is latched and never revised, so an empty ledger
+    // returned here is written straight back over every settled grade by the next --live run.
+    const path = join(dir, 'grades.json');
+    writeFileSync(path, '{"schemaVersion": 1, "grades": {', 'utf8');
+    expect(() => loadGradeLedger(path)).toThrow(new RegExp(path.replace(/[.\\/]/g, '\\$&')));
+    expect(() => loadGradeLedger(path)).toThrow(/Refusing to start over/);
+    // Not an object, and no readable grades block, are the same refusal.
+    writeFileSync(path, '"a ledger this is not"', 'utf8');
+    expect(() => loadGradeLedger(path)).toThrow(/not an object/);
+    writeFileSync(path, JSON.stringify({ schemaVersion: GRADE_LEDGER_VERSION }), 'utf8');
+    expect(() => loadGradeLedger(path)).toThrow(/no readable "grades" block/);
+  });
+
+  it('a ledger from a schema this build does not know refuses', () => {
+    const path = join(dir, 'grades.json');
+    writeFileSync(path, JSON.stringify({ ...settled(), schemaVersion: GRADE_LEDGER_VERSION + 1 }), 'utf8');
+    expect(() => loadGradeLedger(path)).toThrow(/never retro-fitted/);
+  });
+
+  it('a corrupt ledger is TERMINAL for the run, and the run writes nothing', async () => {
+    const path = join(dir, 'grades.json');
+    const corrupt = '{"schemaVersion": 1, "grades": {';
+    writeFileSync(path, corrupt, 'utf8');
+    mkdirSync(join(dir, 'runs'), { recursive: true });
+    const err: string[] = [];
+    const code = await gradeMain(
+      { help: false, live: true, runsDir: join(dir, 'runs'), ledgerPath: path, claims: null, json: false },
+      { MADEONSOL_API_KEY: 'msk_feedbackloopfixture0000000000' },
+      () => {},
+      (l) => err.push(l),
+    );
+    expect(code).toBe(2);
+    expect(err.join('\n')).toMatch(/Refusing to start over/);
+    // Untouched, byte for byte — the whole point of the refusal.
+    expect(readFileSync(path, 'utf8')).toBe(corrupt);
+  });
+
+  it('writes ATOMICALLY, so a run killed mid-write cannot leave a truncated ledger', () => {
+    // Temp file in the same directory, then rename over the target: within one directory rename is
+    // atomic, so the target is either the old ledger or the new one and never half of either.
+    const path = join(dir, 'nested', 'grades.json');
+    saveGradeLedger(path, settled());
+    expect(Object.keys(loadGradeLedger(path).grades)).toHaveLength(1);
+    // No temp file survives a completed write.
+    expect(readdirSync(join(dir, 'nested'))).toEqual(['grades.json']);
+    const source = readFileSync(join(__dirname, '..', 'tools', 'deployer-screen', 'grade.mjs'), 'utf8');
+    expect(source).toMatch(/renameSync\(tmp, path\)/);
+    expect(source).not.toMatch(/writeFileSync\(path,/);
   });
 });
 
@@ -599,6 +702,42 @@ describe('the loop is idempotent, and a settled grade is never revised', () => {
     expect(dueForMeasurement([p as never], ledger, attemptedAt + 15 * MS_PER_DAY, bounds).due).toHaveLength(1);
   });
 
+  it('says COOLING OFF and says CAPPED with two different reasons, never one', () => {
+    // The same conflation this lane refuses one level up between `not-scored` and
+    // `entry-unmeasured`: reporting a cap that bound nothing tells the operator to raise a ceiling
+    // that was never reached, and hides a backlog that is merely waiting.
+    const bounds = { minOutcomeAgeMs: 21 * MS_PER_DAY, retryAfterMs: 14 * MS_PER_DAY, maxClaimsPerRun: 3 };
+    const p = claimFixture();
+    const attemptedAt = MADE_AT_MS + 30 * MS_PER_DAY;
+    const ledger = mergeGrades(
+      emptyGradeLedger(),
+      [gradeOne(p as never, outcomeFixture('entry-unmeasured'), null, new Date(attemptedAt).toISOString())],
+      new Date(attemptedAt).toISOString(),
+    ).ledger;
+    const cooling = dueForMeasurement([p as never], ledger, attemptedAt + MS_PER_DAY, bounds);
+    expect(cooling.skipped.map((s) => s.reason)).toEqual(['awaiting-retry']);
+
+    // Past the cap, with nothing cooling off: that IS the cap, and it keeps the other name.
+    const capped = dueForMeasurement(
+      [30, 10, 20].map((d) => claimFixture({ source: `run-${d}.json`, outOfSampleAfterMs: MADE_AT_MS + d * MS_PER_DAY })) as never,
+      emptyGradeLedger(),
+      MADE_AT_MS + 100 * MS_PER_DAY,
+      { ...bounds, maxClaimsPerRun: 2 },
+    );
+    expect(capped.skipped.map((s) => s.reason)).toEqual(['not-attempted']);
+    expect(UNGRADED_REASONS['awaiting-retry']).not.toBe(UNGRADED_REASONS['not-attempted']);
+    // Each sentence asserts only its own cause.
+    expect(UNGRADED_REASONS['awaiting-retry']).toMatch(/NO cap bound this run/);
+    expect(UNGRADED_REASONS['not-attempted']).toMatch(/ONLY that cap/);
+    // And neither is an attempt: a scheduling refusal must not stamp the retry clock on a row
+    // nobody looked at.
+    for (const reason of ['awaiting-retry', 'not-attempted', 'too-soon'] as const) {
+      const row = gradeOne(p as never, null, { reason, detail: null }, '2026-08-01T00:00:00.000Z');
+      expect(row.attempts, reason).toBe(0);
+      expect(row.lastAttemptIso, reason).toBeNull();
+    }
+  });
+
   it('caps the work per run, reports the excess, and drains oldest first', () => {
     // An invisible cap reads as "there was nothing to do", so the excess is returned rather than
     // dropped — and the order is deterministic so two runs over the same ledger pick the same work.
@@ -666,6 +805,28 @@ describe('every provider call is bounded, and the plan is refused BEFORE anythin
       expect(bad.usable, key).toBe(false);
       if (!bad.usable) expect(bad.reason).toMatch(/NOT substituted/);
     }
+  });
+
+  it('carries the recorded RETRY SCHEDULE through, and refuses a claim that cannot supply one', () => {
+    // The schedule is not a bar but it is part of the walk's arithmetic: its length is what each
+    // request reserves against `maxRequestsPerLaunch`, so grading under a different one walks a
+    // different number of pages per launch. It is an ARRAY, so the typeof-number check above does
+    // not cover it and would have let a missing one default silently.
+    const ok = priceClaim(claimFixture() as never, F['keylessMinIntervalMs']!);
+    expect(ok.usable).toBe(true);
+    if (ok.usable) expect(ok.keylessRetryBackoffMs).toEqual(S2['keylessRetryBackoffMs']);
+    for (const key of REQUIRED_ENTRY_RECIPE_SCHEDULES) {
+      for (const value of [undefined, 3_000, 'nope', [3_000, 'nope'], [-1]]) {
+        const entry = { ...S2 } as Record<string, unknown>;
+        if (value === undefined) delete entry[key];
+        else entry[key] = value;
+        const bad = priceClaim(claimFixture({ stage2Entry: entry }) as never, 0);
+        expect(bad.usable, `${key}=${JSON.stringify(value)}`).toBe(false);
+        if (!bad.usable) expect(bad.reason).toMatch(new RegExp(key));
+      }
+    }
+    // And it is not covered by the number list, which is what would have hidden it.
+    expect(REQUIRED_ENTRY_RECIPE).not.toContain('keylessRetryBackoffMs');
   });
 
   it('never runs faster than either pacing pin, whichever is slower', () => {

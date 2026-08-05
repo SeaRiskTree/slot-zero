@@ -86,11 +86,26 @@ export const HIT_RATE_CAVEAT =
  */
 
 /**
+ * The reasons that reach no provider and inspect nothing, so they are not attempts and must not
+ * stamp the retry clock. Named once because {@link gradeOne} and {@link dueForMeasurement} have to
+ * agree on it: a reason counted as an attempt here would push the retry window forward on a row
+ * nobody looked at and stall the loop rather than pace it.
+ *
+ * @type {ReadonlySet<string>}
+ */
+export const SCHEDULING_REFUSALS = new Set(['too-soon', 'awaiting-retry', 'not-attempted']);
+
+/**
  * Why a claim could not be scored. **Every one of these is our own coverage** — none is a finding
  * about the deployer, and none may be read as a failed prediction.
  *
- * @typedef {'too-soon' | 'not-attempted' | 'no-post-prediction-launches' | 'outcome-unmeasured'
- *   | 'profile-unreadable' | 'recipe-unusable'} UngradedReason
+ * Two of them are scheduling refusals and they are kept APART on purpose: `awaiting-retry` is a
+ * claim cooling off after an attempt, `not-attempted` is this run's per-run cap. Folding them
+ * together reports a cap that bound nothing, which is the same conflation this lane refuses between
+ * `not-scored` and `entry-unmeasured`, one level down.
+ *
+ * @typedef {'too-soon' | 'awaiting-retry' | 'not-attempted' | 'no-post-prediction-launches'
+ *   | 'outcome-unmeasured' | 'profile-unreadable' | 'recipe-unusable'} UngradedReason
  */
 
 /** @type {Readonly<Record<UngradedReason, string>>} */
@@ -98,9 +113,15 @@ export const UNGRADED_REASONS = Object.freeze({
   'too-soon':
     'not enough time has passed since the claim for this deployer to have produced a scoreable ' +
     'number of post-prediction launches. Nothing was spent on it; a later run reaches it.',
+  'awaiting-retry':
+    'this claim was attempted before and is still inside its retry window, so it was left alone to ' +
+    'cool off. NO cap bound this run on its account — every ungraded reason is fixed by the ' +
+    'deployer launching again, which takes days, so asking again the same afternoon would spend the ' +
+    'walk budget to learn the same thing.',
   'not-attempted':
-    'this run`s per-run measurement cap was reached before this claim`s turn. A bound of ours, not ' +
-    'a property of the claim — the oldest waiting claims are taken first, so a later run reaches it.',
+    'this run`s per-run measurement cap, and ONLY that cap, was reached before this claim`s turn. A ' +
+    'bound of ours, not a property of the claim — the oldest waiting claims are taken first, so a ' +
+    'later run reaches it.',
   'no-post-prediction-launches':
     'the vendor profile offered no launch created after the claim`s boundary, so there is nothing ' +
     'out of sample to measure yet. This is NOT evidence the deployer stopped launching: the ' +
@@ -201,9 +222,10 @@ export function gradeKeyOf(p) {
  * @returns {GradeRow}
  */
 export function gradeOne(prediction, outcome, refusal, nowIso, existing = null) {
-  // Whether this run actually LOOKED at the claim. The two scheduling refusals reach no provider and
-  // inspect nothing, so they are not attempts; everything else either spent a request or tried to.
-  const looked = outcome !== null || (refusal?.reason !== 'too-soon' && refusal?.reason !== 'not-attempted');
+  // Whether this run actually LOOKED at the claim. The three scheduling refusals reach no provider
+  // and inspect nothing, so they are not attempts; everything else either spent a request or tried
+  // to.
+  const looked = outcome !== null || !SCHEDULING_REFUSALS.has(refusal?.reason ?? '');
   /** @type {GradeRow} */
   const base = {
     source: prediction.source,
@@ -358,7 +380,7 @@ export function dueForMeasurement(predictions, ledger, nowMs, bounds) {
     // budget to learn the same thing.
     const lastAttempt = existing?.lastAttemptIso == null ? null : Date.parse(existing.lastAttemptIso);
     if (lastAttempt !== null && Number.isFinite(lastAttempt) && nowMs - lastAttempt < bounds.retryAfterMs) {
-      skipped.push({ prediction: p, reason: 'not-attempted' });
+      skipped.push({ prediction: p, reason: 'awaiting-retry' });
       continue;
     }
     ready.push(p);

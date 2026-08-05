@@ -833,7 +833,17 @@ export async function main(opts, env, out, err) {
     // ONLY A PLAN THAT WILL PRINT THE FIGURE MAY BUY IT. The eligibility floor is rendered inside
     // the Stage 2 block and nowhere else, so under `--no-stage2` the source is not consulted at
     // all — otherwise the opt-in could authorise a bounded purchase of a number that appears on no
-    // page, which is a spend with no reader and one the run path would not make either.
+    // page.
+    //
+    // THIS GATE IS ABOUT THE PLAN PATH ONLY AND MAKES NO CLAIM ABOUT THE RUN PATH. The run path
+    // builds its source UNCONDITIONALLY — `selectEntryFillSource` below, outside any `opts.stage2`
+    // guard — while `entryFillSource` and `entryMinAgeMs` are consumed only inside the
+    // `if (opts.stage2)` block that scores candidates. That is a KNOWN GAP, not an oversight:
+    // under a future billed construction a real `--no-stage2` run WOULD run the billed coverage
+    // probe for a source it never reads, and WOULD refuse the whole run with `EXIT.upstream` for
+    // an unbuildable source Stage 2 was never going to use. It is harmless today because the
+    // selected source is free to build. It is FILED AGAINST THE GATE 3 CUTOVER as its own item and
+    // is deliberately not fixed here, because the run path's behaviour is frozen for this change.
     if (opts.stage2) {
       try {
         entryEligibility = await planEntryEligibility(ENTRY_FILL_SOURCE_KIND, entryFillSources, {

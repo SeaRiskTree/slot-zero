@@ -1133,6 +1133,15 @@ arrives as `null` — a third state meaning *not asked*, distinct from *asked an
 says so in those words rather than claiming the construction was free, which is not something that
 page found out. Otherwise the `--no-stage2` plan is unchanged.
 
+**That gate is the PLAN path's and makes no claim about the RUN path — trigger: the Gate 3 cutover,
+status: filed, deliberately not fixed here.** A real run builds its source unconditionally, outside
+any `--no-stage2` guard, while the source and its floor are consumed only inside the block that
+scores candidates. So under a future billed construction `screen.mjs --no-stage2` would run the
+billed coverage probe for a source it never reads, and would refuse the whole run (exit `7`) for an
+unbuildable source Stage 2 was never going to use. Harmless today — the selected source is free to
+build — and the run path's behaviour is frozen for this change, so it is filed as its own item
+against the cutover rather than fixed in this lane.
+
 **An undeclared construction is treated as billed, never as free.** A registry entry that says
 nothing about what building it costs is an absence, and reading an absence as a benign value is the
 failure this repo names in three other places (`covered.fromMs` of `0` read as a 56-year window;

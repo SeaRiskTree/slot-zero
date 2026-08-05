@@ -163,6 +163,15 @@ export const FILL_SOURCE_KINDS = Object.freeze(['swap-api', 'dune']);
  * answer, in the same spirit as {@link assertWindowUsable}, and a guard that cannot fail is not a
  * guard.
  *
+ * **It is therefore applied at every point the answer is CONSUMED, not only at construction**, as
+ * the backstop for a source that forgets: `stage2.mjs` before it filters a run, `screen.mjs` and
+ * `bundling.mjs` before their dry-run plans print the floor, and `bundling.mjs` again before the
+ * census filters on it. The census case is the one that shows why a printed line is not the worst
+ * outcome: there the floor is a FILTER, so a non-finite answer makes every launch fail `age >=
+ * minAgeMs` and the pass reports zero eligible launches for every candidate — a census of nothing,
+ * indistinguishable from a cohort that genuinely had none, and wrong in the direction that
+ * publishes a finding rather than refusing to.
+ *
  * @param {{ kind: FillSourceKind }} source The source itself, so the message can name it. The
  *   consumer therefore never spells a provenance: reading `kind` for a sentence belongs here, in the
  *   contract, exactly as {@link assertWindowUsable} reads it.

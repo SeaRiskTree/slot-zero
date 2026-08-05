@@ -715,11 +715,15 @@ export function compareReproduction(dataDir, planned, rowsByMint) {
   const duneLaunches = [];
   /** @type {string[]} */
   const failures = [];
-  /** Launches disagreeing over the entrants the chain does NOT refute — the GATING reading. */
-  /** @type {string[]} */
+  /**
+   * Launches disagreeing over the entrants the chain does NOT refute — the GATING reading.
+   * @type {string[]}
+   */
   const fieldDisagreementMints = [];
-  /** The same, over EVERY entrant — reported beside it, and gating nothing. */
-  /** @type {string[]} */
+  /**
+   * The same, over EVERY entrant — reported beside it, and gating nothing.
+   * @type {string[]}
+   */
   const fieldDisagreementMintsAllEntrants = [];
 
   for (const launch of planned) {

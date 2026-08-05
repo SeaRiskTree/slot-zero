@@ -187,7 +187,25 @@ import {
 } from './pumpfun.mjs';
 import { applyGate, verdictFor } from './rank.mjs';
 import { measureSubjectLaunches } from './stage0.mjs';
-import { describeTransportFailure } from './stage2.mjs';
+import { describeTransportFailure, entryFillBounds } from './stage2.mjs';
+import { swapApiFillSource } from './swapapi-fills.mjs';
+
+/**
+ * The fill source this census asks for its eligibility gate.
+ *
+ * **Keyless by construction, which is why it is built here rather than selected.** The screen
+ * resolves its source through `screen.mjs` → `selectEntryFillSource`, and importing that module
+ * would put the Dune client and the credential reader in this census's import graph — captain
+ * decision 173a's "a windows-only pass spending zero keyed requests" is a property of the tree, and
+ * `test/bundling-census.test.ts` holds it. So the tie to the screen's own choice is asserted in that
+ * test against `ENTRY_FILL_SOURCE_KIND` rather than expressed as an import here.
+ *
+ * @param {KeylessClient} client
+ * @returns {import('./fill-source.mjs').FillSource}
+ */
+export function censusFillSource(client) {
+  return swapApiFillSource(client);
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, '..', '..');
@@ -491,20 +509,26 @@ export function buildCohort(toolDir = HERE) {
  * @param {number} input.mintTimeBackdateMs `thresholds.json` → `bundling_census`. See
  *   {@link MINT_TIME_BACKDATE_CAVEAT}: the two vendors' clocks disagree by up to ~2s in the one
  *   direction that deletes a create slot, and this is what makes that survivable.
+ * @param {import('./fill-source.mjs').FillSource} [input.fillSource] Who answers ELIGIBILITY, and
+ *   nothing else — the walk below is this census's own. Absent means {@link censusFillSource}.
  * @param {(line: string) => void} [input.log]
  * @returns {Promise<BundlingWalk>}
  */
 export async function censusCandidate(client, input) {
   const t = input.entry;
-  // The SAME derivation `stage2.mjs` gates on, by the same function call rather than by a second
-  // copy of the arithmetic — the doc above claims this pass measures "the launches Stage 2 would
-  // have scored", and a local `windowMs + seekMarginMs` made that claim false the moment the
-  // screen's gate moved. `roomIsProven` is called here for the same reason.
-  const minAgeMs = windowReachMs({
-    windowMs: t.windowMs,
-    seekMarginMs: t.seekMarginMs,
-    windowSlotSpan: t.windowSlotSpan,
-  });
+  // THE GATE IS ASKED OF A FILL SOURCE, exactly as `stage2.mjs` asks it — not derived here. The doc
+  // above claims this pass measures "the launches Stage 2 would have scored", and that claim is only
+  // true while the two ask the same question of the same kind of vendor: captain decision 257a made
+  // "has this launch finished happening" the SOURCE's to answer, so a `windowReachMs` call here
+  // would be the arithmetic one particular source happens to use rather than the screen's gate.
+  // The source is constructed by {@link censusFillSource} rather than resolved through
+  // `screen.mjs` → `selectEntryFillSource`, because importing that module would pull the Dune
+  // client and the credential reader into this census's import graph and captain decision 173a's
+  // "a windows-only pass spending zero keyed requests" is load-bearing. The tie to the screen's own
+  // choice is asserted in `test/bundling-census.test.ts` instead, against
+  // `ENTRY_FILL_SOURCE_KIND`. `roomIsProven` is called rather than copied for the same reason.
+  const fillSource = input.fillSource ?? censusFillSource(client);
+  const minAgeMs = await fillSource.minAgeMs(entryFillBounds(t, input.nowMs));
   const eligible = input.refs.filter((r) => input.nowMs - r.deployedAtMs >= minAgeMs);
   const planned = eligible.slice(0, t.maxLaunchesPerCandidate);
 

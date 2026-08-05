@@ -690,11 +690,29 @@ export async function main(opts, env, out, err) {
   // captain decision 144a's defect and the reason the gate was injected in the first place.
   // Selecting costs nothing — a source is built from its transport, and neither source opens a
   // socket to say how old a launch must be.
-  const entryFillSource = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, {
-    'swap-api': () => swapApiFillSource(stage2Keyless),
-  });
-  const entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entryThresholds, Date.now()));
-  assertMinAgeUsable(entryFillSource, entryMinAgeMs);
+  //
+  // BOTH STEPS CAN REFUSE, AND A REFUSAL IS A REPORTED OUTCOME RATHER THAN A STACK TRACE. A source
+  // whose constructor cannot vouch for itself, or one answering an eligibility that is not a
+  // duration, stops the run here — the site whose whole job is to say "we cannot run Stage 2 on the
+  // source we were asked for". Escaping `main` would return Node's exit 1, which is not in the
+  // `EXIT` map, and print the message as a crash.
+  /** @type {import('./fill-source.mjs').FillSource} */
+  let entryFillSource;
+  /** @type {number} */
+  let entryMinAgeMs;
+  try {
+    entryFillSource = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, {
+      'swap-api': () => swapApiFillSource(stage2Keyless),
+    });
+    entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entryThresholds, Date.now()));
+    assertMinAgeUsable(entryFillSource, entryMinAgeMs);
+  } catch (cause) {
+    err('');
+    err('Refusing to start: Stage 2 has no usable fill source.');
+    err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
+    err('  Nothing was requested, so no quota was spent.');
+    return EXIT.upstream;
+  }
 
   if (opts.dryRun) {
     out('');

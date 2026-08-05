@@ -26,6 +26,7 @@ import {
   PREDICATE_CAVEAT,
   buildCohort,
   censusCandidate,
+  censusFillSource,
   loadThresholds,
   parseArgs,
   renderDryRun,
@@ -36,6 +37,9 @@ import {
 } from '../tools/deployer-screen/bundling.mjs';
 import type { CandidateBundling } from '../tools/deployer-screen/bundling.mjs';
 import { KeylessClient, windowReachMs } from '../tools/deployer-screen/pumpfun.mjs';
+import { ENTRY_FILL_SOURCE_KIND, selectEntryFillSource } from '../tools/deployer-screen/screen.mjs';
+import { swapApiFillSource } from '../tools/deployer-screen/swapapi-fills.mjs';
+import { entryFillBounds } from '../tools/deployer-screen/stage2.mjs';
 import type { Stage2Thresholds } from '../tools/deployer-screen/stage2.mjs';
 
 const CENSUS_SOURCE = readFileSync(
@@ -480,6 +484,45 @@ describe('it measures bundling and nothing else', () => {
     expect(floor).toBeGreaterThan(ENTRY.windowMs + ENTRY.seekMarginMs);
     expect((await at(ENTRY.windowMs + ENTRY.seekMarginMs)).launchesEligible).toBe(0);
     expect((await at(floor)).launchesEligible).toBe(1);
+  });
+
+  it('ASKS a fill source for that floor, and it is the kind the screen selects', async () => {
+    // The census's whole value is that it cannot drift from the pass it reports on, and captain
+    // decision 257a moved "has this launch finished happening" out of the arithmetic and into the
+    // VENDOR. So a `windowReachMs` call here would no longer be the screen's gate — it would be the
+    // duration one particular source happens to answer with.
+    //
+    // Proven by making the two disagree: a source answering an hour refuses a launch the reach
+    // admits, so a re-derivation in `bundling.mjs` fails this.
+    const floor = windowReachMs(ENTRY);
+    const stub = {
+      ...censusFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 })),
+      minAgeMs: async () => floor + 3_600_000,
+    };
+    const { client, urls } = scriptedClient([page({ createSlot: 500, bundles: 1, loneWallets: 1 })]);
+    const refused = await censusCandidate(client, {
+      refs: [{ mint: 'YOUNG', deployedAtMs: NOW - floor }],
+      nowMs: NOW,
+      entry: ENTRY,
+      mintTimeBackdateMs: BACKDATE,
+      fillSource: stub,
+    });
+    expect(refused.launchesEligible).toBe(0);
+    expect(urls).toEqual([]);
+
+    // AND THE TIE TO THE SCREEN, which is what stops the two answering to different vendors. The
+    // census builds its source rather than importing `selectEntryFillSource` — that module carries
+    // the Dune client and the credential reader, and this pass spends zero keyed requests — so the
+    // agreement is asserted here instead: same provenance, same answer, on the same bounds.
+    const keyless = () => new KeylessClient({ maxRequests: 1, minIntervalMs: 0 });
+    const census = censusFillSource(keyless());
+    const screen = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, {
+      'swap-api': () => swapApiFillSource(keyless()),
+    });
+    expect(census.kind).toBe(ENTRY_FILL_SOURCE_KIND);
+    const bounds = entryFillBounds(ENTRY, NOW);
+    expect(await census.minAgeMs(bounds)).toBe(await screen.minAgeMs(bounds));
+    expect(census.issued()).toBe(0);
   });
 
   it('caps the sample at Stage 2\'s own per-candidate launch cap', async () => {

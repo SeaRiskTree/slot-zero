@@ -9450,10 +9450,16 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
         /const minAgeMs = t\.windowMs \+ t\.seekMarginMs;/,
       );
     }
-    for (const file of ['bundling.mjs', 'swapapi-fills.mjs']) {
-      const src = readFileSync(join(TOOL_DIR, file), 'utf8');
-      expect(src, `${file} does not derive the gate`).toMatch(/windowReachMs\(\{/);
-    }
+    const swapApi = readFileSync(join(TOOL_DIR, 'swapapi-fills.mjs'), 'utf8');
+    expect(swapApi, 'swapapi-fills.mjs does not derive the gate').toMatch(/windowReachMs\(\{/);
+    // `bundling.mjs` ASKS now too, for the reason its own comment gives: the census is a finding
+    // ABOUT the screen, and a `windowReachMs` call there would be the arithmetic one source happens
+    // to use rather than the gate the screen applies. `test/bundling-census.test.ts` drives that
+    // from a stub source with a distinctive answer and ties the source's kind to the screen's.
+    const bundling = readFileSync(join(TOOL_DIR, 'bundling.mjs'), 'utf8');
+    expect(bundling, 'bundling.mjs must ask the source for the gate').toMatch(
+      /const minAgeMs = await fillSource\.minAgeMs\(/,
+    );
     // And `stage2.mjs` no longer derives it AT ALL — it asks. A scoring module that kept its own
     // derivation would be a second answer to the same question, which is how this expression
     // drifted the first two times.

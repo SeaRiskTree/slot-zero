@@ -196,8 +196,9 @@ export const ALLOWANCE_RESERVE_CREDITS = 25;
  *
  * **Gated on `reached_mint`, not on file existence** — all 239 mints have a window file and four
  * never reached the mint, and those four are truncated at the OLDEST end, so a reader that trusted
- * the filename would compare against a launch whose create slot the collector never saw. The gzipped
- * fills are read only for `tapeFills`, which the planner needs to size a batch.
+ * the filename would compare against a launch whose create slot the collector never saw. No
+ * `window/*.jsonl.gz` is opened here: `tapeFills`, which the planner needs to size a batch, is the
+ * sidecar's own `n`, so the plan step costs one small JSON read per launch and no decompression.
  *
  * @param {string} dataDir Path to `data/population-tape-2026-07-29`.
  * @returns {TapeLaunchRef[]} Oldest first.
@@ -240,10 +241,12 @@ export function readTapeLaunches(dataDir) {
  * page the reader refuses. Launches stay in date order inside a month, so the split is deterministic
  * and two plans over the same tape are the same plan.
  *
- * A single launch whose own tape count exceeds the cap would get a batch of its own and be reported
- * as over the cap rather than silently split — this statement cannot return half a window, and half
- * a window is a biased sample rather than a short one. On the committed tape the largest launch is
- * 2,321 fills, so this does not arise.
+ * A single launch whose own tape count exceeds the cap gets a batch of its own, over the cap, rather
+ * than being silently split — this statement cannot return half a window, and half a window is a
+ * biased sample rather than a short one. {@link oversizedBatches} is what says so: the plan output
+ * prints every such batch and the live path REFUSES before its first billed request, the same whole-
+ * plan refusal the allowance check already applies. On the committed tape the largest launch is
+ * 2,321 fills against a 20,000-row cap, so it does not arise there.
  *
  * @param {readonly TapeLaunchRef[]} launches
  * @param {number} [maxRows]
@@ -263,6 +266,24 @@ export function planReproduction(launches, maxRows = MAX_PLANNED_ROWS_PER_EXECUT
     batches.push({ month, launches: [launch], plannedRows: launch.tapeFills });
   }
   return batches;
+}
+
+/**
+ * The batches a plan cannot ask for in one execution.
+ *
+ * {@link planReproduction} never splits a launch, so the only way a batch exceeds the cap is a
+ * single launch whose own tape count does — and there is no grouping that fixes it. This is the
+ * check that makes that visible instead of leaving a result the reader would refuse as a page, or
+ * (between the cap and `maxResultRows`) accept as whole while the vendor truncated it. The caller
+ * refuses the plan WHOLE on a non-empty return rather than dropping the offending launch, because a
+ * run that quietly excludes its largest window reports completeness over a population it chose.
+ *
+ * @param {readonly ReproductionBatch[]} batches
+ * @param {number} [maxRows]
+ * @returns {ReproductionBatch[]} Empty when every batch fits.
+ */
+export function oversizedBatches(batches, maxRows = MAX_PLANNED_ROWS_PER_EXECUTION) {
+  return batches.filter((b) => b.plannedRows > maxRows);
 }
 
 /**
@@ -952,8 +973,12 @@ export async function runReproduction(client, opts) {
     const before = client.resultBytes();
     const result = await executeAndRead(client, queryId, parameters, opts.bounds);
     for (const row of result.rows) {
-      // A row for a mint this batch did not ask about — or one carrying no readable mint at all — is
+      // A row for a mint this RUN did not ask about — or one carrying no readable mint at all — is
       // a statement that ignored its own predicate, and it is COUNTED rather than dropped quietly.
+      // The scope is the run, not the batch, deliberately: `rowsByMint` is seeded for every launch
+      // of every batch before the loop, so a row returned by one batch for a launch belonging to
+      // another is PLACED and shows up, if at all, as `launchesDuneLong`, which does not gate. That
+      // is a placement question; this counter is the vendor-ignored-its-predicate question.
       //
       // The count is the point. This comment used to claim such a row "surfaces as a row-count
       // disagreement", and that was false in the direction that hides the defect: an unasked mint
@@ -1125,6 +1150,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     .filter((l) => args.months.length === 0 || args.months.includes(new Date(l.createdAtMs).toISOString().slice(0, 7)))
     .filter((l) => args.mints.length === 0 || args.mints.includes(l.mint));
   const batches = planReproduction(selected);
+  const oversized = oversizedBatches(batches);
   const estimate = estimateReproductionCredits(batches);
 
   say('');
@@ -1140,6 +1166,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   );
   say(`  saved query    ${ENTRY_QUERY_ID}, compared against the committed text BEFORE any execution`);
   say(`  statement      sha256 ${entrySqlFingerprint()} of the normalised ENTRY_SQL`);
+  say(
+    `  over the cap   ${oversized.length} batch(es) above ${MAX_PLANNED_ROWS_PER_EXECUTION.toLocaleString('en-US')} ` +
+      `planned rows — a launch this statement cannot return whole`,
+  );
+  for (const b of oversized) {
+    say(
+      `      ${b.month}: ${b.plannedRows.toLocaleString('en-US')} row(s) across ` +
+        `${b.launches.length} launch(es) — ${b.launches.map((l) => l.mint.slice(0, 8)).join(', ')}…`,
+    );
+  }
 
   /**
    * Report a finished comparison. Shared by the live path and the offline recompute so the two
@@ -1267,6 +1303,17 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     say('');
     say('  DRY RUN — nothing was requested and no socket was opened. Re-run with --live to spend.');
     process.exit(0);
+  }
+
+  if (oversized.length > 0) {
+    say('');
+    say(
+      `  REFUSED before the first billed request: ${oversized.length} batch(es) plan more than ` +
+        `${MAX_PLANNED_ROWS_PER_EXECUTION.toLocaleString('en-US')} rows, and this statement cannot ` +
+        'return half a window. Half a window is a biased sample rather than a short one, so the plan',
+    );
+    say('  is refused WHOLE rather than truncated to what fits. Narrow it with --mints or --months.');
+    process.exit(4);
   }
 
   const credential = resolveDuneCredential(process.env);

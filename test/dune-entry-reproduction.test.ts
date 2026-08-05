@@ -35,6 +35,7 @@ import {
 } from '../tools/deployer-screen/dune-fills.mjs';
 import {
   ESTIMATED_BYTES_PER_ROW,
+  MAX_PLANNED_ROWS_PER_EXECUTION,
   NO_TRIM_SLOT_SPAN,
   REFUTED_REFERENCE_PAIRS,
   SCAN_MARGIN_MS,
@@ -47,6 +48,7 @@ import {
   estimateReproductionCredits,
   fieldEntrantsDisagree,
   parseArgs,
+  oversizedBatches,
   planReproduction,
   readTapeLaunches,
   recordCustody,
@@ -431,6 +433,33 @@ describe('the plan, and the ceiling that refuses before the first request', () =
     expect(batches.flatMap((b) => b.launches.map((l) => l.mint)).sort()).toEqual(launches.map((l) => l.mint).sort());
     // Deterministic, so two plans over the same tape are the same plan.
     expect(JSON.stringify(planReproduction(launches))).toBe(JSON.stringify(batches));
+    // The committed tape's largest launch is far under the cap, so the over-cap check reads zero
+    // here. The test below drives it FIRING rather than resting on that zero.
+    expect(oversizedBatches(batches)).toEqual([]);
+  });
+
+  it('surfaces a launch too large to return whole rather than splitting it or dropping it', () => {
+    // A launch whose own tape count exceeds the cap cannot be grouped smaller: this statement
+    // cannot return half a window, and half a window is a biased sample rather than a short one.
+    const huge = {
+      mint: MINT,
+      symbol: 'huge',
+      createdAtMs: Date.parse('2026-04-07T13:27:14.000Z'),
+      windowMs: 60_000,
+      tapeFills: MAX_PLANNED_ROWS_PER_EXECUTION + 1,
+    };
+    const small = { ...huge, mint: OTHER_MINT, symbol: 'small', tapeFills: 10 };
+    const batches = planReproduction([huge, small]);
+    // Not split, and not silently merged into a batch that would then also be over the cap.
+    expect(batches[0]!.launches.map((l) => l.mint)).toEqual([MINT]);
+    expect(batches[0]!.plannedRows).toBe(MAX_PLANNED_ROWS_PER_EXECUTION + 1);
+    const offending = oversizedBatches(batches);
+    expect(offending).toHaveLength(1);
+    expect(offending[0]!.launches.map((l) => l.mint)).toEqual([MINT]);
+    // The launch that DOES fit is not what the refusal is about, and the plan still holds it — the
+    // refusal is whole-plan, so nothing here has quietly dropped a window to make the plan fit.
+    expect(batches.flatMap((b) => b.launches.map((l) => l.mint)).sort()).toEqual([MINT, OTHER_MINT].sort());
+    expect(oversizedBatches(planReproduction([small]))).toEqual([]);
   });
 
   it('prices executions at the ceiling and bytes at the tape\'s own row counts', () => {

@@ -1282,14 +1282,14 @@ export async function assertSavedQueryMatches(client, queryId, expectedSql) {
   const actual = field(body, 'query_sql');
   if (typeof actual !== 'string') {
     throw new DuneRefused(
-      `Dune query ${queryId} returned no SQL, so it cannot be verified against the text committed in ` +
-        `dune.mjs. Nothing was executed.`,
+      `Dune query ${queryId} returned no SQL, so it cannot be verified against the text this repo ` +
+        `commits for that query id. Nothing was executed.`,
       { status: null, terminal: true },
     );
   }
   if (normaliseSql(actual) !== normaliseSql(expectedSql)) {
     throw new DuneRefused(
-      `Dune query ${queryId} no longer matches the SQL committed in tools/deployer-screen/dune.mjs. ` +
+      `Dune query ${queryId} no longer matches the SQL committed in this repo for that query id. ` +
         `A saved query is editable from a browser and its answer is a gate input, so this run refuses ` +
         `to spend an execution on it. Restore the saved query from the committed text, or update the ` +
         `committed text on purpose. Nothing was executed.`,

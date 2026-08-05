@@ -479,6 +479,12 @@ describe('the structural checks GATE, and each one is shown FAILING', () => {
     expect(result.launches[0]!.usable).toBe(true);
     expect(result.launches[0]!.tapeFieldEntrants).toBeGreaterThan(result.launches[0]!.fieldEntrants);
     expect(result.fieldDisagreementsOnUnrefutedReferences).toBe(1);
+    // BOTH readings come out of `fieldEntrantsDisagree` inside `compareReproduction`, differing only
+    // in the flag — so the reported one is exercised in production use here rather than only in the
+    // unit assertions below. It used to be a second, inline `fieldEntrants !== tapeFieldEntrants`
+    // expression of the same predicate, which made the two numbers equal by authorship rather than
+    // by construction and left the reported one covered by no production caller at all.
+    expect(result.fieldDisagreements).toBe(1);
     expect(result.failures.join(' ')).toMatch(/different number of field entrants/);
     expect(result.ok).toBe(false);
   });

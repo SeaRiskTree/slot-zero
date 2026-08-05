@@ -715,8 +715,12 @@ export function compareReproduction(dataDir, planned, rowsByMint) {
   const duneLaunches = [];
   /** @type {string[]} */
   const failures = [];
+  /** Launches disagreeing over the entrants the chain does NOT refute — the GATING reading. */
   /** @type {string[]} */
   const fieldDisagreementMints = [];
+  /** The same, over EVERY entrant — reported beside it, and gating nothing. */
+  /** @type {string[]} */
+  const fieldDisagreementMintsAllEntrants = [];
 
   for (const launch of planned) {
     const rows = rowsByMint.get(launch.mint) ?? [];
@@ -744,13 +748,22 @@ export function compareReproduction(dataDir, planned, rowsByMint) {
       tapeRoomLeft: tape?.createSlot.roomLeft ?? null,
     };
     comparisons.push(comparison);
-    if (
-      window.usable &&
-      fieldEntrantsDisagree(launch.mint, taped?.field ?? [], tape?.field ?? [], {
-        ignoringRefutedReferences: true,
-      })
-    ) {
-      fieldDisagreementMints.push(`${launch.symbol} (${launch.mint})`);
+    // BOTH readings come out of {@link fieldEntrantsDisagree}, differing only in the flag. The
+    // reported one used to be an inline `fieldEntrants !== tapeFieldEntrants` over the comparison
+    // row — arithmetically the same thing, and that is exactly the problem: it was a SECOND
+    // expression of the predicate, so the reported and gating numbers were only equal by
+    // coincidence of authorship and the reported one was covered by no production caller. Routing
+    // it through the same function makes them provably the same measurement, and puts both flag
+    // settings under test in real use rather than only in the unit test.
+    if (window.usable) {
+      const duneField = taped?.field ?? [];
+      const tapeFieldEntrants = tape?.field ?? [];
+      if (fieldEntrantsDisagree(launch.mint, duneField, tapeFieldEntrants, { ignoringRefutedReferences: true })) {
+        fieldDisagreementMints.push(`${launch.symbol} (${launch.mint})`);
+      }
+      if (fieldEntrantsDisagree(launch.mint, duneField, tapeFieldEntrants, { ignoringRefutedReferences: false })) {
+        fieldDisagreementMintsAllEntrants.push(`${launch.symbol} (${launch.mint})`);
+      }
     }
     if (taped !== null) duneLaunches.push(taped);
     else failures.push(`${launch.symbol} (${launch.mint}): ${window.note}`);
@@ -769,9 +782,7 @@ export function compareReproduction(dataDir, planned, rowsByMint) {
   const createSlotDisagreements = comparisons.filter(
     (c) => c.createSlot !== null && c.tapeCreateSlot !== null && c.createSlot !== c.tapeCreateSlot,
   ).length;
-  const fieldDisagreements = comparisons.filter(
-    (c) => c.usable && c.fieldEntrants !== c.tapeFieldEntrants,
-  ).length;
+  const fieldDisagreements = fieldDisagreementMintsAllEntrants.length;
   const fieldDisagreementsOnUnrefutedReferences = fieldDisagreementMints.length;
 
   const field = verifyFieldReproduction(dataDir, duneLaunches);
@@ -978,6 +989,38 @@ export const REPRODUCTION_CAVEATS = [
  * It hashes {@link normaliseSql}'s output rather than the raw text, so it is the same equivalence
  * the custody comparison uses: a reflow that `assertSavedQueryMatches` would accept does not
  * invalidate a record, and a change of meaning does.
+ *
+ * ## IT IS SENSITIVE TO THE STATEMENT'S COMMENTS, AND THAT IS ACCEPTED RATHER THAN OVERLOOKED
+ *
+ * `normaliseSql` folds line endings and trailing whitespace and nothing else, so editing a COMMENT
+ * inside {@link ENTRY_SQL} — where this repo writes its traps down — changes this fingerprint and
+ * turns the committed record's assertion red, even though the rows the vendor returns are identical.
+ *
+ * That is deliberate, and stripping comments before hashing would be the wrong fix:
+ *
+ * - **It is exactly the equivalence custody already imposes.** `assertSavedQueryMatches` compares
+ *   the same `normaliseSql` output against the deployed query, comments included, precisely because
+ *   the comments are where the traps live and a browser edit to one is a change to the artefact.
+ *   A fingerprint that ignored them would be a WEAKER guard than the one beside it, and the two
+ *   would disagree about what "the same statement" means.
+ * - **The cost of a false red is a doc edit; the cost of a false green is a record describing text
+ *   that no longer exists.** Those are not symmetric.
+ *
+ * **SO A COMMENT-ONLY EDIT TO `ENTRY_SQL` HAS A REAL PRICE, AND HERE IS WHAT IT IS.** The record's
+ * fingerprint can only be brought back into agreement by one of two things, and NEITHER is editing
+ * the JSON by hand:
+ *
+ * 1. **Re-run the reproduction** — `--live`, ~495 credits of a 2,500-credit shared month; or
+ * 2. **Revert the comment**, which costs nothing.
+ *
+ * A third route exists and is not free either: redeploying the saved query to the edited text, which
+ * is the documented deploy step and is required anyway before any run, since the custody comparison
+ * runs first and would otherwise refuse the whole leg terminally.
+ *
+ * **NEVER hand-edit `entrySqlSha256` in a committed record to make a test pass.** The field exists
+ * to say which text produced those numbers; typing a new value into it asserts a measurement that
+ * was never taken, which is the one failure this whole lane was built to make impossible. If the
+ * statement's meaning changed, the numbers are stale and the record must be re-measured or retired.
  *
  * @param {string} [sql]
  * @returns {string} sha256, hex.

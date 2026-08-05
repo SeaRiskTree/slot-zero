@@ -113,6 +113,25 @@ Both are stated here rather than left to look like run output:
   record *was* produced by exactly this text. It exists because the saved-query **id** survives an
   edit: without it, editing `ENTRY_SQL` leaves every assertion below green over a record describing
   a different statement.
+
+  **It is sensitive to the statement's COMMENTS, and that is accepted rather than overlooked.**
+  `normaliseSql` folds line endings and trailing whitespace and nothing else, so editing a comment
+  inside `ENTRY_SQL` — where this repo writes its traps down — turns this record's assertion red
+  although the vendor would return identical rows. Three reasons that is the right trade, and they
+  are recorded here because the alternative looks cheap and is not:
+
+  1. **It is the same equivalence custody already imposes.** `assertSavedQueryMatches` compares that
+     same `normaliseSql` output against the deployed query, comments included, because the comments
+     are where the traps live. A fingerprint that stripped them would be a *weaker* guard than the
+     one beside it, and the two would disagree about what "the same statement" means.
+  2. **The costs are not symmetric.** A false red costs a doc edit. A false green costs a record
+     that describes text which no longer exists.
+  3. **The only ways back into agreement are priced.** Re-running the reproduction is **~495
+     credits** of a 2,500-credit shared month; reverting the comment is free; redeploying the saved
+     query is the documented deploy step and is required before any run anyway, since the custody
+     comparison runs first. **Hand-editing this field is not one of them** — the warning is written
+     into `entrySqlFingerprint`'s own doc rather than left in a review thread, because typing a new
+     value here asserts a measurement nobody took.
 - **`result.fieldDisagreementsOnUnrefutedReferences`** — the gating half of the field-entrant check,
   added when that check was made to gate at all. It is **0 by derivation, not by re-measurement**:
   the unfiltered count is 0 on every one of the 235 launches in this record, and the filtered

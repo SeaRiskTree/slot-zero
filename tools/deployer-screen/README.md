@@ -686,6 +686,18 @@ failed over to the walk, and six mint-time drops against MadeOnSol's creation ti
 the refusal rate does and does not imply for tightening the unproven-window padding. Do not
 re-derive those figures here.
 
+### The 2026-08-05 seeding comparison — three legs, and records that are not under `runs/`
+
+Captain decision 232c ran the screen on the untiered default seeds and on `--tier good`/`--tier
+elite` the same day, at unmoved bars, to compare the two seedings; **choosing one is the captain's
+and was not done there.** Read it through `runs/2026-08-05-seed-comparison.md`, which owns every
+figure, the spend and the decisions it leaves open. Do not re-derive them here.
+
+Its three records are held at `measurements/2026-08-05-seed-comparison/` rather than under `runs/`,
+because **no schema version describes them** — schema-15 candidate rows plus a run-level block that
+only exists at 17. That directory's own `README.md` owns the statement and is the one place it is
+made; `runs/` stays exactly the set of records the per-version key assertions below hold.
+
 ## Retention — MadeOnSol terms §5a(d)
 
 > *(d) you may not cache, store, or accumulate API Data beyond what is reasonably necessary to

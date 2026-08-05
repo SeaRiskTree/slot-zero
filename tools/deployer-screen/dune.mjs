@@ -1622,7 +1622,7 @@ export async function checkDuneAllowance(client, input) {
  * Batching is the cost model rather than a convenience: the scan cost is nearly independent of how
  * many wallets are in the filter — measured, 5 wallets and 20 wallets cost the same table scan — so
  * the per-deployer price falls as the batch grows. What scales is the bytes returned, which is why
- * the SQL selects five columns and no more, and why {@link CREATION_SQL} caps the rows ONE DEPLOYER
+ * the SQL selects six columns and no more, and why {@link CREATION_SQL} caps the rows ONE DEPLOYER
  * may contribute rather than letting a single spam wallet's history price the batch.
  *
  * **Every wallet asked about comes back with an answer, and "fall back to the walk" is one of the

@@ -140,8 +140,8 @@ const DUNE_MONTHLY_CREDITS = 2_500;
  * and at 20) while only the bytes scale. 0.1 is the per-deployer figure at the candidate cap, where
  * the fixed scan is amortised over 195 wallets and the per-row bytes are the whole marginal cost: 195
  * deployers at a median ~50 launches is ~0.95 MB, about 19 credits of export plus ~1 of compute.
- * The 46,718 bytes above were measured at FOUR columns; `CREATION_SQL` now selects five, whose
- * per-row cost is bounded rather than measured — see `DUNE_BYTES_PER_ROW_CEILING` below.
+ * The 46,718 bytes above were measured at FOUR columns; `CREATION_SQL` now selects six, whose
+ * per-row cost has been re-measured — see `DUNE_BYTES_PER_ROW_CEILING` below.
  * Quoted beside the ceiling for the same reason the Helius median is — they differ by 40x, and
  * printing only one of them misleads in whichever direction it was chosen.
  */
@@ -151,11 +151,12 @@ const DUNE_EXPECTED_CREDITS_PER_CANDIDATE = 0.1;
  * An UPPER BOUND on the bytes one enumeration row costs, in bytes.
  *
  * **97 is a MEASUREMENT and it was taken at FOUR columns** (482 rows, 46,718 bytes, 2026-08-03).
- * `CREATION_SQL` now selects five: `launches_total` is what makes its per-deployer cap detectable
- * instead of silent. The fifth column's cost has NOT been measured on this account, so it is bounded
- * by arithmetic rather than invented — the widest a JSON row can carry it is the key plus a count
- * with more digits than pump.fun has mints, about 24 bytes. 121 is therefore a ceiling that the next
- * real run should REPLACE with a measurement, not a figure anyone has observed.
+ * `CREATION_SQL` now selects six: `launches_total` is what makes its per-deployer cap detectable
+ * instead of silent, and `is_mayhem_mode` is captain decision 227a's recorded-and-reported flag.
+ * That six-column shape has been MEASURED at both read shapes — 105.92 bytes/row batch-shaped and
+ * 105.91 for one wallet — so 121 still holds and does not move. Its headroom is now 15.08 bytes,
+ * less than one more boolean column is worth, so a SEVENTH column must re-measure and raise the
+ * pin rather than lean on a margin that is gone. `CREATION-DERIVED.md` §8.2c owns every figure.
  */
 const DUNE_BYTES_PER_ROW_CEILING = 121;
 
@@ -1338,7 +1339,7 @@ export function renderDryRun(plan) {
       L.push('  ONE EXECUTION FOR THE WHOLE BATCH, and that is the cost model rather than a');
       L.push('  convenience: the table scan costs nearly the same for 5 wallets as for 20, so the');
       L.push('  per-deployer price falls as the batch grows. What scales is BYTES RETURNED, which');
-      L.push('  is why the SQL selects five columns and no more, and why the rows a single deployer');
+      L.push('  is why the SQL selects six columns and no more, and why the rows a single deployer');
       L.push('  may contribute are CAPPED. The cap is per DEPLOYER, not per batch: one');
       L.push('  industrial-spam wallet used to carry the whole result past the row ceiling and send');
       L.push('  EVERY candidate to the walk. Now that wallet walks alone and the rest keep Dune.');

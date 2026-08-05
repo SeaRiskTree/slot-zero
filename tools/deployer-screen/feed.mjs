@@ -132,6 +132,17 @@ export const FEED_LIMITATIONS = [
     'counted and their trailing counts reported, so the cost is visible; it is not eliminated.',
   'THE GATE READING HERE IS OWNERSHIP-DERIVED AND BIASED TOWARDS REJECTION. A `held` wallet is NOT ' +
     'a rejected wallet. screen.mjs, which reads the creation-derived history, is the authority.',
+  'AND THAT BIAS RUNS BOTH WAYS AT ONCE, FROM THE SAME SURFACE. Measured over the 82 candidates of ' +
+    'the screen\'s last real run, which records both readings per candidate: the vendor page ' +
+    'REJECTS through the count bars — 20 of 82 clear minTokens+minSpanDays here against 66 of 82 on ' +
+    'the creation-derived reading — while the RATE it computes reads HIGHER than the gate\'s on 37 ' +
+    'of 81 wallets, by up to +0.6929, because the page holds what a wallet still OWNS and the ones ' +
+    'that move on are the winners. So `held` is over-populated and `queued` is over-generous at the ' +
+    'same time; this is not a one-way conservative filter.',
+  'THIS RECORD\'S completionRate IS NOT screen.mjs\'s completionRate. They are different quantities ' +
+    'over different histories and differ by up to 0.69 on one wallet. Every ledger row carries ' +
+    '`gateReading` (`ownership-only` here, `creation-derived` under screen.mjs\'s default) — read ' +
+    'it before comparing, pooling or ranking rates across the two sources.',
   'CLEARING THIS GATE IS NOT A RECOMMENDATION. It means competent enough to be worth measuring. ' +
     'Whether a deployer leaves an outsider any room, and whether that room is profitable, is ' +
     'UNMEASURED here — that is Stage 2, in screen.mjs.',

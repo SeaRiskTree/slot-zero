@@ -128,17 +128,42 @@ The Stage 1 gate can be applied to either of two histories, and `README.md` →
   bounds pin zero keyless requests, no Solana RPC spend and no Dune execution at all.
 - **ownership** — which tokens the wallet *owns now*. One keyed request, already paid for.
 
-This lane reads ownership. That reading **understates** a wallet's launches, understates its bonded
-launches by more, and therefore **scores the better deployer worse** — it is biased towards
-**rejection**, and a false rejection is invisible.
+This lane reads ownership. That reading **understates** a wallet's launches and understates its
+bonded launches by more, and therefore **scores the better deployer worse** — a false rejection, and
+an invisible one.
+
+### It is biased in BOTH directions at once, and only one of them was written down
+
+Captain decision 233a. The lane keeps reading ownership — moving it would break the pinned
+zero-Solana-RPC bound above — but the one-directional description it used to carry was wrong.
+`slot-zero-gate-bar-measure-own-population` §2.1/§2.3 (held in firstmate's records, not in this
+repo) measured both readings over the same 82 candidates, from the screen's last real run, which
+records each candidate's vendor reading beside its gate reading:
+
+| direction | how it bites | measured |
+|---|---|---|
+| **rejects**, through the **count** bars | a 70-record page for a wallet creating ~9/day spans three days, so `minTokens` + `minSpanDays` fail on evidence length rather than on the deployer | **20 of 82** clear both bars on the vendor page against **66 of 82** on the gate reading |
+| **inflates**, through the **rate** | the page holds what the wallet still *owns*, and the ones that move on are the winners — a success-biased short window, not merely a short one | the vendor rate reads **higher** on **37 of 81** wallets (lower on 29, median difference 0.0000), by up to **+0.6929** |
+
+So the `held` pile is over-populated *and* the `queued` pile is over-generous, from the same
+surface, on the same run. Do not reason about this reading as a one-way conservative filter, and do
+not treat a `queued` wallet as pre-validated.
+
+### The two `completionRate`s are different quantities
+
+`feed.mjs`'s `completionRate` and `screen.mjs`'s are **not the same number** and can differ by
+**0.69** on one wallet. What keeps that legible rather than silently conflated — and what makes
+keeping this lane on the vendor page defensible — is that **every ledger row records
+`gateReading`**: `ownership-only` here, `creation-derived` under `screen.mjs`'s default. Read that
+field before comparing, pooling or ranking rates across the two sources.
 
 The design follows from that, and it is the single most important thing to understand about this
 lane's output:
 
 | feed state | meaning |
 |---|---|
-| `queued` | Cleared the gate on the ownership reading. **The feed's product**: worth putting through the beatability screen. |
-| `held` | Did **not** clear it. **This is NOT a rejection.** It is a triage outcome on a reading known to be biased against the wallet. |
+| `queued` | Cleared the gate on the ownership reading. **The feed's product**: worth putting through the beatability screen. **Not a pass** — the rate that cleared it may read up to +0.6929 above the gate's on the same wallet. |
+| `held` | Did **not** clear it. **This is NOT a rejection.** It is a triage outcome on a reading whose count bars fail 46 more of 82 wallets than the gate reading does. |
 | `unmeasured` | The vendor's profile carried no readable launch record. An empty deployer and a moved response shape are indistinguishable from here, so neither is recorded as a finding. |
 | `prefiltered` | Never gated: the vendor's trailing deploy count was below the floor. The cadence filter. |
 | `deferred` | Surfaced and recorded, waiting for a gate batch. |

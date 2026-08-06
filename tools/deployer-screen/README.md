@@ -408,11 +408,16 @@ a decision of that size silently.
 2. **The new worst case is priced and refused before the first walk request.**
    `dune.mjs` → `priceWalkFallbackCliff` prices the whole-batch fallback against the plan that was
    made — the same expression evaluated twice, with only the candidate count changed — in whichever
-   unit *this* run's walk bills in. Past `dune.legFallbackCliffMultiple` the run stops (exit 2) with
-   the figure printed, unless `--allow-walk-fallback` says otherwise. `thresholds.json` →
-   `dune.justification.legFallbackCliffMultiple` owns the derivation, including why the guard first
-   bites at 9 candidates and does nothing below that; the baseline share is re-derived from the two
-   committed legs above by a test rather than quoted.
+   unit *this* run's walk bills in. Past `dune.legFallbackCliffMultiple`, and on a batch no smaller
+   than the magnitude floor `dune.legFallbackMinCandidates`, the run stops (exit 2) with the figure
+   printed, unless `--allow-walk-fallback` says otherwise. It stops *having filed its record*: the
+   refusal is an abort reason, so the run it already paid for — the seeds and the run-level `dune`
+   block — is written as `completed: false` carrying that reason as its `truncationReason`, under the
+   incomplete-run rules above, rather than discarded so a rerun spends the shared allowance again to
+   learn the same thing. Each of those two thresholds carries its own
+   derivation in `thresholds.json` → `dune.justification`, including why the guard first bites at 9
+   candidates and does nothing below that; the baseline share is re-derived from the two committed
+   legs above by a test rather than quoted.
 3. **A failed coverage-probe *execution* no longer takes the leg down with it.** `readCoverageProbe`
    falls back to Dune's **cached** result, which costs no execution. It is a read and never a retry:
    `DuneClient.execute` is the one call in this repository that is never retried, a failed execution

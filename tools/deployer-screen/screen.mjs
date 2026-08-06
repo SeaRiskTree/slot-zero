@@ -959,6 +959,14 @@ export async function main(opts, env, out, err) {
     return EXIT.ok;
   }
 
+  if (!resolution.ok) {
+    err('');
+    err(`CREDENTIAL PROBLEM — no deployer was screened, and this is NOT a negative result.`);
+    err('');
+    err(resolution.message);
+    return EXIT.credentialMissing;
+  }
+
   // ---- the RUN path -----------------------------------------------------------------------
   // A real run that is going to READ the source builds it and pays whatever that costs: it was
   // always going to reach that vendor, and the eligibility answer is an input to a measurement
@@ -969,6 +977,17 @@ export async function main(opts, env, out, err) {
   // probe for a leg the operator switched off, or refusing the whole run over a source that leg was
   // never going to use. Restoring the unconditional call would re-open both, invisibly, on the first
   // run that ever exercises a billed source.
+  //
+  // **AND IT SITS BELOW THE CREDENTIAL REFUSAL FOR THE SAME REASON, ONE CONDITION OVER.** Only a run
+  // that will actually READ the source may build it, and a run whose MadeOnSol credential does not
+  // resolve screens nothing — so it reads nothing. Above the refusal, a Stage 2 run with no
+  // credential would pay a billed coverage probe and then return `EXIT.credentialMissing` having
+  // measured nothing, or refuse with `EXIT.upstream` and hide the credential message behind a
+  // complaint about a source it was never going to use. Unreachable today for exactly the reason
+  // the conditional construction was — every registered construction is free while
+  // `ENTRY_FILL_SOURCE_KIND` is `'swap-api'` — which is the same pre-cutover window and the same
+  // reason to close it before Gate 3 rather than after. Moving this block back above the refusal
+  // re-opens it; the ORDER is the guard.
   //
   // BOTH STEPS CAN REFUSE, AND A REFUSAL IS A REPORTED OUTCOME RATHER THAN A STACK TRACE. A source
   // whose constructor cannot vouch for itself, or one answering an eligibility that is not a
@@ -984,14 +1003,6 @@ export async function main(opts, env, out, err) {
     err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
     err('  Nothing was requested, so no quota was spent.');
     return EXIT.upstream;
-  }
-
-  if (!resolution.ok) {
-    err('');
-    err(`CREDENTIAL PROBLEM — no deployer was screened, and this is NOT a negative result.`);
-    err('');
-    err(resolution.message);
-    return EXIT.credentialMissing;
   }
 
   // ---- Stage 1 ---------------------------------------------------------------------------

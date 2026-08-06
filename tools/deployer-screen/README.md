@@ -1237,6 +1237,17 @@ rather than by a second reading of `opts.stage2`, so constructing and scoring ar
 Stage 2 enabled is byte-for-byte unchanged, and it still reads the swap-api: **this is not the
 cutover.**
 
+**AND THE CONSTRUCTION SITS BELOW THE CREDENTIAL REFUSAL, WHICH IS THE SAME INVARIANT ONE CONDITION
+OVER.** Only a run that will actually READ the source may build it — and a run whose MadeOnSol
+credential does not resolve screens nothing, so it reads nothing. Built above that refusal, a Stage 2
+run with no credential would pay the billed coverage probe and then return `EXIT.credentialMissing`
+having measured nothing, or refuse with `EXIT.upstream` and hide the credential message behind a
+complaint about a source it was never going to reach. No source consumer sits between the two points,
+so the fix is the ORDER, and the order is what a test pins: `--no-stage2` is the flag half of the
+invariant and the credential is the state half. Unreachable today for exactly the reason the
+unconditional construction was — every registered construction is free while `ENTRY_FILL_SOURCE_KIND`
+is `swap-api` — which is the same pre-cutover window and the same reason to close it now.
+
 **An undeclared construction is treated as billed, never as free.** A registry entry that says
 nothing about what building it costs is an absence, and reading an absence as a benign value is the
 failure this repo names in three other places (`covered.fromMs` of `0` read as a 56-year window;

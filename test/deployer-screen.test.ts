@@ -12652,6 +12652,36 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         expect(errs.join('\n')).toContain('CREDENTIAL PROBLEM');
         expect(errs.join('\n')).not.toContain('has no usable fill source');
       }, 60_000);
+
+      it('a run with NO credential builds no source either, Stage 2 on or off', async () => {
+        // THE SAME INVARIANT, ONE CONDITION OVER: only a run that will actually READ the source may
+        // build it, and a run whose credential does not resolve screens nothing. Post-Gate-3 a
+        // Stage 2 run with no credential would otherwise pay a billed coverage probe before
+        // returning EXIT.credentialMissing having measured nothing — or refuse with EXIT.upstream
+        // and hide the credential message behind a complaint about a source it never read.
+        //
+        // `main` takes no registry, so the ORDER is what carries this and the order is what is
+        // pinned: the credential refusal must return before the construction is reached. Today both
+        // orders exit 3 on an empty environment, because the swap-api construction is free and
+        // succeeds — which is precisely why this closes before the cutover rather than after.
+        const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+        const refusal = screen.indexOf('return EXIT.credentialMissing;');
+        const construction = screen.indexOf(
+          'entryFillSource = await runEntryFillSource(entryFillSources, opts, entryThresholds);',
+        );
+        expect(refusal).toBeGreaterThan(-1);
+        expect(construction).toBeGreaterThan(refusal);
+
+        // And the behaviour that ordering guarantees rather than merely observes: Stage 2 ON, empty
+        // environment, and the credential message is the one the operator gets.
+        const parsed = parseArgs([]);
+        if (!parsed.ok) throw new Error('unreachable');
+        expect(parsed.opts.stage2).toBe(true);
+        const errs: string[] = [];
+        expect(await main(parsed.opts, {}, () => {}, (l) => errs.push(l))).toBe(3);
+        expect(errs.join('\n')).toContain('CREDENTIAL PROBLEM');
+        expect(errs.join('\n')).not.toContain('has no usable fill source');
+      }, 60_000);
     });
   });
 

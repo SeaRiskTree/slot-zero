@@ -842,7 +842,12 @@ dev currently?"*, and the shape of the answer is the point:
   `planEligibility` and must never become it (a plan refuses a billed or undeclared construction, a
   run builds both — the source-text pins say so). Stage 2's block is guarded by
   `entryFillSource !== null`, so constructing and scoring are ONE decision. Stage 2 enabled is
-  unchanged and still reads the swap-api; **this was not the cutover.**
+  unchanged and still reads the swap-api; **this was not the cutover.** **The construction also sits
+  BELOW the credential refusal, which is the same invariant one condition over**: a run whose
+  MadeOnSol credential does not resolve screens nothing, so it reads nothing, and building above the
+  refusal would pay a billed probe before returning `EXIT.credentialMissing` — or refuse with
+  `EXIT.upstream` and mask the credential message — for a source never read. No consumer sits between
+  the two points, so the ORDER is the guard and a test pins it.
 - **THE 156a BOUNDARY IS GUARDED BY TWO ASSERTIONS NOW, AND THE OLD ONE CANNOT FAIL** (captain
   decision 261a). `test/deployer-screen.test.ts` → "NO Dune value can reach a Stage 2 entry number or
   Stage 3" is a deny-list on the literal filename `./dune.mjs`, and **one hop of indirection defeats

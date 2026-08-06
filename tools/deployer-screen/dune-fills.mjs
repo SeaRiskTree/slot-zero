@@ -703,6 +703,39 @@ ORDER BY 1, 2, 3
 `;
 
 /**
+ * THIS LEG'S SPEND, in the unit the monthly credit ceiling is denominated in — the Stage 2 half of
+ * what `dune.mjs` → `duneSpendPlan` already states for the enumeration.
+ *
+ * It is a PLAN rather than a second pricing path: `client.mjs` → `estimatePlanCredits` does the
+ * arithmetic for both legs and `decideAllowance` reaches the verdict for both, because two answers
+ * to "may this run spend" is the defect this repository names repeatedly. All this supplies is the
+ * ceilings, which are the only thing that differs — this leg executes PER WINDOW where the
+ * enumeration answers a whole batch in one execution.
+ *
+ * **`creditsPerExecution` IS COMPUTE ONLY, and that is load-bearing.** `entry_source_agreement.
+ * worstCaseCreditsPerWindow` is a COMPOSITE — its own justification decomposes it as one credit of
+ * compute plus sixteen of retrieval — and {@link estimatePlanCredits} adds retrieval separately from
+ * `resultReads × rowsPerRead × bytesPerRow`. Passing the composite here would charge retrieval twice
+ * and inflate the very figure a spend decision rests on, so the compute term is pinned on its own.
+ *
+ * @param {{ maxExecutionsPerRun: number, maxResultRowsPerWindow: number,
+ *   worstCaseComputeCreditsPerExecution: number, resultBytesPerRowCeiling: number }} bounds
+ * @returns {import('./client.mjs').DuneSpendPlan}
+ */
+export function tradeFillSpendPlan(bounds) {
+  return {
+    lane: "tools/deployer-screen (Stage 2's entry fill source)",
+    executions: bounds.maxExecutionsPerRun,
+    creditsPerExecution: bounds.worstCaseComputeCreditsPerExecution,
+    // One result read per execution, plus the coverage probe's own read — which is billed by bytes
+    // whether or not it cost an execution, and is this leg's FIRST billed request.
+    resultReads: bounds.maxExecutionsPerRun + 1,
+    rowsPerRead: bounds.maxResultRowsPerWindow,
+    bytesPerRow: bounds.resultBytesPerRowCeiling,
+  };
+}
+
+/**
  * Assess the TRADE tables' coverage from a probe result.
  *
  * A one-line wrapper on purpose: `dune.mjs` → `assessCoverage` already owns every refusal — a

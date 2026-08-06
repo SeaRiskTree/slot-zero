@@ -56,6 +56,8 @@ import {
   estimatePlanCredits as censusEstimatePlanCredits,
 } from '../tools/creation-census/client.mjs';
 import { checkDuneAllowance, duneSpendPlan, enumerateCreations } from '../tools/deployer-screen/dune.mjs';
+import { tradeFillSpendPlan } from '../tools/deployer-screen/dune-fills.mjs';
+import { buildDuneEntryFillSource } from '../tools/deployer-screen/screen.mjs';
 import { EXIT, main as censusMain, readBounds } from '../tools/creation-census/run.mjs';
 
 const SCREEN_CLIENT = fileURLToPath(new URL('../tools/deployer-screen/client.mjs', import.meta.url));
@@ -702,5 +704,127 @@ describe('THE SCREEN REFUSES BEFORE ITS FIRST BILLED READ', () => {
       allowance: checked.decision,
     }).catch(() => undefined);
     expect(paths.length).toBeGreaterThan(1);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+
+describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () => {
+  // Captain decision 317a, 2026-08-06. The dual-source Stage 2 leg is the first path on which this
+  // screen spends a Dune credit INSIDE Stage 2, and as first committed it built its client and went
+  // straight to the trade-table coverage probe — a billed result read — with the balance never
+  // examined. The enumeration's own check sits far downstream and prices a different plan, so it
+  // could not have caught this. Everything here drives a stubbed transport: this lane executes no
+  // billed Dune call, and `POST /usage` is free by Dune's own documentation.
+  const AGREEMENT = JSON.parse(readFileSync(THRESHOLDS, 'utf8')).entry_source_agreement as {
+    maxExecutionsPerRun: number;
+    maxRequestsPerRun: number;
+    maxResultRowsPerWindow: number;
+    resultBytesPerRowCeiling: number;
+    worstCaseCreditsPerWindow: number;
+    worstCaseComputeCreditsPerExecution: number;
+  };
+  const DUNE_BOUNDS = {
+    pollIntervalMs: 0,
+    maxPollAttempts: 5,
+    maxResultRows: 20_000,
+    maxCoverageLagMs: 21_600_000,
+    allowanceReserveCredits: 25,
+    allowanceTightMultiple: 2,
+    allowanceRequired: true,
+  };
+
+  function client(onFetch: (path: string) => Response) {
+    const paths: string[] = [];
+    const fetchImpl = vi.fn(async (url: unknown) => {
+      const path = String(url).slice(DUNE_API_BASE.length);
+      paths.push(path);
+      return onFetch(path);
+    });
+    const c = new ScreenDuneClient({
+      key: SENTINEL_KEY,
+      maxExecutions: AGREEMENT.maxExecutionsPerRun,
+      maxRequests: AGREEMENT.maxRequestsPerRun,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => undefined,
+    });
+    return { c, paths };
+  }
+
+  const build = (c: ScreenDuneClient, announce?: (l: string) => void) =>
+    buildDuneEntryFillSource(c, {
+      agreementBounds: AGREEMENT as never,
+      duneBounds: DUNE_BOUNDS,
+      refreshProbe: false,
+      nowMs: NOW_MS,
+      announce,
+    });
+
+  it('prices its OWN ceilings, with retrieval counted exactly once', () => {
+    // `estimatePlanCredits` derives retrieval from `resultReads x rowsPerRead x bytesPerRow`, so the
+    // per-execution figure it is handed must be COMPUTE ONLY. `worstCaseCreditsPerWindow` is a
+    // composite (1 compute + 16 retrieval by its own justification) and handing it over would charge
+    // retrieval twice — roughly doubling a figure a spend approval is read from.
+    const plan = tradeFillSpendPlan(AGREEMENT);
+    const estimate = estimatePlanCredits(plan);
+    expect(plan.creditsPerExecution).toBe(AGREEMENT.worstCaseComputeCreditsPerExecution);
+    expect(plan.creditsPerExecution).toBeLessThan(AGREEMENT.worstCaseCreditsPerWindow);
+    expect(estimate.executionCredits).toBe(
+      AGREEMENT.maxExecutionsPerRun * AGREEMENT.worstCaseComputeCreditsPerExecution,
+    );
+    // Retrieval is the dominant term and it is derived, not carried.
+    expect(estimate.exportCredits).toBeGreaterThan(estimate.executionCredits);
+    expect(estimate.exportBytes).toBe(
+      (AGREEMENT.maxExecutionsPerRun + 1) * AGREEMENT.maxResultRowsPerWindow * AGREEMENT.resultBytesPerRowCeiling,
+    );
+    // And the probe's own result read is inside the plan: it is billed by bytes whether or not it
+    // cost an execution, and it is this leg's FIRST billed request.
+    expect(plan.resultReads).toBe(AGREEMENT.maxExecutionsPerRun + 1);
+  });
+
+  it('reads the balance and REFUSES before the coverage probe, having billed nothing', async () => {
+    const { c, paths } = client((path) =>
+      path === USAGE_PATH
+        ? new Response(JSON.stringify(usageBody([period(2_499)])), { status: 200 })
+        : new Response(JSON.stringify({}), { status: 200 }),
+    );
+    const lines: string[] = [];
+    await expect(build(c, (l) => lines.push(l))).rejects.toThrow(/refuses to spend/);
+    // The free usage read and nothing else: no saved-query comparison, no probe, no execution.
+    expect(paths).toEqual([USAGE_PATH]);
+    expect(c.executions()).toBe(0);
+    // And the refusal is a reported outcome rather than a stack trace: it says what it could not
+    // afford and that nothing was taken.
+    expect(lines.join('\n')).toMatch(/dune allowance: INSUFFICIENT/);
+    await expect(build(c)).rejects.toThrow(/NOTHING WAS REQUESTED AND NOTHING WAS BILLED/);
+    expect(lines.join('\n')).not.toContain(SENTINEL_KEY);
+  });
+
+  it('refuses on an UNREADABLE balance too — that is not headroom', async () => {
+    const { c, paths } = client(() => {
+      throw new Error('socket hang up');
+    });
+    await expect(build(c)).rejects.toThrow(/refuses to spend/);
+    expect(c.executions()).toBe(0);
+    // The client retries the free read once; nothing beyond it was ever attempted.
+    expect(new Set(paths)).toEqual(new Set([USAGE_PATH]));
+  });
+
+  it('a CLEARED balance goes on to the probe, which is the next gate and not this one', async () => {
+    // The control: the refusal above must be the BALANCE and not something else failing first. With
+    // credits available the guard passes and the undeployed trade-coverage probe refuses instead —
+    // which is also the proof of ORDER, since only one of the two can be the message.
+    const { c, paths } = client((path) =>
+      path === USAGE_PATH
+        ? new Response(JSON.stringify(usageBody([period(0)])), { status: 200 })
+        : new Response(JSON.stringify({}), { status: 200 }),
+    );
+    const lines: string[] = [];
+    await expect(build(c, (l) => lines.push(l))).rejects.toThrow(/no deployed saved query/);
+    expect(lines.join('\n')).toMatch(/dune allowance: (SUFFICIENT|TIGHT)/);
+    // Still nothing billed — the probe refuses before it reaches the vendor at all.
+    expect(paths).toEqual([USAGE_PATH]);
+    expect(c.executions()).toBe(0);
   });
 });

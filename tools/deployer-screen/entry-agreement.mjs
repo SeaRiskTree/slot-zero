@@ -46,6 +46,7 @@
  * FALLBACK when the primary could not answer, and a sentence per candidate saying which and why.
  */
 
+import { localCreditEstimate } from './client.mjs';
 import { isDeployerAttributable } from './entry.mjs';
 import { FILL_SOURCE_KINDS } from './fill-source.mjs';
 
@@ -302,4 +303,59 @@ export function summariseEntryAgreement(rows) {
     byClass[row.class] = (byClass[row.class] ?? 0) + 1;
   }
   return { candidates: rows.length, byClass, noAggregateRate: NO_AGGREGATE_RATE };
+}
+
+/**
+ * The run-level `entrySourceAgreement` block, as a PROJECTION rather than a literal assembled inside
+ * `buildRecord`.
+ *
+ * It is a function for the reason `coverageRecordRow` and `toEntryRecordRow` already are: the run
+ * record is a versioned contract whose per-block key sets are pinned, and a block that exists only
+ * as an inline literal can be pinned only by reading source text — which passes a behaviour-
+ * preserving rename and says nothing about what a run actually writes. Constructed here, the schema
+ * pin drives the real projection.
+ *
+ * **`duneSpend` is this leg's OWN meter and is deliberately not folded into the record's `dune`
+ * block**: that one bounds an enumeration answering a whole batch in ONE execution, this one bounds a
+ * leg executing per window, and adding them would imply a single budget where there are two
+ * ceilings. `localEstimate` is charged at the COMPUTE term alone — `localCreditEstimate` prices the
+ * result bytes separately, so handing it the composite `worstCaseCreditsPerWindow` would count
+ * retrieval twice — and it stays an ESTIMATE: the vendor's own `POST /usage` is the only
+ * authoritative figure, and it lags by longer than a run lasts.
+ *
+ * @param {object} input
+ * @param {import('./fill-source.mjs').FillSourceKind} input.primary
+ * @param {import('./fill-source.mjs').FillSourceKind} input.crossCheck
+ * @param {readonly EntryAgreementRow[]} input.rows
+ * @param {{ recipeBlock: string, maxExecutionsPerRun: number, maxWindowsPerRun: number,
+ *   worstCaseCreditsPerWindow: number, worstCaseComputeCreditsPerExecution: number }} input.bounds
+ * @param {{ executions: number, requests: number, resultBytes: number } | null} input.stats This
+ *   leg's own Dune counters, or `null` where no client was ever built.
+ * @returns {Record<string, unknown>}
+ */
+export function entrySourceAgreementRecordRow(input) {
+  const executions = input.stats?.executions ?? 0;
+  const resultBytes = input.stats?.resultBytes ?? 0;
+  return {
+    primary: input.primary,
+    crossCheck: input.crossCheck,
+    // WHICH RECIPE BOTH SOURCES SCORED AT, named rather than implied. The two sources carry
+    // different sampling caps, so a verdict difference measured at two recipes would be a comparison
+    // of the recipes wearing the clothes of a comparison of the transports.
+    recipeBlock: input.bounds.recipeBlock,
+    ...summariseEntryAgreement(input.rows),
+    duneSpend: {
+      executions,
+      executionCeiling: input.bounds.maxExecutionsPerRun,
+      requests: input.stats?.requests ?? 0,
+      resultBytes,
+      windowCeiling: input.bounds.maxWindowsPerRun,
+      worstCaseCreditsPerWindow: input.bounds.worstCaseCreditsPerWindow,
+      localEstimate: localCreditEstimate({
+        executions,
+        creditsPerExecution: input.bounds.worstCaseComputeCreditsPerExecution,
+        resultBytes,
+      }),
+    },
+  };
 }

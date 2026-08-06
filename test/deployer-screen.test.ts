@@ -128,6 +128,8 @@ import { rpcCostSource } from '../tools/deployer-screen/rpc-costs.mjs';
 import {
   ENTRY_FILL_SOURCE_KIND,
   SWAP_API_CONSTRUCTION,
+  assertAgreementWindowsFit,
+  buildDuneEntryFillSource,
   entryFillSourceIsRead,
   planEntryEligibility,
   resolveEntryFillSource,
@@ -139,6 +141,7 @@ import {
   AGREEMENT_CLASSES,
   NO_AGGREGATE_RATE,
   classifyEntryAgreement,
+  entrySourceAgreementRecordRow,
   pickRecordedReading,
   readEntryReading,
   summariseEntryAgreement,
@@ -162,6 +165,7 @@ import {
   duneRowsToWindow,
   parseDuneTradeRow,
   rebuildSid,
+  tradeFillSpendPlan,
 } from '../tools/deployer-screen/dune-fills.mjs';
 import {
   CREATE_SLOT_COHORT,
@@ -5982,6 +5986,49 @@ describe('the keyless boundary holds in both directions', () => {
     18: ['entrySourceAgreement'],
   };
 
+  // The run-level `entrySourceAgreement` block's OWN key set, and `duneSpend` one level below it —
+  // the same gap `SPEND_KEYS_BY_SCHEMA` and `DUNE_COVERAGE_KEYS_BY_SCHEMA` were added to close, one
+  // block over. `RUN_LEVEL_KEYS_ADDED_BY_SCHEMA[18]` pins only that the KEY appears; without these
+  // the block could grow a field at an unchanged version with every other assertion still green,
+  // and this is the block a Gate 3 approval decision would be read from.
+  //
+  // `candidates` / `byClass` / `noAggregateRate` come from `summariseEntryAgreement` and carry
+  // COUNTS AND NO RATE, captain decision 143a. A denominator appearing here is precisely the drift
+  // worth failing on.
+  const ENTRY_SOURCE_AGREEMENT_KEYS_18 = [
+    'primary',
+    'crossCheck',
+    'recipeBlock',
+    'candidates',
+    'byClass',
+    'noAggregateRate',
+    'duneSpend',
+  ];
+  const ENTRY_SOURCE_AGREEMENT_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    18: ENTRY_SOURCE_AGREEMENT_KEYS_18,
+  };
+  // This leg's own Dune meter. It is deliberately NOT folded into the run-level `dune` block: that
+  // one bounds an enumeration answering a whole batch in ONE execution, this one bounds a leg
+  // executing per window, and adding them would imply a single budget where there are two ceilings.
+  const AGREEMENT_DUNE_SPEND_KEYS_18 = [
+    'executions',
+    'executionCeiling',
+    'requests',
+    'resultBytes',
+    'windowCeiling',
+    'worstCaseCreditsPerWindow',
+    'localEstimate',
+  ];
+  const AGREEMENT_DUNE_SPEND_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    18: AGREEMENT_DUNE_SPEND_KEYS_18,
+  };
+  // And the per-candidate row, which is where the class that can be WRONG lives. The run level only
+  // counts these, so a field vanishing here would be invisible to every pin above it.
+  const ENTRY_AGREEMENT_KEYS_18 = ['primary', 'recorded', 'class', 'readings', 'note'];
+  const ENTRY_AGREEMENT_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    18: ENTRY_AGREEMENT_KEYS_18,
+  };
+
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
     // The boundary is the directory. src/ is provably keyless (test/loader.test.ts) and must stay
     // that way; a dependency in either direction would blur the line that guarantee rests on.
@@ -6566,8 +6613,52 @@ describe('the keyless boundary holds in both directions', () => {
           }
         }
       }
+      // The run-level `entrySourceAgreement` block, read out of the SAVED record. `null` is the
+      // legitimate value on every single-source run — which is every default run, and every record
+      // committed so far — and the KEY's own presence is pinned one level up by
+      // RUN_LEVEL_KEYS_ADDED_BY_SCHEMA, so this null guard cannot hide a vanished block. The
+      // VERSION decides whether to assert, never the block's presence.
+      const agreementExpected = ENTRY_SOURCE_AGREEMENT_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+      if (agreementExpected !== undefined) {
+        const agreement = (parsed as Record<string, unknown>)['entrySourceAgreement'];
+        expect(
+          agreement,
+          `${file} declares a schema whose record carries an entrySourceAgreement key, and has none`,
+        ).not.toBeUndefined();
+        if (agreement !== null) {
+          expect(Object.keys(agreement as object).sort(), `${file} entrySourceAgreement`).toEqual(
+            [...agreementExpected].sort(),
+          );
+          const spendExpectedKeys = AGREEMENT_DUNE_SPEND_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+          expect(spendExpectedKeys, `${file} entrySourceAgreement.duneSpend at an unknown schemaVersion`)
+            .toBeDefined();
+          expect(
+            Object.keys((agreement as Record<string, unknown>)['duneSpend'] as object).sort(),
+            `${file} entrySourceAgreement.duneSpend`,
+          ).toEqual([...spendExpectedKeys!].sort());
+          // And no denominator anywhere in the counts. Captain decision 143a: a single agreement
+          // percentage on this project once read 98.4% while hiding a total failure confined to the
+          // create slot, so the absence of a rate is the deliverable's shape and not an omission.
+          expect(
+            Object.keys(agreement as object),
+            `${file} entrySourceAgreement must carry counts and no rate`,
+          ).not.toContain('agreementRate');
+        }
+      }
       for (const row of parsed.candidates) {
         expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(expected);
+        // And the per-candidate agreement row one level down, in the same idiom as `entry`: `null`
+        // on every single-source run, key presence pinned by the candidate-row assertion above.
+        const rowAgreementExpected = ENTRY_AGREEMENT_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+        if (rowAgreementExpected !== undefined) {
+          const rowAgreement = row['entryAgreement'];
+          expect(rowAgreement, `${file} candidate row has no entryAgreement key`).not.toBeUndefined();
+          if (rowAgreement !== null) {
+            expect(Object.keys(rowAgreement as object).sort(), `${file} entryAgreement`).toEqual(
+              [...rowAgreementExpected].sort(),
+            );
+          }
+        }
         expect(FORBIDDEN.test(JSON.stringify(row)), `${file} holds per-token vendor data`).toBe(false);
         // And the `entry` block's own key set, for the same reason one level down: schema 5 changed
         // nothing about a candidate row and everything about what `entry` means.
@@ -6874,6 +6965,34 @@ describe('the keyless boundary holds in both directions', () => {
     const projectedMonths = (duneCoverageRow.tables[0] as { months: unknown }).months;
     expect(typeof projectedMonths, '`months` must be the derived COUNT, not the vendor rows').toBe('number');
     expect(projectedMonths).toBe(2);
+
+    // And the run-level `entrySourceAgreement` block, against the REAL projection rather than its
+    // source text — the same way `entry` and `dune.coverage` are pinned above. The loop over
+    // `runs/` cannot see this block at this version because every committed record is single-source
+    // and carries `null` there, so without this the whole block could grow at an unchanged version.
+    const agreementRow = entrySourceAgreementRecordRow({
+      primary: 'dune',
+      crossCheck: 'swap-api',
+      rows: [],
+      bounds: loadThresholds()['entry_source_agreement'] as never,
+      stats: { executions: 3, requests: 11, resultBytes: 2_000_000 },
+    }) as Record<string, unknown>;
+    expect(Object.keys(agreementRow).sort()).toEqual(
+      [...ENTRY_SOURCE_AGREEMENT_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
+    expect(Object.keys(agreementRow['duneSpend'] as object).sort()).toEqual(
+      [...AGREEMENT_DUNE_SPEND_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
+
+    // And the per-candidate row, straight out of the production classifier.
+    const agreementCandidateRow = classifyEntryAgreement({
+      primary: 'dune',
+      recorded: 'dune',
+      readings: [],
+    }) as unknown as Record<string, unknown>;
+    expect(Object.keys(agreementCandidateRow).sort()).toEqual(
+      [...ENTRY_AGREEMENT_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
   });
 });
 
@@ -13858,7 +13977,14 @@ describe('ONE run, TWO entry fill sources, and it agrees with itself PER CANDIDA
         },
         { stage2: true, entrySourceAgreement: true },
         T as never,
-        { active: true, primarySource: 'dune', crossCheckSource: 'swap-api' },
+        {
+          active: true,
+          primarySource: 'dune',
+          crossCheckSource: 'swap-api',
+          // The window ceiling binds (captain decision 318a), so a plan has to carry one to be
+          // admissible at all — an unpriceable plan is not a cleared one.
+          maxWindowsPerRun: AGREE['maxWindowsPerRun'] as number,
+        },
       );
       expect(plan?.primary).toBe('dune');
       expect(plan?.crossCheck).toBe('swap-api');
@@ -13885,6 +14011,50 @@ describe('ONE run, TWO entry fill sources, and it agrees with itself PER CANDIDA
           AGREE as never,
         ),
       ).rejects.toThrow(/refuses to build a second fill source/);
+    });
+
+    it('the window ceiling BINDS, and it refuses before a source is built', async () => {
+      // Captain decision 318a. `maxWindowsPerRun` used to be read by exactly one line — the run
+      // record, which PRINTED it as a ceiling — while the only thing that stopped a window was the
+      // client's own execution ceiling, and a cached coverage probe costs no execution. So a plan
+      // could put more windows through than the ceiling a saved record described.
+      let built = 0;
+      const registry = {
+        'swap-api': () => {
+          built += 1;
+          return stubSource('swap-api');
+        },
+        dune: () => {
+          built += 1;
+          return stubSource('dune');
+        },
+      };
+      const bounds = { active: true, primarySource: 'dune', crossCheckSource: 'swap-api' };
+      // A recipe whose caps admit MORE windows than this leg was priced for is refused whole — and
+      // the refusal lands before either constructor runs, which on the Dune route is what keeps a
+      // billed coverage probe from being paid for a plan that was never affordable.
+      await expect(
+        runEntrySourcePlan(
+          registry,
+          { stage2: true, entrySourceAgreement: true },
+          { ...T, maxCandidatesScored: 9, maxLaunchesPerCandidate: 10 } as never,
+          { ...bounds, maxWindowsPerRun: 80 },
+        ),
+      ).rejects.toThrow(/admits 90 Dune windows/);
+      expect(built).toBe(0);
+      // A missing or non-numeric ceiling is refused too: an unpriceable plan is not a cleared one.
+      await expect(
+        runEntrySourcePlan(registry, { stage2: true, entrySourceAgreement: true }, T as never, bounds),
+      ).rejects.toThrow(/not a finite number of windows/);
+      expect(built).toBe(0);
+      // And the committed configuration fits, which is what makes this a backstop rather than a bar:
+      // it bites the moment a sampling cap is raised without re-pricing this leg.
+      const fit = assertAgreementWindowsFit(T as never, AGREE as never);
+      expect(fit.windowsPlanned).toBe(T['maxCandidatesScored']! * T['maxLaunchesPerCandidate']!);
+      expect(fit.windowsPlanned).toBeLessThanOrEqual(fit.ceiling);
+      // The 80 and the client's 82 are deliberately unequal: 82 = 80 windows + the probe's own
+      // execution + one of headroom. Setting them equal would delete two terms of that derivation.
+      expect(AGREE['maxExecutionsPerRun']).toBe((AGREE['maxWindowsPerRun'] as number) + 2);
     });
 
     it('refuses to compare a source against itself', async () => {

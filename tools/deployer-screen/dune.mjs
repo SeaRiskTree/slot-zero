@@ -1689,19 +1689,33 @@ export function duneSpendPlan(bounds) {
  * documents `/usage` as a metadata endpoint consuming no credits) and is retried once inside the
  * client, so one hiccup does not decide a run cannot afford itself.
  *
+ * **A SECOND LEG MAY SUPPLY ITS OWN PLAN, AND IT STILL GETS THIS ONE VERDICT.** Stage 2's entry fill
+ * source executes per WINDOW where the enumeration answers a whole batch in one execution, so its
+ * ceilings are different numbers in different keys — but "may this run spend" must have exactly one
+ * answer, and a second reader of `POST /usage` beside a second `decideAllowance` would be two.
+ * `dune-fills.mjs` → `tradeFillSpendPlan` builds that plan; everything below is shared unchanged,
+ * and `input.bounds` then supplies only the three allowance policies.
+ *
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} input
- * @param {{ maxExecutionsPerRun: number, maxResultRows: number, worstCaseCreditsPerExecution: number,
- *   resultBytesPerRowCeiling: number, allowanceReserveCredits: number, allowanceTightMultiple: number,
+ * @param {{ maxExecutionsPerRun?: number, maxResultRows?: number, worstCaseCreditsPerExecution?: number,
+ *   resultBytesPerRowCeiling?: number, allowanceReserveCredits: number, allowanceTightMultiple: number,
  *   allowanceRequired: boolean }} input.bounds
  * @param {number} input.nowMs
+ * @param {import('./client.mjs').DuneSpendPlan} [input.plan] The asking leg's own ceilings. Absent
+ *   means the ENUMERATION's, priced from `input.bounds` by {@link duneSpendPlan} exactly as before.
  * @returns {Promise<{ plan: import('./client.mjs').DuneSpendPlan,
  *   estimate: import('./client.mjs').DuneSpendEstimate,
  *   allowance: import('./client.mjs').DuneAllowance | null,
  *   decision: import('./client.mjs').AllowanceDecision }>}
  */
 export async function checkDuneAllowance(client, input) {
-  const plan = duneSpendPlan(input.bounds);
+  const plan =
+    input.plan ??
+    duneSpendPlan(
+      /** @type {{ maxExecutionsPerRun: number, maxResultRows: number, worstCaseCreditsPerExecution: number,
+       *   resultBytesPerRowCeiling: number }} */ (input.bounds),
+    );
   const estimate = estimatePlanCredits(plan);
   /** @type {import('./client.mjs').UsageReading} */
   let reading = { ok: false, allowance: null, reasons: [] };

@@ -90,12 +90,13 @@ import {
   committedEntryQuery,
   duneFillSource,
   readTradeCoverageProbe,
+  tradeFillSpendPlan,
 } from './dune-fills.mjs';
 import {
   classifyEntryAgreement,
+  entrySourceAgreementRecordRow,
   pickRecordedReading,
   readEntryReading,
-  summariseEntryAgreement,
 } from './entry-agreement.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import { renderDryRun, renderMayhemShare, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
@@ -312,6 +313,146 @@ export async function planEntryEligibility(kind, sources, opts) {
 }
 
 /**
+ * BUILD THE DUNE ENTRY FILL SOURCE — **and read the monthly credit allowance BEFORE the first billed
+ * request, which is the coverage probe** (captain decision 317a).
+ *
+ * This is the invariant every other keyed Dune lane in this repository already holds and this one
+ * did not: price the worst case the leg's own ceilings admit, subtract the pinned reserve, compare
+ * against a balance read LIVE from `POST /usage` — which Dune documents as a metadata endpoint
+ * consuming no credits — and REFUSE BEFORE ANYTHING IS BILLED rather than partway through. The
+ * enumeration leg's own check sits far downstream inside its try block and prices its own plan, so
+ * it never saw this one; a run could reach the probe, the executions and the result reads with the
+ * balance unexamined.
+ *
+ * **The balance is a READING and never a reservation.** It is not pinned, cached or carried in a
+ * document anywhere: the key is SHARED, so another holder may spend between the reading and the
+ * execution; the vendor's counter LAGS, which is what `dune.allowanceReserveCredits` is held back
+ * for; and the period is a subscription anniversary rather than a calendar month. Those three limits
+ * travel with the decision — `decideAllowance` attaches them as caveats — and are the reason a
+ * sufficient reading is evidence and not a guarantee.
+ *
+ * **It shares ONE pricing path with the enumeration.** `dune-fills.mjs` → `tradeFillSpendPlan`
+ * supplies this leg's ceilings and `dune.mjs` → `checkDuneAllowance` does the rest, because two
+ * answers to "may this run spend" is the defect this repository names repeatedly.
+ *
+ * It is a named export rather than a closure inside `main` so the ORDER is testable: a stub client
+ * whose balance refuses must produce the allowance refusal and never the probe's, which is the whole
+ * claim. Nothing routes through it today — `ENTRY_FILL_SOURCE_KIND` is `'swap-api'` and
+ * `entry_source_agreement.active` is false — so the first run that ever exercises it is the one that
+ * would otherwise have paid for the gap.
+ *
+ * @param {import('./client.mjs').DuneClient} client
+ * @param {object} opts
+ * @param {{ maxExecutionsPerRun: number, maxRequestsPerRun: number, maxResultRowsPerWindow: number,
+ *   resultBytesPerRowCeiling: number, worstCaseComputeCreditsPerExecution: number }} opts.agreementBounds
+ * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number,
+ *   maxCoverageLagMs: number, allowanceReserveCredits: number, allowanceTightMultiple: number,
+ *   allowanceRequired: boolean }} opts.duneBounds
+ * @param {boolean} opts.refreshProbe
+ * @param {number} opts.nowMs
+ * @param {(line: string) => void} [opts.announce]
+ * @returns {Promise<import('./fill-source.mjs').FillSource>}
+ */
+export async function buildDuneEntryFillSource(client, opts) {
+  const checked = await checkDuneAllowance(client, {
+    bounds: opts.duneBounds,
+    nowMs: opts.nowMs,
+    plan: tradeFillSpendPlan(opts.agreementBounds),
+  });
+  for (const line of describeAllowanceDecision(checked.decision)) opts.announce?.(line);
+  if (!checked.decision.ok) {
+    throw new Error(
+      `the Dune fill source refuses to spend against the monthly credit allowance. ` +
+        `${checked.decision.reasons.join(' ')} ` +
+        `NOTHING WAS REQUESTED AND NOTHING WAS BILLED: the balance came from POST /usage, which Dune ` +
+        `documents as a metadata endpoint consuming no credits, and this leg's first billed request — ` +
+        `the trade-table coverage probe's result read — has not been made.`,
+    );
+  }
+
+  // THE WATERMARK, READ BEFORE THE SOURCE EXISTS. `readTradeCoverageProbe` refuses outright while
+  // `TRADE_COVERAGE_QUERY_ID` is undeployed — the one place that refusal lives, so the deploy is the
+  // only thing standing between this path and a working one. A cached read is the default and costs
+  // no execution; `--dune-refresh-probe` re-executes it, which aggregates three whole decoded trade
+  // tables and is the expensive call rather than the cheap one.
+  const probe = await readTradeCoverageProbe(client, {
+    refresh: opts.refreshProbe,
+    bounds: {
+      pollIntervalMs: opts.duneBounds.pollIntervalMs,
+      maxPollAttempts: opts.duneBounds.maxPollAttempts,
+      maxResultRows: opts.duneBounds.maxResultRows,
+    },
+    onRefreshFailure: (note) =>
+      opts.announce?.(`! the trade coverage probe's refresh failed and the cache answered: ${note}`),
+  });
+  // A REFUSED ASSESSMENT REFUSES THE SOURCE, and `duneFillSource` is where that is stated — it
+  // throws on a coverage that established no newest covered instant, because there is then no honest
+  // answer to "has this launch finished happening". Handing it the assessment unexamined is
+  // deliberate: a second refusal here would be a second answer to one question.
+  return duneFillSource(client, {
+    bounds: {
+      pollIntervalMs: opts.duneBounds.pollIntervalMs,
+      maxPollAttempts: opts.duneBounds.maxPollAttempts,
+      maxResultRows: opts.agreementBounds.maxResultRowsPerWindow,
+    },
+    coverage: assessTradeCoverage({
+      probe,
+      nowMs: opts.nowMs,
+      bounds: { maxCoverageLagMs: opts.duneBounds.maxCoverageLagMs },
+    }),
+    query: committedEntryQuery(),
+    maxRequests: opts.agreementBounds.maxRequestsPerRun,
+  });
+}
+
+/**
+ * THE WINDOW CEILING, AND IT BITES RATHER THAN DECORATES (captain decision 318a).
+ *
+ * `entry_source_agreement.maxWindowsPerRun` was read by exactly one line — the record, which
+ * REPORTED it as a ceiling — and bounded nothing. The only thing that stopped windows was the
+ * client's own `maxExecutionsPerRun`, and a CACHED coverage probe costs no execution, so a run could
+ * put 82 windows through a ceiling a saved record described as 80.
+ *
+ * **The two are deliberately UNEQUAL and setting them equal would be the wrong fix.** They bound
+ * different things: this one bounds the WINDOWS a plan may score, and it is checked here against the
+ * recipe's own caps before the first window; the client's bounds every EXECUTION the leg may issue,
+ * which is the windows plus the probe plus one of headroom. Their derivation is in
+ * `thresholds.json` → `entry_source_agreement.justification`.
+ *
+ * It is the SECOND line of defence behind the allowance check in {@link buildDuneEntryFillSource}:
+ * that one asks whether the account can afford the leg's ceilings, this one asks whether the plan
+ * fits the ceiling that priced them. Both refuse before anything is requested.
+ *
+ * @param {{ maxCandidatesScored: number, maxLaunchesPerCandidate: number }} entryThresholds
+ * @param {{ maxWindowsPerRun?: number }} agreementBounds
+ * @returns {{ windowsPlanned: number, ceiling: number }}
+ * @throws when the plan's own caps admit more windows than this leg was priced for.
+ */
+export function assertAgreementWindowsFit(entryThresholds, agreementBounds) {
+  const windowsPlanned = entryThresholds.maxCandidatesScored * entryThresholds.maxLaunchesPerCandidate;
+  const ceiling = agreementBounds.maxWindowsPerRun;
+  if (typeof ceiling !== 'number' || !Number.isFinite(ceiling)) {
+    throw new Error(
+      `entry_source_agreement.maxWindowsPerRun priced to ${String(ceiling)}, which is not a finite ` +
+        `number of windows, so this run cannot say whether its plan fits the ceiling its credit ` +
+        `worst case was derived from. A pinned bound is missing or non-numeric. Nothing was requested.`,
+    );
+  }
+  if (windowsPlanned > ceiling) {
+    throw new Error(
+      `the dual-source Stage 2 plan admits ${windowsPlanned} Dune windows — stage2_entry ` +
+        `maxCandidatesScored ${entryThresholds.maxCandidatesScored} x maxLaunchesPerCandidate ` +
+        `${entryThresholds.maxLaunchesPerCandidate} — against entry_source_agreement ` +
+        `maxWindowsPerRun of ${ceiling}. Every credit figure this leg was approved on is derived ` +
+        `from that ceiling, so a plan above it would spend against an estimate nobody made. Raising ` +
+        `a sampling cap without re-pricing this leg is exactly what the ceiling exists to catch. ` +
+        `Nothing was requested and nothing was billed.`,
+    );
+  }
+  return { windowsPlanned, ceiling };
+}
+
+/**
  * WILL THIS RUN READ AN ENTRY FILL SOURCE AT ALL? **The one condition BOTH paths gate their
  * construction on**, written once so they cannot answer it differently.
  *
@@ -402,7 +543,8 @@ export async function runEntryFillSource(entryFillSources, opts, entryThresholds
  * @param {FillSourceRegistry} entryFillSources
  * @param {{ stage2: boolean, entrySourceAgreement?: boolean }} opts
  * @param {import('./stage2.mjs').Stage2Thresholds} entryThresholds
- * @param {{ active?: boolean, primarySource?: string, crossCheckSource?: string }} [agreementBounds]
+ * @param {{ active?: boolean, primarySource?: string, crossCheckSource?: string,
+ *   maxWindowsPerRun?: number }} [agreementBounds]
  *   `thresholds.json` → `entry_source_agreement`. Absent or inactive means one source.
  * @returns {Promise<EntrySourcePlan | null>}
  */
@@ -419,7 +561,6 @@ export async function runEntrySourcePlan(entryFillSources, opts, entryThresholds
         `so. Nothing was requested.`,
     );
   }
-
   /** @type {import('./fill-source.mjs').FillSourceKind} */
   const primary = wantsAgreement
     ? /** @type {import('./fill-source.mjs').FillSourceKind} */ (agreementBounds?.primarySource)
@@ -435,6 +576,12 @@ export async function runEntrySourcePlan(entryFillSources, opts, entryThresholds
         `nothing, which is the shape of finding this precondition exists to refuse.`,
     );
   }
+  // THE SECOND LINE OF DEFENCE, and it runs before a single source is CONSTRUCTED — the Dune one's
+  // construction is billed. It sits after the two configuration refusals above so an operator sees
+  // "these bounds name one source twice" before "these bounds do not fit", which is the order the
+  // problems have to be fixed in. See {@link assertAgreementWindowsFit} for why this ceiling and the
+  // client's execution ceiling are deliberately different numbers.
+  if (wantsAgreement) assertAgreementWindowsFit(entryThresholds, agreementBounds ?? {});
 
   /** @type {{ kind: import('./fill-source.mjs').FillSourceKind, source: import('./fill-source.mjs').FillSource }[]} */
   const sources = [];
@@ -1085,7 +1232,7 @@ export async function main(opts, env, out, err) {
    * @type {{ active: boolean, recipeBlock: string, primarySource: string, crossCheckSource: string,
    *   maxWindowsPerRun: number, maxExecutionsPerRun: number, maxRequestsPerRun: number,
    *   minIntervalMs: number, maxResultRowsPerWindow: number, resultBytesPerRowCeiling: number,
-   *   worstCaseCreditsPerWindow: number }}
+   *   worstCaseCreditsPerWindow: number, worstCaseComputeCreditsPerExecution: number }}
    */
   const agreementBounds = T['entry_source_agreement'];
 
@@ -1106,6 +1253,20 @@ export async function main(opts, env, out, err) {
     );
     err('  Nothing was requested and nothing was billed.');
     return EXIT.usage;
+  }
+  // AND THE WINDOW CEILING, on the same two paths and for the same reason: a dry run under
+  // `--dry-run-spend` may BUILD the primary source, which on the Dune route is a billed coverage
+  // probe, so a plan the ceiling would refuse must be refused before it is priced rather than after
+  // it has paid. `runEntrySourcePlan` keeps its own copy of the check as the seam-level backstop.
+  if (opts.entrySourceAgreement && agreementBounds.active === true) {
+    try {
+      assertAgreementWindowsFit(entryThresholds, agreementBounds);
+    } catch (cause) {
+      err('');
+      err('Refusing to run: the dual-source Stage 2 plan does not fit its own window ceiling.');
+      err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
+      return EXIT.ceiling;
+    }
   }
   /** @type {import('./client.mjs').DuneClient | null} */
   let entryDuneClient = null;
@@ -1154,41 +1315,14 @@ export async function main(opts, env, out, err) {
             if (!opts.json) out(`  → dune(entry) ${path}`);
           },
         });
-        // THE WATERMARK, READ BEFORE THE SOURCE EXISTS. `readTradeCoverageProbe` refuses outright
-        // while `TRADE_COVERAGE_QUERY_ID` is undeployed — the one place that refusal lives, so the
-        // deploy is the only thing standing between this path and a working one. A cached read is
-        // the default and costs no execution; `--dune-refresh-probe` re-executes it, which
-        // aggregates three whole decoded trade tables and is the expensive call rather than the
-        // cheap one.
-        const probeBounds = {
-          pollIntervalMs: duneBounds.pollIntervalMs,
-          maxPollAttempts: duneBounds.maxPollAttempts,
-          maxResultRows: duneBounds.maxResultRows,
-        };
-        const probe = await readTradeCoverageProbe(entryDuneClient, {
-          refresh: opts.duneRefreshProbe,
-          bounds: probeBounds,
-          onRefreshFailure: (note) => {
-            if (!opts.json) out(`  ! the trade coverage probe's refresh failed and the cache answered: ${note}`);
+        return buildDuneEntryFillSource(entryDuneClient, {
+          agreementBounds,
+          duneBounds,
+          refreshProbe: opts.duneRefreshProbe,
+          nowMs: Date.now(),
+          announce: (line) => {
+            if (!opts.json) out(`  ${line}`);
           },
-        });
-        // A REFUSED ASSESSMENT REFUSES THE SOURCE, and `duneFillSource` is where that is stated —
-        // it throws on a coverage that established no newest covered instant, because there is then
-        // no honest answer to "has this launch finished happening". Handing it the assessment
-        // unexamined is deliberate: a second refusal here would be a second answer to one question.
-        return duneFillSource(entryDuneClient, {
-          bounds: {
-            pollIntervalMs: duneBounds.pollIntervalMs,
-            maxPollAttempts: duneBounds.maxPollAttempts,
-            maxResultRows: agreementBounds.maxResultRowsPerWindow,
-          },
-          coverage: assessTradeCoverage({
-            probe,
-            nowMs: Date.now(),
-            bounds: { maxCoverageLagMs: duneBounds.maxCoverageLagMs },
-          }),
-          query: committedEntryQuery(),
-          maxRequests: agreementBounds.maxRequestsPerRun,
         });
       },
     },
@@ -2294,37 +2428,15 @@ export async function main(opts, env, out, err) {
         entrySourceAgreement:
           entrySourcePlan === null || entrySourcePlan === undefined || entrySourcePlan.crossCheck === null
             ? null
-            : (() => {
-                const stats = entryDuneClient?.stats() ?? null;
-                return {
-                  primary: entrySourcePlan.primary,
-                  crossCheck: entrySourcePlan.crossCheck,
-                  // WHICH RECIPE BOTH SOURCES SCORED AT, named rather than implied. The two
-                  // sources carry different sampling caps, so a verdict difference measured at two
-                  // recipes would be a comparison of the recipes wearing the clothes of a
-                  // comparison of the transports. `thresholds.stage2_entry` below is the block, and
-                  // it is the one recorded, so what a grader would re-apply is what was applied.
-                  recipeBlock: agreementBounds.recipeBlock,
-                  ...summariseEntryAgreement(
-                    /** @type {import('./entry-agreement.mjs').EntryAgreementRow[]} */ (
-                      candidates.map((c) => c.entryAgreement).filter((a) => a !== null)
-                    ),
-                  ),
-                  duneSpend: {
-                    executions: stats?.executions ?? 0,
-                    executionCeiling: agreementBounds.maxExecutionsPerRun,
-                    requests: stats?.requests ?? 0,
-                    resultBytes: stats?.resultBytes ?? 0,
-                    windowCeiling: agreementBounds.maxWindowsPerRun,
-                    worstCaseCreditsPerWindow: agreementBounds.worstCaseCreditsPerWindow,
-                    localEstimate: localCreditEstimate({
-                      executions: stats?.executions ?? 0,
-                      creditsPerExecution: agreementBounds.worstCaseCreditsPerWindow,
-                      resultBytes: stats?.resultBytes ?? 0,
-                    }),
-                  },
-                };
-              })(),
+            : entrySourceAgreementRecordRow({
+                primary: entrySourcePlan.primary,
+                crossCheck: entrySourcePlan.crossCheck,
+                rows: /** @type {import('./entry-agreement.mjs').EntryAgreementRow[]} */ (
+                  candidates.map((c) => c.entryAgreement).filter((a) => a !== null)
+                ),
+                bounds: agreementBounds,
+                stats: entryDuneClient?.stats() ?? null,
+              }),
         // Run-level Stage 2 drop tally, broken out by cause. `mintTimeDisagreement` is the one to
         // read: it says the vendor's mint time and pump.fun's fills contradicted each other, which
         // on our own tape never happens, so a non-zero value in a committed record is the evidence

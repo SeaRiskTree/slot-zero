@@ -107,6 +107,40 @@ result — so whoever runs this pays one refresh execution and should record wha
 
 ## What the guard does with these numbers TODAY, and it refuses the proposed shape
 
+> **CORRECTION, 2026-08-06 — THE GUARD DESCRIBED IN THIS SECTION DID NOT EXIST WHEN THIS SECTION WAS
+> WRITTEN, AND WAS ADDED BY THE REVIEW ROUND THAT FOUND IT MISSING (captain decision 317a).** As
+> first committed, this document asserted that `client.mjs` → `decideAllowance` already ran before
+> this leg's first billed request. It did not: the entry fill source built its own `DuneClient` and
+> went straight to the trade-table coverage probe — a billed result read — and the only allowance
+> check in the run belonged to the enumeration leg, downstream and priced against the enumeration's
+> own plan. So the arithmetic below was correct and the safety property it rests on was not.
+> `screen.mjs` → `buildDuneEntryFillSource` now performs exactly the check this section describes,
+> through the same `POST /usage` read and the same `decideAllowance` verdict, before the probe.
+>
+> **Why this correction is stated rather than the sentence quietly rewritten.** The point of
+> separating the lane that PROPOSES a spend from the lane that PERFORMS it is that the proposal is
+> reviewable before money moves. A document promising a safety property it does not have defeats
+> that — and this one had already been relayed to the captain as fact before review caught it. A
+> reader comparing this file against its own commit history must find the correction, not a clean
+> page.
+>
+> **And the guard is COARSER than the table below, deliberately.** It prices what this leg's own
+> ceilings ADMIT — `maxExecutionsPerRun` executions plus one result read each and the probe's, every
+> read at `maxResultRowsPerWindow` rows of at most `resultBytesPerRowCeiling` bytes — not the
+> candidate count an operator plans. That is the same discipline `dune.mjs` → `duneSpendPlan` already
+> applies to the enumeration: a plan is admissible when its worst case fits, so the ceiling is exact
+> rather than usually-right. The rows below therefore describe the PLAN's exposure per candidate;
+> the guard compares one figure, priced at the ceiling, and it is larger than any of them. Refusing a
+> run that would have cost ~145 because it COULD have cost the ceiling is the safe direction here:
+> the refusal costs a comparison, and the alternative is dying part-way through a per-window leg with
+> neither a result nor the credits to retry.
+>
+> **One figure in this section is now dated, and that is by design.** The balance is a READING and
+> never a reservation: it is not pinned in code, in `thresholds.json` or here as anything other than
+> a timestamped observation. Captain decision 315d buys additional Dune capacity ahead of the
+> 2026-08-29 roll, so the live guard will operate against a LARGER balance than the 455.643 priced
+> below. Re-read `POST /usage` rather than quoting this table.
+
 `client.mjs` → `decideAllowance` prices the **worst case**, subtracts the pinned reserve, and refuses
 before the first billed request. At the balance read above:
 

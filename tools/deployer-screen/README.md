@@ -1227,6 +1227,30 @@ things must land before any such run can start, and both are captain decisions:
 Until all three land the mode refuses with a sentence naming which one is missing, and **nothing is
 requested and nothing is billed**.
 
+**AND TWO GUARDS RUN BEFORE THE FIRST BILLED REQUEST, because neither did when this mode was first
+committed** (captain decisions 317a and 318a, 2026-08-06):
+
+1. **THE MONTHLY CREDIT ALLOWANCE, read LIVE.** `screen.mjs` → `buildDuneEntryFillSource` reads the
+   account's balance from `POST /usage` — a metadata endpoint Dune documents as consuming no credits
+   — prices this leg's own ceilings through `dune-fills.mjs` → `tradeFillSpendPlan`, and refuses
+   through the **same** `client.mjs` → `decideAllowance` every other keyed lane uses, **before the
+   trade-table coverage probe**, which is this leg's first billed request. As first committed it
+   built its client and went straight to that probe, and the run's only allowance check belonged to
+   the enumeration leg, downstream and priced against a different plan. There is **one** pricing path
+   and one verdict: two answers to "may this run spend" is the defect shape this tool has paid for
+   repeatedly. The balance is a **reading and never a reservation** — it is pinned nowhere, and the
+   three limits that travel with it (the counter lags, the key is shared, the period is a
+   subscription anniversary) are the `dune` block's and unchanged.
+2. **THE WINDOW CEILING now binds.** `entry_source_agreement.maxWindowsPerRun` was reported by the
+   run record as a ceiling and enforced by nothing; the only thing that stopped a window was the
+   client's `maxExecutionsPerRun`, and a cached coverage probe costs no execution, so 82 windows
+   could run against a ceiling a saved record called 80. `screen.mjs` → `assertAgreementWindowsFit`
+   refuses a plan whose `stage2_entry` `maxCandidatesScored × maxLaunchesPerCandidate` exceeds it, on
+   both the plan and the run path, before a source is constructed. **The 80 and the 82 stay
+   deliberately unequal** — `82 = 80 windows + 1 probe + 1 headroom`, and that inequality is the
+   derivation; the block's `justification` owns it. At today's caps (7 × 10 = 70) it is inert, which
+   is what a backstop is: it bites the moment a sampling cap is raised without re-pricing this leg.
+
 ### The reproduction — the statement run against every launch on the tape
 
 **Gate 3 precondition 1, 2026-08-05.** `node tools/deployer-screen/dune-reproduction.mjs` runs

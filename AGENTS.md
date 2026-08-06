@@ -857,6 +857,18 @@ dev currently?"*, and the shape of the answer is the point:
   **This is NOT the cutover** — `ENTRY_FILL_SOURCE_KIND` is unmoved and a default run is unchanged.
   One consequence for any lane touching `plan-source.mjs`: a registration's `build` **may now be
   async**, because a billed construction reaches a vendor.
+  **AND TWO GUARDS RUN BEFORE THE FIRST BILLED REQUEST, BECAUSE NEITHER DID WHEN THE MODE WAS FIRST
+  WRITTEN** (captain decisions 317a and 318a, `thresholds.json` 6.5.0). (1) `screen.mjs` →
+  `buildDuneEntryFillSource` reads the monthly credit balance from the free `POST /usage`, prices
+  this leg through `dune-fills.mjs` → `tradeFillSpendPlan`, and refuses through the SAME
+  `decideAllowance` every other keyed lane uses — **before the trade coverage probe, which is the
+  first billed read.** The balance is a READING and is pinned NOWHERE; the estimate document's
+  correction note says so and says the guard post-dates it. `worstCaseComputeCreditsPerExecution` is
+  a new pin and no new anchor: it is `worstCaseCreditsPerWindow`'s own compute term, split out
+  because both credit pricers derive retrieval from bytes themselves and the composite counted it
+  twice. (2) `assertAgreementWindowsFit` makes `maxWindowsPerRun` BIND — it was reported by the
+  record and enforced by nothing, so 82 windows could run against a ceiling of 80. **80 and 82 stay
+  unequal on purpose** (`82 = 80 + probe + headroom`); do not reconcile them.
 - **A DRY RUN IS FREE AND ALWAYS PRINTS THE PLAN, AND THOSE TWO STOPPED BEING COMPATIBLE — SO THE
   CAPTAIN SPLIT IT** (decision 286c). 281a/284a/285a made the plan state the eligibility bound the
   SELECTED source applies instead of re-deriving it; asking a source anything needs the source to

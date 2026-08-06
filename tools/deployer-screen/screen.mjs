@@ -55,6 +55,7 @@ import {
   coverageRecordRow,
   describeWalkFallbackCliff,
   enumerateCreations,
+  openDuneCreditLedger,
   priceWalkFallbackCliff,
   walkFallbackRefusalReason,
   walkFallbackReasons,
@@ -88,6 +89,7 @@ import {
   TRADE_COVERAGE_QUERY_ID,
   assessTradeCoverage,
   committedEntryQuery,
+  agreementExecutionsFor,
   duneFillSource,
   readTradeCoverageProbe,
   tradeFillSpendPlan,
@@ -341,6 +343,18 @@ export async function planEntryEligibility(kind, sources, opts) {
  * `entry_source_agreement.active` is false — so the first run that ever exercises it is the one that
  * would otherwise have paid for the gap.
  *
+ * **IT RESERVES RATHER THAN MERELY CHECKING** (captain decision 320a). The verdict comes from the
+ * RUN's `dune.mjs` → `openDuneCreditLedger`, which reads the balance once and holds what each cleared
+ * leg may spend, so the Stage 1 enumeration downstream is priced against what is left AFTER this leg
+ * was approved. Two legs each deciding alone against one unreduced reading is time-of-check-to-
+ * time-of-use, and the estimate artefact's own rule — a balance reading is never a reservation — is
+ * what it breaks. Passing no ledger opens a private one, which is the single-leg behaviour.
+ *
+ * **AND IT PRICES THE WINDOWS THIS RUN PLANS, not the pinned ceiling** (captain decision 321a):
+ * `opts.windowsPlanned` reaches both the plan and the client's own execution ceiling through
+ * `dune-fills.mjs` → `agreementExecutionsFor`, so a `--score 2` run is judged on its own arithmetic
+ * instead of being refused as though it were a full one.
+ *
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} opts
  * @param {{ maxExecutionsPerRun: number, maxRequestsPerRun: number, maxResultRowsPerWindow: number,
@@ -348,8 +362,10 @@ export async function planEntryEligibility(kind, sources, opts) {
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number,
  *   maxCoverageLagMs: number, allowanceReserveCredits: number, allowanceTightMultiple: number,
  *   allowanceRequired: boolean }} opts.duneBounds
+ * @param {number} opts.windowsPlanned Windows this run will score through this source.
  * @param {boolean} opts.refreshProbe
  * @param {number} opts.nowMs
+ * @param {import('./dune.mjs').DuneCreditLedger} [opts.ledger] The RUN's shared reservation.
  * @param {(line: string) => void} [opts.announce]
  * @returns {Promise<import('./fill-source.mjs').FillSource>}
  */
@@ -357,7 +373,8 @@ export async function buildDuneEntryFillSource(client, opts) {
   const checked = await checkDuneAllowance(client, {
     bounds: opts.duneBounds,
     nowMs: opts.nowMs,
-    plan: tradeFillSpendPlan(opts.agreementBounds),
+    plan: tradeFillSpendPlan(opts.agreementBounds, opts.windowsPlanned),
+    ledger: opts.ledger,
   });
   for (const line of describeAllowanceDecision(checked.decision)) opts.announce?.(line);
   if (!checked.decision.ok) {
@@ -420,8 +437,14 @@ export async function buildDuneEntryFillSource(client, opts) {
  * `thresholds.json` → `entry_source_agreement.justification`.
  *
  * It is the SECOND line of defence behind the allowance check in {@link buildDuneEntryFillSource}:
- * that one asks whether the account can afford the leg's ceilings, this one asks whether the plan
- * fits the ceiling that priced them. Both refuse before anything is requested.
+ * that one asks whether the account can afford the windows this run plans, this one asks whether
+ * those windows fit the ceiling the leg was approved against at all. Both refuse before anything is
+ * requested.
+ *
+ * **AND `windowsPlanned` IS WHAT THE LEG IS PRICED ON** (captain decision 321a), so the caller hands
+ * it the cap this run will ACTUALLY score — `--score` included — rather than the pinned one. The
+ * ceiling stays the pinned bound either way; what changed is that a smaller plan is charged for
+ * itself, which is the choice that preserves headroom under a fixed monthly Dune budget.
  *
  * @param {{ maxCandidatesScored: number, maxLaunchesPerCandidate: number }} entryThresholds
  * @param {{ maxWindowsPerRun?: number }} agreementBounds
@@ -1258,9 +1281,20 @@ export async function main(opts, env, out, err) {
   // `--dry-run-spend` may BUILD the primary source, which on the Dune route is a billed coverage
   // probe, so a plan the ceiling would refuse must be refused before it is priced rather than after
   // it has paid. `runEntrySourcePlan` keeps its own copy of the check as the seam-level backstop.
+  //
+  // IT ALSO YIELDS THE NUMBER THE LEG IS PRICED ON. The cap it multiplies is `maxScored` — what this
+  // run will ACTUALLY score, `--score` included — rather than the pinned `maxCandidatesScored`, so a
+  // reduced-scale run is charged for the windows it plans (captain decision 321a). The seam-level
+  // backstop inside `runEntrySourcePlan` checks the PINNED cap, which is never smaller, so it cannot
+  // pass a plan this refuses.
+  /** @type {number} */
+  let agreementWindowsPlanned = 0;
   if (opts.entrySourceAgreement && agreementBounds.active === true) {
     try {
-      assertAgreementWindowsFit(entryThresholds, agreementBounds);
+      agreementWindowsPlanned = assertAgreementWindowsFit(
+        { maxCandidatesScored: maxScored, maxLaunchesPerCandidate: entryThresholds.maxLaunchesPerCandidate },
+        agreementBounds,
+      ).windowsPlanned;
     } catch (cause) {
       err('');
       err('Refusing to run: the dual-source Stage 2 plan does not fit its own window ceiling.');
@@ -1268,6 +1302,12 @@ export async function main(opts, env, out, err) {
       return EXIT.ceiling;
     }
   }
+  // THE RUN'S ONE RESERVATION, shared by every leg that spends a Dune credit (captain decision
+  // 320a). It reads `POST /usage` at most once — on whichever leg asks first — and holds what each
+  // cleared leg may spend, so the second leg is priced against what is left rather than against a
+  // reading the first has already claimed. Opening it costs nothing: a run that reaches no Dune
+  // surface never asks it anything and it never reads the balance.
+  const duneCreditLedger = openDuneCreditLedger();
   /** @type {import('./client.mjs').DuneClient | null} */
   let entryDuneClient = null;
 
@@ -1289,8 +1329,9 @@ export async function main(opts, env, out, err) {
           'than answering Infinity.',
         bound:
           `at most 1 Dune execution (or 0 on the cached read, which is the default) plus one result ` +
-          `read, against the entry leg's ceiling of ${agreementBounds.maxExecutionsPerRun} ` +
-          `execution(s) for the whole run`,
+          `read, against the ${agreementExecutionsFor(agreementBounds, agreementWindowsPlanned)} ` +
+          `execution(s) this run's own ${agreementWindowsPlanned} planned window(s) are priced for ` +
+          `— itself capped by the pinned ceiling of ${agreementBounds.maxExecutionsPerRun}`,
         actual: () =>
           entryDuneClient === null
             ? 'nothing — the source was never built'
@@ -1308,7 +1349,9 @@ export async function main(opts, env, out, err) {
         }
         entryDuneClient = new DuneClient({
           key: duneCredential.key ?? '',
-          maxExecutions: agreementBounds.maxExecutionsPerRun,
+          // THE CEILING THE PLAN WAS PRICED AT, not the pinned one — one derivation, so what this
+          // client may issue and what the allowance approved cannot come apart.
+          maxExecutions: agreementExecutionsFor(agreementBounds, agreementWindowsPlanned),
           maxRequests: agreementBounds.maxRequestsPerRun,
           minIntervalMs: agreementBounds.minIntervalMs,
           onRequest: (path) => {
@@ -1318,6 +1361,8 @@ export async function main(opts, env, out, err) {
         return buildDuneEntryFillSource(entryDuneClient, {
           agreementBounds,
           duneBounds,
+          windowsPlanned: agreementWindowsPlanned,
+          ledger: duneCreditLedger,
           refreshProbe: opts.duneRefreshProbe,
           nowMs: Date.now(),
           announce: (line) => {
@@ -1604,7 +1649,17 @@ export async function main(opts, env, out, err) {
         // neither a result nor the credits to retry. The reading is free and it happens before the
         // coverage probe, which is itself a billed read. A refusal degrades this leg to the RPC
         // walk exactly as any other Dune failure does — slower rather than wrong.
-        const checked = await checkDuneAllowance(duneClient, { bounds: duneBounds, nowMs: Date.now() });
+        //
+        // IT DRAWS ON THE RUN'S LEDGER RATHER THAN RE-READING THE BALANCE (captain decision 320a):
+        // Stage 2's entry fill source may already have been cleared to spend against this same
+        // period, and a second independent verdict computed from the same unreduced reading is how
+        // two legs both fit and together overrun. On a default run nothing has been held and this is
+        // the only leg that asks, so the verdict is exactly what it was.
+        const checked = await checkDuneAllowance(duneClient, {
+          bounds: duneBounds,
+          nowMs: Date.now(),
+          ledger: duneCreditLedger,
+        });
         duneAllowance = checked.decision;
         if (!opts.json) for (const line of describeAllowanceDecision(checked.decision)) out(`  ${line}`);
         duneEnumeration = await enumerateCreations(duneClient, {

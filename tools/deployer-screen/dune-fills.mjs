@@ -703,14 +703,60 @@ ORDER BY 1, 2, 3
 `;
 
 /**
+ * The two executions a run of ANY size needs beyond its windows: the trade-table coverage probe the
+ * source cannot be built without, and one of headroom so a single retry-shaped condition does not
+ * refuse a run mid-flight.
+ *
+ * Named once because it is the term shared by the pinned ceiling's derivation
+ * (`entry_source_agreement.maxExecutionsPerRun` = `maxWindowsPerRun` + these two) and by
+ * {@link agreementExecutionsFor}, which applies it to the windows a given run actually plans.
+ */
+const EXECUTIONS_BESIDE_THE_WINDOWS = 2;
+
+/**
+ * HOW MANY EXECUTIONS A RUN OF THIS SIZE MAY ISSUE — one derivation, used both to bound the client
+ * and to price the plan (captain decision 321a).
+ *
+ * **A run is charged for what it PLANS, not for the maximum it is permitted.** `tradeFillSpendPlan`
+ * used to price `maxExecutionsPerRun` unconditionally, so `--score 2` was refused identically to a
+ * full run — which defeated the reduced-scale mitigation the committed estimate artefact recommends
+ * to the captain as the way to fit inside the allowance, and left this leg unable ever to read
+ * `sufficient`, since its ceiling times `allowanceTightMultiple` exceeded a whole month's plan.
+ * **Under a fixed monthly Dune budget a reduced-scale run is the normal operating mode rather than a
+ * fallback**, so the option that preserves headroom is to price the plan; that is why this exists.
+ *
+ * **THE CEILING IS STILL A CEILING.** The derived figure is capped at `maxExecutionsPerRun`, and
+ * `screen.mjs` → `assertAgreementWindowsFit` has already refused any plan whose windows exceed
+ * `maxWindowsPerRun`, so this can never price a run larger than the pins admit. 318a's derivation
+ * (`82 = 80 windows + probe + headroom`) is unchanged and is exactly what this function computes for
+ * a full-size plan.
+ *
+ * **The remaining error still runs toward refusal.** The per-window credit worst case charges every
+ * window the busiest window this repo has ever measured, so a priced plan is an upper bound on what
+ * the run can cost, and the guard goes on refusing rather than half-running.
+ *
+ * @param {{ maxExecutionsPerRun: number }} bounds
+ * @param {number} windowsPlanned Windows this run will actually score through this source.
+ * @returns {number}
+ */
+export function agreementExecutionsFor(bounds, windowsPlanned) {
+  const planned = Math.max(0, Math.floor(windowsPlanned)) + EXECUTIONS_BESIDE_THE_WINDOWS;
+  return Math.min(bounds.maxExecutionsPerRun, planned);
+}
+
+/**
  * THIS LEG'S SPEND, in the unit the monthly credit ceiling is denominated in — the Stage 2 half of
  * what `dune.mjs` → `duneSpendPlan` already states for the enumeration.
  *
  * It is a PLAN rather than a second pricing path: `client.mjs` → `estimatePlanCredits` does the
  * arithmetic for both legs and `decideAllowance` reaches the verdict for both, because two answers
  * to "may this run spend" is the defect this repository names repeatedly. All this supplies is the
- * ceilings, which are the only thing that differs — this leg executes PER WINDOW where the
- * enumeration answers a whole batch in one execution.
+ * shape, which is the only thing that differs — this leg executes PER WINDOW where the enumeration
+ * answers a whole batch in one execution.
+ *
+ * **It prices the WINDOWS THIS RUN PLANS**, through {@link agreementExecutionsFor}, and the same
+ * figure bounds the client — so what the run may issue and what it was approved for are one number
+ * rather than two that agree. See that function for why the pinned ceiling is not the price.
  *
  * **`creditsPerExecution` IS COMPUTE ONLY, and that is load-bearing.** `entry_source_agreement.
  * worstCaseCreditsPerWindow` is a COMPOSITE — its own justification decomposes it as one credit of
@@ -720,16 +766,19 @@ ORDER BY 1, 2, 3
  *
  * @param {{ maxExecutionsPerRun: number, maxResultRowsPerWindow: number,
  *   worstCaseComputeCreditsPerExecution: number, resultBytesPerRowCeiling: number }} bounds
+ * @param {number} windowsPlanned Windows this run will score through this source. REQUIRED — a
+ *   default would restore the ceiling-priced behaviour 321a removed, silently.
  * @returns {import('./client.mjs').DuneSpendPlan}
  */
-export function tradeFillSpendPlan(bounds) {
+export function tradeFillSpendPlan(bounds, windowsPlanned) {
+  const executions = agreementExecutionsFor(bounds, windowsPlanned);
   return {
     lane: "tools/deployer-screen (Stage 2's entry fill source)",
-    executions: bounds.maxExecutionsPerRun,
+    executions,
     creditsPerExecution: bounds.worstCaseComputeCreditsPerExecution,
     // One result read per execution, plus the coverage probe's own read — which is billed by bytes
     // whether or not it cost an execution, and is this leg's FIRST billed request.
-    resultReads: bounds.maxExecutionsPerRun + 1,
+    resultReads: executions + 1,
     rowsPerRead: bounds.maxResultRowsPerWindow,
     bytesPerRow: bounds.resultBytesPerRowCeiling,
   };

@@ -1230,17 +1230,33 @@ requested and nothing is billed**.
 **AND TWO GUARDS RUN BEFORE THE FIRST BILLED REQUEST, because neither did when this mode was first
 committed** (captain decisions 317a and 318a, 2026-08-06):
 
-1. **THE MONTHLY CREDIT ALLOWANCE, read LIVE.** `screen.mjs` → `buildDuneEntryFillSource` reads the
-   account's balance from `POST /usage` — a metadata endpoint Dune documents as consuming no credits
-   — prices this leg's own ceilings through `dune-fills.mjs` → `tradeFillSpendPlan`, and refuses
-   through the **same** `client.mjs` → `decideAllowance` every other keyed lane uses, **before the
-   trade-table coverage probe**, which is this leg's first billed request. As first committed it
-   built its client and went straight to that probe, and the run's only allowance check belonged to
-   the enumeration leg, downstream and priced against a different plan. There is **one** pricing path
-   and one verdict: two answers to "may this run spend" is the defect shape this tool has paid for
-   repeatedly. The balance is a **reading and never a reservation** — it is pinned nowhere, and the
-   three limits that travel with it (the counter lags, the key is shared, the period is a
-   subscription anniversary) are the `dune` block's and unchanged.
+1. **THE MONTHLY CREDIT ALLOWANCE, read LIVE, and RESERVED for the whole run.** `screen.mjs` →
+   `buildDuneEntryFillSource` prices this leg through `dune-fills.mjs` → `tradeFillSpendPlan` and
+   refuses through the **same** `client.mjs` → `decideAllowance` every other keyed lane uses,
+   **before the trade-table coverage probe**, which is this leg's first billed request. As first
+   committed it built its client and went straight to that probe, and the run's only allowance check
+   belonged to the enumeration leg, downstream and priced against a different plan.
+
+   **The balance is read ONCE PER RUN and every spending leg draws on one reservation** (captain
+   decision 320a). `dune.mjs` → `openDuneCreditLedger` holds what each cleared leg may spend, so the
+   Stage 1 enumeration is priced against what is left after Stage 2's entry source was approved.
+   Before it, the two legs each read `POST /usage` and each decided alone — two verdicts from the
+   same reading can both say "this fits" while their combined worst case does not, which is
+   time-of-check-to-time-of-use and is the thing this tool's own rule (*a balance reading is never a
+   reservation*) warns against. One mechanism, not two guards taught to subtract each other.
+
+   **A run is charged for the windows it PLANS, not for the ceiling it is permitted** (captain
+   decision 321a). `agreementExecutionsFor` derives `windowsPlanned + probe + headroom` executions,
+   capped by `maxExecutionsPerRun`, and the same figure bounds the client — so what the leg may issue
+   and what it was approved for are one number. Priced at the ceiling instead, `--score 2` was
+   refused identically to a full run, which is the reduced-scale option the estimate artefact
+   recommends; under a fixed monthly Dune budget that is the normal operating mode rather than a
+   fallback. The error still runs toward refusal: every window is charged the busiest window this
+   repo has ever measured.
+
+   The balance itself is pinned nowhere, and the three limits that travel with it — the counter lags,
+   the key is shared, the period is a subscription anniversary — are the `dune` block's and
+   unchanged. A ledger makes one RUN self-consistent; it reserves nothing against a sibling lane.
 2. **THE WINDOW CEILING now binds.** `entry_source_agreement.maxWindowsPerRun` was reported by the
    run record as a ceiling and enforced by nothing; the only thing that stopped a window was the
    client's `maxExecutionsPerRun`, and a cached coverage probe costs no execution, so 82 windows

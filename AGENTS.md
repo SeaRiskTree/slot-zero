@@ -869,6 +869,17 @@ dev currently?"*, and the shape of the answer is the point:
   twice. (2) `assertAgreementWindowsFit` makes `maxWindowsPerRun` BIND — it was reported by the
   record and enforced by nothing, so 82 windows could run against a ceiling of 80. **80 and 82 stay
   unequal on purpose** (`82 = 80 + probe + headroom`); do not reconcile them.
+  **AND THE BALANCE IS READ ONCE PER RUN AND RESERVED, AND A RUN IS CHARGED FOR WHAT IT PLANS**
+  (captain decisions 320a and 321a, `thresholds.json` 6.6.0, no value moved). `dune.mjs` →
+  `openDuneCreditLedger` is the run's ONE reservation: the entry leg and the enumeration each read
+  `POST /usage` and each decided alone, so two verdicts from the same reading could both pass while
+  their combined worst case overran. A cleared leg's worst case is now HELD, so the next leg is
+  priced against what is left — one mechanism, not two guards subtracting each other, and
+  `checkDuneAllowance` IS one reservation against it. And `dune-fills.mjs` →
+  `agreementExecutionsFor` prices `windowsPlanned + probe + headroom` (capped by the pins, and the
+  same figure bounds the client) instead of the ceiling, because pricing the ceiling refused
+  `--score 2` identically to a full run — **under a fixed monthly Dune budget a reduced-scale run is
+  the normal operating mode**. The monthly budget itself is the captain's and is pinned NOWHERE.
 - **A DRY RUN IS FREE AND ALWAYS PRINTS THE PLAN, AND THOSE TWO STOPPED BEING COMPATIBLE — SO THE
   CAPTAIN SPLIT IT** (decision 286c). 281a/284a/285a made the plan state the eligibility bound the
   SELECTED source applies instead of re-deriving it; asking a source anything needs the source to

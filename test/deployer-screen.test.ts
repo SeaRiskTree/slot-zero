@@ -14055,6 +14055,14 @@ describe('ONE run, TWO entry fill sources, and it agrees with itself PER CANDIDA
       // The 80 and the client's 82 are deliberately unequal: 82 = 80 windows + the probe's own
       // execution + one of headroom. Setting them equal would delete two terms of that derivation.
       expect(AGREE['maxExecutionsPerRun']).toBe((AGREE['maxWindowsPerRun'] as number) + 2);
+      // AND THE WINDOW COUNT IS WHAT THE LEG IS PRICED ON (captain decision 321a), so a reduced-scale
+      // run yields a smaller one — the `--score` cap reaches this function, not just the pinned cap.
+      const reduced = assertAgreementWindowsFit(
+        { maxCandidatesScored: 2, maxLaunchesPerCandidate: T['maxLaunchesPerCandidate']! },
+        AGREE as never,
+      );
+      expect(reduced.windowsPlanned).toBe(2 * T['maxLaunchesPerCandidate']!);
+      expect(reduced.windowsPlanned).toBeLessThan(fit.windowsPlanned);
     });
 
     it('refuses to compare a source against itself', async () => {

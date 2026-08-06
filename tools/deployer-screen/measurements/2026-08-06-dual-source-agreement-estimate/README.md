@@ -124,22 +124,68 @@ result — so whoever runs this pays one refresh execution and should record wha
 > reader comparing this file against its own commit history must find the correction, not a clean
 > page.
 >
-> **And the guard is COARSER than the table below, deliberately.** It prices what this leg's own
+> ~~**And the guard is COARSER than the table below, deliberately.** It prices what this leg's own
 > ceilings ADMIT — `maxExecutionsPerRun` executions plus one result read each and the probe's, every
 > read at `maxResultRowsPerWindow` rows of at most `resultBytesPerRowCeiling` bytes — not the
-> candidate count an operator plans. That is the same discipline `dune.mjs` → `duneSpendPlan` already
-> applies to the enumeration: a plan is admissible when its worst case fits, so the ceiling is exact
-> rather than usually-right. The rows below therefore describe the PLAN's exposure per candidate;
-> the guard compares one figure, priced at the ceiling, and it is larger than any of them. Refusing a
-> run that would have cost ~145 because it COULD have cost the ceiling is the safe direction here:
-> the refusal costs a comparison, and the alternative is dying part-way through a per-window leg with
-> neither a result nor the credits to retry.
+> candidate count an operator plans. The rows below therefore describe the PLAN's exposure per
+> candidate; the guard compares one figure, priced at the ceiling, and it is larger than any of
+> them.~~ **SUPERSEDED THE SAME DAY BY CAPTAIN DECISION 321a — see the second correction below.** It
+> is struck through rather than deleted because it was committed and read, and this file's whole
+> value is that its history is legible.
 >
 > **One figure in this section is now dated, and that is by design.** The balance is a READING and
 > never a reservation: it is not pinned in code, in `thresholds.json` or here as anything other than
-> a timestamped observation. Captain decision 315d buys additional Dune capacity ahead of the
-> 2026-08-29 roll, so the live guard will operate against a LARGER balance than the 455.643 priced
-> below. Re-read `POST /usage` rather than quoting this table.
+> a timestamped observation. The live guard will operate against a different balance from the 455.643
+> priced below. Re-read `POST /usage` rather than quoting this table.
+
+> **SECOND CORRECTION, 2026-08-06 — TWO FURTHER DEFECTS THE SAME REVIEW FOUND IN THE GUARD THIS
+> DOCUMENT DESCRIBES (captain decisions 320a and 321a).** Both were introduced by the fix round
+> above, and both are stated here rather than folded silently into the arithmetic.
+>
+> **321a — THE GUARD REFUSED THE MITIGATION THIS DOCUMENT RECOMMENDS.** As first wired it priced
+> `maxExecutionsPerRun` unconditionally, so a `--score 2` run was refused identically to a full one.
+> Option 2 below — *run two candidates now* — was therefore unreachable through the very guard this
+> section describes, and the leg could never read `sufficient` at all, since its ceiling times
+> `allowanceTightMultiple` 2 exceeds a whole period's credits. A run is now charged for the windows
+> it PLANS: `dune-fills.mjs` → `agreementExecutionsFor` derives `windowsPlanned + probe + headroom`
+> executions, capped by the pinned ceiling, and the same figure bounds the client — so what the leg
+> may issue and what it was approved for are one number. **The pins did not move**: 80 and 82 remain
+> ceilings, `82 = 80 + probe + headroom` is exactly what a full-size plan still derives, and the
+> remaining error still runs toward refusal, since every window is charged the busiest window this
+> repo has ever measured.
+>
+> The worst case the guard actually compares, recomputed at the unmoved pins
+> (`executions = 10 × candidates + 2`, at 1 compute credit each, plus `executions + 1` result reads
+> of 3,000 rows × 260 bytes at 20 credits/MB = 15.6 each):
+>
+> | candidates | windows | executions | worst case the guard prices |
+> |---|---|---|---|
+> | 7 | 70 | 72 | **≈1,211** |
+> | 4 | 40 | 42 | **≈713** |
+> | 3 | 30 | 32 | **≈547** |
+> | 2 | 20 | 22 | **≈381** |
+>
+> These supersede the `worst case` column of the table below, which charged a flat 17 per window plus
+> a 25-credit probe. They are within a few credits of it — the shape of the recommendation does not
+> change — but they are what the code now computes, and the difference is the probe being priced on
+> its own terms rather than borrowed from the enumeration's pin.
+>
+> **320a — TWO LEGS WERE DECIDING ALONE AGAINST ONE BALANCE.** The entry leg and the Stage 1
+> enumeration each read `POST /usage` and each approved its own plan, so two verdicts computed from
+> the SAME reading could both say *this fits* while their combined worst case did not — the exact
+> thing this document's own rule (*a balance reading is never a reservation*) warns against.
+> `dune.mjs` → `openDuneCreditLedger` is now the run's single reservation: the balance is read once,
+> a cleared leg's worst case is HELD immediately, and every later leg is priced against what is left.
+> **So a full-period comparison must add the enumeration's own plan on top of the table above**, and
+> an entry leg that clears may leave the enumeration priced out — which sends it to the RPC walk,
+> where `priceWalkFallbackCliff` refuses before its first request if that fallback is a spend cliff.
+> Neither ordering can produce a silent overspend, which is why the reservation order is left where
+> the control flow already put it.
+>
+> **What a ledger still cannot do**, unchanged and worth restating because it bounds every figure
+> here: the vendor's counter LAGS, the key is SHARED with every other lane, and the period is a
+> subscription anniversary. It makes ONE RUN self-consistent; it reserves nothing against a sibling
+> lane.
 
 `client.mjs` → `decideAllowance` prices the **worst case**, subtracts the pinned reserve, and refuses
 before the first billed request. At the balance read above:

@@ -55,8 +55,14 @@ import {
   parseUsageResponse as censusParseUsageResponse,
   estimatePlanCredits as censusEstimatePlanCredits,
 } from '../tools/creation-census/client.mjs';
-import { checkDuneAllowance, duneSpendPlan, enumerateCreations } from '../tools/deployer-screen/dune.mjs';
-import { tradeFillSpendPlan } from '../tools/deployer-screen/dune-fills.mjs';
+import {
+  checkDuneAllowance,
+  duneSpendPlan,
+  enumerateCreations,
+  openDuneCreditLedger,
+} from '../tools/deployer-screen/dune.mjs';
+import type { DuneCreditLedger } from '../tools/deployer-screen/dune.mjs';
+import { agreementExecutionsFor, tradeFillSpendPlan } from '../tools/deployer-screen/dune-fills.mjs';
 import { buildDuneEntryFillSource } from '../tools/deployer-screen/screen.mjs';
 import { EXIT, main as censusMain, readBounds } from '../tools/creation-census/run.mjs';
 
@@ -733,6 +739,16 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
     allowanceTightMultiple: 2,
     allowanceRequired: true,
   };
+  /** The ENUMERATION leg's own ceilings — the second spender on the same balance. */
+  const ENUMERATION_BOUNDS = {
+    maxExecutionsPerRun: 2,
+    maxResultRows: 20_000,
+    worstCaseCreditsPerExecution: 25,
+    resultBytesPerRowCeiling: 121,
+    allowanceReserveCredits: 25,
+    allowanceTightMultiple: 2,
+    allowanceRequired: true,
+  };
 
   function client(onFetch: (path: string) => Response) {
     const paths: string[] = [];
@@ -752,13 +768,23 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
     return { c, paths };
   }
 
-  const build = (c: ScreenDuneClient, announce?: (l: string) => void) =>
+  /** Windows a FULL-SIZE plan carries: the pinned ceiling, which is what 318a's derivation sizes. */
+  const FULL_WINDOWS = (
+    JSON.parse(readFileSync(THRESHOLDS, 'utf8')).entry_source_agreement as { maxWindowsPerRun: number }
+  ).maxWindowsPerRun;
+
+  const build = (
+    c: ScreenDuneClient,
+    over: { announce?: (l: string) => void; windowsPlanned?: number; ledger?: DuneCreditLedger } = {},
+  ) =>
     buildDuneEntryFillSource(c, {
       agreementBounds: AGREEMENT as never,
       duneBounds: DUNE_BOUNDS,
+      windowsPlanned: over.windowsPlanned ?? FULL_WINDOWS,
+      ledger: over.ledger,
       refreshProbe: false,
       nowMs: NOW_MS,
-      announce,
+      announce: over.announce,
     });
 
   it('prices its OWN ceilings, with retrieval counted exactly once', () => {
@@ -766,7 +792,7 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
     // per-execution figure it is handed must be COMPUTE ONLY. `worstCaseCreditsPerWindow` is a
     // composite (1 compute + 16 retrieval by its own justification) and handing it over would charge
     // retrieval twice — roughly doubling a figure a spend approval is read from.
-    const plan = tradeFillSpendPlan(AGREEMENT);
+    const plan = tradeFillSpendPlan(AGREEMENT, FULL_WINDOWS);
     const estimate = estimatePlanCredits(plan);
     expect(plan.creditsPerExecution).toBe(AGREEMENT.worstCaseComputeCreditsPerExecution);
     expect(plan.creditsPerExecution).toBeLessThan(AGREEMENT.worstCaseCreditsPerWindow);
@@ -781,6 +807,121 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
     // And the probe's own result read is inside the plan: it is billed by bytes whether or not it
     // cost an execution, and it is this leg's FIRST billed request.
     expect(plan.resultReads).toBe(AGREEMENT.maxExecutionsPerRun + 1);
+    // 318a's derivation, computed rather than restated: a FULL-SIZE plan is the windows plus the
+    // probe plus one of headroom, which is exactly the pinned execution ceiling.
+    expect(agreementExecutionsFor(AGREEMENT, FULL_WINDOWS)).toBe(AGREEMENT.maxExecutionsPerRun);
+  });
+
+  it('prices the windows the run PLANS, so a reduced-scale run is judged on its own arithmetic', () => {
+    // Captain decision 321a. Priced at the ceiling instead, a 2-candidate run — the reduced-scale
+    // option the committed estimate artefact recommends — was refused identically to a full one.
+    const small = tradeFillSpendPlan(AGREEMENT, 20);
+    const full = tradeFillSpendPlan(AGREEMENT, FULL_WINDOWS);
+    expect(small.executions).toBe(22);
+    expect(small.resultReads).toBe(23);
+    expect(estimatePlanCredits(small).worstCaseCredits).toBeLessThan(
+      estimatePlanCredits(full).worstCaseCredits,
+    );
+    // THE CEILING IS STILL A CEILING: a plan larger than the pins admit cannot price itself higher.
+    expect(agreementExecutionsFor(AGREEMENT, FULL_WINDOWS * 10)).toBe(AGREEMENT.maxExecutionsPerRun);
+    expect(tradeFillSpendPlan(AGREEMENT, FULL_WINDOWS * 10).executions).toBe(AGREEMENT.maxExecutionsPerRun);
+  });
+
+  it('a reduced-scale plan CLEARS a balance the full-size one does not', async () => {
+    // The consequence stated end to end, through the real guard: at a balance that refuses the full
+    // plan, the smaller one this document recommends actually gets through.
+    const usage = (path: string) =>
+      path === USAGE_PATH
+        ? new Response(JSON.stringify(usageBody([period(2_500 - 600)])), { status: 200 })
+        : new Response(JSON.stringify({}), { status: 200 });
+    const full = client(usage);
+    await expect(build(full.c)).rejects.toThrow(/refuses to spend/);
+    expect(full.c.executions()).toBe(0);
+
+    const small = client(usage);
+    // It gets past the allowance and is stopped by the UNDEPLOYED probe instead, which is the next
+    // gate and not this one — and still bills nothing.
+    await expect(build(small.c, { windowsPlanned: 20 })).rejects.toThrow(/no deployed saved query/);
+    expect(small.paths).toEqual([USAGE_PATH]);
+    expect(small.c.executions()).toBe(0);
+  });
+
+  it('ONE reservation for the run: a cleared leg is held against the next one', async () => {
+    // Captain decision 320a. Two legs reading the same balance and each deciding alone can both pass
+    // while their COMBINED worst case overruns it — time-of-check-to-time-of-use, against the rule
+    // the estimate artefact itself states: a balance reading is never a reservation.
+    const ledger = openDuneCreditLedger();
+    const entryPlan = tradeFillSpendPlan(AGREEMENT, 20);
+    const entryWorstCase = estimatePlanCredits(entryPlan).worstCaseCredits;
+    const enumerationWorstCase = estimatePlanCredits(duneSpendPlan(ENUMERATION_BOUNDS)).worstCaseCredits;
+    // A balance that fits EITHER leg alone but not BOTH, which is the whole hazard.
+    const remaining = entryWorstCase + enumerationWorstCase - 1 + DUNE_BOUNDS.allowanceReserveCredits;
+    const { c, paths } = client((path) =>
+      path === USAGE_PATH
+        ? new Response(JSON.stringify(usageBody([period(2_500 - remaining)])), { status: 200 })
+        : new Response(JSON.stringify({}), { status: 200 }),
+    );
+
+    const first = await checkDuneAllowance(c, {
+      bounds: DUNE_BOUNDS,
+      nowMs: NOW_MS,
+      plan: entryPlan,
+      ledger,
+    });
+    expect(first.decision.ok).toBe(true);
+    expect(ledger.reservedCredits()).toBe(entryWorstCase);
+
+    const second = await checkDuneAllowance(c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS, ledger });
+    expect(second.decision.ok).toBe(false);
+    expect(second.decision.reasons.join(' ')).toMatch(/already held by an earlier leg/);
+    // The reading is taken ONCE and cached: a second read would be a second answer to one question,
+    // and the run would hold two beliefs about a balance that moves under it.
+    expect(paths).toEqual([USAGE_PATH]);
+
+    // And WITHOUT the shared ledger both legs pass — which is the defect, reproduced.
+    const solo = client((path) =>
+      path === USAGE_PATH
+        ? new Response(JSON.stringify(usageBody([period(2_500 - remaining)])), { status: 200 })
+        : new Response(JSON.stringify({}), { status: 200 }),
+    );
+    const a = await checkDuneAllowance(solo.c, { bounds: DUNE_BOUNDS, nowMs: NOW_MS, plan: entryPlan });
+    const b = await checkDuneAllowance(solo.c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS });
+    expect(a.decision.ok && b.decision.ok).toBe(true);
+    // Both cleared, and together they exceed what either was compared against — the spendable
+    // balance, i.e. the reading less the reserve held back for the counter's lag.
+    expect(a.estimate.worstCaseCredits + b.estimate.worstCaseCredits).toBeGreaterThan(
+      remaining - DUNE_BOUNDS.allowanceReserveCredits,
+    );
+  });
+
+  it('a single-leg run is unchanged: nothing is held and the verdict is what it always was', async () => {
+    // The control for 320a. A default run has ONE spending leg, so the ledger holds nothing before
+    // it and its verdict must be identical to the ledgerless one.
+    const usage = (path: string) =>
+      path === USAGE_PATH
+        ? new Response(JSON.stringify(usageBody([period(1_000)])), { status: 200 })
+        : new Response(JSON.stringify({}), { status: 200 });
+    const withLedger = await checkDuneAllowance(client(usage).c, {
+      bounds: ENUMERATION_BOUNDS,
+      nowMs: NOW_MS,
+      ledger: openDuneCreditLedger(),
+    });
+    const without = await checkDuneAllowance(client(usage).c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS });
+    expect(withLedger.decision).toEqual(without.decision);
+  });
+
+  it('an UNREADABLE balance is read once and refuses every leg', async () => {
+    // A second read after a failure would be a second answer, and the run would then hold two
+    // beliefs about a balance it could not see at all.
+    const ledger = openDuneCreditLedger();
+    const { c } = client(() => {
+      throw new Error('socket hang up');
+    });
+    const first = await checkDuneAllowance(c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS, ledger });
+    const second = await checkDuneAllowance(c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS, ledger });
+    expect(first.decision.verdict).toBe('unreadable');
+    expect(second.decision.verdict).toBe('unreadable');
+    expect(ledger.reservedCredits()).toBe(0);
   });
 
   it('reads the balance and REFUSES before the coverage probe, having billed nothing', async () => {
@@ -790,7 +931,7 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
         : new Response(JSON.stringify({}), { status: 200 }),
     );
     const lines: string[] = [];
-    await expect(build(c, (l) => lines.push(l))).rejects.toThrow(/refuses to spend/);
+    await expect(build(c, { announce: (l) => void lines.push(l) })).rejects.toThrow(/refuses to spend/);
     // The free usage read and nothing else: no saved-query comparison, no probe, no execution.
     expect(paths).toEqual([USAGE_PATH]);
     expect(c.executions()).toBe(0);
@@ -821,7 +962,7 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
         : new Response(JSON.stringify({}), { status: 200 }),
     );
     const lines: string[] = [];
-    await expect(build(c, (l) => lines.push(l))).rejects.toThrow(/no deployed saved query/);
+    await expect(build(c, { announce: (l) => void lines.push(l) })).rejects.toThrow(/no deployed saved query/);
     expect(lines.join('\n')).toMatch(/dune allowance: (SUFFICIENT|TIGHT)/);
     // Still nothing billed — the probe refuses before it reaches the vendor at all.
     expect(paths).toEqual([USAGE_PATH]);

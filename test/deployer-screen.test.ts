@@ -60,6 +60,7 @@ import {
   describeWalkFallbackCliff,
   enumerateCreations,
   priceWalkFallbackCliff,
+  walkFallbackRefusalReason,
   walkFallbackReasons,
   launchCapPerWallet,
   normaliseSql,
@@ -4771,13 +4772,28 @@ describe('a whole-leg Dune failure is recorded per candidate, and priced before 
     // The two are different findings about different things. A per-wallet refusal is evidence about
     // that wallet; a leg failure is evidence about the run, and a cost model built from the second
     // while reading it as the first is what produced a figure three orders of magnitude too high.
+    // The marker keys on the LEG answering for nobody, never on this wallet being unusable: a wallet
+    // the probe refused while the leg answered for others is a per-WALLET refusal.
     const perWallet = walkFallbackReasons({
       attempted: true,
       reading: reading(false, ['the run-level coverage probe refused these surfaces']),
       legFailure: null,
+      legAnsweredForNobody: false,
     });
     expect(perWallet).toEqual(['the run-level coverage probe refused these surfaces']);
     expect(perWallet.join(' ')).not.toContain(DUNE_LEG_FAILED);
+
+    // And when the SAME per-wallet sentence is one of a whole batch's, the marker is PREPENDED
+    // rather than substituted — the leg failing and the specific refusal are both true, and a
+    // script counting whole-leg failures must not miss the coverage-refusal class.
+    const wholeBatch = walkFallbackReasons({
+      attempted: true,
+      reading: reading(false, ['the run-level coverage probe refused these surfaces']),
+      legFailure: null,
+      legAnsweredForNobody: true,
+    });
+    expect(wholeBatch[0]!.startsWith(`${DUNE_LEG_FAILED}:`)).toBe(true);
+    expect(wholeBatch).toContain('the run-level coverage probe refused these surfaces');
 
     const wholeLeg = walkFallbackReasons({
       attempted: true,
@@ -4881,8 +4897,19 @@ describe('a whole-leg Dune failure is recorded per candidate, and priced before 
       const byWallet = await c.run();
       const r = byWallet.get(DUNE_WALLET) ?? null;
       expect(r?.usable, c.name).toBe(false);
-      const reasons = walkFallbackReasons({ attempted: true, reading: r, legFailure: null });
+      // Every one of these refuses the WHOLE batch, which is the fact the screen computes once from
+      // the leg's own result and hands down. So every one carries the marker, not only the thrown
+      // shape — a script counting whole-batch failures on it counts all of them.
+      const reasons = walkFallbackReasons({
+        attempted: true,
+        reading: r,
+        legFailure: null,
+        legAnsweredForNobody: [...byWallet.values()].every((w) => !w.usable),
+      });
       expect(reasons.length, c.name).toBeGreaterThan(0);
+      expect(reasons[0]!.startsWith(`${DUNE_LEG_FAILED}:`), c.name).toBe(true);
+      // And the wallet's own sentence survives beside it rather than being replaced by the marker.
+      for (const own of r?.reasons ?? []) expect(reasons, c.name).toContain(own);
     }
   });
 
@@ -5043,10 +5070,65 @@ describe('a whole-leg Dune failure is recorded per candidate, and priced before 
     expect(withFlag).not.toMatch(/unless --allow-walk-fallback is passed/);
 
     // And below the magnitude floor there is no refusal to describe on either side, so the flag
-    // changes nothing and the line says so identically.
-    const small = { ...plan, maxCandidates: T['dune'].legFallbackMinCandidates - 1 };
-    expect(renderDryRun(small)).toMatch(/would proceed without the flag/);
-    expect(renderDryRun({ ...small, allowWalkFallback: true })).toMatch(/would proceed without the flag/);
+    // changes nothing and the line says so identically. But it must say WHICH reason spares it: at
+    // 8 candidates the ratio is 4.0x and the BAR is what spares the run, while at 5 it is 5.0x —
+    // over the bar, and only the floor spares it. Reporting the second as "under the bar" would
+    // contradict the figure printed one line above it, and that band is reachable, since
+    // --candidates below ~39 is the documented row-ceiling mitigation.
+    const atCap = (n: number) => renderDryRun({ ...plan, maxCandidates: n });
+    expect(atCap(8)).toMatch(/Under the bar at this candidate cap/);
+    expect(atCap(8)).toMatch(/would proceed without the flag/);
+    const overBarUnderFloor = atCap(5);
+    expect(overBarUnderFloor).toMatch(/5\.0x/);
+    expect(overBarUnderFloor).not.toMatch(/Under the bar at this candidate cap/);
+    expect(overBarUnderFloor).toMatch(
+      new RegExp(`Over the bar, but under the magnitude floor of ${T['dune'].legFallbackMinCandidates} candidates`),
+    );
+    expect(overBarUnderFloor).toMatch(/would proceed without the flag/);
+    expect(renderDryRun({ ...plan, maxCandidates: 5, allowWalkFallback: true })).toMatch(/magnitude floor/);
+  });
+
+  it('the refusal is FILED rather than discarded, as an incomplete record', () => {
+    // Captain decision 310a. By the time this refusal fires the seed enumeration is sunk and the
+    // Dune leg has been billed for its probe read — and on --dune-refresh-probe for a failed
+    // execution — so the run-level Dune block and the seed coverage are paid-for state. The repo's
+    // own rule, quoted in screen.mjs's catch block: a terminal path after vendor spend must not
+    // discard paid-for measurements, or re-running just spends the shared allowance again to learn
+    // the same thing.
+    const T = loadThresholds() as Record<string, Record<string, number>>;
+    const d = T['dune']!;
+    const cliff = priceWalkFallbackCliff({
+      candidates: 82,
+      healthyWalkShare: d['legFallbackHealthyWalkShare']!,
+      cliffMultiple: d['legFallbackCliffMultiple']!,
+      minCandidates: d['legFallbackMinCandidates']!,
+      perCandidate: T['creation_walk_helius']!['maxCreditsPerCandidate']!,
+      unit: 'Helius credit',
+    });
+    expect(cliff.cliff).toBe(true);
+    const reason = walkFallbackRefusalReason(cliff, {
+      cliffMultiple: d['legFallbackCliffMultiple']!,
+      flag: '--allow-walk-fallback',
+    });
+    // It says what was refused, in the unit the run would have billed in, and names the flag that
+    // takes the decision deliberately.
+    expect(reason).toMatch(/REFUSED before the first walk request/);
+    expect(reason).toContain('426,400');
+    expect(reason).toContain('Helius credit');
+    expect(reason).toContain('--allow-walk-fallback');
+    expect(reason).toContain('--no-dune');
+
+    // And it reaches the record through the SAME mechanism a ceiling hit uses — an abort reason, so
+    // no record field was added and RECORD_SCHEMA_VERSION does not move.
+    const truncation = deriveTruncation({
+      abortReason: reason,
+      coverage: { coverageTruncated: false, candidateCap: 195, droppedByCandidateCap: 0 },
+      unmeasured: [],
+    });
+    expect(truncation.truncated).toBe(true);
+    expect(truncation.truncationReason).toContain('--allow-walk-fallback');
+    // An incomplete record must never land on the path a complete one would use.
+    expect(partialOutPath('runs/2026-08-06.json')).toBe('runs/2026-08-06.partial.json');
   });
 
   it('carries the opt-in flag, off by default', () => {

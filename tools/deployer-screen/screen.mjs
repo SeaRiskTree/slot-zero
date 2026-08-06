@@ -56,6 +56,7 @@ import {
   describeWalkFallbackCliff,
   enumerateCreations,
   priceWalkFallbackCliff,
+  walkFallbackRefusalReason,
   walkFallbackReasons,
 } from './dune.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
@@ -1103,6 +1104,10 @@ export async function main(opts, env, out, err) {
   // Whether the Dune leg was ASKED for this batch. It is the difference between a candidate that
   // fell back and one that was never a Dune candidate — see the assignment site.
   let duneLegAttempted = false;
+  // Whether the leg produced a usable reading for NO candidate. Computed ONCE, because the spend
+  // guard and every candidate's fallback reason are the same question, and two expressions that
+  // merely agree is captain decision 144a's defect.
+  let duneLegAnsweredForNobody = false;
 
   const walkBounds = T['creation_walk'];
   let rpcRequests = 0;
@@ -1265,6 +1270,8 @@ export async function main(opts, env, out, err) {
         // `enumerationSource` says the walk answered.
         if (!opts.json) out(`  !! Dune enumeration unusable, falling back to the RPC walk: ${duneUnusableNote}`);
       }
+      duneLegAnsweredForNobody =
+        [...(duneEnumeration?.byWallet.values() ?? [])].filter((w) => w.usable).length === 0;
     }
 
     // ---- THE SPEND CLIFF, PRICED BEFORE IT IS PAID (captain decision 298a). ------------------
@@ -1282,8 +1289,7 @@ export async function main(opts, env, out, err) {
     // NOTHING HERE DISTRUSTS THE WALK. It is the correct answer to a Dune refusal and the only
     // surface that can say who holds a curve today. What is refused is taking that decision silently.
     if (duneLegAttempted) {
-      const answeredByDune = [...(duneEnumeration?.byWallet.values() ?? [])].filter((w) => w.usable).length;
-      if (answeredByDune === 0) {
+      if (duneLegAnsweredForNobody) {
         const cliff = priceWalkFallbackCliff({
           candidates: gating.length,
           healthyWalkShare: duneBounds.legFallbackHealthyWalkShare,
@@ -1306,6 +1312,20 @@ export async function main(opts, env, out, err) {
           if (!opts.allowWalkFallback) {
             err('');
             for (const line of lines) err(line);
+            // THE REFUSAL IS STILL FILED, for the reason the catch block below states: a terminal
+            // path after vendor spend must not discard paid-for measurements, or re-running just
+            // spends the shared allowance a second time to learn the same thing. The seed
+            // enumeration is sunk and the Dune leg was billed for its probe read — and, on
+            // `--dune-refresh-probe`, for a failed execution — so the run-level `dune` block and the
+            // seed coverage are exactly what is worth keeping. `completed: false` and the abort
+            // reason keep it from reading as a screen that finished; the record legitimately carries
+            // zero candidates, which is honest for a run that stopped before its gate loop.
+            completed = false;
+            abortReason = walkFallbackRefusalReason(cliff, {
+              cliffMultiple: duneBounds.legFallbackCliffMultiple,
+              flag: '--allow-walk-fallback',
+            });
+            emit(EXIT.usage);
             return EXIT.usage;
           }
           if (!opts.json) {
@@ -1374,6 +1394,7 @@ export async function main(opts, env, out, err) {
           attempted: duneLegAttempted,
           reading: fromDune,
           legFailure: duneUnusableNote,
+          legAnsweredForNobody: duneLegAnsweredForNobody,
         });
         const duneLaunches = fromDune === null ? null : fromDune.launches;
         // 227a's observation, and it is scoped to the route that ANSWERED this candidate.

@@ -2087,6 +2087,15 @@ export async function enumerateCreations(client, opts) {
  * The two are different findings about different things and they were indistinguishable in a record
  * until now: a per-wallet refusal is evidence about that wallet, and a leg failure is evidence about
  * the run. See {@link walkFallbackReasons}.
+ *
+ * **IT KEYS ON THE LEG ANSWERING FOR NOBODY, NEVER ON THIS WALLET BEING UNUSABLE, AND EVERY
+ * WHOLE-BATCH CLASS CARRIES IT** (captain decision 312a). A thrown execution leaves no per-wallet
+ * sentence, but a refused coverage probe, a refused credit allowance and an unreadable row each
+ * refuse the WHOLE batch while giving every wallet the same run-level sentence — so keying on "this
+ * wallet produced no reason of its own" would have marked the thrown class alone and left a script
+ * counting whole-leg failures short by every other one. Where a wallet has its own sentence too, the
+ * marker is PREPENDED rather than substituted: the leg failing and the specific refusal are both
+ * true, and a reader needs both.
  */
 export const DUNE_LEG_FAILED = 'dune-leg-failed';
 
@@ -2106,30 +2115,45 @@ export const DUNE_LEG_FAILED = 'dune-leg-failed';
  * is the one case that yields an empty list, and there the walk is the route the operator chose
  * rather than a fallback anything took.
  *
+ * **WHICH FACT THE MARKER KEYS ON** (captain decision 312a): `legAnsweredForNobody`, which the caller
+ * computes ONCE from the leg's own result and hands to every candidate. Not "this wallet has no
+ * sentence of its own" — that is true only of a thrown execution, and a coverage refusal, an
+ * allowance refusal and an unreadable row are equally whole-batch while each giving every wallet the
+ * same run-level sentence. Not "this wallet is unusable" either: a wallet the probe refused while the
+ * leg ANSWERED for others is a per-WALLET refusal and gets its own reasons with no marker. Where both
+ * are true the marker is PREPENDED to the wallet's own reasons rather than replacing them.
+ *
  * @param {object} input
  * @param {boolean} input.attempted Whether this run reached the Dune leg for this batch at all.
  * @param {{ usable: boolean, reasons: readonly string[] } | null} input.reading This wallet's own
  *   enumeration, or `null` when the leg produced none for it.
  * @param {string | null} input.legFailure The whole-leg failure's own sentence, or `null`.
+ * @param {boolean} [input.legAnsweredForNobody] Whether the leg produced a usable reading for NO
+ *   candidate in the batch. Defaults to `true` when the wallet has no reason of its own, which is the
+ *   thrown-execution shape and the only one that can be inferred here.
  * @returns {string[]}
  */
 export function walkFallbackReasons(input) {
   if (!input.attempted) return [];
   if (input.reading !== null && input.reading.usable) return [];
   const own = input.reading === null ? [] : [...input.reading.reasons];
-  if (own.length > 0) return own;
+  const wholeLeg = input.legAnsweredForNobody ?? own.length === 0;
+  if (!wholeLeg) return own;
   // The leg answered for nobody. Everything below is one sentence rather than a blank, because a
   // blank here is the whole defect: it is indistinguishable from a run that never asked Dune.
   const note =
     input.legFailure !== null && input.legFailure.trim() !== ''
       ? input.legFailure.trim()
-      : 'no reason survived from the failure itself';
+      : own.length > 0
+        ? own[0]
+        : 'no reason survived from the failure itself';
   return [
     `${DUNE_LEG_FAILED}: the Dune enumeration leg failed as a WHOLE and answered for no candidate in ` +
       `this batch, so this wallet's history was walked from the Solana signature index instead. That ` +
       `is the correct answer to a Dune refusal and it is not a weaker measurement — it is a far more ` +
       `expensive one, and it is recorded per candidate so a cost model built from this record cannot ` +
       `read the degraded route as the normal one. The failure: ${note}`,
+    ...own,
   ];
 }
 
@@ -2250,6 +2274,38 @@ export function describeWalkFallbackCliff(cliff, opts) {
     '  reached. The gate loop had not started, so no candidate profile was fetched and no Helius credit',
     '  and no Solana RPC request was spent — which is the whole reason this is asked here.',
   ];
+}
+
+/**
+ * The one sentence a REFUSED whole-batch fallback puts on the run record, as an abort reason.
+ *
+ * **The refusal files an incomplete record rather than exiting bare** (captain decision 310a), for
+ * the reason `screen.mjs`'s own catch block states: a terminal path reached after vendor spend must
+ * not discard paid-for measurements, or re-running just spends the shared allowance a second time to
+ * learn the same thing. By this point the seed enumeration is sunk and the Dune leg has been billed
+ * for its probe read — and, on `--dune-refresh-probe`, for a failed execution — so the run-level Dune
+ * block and the seed coverage are exactly the state worth keeping.
+ *
+ * It is an ABORT reason and not a new record field: `record.mjs` → `deriveTruncation` turns it into
+ * the run's `truncationReason` and the run reports `completed: false`, which is what keeps a
+ * zero-candidate record from reading as a screen that found nothing. `RECORD_SCHEMA_VERSION` does not
+ * move — a refusal is not a new contract.
+ *
+ * @param {WalkFallbackCliff} cliff
+ * @param {object} opts
+ * @param {number} opts.cliffMultiple The pinned multiple, for the sentence.
+ * @param {string} opts.flag The opt-in flag's own spelling.
+ * @returns {string}
+ */
+export function walkFallbackRefusalReason(cliff, opts) {
+  return (
+    `the whole-batch Dune fallback was REFUSED before the first walk request: the Dune enumeration ` +
+    `leg answered for no candidate, and the creation walk's worst case of ${cliff.projected.toLocaleString('en-US')} ` +
+    `${cliff.unit}(s) over ${cliff.candidates} candidate(s) is ${cliff.multiple.toFixed(1)}x the plan ` +
+    `that was made, past the pinned ${opts.cliffMultiple}x. No candidate was gated and no walk request ` +
+    `was issued. Re-run with ${opts.flag} to take the walk anyway, or with --no-dune to plan for it ` +
+    `from the start.`
+  );
 }
 
 /**

@@ -1623,7 +1623,9 @@ export function renderDryRun(plan) {
       );
       L.push(
         !cliff.cliff
-          ? `  Under the bar at this candidate cap, so such a run would proceed without the flag.`
+          ? cliff.multiple > d.legFallbackCliffMultiple
+            ? `  Over the bar, but under the magnitude floor of ${cliff.minCandidates} candidates — a batch this small has not fallen off a cliff — so such a run would proceed without the flag.`
+            : `  Under the bar at this candidate cap, so such a run would proceed without the flag.`
           : plan.allowWalkFallback
             ? `  Such a run is REFUSED before the first walk request, and --allow-walk-fallback has AUTHORISED it: this run would take the walk and print the figure rather than stop.`
             : `  Such a run is REFUSED before the first walk request unless --allow-walk-fallback is passed.`,

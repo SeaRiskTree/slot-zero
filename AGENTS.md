@@ -821,12 +821,28 @@ dev currently?"*, and the shape of the answer is the point:
   number. It returns **pre-wrapped lines** and its wrapper is unexported, so a consumer indents and
   cannot pick a width — the class is removed rather than enumerated in a guard. **An UNDECLARED construction counts as billed, and is never built by a plan even under the
   opt-in**: an absence is not evidence of "free", and a spend that cannot be bounded first is not an
-  authorised spend. The RUN path is untouched — it builds and pays, because it was always going to
+  authorised spend. A run that READS the source still builds and pays, because it was always going to
   reach that vendor. **Nothing routes through the Dune source until Gate 3, so none of it has been
   exercised against the real source and it must not be**: the free path is proven with a stub
   constructor that fails the test if it is called, the opt-in by what it announces.
   `tools/deployer-screen/README.md` → "The dry run is SPLIT so it can be both free and honest" owns
   it.
+- **THE RUN PATH GATES ON THE SAME CONDITION NOW, AND CLOSING IT BEFORE THE CUTOVER IS THE POINT.**
+  286c's review found the identical exposure one level over — the run path built its source outside
+  any `--no-stage2` guard while consuming it only inside the block that scores — and correctly did
+  NOT fix it, that lane's intent having frozen the run path. Under a billed construction a real
+  `--no-stage2` run would have paid the coverage probe for a source Stage 2 never reads, and an
+  UNBUILDABLE source would have refused the whole run (`EXIT.upstream`) — gate, enumeration and
+  record lost — over a leg the operator switched off. **Neither is reachable today, which is exactly
+  why it closed now: the first run that ever exercises the Dune source is the one that would pay.**
+  **One mechanism, not two patterns** — `screen.mjs` → `entryFillSourceIsRead` is the single
+  predicate both paths ask, written once because two expressions that merely agree is 144a's defect
+  and is how the run path came to sit outside the plan path's guard; `screen.mjs` →
+  `runEntryFillSource` is the run half and returns `null` having touched no constructor. It is **not**
+  `planEligibility` and must never become it (a plan refuses a billed or undeclared construction, a
+  run builds both — the source-text pins say so). Stage 2's block is guarded by
+  `entryFillSource !== null`, so constructing and scoring are ONE decision. Stage 2 enabled is
+  unchanged and still reads the swap-api; **this was not the cutover.**
 - **THE 156a BOUNDARY IS GUARDED BY TWO ASSERTIONS NOW, AND THE OLD ONE CANNOT FAIL** (captain
   decision 261a). `test/deployer-screen.test.ts` → "NO Dune value can reach a Stage 2 entry number or
   Stage 3" is a deny-list on the literal filename `./dune.mjs`, and **one hop of indirection defeats

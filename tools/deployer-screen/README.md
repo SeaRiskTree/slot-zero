@@ -1214,14 +1214,28 @@ arrives as `null` — a third state meaning *not asked*, distinct from *asked an
 says so in those words rather than claiming the construction was free, which is not something that
 page found out. Otherwise the `--no-stage2` plan is unchanged.
 
-**That gate is the PLAN path's and makes no claim about the RUN path — trigger: the Gate 3 cutover,
-status: filed, deliberately not fixed here.** A real run builds its source unconditionally, outside
-any `--no-stage2` guard, while the source and its floor are consumed only inside the block that
-scores candidates. So under a future billed construction `screen.mjs --no-stage2` would run the
-billed coverage probe for a source it never reads, and would refuse the whole run (exit `7`) for an
-unbuildable source Stage 2 was never going to use. Harmless today — the selected source is free to
-build — and the run path's behaviour is frozen for this change, so it is filed as its own item
-against the cutover rather than fixed in this lane.
+**AND THE RUN PATH NOW GATES ON THE SAME CONDITION — the residual 286c filed against the cutover is
+CLOSED, and it is closed BEFORE the cutover on purpose.** 286c's review found the identical exposure
+one level over: the run path built its source unconditionally, outside any `--no-stage2` guard, while
+the source and its floor were consumed only inside the block that scores candidates. Under a billed
+construction `screen.mjs --no-stage2` would have run the billed coverage probe for a source it never
+reads, and would have refused the whole run (exit `7`) — gate, enumeration and record all lost — for
+an unbuildable source Stage 2 was never going to use. It was correctly **not** fixed in that lane,
+whose intent had frozen the run path; the reason it is fixed now rather than at the cutover is that
+**nothing routes through the Dune fill source today, so the first run that ever exercises it is the
+one that would pay.**
+
+**One mechanism, not two patterns.** `screen.mjs` → `entryFillSourceIsRead` is the single predicate
+both paths ask — *will this run read an entry fill source at all* — written once because two
+expressions that merely agree is captain decision 144a's defect and is exactly how the run path came
+to sit outside a guard the plan path already had. The run path's half is `screen.mjs` →
+`runEntryFillSource`: it returns `null` when Stage 2 is off, having touched no constructor, and
+otherwise builds, asks and guards exactly as before. It is **not** `planEligibility` and must never
+become it — a plan refuses to build a billed or undeclared construction, a run builds both, and the
+existing source-text pins say so. Stage 2's own block is then guarded by `entryFillSource !== null`
+rather than by a second reading of `opts.stage2`, so constructing and scoring are one decision.
+Stage 2 enabled is byte-for-byte unchanged, and it still reads the swap-api: **this is not the
+cutover.**
 
 **An undeclared construction is treated as billed, never as free.** A registry entry that says
 nothing about what building it costs is an absence, and reading an absence as a benign value is the

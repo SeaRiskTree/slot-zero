@@ -51,12 +51,17 @@ import {
   CREATION_SQL,
   COVERAGE_SQL,
   DEPLOYERS_PARAM,
+  DUNE_LEG_FAILED,
   ENUMERATION_TABLES,
   LAUNCH_CAP_FLOOR,
   SQL_ROW_CEILING,
   assessCoverage,
   coverageRecordRow,
+  describeWalkFallbackCliff,
   enumerateCreations,
+  priceWalkFallbackCliff,
+  walkFallbackRefusalReason,
+  walkFallbackReasons,
   launchCapPerWallet,
   normaliseSql,
   parseCoverageProbe,
@@ -1637,6 +1642,7 @@ describe('the CLI contract', () => {
       duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
       usingDune: true,
       duneRefreshProbe: false,
+      allowWalkFallback: false,
     });
     const worstCase =
       T['stage2_entry'].maxCandidatesScored *
@@ -1711,6 +1717,7 @@ describe('the CLI contract', () => {
       duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
       usingDune: true,
       duneRefreshProbe: false,
+      allowWalkFallback: false,
     });
     expect(off).toMatch(/STAGE 2 DISABLED/);
     expect(off).toMatch(/nothing about whether a window is enterable/);
@@ -1743,6 +1750,7 @@ describe('the CLI contract', () => {
       duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
       usingDune: true,
       duneRefreshProbe: false,
+      allowWalkFallback: false,
     };
     const reach = windowReachMs(T['stage2_entry']);
     /** @see PlanEligibility — a known floor carries its source's provenance with it. */
@@ -4729,6 +4737,626 @@ describe('the enumeration spends nothing it does not have to', () => {
     expect(c.executions()).toBe(0);
     expect(e.walletsRefusedByShape).toBe(2);
     expect(e.byWallet.get('W')?.usable).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// CAPTAIN DECISION 298a — a WHOLE-LEG Dune failure is a spend cliff, and it used to be invisible.
+//
+// runs/2026-08-04.json is the evidence and stays committed unedited: the coverage probe's execution
+// ended QUERY_STATE_FAILED, the whole leg died, all 82 candidates walked at 221,731 Helius credits
+// and 3,941 RPC requests — and every candidate's `duneFallbackReasons` read EMPTY, which is also
+// exactly what a candidate looks like when Dune was never asked. Three things close that here: the
+// per-candidate reason, the pre-flight price of the fallback, and a probe refresh that falls back to
+// the free cached read instead of taking the leg down with it.
+
+describe('a whole-leg Dune failure is recorded per candidate, and priced before it is paid', () => {
+  const reading = (usable: boolean, reasons: string[]) => ({ usable, reasons });
+
+  it('never leaves a candidate that fell back with an empty reason list', () => {
+    // THE INVARIANT, over every shape the leg can hand back. While Dune was ASKED, a candidate the
+    // walk answered for always says why — the whole point being that a reader can no longer meet an
+    // unexplained walk and reason about it as though it were the normal route.
+    const readings = [null, reading(false, []), reading(false, ['this wallet was refused'])];
+    const failures = [null, '', '   ', 'Dune execution of query 8204603 ended QUERY_STATE_FAILED.'];
+    for (const r of readings) {
+      for (const f of failures) {
+        const reasons = walkFallbackReasons({ attempted: true, reading: r, legFailure: f });
+        expect(reasons.length, `reading=${JSON.stringify(r)} failure=${JSON.stringify(f)}`).toBeGreaterThan(0);
+        for (const line of reasons) expect(line.trim()).not.toBe('');
+        // AND NO SENTENCE TWICE. The marker used to splice the wallet's first reason in and then
+        // append the whole list, so every non-thrown whole-batch class wrote that paragraph twice
+        // per candidate — ~390 copies in a 195-candidate record.
+        expect(new Set(reasons).size, `reading=${JSON.stringify(r)} failure=${JSON.stringify(f)}`).toBe(reasons.length);
+      }
+    }
+  });
+
+  it('marks a whole-LEG failure differently from a per-WALLET refusal, and carries the vendor sentence', () => {
+    // The two are different findings about different things. A per-wallet refusal is evidence about
+    // that wallet; a leg failure is evidence about the run, and a cost model built from the second
+    // while reading it as the first is what produced a figure three orders of magnitude too high.
+    // The marker keys on the LEG answering for nobody, never on this wallet being unusable: a wallet
+    // the probe refused while the leg answered for others is a per-WALLET refusal.
+    const perWallet = walkFallbackReasons({
+      attempted: true,
+      reading: reading(false, ['the run-level coverage probe refused these surfaces']),
+      legFailure: null,
+      legAnsweredForNobody: false,
+    });
+    expect(perWallet).toEqual(['the run-level coverage probe refused these surfaces']);
+    expect(perWallet.join(' ')).not.toContain(DUNE_LEG_FAILED);
+
+    // And when the SAME per-wallet sentence is one of a whole batch's, the marker is PREPENDED
+    // rather than substituted — the leg failing and the specific refusal are both true, and a
+    // script counting whole-leg failures must not miss the coverage-refusal class.
+    const wholeBatch = walkFallbackReasons({
+      attempted: true,
+      reading: reading(false, ['the run-level coverage probe refused these surfaces']),
+      legFailure: null,
+      legAnsweredForNobody: true,
+    });
+    expect(wholeBatch[0]!.startsWith(`${DUNE_LEG_FAILED}:`)).toBe(true);
+    expect(wholeBatch).toContain('the run-level coverage probe refused these surfaces');
+    // With no vendor sentence of its own, the marker POINTS at that reason rather than restating it:
+    // the wallet's sentence appears exactly once in the list and not inside the marker as well.
+    expect(new Set(wholeBatch).size).toBe(wholeBatch.length);
+    expect(wholeBatch[0]).not.toContain('the run-level coverage probe refused these surfaces');
+    expect(wholeBatch[0]).toMatch(/see this candidate's own reason below/i);
+    // And the marker describes what is true of every whole-batch class — including the two that are
+    // deliberate refusals rather than failures — while the machine-readable token is unchanged.
+    expect(wholeBatch[0]).toMatch(/answered for NO candidate in this batch/);
+
+    const wholeLeg = walkFallbackReasons({
+      attempted: true,
+      reading: null,
+      legFailure: 'Dune execution of query 8204603 ended QUERY_STATE_FAILED.',
+    });
+    expect(wholeLeg).toHaveLength(1);
+    expect(wholeLeg[0]!.startsWith(`${DUNE_LEG_FAILED}:`)).toBe(true);
+    // The vendor's own sentence travels with it — an operator who paid for a failed execution must
+    // not have to go and ask Dune separately what it objected to.
+    expect(wholeLeg[0]).toContain('QUERY_STATE_FAILED');
+    // And the sentence says the walk is correct rather than suspect. The defect is the silence and
+    // the spend, never the measurement.
+    expect(wholeLeg[0]).toMatch(/correct answer/i);
+  });
+
+  it('stays EMPTY when Dune was never asked, because there the walk is the planned route', () => {
+    // --no-dune, --ownership-only and an unset key all land here, and none of them is a fallback.
+    for (const r of [null, reading(false, ['ignored'])]) {
+      expect(walkFallbackReasons({ attempted: false, reading: r, legFailure: 'ignored' })).toEqual([]);
+    }
+    // As does a candidate Dune ANSWERED for.
+    expect(walkFallbackReasons({ attempted: true, reading: reading(true, []), legFailure: null })).toEqual([]);
+  });
+
+  it('carries a reason through every way enumerateCreations can answer for nobody', async () => {
+    // The end-to-end half: drive the real enumeration into each whole-batch refusal and feed what it
+    // returns to the rule the screen applies. A future refusal shape that forgot its sentence fails
+    // here rather than shipping as another silent walk.
+    const stub = (handlers: Record<string, () => Response>) =>
+      vi.fn(async (url: unknown) => {
+        const path = String(url).replace(DUNE_API_BASE, '');
+        for (const [prefix, make] of Object.entries(handlers)) if (path.startsWith(prefix)) return make();
+        throw new Error(`unstubbed ${path}`);
+      });
+    const okJson = (body: unknown) => () => new Response(JSON.stringify(body), { status: 200 });
+    const resultOf = (rows: unknown[]) =>
+      okJson({ result: { rows, metadata: { total_row_count: rows.length, total_result_set_bytes: 100 } } });
+    const client = (fetchImpl: unknown) =>
+      new DuneClient({
+        key: DUNE_FAKE_KEY,
+        maxExecutions: 2,
+        maxRequests: 40,
+        minIntervalMs: 0,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        sleepImpl: async () => {},
+      });
+
+    const holed = probeRows([
+      { table: 'evt_createevent', first: '2026-01-01 00:00:00.000 UTC', last: '2026-08-03 00:00:00.000 UTC', total: 1, months: ['2026-01-01 00:00:00.000 UTC'] },
+      { table: 'call_create', first: '2026-01-01 00:00:00.000 UTC', last: '2026-08-03 00:00:00.000 UTC', total: 1, months: ['2026-01-01 00:00:00.000 UTC'] },
+    ]);
+    const cases: { name: string; run: () => Promise<Map<string, { usable: boolean; reasons: string[] }>> }[] = [
+      {
+        name: 'the coverage probe refuses',
+        run: async () => {
+          const e = await enumerateCreations(
+            client(stub({ '/query/2/results': resultOf(holed), '/query/2': okJson({ query_sql: COVERAGE_SQL }) })),
+            { wallets: [DUNE_WALLET], creationQueryId: 1, coverageQueryId: 2, refreshProbe: false, nowMs: NOW_MS, bounds: DUNE_BOUNDS, allowance: DUNE_ALLOWANCE_CLEARED },
+          );
+          return e.byWallet;
+        },
+      },
+      {
+        name: 'the enumeration returns no row for the wallet',
+        run: async () => {
+          const e = await enumerateCreations(
+            client(
+              stub({
+                '/query/2/results': resultOf(HEALTHY_PROBE()),
+                '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+                '/query/1/execute': okJson({ execution_id: 'e1' }),
+                '/query/1': okJson({ query_sql: CREATION_SQL }),
+                '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+                '/execution/e1/results': resultOf([]),
+              }),
+            ),
+            { wallets: [DUNE_WALLET], creationQueryId: 1, coverageQueryId: 2, refreshProbe: false, nowMs: NOW_MS, bounds: DUNE_BOUNDS, allowance: DUNE_ALLOWANCE_CLEARED },
+          );
+          return e.byWallet;
+        },
+      },
+      {
+        name: 'the monthly credit allowance refuses before a request',
+        run: async () => {
+          const e = await enumerateCreations(client(stub({})), {
+            wallets: [DUNE_WALLET],
+            creationQueryId: 1,
+            coverageQueryId: 2,
+            refreshProbe: false,
+            nowMs: NOW_MS,
+            bounds: DUNE_BOUNDS,
+            allowance: null,
+          });
+          return e.byWallet;
+        },
+      },
+    ];
+
+    for (const c of cases) {
+      const byWallet = await c.run();
+      const r = byWallet.get(DUNE_WALLET) ?? null;
+      expect(r?.usable, c.name).toBe(false);
+      // Every one of these refuses the WHOLE batch, which is the fact the screen computes once from
+      // the leg's own result and hands down. So every one carries the marker, not only the thrown
+      // shape — a script counting whole-batch failures on it counts all of them.
+      const reasons = walkFallbackReasons({
+        attempted: true,
+        reading: r,
+        legFailure: null,
+        legAnsweredForNobody: [...byWallet.values()].every((w) => !w.usable),
+      });
+      expect(reasons.length, c.name).toBeGreaterThan(0);
+      expect(reasons[0]!.startsWith(`${DUNE_LEG_FAILED}:`), c.name).toBe(true);
+      // And the wallet's own sentence survives beside it rather than being replaced by the marker —
+      // exactly once, never restated inside the marker as well.
+      for (const own of r?.reasons ?? []) expect(reasons, c.name).toContain(own);
+      expect(new Set(reasons).size, c.name).toBe(reasons.length);
+      for (const own of r?.reasons ?? []) expect(reasons[0], c.name).not.toContain(own);
+    }
+  });
+
+  it('prices the fallback in the walk\'s own unit and refuses the measured populations', () => {
+    const T = loadThresholds() as Record<string, Record<string, number>>;
+    const d = T['dune']!;
+    const helius = T['creation_walk_helius']!;
+    const priced = (candidates: number) =>
+      priceWalkFallbackCliff({
+        candidates,
+        healthyWalkShare: d['legFallbackHealthyWalkShare']!,
+        cliffMultiple: d['legFallbackCliffMultiple']!,
+        minCandidates: d['legFallbackMinCandidates']!,
+        perCandidate: helius['maxCreditsPerCandidate']!,
+        unit: 'Helius credit',
+      });
+
+    // The two real events this guard exists for: runs/2026-08-04.json (82 candidates, whole leg
+    // dead on a failed probe execution) and the 2026-08-05 untiered leg (76, reading refused whole).
+    for (const n of [82, 76]) {
+      const c = priced(n);
+      expect(c.cliff, `${n} candidates`).toBe(true);
+      expect(c.projected).toBe(n * helius['maxCreditsPerCandidate']!);
+      expect(c.multiple).toBeGreaterThan(d['legFallbackCliffMultiple']!);
+    }
+
+    // AND IT IS NOT A CONSTANT. The baseline rounds UP to a whole candidate, so a small batch's
+    // whole-batch fallback is a small multiple of its own plan and proceeds untouched. A cliff is a
+    // magnitude as well as a ratio.
+    expect(priced(0).cliff).toBe(false);
+    expect(priced(3).cliff).toBe(false);
+
+    // THE 4-9 BAND, EVERY COUNT PINNED. The ratio alone is non-monotone down here — the raw
+    // multiples read 4.0x, 5.0x, 6.0x, 7.0x, 4.0x, 4.5x at n = 4..9 — so without the magnitude floor
+    // a batch of 5 (~26,000 Helius credits) would be refused while a batch of 8 (~41,600) proceeded.
+    // The floor is what makes the published claim "a batch of 8 or fewer proceeds, and the guard
+    // first bites at 9" true of the code.
+    for (const n of [4, 5, 6, 7, 8]) expect(priced(n).cliff, `${n} candidates`).toBe(false);
+    expect(priced(9).cliff).toBe(true);
+    // The ratio is still reported honestly below the floor; it is the VERDICT the floor changes.
+    expect(priced(5).multiple).toBeCloseTo(5, 10);
+    expect(priced(5).minCandidates).toBe(d['legFallbackMinCandidates']!);
+
+    // MONOTONICITY IS THE REQUIREMENT, not the spot values: once the guard fires it must fire on
+    // every larger batch, or a cheaper run is refused while a dearer one proceeds.
+    let fired = false;
+    for (let n = 0; n <= 200; n += 1) {
+      const c = priced(n).cliff;
+      if (c) fired = true;
+      expect(c, `${n} candidates must not un-fire`).toBe(fired ? true : false);
+    }
+    expect(fired).toBe(true);
+
+    // The unit is carried, never converted: the keyless walk bills in requests and wall clock, and
+    // there is no exchange rate between that and a Helius credit.
+    const keyless = priceWalkFallbackCliff({
+      candidates: 82,
+      healthyWalkShare: d['legFallbackHealthyWalkShare']!,
+      cliffMultiple: d['legFallbackCliffMultiple']!,
+      minCandidates: d['legFallbackMinCandidates']!,
+      perCandidate: T['creation_walk']!['maxRpcRequestsPerCandidate']!,
+      unit: 'keyless RPC request',
+    });
+    expect(keyless.unit).toBe('keyless RPC request');
+    expect(keyless.projected).toBe(82 * T['creation_walk']!['maxRpcRequestsPerCandidate']!);
+    // Same candidate counts on both sides, so the multiple is the SAME number in either unit.
+    expect(keyless.multiple).toBeCloseTo(priced(82).multiple, 10);
+  });
+
+  it('derives the pinned share from records committed in THIS repository', () => {
+    // The baseline must be the plan that was actually made rather than zero, and the only evidence
+    // for it is the two 2026-08-05 legs whose Dune leg ANSWERED: a coverage probe refuses one wallet
+    // at a time, so a healthy leg still sends some candidates to the walk. Re-derived here so the
+    // pin cannot drift from the records it is quoted from.
+    const dir = fileURLToPath(new URL('../tools/deployer-screen/measurements/2026-08-05-seed-comparison/', import.meta.url));
+    let walked = 0;
+    let total = 0;
+    for (const file of ['2026-08-05-tier-good.json', '2026-08-05-tier-elite.json']) {
+      const parsed = JSON.parse(readFileSync(join(dir, file), 'utf8')) as {
+        run?: { candidates: { creation: { enumerationSource: string } | null }[] };
+        candidates?: { creation: { enumerationSource: string } | null }[];
+      };
+      const run = parsed.run ?? (parsed as { candidates: { creation: { enumerationSource: string } | null }[] });
+      const scored = run.candidates.filter((c) => c.creation !== null);
+      // Both legs kept their Dune answer, which is what makes them the healthy population.
+      expect(scored.some((c) => c.creation!.enumerationSource === 'dune')).toBe(true);
+      total += scored.length;
+      walked += scored.filter((c) => c.creation!.enumerationSource !== 'dune').length;
+    }
+    expect(total).toBe(128);
+    expect(walked).toBe(17);
+    const T = loadThresholds() as Record<string, Record<string, number>>;
+    expect(T['dune']!['legFallbackHealthyWalkShare']).toBeCloseTo(walked / total, 3);
+  });
+
+  it('states the NEW worst case and names the flag, on both sides of the decision', () => {
+    const cliff = priceWalkFallbackCliff({
+      candidates: 82,
+      healthyWalkShare: 0.133,
+      cliffMultiple: 4,
+      minCandidates: 9,
+      perCandidate: 5200,
+      unit: 'Helius credit',
+    });
+    const refusal = describeWalkFallbackCliff(cliff, { authorised: false, cliffMultiple: 4, flag: '--allow-walk-fallback' }).join('\n');
+    // The figure an operator needs is the one they have not yet paid.
+    expect(refusal).toContain('426,400');
+    expect(refusal).toContain('--allow-walk-fallback');
+    // And it separates what is already spent from what this refusal saves.
+    expect(refusal).toMatch(/no Helius credit\s+and no Solana RPC request was spent/);
+    expect(refusal).toMatch(/already spent/);
+    // And it must not read as a verdict on the walk.
+    expect(refusal).toMatch(/correct answer/i);
+
+    const allowed = describeWalkFallbackCliff(cliff, { authorised: true, cliffMultiple: 4, flag: '--allow-walk-fallback' }).join('\n');
+    expect(allowed).toContain('426,400');
+    expect(allowed).not.toMatch(/Refusing to continue/);
+  });
+
+  it('the dry-run preview reads the operator\'s own flag rather than describing it as unpassed', () => {
+    // Captain decision 309a. The preview line used to say "unless --allow-walk-fallback is passed"
+    // even when it HAD been passed, which reads as though the flag changed nothing. --dry-run is not
+    // a place the flag is inert — previewing what a real run would do is legitimate use of it — so
+    // the line states which side of the decision this plan is on.
+    const T = loadThresholds();
+    const plan = {
+      seedPlan: [],
+      maxCandidates: T['budget'].maxCandidates,
+      maxKeyedRequests: 45,
+      consistency: false,
+      maxKeylessRequests: T['budget'].maxKeylessRequests,
+      historySource: 'creation-derived' as const,
+      creationWalk: T['creation_walk'],
+      costBounds: T['stage2_cost'],
+      stage2: false,
+      maxScored: T['stage2_entry'].maxCandidatesScored,
+      entryThresholds: T['stage2_entry'],
+      entryEligibility: null,
+      spendAuthorised: false,
+      keyDescription: null,
+      rpcEndpoint: resolveSolanaRpcEndpoint({}),
+      indexedWalk: T['creation_walk_helius'],
+      worstCaseCredits: 0,
+      dune: T['dune'],
+      duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
+      usingDune: true,
+      duneRefreshProbe: false,
+      allowWalkFallback: false,
+    };
+    const withoutFlag = renderDryRun(plan);
+    expect(withoutFlag).toMatch(/SPEND CLIFF/);
+    expect(withoutFlag).toMatch(/REFUSED before the first walk request unless --allow-walk-fallback is passed/);
+
+    const withFlag = renderDryRun({ ...plan, allowWalkFallback: true });
+    // Same figures, opposite reading of the operator's own authorisation.
+    expect(withFlag).toMatch(/SPEND CLIFF/);
+    expect(withFlag).toMatch(/--allow-walk-fallback has AUTHORISED it/);
+    expect(withFlag).not.toMatch(/unless --allow-walk-fallback is passed/);
+
+    // And below the magnitude floor there is no refusal to describe on either side, so the flag
+    // changes nothing and the line says so identically. But it must say WHICH reason spares it: at
+    // 8 candidates the ratio is 4.0x and the BAR is what spares the run, while at 5 it is 5.0x —
+    // over the bar, and only the floor spares it. Reporting the second as "under the bar" would
+    // contradict the figure printed one line above it, and that band is reachable, since
+    // --candidates below ~39 is the documented row-ceiling mitigation.
+    const atCap = (n: number) => renderDryRun({ ...plan, maxCandidates: n });
+    expect(atCap(8)).toMatch(/Under the bar at this candidate cap/);
+    expect(atCap(8)).toMatch(/would proceed without the flag/);
+    const overBarUnderFloor = atCap(5);
+    expect(overBarUnderFloor).toMatch(/5\.0x/);
+    expect(overBarUnderFloor).not.toMatch(/Under the bar at this candidate cap/);
+    expect(overBarUnderFloor).toMatch(
+      new RegExp(`Over the bar, but under the magnitude floor of ${T['dune'].legFallbackMinCandidates} candidates`),
+    );
+    expect(overBarUnderFloor).toMatch(/would proceed without the flag/);
+    expect(renderDryRun({ ...plan, maxCandidates: 5, allowWalkFallback: true })).toMatch(/magnitude floor/);
+  });
+
+  it('the refusal is FILED rather than discarded, as an incomplete record', () => {
+    // Captain decision 310a. By the time this refusal fires the seed enumeration is sunk and the
+    // Dune leg has been billed for its probe read — and on --dune-refresh-probe for a failed
+    // execution — so the run-level Dune block and the seed coverage are paid-for state. The repo's
+    // own rule, quoted in screen.mjs's catch block: a terminal path after vendor spend must not
+    // discard paid-for measurements, or re-running just spends the shared allowance again to learn
+    // the same thing.
+    const T = loadThresholds() as Record<string, Record<string, number>>;
+    const d = T['dune']!;
+    const cliff = priceWalkFallbackCliff({
+      candidates: 82,
+      healthyWalkShare: d['legFallbackHealthyWalkShare']!,
+      cliffMultiple: d['legFallbackCliffMultiple']!,
+      minCandidates: d['legFallbackMinCandidates']!,
+      perCandidate: T['creation_walk_helius']!['maxCreditsPerCandidate']!,
+      unit: 'Helius credit',
+    });
+    expect(cliff.cliff).toBe(true);
+    const reason = walkFallbackRefusalReason(cliff, {
+      cliffMultiple: d['legFallbackCliffMultiple']!,
+      flag: '--allow-walk-fallback',
+    });
+    // It says what was refused, in the unit the run would have billed in, and names the flag that
+    // takes the decision deliberately.
+    expect(reason).toMatch(/REFUSED before the first walk request/);
+    expect(reason).toContain('426,400');
+    expect(reason).toContain('Helius credit');
+    expect(reason).toContain('--allow-walk-fallback');
+    expect(reason).toContain('--no-dune');
+
+    // And it reaches the record through the SAME mechanism a ceiling hit uses — an abort reason, so
+    // no record field was added and RECORD_SCHEMA_VERSION does not move.
+    const truncation = deriveTruncation({
+      abortReason: reason,
+      coverage: { coverageTruncated: false, candidateCap: 195, droppedByCandidateCap: 0 },
+      unmeasured: [],
+    });
+    expect(truncation.truncated).toBe(true);
+    expect(truncation.truncationReason).toContain('--allow-walk-fallback');
+    // An incomplete record must never land on the path a complete one would use.
+    expect(partialOutPath('runs/2026-08-06.json')).toBe('runs/2026-08-06.partial.json');
+  });
+
+  it('carries the opt-in flag, off by default', () => {
+    const plain = parseArgs([]);
+    if (!plain.ok) throw new Error('unreachable');
+    expect(plain.opts.allowWalkFallback).toBe(false);
+    const on = parseArgs(['--allow-walk-fallback']);
+    if (!on.ok) throw new Error('unreachable');
+    expect(on.opts.allowWalkFallback).toBe(true);
+
+    // And it is refused where it would be UNCONDITIONALLY inert — captain decision 286c's rule for
+    // the other opt-in: a flag that silently authorises nothing is how an operator comes to believe
+    // they authorised something they did not.
+    for (const skip of ['--no-dune', '--ownership-only']) {
+      const inert = parseArgs(['--allow-walk-fallback', skip]);
+      expect(inert.ok, skip).toBe(false);
+      if (!inert.ok) expect(inert.message).toMatch(/no Dune leg to lose/);
+    }
+  });
+
+  it('asks the guard on the run path, between the leg and the first walk request', () => {
+    // There is no seam to drive `main`'s gate loop through without a network, so the wiring is
+    // asserted where it lives. The substance — the arithmetic, the reasons and the wording — is
+    // pinned behaviourally above; what this catches is the guard being computed and then not
+    // consulted, which would restore the silence exactly.
+    const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    expect(screen).toContain('duneLegAttempted = usingDune && duneClient !== null && gating.length > 0;');
+    expect(screen).toContain('if (cliff.cliff) {');
+    expect(screen).toContain('if (!opts.allowWalkFallback) {');
+    // The guard sits BEFORE the gate loop, which is where the first walk request is issued. After it
+    // the refusal would be a report rather than a refusal.
+    expect(screen.indexOf('priceWalkFallbackCliff({')).toBeLessThan(screen.indexOf('for (const seed of gating) {'));
+  });
+});
+
+describe('a failed coverage-probe EXECUTION does not take the whole Dune leg down', () => {
+  const stub = (handlers: Record<string, () => Response>) =>
+    vi.fn(async (url: unknown) => {
+      const path = String(url).replace(DUNE_API_BASE, '');
+      for (const [prefix, make] of Object.entries(handlers)) if (path.startsWith(prefix)) return make();
+      throw new Error(`unstubbed ${path}`);
+    });
+  const okJson = (body: unknown) => () => new Response(JSON.stringify(body), { status: 200 });
+  const resultOf = (rows: unknown[]) =>
+    okJson({ result: { rows, metadata: { total_row_count: rows.length, total_result_set_bytes: 100 } } });
+
+  it('falls back to the CACHED probe and lets the enumeration answer, the incident it is named for', async () => {
+    // runs/2026-08-04.json exactly: the probe's execution ended QUERY_STATE_FAILED with a full
+    // execution of enumeration budget still unspent, and the exception took all 82 candidates to the
+    // walk. The repair is a READ and never a second execution — a failed execution is billed either
+    // way, is never retried anywhere in this repository, and a retry would spend the enumeration's
+    // own remaining execution to buy the same answer, leaving nothing to enumerate with.
+    let probeReads = 0;
+    const fetchImpl = stub({
+      '/query/2/results': () => {
+        probeReads += 1;
+        return new Response(
+          JSON.stringify({
+            result: { rows: HEALTHY_PROBE(), metadata: { total_row_count: HEALTHY_PROBE().length, total_result_set_bytes: 1 } },
+          }),
+          { status: 200 },
+        );
+      },
+      '/query/2/execute': okJson({ execution_id: 'p1' }),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/execution/p1/status': okJson({ state: 'QUERY_STATE_FAILED', error: { type: 'QUERY_FAILED', message: 'integer out of range' } }),
+      '/query/1/execute': okJson({ execution_id: 'e1' }),
+      '/query/1': okJson({ query_sql: CREATION_SQL }),
+      '/execution/e1/status': okJson({ state: 'QUERY_STATE_COMPLETED' }),
+      '/execution/e1/results': resultOf([
+        { deployer: DUNE_WALLET, mint: 'M', created_at: '2026-01-01 00:00:00.000 UTC', bonded: true, launches_total: 1 },
+      ]),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 40,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const announced: string[] = [];
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: true,
+      nowMs: NOW_MS,
+      bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
+      onProbeRefreshFailure: (note) => announced.push(note),
+    });
+
+    // The leg SURVIVES: coverage bounded from the cache, and the candidate keeps its Dune answer
+    // instead of costing a signature walk.
+    expect(e.coverage.ok).toBe(true);
+    expect(e.byWallet.get(DUNE_WALLET)?.usable).toBe(true);
+    expect(e.probe.fromCache).toBe(true);
+    // Exactly ONE cached read, and the executions stay inside the pinned budget: the failed probe
+    // and the enumeration, with no retry of either.
+    expect(probeReads).toBe(1);
+    expect(c.executions()).toBe(2);
+    expect(c.executions()).toBeLessThanOrEqual((loadThresholds() as Record<string, Record<string, number>>)['dune']!['maxExecutionsPerRun']!);
+    // The spend is real, so the operator hears about it even though the run recovered.
+    expect(announced).toHaveLength(1);
+    expect(announced[0]).toContain('QUERY_STATE_FAILED');
+  });
+
+  it('keeps a STALE probe stale rather than buying a second read of the same answer', async () => {
+    // The other order: the cache was read, judged stale, and the one budgeted re-execution failed.
+    // There is nothing to repair — the cached probe in hand IS the fallback — so no second read is
+    // issued, the coverage stays refused, and every candidate carries that refusal as its reason.
+    let probeReads = 0;
+    const fetchImpl = stub({
+      '/query/2/results': () => {
+        probeReads += 1;
+        return new Response(
+          JSON.stringify({
+            result: { rows: HEALTHY_PROBE(), metadata: { total_row_count: HEALTHY_PROBE().length, total_result_set_bytes: 1 } },
+          }),
+          { status: 200 },
+        );
+      },
+      '/query/2/execute': okJson({ execution_id: 'p1' }),
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/execution/p1/status': okJson({ state: 'QUERY_STATE_FAILED', error: { type: 'QUERY_FAILED', message: 'boom' } }),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 40,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: false,
+      nowMs: NOW_MS + 48 * 3_600_000,
+      bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
+    });
+    expect(probeReads).toBe(1);
+    // ONE execution: the failed refresh. The enumeration is never issued over unbounded coverage.
+    expect(c.executions()).toBe(1);
+    expect(e.coverage.ok).toBe(false);
+    const r = e.byWallet.get(DUNE_WALLET) ?? null;
+    expect(r?.usable).toBe(false);
+    expect(walkFallbackReasons({ attempted: true, reading: r, legFailure: null }).length).toBeGreaterThan(0);
+  });
+
+  it('never re-executes a probe whose refresh already failed, even when the cache it fell back to is STALE', async () => {
+    // The third order, and the one that would double-bill: --dune-refresh-probe executes (billed),
+    // fails, and falls back to a cached probe that is ALSO stale — which is the ordinary reason an
+    // operator asked for a refresh at all. Re-executing there would retry the one call this
+    // repository never retries AND spend the enumeration's own remaining execution, so the leg would
+    // die anyway at two bills instead of one.
+    let probeReads = 0;
+    let probeExecutes = 0;
+    const fetchImpl = stub({
+      '/query/2/results': () => {
+        probeReads += 1;
+        return new Response(
+          JSON.stringify({
+            result: { rows: HEALTHY_PROBE(), metadata: { total_row_count: HEALTHY_PROBE().length, total_result_set_bytes: 1 } },
+          }),
+          { status: 200 },
+        );
+      },
+      '/query/2/execute': () => {
+        probeExecutes += 1;
+        return new Response(JSON.stringify({ execution_id: 'p1' }), { status: 200 });
+      },
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/execution/p1/status': okJson({ state: 'QUERY_STATE_FAILED', error: { type: 'QUERY_FAILED', message: 'integer out of range' } }),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 40,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const announced: string[] = [];
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: true,
+      // Far enough past the cached probe's own instant that staleness is the ONLY thing wrong with
+      // it, which is exactly the condition the re-execution branch reads.
+      nowMs: NOW_MS + 48 * 3_600_000,
+      bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
+      onProbeRefreshFailure: (note) => announced.push(note),
+    });
+
+    // ONE billed execution, not two: the failed refresh, and no retry of it from the staleness path.
+    expect(probeExecutes).toBe(1);
+    expect(c.executions()).toBe(1);
+    expect(announced).toHaveLength(1);
+    // The cache answered once and was judged stale; asking it again buys the same bytes.
+    expect(probeReads).toBe(1);
+    expect(e.probe.fromCache).toBe(true);
+    expect(e.coverage.ok).toBe(false);
+    expect(e.coverage.staleOnly).toBe(true);
+    // And the refusal reaches the candidate rather than leaving an unexplained walk behind it.
+    const r = e.byWallet.get(DUNE_WALLET) ?? null;
+    expect(r?.usable).toBe(false);
+    expect(walkFallbackReasons({ attempted: true, reading: r, legFailure: null }).length).toBeGreaterThan(0);
   });
 });
 
@@ -11644,6 +12272,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
         usingDune: true,
         duneRefreshProbe: false,
+        allowWalkFallback: false,
       };
       const text = renderDryRun({
         ...plan,
@@ -11752,6 +12381,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
         usingDune: true,
         duneRefreshProbe: false,
+        allowWalkFallback: false,
       };
 
       // (1) KNOWN and BILLED — the construction spent, and the banner points at the bound and the
@@ -11868,6 +12498,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
         usingDune: true,
         duneRefreshProbe: false,
+        allowWalkFallback: false,
       };
       const T = loadThresholds()['stage2_entry'] as never;
       const bounds = entryFillBounds(T, Date.parse('2026-08-05T12:00:00Z'));
@@ -12014,6 +12645,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
         usingDune: true,
         duneRefreshProbe: false,
+        allowWalkFallback: false,
         entryEligibility: unavailable,
       };
       // (1) the screen's Stage 2 block, and (2) the spend-authorised banner, which used to wrap the
@@ -12075,6 +12707,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
         usingDune: true,
         duneRefreshProbe: false,
+        allowWalkFallback: false,
       };
       const known = renderDryRun({
         ...plan,
@@ -12326,6 +12959,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
         usingDune: true,
         duneRefreshProbe: false,
+        allowWalkFallback: false,
         entryEligibility: eligibility,
       });
       const prose = text.replace(/\s+/g, ' ');

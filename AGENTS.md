@@ -515,6 +515,31 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   the old ~115 five-column reading as non-reproducible, and states the live tripwire: **headroom is
   now 15.08 bytes, less than one more boolean column is worth, so a SEVENTH column must re-measure
   and raise the pin**), one execution for the whole batch, and a **cached** probe read by default.
+  **A FAILED PROBE EXECUTION NO LONGER TAKES THE LEG WITH IT** (captain decision 298a):
+  `readCoverageProbe` falls back to Dune's **cached** result, which costs no execution — a READ, never
+  a retry, and the never-retry rule above is exactly why (`maxExecutionsPerRun` is 2, so a retry would
+  spend the enumeration's own remaining execution to buy the same answer). Its signature in a record
+  is `dune.executions` ≥ 1 beside `dune.coverage.fromCache: true`.
+- **LOSING THE WHOLE DUNE LEG IS A SPEND CLIFF, NOT THE SLOWER ROAD THE DESIGN INTENT DESCRIBES, AND
+  IT IS NOW REFUSED BEFORE IT IS PAID** (captain decision 298a, 2026-08-06). Measured from records
+  committed here: `runs/2026-08-04.json` lost its leg to a failed probe execution and spent **221,731
+  Helius credits / 3,941 RPC requests** over 82 candidates; the 2026-08-05 untiered leg spent
+  **232,937 over 76**, against **1,924 over 69** for the leg that kept its answer.
+  `creation_walk_helius.maxCreditsPerRun` catches none of it and cannot — it is sized for the walk
+  being the INTENDED route, so it already reserves every candidate walking. Two guards, and **neither
+  distrusts the walk**, which is the correct answer to a Dune refusal and the only surface that says
+  who holds a curve today: (1) `dune.mjs` → `walkFallbackReasons` puts a sentence on EVERY candidate
+  that fell back while the leg was asked — a whole-leg one starts with the `dune-leg-failed:` marker —
+  so `duneFallbackReasons` empty now means only "Dune answered" or "Dune was never asked"; before
+  this, all 82 candidates of `runs/2026-08-04.json` read empty and a per-candidate cost model built
+  from that record described the DEGRADED path while looking like the normal one, by ~3 orders of
+  magnitude. (2) `priceWalkFallbackCliff` prices the whole-batch fallback against the plan that was
+  made and `screen.mjs` refuses the run (exit 2, before the first walk request) past
+  `dune.legFallbackCliffMultiple`, unless `--allow-walk-fallback`. **Cite
+  `thresholds.json` → `dune.justification.legFallbackCliffMultiple` and the tool README's "A
+  WHOLE-LEG Dune failure is a spend cliff" rather than restating the figures**; the baseline share is
+  re-derived from the two committed legs by a test. The guard first bites at 9 candidates and is inert
+  below that, and inert on a run that never asked Dune.
 - **THE MONTHLY CEILING IS NOW CHECKED BEFORE A RUN SPENDS, NOT DISCOVERED BY HITTING IT — and the
   period is NOT a calendar month.** `POST /api/v1/usage` is free (a metadata endpoint that consumes
   no credits), reports `credits_used`/`credits_included` per **billing period**, and this account's

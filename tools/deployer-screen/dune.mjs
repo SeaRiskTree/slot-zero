@@ -2094,8 +2094,14 @@ export async function enumerateCreations(client, opts) {
  * refuse the WHOLE batch while giving every wallet the same run-level sentence — so keying on "this
  * wallet produced no reason of its own" would have marked the thrown class alone and left a script
  * counting whole-leg failures short by every other one. Where a wallet has its own sentence too, the
- * marker is PREPENDED rather than substituted: the leg failing and the specific refusal are both
- * true, and a reader needs both.
+ * marker is PREPENDED rather than substituted: the leg answering for nobody and the specific refusal
+ * are both true, and a reader needs both.
+ *
+ * **THE TOKEN SAYS "FAILED"; THE PROSE AROUND IT DOES NOT** (captain decision 313a). Two of the
+ * classes it now covers — a coverage probe that would not vouch for its surfaces, a credit allowance
+ * that refused before the first request — are deliberate, correct refusals rather than failures, so
+ * the sentence states what is true of every class: the leg answered for NO candidate in this batch.
+ * The token itself is unchanged, because it is the machine-readable key a script filters on.
  */
 export const DUNE_LEG_FAILED = 'dune-leg-failed';
 
@@ -2123,6 +2129,12 @@ export const DUNE_LEG_FAILED = 'dune-leg-failed';
  * leg ANSWERED for others is a per-WALLET refusal and gets its own reasons with no marker. Where both
  * are true the marker is PREPENDED to the wallet's own reasons rather than replacing them.
  *
+ * **AND NO SENTENCE APPEARS TWICE IN THE RETURNED LIST** (captain decision 313a). `legFailure` is
+ * embedded in the marker only where the wallet carries no reason of its own — the thrown-execution
+ * shape, where the vendor's message exists nowhere else. Where the wallet does carry one, the marker
+ * points at it instead of restating it, because every non-thrown whole-batch class hands the SAME
+ * run-level sentence to every wallet and duplicating it scales with the batch.
+ *
  * @param {object} input
  * @param {boolean} input.attempted Whether this run reached the Dune leg for this batch at all.
  * @param {{ usable: boolean, reasons: readonly string[] } | null} input.reading This wallet's own
@@ -2141,18 +2153,25 @@ export function walkFallbackReasons(input) {
   if (!wholeLeg) return own;
   // The leg answered for nobody. Everything below is one sentence rather than a blank, because a
   // blank here is the whole defect: it is indistinguishable from a run that never asked Dune.
-  const note =
+  //
+  // NO SENTENCE IS WRITTEN TWICE (captain decision 313a). The vendor's own words are embedded only
+  // when the wallet does NOT already carry them: a thrown execution leaves `own` empty and its
+  // message nowhere else, so an operator who paid for a failed execution must not have to go and ask
+  // Dune what it objected to. Every other whole-batch class puts the same run-level sentence on every
+  // wallet, so splicing the first one in here as well duplicated it in `own` — ~390 copies of one
+  // paragraph in a 195-candidate record, and twice per candidate on the console.
+  const closing =
     input.legFailure !== null && input.legFailure.trim() !== ''
-      ? input.legFailure.trim()
+      ? `The failure: ${input.legFailure.trim()}`
       : own.length > 0
-        ? own[0]
-        : 'no reason survived from the failure itself';
+        ? `Why it answered for nobody: see this candidate's own reason below.`
+        : `No reason survived from the leg itself.`;
   return [
-    `${DUNE_LEG_FAILED}: the Dune enumeration leg failed as a WHOLE and answered for no candidate in ` +
-      `this batch, so this wallet's history was walked from the Solana signature index instead. That ` +
-      `is the correct answer to a Dune refusal and it is not a weaker measurement — it is a far more ` +
-      `expensive one, and it is recorded per candidate so a cost model built from this record cannot ` +
-      `read the degraded route as the normal one. The failure: ${note}`,
+    `${DUNE_LEG_FAILED}: the Dune enumeration leg answered for NO candidate in this batch, so this ` +
+      `wallet's history was walked from the Solana signature index instead. That is the correct ` +
+      `answer to a Dune refusal and it is not a weaker measurement — it is a far more expensive one, ` +
+      `and it is recorded per candidate so a cost model built from this record cannot read the ` +
+      `degraded route as the normal one. ${closing}`,
     ...own,
   ];
 }

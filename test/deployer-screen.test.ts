@@ -4764,6 +4764,10 @@ describe('a whole-leg Dune failure is recorded per candidate, and priced before 
         const reasons = walkFallbackReasons({ attempted: true, reading: r, legFailure: f });
         expect(reasons.length, `reading=${JSON.stringify(r)} failure=${JSON.stringify(f)}`).toBeGreaterThan(0);
         for (const line of reasons) expect(line.trim()).not.toBe('');
+        // AND NO SENTENCE TWICE. The marker used to splice the wallet's first reason in and then
+        // append the whole list, so every non-thrown whole-batch class wrote that paragraph twice
+        // per candidate — ~390 copies in a 195-candidate record.
+        expect(new Set(reasons).size, `reading=${JSON.stringify(r)} failure=${JSON.stringify(f)}`).toBe(reasons.length);
       }
     }
   });
@@ -4794,6 +4798,14 @@ describe('a whole-leg Dune failure is recorded per candidate, and priced before 
     });
     expect(wholeBatch[0]!.startsWith(`${DUNE_LEG_FAILED}:`)).toBe(true);
     expect(wholeBatch).toContain('the run-level coverage probe refused these surfaces');
+    // With no vendor sentence of its own, the marker POINTS at that reason rather than restating it:
+    // the wallet's sentence appears exactly once in the list and not inside the marker as well.
+    expect(new Set(wholeBatch).size).toBe(wholeBatch.length);
+    expect(wholeBatch[0]).not.toContain('the run-level coverage probe refused these surfaces');
+    expect(wholeBatch[0]).toMatch(/see this candidate's own reason below/i);
+    // And the marker describes what is true of every whole-batch class — including the two that are
+    // deliberate refusals rather than failures — while the machine-readable token is unchanged.
+    expect(wholeBatch[0]).toMatch(/answered for NO candidate in this batch/);
 
     const wholeLeg = walkFallbackReasons({
       attempted: true,
@@ -4908,8 +4920,11 @@ describe('a whole-leg Dune failure is recorded per candidate, and priced before 
       });
       expect(reasons.length, c.name).toBeGreaterThan(0);
       expect(reasons[0]!.startsWith(`${DUNE_LEG_FAILED}:`), c.name).toBe(true);
-      // And the wallet's own sentence survives beside it rather than being replaced by the marker.
+      // And the wallet's own sentence survives beside it rather than being replaced by the marker —
+      // exactly once, never restated inside the marker as well.
       for (const own of r?.reasons ?? []) expect(reasons, c.name).toContain(own);
+      expect(new Set(reasons).size, c.name).toBe(reasons.length);
+      for (const own of r?.reasons ?? []) expect(reasons[0], c.name).not.toContain(own);
     }
   });
 

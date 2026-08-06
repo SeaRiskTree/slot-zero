@@ -2138,6 +2138,8 @@ export function walkFallbackReasons(input) {
  * @property {number} candidates      Candidates that must now take the walk.
  * @property {number} baselineCandidates How many of them a HEALTHY Dune leg would have sent to the
  *   walk anyway, at the pinned share. Never below 1, so the multiple is always defined.
+ * @property {number} minCandidates   The magnitude floor this pricing applied. Below it `cliff` is
+ *   `false` whatever `multiple` reads, so the two must be read together.
  * @property {number} projected       This run's new worst case, in {@link WalkFallbackCliff.unit}.
  * @property {number} baseline        The worst case the Dune-primary plan was made against.
  * @property {number} multiple        `projected / baseline`, i.e. `candidates / baselineCandidates`.
@@ -2165,15 +2167,24 @@ export function walkFallbackReasons(input) {
  * multiple is a ratio of candidate counts and the unit cancels; what the unit decides is only what
  * the printed figures MEAN, which is why it is named on the result.
  *
- * `ceil` on the baseline is deliberate and is what makes the guard batch-sensitive rather than a
- * constant: a three-candidate batch's whole-batch fallback is 3x its own plan and passes, while a
- * nine-candidate one is 4.5x and does not. A cliff is a magnitude as well as a ratio, and a run small
- * enough that the share rounds up to most of it has not fallen off one.
+ * **A CLIFF IS A MAGNITUDE AS WELL AS A RATIO, AND THE MAGNITUDE IS ITS OWN PINNED FLOOR RATHER THAN
+ * SOMETHING `ceil` IMPLIES.** The baseline rounds up to at least one candidate, which makes the
+ * multiple move in bands as the batch grows — and those bands are NOT monotone near the bottom: at the
+ * pinned share and multiple a batch of 5, 6 or 7 would read 5.0x, 6.0x and 7.0x and fire, while a
+ * batch of 8 reads exactly 4.0x and would not, so the smaller and cheaper run would be the one
+ * refused. `minCandidates` removes that band outright: below it the answer is no cliff, whatever the
+ * ratio says. Captain decision 308a, and it introduces NO new anchor — the value is the one
+ * `thresholds.json` → `dune.justification.legFallbackCliffMultiple` already publishes, "a batch of 8 or
+ * fewer is at most 4x and proceeds, and the guard first bites at 9 candidates". From the floor up the
+ * guard IS monotone: the smallest multiple in each band is 16/3, 23/4, 31/5 … rising towards
+ * `1 / healthyWalkShare`, so once it fires it fires at every larger batch.
  *
  * @param {object} input
  * @param {number} input.candidates       Candidates that must now walk.
  * @param {number} input.healthyWalkShare `thresholds.json` → `dune.legFallbackHealthyWalkShare`.
  * @param {number} input.cliffMultiple    `thresholds.json` → `dune.legFallbackCliffMultiple`.
+ * @param {number} input.minCandidates    `thresholds.json` → `dune.legFallbackMinCandidates`. The
+ *   magnitude floor: a batch smaller than this is never a cliff, however large its ratio.
  * @param {number} input.perCandidate     The walk's own per-candidate ceiling, in `unit`.
  * @param {string} input.unit             Singular unit name, e.g. `'Helius credit'`.
  * @returns {WalkFallbackCliff}
@@ -2181,15 +2192,17 @@ export function walkFallbackReasons(input) {
 export function priceWalkFallbackCliff(input) {
   const candidates = Math.max(0, Math.floor(input.candidates));
   const perCandidate = Math.max(0, input.perCandidate);
+  const minCandidates = Math.max(0, Math.floor(input.minCandidates));
   const baselineCandidates = Math.max(1, Math.ceil(candidates * Math.max(0, input.healthyWalkShare)));
   const multiple = candidates === 0 ? 0 : candidates / baselineCandidates;
   return {
     candidates,
     baselineCandidates,
+    minCandidates,
     projected: candidates * perCandidate,
     baseline: baselineCandidates * perCandidate,
     multiple,
-    cliff: candidates > 0 && multiple > input.cliffMultiple,
+    cliff: candidates >= minCandidates && candidates > 0 && multiple > input.cliffMultiple,
     unit: input.unit,
     perCandidate,
   };

@@ -995,6 +995,7 @@ export async function main(opts, env, out, err) {
         duneCredential,
         usingDune,
         duneRefreshProbe: opts.duneRefreshProbe,
+        allowWalkFallback: opts.allowWalkFallback,
       }),
     );
     return EXIT.ok;
@@ -1287,6 +1288,7 @@ export async function main(opts, env, out, err) {
           candidates: gating.length,
           healthyWalkShare: duneBounds.legFallbackHealthyWalkShare,
           cliffMultiple: duneBounds.legFallbackCliffMultiple,
+          minCandidates: duneBounds.legFallbackMinCandidates,
           // Priced in whichever unit THIS run's walk bills in. Helius charges by transactions
           // returned, the keyless endpoint by request and by wall clock, and there is no exchange
           // rate between them — so the unit travels with the figure rather than being converted.

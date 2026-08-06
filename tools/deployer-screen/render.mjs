@@ -1201,12 +1201,17 @@ export function renderStage1(run) {
  *   minIntervalMs: number, worstCaseCreditsPerExecution: number, resultBytesPerRowCeiling: number,
  *   allowanceReserveCredits: number, allowanceTightMultiple: number,
  *   allowanceRequired: boolean, legFallbackHealthyWalkShare: number,
- *   legFallbackCliffMultiple: number }} plan.dune The pinned Dune bounds.
+ *   legFallbackCliffMultiple: number, legFallbackMinCandidates: number }} plan.dune The pinned Dune
+ *   bounds.
  * @param {import('./credential.mjs').DuneCredential} plan.duneCredential Never its value: `label`,
  *   a length and a shape are the only things printed.
  * @param {boolean} plan.usingDune Whether creation enumeration would take the Dune route.
  * @param {boolean} plan.duneRefreshProbe Whether the coverage probe would be re-EXECUTED (billed)
  *   rather than read from Dune's cache (free).
+ * @param {boolean} plan.allowWalkFallback Whether `--allow-walk-fallback` was passed. The whole-leg
+ *   cliff line reads it so a preview does not tell an operator their own flag would change nothing.
+ *   It is NOT refused beside `--dry-run` the way it is beside `--no-dune`: previewing what a real run
+ *   would do is legitimate use of it, so it is not inert here.
  * @returns {string}
  */
 export function renderDryRun(plan) {
@@ -1605,6 +1610,7 @@ export function renderDryRun(plan) {
         candidates: plan.maxCandidates,
         healthyWalkShare: d.legFallbackHealthyWalkShare,
         cliffMultiple: d.legFallbackCliffMultiple,
+        minCandidates: d.legFallbackMinCandidates,
         perCandidate: keyedWalk ? plan.indexedWalk.maxCreditsPerCandidate : plan.creationWalk.maxRpcRequestsPerCandidate,
         unit: keyedWalk ? 'Helius credit' : 'keyless RPC request',
       });
@@ -1616,9 +1622,11 @@ export function renderDryRun(plan) {
           `pinned bar ${d.legFallbackCliffMultiple}x.`,
       );
       L.push(
-        cliff.cliff
-          ? `  Such a run is REFUSED before the first walk request unless --allow-walk-fallback is passed.`
-          : `  Under the bar at this candidate cap, so such a run would proceed without the flag.`,
+        !cliff.cliff
+          ? `  Under the bar at this candidate cap, so such a run would proceed without the flag.`
+          : plan.allowWalkFallback
+            ? `  Such a run is REFUSED before the first walk request, and --allow-walk-fallback has AUTHORISED it: this run would take the walk and print the figure rather than stop.`
+            : `  Such a run is REFUSED before the first walk request unless --allow-walk-fallback is passed.`,
       );
     }
     L.push('');

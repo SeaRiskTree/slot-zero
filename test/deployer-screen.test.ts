@@ -1641,6 +1641,7 @@ describe('the CLI contract', () => {
       duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
       usingDune: true,
       duneRefreshProbe: false,
+      allowWalkFallback: false,
     });
     const worstCase =
       T['stage2_entry'].maxCandidatesScored *
@@ -1715,6 +1716,7 @@ describe('the CLI contract', () => {
       duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
       usingDune: true,
       duneRefreshProbe: false,
+      allowWalkFallback: false,
     });
     expect(off).toMatch(/STAGE 2 DISABLED/);
     expect(off).toMatch(/nothing about whether a window is enterable/);
@@ -1747,6 +1749,7 @@ describe('the CLI contract', () => {
       duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
       usingDune: true,
       duneRefreshProbe: false,
+      allowWalkFallback: false,
     };
     const reach = windowReachMs(T['stage2_entry']);
     /** @see PlanEligibility — a known floor carries its source's provenance with it. */
@@ -4892,6 +4895,7 @@ describe('a whole-leg Dune failure is recorded per candidate, and priced before 
         candidates,
         healthyWalkShare: d['legFallbackHealthyWalkShare']!,
         cliffMultiple: d['legFallbackCliffMultiple']!,
+        minCandidates: d['legFallbackMinCandidates']!,
         perCandidate: helius['maxCreditsPerCandidate']!,
         unit: 'Helius credit',
       });
@@ -4908,10 +4912,29 @@ describe('a whole-leg Dune failure is recorded per candidate, and priced before 
     // AND IT IS NOT A CONSTANT. The baseline rounds UP to a whole candidate, so a small batch's
     // whole-batch fallback is a small multiple of its own plan and proceeds untouched. A cliff is a
     // magnitude as well as a ratio.
-    expect(priced(3).cliff).toBe(false);
-    expect(priced(8).cliff).toBe(false);
-    expect(priced(9).cliff).toBe(true);
     expect(priced(0).cliff).toBe(false);
+    expect(priced(3).cliff).toBe(false);
+
+    // THE 4-9 BAND, EVERY COUNT PINNED. The ratio alone is non-monotone down here — the raw
+    // multiples read 4.0x, 5.0x, 6.0x, 7.0x, 4.0x, 4.5x at n = 4..9 — so without the magnitude floor
+    // a batch of 5 (~26,000 Helius credits) would be refused while a batch of 8 (~41,600) proceeded.
+    // The floor is what makes the published claim "a batch of 8 or fewer proceeds, and the guard
+    // first bites at 9" true of the code.
+    for (const n of [4, 5, 6, 7, 8]) expect(priced(n).cliff, `${n} candidates`).toBe(false);
+    expect(priced(9).cliff).toBe(true);
+    // The ratio is still reported honestly below the floor; it is the VERDICT the floor changes.
+    expect(priced(5).multiple).toBeCloseTo(5, 10);
+    expect(priced(5).minCandidates).toBe(d['legFallbackMinCandidates']!);
+
+    // MONOTONICITY IS THE REQUIREMENT, not the spot values: once the guard fires it must fire on
+    // every larger batch, or a cheaper run is refused while a dearer one proceeds.
+    let fired = false;
+    for (let n = 0; n <= 200; n += 1) {
+      const c = priced(n).cliff;
+      if (c) fired = true;
+      expect(c, `${n} candidates must not un-fire`).toBe(fired ? true : false);
+    }
+    expect(fired).toBe(true);
 
     // The unit is carried, never converted: the keyless walk bills in requests and wall clock, and
     // there is no exchange rate between that and a Helius credit.
@@ -4919,6 +4942,7 @@ describe('a whole-leg Dune failure is recorded per candidate, and priced before 
       candidates: 82,
       healthyWalkShare: d['legFallbackHealthyWalkShare']!,
       cliffMultiple: d['legFallbackCliffMultiple']!,
+      minCandidates: d['legFallbackMinCandidates']!,
       perCandidate: T['creation_walk']!['maxRpcRequestsPerCandidate']!,
       unit: 'keyless RPC request',
     });
@@ -4959,6 +4983,7 @@ describe('a whole-leg Dune failure is recorded per candidate, and priced before 
       candidates: 82,
       healthyWalkShare: 0.133,
       cliffMultiple: 4,
+      minCandidates: 9,
       perCandidate: 5200,
       unit: 'Helius credit',
     });
@@ -4975,6 +5000,53 @@ describe('a whole-leg Dune failure is recorded per candidate, and priced before 
     const allowed = describeWalkFallbackCliff(cliff, { authorised: true, cliffMultiple: 4, flag: '--allow-walk-fallback' }).join('\n');
     expect(allowed).toContain('426,400');
     expect(allowed).not.toMatch(/Refusing to continue/);
+  });
+
+  it('the dry-run preview reads the operator\'s own flag rather than describing it as unpassed', () => {
+    // Captain decision 309a. The preview line used to say "unless --allow-walk-fallback is passed"
+    // even when it HAD been passed, which reads as though the flag changed nothing. --dry-run is not
+    // a place the flag is inert — previewing what a real run would do is legitimate use of it — so
+    // the line states which side of the decision this plan is on.
+    const T = loadThresholds();
+    const plan = {
+      seedPlan: [],
+      maxCandidates: T['budget'].maxCandidates,
+      maxKeyedRequests: 45,
+      consistency: false,
+      maxKeylessRequests: T['budget'].maxKeylessRequests,
+      historySource: 'creation-derived' as const,
+      creationWalk: T['creation_walk'],
+      costBounds: T['stage2_cost'],
+      stage2: false,
+      maxScored: T['stage2_entry'].maxCandidatesScored,
+      entryThresholds: T['stage2_entry'],
+      entryEligibility: null,
+      spendAuthorised: false,
+      keyDescription: null,
+      rpcEndpoint: resolveSolanaRpcEndpoint({}),
+      indexedWalk: T['creation_walk_helius'],
+      worstCaseCredits: 0,
+      dune: T['dune'],
+      duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
+      usingDune: true,
+      duneRefreshProbe: false,
+      allowWalkFallback: false,
+    };
+    const withoutFlag = renderDryRun(plan);
+    expect(withoutFlag).toMatch(/SPEND CLIFF/);
+    expect(withoutFlag).toMatch(/REFUSED before the first walk request unless --allow-walk-fallback is passed/);
+
+    const withFlag = renderDryRun({ ...plan, allowWalkFallback: true });
+    // Same figures, opposite reading of the operator's own authorisation.
+    expect(withFlag).toMatch(/SPEND CLIFF/);
+    expect(withFlag).toMatch(/--allow-walk-fallback has AUTHORISED it/);
+    expect(withFlag).not.toMatch(/unless --allow-walk-fallback is passed/);
+
+    // And below the magnitude floor there is no refusal to describe on either side, so the flag
+    // changes nothing and the line says so identically.
+    const small = { ...plan, maxCandidates: T['dune'].legFallbackMinCandidates - 1 };
+    expect(renderDryRun(small)).toMatch(/would proceed without the flag/);
+    expect(renderDryRun({ ...small, allowWalkFallback: true })).toMatch(/would proceed without the flag/);
   });
 
   it('carries the opt-in flag, off by default', () => {
@@ -12103,6 +12175,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
         usingDune: true,
         duneRefreshProbe: false,
+        allowWalkFallback: false,
       };
       const text = renderDryRun({
         ...plan,
@@ -12211,6 +12284,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
         usingDune: true,
         duneRefreshProbe: false,
+        allowWalkFallback: false,
       };
 
       // (1) KNOWN and BILLED — the construction spent, and the banner points at the bound and the
@@ -12327,6 +12401,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
         usingDune: true,
         duneRefreshProbe: false,
+        allowWalkFallback: false,
       };
       const T = loadThresholds()['stage2_entry'] as never;
       const bounds = entryFillBounds(T, Date.parse('2026-08-05T12:00:00Z'));
@@ -12473,6 +12548,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
         usingDune: true,
         duneRefreshProbe: false,
+        allowWalkFallback: false,
         entryEligibility: unavailable,
       };
       // (1) the screen's Stage 2 block, and (2) the spend-authorised banner, which used to wrap the
@@ -12534,6 +12610,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
         usingDune: true,
         duneRefreshProbe: false,
+        allowWalkFallback: false,
       };
       const known = renderDryRun({
         ...plan,
@@ -12785,6 +12862,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         duneCredential: resolveDuneCredential({ DUNE_API_KEY: 'a'.repeat(32) }),
         usingDune: true,
         duneRefreshProbe: false,
+        allowWalkFallback: false,
         entryEligibility: eligibility,
       });
       const prose = text.replace(/\s+/g, ' ');

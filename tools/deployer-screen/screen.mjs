@@ -50,7 +50,14 @@ import {
   resolveKey,
   resolveSolanaRpcEndpoint,
 } from './credential.mjs';
-import { checkDuneAllowance, coverageRecordRow, enumerateCreations } from './dune.mjs';
+import {
+  checkDuneAllowance,
+  coverageRecordRow,
+  describeWalkFallbackCliff,
+  enumerateCreations,
+  priceWalkFallbackCliff,
+  walkFallbackReasons,
+} from './dune.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
 import { buildPredictionBlock, summarisePredictions } from './prediction.mjs';
 import {
@@ -415,6 +422,13 @@ OPTIONS
   --dune-refresh-probe
                       Re-EXECUTE Dune's coverage probe rather than reading its cached result.
                       Costs one billed execution; the default cached read costs none.
+  --allow-walk-fallback
+                      Let the creation walk answer for the WHOLE batch when the Dune leg answers
+                      for NOBODY. Without it such a run is refused (exit 2) before the walk starts,
+                      because that fallback is a spend cliff and not a slower road: measured, 232,937
+                      Helius credits over 76 candidates against 1,924 over 69 for a run that kept its
+                      Dune answer. The walk is the CORRECT answer to a Dune refusal — what is refused
+                      is taking a decision that size silently. Inert without a Dune leg to lose.
   --predict <path>    Read a predictions document and carry it VERBATIM in the run record, so the
                       grading lane has an input rather than a plan. Validated for shape BEFORE the
                       first request — an unreadable document refuses the run (exit 2) rather than
@@ -497,6 +511,7 @@ export function parseArgs(argv) {
     ownershipOnly: false,
     noDune: false,
     duneRefreshProbe: false,
+    allowWalkFallback: false,
     predict: null,
     out: null,
     json: false,
@@ -551,6 +566,9 @@ export function parseArgs(argv) {
         break;
       case '--dune-refresh-probe':
         opts.duneRefreshProbe = true;
+        break;
+      case '--allow-walk-fallback':
+        opts.allowWalkFallback = true;
         break;
       case '--json':
         opts.json = true;
@@ -607,6 +625,21 @@ export function parseArgs(argv) {
     return { ok: false, message: '--dry-run-spend only means anything with --dry-run' };
   }
 
+  // **The same rule for the other opt-in.** `--allow-walk-fallback` authorises a WHOLE-BATCH walk
+  // when the Dune leg answers for nobody, and beside a flag that skips the Dune leg entirely there is
+  // no leg to lose — the authorisation would be read as covering a spend it never governs. Captain
+  // decision 286c's shape, applied where it is decidable: an absent key makes it inert too, and
+  // `parseArgs` cannot see the environment, so that case is stated in `Options` rather than caught.
+  if (opts.allowWalkFallback && (opts.noDune || opts.ownershipOnly)) {
+    return {
+      ok: false,
+      message:
+        '--allow-walk-fallback authorises a whole-batch creation walk when the DUNE leg answers for ' +
+        'nobody; with --no-dune or --ownership-only there is no Dune leg to lose, so it authorises ' +
+        'nothing. Drop it.',
+    };
+  }
+
   return { ok: true, opts };
 }
 
@@ -629,6 +662,13 @@ export function parseArgs(argv) {
  *   is what every run before captain decision 156a did. The record still says which surface answered.
  * @property {boolean} duneRefreshProbe Re-EXECUTE the coverage probe instead of reading Dune's
  *   cached result for it. An execution is billed; the cached read is not.
+ * @property {boolean} allowWalkFallback Authorise the creation walk to answer for the WHOLE batch
+ *   when the Dune leg answers for nobody. Captain decision 298a: that fallback is a spend cliff of
+ *   roughly two orders of magnitude rather than a slower road, so it is taken deliberately or not at
+ *   all. Inert on a run that never asked Dune — there the walk is the planned route, and `parseArgs`
+ *   REFUSES it beside `--no-dune`/`--ownership-only` for that reason. It cannot refuse the third way
+ *   of getting there, an unset `DUNE_API_KEY`, because it does not read the environment. See
+ *   `dune.mjs` → `priceWalkFallbackCliff`.
  * @property {string | null} predict Path to a predictions document, carried verbatim in the record.
  *   Read and shape-checked before the first request; see `record.mjs` → `readPredictions`.
  * @property {string | null} out
@@ -1059,6 +1099,9 @@ export async function main(opts, env, out, err) {
   let duneAllowance = null;
   /** @type {string | null} */
   let duneUnusableNote = null;
+  // Whether the Dune leg was ASKED for this batch. It is the difference between a candidate that
+  // fell back and one that was never a Dune candidate — see the assignment site.
+  let duneLegAttempted = false;
 
   const walkBounds = T['creation_walk'];
   let rpcRequests = 0;
@@ -1128,7 +1171,13 @@ export async function main(opts, env, out, err) {
     // Batching is the cost model rather than a convenience: the table scan costs nearly the same
     // for 5 wallets as for 20, so the per-deployer price falls as the batch grows. It runs BEFORE
     // the gate loop because the loop is where the fallback walk would otherwise be spent.
-    if (usingDune && duneClient !== null && gating.length > 0) {
+    // WHETHER THIS RUN ASKED DUNE AT ALL, decided once and read twice — by the leg below and by the
+    // per-candidate fallback reason. A candidate with no Dune answer means two opposite things
+    // depending on it: "the primary surface refused" when it is true, "the walk is the route this
+    // invocation chose" when it is false, and conflating them is the defect captain decision 298a
+    // closes. One expression, because two that merely agree is 144a's defect.
+    duneLegAttempted = usingDune && duneClient !== null && gating.length > 0;
+    if (duneLegAttempted && duneClient !== null) {
       if (!opts.json) {
         out('');
         out(
@@ -1154,6 +1203,18 @@ export async function main(opts, env, out, err) {
           nowMs: Date.now(),
           bounds: duneBounds,
           allowance: checked.decision,
+          // A probe REFRESH that failed and was answered from the cache instead. The execution is
+          // billed and is never retried, so the operator hears about the spend even though the leg
+          // survived it — silence would make a billed failure look like an ordinary cached read.
+          onProbeRefreshFailure: (note) => {
+            if (!opts.json) {
+              out(
+                `  !! the coverage probe's REFRESH EXECUTION FAILED and is billed. It is not retried; ` +
+                  `Dune's CACHED result answers instead, which costs no execution: ` +
+                  `${redactVendorIdentifiers(note)}`,
+              );
+            }
+          },
         });
         if (!opts.json) {
           const cov = duneEnumeration.coverage;
@@ -1202,6 +1263,54 @@ export async function main(opts, env, out, err) {
         // is on the record either way: `dune.unusableNote` carries it, and every candidate's
         // `enumerationSource` says the walk answered.
         if (!opts.json) out(`  !! Dune enumeration unusable, falling back to the RPC walk: ${duneUnusableNote}`);
+      }
+    }
+
+    // ---- THE SPEND CLIFF, PRICED BEFORE IT IS PAID (captain decision 298a). ------------------
+    // A Dune leg that answered for NOBODY sends the whole batch to a route roughly two orders of
+    // magnitude dearer per candidate, and no ceiling above catches it: `creation_walk_helius.
+    // maxCreditsPerRun` is sized for the walk being the INTENDED route, so it already reserves every
+    // candidate walking and passes a run whose plan has silently changed underneath it.
+    //
+    // ONE CONDITION COVERS EVERY WAY THE LEG CAN COME BACK EMPTY — a thrown failure, a refused
+    // coverage probe, an unreadable row, a refused allowance — because the operator's question is
+    // about the SPEND and all four spend the same. It is asked here, between the leg and the gate
+    // loop, which is the last instant before the first walk request and after every keyed
+    // enumeration request is already sunk; refusing costs the seeds and nothing else.
+    //
+    // NOTHING HERE DISTRUSTS THE WALK. It is the correct answer to a Dune refusal and the only
+    // surface that can say who holds a curve today. What is refused is taking that decision silently.
+    if (duneLegAttempted) {
+      const answeredByDune = [...(duneEnumeration?.byWallet.values() ?? [])].filter((w) => w.usable).length;
+      if (answeredByDune === 0) {
+        const cliff = priceWalkFallbackCliff({
+          candidates: gating.length,
+          healthyWalkShare: duneBounds.legFallbackHealthyWalkShare,
+          cliffMultiple: duneBounds.legFallbackCliffMultiple,
+          // Priced in whichever unit THIS run's walk bills in. Helius charges by transactions
+          // returned, the keyless endpoint by request and by wall clock, and there is no exchange
+          // rate between them — so the unit travels with the figure rather than being converted.
+          perCandidate: usingIndexedWalk
+            ? indexedWalk.maxCreditsPerCandidate
+            : walkBounds.maxRpcRequestsPerCandidate,
+          unit: usingIndexedWalk ? 'Helius credit' : 'keyless RPC request',
+        });
+        if (cliff.cliff) {
+          const lines = describeWalkFallbackCliff(cliff, {
+            authorised: opts.allowWalkFallback,
+            cliffMultiple: duneBounds.legFallbackCliffMultiple,
+            flag: '--allow-walk-fallback',
+          });
+          if (!opts.allowWalkFallback) {
+            err('');
+            for (const line of lines) err(line);
+            return EXIT.usage;
+          }
+          if (!opts.json) {
+            out('');
+            for (const line of lines) out(line);
+          }
+        }
       }
     }
 
@@ -1254,8 +1363,16 @@ export async function main(opts, env, out, err) {
         // single run can carry both sources, and every candidate row says which one answered it.
         const fromDune = duneEnumeration?.byWallet.get(seed.wallet) ?? null;
         const useDune = fromDune !== null && fromDune.usable;
+        // WHY THIS CANDIDATE WALKED, never a blank while Dune was asked (captain decision 298a).
+        // A whole-LEG failure used to be recorded once, in run-level prose, leaving every candidate
+        // with an empty list — the same thing a run that never asked Dune looks like. See
+        // `dune.mjs` → `walkFallbackReasons` for what that cost when a reader believed it.
         /** @type {string[]} */
-        const duneFallbackReasons = useDune ? [] : (fromDune?.reasons ?? []);
+        const duneFallbackReasons = walkFallbackReasons({
+          attempted: duneLegAttempted,
+          reading: fromDune,
+          legFailure: duneUnusableNote,
+        });
         const duneLaunches = fromDune === null ? null : fromDune.launches;
         // 227a's observation, and it is scoped to the route that ANSWERED this candidate.
         // `is_mayhem_mode` is a column on the decoded create event; the creation walk reads
@@ -1444,8 +1561,10 @@ export async function main(opts, env, out, err) {
           bondedFromListing: merged.bondedFromListing,
           bondedUndecidable: merged.bondedUndecidable,
           // WHICH SURFACE ANSWERED THIS CANDIDATE, per candidate rather than per run, because the
-          // coverage probe refuses a wallet at a time. `duneFallbackReasons` is empty both when Dune
-          // answered and when Dune was never consulted; the run-level `dune` block separates those.
+          // coverage probe refuses a wallet at a time. `duneFallbackReasons` is empty when Dune
+          // ANSWERED and when Dune was never CONSULTED, and in no other case: since captain decision
+          // 298a a candidate that fell back while the leg was asked always carries its own sentence,
+          // including when the leg failed whole and the reason is the same one for all of them.
           enumerationSource: useDune ? 'dune' : usingIndexedWalk ? 'helius' : 'keyless-rpc',
           duneLaunches,
           duneFallbackReasons,

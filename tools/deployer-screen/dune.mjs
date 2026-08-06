@@ -1470,19 +1470,61 @@ export async function executeAndRead(client, queryId, parameters, bounds) {
  * flag, and a cached probe that is too old to vouch for the enumeration's recent end is refused by
  * {@link assessCoverage}'s staleness rule rather than used.
  *
+ * ## A FAILED PROBE EXECUTION DOES NOT TAKE THE WHOLE LEG DOWN — it falls back to the CACHE
+ *
+ * The recorded incident: `runs/2026-08-04.json`, where an execution of the coverage probe ended
+ * `QUERY_STATE_FAILED`, the exception escaped the whole Dune leg, and all 82 candidates walked —
+ * **221,731 Helius credits against roughly 20 Dune credits for the same measurement**, on a run whose
+ * enumeration still had a full execution of budget left and would have answered.
+ *
+ * The repair is a READ, never a second execution. `client.mjs` → `DuneClient.execute` is the one call
+ * in this repository that is never retried on any failure for any reason — a failed execution is
+ * billed exactly like a successful one, and `dune.maxExecutionsPerRun` is 2, so a retry here would
+ * both break that rule and spend the enumeration's only remaining execution to buy the same answer.
+ * The cached result costs no execution at all, so a refresh that fails falls back to it and the leg
+ * carries on. `assessCoverage` then decides on the merits: a fresh-enough cache lets the enumeration
+ * run, a stale one refuses exactly as it does today, and the refusal reaches every candidate.
+ *
+ * **What the record shows afterwards, since no field was added for it:** `dune.executions` counts the
+ * billed execution and `dune.coverage.fromCache` reads `true`. That pair — an execution spent AND a
+ * cached probe — is the signature of this fallback, and it is distinct from both an ordinary cached
+ * read (no execution) and a successful refresh (`fromCache: false`). The failure's own sentence is
+ * announced rather than persisted; `opts.onRefreshFailure` is how a caller prints it.
+ *
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} opts
  * @param {number} opts.queryId
  * @param {boolean} opts.refresh Execute instead of reading the cache.
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number }} opts.bounds
+ * @param {CoverageProbe | null} [opts.fallbackProbe] A cached probe the caller ALREADY holds. Supplied
+ *   on the staleness path, where re-reading the cache would spend a billed read to be handed back the
+ *   very probe that was judged stale a moment ago. One rule, one code path: a refresh that fails
+ *   yields a cached probe, and this only decides whether that probe has to be fetched again.
+ * @param {(note: string) => void} [opts.onRefreshFailure] Called with the vendor's own sentence when a
+ *   refresh execution fails and the cache answers instead. The spend is real and the operator is told.
  * @returns {Promise<CoverageProbe>}
  */
 export async function readCoverageProbe(client, opts) {
   await assertSavedQueryMatches(client, opts.queryId, COVERAGE_SQL);
-  const result = opts.refresh
-    ? await executeAndRead(client, opts.queryId, {}, opts.bounds)
-    : await readResult(client, `/query/${opts.queryId}/results?limit=${opts.bounds.maxResultRows}`, opts.bounds);
-  return parseCoverageProbe(result.rows, { probedAtMs: result.endedAtMs, fromCache: !opts.refresh });
+  if (opts.refresh) {
+    try {
+      const executed = await executeAndRead(client, opts.queryId, {}, opts.bounds);
+      return parseCoverageProbe(executed.rows, { probedAtMs: executed.endedAtMs, fromCache: false });
+    } catch (cause) {
+      // The execution is billed and is NOT retried. What IS repairable for free is the answer: the
+      // probe is parameterless, so Dune's cached result for it is the same shape and costs no
+      // execution. Falling through to the walk here would trade ~1 Dune credit for a whole-batch
+      // signature walk, which is the cliff this path exists to refuse.
+      opts.onRefreshFailure?.(cause instanceof Error ? cause.message : String(cause));
+      if (opts.fallbackProbe != null) return opts.fallbackProbe;
+    }
+  }
+  const result = await readResult(
+    client,
+    `/query/${opts.queryId}/results?limit=${opts.bounds.maxResultRows}`,
+    opts.bounds,
+  );
+  return parseCoverageProbe(result.rows, { probedAtMs: result.endedAtMs, fromCache: true });
 }
 
 /**
@@ -1700,6 +1742,10 @@ export async function checkDuneAllowance(client, input) {
  *   "check the balance first" has to bind here and not only at the call site. `undefined` is treated
  *   exactly like a refusal: a caller that forgot to check has not established that it can afford
  *   this, which is the same evidence as an empty allowance.
+ * @param {(note: string) => void} [opts.onProbeRefreshFailure] Announce a probe REFRESH execution that
+ *   failed and was answered from the cache instead. See {@link readCoverageProbe}: the execution is
+ *   billed and is never retried, and the free cached read is what keeps one failed probe from sending
+ *   a whole batch to the walk.
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number,
  *   maxCoverageLagMs: number, maxOversizedExecutions?: number, maxOversizedRowsPerExecution?: number }} opts.bounds
  * @param {boolean} [opts.splitOversized] **Opt-IN, and deliberately so.** Captain decision 196a
@@ -1736,6 +1782,7 @@ export async function enumerateCreations(client, opts) {
     queryId: opts.coverageQueryId,
     refresh: opts.refreshProbe,
     bounds: opts.bounds,
+    ...(opts.onProbeRefreshFailure === undefined ? {} : { onRefreshFailure: opts.onProbeRefreshFailure }),
   });
   let coverage = assessCoverage({ probe, nowMs: opts.nowMs, bounds: opts.bounds });
 
@@ -1746,7 +1793,16 @@ export async function enumerateCreations(client, opts) {
   // other refusal — a missing table, a month with no rows — asks the same question and gets the same
   // answer, so it is not retried.
   if (!coverage.ok && coverage.staleOnly && probe.fromCache) {
-    probe = await readCoverageProbe(client, { queryId: opts.coverageQueryId, refresh: true, bounds: opts.bounds });
+    probe = await readCoverageProbe(client, {
+      queryId: opts.coverageQueryId,
+      refresh: true,
+      bounds: opts.bounds,
+      // The probe already in hand, so a FAILED re-execution does not spend a second billed read to
+      // be handed back the very result that was judged stale a moment ago. It stays stale, the
+      // coverage stays refused, and every candidate gets that refusal as its own reason.
+      fallbackProbe: probe,
+      ...(opts.onProbeRefreshFailure === undefined ? {} : { onRefreshFailure: opts.onProbeRefreshFailure }),
+    });
     coverage = assessCoverage({ probe, nowMs: opts.nowMs, bounds: opts.bounds });
   }
 
@@ -1990,6 +2046,167 @@ export async function enumerateCreations(client, opts) {
     walletsRefusedByLaunchCap,
     oversizedSplit,
   };
+}
+
+// --- the whole-leg failure, and the spend cliff behind it (captain decision 298a) ---------------
+
+/**
+ * The marker every whole-LEG fallback reason starts with, so a reader — or a script — can separate
+ * "Dune answered and refused THIS wallet" from "Dune answered for nobody".
+ *
+ * The two are different findings about different things and they were indistinguishable in a record
+ * until now: a per-wallet refusal is evidence about that wallet, and a leg failure is evidence about
+ * the run. See {@link walkFallbackReasons}.
+ */
+export const DUNE_LEG_FAILED = 'dune-leg-failed';
+
+/**
+ * Why a candidate took the creation walk, as sentences that reach the run record.
+ *
+ * **THE DEFECT THIS CLOSES, from `runs/2026-08-04.json`.** The Dune leg died whole — the coverage
+ * probe's execution ended `QUERY_STATE_FAILED` — and every one of the 82 candidates walked. The
+ * failure was recorded ONCE, at run level, in a prose note; every candidate's `duneFallbackReasons`
+ * read **empty**, which is also exactly what a candidate looks like when Dune was never consulted at
+ * all. A reader scanning that record sees 82 unexplained walks, and a per-candidate cost model built
+ * from it describes the DEGRADED path while looking like the normal one — which is what happened, at
+ * roughly three orders of magnitude.
+ *
+ * So the rule is: **while the Dune leg was ATTEMPTED, a candidate that did not get a usable Dune
+ * reading always carries a reason.** `attempted: false` — no key, `--no-dune`, `--ownership-only` —
+ * is the one case that yields an empty list, and there the walk is the route the operator chose
+ * rather than a fallback anything took.
+ *
+ * @param {object} input
+ * @param {boolean} input.attempted Whether this run reached the Dune leg for this batch at all.
+ * @param {{ usable: boolean, reasons: readonly string[] } | null} input.reading This wallet's own
+ *   enumeration, or `null` when the leg produced none for it.
+ * @param {string | null} input.legFailure The whole-leg failure's own sentence, or `null`.
+ * @returns {string[]}
+ */
+export function walkFallbackReasons(input) {
+  if (!input.attempted) return [];
+  if (input.reading !== null && input.reading.usable) return [];
+  const own = input.reading === null ? [] : [...input.reading.reasons];
+  if (own.length > 0) return own;
+  // The leg answered for nobody. Everything below is one sentence rather than a blank, because a
+  // blank here is the whole defect: it is indistinguishable from a run that never asked Dune.
+  const note =
+    input.legFailure !== null && input.legFailure.trim() !== ''
+      ? input.legFailure.trim()
+      : 'no reason survived from the failure itself';
+  return [
+    `${DUNE_LEG_FAILED}: the Dune enumeration leg failed as a WHOLE and answered for no candidate in ` +
+      `this batch, so this wallet's history was walked from the Solana signature index instead. That ` +
+      `is the correct answer to a Dune refusal and it is not a weaker measurement — it is a far more ` +
+      `expensive one, and it is recorded per candidate so a cost model built from this record cannot ` +
+      `read the degraded route as the normal one. The failure: ${note}`,
+  ];
+}
+
+/**
+ * @typedef {object} WalkFallbackCliff
+ * @property {number} candidates      Candidates that must now take the walk.
+ * @property {number} baselineCandidates How many of them a HEALTHY Dune leg would have sent to the
+ *   walk anyway, at the pinned share. Never below 1, so the multiple is always defined.
+ * @property {number} projected       This run's new worst case, in {@link WalkFallbackCliff.unit}.
+ * @property {number} baseline        The worst case the Dune-primary plan was made against.
+ * @property {number} multiple        `projected / baseline`, i.e. `candidates / baselineCandidates`.
+ * @property {boolean} cliff          Whether the multiple is past the pinned one.
+ * @property {string} unit            Singular name of the unit both figures are in.
+ * @property {number} perCandidate    The per-candidate ceiling both figures were priced at.
+ */
+
+/**
+ * Price what a WHOLE-BATCH Dune fallback does to this run's worst case, in the walk's own unit.
+ *
+ * **Why this exists as a refusal rather than a log line.** The Dune path is primary (captain decision
+ * 156a) and is roughly two orders of magnitude cheaper per candidate than its own fallback, so a
+ * whole-batch fallback is a CLIFF and not a gradient — measured, from records committed in this repo:
+ * the 2026-08-05 untiered leg lost its Dune answer and spent **232,937 Helius credits over 76
+ * candidates**, against **1,924 over 69** and **21,733 over 59** for the two legs that kept theirs.
+ * The tool's design intent — a Dune refusal is "slower, never wrong" — is true about correctness and
+ * false about spend, and the pre-flight credit ceiling does not fire, because it was sized for the
+ * walk being the INTENDED route and therefore already reserves every candidate walking.
+ *
+ * **The arithmetic is one expression evaluated twice, and only the candidate count differs.** The
+ * baseline is what the plan was made against: a healthy Dune leg still sends some candidates to the
+ * walk, one wallet at a time, at `healthyWalkShare` — so the baseline is that share of the batch and
+ * the projection is the whole batch. Both are priced at the same per-candidate ceiling, so the
+ * multiple is a ratio of candidate counts and the unit cancels; what the unit decides is only what
+ * the printed figures MEAN, which is why it is named on the result.
+ *
+ * `ceil` on the baseline is deliberate and is what makes the guard batch-sensitive rather than a
+ * constant: a three-candidate batch's whole-batch fallback is 3x its own plan and passes, while a
+ * nine-candidate one is 4.5x and does not. A cliff is a magnitude as well as a ratio, and a run small
+ * enough that the share rounds up to most of it has not fallen off one.
+ *
+ * @param {object} input
+ * @param {number} input.candidates       Candidates that must now walk.
+ * @param {number} input.healthyWalkShare `thresholds.json` → `dune.legFallbackHealthyWalkShare`.
+ * @param {number} input.cliffMultiple    `thresholds.json` → `dune.legFallbackCliffMultiple`.
+ * @param {number} input.perCandidate     The walk's own per-candidate ceiling, in `unit`.
+ * @param {string} input.unit             Singular unit name, e.g. `'Helius credit'`.
+ * @returns {WalkFallbackCliff}
+ */
+export function priceWalkFallbackCliff(input) {
+  const candidates = Math.max(0, Math.floor(input.candidates));
+  const perCandidate = Math.max(0, input.perCandidate);
+  const baselineCandidates = Math.max(1, Math.ceil(candidates * Math.max(0, input.healthyWalkShare)));
+  const multiple = candidates === 0 ? 0 : candidates / baselineCandidates;
+  return {
+    candidates,
+    baselineCandidates,
+    projected: candidates * perCandidate,
+    baseline: baselineCandidates * perCandidate,
+    multiple,
+    cliff: candidates > 0 && multiple > input.cliffMultiple,
+    unit: input.unit,
+    perCandidate,
+  };
+}
+
+/**
+ * The refusal an operator reads, or the authorisation they already gave, as whole lines.
+ *
+ * It states the NEW worst case before anything is spent — that is the point of refusing here rather
+ * than reporting afterwards — and it names the flag rather than describing it, so the next invocation
+ * is a copy rather than a guess.
+ *
+ * @param {WalkFallbackCliff} cliff
+ * @param {object} opts
+ * @param {boolean} opts.authorised Whether `--allow-walk-fallback` was passed.
+ * @param {number} opts.cliffMultiple The pinned multiple, for the sentence.
+ * @param {string} opts.flag The opt-in flag's own spelling.
+ * @returns {string[]}
+ */
+export function describeWalkFallbackCliff(cliff, opts) {
+  const head = `${cliff.candidates} candidate(s) now take the creation walk, where a run whose Dune leg answered would have sent about ${cliff.baselineCandidates}.`;
+  const money =
+    `Worst case for this run's enumeration: ${cliff.projected.toLocaleString('en-US')} ${cliff.unit}(s), ` +
+    `against ${cliff.baseline.toLocaleString('en-US')} for the plan that was made — ` +
+    `${cliff.multiple.toFixed(1)}x, past the pinned ${opts.cliffMultiple}x ` +
+    `(thresholds.json -> dune.legFallbackCliffMultiple).`;
+  if (opts.authorised) {
+    return [
+      `THE DUNE LEG ANSWERED FOR NOBODY AND ${opts.flag} AUTHORISED THE WALK.`,
+      `  ${head}`,
+      `  ${money}`,
+      '  The walk is the CORRECT answer to a Dune refusal — it is the only surface that can say who ' +
+        'holds a curve today — so this is a spend decision, not a correctness one.',
+    ];
+  }
+  return [
+    'Refusing to continue: the Dune enumeration leg answered for NO candidate, and the fallback is a',
+    'spend cliff rather than a slower road.',
+    `  ${head}`,
+    `  ${money}`,
+    '  The walk is the CORRECT answer to a Dune refusal and nothing here distrusts it. What is refused',
+    '  is taking a decision of this size silently, on a plan the operator approved for a different route.',
+    `  Re-run with ${opts.flag} to take the walk anyway, or with --no-dune to plan for it from the start.`,
+    '  The seed enumeration requests are already spent and the Dune leg was billed for whatever it',
+    '  reached. The gate loop had not started, so no candidate profile was fetched and no Helius credit',
+    '  and no Solana RPC request was spent — which is the whole reason this is asked here.',
+  ];
 }
 
 /**

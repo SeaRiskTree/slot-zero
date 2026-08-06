@@ -70,6 +70,12 @@ node tools/deployer-screen/screen.mjs --tier elite --candidates 12
 # The competence gate alone, which answers nothing about whether a window is enterable.
 node tools/deployer-screen/screen.mjs --no-stage2
 
+# A run whose Dune leg answers for NOBODY stops (exit 2) before the first walk request, printing the
+# new worst case: that fallback costs roughly two orders of magnitude more per candidate, and the
+# credit ceiling cannot catch it. This takes it anyway, deliberately. See "A WHOLE-LEG Dune failure
+# is a spend cliff" below; --no-dune plans for the walk from the start instead.
+node tools/deployer-screen/screen.mjs --allow-walk-fallback
+
 # The old, fast, BIASED reading — it skips every creation-derived reading, Dune enumeration and
 # walk alike, so under an hour rather than ~15.
 # Stamped historySource: "ownership-only" in the record, because the bias must travel with it.
@@ -370,6 +376,51 @@ tool runs exactly as it did before decision 156a, and says that too.
 **The Helius worst case is not reduced by Dune being primary, and that is deliberate.** Every
 candidate can fall back, so the credit reservation `screen.mjs` refuses a plan against still covers
 every candidate falling back. What Dune changes is the *expected* spend, not the admissible plan.
+
+### A WHOLE-LEG Dune failure is a spend cliff, and it is refused before it is paid
+
+Captain decision 298a, 2026-08-06. The per-wallet fallback above is a gradient; a leg that answers
+for **nobody** is not. Measured, from records committed in this repository:
+
+| leg | candidates | Dune answered | Helius credits | RPC requests |
+|---|---|---|---|---|
+| `runs/2026-08-04.json` — probe execution `QUERY_STATE_FAILED` | 82 | **0** | **221,731** | 3,941 |
+| `measurements/2026-08-05-seed-comparison/` untiered — row ceiling | 76 | **0** | **232,937** | 4,105 |
+| same day, `--tier good` — leg kept its answer | 69 | 63 | 1,924 | 33 |
+| same day, `--tier elite` — leg kept its answer | 59 | 48 | 21,733 | 243 |
+
+`creation_walk_helius.maxCreditsPerRun` catches none of them and cannot: it is sized for the walk
+being the *intended* route, so it already reserves every candidate walking and passes a run whose
+plan has silently changed underneath it.
+
+**Three things close that, and none of them distrusts the walk.** The walk is the correct answer to a
+Dune refusal and is the only surface that can say who holds a curve today — what is refused is taking
+a decision of that size silently.
+
+1. **Every affected candidate carries a reason.** `dune.mjs` → `walkFallbackReasons` is the one rule:
+   while the Dune leg was *asked*, a candidate the walk answered for always has a sentence, and a
+   whole-leg failure's sentence starts with the marker `dune-leg-failed:` so it can be told apart
+   from a per-wallet refusal. `duneFallbackReasons` stays empty in exactly two cases — Dune answered,
+   or Dune was never asked (`--no-dune`, `--ownership-only`, no key). Before this, all 82 candidates
+   of `runs/2026-08-04.json` read empty and a cost model built from that record described the
+   degraded route while looking like the normal one, by roughly three orders of magnitude. **That
+   record is evidence and is not retro-edited**, so its emptiness stays.
+2. **The new worst case is priced and refused before the first walk request.**
+   `dune.mjs` → `priceWalkFallbackCliff` prices the whole-batch fallback against the plan that was
+   made — the same expression evaluated twice, with only the candidate count changed — in whichever
+   unit *this* run's walk bills in. Past `dune.legFallbackCliffMultiple` the run stops (exit 2) with
+   the figure printed, unless `--allow-walk-fallback` says otherwise. `thresholds.json` →
+   `dune.justification.legFallbackCliffMultiple` owns the derivation, including why the guard first
+   bites at 9 candidates and does nothing below that; the baseline share is re-derived from the two
+   committed legs above by a test rather than quoted.
+3. **A failed coverage-probe *execution* no longer takes the leg down with it.** `readCoverageProbe`
+   falls back to Dune's **cached** result, which costs no execution. It is a read and never a retry:
+   `DuneClient.execute` is the one call in this repository that is never retried, a failed execution
+   is billed either way, and `dune.maxExecutionsPerRun` is 2 — so a retry would spend the
+   enumeration's own remaining execution to buy the same answer and leave nothing to enumerate with.
+   On `runs/2026-08-04.json`'s shape the leg survives and costs ~20 credits instead of 221,731.
+   Afterwards the record reads `dune.executions` ≥ 1 with `dune.coverage.fromCache: true`, which is
+   that fallback's signature; the vendor's own sentence is announced on the run, not persisted.
 
 ### What the keyless route costs, measured
 

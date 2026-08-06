@@ -174,6 +174,12 @@ export function applyGate(input, t) {
  * @property {string[]} duneFallbackReasons Why this candidate did not use the Dune reading, empty
  *   when it did. **An empty list on a `keyless-rpc`/`helius` source means Dune was never consulted
  *   at all** — no key, `--no-dune`, or `--ownership-only`; the run-level `dune` block says which.
+ *   **Since captain decision 298a there is no third meaning.** A candidate that fell back while the
+ *   leg WAS consulted always carries a sentence, including when the leg failed as a whole and every
+ *   candidate carries the same one — such an entry starts with `dune.mjs` → `DUNE_LEG_FAILED`, so a
+ *   run-wide failure reads apart from a per-wallet refusal. On a record written before schema 17's
+ *   `thresholdsVersion` reached 6.3.0 an empty list on a walked candidate may still be either;
+ *   `runs/2026-08-04.json` is the case — 82 walked candidates, all empty, one whole-leg failure.
  * @property {number} creatorMovementUnmeasured Launches whose curve state came from a route that
  *   does not report a current creator. `movedCreator` says nothing about these — the Dune
  *   enumeration answers who created a mint and whether it completed, and nothing about who owns the

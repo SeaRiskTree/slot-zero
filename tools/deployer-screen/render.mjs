@@ -22,7 +22,13 @@ import { MADEONSOL_DAILY_REQUESTS, buildPath, ENDPOINT_ROLES } from './client.mj
 // The per-deployer cap's arithmetic, imported rather than restated: a dry run that printed a bound
 // the query does not apply would be worse than printing none. It is arithmetic over a pinned
 // threshold — no Dune-derived value crosses this import.
-import { LAUNCH_CAP_FLOOR, MAYHEM_OBSERVATION_ONLY, duneSpendPlan, launchCapPerWallet } from './dune.mjs';
+import {
+  LAUNCH_CAP_FLOOR,
+  MAYHEM_OBSERVATION_ONLY,
+  duneSpendPlan,
+  launchCapPerWallet,
+  priceWalkFallbackCliff,
+} from './dune.mjs';
 import { estimatePlanCredits } from './client.mjs';
 import { LANDING_TIP_CAVEAT } from './entry.mjs';
 // The reach the plan quotes is DERIVED, never a second copy of the formula: an operator reads this
@@ -1194,7 +1200,8 @@ export function renderStage1(run) {
  *   maxRequestsPerRun: number, maxResultRows: number, maxCoverageLagMs: number,
  *   minIntervalMs: number, worstCaseCreditsPerExecution: number, resultBytesPerRowCeiling: number,
  *   allowanceReserveCredits: number, allowanceTightMultiple: number,
- *   allowanceRequired: boolean }} plan.dune The pinned Dune bounds.
+ *   allowanceRequired: boolean, legFallbackHealthyWalkShare: number,
+ *   legFallbackCliffMultiple: number }} plan.dune The pinned Dune bounds.
  * @param {import('./credential.mjs').DuneCredential} plan.duneCredential Never its value: `label`,
  *   a length and a shape are the only things printed.
  * @param {boolean} plan.usingDune Whether creation enumeration would take the Dune route.
@@ -1588,6 +1595,31 @@ export function renderDryRun(plan) {
       L.push('  probed coverage is REFUSED rather than published — that wallet falls back to the');
       L.push('  walk. Decoded tables have silent start dates: they answer confidently and wrongly');
       L.push(`  before their first row. Staleness past ${Math.round(d.maxCoverageLagMs / 3_600_000)}h re-executes the probe once.`);
+      // WHAT LOSING THIS LEG WOULD COST, priced in the plan rather than discovered in the run
+      // (captain decision 298a). The walk is the correct answer to a Dune refusal; it is also
+      // roughly two orders of magnitude dearer per candidate, and no ceiling above catches that,
+      // because the Helius one already reserves every candidate walking. So the plan states the
+      // number and names the flag that would authorise it.
+      const keyedWalk = plan.rpcEndpoint.provider === 'helius';
+      const cliff = priceWalkFallbackCliff({
+        candidates: plan.maxCandidates,
+        healthyWalkShare: d.legFallbackHealthyWalkShare,
+        cliffMultiple: d.legFallbackCliffMultiple,
+        perCandidate: keyedWalk ? plan.indexedWalk.maxCreditsPerCandidate : plan.creationWalk.maxRpcRequestsPerCandidate,
+        unit: keyedWalk ? 'Helius credit' : 'keyless RPC request',
+      });
+      L.push('');
+      L.push('  IF THIS LEG ANSWERS FOR NOBODY, THE WHOLE BATCH WALKS, AND THAT IS A SPEND CLIFF:');
+      L.push(
+        `  ${cliff.projected.toLocaleString('en-US')} ${cliff.unit}(s) worst case against ` +
+          `${cliff.baseline.toLocaleString('en-US')} for this plan — ${cliff.multiple.toFixed(1)}x, ` +
+          `pinned bar ${d.legFallbackCliffMultiple}x.`,
+      );
+      L.push(
+        cliff.cliff
+          ? `  Such a run is REFUSED before the first walk request unless --allow-walk-fallback is passed.`
+          : `  Under the bar at this candidate cap, so such a run would proceed without the flag.`,
+      );
     }
     L.push('');
   }

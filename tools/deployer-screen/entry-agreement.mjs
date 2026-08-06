@@ -323,12 +323,35 @@ export function summariseEntryAgreement(rows) {
  * retrieval twice — and it stays an ESTIMATE: the vendor's own `POST /usage` is the only
  * authoritative figure, and it lags by longer than a run lasts.
  *
+ * **`duneSpend` STATES THE PERMISSION AND THE APPLICATION SIDE BY SIDE, and the two must never be
+ * pooled** (captain decision 323a). Since 321a a run is bounded and approved at a figure DERIVED from
+ * the windows it plans, so a record reporting only the pinned ceiling describes a bound no run
+ * applied — which is exactly the defect 318a closed in this block, pointing the other way. Reporting
+ * only what was applied would be the opposite half-truth: a reader could no longer see whether the
+ * run sat near its limit. So both, named apart:
+ *
+ * - **PERMISSION** — `executionCeiling` and `windowCeiling` are the pins, what this TOOL allows any
+ *   run of this leg.
+ * - **APPLICATION** — `executionBoundApplied` is the `maxExecutions` this run's `DuneClient` was
+ *   actually constructed with, and `windowsPlanned` is the window count its credit plan was priced
+ *   and approved at. Together they are what THIS RUN could have cost.
+ *
+ * It matters here rather than generally because **a run record is the grading lane's declared input
+ * and is NEVER retro-edited**: a figure that misdescribes what a run did is wrong permanently. This
+ * repository has paid for that shape twice already — a guard denominated in the variable that did not
+ * move, and a `0` sentinel read as a 56-year window.
+ *
  * @param {object} input
  * @param {import('./fill-source.mjs').FillSourceKind} input.primary
  * @param {import('./fill-source.mjs').FillSourceKind} input.crossCheck
  * @param {readonly EntryAgreementRow[]} input.rows
  * @param {{ recipeBlock: string, maxExecutionsPerRun: number, maxWindowsPerRun: number,
  *   worstCaseCreditsPerWindow: number, worstCaseComputeCreditsPerExecution: number }} input.bounds
+ *   The PINS — what the tool permits.
+ * @param {{ executionBound: number, windowsPlanned: number }} input.applied What THIS RUN was bounded
+ *   and approved at. Supplied by the caller rather than re-derived here, because the caller is where
+ *   the client is constructed from the same figure — two expressions that merely agree is captain
+ *   decision 144a's defect, and this block is where such a disagreement would be permanent.
  * @param {{ executions: number, requests: number, resultBytes: number } | null} input.stats This
  *   leg's own Dune counters, or `null` where no client was ever built.
  * @returns {Record<string, unknown>}
@@ -347,9 +370,11 @@ export function entrySourceAgreementRecordRow(input) {
     duneSpend: {
       executions,
       executionCeiling: input.bounds.maxExecutionsPerRun,
+      executionBoundApplied: input.applied.executionBound,
       requests: input.stats?.requests ?? 0,
       resultBytes,
       windowCeiling: input.bounds.maxWindowsPerRun,
+      windowsPlanned: input.applied.windowsPlanned,
       worstCaseCreditsPerWindow: input.bounds.worstCaseCreditsPerWindow,
       localEstimate: localCreditEstimate({
         executions,

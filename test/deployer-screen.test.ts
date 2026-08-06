@@ -161,6 +161,7 @@ import {
   undeclaredConstruction,
 } from '../tools/deployer-screen/plan-source.mjs';
 import {
+  agreementExecutionsFor,
   duneFillSource,
   duneRowsToWindow,
   parseDuneTradeRow,
@@ -6010,12 +6011,19 @@ describe('the keyless boundary holds in both directions', () => {
   // This leg's own Dune meter. It is deliberately NOT folded into the run-level `dune` block: that
   // one bounds an enumeration answering a whole batch in ONE execution, this one bounds a leg
   // executing per window, and adding them would imply a single budget where there are two ceilings.
+  // It states the PERMISSION and the APPLICATION side by side (captain decision 323a):
+  // `executionCeiling`/`windowCeiling` are the pins — what the tool allows any run of this leg —
+  // while `executionBoundApplied`/`windowsPlanned` are what THIS run was bounded and approved at,
+  // which since 321a is derived from the windows it plans. Reporting only the pin describes a bound
+  // no run applied; reporting only the application loses the limit a reader judges it against.
   const AGREEMENT_DUNE_SPEND_KEYS_18 = [
     'executions',
     'executionCeiling',
+    'executionBoundApplied',
     'requests',
     'resultBytes',
     'windowCeiling',
+    'windowsPlanned',
     'worstCaseCreditsPerWindow',
     'localEstimate',
   ];
@@ -6975,6 +6983,7 @@ describe('the keyless boundary holds in both directions', () => {
       crossCheck: 'swap-api',
       rows: [],
       bounds: loadThresholds()['entry_source_agreement'] as never,
+      applied: { executionBound: 22, windowsPlanned: 20 },
       stats: { executions: 3, requests: 11, resultBytes: 2_000_000 },
     }) as Record<string, unknown>;
     expect(Object.keys(agreementRow).sort()).toEqual(
@@ -14063,6 +14072,57 @@ describe('ONE run, TWO entry fill sources, and it agrees with itself PER CANDIDA
       );
       expect(reduced.windowsPlanned).toBe(2 * T['maxLaunchesPerCandidate']!);
       expect(reduced.windowsPlanned).toBeLessThan(fit.windowsPlanned);
+    });
+
+    it('the record states what the tool PERMITS and what this run APPLIED, side by side', () => {
+      // Captain decision 323a. Since 321a a run is bounded and approved at a figure derived from the
+      // windows it plans, so a `duneSpend` block reporting only the pinned ceiling describes a bound
+      // no run applied — 318a's defect in this same block, pointing the other way. Reporting only
+      // the application would lose the limit a reader judges the run against, so both are stated.
+      const bounds = AGREE as unknown as {
+        maxExecutionsPerRun: number;
+        maxWindowsPerRun: number;
+      };
+      const windowsPlanned = 2 * T['maxLaunchesPerCandidate']!;
+      const executionBound = agreementExecutionsFor(bounds, windowsPlanned);
+      const spend = (
+        entrySourceAgreementRecordRow({
+          primary: 'dune',
+          crossCheck: 'swap-api',
+          rows: [],
+          bounds: AGREE as never,
+          applied: { executionBound, windowsPlanned },
+          stats: { executions: 0, requests: 0, resultBytes: 0 },
+        }) as Record<string, Record<string, number>>
+      )['duneSpend']!;
+
+      // The PERMISSION: what the tool allows any run of this leg, unmoved by this run's size.
+      expect(spend['executionCeiling']).toBe(bounds.maxExecutionsPerRun);
+      expect(spend['windowCeiling']).toBe(bounds.maxWindowsPerRun);
+      // The APPLICATION: what THIS run was bounded and approved at, and on a reduced-scale run the
+      // two genuinely differ — which is the case a record that carried only the pins misdescribed.
+      expect(spend['windowsPlanned']).toBe(windowsPlanned);
+      expect(spend['executionBoundApplied']).toBe(executionBound);
+      expect(spend['executionBoundApplied']).toBeLessThan(spend['executionCeiling']!);
+      expect(spend['windowsPlanned']).toBeLessThan(spend['windowCeiling']!);
+
+      // And a FULL-SIZE plan makes them coincide, which is 318a's derivation holding: the ceiling is
+      // exactly what the largest admissible plan derives, so the two are equal there and only there.
+      const full = (
+        entrySourceAgreementRecordRow({
+          primary: 'dune',
+          crossCheck: 'swap-api',
+          rows: [],
+          bounds: AGREE as never,
+          applied: {
+            executionBound: agreementExecutionsFor(bounds, bounds.maxWindowsPerRun),
+            windowsPlanned: bounds.maxWindowsPerRun,
+          },
+          stats: null,
+        }) as Record<string, Record<string, number>>
+      )['duneSpend']!;
+      expect(full['executionBoundApplied']).toBe(full['executionCeiling']);
+      expect(full['windowsPlanned']).toBe(full['windowCeiling']);
     });
 
     it('refuses to compare a source against itself', async () => {

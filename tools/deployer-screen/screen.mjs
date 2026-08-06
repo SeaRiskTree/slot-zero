@@ -1308,6 +1308,13 @@ export async function main(opts, env, out, err) {
   // reading the first has already claimed. Opening it costs nothing: a run that reaches no Dune
   // surface never asks it anything and it never reads the balance.
   const duneCreditLedger = openDuneCreditLedger();
+  // THE EXECUTION BOUND THIS RUN IS ACTUALLY BOUNDED AND APPROVED AT, derived ONCE from the windows
+  // it plans (captain decision 321a) and read by all three of the places that must agree: the
+  // client's own ceiling, the credit plan the allowance clears, and the run record's `duneSpend`,
+  // which states it beside the pinned ceiling rather than in place of it (captain decision 323a).
+  // Deriving it three times would be three expressions that merely agree, which is 144a's defect —
+  // and in a record, which is never retro-edited, a disagreement would be permanent.
+  const agreementExecutionBound = agreementExecutionsFor(agreementBounds, agreementWindowsPlanned);
   /** @type {import('./client.mjs').DuneClient | null} */
   let entryDuneClient = null;
 
@@ -1329,7 +1336,7 @@ export async function main(opts, env, out, err) {
           'than answering Infinity.',
         bound:
           `at most 1 Dune execution (or 0 on the cached read, which is the default) plus one result ` +
-          `read, against the ${agreementExecutionsFor(agreementBounds, agreementWindowsPlanned)} ` +
+          `read, against the ${agreementExecutionBound} ` +
           `execution(s) this run's own ${agreementWindowsPlanned} planned window(s) are priced for ` +
           `— itself capped by the pinned ceiling of ${agreementBounds.maxExecutionsPerRun}`,
         actual: () =>
@@ -1351,7 +1358,7 @@ export async function main(opts, env, out, err) {
           key: duneCredential.key ?? '',
           // THE CEILING THE PLAN WAS PRICED AT, not the pinned one — one derivation, so what this
           // client may issue and what the allowance approved cannot come apart.
-          maxExecutions: agreementExecutionsFor(agreementBounds, agreementWindowsPlanned),
+          maxExecutions: agreementExecutionBound,
           maxRequests: agreementBounds.maxRequestsPerRun,
           minIntervalMs: agreementBounds.minIntervalMs,
           onRequest: (path) => {
@@ -2490,6 +2497,10 @@ export async function main(opts, env, out, err) {
                   candidates.map((c) => c.entryAgreement).filter((a) => a !== null)
                 ),
                 bounds: agreementBounds,
+                applied: {
+                  executionBound: agreementExecutionBound,
+                  windowsPlanned: agreementWindowsPlanned,
+                },
                 stats: entryDuneClient?.stats() ?? null,
               }),
         // Run-level Stage 2 drop tally, broken out by cause. `mintTimeDisagreement` is the one to

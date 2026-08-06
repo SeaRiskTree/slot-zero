@@ -453,6 +453,15 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   disagreement** — captain decision 174b, one level up: an unmeasured verdict is no answer, and
  *   every producer of one is our own coverage.
  *
+ *   **`entrySourceAgreement.duneSpend` STATES THE PERMISSION AND THE APPLICATION SIDE BY SIDE**
+ *   (captain decision 323a). `executionCeiling` and `windowCeiling` are the PINS — what the tool
+ *   allows any run of this leg — while `executionBoundApplied` (the `maxExecutions` this run's
+ *   `DuneClient` was constructed with) and `windowsPlanned` (the window count its credit plan was
+ *   priced and approved at) are what THIS RUN could have cost. Since the plan is derived from the
+ *   windows a run plans, a block carrying only the pins would describe a bound no run applied, and
+ *   one carrying only the application would lose the limit a reader judges it against. A record is
+ *   never retro-edited, so either half-truth would be permanent. Do not pool the two.
+ *
  *   `prediction.entryReading` became SOURCE-AWARE at this version. It named the swap-api gate
  *   specifically, which was true only while one source was ever selected; a Dune-sourced claim filed
  *   under that sentence would describe a gate it did not use, permanently, since a record is never

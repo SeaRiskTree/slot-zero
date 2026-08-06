@@ -421,6 +421,13 @@ a decision of that size silently.
    On `runs/2026-08-04.json`'s shape the leg survives and costs ~20 credits instead of 221,731.
    Afterwards the record reads `dune.executions` ≥ 1 with `dune.coverage.fromCache: true`, which is
    that fallback's signature; the vendor's own sentence is announced on the run, not persisted.
+   **At most one probe execution is issued per run, in whichever order the two paths are reached.**
+   A failed refresh hands back a cached probe, and if that cache is *also* stale — the ordinary reason
+   an operator asked for a refresh — the staleness re-execution below it does not fire, because it
+   would be a retry of the statement that just failed and would spend the enumeration's own remaining
+   execution. That run ends at one billed execution with coverage refused and every candidate carrying
+   its own fallback reason. `enumerateCreations` records the failure from `onRefreshFailure` rather
+   than from `probe.fromCache`, which cannot tell a failed refresh from an ordinary cached read.
 
 ### What the keyless route costs, measured
 

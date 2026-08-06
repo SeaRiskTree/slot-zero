@@ -1502,6 +1502,11 @@ export async function executeAndRead(client, queryId, parameters, bounds) {
  *   yields a cached probe, and this only decides whether that probe has to be fetched again.
  * @param {(note: string) => void} [opts.onRefreshFailure] Called with the vendor's own sentence when a
  *   refresh execution fails and the cache answers instead. The spend is real and the operator is told.
+ *   **It is also the only signal that the failure happened**, and a caller that may execute this probe
+ *   again must consume it as one: the returned probe reads `fromCache: true` on a failed refresh and on
+ *   an ordinary cached read alike, so `fromCache` cannot tell those apart and a caller inferring the
+ *   failure from it would re-execute a statement that just failed. {@link enumerateCreations} is the
+ *   caller that does exactly this.
  * @returns {Promise<CoverageProbe>}
  */
 export async function readCoverageProbe(client, opts) {
@@ -1745,7 +1750,13 @@ export async function checkDuneAllowance(client, input) {
  * @param {(note: string) => void} [opts.onProbeRefreshFailure] Announce a probe REFRESH execution that
  *   failed and was answered from the cache instead. See {@link readCoverageProbe}: the execution is
  *   billed and is never retried, and the free cached read is what keeps one failed probe from sending
- *   a whole batch to the walk.
+ *   a whole batch to the walk. **At most ONE probe execution is ever issued per run, whichever order
+ *   the two paths are reached in.** The staleness re-execution below is the one that could otherwise
+ *   double-bill: `--dune-refresh-probe` that fails hands back a CACHED probe, and if that cache is also
+ *   stale the staleness branch would re-execute the statement that just failed. It does not, because
+ *   this function records the failure from the callback rather than reading `probe.fromCache`, which
+ *   cannot distinguish a failed refresh from an ordinary cached read. That run ends at one billed
+ *   execution, coverage refused, and every candidate carrying its own fallback reason.
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number,
  *   maxCoverageLagMs: number, maxOversizedExecutions?: number, maxOversizedRowsPerExecution?: number }} opts.bounds
  * @param {boolean} [opts.splitOversized] **Opt-IN, and deliberately so.** Captain decision 196a
@@ -1778,11 +1789,22 @@ export async function enumerateCreations(client, opts) {
   // The probe FIRST, and its cost is a cached read. An enumeration executed against surfaces nobody
   // has bounded is the thing this module exists to refuse, so it is not spent before the bound is in
   // hand — and if the probe refuses, the execution is never issued at all.
+  // Whether a REFRESH execution of the probe has already been issued and failed in this run. It is
+  // recorded here rather than inferred from `probe.fromCache`, which cannot tell "cached because the
+  // caller asked for the cache" apart from "cached because the refresh died" — and those two owe the
+  // staleness branch opposite answers.
+  let refreshExecutionFailed = false;
+  /** @param {string} note */
+  const onRefreshFailure = (note) => {
+    refreshExecutionFailed = true;
+    opts.onProbeRefreshFailure?.(note);
+  };
+
   let probe = await readCoverageProbe(client, {
     queryId: opts.coverageQueryId,
     refresh: opts.refreshProbe,
     bounds: opts.bounds,
-    ...(opts.onProbeRefreshFailure === undefined ? {} : { onRefreshFailure: opts.onProbeRefreshFailure }),
+    onRefreshFailure,
   });
   let coverage = assessCoverage({ probe, nowMs: opts.nowMs, bounds: opts.bounds });
 
@@ -1792,7 +1814,15 @@ export async function enumerateCreations(client, opts) {
   // walk because a free cached read was six hours old would trade ~1 credit for ~13 hours. Every
   // other refusal — a missing table, a month with no rows — asks the same question and gets the same
   // answer, so it is not retried.
-  if (!coverage.ok && coverage.staleOnly && probe.fromCache) {
+  //
+  // `!refreshExecutionFailed` is the load-bearing clause. `--dune-refresh-probe` whose execution
+  // failed lands here holding a CACHED probe, and if that cache is also stale — the ordinary reason
+  // an operator asks for a refresh in the first place — re-executing would be a RETRY of the failed
+  // `DuneClient.execute`, which is the one call in this repository that is never retried on any
+  // failure for any reason (`thresholds.json` -> `dune.$comment`). It would also spend the second of
+  // the two budgeted executions, so the enumeration itself would then hit the ceiling and the whole
+  // leg would die anyway, at two bills instead of one.
+  if (!coverage.ok && coverage.staleOnly && probe.fromCache && !refreshExecutionFailed) {
     probe = await readCoverageProbe(client, {
       queryId: opts.coverageQueryId,
       refresh: true,
@@ -1801,7 +1831,7 @@ export async function enumerateCreations(client, opts) {
       // be handed back the very result that was judged stale a moment ago. It stays stale, the
       // coverage stays refused, and every candidate gets that refusal as its own reason.
       fallbackProbe: probe,
-      ...(opts.onProbeRefreshFailure === undefined ? {} : { onRefreshFailure: opts.onProbeRefreshFailure }),
+      onRefreshFailure,
     });
     coverage = assessCoverage({ probe, nowMs: opts.nowMs, bounds: opts.bounds });
   }

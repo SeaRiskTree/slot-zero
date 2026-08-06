@@ -5127,6 +5127,68 @@ describe('a failed coverage-probe EXECUTION does not take the whole Dune leg dow
     expect(r?.usable).toBe(false);
     expect(walkFallbackReasons({ attempted: true, reading: r, legFailure: null }).length).toBeGreaterThan(0);
   });
+
+  it('never re-executes a probe whose refresh already failed, even when the cache it fell back to is STALE', async () => {
+    // The third order, and the one that would double-bill: --dune-refresh-probe executes (billed),
+    // fails, and falls back to a cached probe that is ALSO stale — which is the ordinary reason an
+    // operator asked for a refresh at all. Re-executing there would retry the one call this
+    // repository never retries AND spend the enumeration's own remaining execution, so the leg would
+    // die anyway at two bills instead of one.
+    let probeReads = 0;
+    let probeExecutes = 0;
+    const fetchImpl = stub({
+      '/query/2/results': () => {
+        probeReads += 1;
+        return new Response(
+          JSON.stringify({
+            result: { rows: HEALTHY_PROBE(), metadata: { total_row_count: HEALTHY_PROBE().length, total_result_set_bytes: 1 } },
+          }),
+          { status: 200 },
+        );
+      },
+      '/query/2/execute': () => {
+        probeExecutes += 1;
+        return new Response(JSON.stringify({ execution_id: 'p1' }), { status: 200 });
+      },
+      '/query/2': okJson({ query_sql: COVERAGE_SQL }),
+      '/execution/p1/status': okJson({ state: 'QUERY_STATE_FAILED', error: { type: 'QUERY_FAILED', message: 'integer out of range' } }),
+    });
+    const c = new DuneClient({
+      key: DUNE_FAKE_KEY,
+      maxExecutions: 2,
+      maxRequests: 40,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const announced: string[] = [];
+    const e = await enumerateCreations(c, {
+      wallets: [DUNE_WALLET],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: true,
+      // Far enough past the cached probe's own instant that staleness is the ONLY thing wrong with
+      // it, which is exactly the condition the re-execution branch reads.
+      nowMs: NOW_MS + 48 * 3_600_000,
+      bounds: DUNE_BOUNDS,
+      allowance: DUNE_ALLOWANCE_CLEARED,
+      onProbeRefreshFailure: (note) => announced.push(note),
+    });
+
+    // ONE billed execution, not two: the failed refresh, and no retry of it from the staleness path.
+    expect(probeExecutes).toBe(1);
+    expect(c.executions()).toBe(1);
+    expect(announced).toHaveLength(1);
+    // The cache answered once and was judged stale; asking it again buys the same bytes.
+    expect(probeReads).toBe(1);
+    expect(e.probe.fromCache).toBe(true);
+    expect(e.coverage.ok).toBe(false);
+    expect(e.coverage.staleOnly).toBe(true);
+    // And the refusal reaches the candidate rather than leaving an unexplained walk behind it.
+    const r = e.byWallet.get(DUNE_WALLET) ?? null;
+    expect(r?.usable).toBe(false);
+    expect(walkFallbackReasons({ attempted: true, reading: r, legFailure: null }).length).toBeGreaterThan(0);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------

@@ -12479,7 +12479,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       }
     });
 
-    it('the RUN path is untouched: it builds its source and pays whatever that costs', () => {
+    it('the RUN path builds and pays when it READS the source', () => {
       // Criterion 5. The split is about the PLAN path, and the run path's two steps — select, then
       // ask, then guard — are pinned as source text because a refactor that quietly routed the run
       // through `planEligibility` would inherit a refusal the run must never have: a real run was

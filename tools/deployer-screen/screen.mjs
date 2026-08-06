@@ -165,9 +165,10 @@ export const ENTRY_FILL_SOURCE_KIND = 'swap-api';
  *
  * **SELECTION AND CONSTRUCTION ARE TWO STEPS NOW** (captain decision 286c). {@link
  * resolveEntryFillSource} does the choosing and touches nothing; this function is that plus the
- * `build()` the RUN path always wants. The split exists because the PLAN path must be able to
- * resolve a source — to name it, and to say what asking it would cost — without building one, since
- * building the Dune source needs a billed coverage probe. Nothing about the run path moved.
+ * `build()` a run wants whenever it will READ the source. The split exists because the PLAN path
+ * must be able to resolve a source — to name it, and to say what asking it would cost — without
+ * building one, since building the Dune source needs a billed coverage probe. When a run reads no
+ * source at all, it calls neither: see {@link entryFillSourceIsRead} and {@link runEntryFillSource}.
  *
  * @param {import('./fill-source.mjs').FillSourceKind} kind
  * @param {FillSourceRegistry} sources
@@ -280,6 +281,74 @@ export async function planEntryEligibility(kind, sources, opts) {
     authorisedBy: DRY_RUN_SPEND_FLAG,
     announce: opts.announce,
   });
+}
+
+/**
+ * WILL THIS RUN READ AN ENTRY FILL SOURCE AT ALL? **The one condition BOTH paths gate their
+ * construction on**, written once so they cannot answer it differently.
+ *
+ * Captain decision 286c established the rule on the PLAN path — *only a plan that will print the
+ * figure may buy it* — and left the RUN path's identical exposure filed against the Gate 3 cutover,
+ * because that lane's intent had frozen the run path. This is that filed item, and the rule is the
+ * same one level over: **only a run that will READ the source may build it.**
+ *
+ * The exposure it closes is not reachable today and that is precisely why it closes now. Every
+ * construction in the registry is free while `ENTRY_FILL_SOURCE_KIND` is `swap-api`, so a
+ * `--no-stage2` run building one costs nothing and cannot fail. The moment Gate 3 points the kind at
+ * Dune, the same unconditional construction becomes two defects at once, and **the first run that
+ * ever exercises the Dune source is the one that would pay them**:
+ *
+ *   - a real `--no-stage2` run would run the BILLED coverage probe for a source Stage 2 never reads;
+ *   - an UNBUILDABLE source would refuse the whole run with `EXIT.upstream` — the gate, the
+ *     enumeration and the record all lost — over a leg the operator had switched off.
+ *
+ * It is a function rather than `opts.stage2` spelled twice because two expressions that merely agree
+ * are what captain decision 144a is about: this repo has already paid for a guard denominated in the
+ * variable that did not move. When a later flag makes Stage 2 conditional on something else, there
+ * is one place that learns it.
+ *
+ * @param {{ stage2: boolean }} opts
+ * @returns {boolean}
+ */
+export function entryFillSourceIsRead(opts) {
+  return opts.stage2;
+}
+
+/**
+ * THE RUN PATH'S CONSTRUCTION: build the fill source and prove its gate is usable — or build
+ * NOTHING, because Stage 2 is off and nothing downstream will ever ask it anything.
+ *
+ * **`null` means NO SOURCE WAS BUILT, and it is the only way this returns without one.** A run with
+ * Stage 2 on either gets a source whose eligibility gate is a finite duration, or this throws; there
+ * is no third outcome and no source that exists while answering `Infinity`. That is what lets the
+ * Stage 2 block downstream be guarded by `entryFillSource !== null` rather than by a second reading
+ * of `opts.stage2` — the construction and the scoring are ONE decision, so they cannot drift into
+ * scoring without a source or building one nobody scores with.
+ *
+ * **It is NOT `planEligibility` and must never become it** (the existing pin on this file's source
+ * text is what says so). A plan refuses to build a billed or an undeclared construction; a run
+ * builds both, because a run that is going to read the source was always going to reach that vendor
+ * and what the construction costs is not its question. The only thing this shares with the plan path
+ * is {@link entryFillSourceIsRead} — the question of whether the source is read at all, which is a
+ * property of the RUN rather than of either path.
+ *
+ * It is a named export rather than four lines inside `main` for the reason
+ * {@link planEntryEligibility} already gives: **the registry is what a test substitutes**, and a
+ * registry whose constructor throws if it is called is the only way to prove that a `--no-stage2`
+ * run never calls it. There is no such seam through `main`, so a test driving `main` could only
+ * observe the free swap-api source succeeding either way.
+ *
+ * @param {FillSourceRegistry} entryFillSources
+ * @param {{ stage2: boolean }} opts
+ * @param {import('./stage2.mjs').Stage2Thresholds} entryThresholds
+ * @returns {Promise<import('./fill-source.mjs').FillSource | null>}
+ */
+export async function runEntryFillSource(entryFillSources, opts, entryThresholds) {
+  if (!entryFillSourceIsRead(opts)) return null;
+  const entryFillSource = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, entryFillSources);
+  const entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entryThresholds, Date.now()));
+  assertMinAgeUsable(entryFillSource, entryMinAgeMs);
+  return entryFillSource;
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -835,16 +904,11 @@ export async function main(opts, env, out, err) {
     // all — otherwise the opt-in could authorise a bounded purchase of a number that appears on no
     // page.
     //
-    // THIS GATE IS ABOUT THE PLAN PATH ONLY AND MAKES NO CLAIM ABOUT THE RUN PATH. The run path
-    // builds its source UNCONDITIONALLY — `selectEntryFillSource` below, outside any `opts.stage2`
-    // guard — while `entryFillSource` and `entryMinAgeMs` are consumed only inside the
-    // `if (opts.stage2)` block that scores candidates. That is a KNOWN GAP, not an oversight:
-    // under a future billed construction a real `--no-stage2` run WOULD run the billed coverage
-    // probe for a source it never reads, and WOULD refuse the whole run with `EXIT.upstream` for
-    // an unbuildable source Stage 2 was never going to use. It is harmless today because the
-    // selected source is free to build. It is FILED AGAINST THE GATE 3 CUTOVER as its own item and
-    // is deliberately not fixed here, because the run path's behaviour is frozen for this change.
-    if (opts.stage2) {
+    // THE RUN PATH NOW GATES ON THE SAME PREDICATE, and the KNOWN GAP recorded here is CLOSED.
+    // `entryFillSourceIsRead` is that one condition; `runEntryFillSource` below is the run path's
+    // half of it. Both are deliberately conditional — see `entryFillSourceIsRead` for the two
+    // defects an unconditional construction becomes at the Gate 3 cutover, and do not restore one.
+    if (entryFillSourceIsRead(opts)) {
       try {
         entryEligibility = await planEntryEligibility(ENTRY_FILL_SOURCE_KIND, entryFillSources, {
           bounds: entryFillBounds(entryThresholds, Date.now()),
@@ -896,36 +960,50 @@ export async function main(opts, env, out, err) {
     return EXIT.ok;
   }
 
-  // ---- the RUN path, unchanged by 286c ----------------------------------------------------
-  // A real run builds its source and pays whatever that costs: it was always going to reach that
-  // vendor, and the eligibility answer is an input to a measurement rather than a line on a preview.
-  //
-  // BOTH STEPS CAN REFUSE, AND A REFUSAL IS A REPORTED OUTCOME RATHER THAN A STACK TRACE. A source
-  // whose constructor cannot vouch for itself, or one answering an eligibility that is not a
-  // duration, stops the run here — the site whose whole job is to say "we cannot run Stage 2 on the
-  // source we were asked for".
-  /** @type {import('./fill-source.mjs').FillSource} */
-  let entryFillSource;
-  /** @type {number} */
-  let entryMinAgeMs;
-  try {
-    entryFillSource = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, entryFillSources);
-    entryMinAgeMs = await entryFillSource.minAgeMs(entryFillBounds(entryThresholds, Date.now()));
-    assertMinAgeUsable(entryFillSource, entryMinAgeMs);
-  } catch (cause) {
-    err('');
-    err('Refusing to start: Stage 2 has no usable fill source.');
-    err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
-    err('  Nothing was requested, so no quota was spent.');
-    return EXIT.upstream;
-  }
-
   if (!resolution.ok) {
     err('');
     err(`CREDENTIAL PROBLEM — no deployer was screened, and this is NOT a negative result.`);
     err('');
     err(resolution.message);
     return EXIT.credentialMissing;
+  }
+
+  // ---- the RUN path -----------------------------------------------------------------------
+  // A real run that is going to READ the source builds it and pays whatever that costs: it was
+  // always going to reach that vendor, and the eligibility answer is an input to a measurement
+  // rather than a line on a preview. That half is exactly what captain decision 286c left alone.
+  //
+  // **A RUN WITH STAGE 2 OFF READS NO SOURCE, SO IT BUILDS NONE.** The construction is DELIBERATELY
+  // CONDITIONAL — `runEntryFillSource` returns `null` here rather than paying a billed coverage
+  // probe for a leg the operator switched off, or refusing the whole run over a source that leg was
+  // never going to use. Restoring the unconditional call would re-open both, invisibly, on the first
+  // run that ever exercises a billed source.
+  //
+  // **AND IT SITS BELOW THE CREDENTIAL REFUSAL FOR THE SAME REASON, ONE CONDITION OVER.** Only a run
+  // that will actually READ the source may build it, and a run whose MadeOnSol credential does not
+  // resolve screens nothing — so it reads nothing. Above the refusal, a Stage 2 run with no
+  // credential would pay a billed coverage probe and then return `EXIT.credentialMissing` having
+  // measured nothing, or refuse with `EXIT.upstream` and hide the credential message behind a
+  // complaint about a source it was never going to use. Unreachable today for exactly the reason
+  // the conditional construction was — every registered construction is free while
+  // `ENTRY_FILL_SOURCE_KIND` is `'swap-api'` — which is the same pre-cutover window and the same
+  // reason to close it before Gate 3 rather than after. Moving this block back above the refusal
+  // re-opens it; the ORDER is the guard.
+  //
+  // BOTH STEPS CAN REFUSE, AND A REFUSAL IS A REPORTED OUTCOME RATHER THAN A STACK TRACE. A source
+  // whose constructor cannot vouch for itself, or one answering an eligibility that is not a
+  // duration, stops the run here — the site whose whole job is to say "we cannot run Stage 2 on the
+  // source we were asked for". With Stage 2 off there is nothing to say it about.
+  /** @type {import('./fill-source.mjs').FillSource | null} */
+  let entryFillSource;
+  try {
+    entryFillSource = await runEntryFillSource(entryFillSources, opts, entryThresholds);
+  } catch (cause) {
+    err('');
+    err('Refusing to start: Stage 2 has no usable fill source.');
+    err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
+    err('  Nothing was requested, so no quota was spent.');
+    return EXIT.upstream;
   }
 
   // ---- Stage 1 ---------------------------------------------------------------------------
@@ -1428,7 +1506,12 @@ export async function main(opts, env, out, err) {
     }
 
     // ---- Stage 2 — ENTRY. Keyless, and it spends no keyed request at all. -----------------
-    if (opts.stage2) {
+    // GATED ON THE SOURCE ITSELF, not on a second reading of `opts.stage2`. `runEntryFillSource`
+    // returns a source exactly when Stage 2 will read one and `null` otherwise, so scoring and
+    // constructing are ONE decision: this cannot score without a source, and the construction above
+    // cannot build one nobody scores with. Two expressions that merely agree is captain decision
+    // 144a's defect, and it is what let the construction sit outside this guard in the first place.
+    if (entryFillSource !== null) {
       const survivors = candidates.filter((c) => c.verdict === 'gate-passed');
       const toScore = survivors.slice(0, maxScored);
       scoringTruncatedBy = survivors.length - toScore.length;

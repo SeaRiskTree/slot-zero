@@ -123,8 +123,10 @@ import { rpcCostSource } from '../tools/deployer-screen/rpc-costs.mjs';
 import {
   ENTRY_FILL_SOURCE_KIND,
   SWAP_API_CONSTRUCTION,
+  entryFillSourceIsRead,
   planEntryEligibility,
   resolveEntryFillSource,
+  runEntryFillSource,
   selectEntryFillSource,
 } from '../tools/deployer-screen/screen.mjs';
 import { renderDryRun as renderCensusDryRun } from '../tools/deployer-screen/bundling.mjs';
@@ -12477,7 +12479,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       }
     });
 
-    it('the RUN path is untouched: it builds its source and pays whatever that costs', () => {
+    it('the RUN path builds and pays when it READS the source', () => {
       // Criterion 5. The split is about the PLAN path, and the run path's two steps — select, then
       // ask, then guard — are pinned as source text because a refactor that quietly routed the run
       // through `planEligibility` would inherit a refusal the run must never have: a real run was
@@ -12486,6 +12488,10 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       // standing BESIDE the behavioural test immediately above, which drives `selectEntryFillSource`
       // against a billed and an undeclared registry and observes the constructor run. Removing them
       // is the captain's call, not a cleanup — add beside them, never replace them.
+      // STILL TRUE AFTER THE RUN PATH'S CONSTRUCTION BECAME CONDITIONAL: the three steps moved into
+      // `runEntryFillSource`, in this same file, and are unchanged in text and in order. What
+      // changed is only WHETHER they run — see the block below. A run that reads the source still
+      // builds it and still pays whatever that costs.
       const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
       expect(screen).toMatch(/entryFillSource = selectEntryFillSource\(ENTRY_FILL_SOURCE_KIND, entryFillSources\);/);
       expect(screen).toMatch(/entryMinAgeMs = await entryFillSource\.minAgeMs\(entryFillBounds\(entryThresholds, Date\.now\(\)\)\);/);
@@ -12498,6 +12504,184 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         const text = readFileSync(join(TOOL_DIR, module), 'utf8');
         expect(text, `${module} must not import the plan path`).not.toMatch(/plan-source\.mjs/);
       }
+    });
+
+    describe('and the RUN path builds nothing for a leg that is switched off', () => {
+      // WHY THIS BLOCK EXISTS, AND WHY IT IS NOT PART OF 286c. The review of 286c surfaced the same
+      // exposure one level over, on the RUN path, and it was correctly NOT fixed there: that lane's
+      // intent had frozen the run path, so it recorded the gap in place instead. This is that filed
+      // item, closed BEFORE the Gate 3 cutover rather than after — because nothing routes through
+      // the Dune fill source today, and therefore THE FIRST RUN THAT EVER EXERCISES IT IS THE ONE
+      // THAT WOULD PAY.
+      //
+      // The two outcomes, both from one unconditional construction:
+      //   1. a real `--no-stage2` run pays the BILLED coverage probe for a source Stage 2 never
+      //      reads;
+      //   2. an UNBUILDABLE source refuses that whole run with EXIT.upstream — gate, enumeration and
+      //      record all lost — over a leg the operator switched off.
+      //
+      // SAME MECHANISM AS 286c, NOT A SECOND PATTERN: `entryFillSourceIsRead` is the one predicate
+      // both paths gate on, and `runEntryFillSource` is the run path's half — the registry seam a
+      // test substitutes, exactly as `planEntryEligibility` is for the plan path. The stub-registry
+      // argument in this block's header applies unchanged: the property is "the constructor is not
+      // called", and a constructor that fails the test states it exactly.
+
+      /**
+       * The billed, unbuildable registry a Gate 3 run could be handed.
+       *
+       * IT IS REGISTERED UNDER THE SELECTED KIND, and the vendor name is not what is under test.
+       * `runEntryFillSource` selects through `ENTRY_FILL_SOURCE_KIND`, which a test cannot repoint —
+       * that is Gate 3's edit and this lane is explicitly not the cutover. So the cutover's shape is
+       * reproduced from the other side: the SELECTED kind's registration declares a BILLED
+       * construction that then fails, which is the same code path the constant's move would produce.
+       */
+      const unbuildable = (count: { n: number }) => ({
+        'swap-api': {
+          construction: billedConstruction('swap-api', {
+            why: 'building it runs a billed coverage probe.',
+            bound: 'at most 1 execution and 2.0 billed credits',
+            actual: () => '1 execution, 1.8 billed credits',
+          }),
+          build: () => {
+            count.n += 1;
+            throw new Error('the coverage probe refused the trade tables.');
+          },
+        },
+      });
+
+      it('constructs NO fill source when Stage 2 is off, and refuses none either', async () => {
+        // BOTH acceptance criteria in one assertion pair, because they are one defect: the
+        // constructor is never called (nothing is billed) and nothing is thrown (nothing refuses).
+        const count = { n: 0 };
+        await expect(runEntryFillSource(unbuildable(count), { stage2: false }, T)).resolves.toBeNull();
+        expect(count.n).toBe(0);
+      });
+
+      it('and the SAME registry still refuses when Stage 2 is ON — the gate is the leg, not the source', async () => {
+        // The control that makes the test above mean something. Without it, a `runEntryFillSource`
+        // that always returned `null` would pass — and Stage 2 would silently stop being able to
+        // report that it has no usable fill source, which is the one thing that refusal is for.
+        const count = { n: 0 };
+        await expect(runEntryFillSource(unbuildable(count), { stage2: true }, T)).rejects.toThrow(
+          /coverage probe refused the trade tables/,
+        );
+        expect(count.n).toBe(1);
+      });
+
+      it('a source that IS buildable is built, asked and returned, exactly as before', async () => {
+        // Criterion 3: Stage 2 enabled is unchanged. The source comes back, and the eligibility gate
+        // it was asked for is the SOURCE'S OWN answer — the property 281a/284a/285a bought, which
+        // making the construction conditional must not spend.
+        let constructed = 0;
+        const source = await runEntryFillSource(
+          {
+            dune: {
+              construction: duneConstruction(),
+              build: () => {
+                constructed += 1;
+                return duneStub();
+              },
+            },
+            'swap-api': {
+              construction: SWAP_API_CONSTRUCTION,
+              build: () => swapApiFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 })),
+            },
+          },
+          { stage2: true },
+          T,
+        );
+        // ENTRY_FILL_SOURCE_KIND is `swap-api`, so the Dune constructor beside it stays untouched —
+        // the selector builds only what it selected, which is what makes the conditional worth
+        // having at all.
+        expect(constructed).toBe(0);
+        expect(source?.kind).toBe('swap-api');
+        expect(await source?.minAgeMs(BOUNDS)).toBe(windowReachMs(loadThresholds()['stage2_entry']));
+      });
+
+      it('an UNUSABLE eligibility answer still refuses, and only where Stage 2 reads it', async () => {
+        // The second of the run path's two steps. A source that exists while answering `Infinity` is
+        // an unknown wearing a measurement's clothes — it is persisted as `entry.coverage.minAgeMs`,
+        // where JSON.stringify writes it as `null`, and rendered as a duration. It must still stop a
+        // run that would read it, and must still cost a run that would not read it nothing.
+        const infinite = {
+          'swap-api': {
+            construction: SWAP_API_CONSTRUCTION,
+            build: () => ({ ...duneStub(), kind: 'swap-api' as const, minAgeMs: async () => Infinity }),
+          },
+        };
+        await expect(runEntryFillSource(infinite, { stage2: true }, T)).rejects.toThrow(/finite/);
+        await expect(runEntryFillSource(infinite, { stage2: false }, T)).resolves.toBeNull();
+      });
+
+      it('BOTH paths gate on ONE predicate, and `main` routes through it', async () => {
+        // The relationship to 286c, pinned rather than described. `entryFillSourceIsRead` is the
+        // shared mechanism: the plan path's construction and the run path's are the same question
+        // asked once. Two expressions that merely agree is captain decision 144a's defect, and it
+        // is exactly how the run path came to sit outside the guard the plan path already had.
+        expect(entryFillSourceIsRead({ stage2: true })).toBe(true);
+        expect(entryFillSourceIsRead({ stage2: false })).toBe(false);
+
+        // SOURCE-TEXT PINS, in the idiom this file already uses where `main` offers no seam — the
+        // seam proves the helper is right, these prove `main` goes through it. They stand BESIDE
+        // the behavioural tests above, never instead of them; the same rule 287c states for the
+        // three pins in the test immediately preceding this block.
+        const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+        // The run path calls the gated constructor and nothing else.
+        expect(screen).toContain(
+          'entryFillSource = await runEntryFillSource(entryFillSources, opts, entryThresholds);',
+        );
+        // ...and the ONLY unconditional caller of `selectEntryFillSource` left in this file is
+        // inside `runEntryFillSource`, behind its own early return.
+        expect(screen.match(/selectEntryFillSource\(ENTRY_FILL_SOURCE_KIND, entryFillSources\)/g)).toHaveLength(1);
+        expect(screen).toContain('if (!entryFillSourceIsRead(opts)) return null;');
+        // Three occurrences and no more: the definition, the run path's early return, and the plan
+        // path's guard. A fourth would be a third site deciding this on its own.
+        expect(screen.match(/entryFillSourceIsRead\(opts\)/g)).toHaveLength(3);
+        expect(screen).toContain('if (entryFillSourceIsRead(opts)) {');
+        // And Stage 2 scores exactly where a source was built, rather than re-reading the flag.
+        expect(screen).toContain('if (entryFillSource !== null) {');
+        // The comment that has to survive a refactor: the conditional is deliberate and says why.
+        expect(screen).toContain('A RUN WITH STAGE 2 OFF READS NO SOURCE, SO IT BUILDS NONE.');
+
+        // AND THE RUN PATH STILL BEHAVES: `--no-stage2` against an empty environment reaches the
+        // credential check as it always did, so nothing was reordered into a different refusal.
+        const parsed = parseArgs(['--no-stage2']);
+        if (!parsed.ok) throw new Error('unreachable');
+        const errs: string[] = [];
+        expect(await main(parsed.opts, {}, () => {}, (l) => errs.push(l))).toBe(3);
+        expect(errs.join('\n')).toContain('CREDENTIAL PROBLEM');
+        expect(errs.join('\n')).not.toContain('has no usable fill source');
+      }, 60_000);
+
+      it('a run with NO credential builds no source either, Stage 2 on or off', async () => {
+        // THE SAME INVARIANT, ONE CONDITION OVER: only a run that will actually READ the source may
+        // build it, and a run whose credential does not resolve screens nothing. Post-Gate-3 a
+        // Stage 2 run with no credential would otherwise pay a billed coverage probe before
+        // returning EXIT.credentialMissing having measured nothing — or refuse with EXIT.upstream
+        // and hide the credential message behind a complaint about a source it never read.
+        //
+        // `main` takes no registry, so the ORDER is what carries this and the order is what is
+        // pinned: the credential refusal must return before the construction is reached. Today both
+        // orders exit 3 on an empty environment, because the swap-api construction is free and
+        // succeeds — which is precisely why this closes before the cutover rather than after.
+        const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+        const refusal = screen.indexOf('return EXIT.credentialMissing;');
+        const construction = screen.indexOf(
+          'entryFillSource = await runEntryFillSource(entryFillSources, opts, entryThresholds);',
+        );
+        expect(refusal).toBeGreaterThan(-1);
+        expect(construction).toBeGreaterThan(refusal);
+
+        // And the behaviour that ordering guarantees rather than merely observes: Stage 2 ON, empty
+        // environment, and the credential message is the one the operator gets.
+        const parsed = parseArgs([]);
+        if (!parsed.ok) throw new Error('unreachable');
+        expect(parsed.opts.stage2).toBe(true);
+        const errs: string[] = [];
+        expect(await main(parsed.opts, {}, () => {}, (l) => errs.push(l))).toBe(3);
+        expect(errs.join('\n')).toContain('CREDENTIAL PROBLEM');
+        expect(errs.join('\n')).not.toContain('has no usable fill source');
+      }, 60_000);
     });
   });
 

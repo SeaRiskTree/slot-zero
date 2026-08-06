@@ -154,6 +154,72 @@ export const ENTRY_PREDICTION_READING =
   'the two must never be pooled or compared.';
 
 /**
+ * THE SAME SENTENCE FOR THE DUNE FILL SOURCE, and it exists because the one above is TRUE ONLY OF
+ * THE SWAP-API.
+ *
+ * `thresholds.json` -> `stage2_entry_dune`'s block comment records this as a binding precondition on
+ * whoever routes Stage 2 through a second source: {@link ENTRY_PREDICTION_READING} is emitted
+ * unconditionally into every schema 16/17 record and names the swap-api gate specifically, which was
+ * true only because `screen.mjs` selected that source on every run. A record is never retro-edited,
+ * so a Dune-sourced claim filed under that sentence would describe a gate it did not use --
+ * permanently, and invisibly, since nothing downstream re-derives it.
+ *
+ * The two differ in the ONE clause that matters to a grader: where the eligibility gate comes from.
+ * The swap-api answers from its own cursor reach, which is arithmetic over pinned thresholds; this
+ * source answers from an OBSERVED vendor watermark (captain decision 257a), so the same wording
+ * would be a written duration for something the vendor controls -- captain decision 144a's defect
+ * arriving through a doc string.
+ */
+export const ENTRY_PREDICTION_READING_DUNE =
+  'STAGE 2 ENTRY, over Dune-decoded pump.fun fills (`dune-fills.mjs` -> `ENTRY_SQL`, saved query ' +
+  '8235460) for the launches `measure.mjs` -> `toLaunchRefs` read off the MadeOnSol profile, gated ' +
+  'to launches at least the Stage 2 fill source`s own `minAgeMs` old — which on THIS source is an ' +
+  'OBSERVED WATERMARK plus the window`s own reach, never a written duration: the decoded trade ' +
+  'tables lag the chain and captain decision 257a requires the lag to be read off the tables ' +
+  'themselves, so the figure differs run to run and is recorded as `entry.coverage.minAgeMs`. ' +
+  'Scored by `entry.mjs` -> `scoreEntry` at this run`s pinned `stage2_entry` and `stage2_cost` ' +
+  'bars — the SAME recipe the swap-api reading is scored at, because a dual-source run holds the ' +
+  'recipe fixed and varies only the transport. It is NOT the gate reading: `gateReading` on this ' +
+  'block names that one separately, and the two must never be pooled or compared.';
+
+/**
+ * The reading sentence for one fill source. **EXHAUSTIVE** — a source absent from here has no
+ * sentence, and {@link entryReadingFor} refuses rather than defaulting to another source's.
+ *
+ * @type {Readonly<Record<string, string>>}
+ */
+export const ENTRY_PREDICTION_READING_BY_SOURCE = Object.freeze({
+  'swap-api': ENTRY_PREDICTION_READING,
+  dune: ENTRY_PREDICTION_READING_DUNE,
+});
+
+/**
+ * Which reading sentence describes this candidate's claim.
+ *
+ * **A `null` source means Stage 2 produced no score, and the swap-api sentence is still correct
+ * there**: the claim is `null` too, so the sentence describes the reading that WOULD have been
+ * taken, and every run that reaches Stage 2 without the dual-source flag takes it. An UNKNOWN
+ * source refuses, because filing a claim under another source's reading is the exact failure this
+ * function exists to prevent, and defaulting is how it would happen quietly.
+ *
+ * @param {string | null | undefined} entrySource
+ * @returns {string}
+ */
+export function entryReadingFor(entrySource) {
+  if (entrySource === null || entrySource === undefined) return ENTRY_PREDICTION_READING;
+  const reading = ENTRY_PREDICTION_READING_BY_SOURCE[entrySource];
+  if (reading === undefined) {
+    throw new Error(
+      `a prediction block was asked to describe the reading for a ${JSON.stringify(entrySource)} ` +
+        `fill source and no sentence is declared for one. It refuses rather than falling back to ` +
+        `another source's: a record is never retro-edited, so a claim filed under a reading it did ` +
+        `not use is wrong permanently and invisibly.`,
+    );
+  }
+  return reading;
+}
+
+/**
  * The sentence that says what would make an entry claim scoreable, carried ON the claim.
  *
  * Same discipline as `entry.mjs` → `LANDING_TIP_CAVEAT`: a rule that lives only in a README is a
@@ -313,6 +379,9 @@ export function entryPredictionClaim(entry) {
  *   finding, or `null` when Stage 2 never scored this candidate.
  * @param {string} input.madeAtIso        The run's `finishedAtIso`. See the module header for why.
  * @param {string} input.gateReading      The candidate row's `historySource`.
+ * @param {string | null} [input.entrySource] The candidate row's `entrySource` — WHICH FILL SOURCE
+ *   produced the finding this claim restates. Absent or `null` means the swap-api, which is what
+ *   every run before the dual-source mode read and what every default run still reads.
  * @param {string | number | null} input.thresholdsVersion
  * @returns {PredictionBlock}
  */
@@ -322,7 +391,11 @@ export function buildPredictionBlock(input) {
     block: PREDICTION_BLOCK_VERSION,
     madeAtIso: input.madeAtIso,
     gateReading: input.gateReading,
-    entryReading: ENTRY_PREDICTION_READING,
+    // NAMED FROM THE CANDIDATE'S OWN SOURCE, never from a run-level assumption. See
+    // {@link entryReadingFor}: a dual-source run can record a Dune reading for one candidate and a
+    // swap-api one for the next, so a run-level sentence would be wrong for a subset of the rows it
+    // was filed against — and a committed record is never retro-edited.
+    entryReading: entryReadingFor(input.entrySource ?? null),
     thresholdsVersion: input.thresholdsVersion,
     claims: [
       {

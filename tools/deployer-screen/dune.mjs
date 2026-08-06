@@ -1494,6 +1494,14 @@ export async function executeAndRead(client, queryId, parameters, bounds) {
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} opts
  * @param {number} opts.queryId
+ * @param {string} [opts.sql] The committed text this saved query must still match. Defaults to
+ *   {@link COVERAGE_SQL}, the create surfaces the enumeration reads. **It is a parameter because
+ *   there is now a SECOND probe of the same shape** — `dune-fills.mjs` → `TRADE_COVERAGE_SQL`, which
+ *   bounds the TRADE tables Stage 2's entry statement reads. The two surfaces lag differently and a
+ *   create-table watermark read as a trade-table one admits launches against tables that do not yet
+ *   hold their fills, so they must be probed apart. What must NOT be duplicated is the machinery
+ *   around them — the custody check, the refresh-then-cache order, the billed-execution fallback of
+ *   captain decision 298a — because two copies of that is two answers to "may this surface be read".
  * @param {boolean} opts.refresh Execute instead of reading the cache.
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number }} opts.bounds
  * @param {CoverageProbe | null} [opts.fallbackProbe] A cached probe the caller ALREADY holds. Supplied
@@ -1510,7 +1518,7 @@ export async function executeAndRead(client, queryId, parameters, bounds) {
  * @returns {Promise<CoverageProbe>}
  */
 export async function readCoverageProbe(client, opts) {
-  await assertSavedQueryMatches(client, opts.queryId, COVERAGE_SQL);
+  await assertSavedQueryMatches(client, opts.queryId, opts.sql ?? COVERAGE_SQL);
   if (opts.refresh) {
     try {
       const executed = await executeAndRead(client, opts.queryId, {}, opts.bounds);

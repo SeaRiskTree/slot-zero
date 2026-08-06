@@ -59,7 +59,14 @@
  * edge is not strictly older than the declared mint proves nothing and is refused.
  */
 
-import { WALLET_SHAPE, assertSavedQueryMatches, executeAndRead, parseDuneTimestamp } from './dune.mjs';
+import {
+  WALLET_SHAPE,
+  assertSavedQueryMatches,
+  assessCoverage,
+  executeAndRead,
+  parseDuneTimestamp,
+  readCoverageProbe,
+} from './dune.mjs';
 import { LAMPORTS_PER_SOL } from './measure.mjs';
 // Window GEOMETRY, shared by every source: which fills are inside the window
 // ({@link windowFilter}, denominated in slots) and how far past the mint the window reaches
@@ -588,6 +595,171 @@ export function entryQueryParameters(windows) {
     scan_from: timestampLiteral(Math.min(...windows.map((w) => w.fromMs))),
     scan_to: timestampLiteral(Math.max(...windows.map((w) => w.toMs))),
   };
+}
+
+/**
+ * The tables {@link ENTRY_SQL} actually READS, named once so a coverage probe and the statement
+ * cannot come apart.
+ *
+ * Same asymmetry `dune.mjs` → `ENUMERATION_TABLES` states for the create surfaces: the probe below
+ * is allowed to be WIDER than this list so its own output demonstrates a boundary, but every table
+ * named here must be probed or {@link assessTradeCoverage}'s caller is vouching for a surface
+ * nothing measured. `createpoolevent` is deliberately absent — the statement joins it to map a pool
+ * to its mint and reads no FILL from it, so it bounds no fill's timestamp.
+ *
+ * @type {readonly string[]}
+ */
+export const TRADE_TABLES = Object.freeze(['base_trades', 'pump_amm_evt_buyevent', 'pump_amm_evt_sellevent']);
+
+/**
+ * **UNDEPLOYED, AND `null` MEANS THE SOURCE CANNOT BE BUILT — it does not mean "skip the probe".**
+ *
+ * {@link TRADE_COVERAGE_SQL} is committed here, and a committed statement is half of this repo's
+ * custody: the other half is a saved query holding the identical text, because
+ * `assertSavedQueryMatches` compares the two BEFORE an execution is billed. Nothing has been
+ * deployed for this one — it needs a private-query slot and a captain decision to take it, exactly
+ * as saved query `8214953` did (captain decision 187a) — so the id is `null` and every consumer
+ * must refuse rather than invent one.
+ *
+ * The alternative shapes were both worse and both are on this repo's record. Pointing it at an
+ * EXISTING id would run a statement whose text the saved query does not match, which refuses the
+ * leg terminally on the first real run — after the coverage probe has already been billed. Omitting
+ * the watermark and writing a lag constant instead is captain decision 144a's defect verbatim, a
+ * duration for something the vendor controls, and captain decision 257a refused it in this exact
+ * place. So: `null`, a refusal a reader can act on, and the deploy is a named step rather than a
+ * discovery.
+ *
+ * `tools/deployer-screen/README.md` → "Deploying a change to the committed SQL" owns the step.
+ *
+ * @type {number | null}
+ */
+export const TRADE_COVERAGE_QUERY_ID = null;
+
+/**
+ * COVERAGE PROBE for the trade surfaces {@link ENTRY_SQL} reads — the observed watermark captain
+ * decision 257a requires, and the thing {@link duneFillSource} refuses to exist without.
+ *
+ * **The enumeration's probe cannot serve this and substituting it would be a silent lie.**
+ * `dune.mjs` → `COVERAGE_SQL` probes the three CREATE tables. Their newest row says when pump.fun
+ * last minted a token that Dune has decoded; it says nothing about whether the decoded TRADE tables
+ * hold that launch's fills yet, and the two lag differently — the measured gap is what makes
+ * eligibility on this route ~4 minutes rather than the swap-api's 85,000 ms. Reading a create-table
+ * watermark as a trade-table one would admit launches against tables that do not yet hold their
+ * fills, and the result comes back well-formed, complete-looking and SHORT: the same silent
+ * truncation a backwards walk produces, in the same direction, arriving by a different door.
+ *
+ * Shaped to `dune.mjs` → `parseCoverageProbe`'s three metrics (`first_row`, `last_row`, `month`) so
+ * the existing parser and {@link assessTradeCoverage}'s `assessCoverage` read it unchanged. A second
+ * parser for the same three metrics would be a second answer to "what does this table cover".
+ */
+export const TRADE_COVERAGE_SQL = `-- slot-zero: COVERAGE PROBE for the trade surfaces the Stage 2 entry statement reads.
+--
+-- Committed byte for byte as TRADE_COVERAGE_SQL in tools/deployer-screen/dune-fills.mjs, which
+-- refuses to read a result unless the saved query still matches it.
+--
+-- WHY IT IS SEPARATE FROM THE ENUMERATION'S PROBE: that one bounds the CREATE tables. A launch can
+-- be decoded as created minutes before its fills are decoded as traded, and a window queried in
+-- that gap comes back well-formed, complete-looking and SHORT. The newest row here is the
+-- watermark eligibility is derived from -- captain decision 257a, never a written lag constant.
+--
+-- pump_amm_evt_createpoolevent is probed but NOT read as a fill surface. It is here so the probe
+-- itself shows the pool-mapping join's own bound rather than the repo asserting it in prose.
+SELECT 'base_trades' AS tbl, 'first_row' AS metric, min(block_time) AS at, count(*) AS n
+FROM pumpdotfun_solana.base_trades
+UNION ALL
+SELECT 'base_trades', 'last_row', max(block_time), count(*)
+FROM pumpdotfun_solana.base_trades
+UNION ALL
+SELECT 'base_trades', 'month', date_trunc('month', block_time), count(*)
+FROM pumpdotfun_solana.base_trades GROUP BY 1, 2, 3
+UNION ALL
+SELECT 'pump_amm_evt_buyevent', 'first_row', min(evt_block_time), count(*)
+FROM pumpdotfun_solana.pump_amm_evt_buyevent
+UNION ALL
+SELECT 'pump_amm_evt_buyevent', 'last_row', max(evt_block_time), count(*)
+FROM pumpdotfun_solana.pump_amm_evt_buyevent
+UNION ALL
+SELECT 'pump_amm_evt_buyevent', 'month', date_trunc('month', evt_block_time), count(*)
+FROM pumpdotfun_solana.pump_amm_evt_buyevent GROUP BY 1, 2, 3
+UNION ALL
+SELECT 'pump_amm_evt_sellevent', 'first_row', min(evt_block_time), count(*)
+FROM pumpdotfun_solana.pump_amm_evt_sellevent
+UNION ALL
+SELECT 'pump_amm_evt_sellevent', 'last_row', max(evt_block_time), count(*)
+FROM pumpdotfun_solana.pump_amm_evt_sellevent
+UNION ALL
+SELECT 'pump_amm_evt_sellevent', 'month', date_trunc('month', evt_block_time), count(*)
+FROM pumpdotfun_solana.pump_amm_evt_sellevent GROUP BY 1, 2, 3
+UNION ALL
+SELECT 'pump_amm_evt_createpoolevent', 'first_row', min(evt_block_time), count(*)
+FROM pumpdotfun_solana.pump_amm_evt_createpoolevent
+UNION ALL
+SELECT 'pump_amm_evt_createpoolevent', 'last_row', max(evt_block_time), count(*)
+FROM pumpdotfun_solana.pump_amm_evt_createpoolevent
+UNION ALL
+SELECT 'pump_amm_evt_createpoolevent', 'month', date_trunc('month', evt_block_time), count(*)
+FROM pumpdotfun_solana.pump_amm_evt_createpoolevent GROUP BY 1, 2, 3
+ORDER BY 1, 2, 3
+`;
+
+/**
+ * Assess the TRADE tables' coverage from a probe result.
+ *
+ * A one-line wrapper on purpose: `dune.mjs` → `assessCoverage` already owns every refusal — a
+ * missing table, an empty one, a month-shaped hole inside the covered span, and staleness — and
+ * writing a second assessor for the same four would be two answers to one question. All this adds
+ * is the table list, which is the only thing that differs between the two surfaces.
+ *
+ * @param {object} input
+ * @param {import('./dune.mjs').CoverageProbe} input.probe
+ * @param {number} input.nowMs
+ * @param {{ maxCoverageLagMs: number }} input.bounds
+ * @returns {import('./dune.mjs').CoverageAssessment}
+ */
+export function assessTradeCoverage(input) {
+  return assessCoverage({ probe: input.probe, nowMs: input.nowMs, bounds: input.bounds, tables: TRADE_TABLES });
+}
+
+/**
+ * Read the trade tables' coverage probe — the watermark {@link duneFillSource} refuses to exist
+ * without.
+ *
+ * **It reuses `dune.mjs` → `readCoverageProbe` rather than reimplementing it**, so the custody
+ * check, the cache-by-default order and captain decision 298a's billed-execution fallback are one
+ * code path serving both probes. Only the statement and the id differ, which is the only thing that
+ * genuinely differs between the two surfaces.
+ *
+ * **A cached read is the default and it costs no execution.** Executing this statement aggregates
+ * the WHOLE of three decoded trade tables, which are orders of magnitude larger than the create
+ * tables the enumeration's probe scans, so a refresh here is the expensive call rather than the
+ * cheap one — `dune.refreshProbeByDefault` is `false` for the same reason and this inherits it.
+ *
+ * @param {import('./client.mjs').DuneClient} client
+ * @param {object} opts
+ * @param {boolean} opts.refresh
+ * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number }} opts.bounds
+ * @param {(note: string) => void} [opts.onRefreshFailure]
+ * @returns {Promise<import('./dune.mjs').CoverageProbe>}
+ */
+export async function readTradeCoverageProbe(client, opts) {
+  if (TRADE_COVERAGE_QUERY_ID === null) {
+    throw new Error(
+      `the trade-table coverage probe has no deployed saved query, so this run cannot read the ` +
+        `watermark the Dune fill source needs. TRADE_COVERAGE_SQL is committed in ` +
+        `tools/deployer-screen/dune-fills.mjs and TRADE_COVERAGE_QUERY_ID is null: deploying it is a ` +
+        `captain decision because it takes one of the account's private-query slots, and pointing ` +
+        `this at an existing id would run a statement the saved query does not match, which refuses ` +
+        `the whole leg terminally AFTER a billed probe. Captain decision 257a forbids the other way ` +
+        `out — writing a lag constant instead of observing the watermark. Nothing was requested.`,
+    );
+  }
+  return readCoverageProbe(client, {
+    queryId: TRADE_COVERAGE_QUERY_ID,
+    sql: TRADE_COVERAGE_SQL,
+    refresh: opts.refresh,
+    bounds: opts.bounds,
+    onRefreshFailure: opts.onRefreshFailure,
+  });
 }
 
 /**

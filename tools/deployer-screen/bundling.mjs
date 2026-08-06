@@ -1398,7 +1398,11 @@ export async function main(opts, out, err) {
     return EXIT.ok;
   }
 
-  const entryFillSource = entryFillRegistration.build();
+  // AWAITED — a registration's `build` may be async since the entry leg acquired a BILLED
+  // construction (the Dune source reads its watermark over the wire). This census's own source is
+  // keyless and free and returns directly, so `await` on a non-promise changes nothing here; it is
+  // the contract that widened, not this lane's cost.
+  const entryFillSource = await entryFillRegistration.build();
   // The survey FILTERS on this figure, so it is guarded before it is used — a non-finite floor fails
   // every `age >= minAgeMs` and reports `launchesEligible: 0` for every candidate, a census of
   // nothing indistinguishable from a cohort that had no eligible launch. The refusal is caught here

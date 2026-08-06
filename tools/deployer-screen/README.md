@@ -1161,7 +1161,7 @@ The captain refused both. `plan-source.mjs` is the split:
 
 | what | where |
 |---|---|
-| SELECTION, with no network call | `screen.mjs` → `resolveEntryFillSource`. It resolves a registration — data — and refuses an unsupplied kind exactly as `selectEntryFillSource` always did. `selectEntryFillSource` is now that plus the `build()` the RUN path always wants. |
+| SELECTION, with no network call | `screen.mjs` → `resolveEntryFillSource`. It resolves a registration — data — and refuses an unsupplied kind exactly as `selectEntryFillSource` always did. `selectEntryFillSource` is now that plus the `build()` a run wants whenever it will READ the source — see "AND THE RUN PATH NOW GATES ON THE SAME CONDITION" below for when it does not. |
 | CONSTRUCTION, only where it is free or authorised | `plan-source.mjs` → `planEligibility`. The default plan never calls a billed constructor, and a test drives it with a stub whose constructor fails the test if it is ever reached. |
 | the figure it could not have | printed as **UNAVAILABLE**, naming the source and the reason, by `plan-source.mjs` → `eligibilityUnavailableNote` — one wording, used by both plan surfaces, so they cannot drift and so a change degrading it into a blank or a zero has to delete the function. It hands out **PRE-WRAPPED LINES** at `PLAN_NOTE_WIDTH`, and the wrapper is not exported: a consumer indents what it is given and cannot choose a second width, so a printer added later inherits the layout instead of enumerating itself into a guard. |
 | the spending plan | `--dry-run-spend`, with `--dry-run` only. It states the **bounded** spend before spending and the **actual** after; the order is a property of `planEligibility` rather than of the caller's memory, and the actual is reported in a `finally`, because a construction that failed half-way still spent. **A cost that cannot be READ is a stated absence, never a propagation** — a real billed source reads its actual out of the transport's own counters (Dune's credit accounting), and a rejection thrown from that `finally` would replace the whole plan's outcome and hand the caller a refusal, i.e. the money gone AND the page withheld. So `actualSpend` never throws: it prints that the spend was made and what it cost could not be read, which is an UNKNOWN and not a zero. |
@@ -1260,11 +1260,12 @@ undeclared one, which says in place that nothing can be said about what building
 A benign default in that last branch would be the same absence-read-as-a-value one line above,
 contradicting the UNAVAILABLE the eligibility line on the same page prints.
 
-**The RUN path did not move.** A real run builds its source and pays whatever that costs: it was
-always going to reach that vendor, and the eligibility answer is an input to a measurement rather
-than a line on a preview. The census (`bundling.mjs`) routes its plan through the same helper and
-declares its source free — it is keyless throughout, captain decision 173a's property of the tree —
-so it ships **no** spending opt-in rather than one that could only ever be inert. That declaration
+**286c left the RUN path alone; it has since gated on the same condition** — "AND THE RUN PATH NOW
+GATES ON THE SAME CONDITION" above owns that, and what survives from 286c is the other half: a run
+that READS its source builds it and pays whatever that costs, because it was always going to reach
+that vendor and the eligibility answer is an input to a measurement rather than a line on a preview.
+The census (`bundling.mjs`) routes its plan through the same helper and declares its source free — it
+is keyless throughout, captain decision 173a's property of the tree — so it ships **no** spending opt-in rather than one that could only ever be inert. That declaration
 is a second copy of `screen.mjs` → `SWAP_API_CONSTRUCTION` and **must stay one claim**: the census
 may not import the screen (that would put the Dune client and the credential reader in its import
 graph), so `test/bundling-census.test.ts` imports both and fails the build if they ever differ. A

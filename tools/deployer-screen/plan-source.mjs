@@ -69,9 +69,9 @@
  *
  * ## What this module does NOT touch
  *
- * The RUN path. A real run builds its source and pays whatever that costs — it was always going to
- * reach that vendor, and the eligibility answer is an input to a measurement rather than a line on a
- * preview. Everything here is reachable only from a `--dry-run`/plan printer.
+ * The RUN path. A real run that will READ its source builds it and pays whatever that costs — it was
+ * always going to reach that vendor, and the eligibility answer is an input to a measurement rather
+ * than a line on a preview. Everything here is reachable only from a `--dry-run`/plan printer.
  */
 
 import { assertMinAgeUsable } from './fill-source.mjs';

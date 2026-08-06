@@ -165,9 +165,10 @@ export const ENTRY_FILL_SOURCE_KIND = 'swap-api';
  *
  * **SELECTION AND CONSTRUCTION ARE TWO STEPS NOW** (captain decision 286c). {@link
  * resolveEntryFillSource} does the choosing and touches nothing; this function is that plus the
- * `build()` the RUN path always wants. The split exists because the PLAN path must be able to
- * resolve a source — to name it, and to say what asking it would cost — without building one, since
- * building the Dune source needs a billed coverage probe. Nothing about the run path moved.
+ * `build()` a run wants whenever it will READ the source. The split exists because the PLAN path
+ * must be able to resolve a source — to name it, and to say what asking it would cost — without
+ * building one, since building the Dune source needs a billed coverage probe. When a run reads no
+ * source at all, it calls neither: see {@link entryFillSourceIsRead} and {@link runEntryFillSource}.
  *
  * @param {import('./fill-source.mjs').FillSourceKind} kind
  * @param {FillSourceRegistry} sources

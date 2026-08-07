@@ -908,6 +908,36 @@ dev currently?"*, and the shape of the answer is the point:
   same figure bounds the client) instead of the ceiling, because pricing the ceiling refused
   `--score 2` identically to a full run — **under a fixed monthly Dune budget a reduced-scale run is
   the normal operating mode**. The monthly budget itself is the captain's and is pinned NOWHERE.
+  **AND THE TWO GATE-3 SPEND HAZARDS 320a/321a LEFT BEHIND ARE NOW CLOSED, BOTH BY DERIVING FROM
+  WHAT A RUN WILL ACTUALLY DO** (the pre-Gate-3 hazard round, 2026-08-06; no value moved). Under the
+  captain's Dune account controls — extra credits capped at $0, per-query and per-read throttles OFF
+  — the cost of either is **AVAILABILITY, not money**: the vendor refuses at the ceiling rather than
+  billing past it, so a run that bills and then dies leaves the period consumed and nothing produced,
+  and this repo's own guard is the only thing bounding a run's size. (1) **The priced window count
+  followed the AGREEMENT FLAG, which is the one thing the cutover does not touch** — pointing
+  `ENTRY_FILL_SOURCE_KIND` at `dune` left it 0, so `agreementExecutionsFor` bounded the client and
+  cleared the allowance at *probe + headroom* for a leg intending `maxScored × maxLaunchesPerCandidate`
+  windows: bill the probe, then die on `CeilingReached`. `screen.mjs` → `entrySourceKindsRead` is now
+  the ONE derivation of which sources a run reads (built on `entryFillSourceIsRead`, so "no source"
+  and "no Dune source" cannot disagree), and the ceiling check, the priced count and the run's own
+  construction all read it. Its `selectedKind` parameter exists so a test can stand where Gate 3
+  will — do not inline the constant. (2) **320a shared the reservation but never fixed the ORDER**,
+  and control flow had the EXPENSIVE OPTIONAL leg first: the entry source is built before Stage 1
+  enumerates, so it billed its coverage probe, the enumeration was priced out into the RPC walk, and
+  `priceWalkFallbackCliff` refused the whole run at exit 2. `dune.mjs` → `DUNE_LEG_ORDER`
+  (`enumeration` then `entry`) is enforced by the ledger, **before the free balance read**;
+  `checkDuneAllowance`'s `leg` is REQUIRED with no default, a leg that will not spend must
+  `declineToSpend` rather than be skipped (silence blocks the legs behind it, which fails towards
+  refusing), and a ledgerless call is the SOLE leg and queues behind nothing — so every single-leg
+  path is byte-identical. Neither guard can fire on the default branch; the first run that exercises
+  the Dune fill source is Gate 3's.
+- **`node tools/deployer-screen/screen.mjs` WITH NO MODE FLAG IS A LIVE RUN AND SPENDS, and the
+  agent environment normally has all three keys set.** It costs MadeOnSol keyed requests immediately
+  and a Dune coverage-probe result read — billed by bytes — before the gate loop starts. `--dry-run`
+  and `--stage0` are the free modes and are what a smoke test wants; `--dry-run --dry-run-spend`
+  authorises a bounded purchase. Check whether `DUNE_API_KEY`/`MADEONSOL_API_KEY` are set before
+  invoking the CLI at all: these tools are designed to be provable from tests and fixtures, so a lane
+  under a no-billed-execution constraint should never need a live run.
 - **A DRY RUN IS FREE AND ALWAYS PRINTS THE PLAN, AND THOSE TWO STOPPED BEING COMPATIBLE — SO THE
   CAPTAIN SPLIT IT** (decision 286c). 281a/284a/285a made the plan state the eligibility bound the
   SELECTED source applies instead of re-deriving it; asking a source anything needs the source to

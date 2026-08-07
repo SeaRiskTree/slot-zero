@@ -1273,6 +1273,23 @@ committed** (captain decisions 317a and 318a, 2026-08-06):
    fallback. The error still runs toward refusal: every window is charged the busiest window this
    repo has ever measured.
 
+   **AND THE MANDATORY LEG RESERVES FIRST, BY RULE RATHER THAN BY CONTROL FLOW** (the pre-Gate-3
+   hazard round of 2026-08-06, closing a finding of PR 65's review). 320a made both legs draw on one
+   reservation; it did not change which of them reserved FIRST, and the control flow had the wrong
+   one there — this leg is built inside `runEntrySourcePlan`, which runs before Stage 1 enumerates.
+   So the EXPENSIVE OPTIONAL leg billed its coverage probe, the CHEAP MANDATORY enumeration was then
+   priced against what was left, fell back to the RPC walk, and `priceWalkFallbackCliff` refused the
+   whole run at exit 2 **before its first walk request** — billed, and with nothing produced. Under
+   the captain's Dune account controls (extra credits capped at $0, so the vendor refuses at the
+   ceiling rather than billing past it) that is an **availability** loss rather than a money one, and
+   a consumed period is candidates that cannot be checked at all. `dune.mjs` → `DUNE_LEG_ORDER`
+   states the order — `enumeration`, then `entry` — and `openDuneCreditLedger` refuses a leg whose
+   predecessors have not SETTLED, **before the free balance read**, let alone a billed one. A leg
+   that will not spend (`--no-dune`, `--ownership-only`, no credential, or a dry run, which
+   enumerates nothing) must say so with `declineToSpend`: being quietly skipped leaves the legs
+   behind it blocked, which fails towards refusing. A leg handed no ledger is the SOLE leg by
+   definition and queues behind nothing, so every single-leg path is byte-identical.
+
    The balance itself is pinned nowhere, and the three limits that travel with it — the counter lags,
    the key is shared, the period is a subscription anniversary — are the `dune` block's and
    unchanged. A ledger makes one RUN self-consistent; it reserves nothing against a sibling lane.
@@ -1285,6 +1302,28 @@ committed** (captain decisions 317a and 318a, 2026-08-06):
    deliberately unequal** — `82 = 80 windows + 1 probe + 1 headroom`, and that inequality is the
    derivation; the block's `justification` owns it. At today's caps (7 × 10 = 70) it is inert, which
    is what a backstop is: it bites the moment a sampling cap is raised without re-pricing this leg.
+
+   **AND IT GATES ON READING THE DUNE SOURCE, NOT ON THE AGREEMENT FLAG** (the same 2026-08-06 hazard
+   round; no value moved). Both the ceiling check and the window count the leg is PRICED on were
+   gated on `--entry-source-agreement`, which is the one thing the Gate 3 cutover does not touch: it
+   moves `ENTRY_FILL_SOURCE_KIND` to `dune` and arms this leg with no flag in sight. The count would
+   have stayed **0**, so `agreementExecutionsFor` would have bounded the client and priced the
+   allowance at *the probe plus headroom* for a leg intending `maxScored × maxLaunchesPerCandidate`
+   windows — the allowance clears the small plan, the probe is billed, and the run then dies on
+   `CeilingReached` mid-flight. That is captain decision 144a's defect in the place it costs most: a
+   guard denominated in the variable that does not move at the moment the thing it guards starts
+   happening. `screen.mjs` → `entrySourceKindsRead` is now the ONE derivation of which sources a run
+   reads — built on `entryFillSourceIsRead`, so "no source at all" and "no Dune source" cannot
+   disagree — and the ceiling check, the priced count and the run's own construction all read it.
+
+### What is still open here, and is Gate 3's
+
+Neither of the two guards above can fire on a default run today, and that is the resting state: all
+three gates named at the top of this section stay shut and this round opened none of them. What has
+**never been exercised against the real vendor** is the Dune fill source itself — the probe, the
+per-window executions, the ordering under a live balance. The tests prove the guards through stubbed
+transports and committed fixtures; the first run that ever reaches Dune inside Stage 2 is Gate 3's,
+and it is the run these guards were closed ahead of.
 
 ### The reproduction — the statement run against every launch on the tape
 

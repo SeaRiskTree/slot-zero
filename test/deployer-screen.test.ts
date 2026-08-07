@@ -131,6 +131,7 @@ import {
   assertAgreementWindowsFit,
   buildDuneEntryFillSource,
   entryFillSourceIsRead,
+  entrySourceKindsRead,
   planEntryEligibility,
   resolveEntryFillSource,
   runEntryFillSource,
@@ -13492,9 +13493,14 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         // COUNT of construction sites, which is the property the original spelling stood for.
         expect(screen.match(/await selectEntryFillSource\(/g)).toHaveLength(1);
         expect(screen).toContain('if (!entryFillSourceIsRead(opts)) return null;');
-        // Three occurrences and no more: the definition, the run path's early return, and the plan
-        // path's guard. A fourth would be a third site deciding this on its own.
-        expect(screen.match(/entryFillSourceIsRead\(opts\)/g)).toHaveLength(3);
+        // FOUR occurrences and no more: the definition, the run path's early return, the plan
+        // path's guard, and `entrySourceKindsRead`, which ASKS this predicate rather than answering
+        // the question again. The pin's property is unchanged — no site decides on its own — and
+        // the fourth is the reason it holds one level down: the derivation that says WHICH sources a
+        // run reads is built on the one that says WHETHER it reads any, so a call site cannot get
+        // "no source at all" and "no Dune source" to disagree. A FIFTH would be a new site.
+        expect(screen.match(/entryFillSourceIsRead\(opts\)/g)).toHaveLength(4);
+        expect(screen).toContain('  if (!entryFillSourceIsRead(opts)) return [];');
         expect(screen).toContain('if (entryFillSourceIsRead(opts)) {');
         // And Stage 2 scores exactly where a source was built, rather than re-reading the flag.
         expect(screen).toContain('if (entrySourcePlan !== null) {');
@@ -14133,6 +14139,121 @@ describe('ONE run, TWO entry fill sources, and it agrees with itself PER CANDIDA
       )['duneSpend']!;
       expect(full['executionBoundApplied']).toBe(full['executionCeiling']);
       expect(full['windowsPlanned']).toBe(full['windowCeiling']);
+    });
+
+    describe('THE PRICED WINDOW COUNT FOLLOWS WHETHER THE DUNE SOURCE IS READ, not the flag', () => {
+      // THE HAZARD, found by the review of PR 65 and open on `main` when this round started.
+      // `agreementWindowsPlanned` was initialised to 0 and assigned ONLY inside
+      // `opts.entrySourceAgreement && agreementBounds.active === true`, so the number that PRICES and
+      // BOUNDS this leg was denominated in the agreement flag. The Gate 3 cutover moves
+      // `ENTRY_FILL_SOURCE_KIND` to Dune and touches no flag — so the count would have stayed 0
+      // while Stage 2 went on intending `maxCandidatesScored x maxLaunchesPerCandidate` windows.
+      //
+      // WHAT IT COSTS, in the unit that now matters. The captain has capped Dune's extra credits at
+      // $0, so the vendor REFUSES at the ceiling rather than billing past it: a run that has already
+      // billed its coverage probe and is then bounded at ~2 executions does not overspend, it DIES
+      // MID-FLIGHT with the period consumed and nothing produced. Under a goal of "check as many
+      // candidates as possible" a consumed period is candidates that cannot be checked at all.
+      //
+      // `entrySourceKindsRead` takes the selected kind as a PARAMETER precisely so this test can
+      // stand where Gate 3 will: the constant is the cutover's own edit and this lane may not make
+      // it, so the case that is broken today is otherwise unreachable from a test.
+      const ACTIVE = { active: true, primarySource: 'dune', crossCheckSource: 'swap-api' };
+
+      it('THE CUTOVER CASE: kind `dune` with NO agreement flag is a run that reads Dune', () => {
+        // Broken on `main` at the start of this round: this exact configuration produced a planned
+        // window count of 0. Both the flagless cutover and the flagged agreement mode read Dune, and
+        // the derivation says so about both.
+        expect(entrySourceKindsRead({ stage2: true }, AGREE as never, 'dune')).toEqual(['dune']);
+        expect(entrySourceKindsRead({ stage2: true, entrySourceAgreement: true }, ACTIVE as never)).toEqual([
+          'dune',
+          'swap-api',
+        ]);
+        // ...and the two ways a run reads NO Dune source are still distinguished from those.
+        expect(entrySourceKindsRead({ stage2: true }, AGREE as never)).toEqual([ENTRY_FILL_SOURCE_KIND]);
+        expect(entrySourceKindsRead({ stage2: true }, AGREE as never)).not.toContain('dune');
+        expect(entrySourceKindsRead({ stage2: false }, ACTIVE as never)).toEqual([]);
+        // The flag alone, against the SHIPPED bounds where `active` is false, is not a Dune run —
+        // `main` and `runEntrySourcePlan` both refuse that configuration outright, and the
+        // derivation must not price a leg for a run that will be refused.
+        expect(AGREE['active']).toBe(false);
+        expect(entrySourceKindsRead({ stage2: true, entrySourceAgreement: true }, AGREE as never)).toEqual([
+          ENTRY_FILL_SOURCE_KIND,
+        ]);
+      });
+
+      it('and the OLD rule bounds the cutover at the probe rather than at its windows', () => {
+        // The defect quantified through the production pricer, rather than described. The old
+        // derivation yields 0 windows for the cutover; the new one yields the run's own plan.
+        const oldRule = 0;
+        const newRule = assertAgreementWindowsFit(
+          { maxCandidatesScored: 2, maxLaunchesPerCandidate: T['maxLaunchesPerCandidate']! },
+          AGREE as never,
+        ).windowsPlanned;
+        expect(newRule).toBeGreaterThan(0);
+
+        // What the client would have been CONSTRUCTED with, and what the allowance would have
+        // APPROVED: a plan for the probe plus headroom, for a leg intending `newRule` windows.
+        const bounded = agreementExecutionsFor(AGREE as never, oldRule);
+        expect(bounded).toBeLessThan(newRule);
+        expect(agreementExecutionsFor(AGREE as never, newRule)).toBeGreaterThan(bounded);
+        // The leg executes PER WINDOW, so a ceiling below the window count is a run that stops
+        // partway — after the coverage probe has already been billed.
+        expect(tradeFillSpendPlan(AGREE as never, oldRule).executions).toBeLessThan(newRule);
+        expect(tradeFillSpendPlan(AGREE as never, newRule).executions).toBeGreaterThanOrEqual(newRule);
+      });
+
+      it('the window ceiling now binds on READING Dune, flag or no flag', async () => {
+        // 318a's check used to run only under the agreement flag, which left the cutover's own
+        // configuration unpriced by the one guard that asks whether a plan fits what it was priced
+        // against. The reachable half is asserted here — an active agreement naming Dune as primary
+        // — and the refusal still lands before either constructor runs.
+        let built = 0;
+        const registry = {
+          'swap-api': () => {
+            built += 1;
+            return stubSource('swap-api');
+          },
+          dune: () => {
+            built += 1;
+            return stubSource('dune');
+          },
+        };
+        await expect(
+          runEntrySourcePlan(
+            registry,
+            { stage2: true, entrySourceAgreement: true },
+            { ...T, maxCandidatesScored: 9, maxLaunchesPerCandidate: 10 } as never,
+            { ...ACTIVE, maxWindowsPerRun: 80 },
+          ),
+        ).rejects.toThrow(/admits 90 Dune windows/);
+        expect(built).toBe(0);
+        // AND A RUN THAT READS NO DUNE SOURCE IS NOT SUBJECT TO IT: the default reads the swap-api,
+        // whose windows this ceiling does not price, so an absent ceiling refuses nothing there.
+        // Without this the shipped default would refuse itself the moment the check widened.
+        const plan = await runEntrySourcePlan(registry, { stage2: true }, T as never);
+        expect(plan?.sources.map((s) => s.kind)).toEqual([ENTRY_FILL_SOURCE_KIND]);
+      });
+
+      it('`main` asks the shared derivation, and prices from its answer', () => {
+        // The seam proves the derivation is right; this proves `main` goes through it rather than
+        // re-reading the flag beside it. The idiom is this file's, where `main` offers no seam.
+        const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+        expect(screen).toContain(
+          "const duneEntrySourceIsRead = entrySourceKindsRead(opts, agreementBounds).includes('dune');",
+        );
+        expect(screen).toContain('if (duneEntrySourceIsRead) {');
+        // The old spelling is gone from the file entirely, executable and prose alike, except where
+        // `entrySourceKindsRead`'s own doc names it as the defect it removed.
+        expect(screen.match(/agreementWindowsPlanned/g)).toHaveLength(1);
+        // And the count reaches all three places that must agree on it: the client's ceiling, the
+        // credit plan the allowance clears, and the record. Deriving it again anywhere is 144a's
+        // defect, and in a record — never retro-edited — a disagreement would be permanent.
+        expect(screen.match(/duneEntryWindowsPlanned/g)!.length).toBeGreaterThanOrEqual(4);
+        expect(screen).toContain(
+          'const agreementExecutionBound = agreementExecutionsFor(agreementBounds, duneEntryWindowsPlanned);',
+        );
+      });
     });
 
     it('refuses to compare a source against itself', async () => {

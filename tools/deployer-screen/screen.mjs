@@ -354,6 +354,14 @@ export async function planEntryEligibility(kind, sources, opts) {
  * time-of-use, and the estimate artefact's own rule — a balance reading is never a reservation — is
  * what it breaks. Passing no ledger opens a private one, which is the single-leg behaviour.
  *
+ * **AND IT RESERVES SECOND, BY RULE RATHER THAN BY CONTROL FLOW.** This leg is the OPTIONAL one and
+ * it is the EXPENSIVE one, so `dune.mjs` → `DUNE_LEG_ORDER` puts it behind Stage 1's enumeration:
+ * hand it a run's shared ledger before that leg has settled and it refuses here, having requested
+ * nothing at all. The failure it removes is the one that costs the most and shows the least — this
+ * leg billing its coverage probe, the enumeration then being priced out into the RPC walk, and
+ * `priceWalkFallbackCliff` refusing the whole run before its first walk request. Period consumed,
+ * nothing produced, and every candidate that period could have checked lost with it.
+ *
  * **AND IT PRICES THE WINDOWS THIS RUN PLANS, not the pinned ceiling** (captain decision 321a):
  * `opts.windowsPlanned` reaches both the plan and the client's own execution ceiling through
  * `dune-fills.mjs` → `agreementExecutionsFor`, so a `--score 2` run is judged on its own arithmetic
@@ -380,6 +388,11 @@ export async function buildDuneEntryFillSource(client, opts) {
     nowMs: opts.nowMs,
     plan: tradeFillSpendPlan(opts.agreementBounds, opts.windowsPlanned),
     ledger: opts.ledger,
+    // THE OPTIONAL LEG, and it says so. `DUNE_LEG_ORDER` puts it behind the enumeration, so on a run
+    // sharing a ledger this refuses — before the free balance read — until Stage 1's mandatory leg
+    // has reserved or declared it will not spend. Handed no ledger it is the sole leg and nothing
+    // queues at all.
+    leg: 'entry',
   });
   for (const line of describeAllowanceDecision(checked.decision)) opts.announce?.(line);
   if (!checked.decision.ok) {
@@ -512,6 +525,48 @@ export function entryFillSourceIsRead(opts) {
 }
 
 /**
+ * WHICH ENTRY FILL SOURCES THIS RUN WILL ASK, IN THE ORDER IT ASKS THEM. **The one derivation that
+ * answers "will the Dune source be READ", and every figure denominated in that question reads it.**
+ *
+ * It exists because the priced window count did not. What is now `duneEntryWindowsPlanned` was named
+ * `agreementWindowsPlanned` and assigned only inside `opts.entrySourceAgreement &&
+ * agreementBounds.active === true`, so it was denominated in the AGREEMENT FLAG rather than in
+ * whether this run reaches the Dune source at all — the rename is the finding, not decoration. Point
+ * {@link ENTRY_FILL_SOURCE_KIND} at Dune at the Gate 3 cutover WITHOUT that flag — which is exactly
+ * what the cutover is — and the count stays 0: `dune-fills.mjs` → `agreementExecutionsFor` then
+ * prices a ~2-execution plan, the allowance clears it, the client is built with that ceiling, and
+ * Stage 2 goes on to intend `maxCandidatesScored × maxLaunchesPerCandidate` windows. The run dies
+ * with `CeilingReached` after the coverage probe — **billed, mid-flight, having produced nothing**,
+ * which under a Dune account that refuses rather than bills past its ceiling is a lost period rather
+ * than a lost pound. This is captain decision 144a's defect in its purest form: a guard denominated
+ * in the variable that does not move at the moment the thing it guards starts happening.
+ *
+ * **It is the same shape as {@link entryFillSourceIsRead} one level down**, and deliberately so:
+ * that one answers whether ANY source is read, this one answers WHICH — so a Gate 3 cutover that
+ * moves one constant moves every figure derived from it, and nothing has to be remembered.
+ *
+ * @param {{ stage2: boolean, entrySourceAgreement?: boolean }} opts
+ * @param {{ active?: boolean, primarySource?: string, crossCheckSource?: string }} [agreementBounds]
+ *   `thresholds.json` → `entry_source_agreement`. Absent or inactive means one source.
+ * @param {import('./fill-source.mjs').FillSourceKind} [selectedKind] The kind a single-source run
+ *   reads. It is a PARAMETER with `ENTRY_FILL_SOURCE_KIND` as its default rather than that constant
+ *   spelled inline, because the cutover's own case — a Dune-selected run with no agreement flag —
+ *   is otherwise unreachable from a test: the constant is Gate 3's edit and this lane may not make
+ *   it. Every caller in this file takes the default.
+ * @returns {import('./fill-source.mjs').FillSourceKind[]} Empty when this run reads no source.
+ */
+export function entrySourceKindsRead(opts, agreementBounds, selectedKind = ENTRY_FILL_SOURCE_KIND) {
+  if (!entryFillSourceIsRead(opts)) return [];
+  if (opts.entrySourceAgreement === true && agreementBounds?.active === true) {
+    return [
+      /** @type {import('./fill-source.mjs').FillSourceKind} */ (agreementBounds.primarySource),
+      /** @type {import('./fill-source.mjs').FillSourceKind} */ (agreementBounds.crossCheckSource),
+    ];
+  }
+  return [selectedKind];
+}
+
+/**
  * THE RUN PATH'S CONSTRUCTION: build the fill source and prove its gate is usable — or build
  * NOTHING, because Stage 2 is off and nothing downstream will ever ask it anything.
  *
@@ -538,10 +593,14 @@ export function entryFillSourceIsRead(opts) {
  * @param {FillSourceRegistry} entryFillSources
  * @param {{ stage2: boolean }} opts
  * @param {import('./stage2.mjs').Stage2Thresholds} entryThresholds
+ * @param {{ active?: boolean, primarySource?: string, crossCheckSource?: string,
+ *   maxWindowsPerRun?: number }} [agreementBounds] Passed straight through. A single-source view
+ *   still needs them, because the window ceiling binds whenever the DUNE source is read — flag or
+ *   no flag — and a caller that withheld them would be asking for a plan nobody could price.
  * @returns {Promise<import('./fill-source.mjs').FillSource | null>}
  */
-export async function runEntryFillSource(entryFillSources, opts, entryThresholds) {
-  const plan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds);
+export async function runEntryFillSource(entryFillSources, opts, entryThresholds, agreementBounds) {
+  const plan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds);
   return plan === null ? null : (plan.sources.find((s) => s.kind === plan.primary)?.source ?? null);
 }
 
@@ -589,14 +648,15 @@ export async function runEntrySourcePlan(entryFillSources, opts, entryThresholds
         `so. Nothing was requested.`,
     );
   }
+  // THE ONE DERIVATION, shared with the site that PRICES this leg. Two expressions that merely agree
+  // about which sources a run reads is how the priced window count came to be denominated in the
+  // agreement flag while the construction was denominated in the kind — see {@link
+  // entrySourceKindsRead} for what that costs at the Gate 3 cutover.
+  const kinds = entrySourceKindsRead(opts, agreementBounds);
   /** @type {import('./fill-source.mjs').FillSourceKind} */
-  const primary = wantsAgreement
-    ? /** @type {import('./fill-source.mjs').FillSourceKind} */ (agreementBounds?.primarySource)
-    : ENTRY_FILL_SOURCE_KIND;
+  const primary = /** @type {import('./fill-source.mjs').FillSourceKind} */ (kinds[0]);
   /** @type {import('./fill-source.mjs').FillSourceKind | null} */
-  const crossCheck = wantsAgreement
-    ? /** @type {import('./fill-source.mjs').FillSourceKind} */ (agreementBounds?.crossCheckSource)
-    : null;
+  const crossCheck = kinds[1] ?? null;
   if (crossCheck === primary) {
     throw new Error(
       `entry_source_agreement names ${primary} as both the primary and the cross-check source. A ` +
@@ -609,11 +669,17 @@ export async function runEntrySourcePlan(entryFillSources, opts, entryThresholds
   // "these bounds name one source twice" before "these bounds do not fit", which is the order the
   // problems have to be fixed in. See {@link assertAgreementWindowsFit} for why this ceiling and the
   // client's execution ceiling are deliberately different numbers.
-  if (wantsAgreement) assertAgreementWindowsFit(entryThresholds, agreementBounds ?? {});
+  //
+  // **IT GATES ON READING THE DUNE SOURCE, NOT ON THE AGREEMENT FLAG.** Every credit this leg is
+  // approved for is derived from `entry_source_agreement`'s window ceiling, and the leg spends them
+  // whenever the Dune source is asked — which the Gate 3 cutover makes true with no flag in sight.
+  // Gating on the flag would leave the cutover's own configuration unpriced by the one check that
+  // asks whether the plan fits what it was priced against.
+  if (kinds.includes('dune')) assertAgreementWindowsFit(entryThresholds, agreementBounds ?? {});
 
   /** @type {{ kind: import('./fill-source.mjs').FillSourceKind, source: import('./fill-source.mjs').FillSource }[]} */
   const sources = [];
-  for (const kind of crossCheck === null ? [primary] : [primary, crossCheck]) {
+  for (const kind of kinds) {
     const source = await selectEntryFillSource(kind, entryFillSources);
     const minAgeMs = await source.minAgeMs(entryFillBounds(entryThresholds, Date.now()));
     assertMinAgeUsable(source, minAgeMs);
@@ -1292,11 +1358,20 @@ export async function main(opts, env, out, err) {
   // reduced-scale run is charged for the windows it plans (captain decision 321a). The seam-level
   // backstop inside `runEntrySourcePlan` checks the PINNED cap, which is never smaller, so it cannot
   // pass a plan this refuses.
+  //
+  // **AND THE CONDITION IS WHETHER THE DUNE SOURCE WILL BE READ, NOT WHETHER THE AGREEMENT FLAG WAS
+  // PASSED.** It used to be the flag, and that is 144a's defect in the one place it costs most: at
+  // the Gate 3 cutover `ENTRY_FILL_SOURCE_KIND` moves to Dune with no flag involved, the count would
+  // stay 0, and `agreementExecutionsFor` would price and bound a ~2-execution plan for a leg
+  // intending `maxScored × maxLaunchesPerCandidate` windows. The allowance clears the small plan,
+  // the probe is billed, and the run then dies on `CeilingReached` mid-flight. See
+  // {@link entrySourceKindsRead}, which is the one place that question is answered.
+  const duneEntrySourceIsRead = entrySourceKindsRead(opts, agreementBounds).includes('dune');
   /** @type {number} */
-  let agreementWindowsPlanned = 0;
-  if (opts.entrySourceAgreement && agreementBounds.active === true) {
+  let duneEntryWindowsPlanned = 0;
+  if (duneEntrySourceIsRead) {
     try {
-      agreementWindowsPlanned = assertAgreementWindowsFit(
+      duneEntryWindowsPlanned = assertAgreementWindowsFit(
         { maxCandidatesScored: maxScored, maxLaunchesPerCandidate: entryThresholds.maxLaunchesPerCandidate },
         agreementBounds,
       ).windowsPlanned;
@@ -1319,7 +1394,7 @@ export async function main(opts, env, out, err) {
   // which states it beside the pinned ceiling rather than in place of it (captain decision 323a).
   // Deriving it three times would be three expressions that merely agree, which is 144a's defect —
   // and in a record, which is never retro-edited, a disagreement would be permanent.
-  const agreementExecutionBound = agreementExecutionsFor(agreementBounds, agreementWindowsPlanned);
+  const agreementExecutionBound = agreementExecutionsFor(agreementBounds, duneEntryWindowsPlanned);
   /** @type {import('./client.mjs').DuneClient | null} */
   let entryDuneClient = null;
 
@@ -1342,7 +1417,7 @@ export async function main(opts, env, out, err) {
         bound:
           `at most 1 Dune execution (or 0 on the cached read, which is the default) plus one result ` +
           `read, against the ${agreementExecutionBound} ` +
-          `execution(s) this run's own ${agreementWindowsPlanned} planned window(s) are priced for ` +
+          `execution(s) this run's own ${duneEntryWindowsPlanned} planned window(s) are priced for ` +
           `— itself capped by the pinned ceiling of ${agreementBounds.maxExecutionsPerRun}`,
         actual: () =>
           entryDuneClient === null
@@ -1373,7 +1448,7 @@ export async function main(opts, env, out, err) {
         return buildDuneEntryFillSource(entryDuneClient, {
           agreementBounds,
           duneBounds,
-          windowsPlanned: agreementWindowsPlanned,
+          windowsPlanned: duneEntryWindowsPlanned,
           ledger: duneCreditLedger,
           refreshProbe: opts.duneRefreshProbe,
           nowMs: Date.now(),
@@ -1386,6 +1461,14 @@ export async function main(opts, env, out, err) {
   };
 
   if (opts.dryRun) {
+    // A DRY RUN ENUMERATES NOTHING, so the mandatory leg settles by DECLARING it will not spend.
+    // `DUNE_LEG_ORDER` holds the entry fill source behind Stage 1's enumeration, and a plan under
+    // `--dry-run-spend` may BUILD that source — which reserves. Without this the opt-in would refuse
+    // with an ordering message for a leg that was never going to run on this path at all. It is
+    // stated rather than skipped for the reason the ledger's own doc gives: a leg that is quietly
+    // passed over leaves the ones behind it blocked, which fails towards refusing, and declaring it
+    // is what makes the free preview honest instead of merely unblocked.
+    duneCreditLedger.declineToSpend('enumeration');
     // THE PLAN MUST STATE THE GATE THE SOURCE ITSELF WILL APPLY — a plan that re-derived that
     // duration would be a second expression that merely agrees, which is captain decision 144a's
     // defect and the reason the gate was injected in the first place (281a/284a/285a). What 286c
@@ -1474,6 +1557,70 @@ export async function main(opts, env, out, err) {
   }
 
   // ---- the RUN path -----------------------------------------------------------------------
+  // The Dune client, built even when unused so the record's spend block always reports the same
+  // shape. Its TWO ceilings are separate on purpose: requests bound the wall clock and the polite
+  // use of a shared free-tier host, executions bound the money — an execution is billed whether or
+  // not it succeeds and is NEVER retried.
+  //
+  // IT IS CONSTRUCTED HERE, ABOVE STAGE 1, ONLY SO THE MANDATORY LEG CAN RESERVE FIRST. Constructing
+  // a client costs nothing and opens no socket; what had to move up is the RESERVATION below, and a
+  // reservation needs a client to read the balance through.
+  const duneClient = usingDune
+    ? new DuneClient({
+        key: duneCredential.key ?? '',
+        maxExecutions: duneBounds.maxExecutionsPerRun,
+        maxRequests: duneBounds.maxRequestsPerRun,
+        minIntervalMs: duneBounds.minIntervalMs,
+        onRequest: (path) => {
+          if (!opts.json) out(`  → dune ${path}`);
+        },
+      })
+    : null;
+
+  // ---- THE MANDATORY LEG RESERVES BEFORE THE OPTIONAL ONE SPENDS. --------------------------
+  // Stage 1's creation enumeration is what this run exists to do, it is ONE execution for the whole
+  // batch, and it is the cheap one. Stage 2's entry fill source is optional, is billed per window,
+  // and its CONSTRUCTION bills a trade-coverage result read. Captain decision 320a made both legs
+  // draw on one reservation; it did not change which reserved first, and the control flow had the
+  // expensive optional leg going first — so a run could bill the probe, find the enumeration priced
+  // out of what was left, fall back to the RPC walk and then be refused whole by
+  // `priceWalkFallbackCliff` before its first walk request. Period consumed, nothing produced, and
+  // under a Dune account whose extra credits are capped at $0 a consumed period is candidates that
+  // cannot be checked at all.
+  //
+  // THE VERDICT IS TAKEN HERE AND REPORTED AT THE ENUMERATION, unchanged. The reading is free —
+  // `POST /usage` is a metadata endpoint Dune documents as consuming no credits — so moving it above
+  // Stage 1 spends nothing and buys the order. What it cannot know yet is how many candidates will
+  // survive seeding; that does not enter this plan, which is priced from the leg's own pinned
+  // ceilings, and a run that ends up enumerating nobody has merely been conservative towards its own
+  // second leg.
+  //
+  // A RUN WITH NO DUNE CLIENT DECLARES THAT RATHER THAN BEING SKIPPED — `--no-dune`,
+  // `--ownership-only`, or no usable credential. The ledger holds the legs behind an unsettled one,
+  // which fails towards refusing, so silence here would refuse a leg that is entitled to go.
+  /** @type {Awaited<ReturnType<typeof checkDuneAllowance>> | null} */
+  let enumerationReservation = null;
+  /** @type {string | null} */
+  let duneUnusableNote = null;
+  if (duneClient !== null) {
+    try {
+      enumerationReservation = await checkDuneAllowance(duneClient, {
+        bounds: duneBounds,
+        nowMs: Date.now(),
+        ledger: duneCreditLedger,
+        leg: 'enumeration',
+      });
+    } catch (cause) {
+      // A refused allowance is NOT this path — `checkDuneAllowance` returns that as a decision. What
+      // lands here is the balance read failing in a way the client itself could not absorb, and it
+      // degrades this leg to the walk exactly as any other Dune failure does. The entry leg behind
+      // it is still unblocked: the leg asked and got its answer, which is what settles it.
+      duneUnusableNote = redactVendorIdentifiers(cause instanceof Error ? cause.message : String(cause));
+    }
+  } else {
+    duneCreditLedger.declineToSpend('enumeration');
+  }
+
   // A real run that is going to READ the source builds it and pays whatever that costs: it was
   // always going to reach that vendor, and the eligibility answer is an input to a measurement
   // rather than a line on a preview. That half is exactly what captain decision 286c left alone.
@@ -1543,27 +1690,10 @@ export async function main(opts, env, out, err) {
     },
   });
 
-  // The Dune client, built even when unused so the record's spend block always reports the same
-  // shape. Its TWO ceilings are separate on purpose: requests bound the wall clock and the polite
-  // use of a shared free-tier host, executions bound the money — an execution is billed whether or
-  // not it succeeds and is NEVER retried.
-  const duneClient = usingDune
-    ? new DuneClient({
-        key: duneCredential.key ?? '',
-        maxExecutions: duneBounds.maxExecutionsPerRun,
-        maxRequests: duneBounds.maxRequestsPerRun,
-        minIntervalMs: duneBounds.minIntervalMs,
-        onRequest: (path) => {
-          if (!opts.json) out(`  → dune ${path}`);
-        },
-      })
-    : null;
   /** @type {import('./dune.mjs').DuneEnumeration | null} */
   let duneEnumeration = null;
   /** @type {import('./client.mjs').AllowanceDecision | null} */
   let duneAllowance = null;
-  /** @type {string | null} */
-  let duneUnusableNote = null;
   // Whether the Dune leg was ASKED for this batch. It is the difference between a candidate that
   // fell back and one that was never a Dune candidate — see the assignment site.
   let duneLegAttempted = false;
@@ -1664,17 +1794,21 @@ export async function main(opts, env, out, err) {
         // walk exactly as any other Dune failure does — slower rather than wrong.
         //
         // IT DRAWS ON THE RUN'S LEDGER RATHER THAN RE-READING THE BALANCE (captain decision 320a):
-        // Stage 2's entry fill source may already have been cleared to spend against this same
-        // period, and a second independent verdict computed from the same unreduced reading is how
-        // two legs both fit and together overrun. On a default run nothing has been held and this is
-        // the only leg that asks, so the verdict is exactly what it was.
-        const checked = await checkDuneAllowance(duneClient, {
-          bounds: duneBounds,
-          nowMs: Date.now(),
-          ledger: duneCreditLedger,
-        });
-        duneAllowance = checked.decision;
-        if (!opts.json) for (const line of describeAllowanceDecision(checked.decision)) out(`  ${line}`);
+        // Stage 2's entry fill source may also be cleared to spend against this same period, and a
+        // second independent verdict computed from the same unreduced reading is how two legs both
+        // fit and together overrun.
+        //
+        // **AND THE RESERVATION ITSELF ALREADY HAPPENED, ABOVE STAGE 1** — this leg is the MANDATORY
+        // one and `DUNE_LEG_ORDER` puts it first, so what is left here is REPORTING the verdict
+        // where an operator reads it. Asking again would be a second answer to one question and
+        // would put this leg back behind the optional one it must precede; `enumerationReservation`
+        // is `null` only where there is no Dune client or the free balance read failed outright, and
+        // `enumerateCreations` treats an absent decision exactly as it treats a refusal.
+        const checked = enumerationReservation;
+        duneAllowance = checked?.decision ?? null;
+        if (!opts.json && checked !== null) {
+          for (const line of describeAllowanceDecision(checked.decision)) out(`  ${line}`);
+        }
         duneEnumeration = await enumerateCreations(duneClient, {
           wallets: gating.map((s) => s.wallet),
           creationQueryId: duneBounds.creationQueryId,
@@ -1682,7 +1816,10 @@ export async function main(opts, env, out, err) {
           refreshProbe: opts.duneRefreshProbe,
           nowMs: Date.now(),
           bounds: duneBounds,
-          allowance: checked.decision,
+          // `null` where the reservation could not be taken at all, which `enumerateCreations`
+          // treats exactly as it treats a refusal: a caller that cannot show it checked has not
+          // established that it can afford this, and the probe is a billed read.
+          allowance: duneAllowance,
           // A probe REFRESH that failed and was answered from the cache instead. The execution is
           // billed and is never retried, so the operator hears about the spend even though the leg
           // survived it — silence would make a billed failure look like an ordinary cached read.
@@ -2505,7 +2642,7 @@ export async function main(opts, env, out, err) {
                 bounds: agreementBounds,
                 applied: {
                   executionBound: agreementExecutionBound,
-                  windowsPlanned: agreementWindowsPlanned,
+                  windowsPlanned: duneEntryWindowsPlanned,
                 },
                 stats: entryDuneClient?.stats() ?? null,
               }),

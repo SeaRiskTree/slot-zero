@@ -60,6 +60,7 @@ import {
   estimatePlanCredits as censusEstimatePlanCredits,
 } from '../tools/creation-census/client.mjs';
 import {
+  DUNE_LEG_ORDER,
   checkDuneAllowance,
   duneSpendPlan,
   enumerateCreations,
@@ -84,6 +85,7 @@ import {
 const SCREEN_CLIENT = fileURLToPath(new URL('../tools/deployer-screen/client.mjs', import.meta.url));
 const CENSUS_CLIENT = fileURLToPath(new URL('../tools/creation-census/client.mjs', import.meta.url));
 const THRESHOLDS = fileURLToPath(new URL('../tools/deployer-screen/thresholds.json', import.meta.url));
+const SCREEN_MAIN = fileURLToPath(new URL('../tools/deployer-screen/screen.mjs', import.meta.url));
 
 /** Never a real key. Every failure path below is driven through it and it may reach no output. */
 const SENTINEL_KEY = 'SENTINELsentinelSENTINELsentinel';
@@ -795,12 +797,12 @@ describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
       sleepImpl: async () => undefined,
     });
     const ledger = openDuneCreditLedger();
-    const first = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, ledger });
+    const first = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, ledger, leg: 'enumeration' });
     expect(first.decision.ok).toBe(true);
     expect(first.decision.bindingCeiling).toBe('operator-cap');
     expect(ledger.reservedCredits()).toBe(legWorstCase);
 
-    const second = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, ledger });
+    const second = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, ledger, leg: 'enumeration' });
     expect(second.decision.ok).toBe(false);
     expect(second.decision.bindingCeiling).toBe('operator-cap');
     expect(second.decision.reasons.join(' ')).toMatch(/already held by an earlier leg/);
@@ -984,6 +986,7 @@ describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
           bounds: { ...POLICY, monthlyCreditCapCredits: cap } as never,
           plan: PLAN,
           nowMs: NOW_MS,
+          leg: 'enumeration',
         });
         return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
       }),
@@ -1221,7 +1224,7 @@ describe('THE SCREEN REFUSES BEFORE ITS FIRST BILLED READ', () => {
           : new Response(JSON.stringify({}), { status: 200 }),
       ),
     );
-    const checked = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS });
+    const checked = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, leg: 'enumeration' });
     expect(checked.decision.verdict).toBe('insufficient');
 
     const e = await enumerateCreations(c, {
@@ -1268,7 +1271,7 @@ describe('THE SCREEN REFUSES BEFORE ITS FIRST BILLED READ', () => {
     const { c } = client(() => {
       throw new Error('socket hang up');
     });
-    const checked = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS });
+    const checked = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, leg: 'enumeration' });
     expect(checked.decision.verdict).toBe('unreadable');
     expect(checked.decision.ok).toBe(false);
     expect(checked.decision.reasons.join(' ')).not.toContain(SENTINEL_KEY);
@@ -1281,7 +1284,7 @@ describe('THE SCREEN REFUSES BEFORE ITS FIRST BILLED READ', () => {
         ? new Response(JSON.stringify(usageBody([period(0)])), { status: 200 })
         : new Response(JSON.stringify({}), { status: 200 }),
     );
-    const checked = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS });
+    const checked = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, leg: 'enumeration' });
     expect(checked.decision.ok).toBe(true);
     await enumerateCreations(c, {
       wallets: [WALLET],
@@ -1447,30 +1450,52 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
         : new Response(JSON.stringify({}), { status: 200 }),
     );
 
+    // THE ORDER IS NOW THE RULE'S, NOT THE CONTROL FLOW'S, and this test reserves in it: the
+    // MANDATORY enumeration first, the OPTIONAL entry leg behind it. It used to be written the other
+    // way round because `screen.mjs` did it that way — the entry fill source was built before Stage
+    // 1 enumerated — and that ordering is the second hazard this round closes. 320a's property is
+    // untouched and is what is asserted below: a cleared leg is HELD against the next one.
     const first = await checkDuneAllowance(c, {
+      bounds: ENUMERATION_BOUNDS,
+      nowMs: NOW_MS,
+      ledger,
+      leg: 'enumeration',
+    });
+    expect(first.decision.ok).toBe(true);
+    expect(ledger.reservedCredits()).toBe(enumerationWorstCase);
+
+    const second = await checkDuneAllowance(c, {
       bounds: DUNE_BOUNDS,
       nowMs: NOW_MS,
       plan: entryPlan,
       ledger,
+      leg: 'entry',
     });
-    expect(first.decision.ok).toBe(true);
-    expect(ledger.reservedCredits()).toBe(entryWorstCase);
-
-    const second = await checkDuneAllowance(c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS, ledger });
     expect(second.decision.ok).toBe(false);
     expect(second.decision.reasons.join(' ')).toMatch(/already held by an earlier leg/);
     // The reading is taken ONCE and cached: a second read would be a second answer to one question,
     // and the run would hold two beliefs about a balance that moves under it.
     expect(paths).toEqual([USAGE_PATH]);
 
-    // And WITHOUT the shared ledger both legs pass — which is the defect, reproduced.
+    // And WITHOUT the shared ledger both legs pass — which is the defect, reproduced. Each opens a
+    // PRIVATE ledger, which is by definition a sole leg with nothing to queue behind, so the order
+    // rule is inert here and the only thing under test is the missing reservation.
     const solo = client((path) =>
       path === USAGE_PATH
         ? new Response(JSON.stringify(usageBody([period(2_500 - remaining)])), { status: 200 })
         : new Response(JSON.stringify({}), { status: 200 }),
     );
-    const a = await checkDuneAllowance(solo.c, { bounds: DUNE_BOUNDS, nowMs: NOW_MS, plan: entryPlan });
-    const b = await checkDuneAllowance(solo.c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS });
+    const a = await checkDuneAllowance(solo.c, {
+      bounds: DUNE_BOUNDS,
+      nowMs: NOW_MS,
+      plan: entryPlan,
+      leg: 'entry',
+    });
+    const b = await checkDuneAllowance(solo.c, {
+      bounds: ENUMERATION_BOUNDS,
+      nowMs: NOW_MS,
+      leg: 'enumeration',
+    });
     expect(a.decision.ok && b.decision.ok).toBe(true);
     // Both cleared, and together they exceed what either was compared against — the spendable
     // balance, i.e. the reading less the reserve held back for the counter's lag.
@@ -1490,8 +1515,13 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
       bounds: ENUMERATION_BOUNDS,
       nowMs: NOW_MS,
       ledger: openDuneCreditLedger(),
+      leg: 'enumeration',
     });
-    const without = await checkDuneAllowance(client(usage).c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS });
+    const without = await checkDuneAllowance(client(usage).c, {
+      bounds: ENUMERATION_BOUNDS,
+      nowMs: NOW_MS,
+      leg: 'enumeration',
+    });
     expect(withLedger.decision).toEqual(without.decision);
   });
 
@@ -1502,8 +1532,18 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
     const { c } = client(() => {
       throw new Error('socket hang up');
     });
-    const first = await checkDuneAllowance(c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS, ledger });
-    const second = await checkDuneAllowance(c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS, ledger });
+    const first = await checkDuneAllowance(c, {
+      bounds: ENUMERATION_BOUNDS,
+      nowMs: NOW_MS,
+      ledger,
+      leg: 'enumeration',
+    });
+    const second = await checkDuneAllowance(c, {
+      bounds: ENUMERATION_BOUNDS,
+      nowMs: NOW_MS,
+      ledger,
+      leg: 'enumeration',
+    });
     expect(first.decision.verdict).toBe('unreadable');
     expect(second.decision.verdict).toBe('unreadable');
     expect(ledger.reservedCredits()).toBe(0);
@@ -1535,6 +1575,151 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
     expect(c.executions()).toBe(0);
     // The client retries the free read once; nothing beyond it was ever attempted.
     expect(new Set(paths)).toEqual(new Set([USAGE_PATH]));
+  });
+
+  describe('AND IT RESERVES SECOND — the mandatory leg goes first, by rule', () => {
+    // THE HAZARD, found by the review of PR 65 and open on `main` when this round started. Captain
+    // decision 320a made both legs draw on ONE reservation; it did not change which of them reserved
+    // FIRST, and the control flow had the wrong one there. `buildDuneEntryFillSource` is called from
+    // `runEntrySourcePlan`, which runs before Stage 1 enumerates — so the EXPENSIVE OPTIONAL leg
+    // billed its trade-coverage result read, the CHEAP MANDATORY enumeration was then priced against
+    // what was left, fell back to the RPC walk, and `priceWalkFallbackCliff` refused the whole run
+    // at exit 2 before its first walk request.
+    //
+    // THE COST IS AVAILABILITY, NOT MONEY. The captain has capped Dune's extra credits at $0, so
+    // the vendor refuses at the ceiling rather than billing past it — which makes a period consumed
+    // by a leg whose run then refused strictly worse than an overspend: it is candidates that
+    // cannot be checked at all, against a goal of checking as many as possible. And with the
+    // vendor's per-query and per-read throttles turned off, this repo's own guard is the only thing
+    // bounding a run.
+    //
+    // Everything here drives a stubbed transport. No billed Dune call is made by this lane, and the
+    // only endpoint any of it reaches is the free `POST /usage`.
+
+    it('THE NEGATIVE CONTROL: the entry leg reserving first is REFUSED, and asks for nothing at all', async () => {
+      // This is the ordering, reproduced. Regress `screen.mjs` back to building the entry fill
+      // source before the enumeration reserves and this is the path a real run takes — so this
+      // assertion is what would go red, rather than a comment going stale.
+      const { c, paths } = client((path) =>
+        path === USAGE_PATH
+          ? new Response(JSON.stringify(usageBody([period(0)])), { status: 200 })
+          : new Response(JSON.stringify({}), { status: 200 }),
+      );
+      await expect(build(c, { ledger: openDuneCreditLedger() })).rejects.toThrow(
+        /"entry" leg tried to reserve Dune credits before "enumeration" had settled/,
+      );
+      // REFUSED BEFORE THE FREE BALANCE READ, let alone a billed one: not one request of any kind.
+      // The balance here is deliberately ROOMY — `period(0)` spends nothing — so the refusal cannot
+      // be the allowance's, which is what makes the order the thing under test.
+      expect(paths).toEqual([]);
+      expect(c.executions()).toBe(0);
+    });
+
+    it('and it PROCEEDS once the mandatory leg has reserved — same balance, same client', async () => {
+      // The control that makes the refusal above mean something: without it a guard that refused
+      // everything would pass. Reaching the undeployed probe is how far this configuration can get,
+      // and it is the next gate rather than this one.
+      const ledger = openDuneCreditLedger();
+      const { c, paths } = client((path) =>
+        path === USAGE_PATH
+          ? new Response(JSON.stringify(usageBody([period(0)])), { status: 200 })
+          : new Response(JSON.stringify({}), { status: 200 }),
+      );
+      const enumeration = await checkDuneAllowance(c, {
+        bounds: ENUMERATION_BOUNDS,
+        nowMs: NOW_MS,
+        ledger,
+        leg: 'enumeration',
+      });
+      expect(enumeration.decision.ok).toBe(true);
+      await expect(build(c, { ledger })).rejects.toThrow(/no deployed saved query/);
+      // Still nothing billed, and the balance still read exactly once for the whole run.
+      expect(paths).toEqual([USAGE_PATH]);
+      expect(c.executions()).toBe(0);
+    });
+
+    it('a mandatory leg that will NOT spend must SAY so, and saying so is what unblocks the rest', async () => {
+      // A run with no Dune client — `--no-dune`, `--ownership-only`, no usable credential — and the
+      // dry run, which enumerates nothing. Being quietly skipped leaves the legs behind it blocked,
+      // which fails towards refusing; declaring it is what makes the free preview honest rather than
+      // merely unblocked.
+      const declared = openDuneCreditLedger();
+      declared.declineToSpend('enumeration');
+      expect(declared.settledLegs()).toEqual(['enumeration']);
+      expect(declared.reservedCredits()).toBe(0);
+      const { c } = client((path) =>
+        path === USAGE_PATH
+          ? new Response(JSON.stringify(usageBody([period(0)])), { status: 200 })
+          : new Response(JSON.stringify({}), { status: 200 }),
+      );
+      await expect(build(c, { ledger: declared })).rejects.toThrow(/no deployed saved query/);
+    });
+
+    it('a REFUSED mandatory leg still settles — it asked, and the answer will not change', async () => {
+      // The enumeration being priced out is a verdict, not a pending question. Holding the leg
+      // behind it would turn one leg's refusal into the whole run's, which is the failure this
+      // ordering exists to prevent rather than to relocate.
+      const ledger = openDuneCreditLedger();
+      const { c } = client((path) =>
+        path === USAGE_PATH
+          ? new Response(JSON.stringify(usageBody([period(2_499)])), { status: 200 })
+          : new Response(JSON.stringify({}), { status: 200 }),
+      );
+      const enumeration = await checkDuneAllowance(c, {
+        bounds: ENUMERATION_BOUNDS,
+        nowMs: NOW_MS,
+        ledger,
+        leg: 'enumeration',
+      });
+      expect(enumeration.decision.ok).toBe(false);
+      expect(ledger.settledLegs()).toEqual(['enumeration']);
+      // Nothing was held by a refused leg, so the entry leg is priced against the whole balance —
+      // and refused by that balance rather than by the order.
+      expect(ledger.reservedCredits()).toBe(0);
+      await expect(build(c, { ledger })).rejects.toThrow(/refuses to spend/);
+    });
+
+    it('a SOLE leg queues behind nothing, so a single-leg run is byte-identical', async () => {
+      // `checkDuneAllowance` opens a private ledger when it is handed none, and that means "this is
+      // the only leg of this run that spends". The order can only bind a run that has two legs, so
+      // every existing single-leg path — every test above, and every default run — is untouched.
+      const { c } = client((path) =>
+        path === USAGE_PATH
+          ? new Response(JSON.stringify(usageBody([period(0)])), { status: 200 })
+          : new Response(JSON.stringify({}), { status: 200 }),
+      );
+      await expect(build(c)).rejects.toThrow(/no deployed saved query/);
+    });
+
+    it('the order is DATA, and the entry leg is behind the enumeration in it', () => {
+      // An array rather than two booleans: a third spending leg gets a position in it and everything
+      // downstream keeps working. What must not change silently is which end the billed optional leg
+      // sits at.
+      expect([...DUNE_LEG_ORDER]).toEqual(['enumeration', 'entry']);
+      expect(DUNE_LEG_ORDER.indexOf('entry')).toBeGreaterThan(DUNE_LEG_ORDER.indexOf('enumeration'));
+      // A leg the order does not know is refused rather than placed by guesswork.
+      expect(() => openDuneCreditLedger().declineToSpend('stage3' as never)).toThrow(/not one of this run's known legs/);
+    });
+
+    it("`main` reserves the mandatory leg ABOVE the construction that bills, on both paths", () => {
+      // The seam proves the rule; this proves `screen.mjs` satisfies it. It is a POSITIONAL pin
+      // because the defect was positional: both call sites already existed and were already correct
+      // in isolation, and only their order in the file was wrong.
+      const screen = readFileSync(SCREEN_MAIN, 'utf8');
+      const reserved = screen.indexOf("leg: 'enumeration',");
+      const built = screen.indexOf('entrySourcePlan = await runEntrySourcePlan(');
+      expect(reserved).toBeGreaterThan(-1);
+      expect(built).toBeGreaterThan(-1);
+      expect(reserved).toBeLessThan(built);
+      // The enumeration site downstream REPORTS that verdict rather than taking a second one, which
+      // would put this leg back behind the optional one it must precede.
+      expect(screen).toContain('const checked = enumerationReservation;');
+      expect(screen.match(/checkDuneAllowance\(duneClient, \{/g)).toHaveLength(1);
+      // And the dry run, which enumerates nothing, declares that rather than being skipped —
+      // otherwise `--dry-run-spend` would refuse with an ordering message post-cutover.
+      expect(screen).toContain("duneCreditLedger.declineToSpend('enumeration');");
+      expect(screen.match(/declineToSpend\('enumeration'\)/g)).toHaveLength(2);
+    });
   });
 
   it('a CLEARED balance goes on to the probe, which is the next gate and not this one', async () => {

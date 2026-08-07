@@ -1680,8 +1680,28 @@ export function duneSpendPlan(bounds) {
 }
 
 /**
+ * @typedef {'enumeration' | 'entry'} DuneLeg A leg of one run that may spend Dune credits.
+ */
+
+/**
+ * THE ORDER THE RUN'S DUNE LEGS RESERVE IN — **cheapest and most necessary first.**
+ *
+ * `enumeration` is Stage 1's creation history: ONE execution for the whole candidate batch, and the
+ * thing a run exists to do. `entry` is Stage 2's fill source: billed PER WINDOW, optional, and dark
+ * until the Gate 3 cutover. Spending the second before the first has reserved is how a run comes to
+ * consume the period on the leg it could have gone without and then refuse over the leg it could
+ * not — which the RPC-walk spend cliff turns into a refusal AFTER the bill.
+ *
+ * It is an ARRAY rather than two booleans because the order is the property: a third spending leg
+ * gets a position in it, and everything downstream keeps working without learning its name.
+ *
+ * @type {readonly DuneLeg[]}
+ */
+export const DUNE_LEG_ORDER = ['enumeration', 'entry'];
+
+/**
  * ONE RESERVATION FOR THE WHOLE RUN, DRAWN ON BY EVERY LEG THAT SPENDS DUNE CREDITS (captain
- * decision 320a).
+ * decision 320a), **IN A DECLARED ORDER**.
  *
  * **The defect it closes is time-of-check-to-time-of-use, and it arrived the moment a second leg
  * started spending.** Stage 2's entry fill source and the Stage 1 enumeration each read `POST /usage`
@@ -1701,11 +1721,24 @@ export function duneSpendPlan(bounds) {
  * second answer to one question, and the run would then hold two different beliefs about a balance
  * it could not see. An unreadable balance refuses every leg, once.
  *
- * **RESERVATION ORDER IS CONTROL-FLOW ORDER, and both outcomes are refusals before spending.** The
- * entry leg is built before Stage 1 enumerates, so it reserves first; an enumeration then priced out
- * falls back to the RPC walk, which `priceWalkFallbackCliff` refuses before its first request when
- * the fallback is a spend cliff rather than the slower road. Neither ordering can produce a silent
- * overspend, which is why the order is left where the control flow already put it.
+ * **RESERVATION ORDER IS A RULE THIS LEDGER ENFORCES, NOT WHATEVER THE CONTROL FLOW HAPPENED TO DO:
+ * the CHEAP MANDATORY leg reserves before the EXPENSIVE OPTIONAL one spends.** 320a made both legs
+ * draw on one reservation; it did not change which of them reserved FIRST, and the control flow put
+ * the wrong one there. Stage 2's entry fill source is built before Stage 1 enumerates, so it
+ * reserved first, BILLED its trade-coverage result read, and only then was the enumeration priced
+ * against what was left. An enumeration priced out there falls back to the RPC walk, and
+ * `priceWalkFallbackCliff` refuses the whole run before its first walk request — so the run ended
+ * having paid the OPTIONAL leg and produced nothing at all. Under the captain's Dune account
+ * controls that is not a money loss: extra credits are capped at $0, so the vendor REFUSES at the
+ * ceiling rather than billing past it, and a period consumed by a leg whose run then refused is a
+ * period that cannot check candidates. **{@link DUNE_LEG_ORDER} states the order**, and a leg whose
+ * predecessors have not SETTLED — reserved, whatever the verdict, or declared not to spend — is
+ * refused before the free balance read, let alone a billed one.
+ *
+ * **A PRIVATE LEDGER HAS NO PREDECESSORS TO WAIT FOR, by definition.** `checkDuneAllowance` opens
+ * one when a caller hands in none, and that means "this is the only leg of this run that spends" —
+ * so it is opened with every earlier leg already settled and the single-leg behaviour is exactly
+ * what it was. The order can only bind a run that actually has two legs.
  *
  * **WHAT IT STILL CANNOT DO, and the three caveats travel with every verdict unchanged:** the
  * vendor's counter LAGS, so a reading over-states what remains and `allowanceReserveCredits` is held
@@ -1716,16 +1749,60 @@ export function duneSpendPlan(bounds) {
  * makes ONE RUN self-consistent. It cannot reserve against a sibling lane, and nothing here pretends
  * otherwise.
  *
+ * @param {{ soleLeg?: DuneLeg }} [opts] `soleLeg` opens the ledger with every leg BEFORE that one
+ *   already settled, which is what "this is the only leg of this run that spends" means. Absent, no
+ *   leg is settled and the order below binds from the first reservation.
  * @returns {DuneCreditLedger}
  */
-export function openDuneCreditLedger() {
+export function openDuneCreditLedger(opts = {}) {
   /** @type {import('./client.mjs').UsageReading | null} */
   let reading = null;
   let reserved = 0;
+  /** @type {Set<DuneLeg>} */
+  const settled = new Set(
+    opts.soleLeg === undefined ? [] : DUNE_LEG_ORDER.slice(0, DUNE_LEG_ORDER.indexOf(opts.soleLeg)),
+  );
+
+  /**
+   * IS IT THIS LEG'S TURN? Refused BEFORE the free balance read, so a leg jumping the queue costs
+   * not one request of any kind.
+   *
+   * @param {DuneLeg} leg
+   */
+  const assertItsTurn = (leg) => {
+    const at = DUNE_LEG_ORDER.indexOf(leg);
+    if (at === -1) {
+      throw new Error(
+        `a Dune spending leg declared itself "${String(leg)}", which is not one of this run's known ` +
+          `legs (${DUNE_LEG_ORDER.join(', ')}). A leg the reservation order does not know cannot be ` +
+          `placed in it, and placing it anyway would be a guess about which leg may spend first. ` +
+          `Nothing was requested and nothing was billed.`,
+      );
+    }
+    const pending = DUNE_LEG_ORDER.slice(0, at).filter((l) => !settled.has(l));
+    if (pending.length === 0) return;
+    throw new Error(
+      `the "${leg}" leg tried to reserve Dune credits before ${pending.map((l) => `"${l}"`).join(' and ')} ` +
+        `had settled. The mandatory leg reserves FIRST BY RULE: building the entry fill source bills ` +
+        `a trade-coverage result read, and a run that paid it and then priced the enumeration out ` +
+        `falls back to the RPC walk, where the spend cliff refuses the whole run — leaving the ` +
+        `period consumed and nothing produced. A leg that will not spend must say so ` +
+        `(declineToSpend) rather than being skipped. Nothing was requested and nothing was billed.`,
+    );
+  };
 
   return {
     reservedCredits: () => reserved,
+    settledLegs: () => [...settled],
+    declineToSpend(leg) {
+      assertItsTurn(leg);
+      settled.add(leg);
+    },
     async reserve(client, input) {
+      assertItsTurn(input.leg);
+      // SETTLED BY ASKING, not by being cleared. A refused leg has had its answer, and the leg
+      // behind it must not be held up waiting for a verdict that will never change.
+      settled.add(input.leg);
       const plan = input.plan;
       const estimate = estimatePlanCredits(plan);
       if (reading === null) reading = await readUsageOnce(client, input.nowMs);
@@ -1773,11 +1850,16 @@ export function openDuneCreditLedger() {
  * @property {(client: import('./client.mjs').DuneClient, input: { plan: import('./client.mjs').DuneSpendPlan,
  *   bounds: { allowanceReserveCredits: number, monthlyCreditCapCredits: number,
  *     allowanceTightMultiple: number, allowanceRequired: boolean },
- *   nowMs: number }) => Promise<{ plan: import('./client.mjs').DuneSpendPlan,
+ *   nowMs: number, leg: DuneLeg }) => Promise<{ plan: import('./client.mjs').DuneSpendPlan,
  *   estimate: import('./client.mjs').DuneSpendEstimate,
  *   allowance: import('./client.mjs').DuneAllowance | null,
  *   decision: import('./client.mjs').AllowanceDecision }>} reserve
  * @property {() => number} reservedCredits What this run has already been cleared to spend.
+ * @property {() => DuneLeg[]} settledLegs Which legs have had their answer, in no particular order.
+ * @property {(leg: DuneLeg) => void} declineToSpend This leg will spend NO Dune credit on this run,
+ *   so the legs behind it may go. It is the only way past the order other than reserving, and it is
+ *   deliberately explicit: a leg that is simply skipped leaves the ones behind it blocked, which
+ *   fails towards refusing rather than towards spending.
  */
 
 /**
@@ -1846,7 +1928,9 @@ function round3(n) {
  * one reservation against {@link openDuneCreditLedger} — the whole of it, so there is ONE mechanism
  * and not two that agree. Without a ledger it opens a private one, which is the single-leg case and
  * is byte-identical to what it did before: one balance read, one verdict, nothing held. With one, the
- * legs share a reading and each is priced against what the earlier ones were cleared to spend.
+ * legs share a reading and each is priced against what the earlier ones were cleared to spend — **in
+ * {@link DUNE_LEG_ORDER}, which the ledger enforces**, so the optional leg cannot bill ahead of the
+ * mandatory one's reservation.
  *
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} input
@@ -1857,7 +1941,11 @@ function round3(n) {
  * @param {import('./client.mjs').DuneSpendPlan} [input.plan] The asking leg's own ceilings. Absent
  *   means the ENUMERATION's, priced from `input.bounds` by {@link duneSpendPlan} exactly as before.
  * @param {DuneCreditLedger} [input.ledger] The RUN's reservation. Absent means this is the only leg
- *   that spends, and a private ledger is opened for it.
+ *   that spends, and a private ledger is opened for it — with every earlier leg already settled,
+ *   because a sole leg has nothing to queue behind.
+ * @param {DuneLeg} input.leg WHICH leg is asking. It is REQUIRED and has no default: the ledger
+ *   enforces {@link DUNE_LEG_ORDER}, and a default would let a leg that forgot to name itself take
+ *   another's place in the queue — which is the one direction this guard exists to refuse.
  * @returns {Promise<{ plan: import('./client.mjs').DuneSpendPlan,
  *   estimate: import('./client.mjs').DuneSpendEstimate,
  *   allowance: import('./client.mjs').DuneAllowance | null,
@@ -1870,8 +1958,8 @@ export async function checkDuneAllowance(client, input) {
       /** @type {{ maxExecutionsPerRun: number, maxResultRows: number, worstCaseCreditsPerExecution: number,
        *   resultBytesPerRowCeiling: number }} */ (input.bounds),
     );
-  const ledger = input.ledger ?? openDuneCreditLedger();
-  return ledger.reserve(client, { plan, bounds: input.bounds, nowMs: input.nowMs });
+  const ledger = input.ledger ?? openDuneCreditLedger({ soleLeg: input.leg });
+  return ledger.reserve(client, { plan, bounds: input.bounds, nowMs: input.nowMs, leg: input.leg });
 }
 
 /**

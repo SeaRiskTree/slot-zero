@@ -39,7 +39,8 @@
 
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { DATASETS, DATA_ROOT_ENV_VAR, resolveDataRoot } from './data-root.mjs';
 
@@ -202,7 +203,7 @@ export function describeVerifyResult(result) {
 }
 
 /* c8 ignore start -- the CLI shell. */
-if (process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   const i = process.argv.indexOf('--root');
   const root = i >= 0 ? process.argv[i + 1] : undefined;
   if (i >= 0 && root === undefined) {

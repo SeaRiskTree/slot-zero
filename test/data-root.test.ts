@@ -72,11 +72,12 @@ function withoutComments(source: string): string {
 
 /**
  * Every environment variable NAME a source file reads, in every spelling the environment can be
- * reached by here: `process.env.NAME` and the same dot form off a BOUND parameter (`env.NAME`),
- * `env['NAME']`, `env[CONSTANT]` — the idiom `config/data-root.mjs` actually writes, resolved
- * through the constant's own declaration — a destructuring pattern off either (`const { NAME } =
- * process.env`), and a bare `process.env` handed on whole, which is only a read at all when it is
- * bound as a default and then reached by one of the forms above.
+ * reached by here. The environment is first followed through the names it is BOUND to — a
+ * parameter default, a `const` alias, a plain assignment — and every one of those, plus
+ * `process.env` itself, is then read for `NAME`, `['NAME']`, `[CONSTANT]` (the idiom
+ * `config/data-root.mjs` actually writes, resolved through the constant's own declaration) and a
+ * destructuring pattern. A bare `process.env` is a read of the whole environment unless it is such
+ * a binding, in which case the binding's own reads are the ones counted.
  *
  * A subscript this cannot resolve to a literal, a computed or rest element in a destructuring
  * pattern, and a bare `process.env` that is NOT such a binding, are all reported as unnameable
@@ -86,8 +87,15 @@ function withoutComments(source: string): string {
 export function environmentNamesRead(source: string): string[] {
   const code = withoutComments(source);
   const names: string[] = [];
-  for (const match of code.matchAll(/\benv\.([A-Za-z0-9_$]+)/g)) names.push(match[1] as string);
-  for (const match of code.matchAll(/\{([^{}]*)\}\s*=\s*(?:process\.)?env\b/g)) {
+  const aliases = new Set(['env']);
+  for (const match of code.matchAll(/([A-Za-z_$][\w$]*)\s*=\s*process\.env\b(?![.[])/g)) {
+    aliases.add(match[1] as string);
+  }
+  const bound = [...aliases].join('|');
+  for (const match of code.matchAll(new RegExp(`\\b(?:${bound})\\.([A-Za-z0-9_$]+)`, 'g'))) {
+    names.push(match[1] as string);
+  }
+  for (const match of code.matchAll(new RegExp(`\\{([^{}]*)\\}\\s*=\\s*(?:process\\.)?(?:${bound})\\b`, 'g'))) {
     for (const part of (match[1] as string).split(',')) {
       const bound = part.trim();
       if (bound === '') continue;
@@ -99,7 +107,7 @@ export function environmentNamesRead(source: string): string[] {
       names.push(key?.[1] ?? `<${bound}, which is not a literal in this file>`);
     }
   }
-  for (const match of code.matchAll(/\benv\[([^\]]*)\]/g)) {
+  for (const match of code.matchAll(new RegExp(`\\b(?:${bound})\\[([^\\]]*)\\]`, 'g'))) {
     const subscript = (match[1] as string).trim();
     const quoted = /^(['"])([^'"]*)\1$/.exec(subscript);
     if (quoted !== null) {
@@ -416,7 +424,10 @@ describe('CI cannot go green without the tapes', () => {
     expect(stepsOf(continued).find((s) => s.run?.trim() === 'npm test')?.continueOnError).toBe('true');
     // And re-indenting or re-spelling a step is NOT a change: the model is the same either way.
     const rewritten = ci.replace('      - run: npm test', '      - run: |\n          npm test');
-    expect(stepsOf(rewritten).find((s) => s.run?.trim() === 'npm test')?.if).toBeUndefined();
+    const step = stepsOf(rewritten).find((s) => s.run?.trim() === 'npm test');
+    expect(step, 'the block-scalar rewrite must still parse as the same step').toBeDefined();
+    expect(step?.run?.trim()).toBe('npm test');
+    expect(step?.if).toBeUndefined();
   });
 });
 
@@ -460,7 +471,7 @@ describe('config/ is governed like the other areas', () => {
     expect(readsSeen).toBe(resolverReads.length);
   });
 
-  it('SEES a second variable in every spelling this area could write one in', () => {
+  it('SEES a second variable in every spelling this area could write one in, or refuses to name it', () => {
     // The regression: each of these passed the old scan untouched. A name other than the data
     // root's — or a subscript that cannot be resolved to one — must come back and fail the guard
     // above, rather than leaving it iterating an empty list.
@@ -481,6 +492,17 @@ describe('config/ is governed like the other areas', () => {
       ['SLOT_ZERO_OTHER'],
     );
     expect(environmentNamesRead('const { ...rest } = process.env;')).toEqual(['<the whole environment>']);
+    // And a module-level ALIAS, which the bound-parameter heuristic used to wave through as
+    // benign while every read off it stayed invisible.
+    expect(
+      environmentNamesRead('const e = process.env;\nexport function f() { return e.SLOT_ZERO_CACHE_DIR; }'),
+    ).toEqual(['SLOT_ZERO_CACHE_DIR']);
+    expect(environmentNamesRead("const e = process.env;\nconst v = e['SLOT_ZERO_CACHE_DIR'];")).toEqual([
+      'SLOT_ZERO_CACHE_DIR',
+    ]);
+    expect(environmentNamesRead('let e;\ne = process.env;\nconst { SLOT_ZERO_OTHER } = e;')).toEqual([
+      'SLOT_ZERO_OTHER',
+    ]);
     // A bare `process.env` is a read of the WHOLE environment unless it is bound and then
     // subscripted — the resolver's own `env = process.env` default is the bound form.
     expect(environmentNamesRead('doThings(); process.env;')).toEqual(['<the whole environment>']);

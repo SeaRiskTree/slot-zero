@@ -269,7 +269,8 @@ the report's name and section inline; they are evidence from elsewhere, not repr
   address common to all three is pump.fun's own protocol fee recipient, which every launch
   pays. *(`kol-cohort-vs-outsider-funding/report.md` §2.1, §4.4;
   `slot-zero-uxento-host-reexamine/report.md` §3, §4.2, §5.2, §8.6;
-  `slot-zero-fee-accounts-protocol-or-tool/report.md` §3.)*
+  `slot-zero-fee-accounts-protocol-or-tool/report.md` §3 — all three held in firstmate's
+  records, not in this repo.)*
 - **The outsider edge is real, thin, and bought.** `5brv79eF…` keeps **+47.8 SOL of +100.9
   gross** over 49 exactly-priced launches — it pays away over half in priority fees, and is
   still the best result in 20,388 wallets outside the operation's own six. Its outsider status is

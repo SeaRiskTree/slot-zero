@@ -217,8 +217,9 @@ permanent limits of the evidence:
   new view read broader than it.
 - **A SHARED VENDOR ARTEFACT NEVER ATTRIBUTES A WALLET TO AN OPERATION — a metadata host, a fee
   account, a deploy preset, a description string.** Before calling any artefact "the operator's
-  own", count the distinct unrelated wallets that also carry it; on pump.fun that count is free and
-  it is usually in the thousands. **This trap fired twice in two days and both times it reached
+  own", count the distinct unrelated wallets that also carry it; on pump.fun that count is free, and
+  where it has been measured the answer came back in the dozens inside a single 33-minute live
+  sample. **This trap fired twice in two days and both times it reached
   committed prose**: `meta.uxento.io`, named in `README.md` and `src/cohort.ts` as "the operator's
   own metadata host", is a commercial third-party deploy platform (23 unrelated creator wallets in one
   33-minute live sample, thousands of launches a day, and this operation in none of them), and the

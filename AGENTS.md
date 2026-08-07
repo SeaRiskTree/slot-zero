@@ -933,10 +933,15 @@ dev currently?"*, and the shape of the answer is the point:
   review of that round caught: a ledger holds a leg until its predecessors have SETTLED, never until
   they have ANSWERED, so the entry probe could still be billed and the run then refused whole at the
   cliff. The construction is therefore SPLIT and carries **two properties, neither of which may
-  lose**. (1) A run whose Stage 2 fill source is unusable refuses BEFORE the MadeOnSol seed
+  lose**. (1) A run whose Stage 2 fill source cannot be RESOLVED refuses BEFORE the MadeOnSol seed
   enumeration is spent — `runEntrySourcePlan(..., { constructionPhase: 'free-only' })` RESOLVES every
   kind the run will read, so an unknown kind still refuses there and resolution touches no vendor,
   and builds only what the registry DECLARES free (the swap-api, so a default run is byte-identical).
+  **THAT IS NARROWER THAN THE PRE-SPLIT BEHAVIOUR AND THE NARROWING IS DELIBERATE — do not read it as
+  "an unusable source always refuses before anything is spent".** A source that RESOLVES and then
+  fails to BUILD (undeployed coverage probe, refused allowance, unreadable watermark) now refuses at
+  `completeEntrySourcePlan` with the seeds already sunk; before the split it refused ahead of them
+  and BILLED the probe ahead of them, which is the hazard (2) removes, so the two cannot both be had.
   (2) The OPTIONAL BILLED leg only bills once the MANDATORY one has ANSWERED —
   `completeEntrySourcePlan` builds the deferred billed and UNDECLARED constructions after the
   enumeration and after `priceWalkFallbackCliff`, still ahead of the gate loop, and its refusal reads
@@ -951,6 +956,15 @@ dev currently?"*, and the shape of the answer is the point:
   `dune.used: false`. `screen.mjs` → `duneFillSourceContradiction` asks the same derivation and
   **REFUSES rather than suppressing** (suppressing discards the configured source; honouring spends
   what the flag forbade), in `parseArgs` and again in `main` where the pinned bounds are readable.
+  **AND `--stage0` IS FOLDED INTO `entryFillSourceIsRead`, WHICH IS THE CORRECTION TO THAT GUARD'S
+  OWN FIRST CUT**: `--stage0` leaves `opts.stage2` true, so at the cutover the guard would have
+  refused `--stage0 --no-dune` — the free, offline, keyless mode — while `main`'s copy, sitting below
+  the `stage0Only` return, let it through. It is folded into the DERIVATION rather than exempted at
+  the call site, because exempting would put the mode question beside a flag again and leave the two
+  copies free to drift apart. **`--dry-run` is deliberately NOT folded**: a dry run reads no source
+  but PLANS one, and `planEligibility` gates on this predicate, so folding it would stop the plan
+  naming its source and regress 286c. The asymmetry is STRUCTURAL — `--stage0` returns before the
+  plan is built — and a test pins both halves.
   Neither guard can fire on the default branch; the first run that exercises
   the Dune fill source is Gate 3's.
 - **`node tools/deployer-screen/screen.mjs` WITH NO MODE FLAG IS A LIVE RUN AND SPENDS, and the

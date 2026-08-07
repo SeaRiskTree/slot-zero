@@ -72,6 +72,7 @@ import {
   ENTRY_FILL_SOURCE_KIND,
   buildDuneEntryFillSource,
   duneFillSourceContradiction,
+  entrySourceKindsRead,
   loadThresholds as screenLoadThresholds,
   main as screenMain,
   parseArgs as screenParseArgs,
@@ -1974,6 +1975,66 @@ describe('the entry fill source is constructed in two phases, and each phase car
     expect(armed).toContain('reaches no Dune surface');
     expect(armed).toContain('ENTRY_FILL_SOURCE_KIND');
   });
+
+  it('leaves `--stage0` FREE at the cutover, in both places, because the mode is folded into the derivation', async () => {
+    // A REGRESSION THE CONTRADICTION GUARD ITSELF INTRODUCED, and this is the guard against it
+    // coming back. `--stage0` sets only `stage0Only` and leaves `stage2` true, so as first written
+    // the guard refused `--stage0 --no-dune` at the cutover — a mode whose usage text promises "No
+    // network, no key, no quota. Always safe." — while `main`'s copy, which sits BELOW the
+    // `stage0Only` return, let the same combination through. Two places, one rule, two answers.
+    //
+    // The fix is in `entryFillSourceIsRead`, so a Stage 0 run reads no source and both copies are
+    // inert for it by construction rather than by two call sites agreeing to be.
+    for (const argv of [['--stage0'], ['--stage0', '--no-dune'], ['--stage0', '--ownership-only']]) {
+      // The CLI half, at the CUTOVER's kind — the case that was broken, reachable only through the
+      // seam because `ENTRY_FILL_SOURCE_KIND` is Gate 3's own edit.
+      const parsed = screenParseArgs(argv);
+      expect(parsed.ok, argv.join(' ')).toBe(true);
+      if (!parsed.ok) throw new Error('unreachable');
+      expect(duneFillSourceContradiction(parsed.opts, undefined, 'dune'), argv.join(' ')).toBeNull();
+      expect(entrySourceKindsRead(parsed.opts, undefined, 'dune')).toEqual([]);
+
+      // And `main` AGREES, observably and at the same kind: Stage 0 runs offline over the committed
+      // tape, exits ok and reaches no vendor at all. An empty environment is deliberate — this mode
+      // needs no key, which is half of what makes it the safe smoke test.
+      try {
+        const seen = stubTransport(() => new Response('{}', { status: 200 }));
+        const errs: string[] = [];
+        const code = await screenMain(parsed.opts, {}, () => {}, (l: string) => errs.push(l), {
+          entryFillSourceKind: 'dune' as never,
+        });
+        expect(code, `${argv.join(' ')}: ${errs.join('\n')}`).toBe(0);
+        expect(errs.join('\n')).not.toContain('reach no Dune surface');
+        expect(seen).toEqual([]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
+  }, 120_000);
+
+  it('does NOT fold `--dry-run` the same way: the plan still describes the source it would read', async () => {
+    // THE LOAD-BEARING HALF OF THE ASYMMETRY. A dry run reads no source but PLANS one, and
+    // `planEligibility` gates on the same predicate `--stage0` was folded into — so folding
+    // `dryRun` in beside it would silently stop the plan describing its own source and regress
+    // captain decision 286c. The difference is structural rather than a judgement: a `--stage0` run
+    // RETURNS before the plan is built, a dry run does not.
+    const parsed = screenParseArgs(['--dry-run']);
+    if (!parsed.ok) throw new Error('unreachable');
+    expect(entrySourceKindsRead(parsed.opts, undefined)).toEqual([ENTRY_FILL_SOURCE_KIND]);
+    try {
+      const seen = stubTransport(() => new Response('{}', { status: 200 }));
+      const lines: string[] = [];
+      const code = await screenMain(parsed.opts, {}, (l: string) => lines.push(l), () => {});
+      expect(code).toBe(0);
+      // The eligibility floor is the figure only a BUILT source can answer, and the free swap-api
+      // construction answers it — so its presence is the plan describing its source. A fold of
+      // `dryRun` into the predicate would remove this line entirely.
+      expect(lines.join('\n')).toMatch(/A launch is not walked until it is/);
+      expect(seen).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
 
   it('the DEFAULT run is unchanged: the one source it reads is free, so both phases still build it once', async () => {
     // The regression guard on "a default run is byte-identical". The swap-api construction is

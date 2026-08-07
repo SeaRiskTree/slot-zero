@@ -1308,6 +1308,20 @@ committed** (captain decisions 317a and 318a, 2026-08-06):
    with Stage 2 off it returns no source at all, so the guard is inert on every configuration
    reachable today and arms itself at the cutover.
 
+   **`--stage0` IS FOLDED INTO THE DERIVATION, AND THAT FOLD IS A CORRECTION TO THIS GUARD'S FIRST
+   CUT RATHER THAN A REFINEMENT OF IT.** `--stage0` sets only `stage0Only` and leaves `stage2` true,
+   so as first written the guard would have refused `--stage0 --no-dune` and `--stage0
+   --ownership-only` at the cutover — a mode whose own usage text promises "No network, no key, no
+   quota. Always safe." — while `main`'s copy of the same guard, which sits below the `stage0Only`
+   return, let the combination through. Two places, one rule, two answers. The fix is in
+   `entryFillSourceIsRead`, so a Stage 0 run reads no source and the guard is inert for it with no
+   special case at either call site; putting the exemption at the call site instead would have
+   reintroduced exactly the beside-a-flag duplication this whole section exists to remove.
+   **`--dry-run` is deliberately NOT folded, and the difference is structural**: a `--stage0` run
+   returns before the plan is built, while a dry run reads no source but PLANS one — `planEligibility`
+   gates on the same predicate, so folding `--dry-run` in would stop the plan describing its own
+   source and regress captain decision 286c. A test pins that the dry-run plan still names it.
+
    **AND ORDERING THE RESERVATIONS DOES NOT ORDER THE SPEND, SO THE CONSTRUCTION IS SPLIT IN TWO —
    TWO PROPERTIES, AND NEITHER MAY LOSE.** A ledger can hold a leg until its predecessors have
    *settled*; it cannot hold one until they have *answered*. With the whole construction still above
@@ -1316,14 +1330,23 @@ committed** (captain decisions 317a and 318a, 2026-08-06):
    coverage probe, an unreadable row, a failed execution, a refused allowance — and be refused whole
    at exit 2 anyway. So `screen.mjs` builds the entry source in two phases:
 
-   - **PROPERTY 1, and it is what the early phase buys**: a run whose Stage 2 fill source is
-     unusable refuses BEFORE the MadeOnSol seed enumeration is spent. Where the construction sits
-     today, `runEntrySourcePlan(..., { constructionPhase: 'free-only' })` RESOLVES every kind the run
-     will read — so an unknown kind, or a registration disagreeing with its own key, still refuses
-     there, and resolution touches no vendor — checks the window ceiling, and builds only the
-     constructions the registry DECLARES free. On a default run that is the swap-api and therefore
-     all of them, which is why a default run is byte-identical and still proves its eligibility gate
-     before Stage 1.
+   - **PROPERTY 1, and it is what the early phase buys**: a run whose Stage 2 fill source cannot be
+     RESOLVED refuses BEFORE the MadeOnSol seed enumeration is spent, and so does a plan that does
+     not fit the window ceiling. `runEntrySourcePlan(..., { constructionPhase: 'free-only' })`
+     resolves every kind the run will read — so an unknown kind, or a registration disagreeing with
+     its own key, still refuses there, and resolution touches no vendor — checks the ceiling, and
+     builds only the constructions the registry DECLARES free. On a default run that is the swap-api
+     and therefore all of them, which is why a default run is byte-identical and still proves its
+     eligibility gate before Stage 1.
+
+     **READ THE SCOPE, NOT THE HEADLINE: this is NARROWER than what the unsplit construction gave,
+     and the narrowing is the trade.** A source that resolves and then fails to BUILD — an undeployed
+     coverage probe, a refused allowance, an unreadable watermark — now refuses at
+     `completeEntrySourcePlan` with the seed requests already sunk, where before the split it refused
+     ahead of them. It also BILLED the coverage probe ahead of them, which is exactly the hazard
+     PROPERTY 2 removes, so the two cannot both be had. What was traded away is a few seed requests
+     on an already-doomed run; what was bought is that the billing period is not consumed by a run
+     that then produces nothing.
    - **PROPERTY 2, and it is what the late phase buys**: the OPTIONAL BILLED leg only bills once the
      MANDATORY leg has ANSWERED. `completeEntrySourcePlan` builds whatever the early phase deferred —
      the billed constructions, and the UNDECLARED ones, which are treated as billed for captain

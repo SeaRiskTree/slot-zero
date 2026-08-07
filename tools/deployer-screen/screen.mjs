@@ -517,11 +517,29 @@ export function assertAgreementWindowsFit(entryThresholds, agreementBounds) {
  * variable that did not move. When a later flag makes Stage 2 conditional on something else, there
  * is one place that learns it.
  *
- * @param {{ stage2: boolean }} opts
+ * **`--stage0` IS ONE OF THOSE FLAGS, AND FOLDING IT IN HERE IS WHY THIS IS A DERIVATION.** A
+ * Stage 0 run is the local validation over the committed tape: it reaches no vendor, needs no key
+ * and its own usage text promises exactly that. It leaves `opts.stage2` true, though, so before the
+ * fold this answered "yes, a source is read" for it — and {@link duneFillSourceContradiction} then
+ * refused `--stage0 --no-dune` at the Gate 3 cutover for a mode that spends nothing. That refusal
+ * was introduced by the round that added the contradiction guard; this is its correction. It is
+ * folded HERE rather than exempted at the guard's call site because that would put the mode question
+ * beside a flag instead of deriving it from whether the source is read, which is the very defect
+ * this lane exists to remove — and it would leave the CLI's copy and `main`'s copy free to drift, as
+ * they already had: `main`'s half sits BELOW the `opts.stage0Only` return and so never saw the
+ * combination the CLI was refusing. One edit here makes both answer identically by construction.
+ *
+ * **`--dry-run` IS DELIBERATELY NOT FOLDED, and the difference is STRUCTURAL rather than a
+ * judgement.** A `--stage0` run RETURNS BEFORE THE PLAN IS BUILT, so nothing downstream can want a
+ * source from it. A dry run reads no source but DOES PLAN one, and `planEligibility` is gated on
+ * this predicate — folding `dryRun` in would stop the plan describing its own source and would
+ * regress captain decision 286c. A test pins that the dry-run plan still names it.
+ *
+ * @param {{ stage2: boolean, stage0Only?: boolean }} opts
  * @returns {boolean}
  */
 export function entryFillSourceIsRead(opts) {
-  return opts.stage2;
+  return opts.stage2 && opts.stage0Only !== true;
 }
 
 /**
@@ -545,7 +563,7 @@ export function entryFillSourceIsRead(opts) {
  * that one answers whether ANY source is read, this one answers WHICH — so a Gate 3 cutover that
  * moves one constant moves every figure derived from it, and nothing has to be remembered.
  *
- * @param {{ stage2: boolean, entrySourceAgreement?: boolean }} opts
+ * @param {{ stage2: boolean, stage0Only?: boolean, entrySourceAgreement?: boolean }} opts
  * @param {{ active?: boolean, primarySource?: string, crossCheckSource?: string }} [agreementBounds]
  *   `thresholds.json` → `entry_source_agreement`. Absent or inactive means one source.
  * @param {import('./fill-source.mjs').FillSourceKind} [selectedKind] The kind a single-source run
@@ -596,7 +614,8 @@ export function entrySourceKindsRead(opts, agreementBounds, selectedKind = ENTRY
  * it arms itself at the cutover. A test asserts that inertness — a refusal that fired today would be
  * a regression rather than a fix.
  *
- * @param {{ stage2: boolean, entrySourceAgreement?: boolean, noDune: boolean, ownershipOnly: boolean }} opts
+ * @param {{ stage2: boolean, stage0Only?: boolean, entrySourceAgreement?: boolean, noDune: boolean,
+ *   ownershipOnly: boolean }} opts
  * @param {{ active?: boolean, primarySource?: string, crossCheckSource?: string }} [agreementBounds]
  *   Absent where the caller cannot read `thresholds.json` — `parseArgs` is exactly that caller, and
  *   the single-source case it CAN answer is the cutover's own, since the kind is a module constant.
@@ -691,9 +710,16 @@ export async function runEntryFillSource(entryFillSources, opts, entryThresholds
  * free. The rest are left to {@link completeEntrySourcePlan}, which runs after the mandatory Dune
  * enumeration has ANSWERED. The two properties, stated because neither may lose:
  *
- *   - **PROPERTY 1**: a run whose Stage 2 fill source is unusable refuses BEFORE the MadeOnSol seed
- *     enumeration is spent. That is what the early phase buys, and it is why resolution and the
- *     window ceiling both stay here rather than moving down with the billed build.
+ *   - **PROPERTY 1, and read its scope rather than its headline**: a run whose Stage 2 fill source
+ *     cannot be RESOLVED — a kind this run carries no constructor for, or a registration that
+ *     disagrees with its own key — refuses BEFORE the MadeOnSol seed enumeration is spent, as does a
+ *     plan that does not fit the window ceiling. That is what the early phase buys, and it is why
+ *     resolution and the ceiling stay here rather than moving down with the billed build. **It is
+ *     NARROWER than the pre-split guarantee and that is the trade the split makes**: a source that
+ *     resolves and then fails to BUILD — an undeployed coverage probe, a refused allowance, an
+ *     unreadable watermark — now refuses at {@link completeEntrySourcePlan} with the seeds already
+ *     sunk. Before the split every such failure refused early; it also billed the probe early, which
+ *     is the hazard PROPERTY 2 exists to remove, and the two cannot both be had.
  *   - **PROPERTY 2**: the OPTIONAL BILLED leg only bills once the MANDATORY leg has ANSWERED, not
  *     merely reserved. `dune.mjs` → `DUNE_LEG_ORDER` orders the two RESERVATIONS; it cannot order
  *     their SPEND, so a Dune enumeration coming back empty for any reason — refused coverage probe,
@@ -706,7 +732,7 @@ export async function runEntryFillSource(entryFillSources, opts, entryThresholds
  * path builds it either way — later.
  *
  * @param {FillSourceRegistry} entryFillSources
- * @param {{ stage2: boolean, entrySourceAgreement?: boolean }} opts
+ * @param {{ stage2: boolean, stage0Only?: boolean, entrySourceAgreement?: boolean }} opts
  * @param {import('./stage2.mjs').Stage2Thresholds} entryThresholds
  * @param {{ active?: boolean, primarySource?: string, crossCheckSource?: string,
  *   maxWindowsPerRun?: number }} [agreementBounds]
@@ -1525,12 +1551,19 @@ export async function main(opts, env, out, err, seam = {}) {
   // {@link entrySourceKindsRead}, which is the one place that question is answered.
   const duneEntrySourceIsRead = entrySourceKindsRead(opts, agreementBounds, entryFillSourceKind).includes('dune');
   // **"REACH NO DUNE SURFACE" AND "SCORE THROUGH DUNE" CANNOT BOTH BE HONOURED**, and this is the
-  // half of that refusal which can see the pinned bounds — a `--entry-source-agreement` run whose
-  // `primarySource`/`crossCheckSource` names Dune. `parseArgs` holds the CLI-contract half and
-  // answers the cutover's own single-source case, which needs no bounds. Both ask the ONE derivation
-  // rather than re-spelling the condition. It refuses BEFORE the dry-run block on purpose: an
-  // incoherent pair of instructions is not something a preview should describe as though it were a
-  // plan. Inert on every configuration reachable today.
+  // half of that refusal which can see the pinned bounds — the shape `parseArgs` cannot decide
+  // without reading `thresholds.json`, an `--entry-source-agreement` run whose `primarySource` or
+  // `crossCheckSource` names Dune. That particular pair is ALSO refused by the older agreement-flag
+  // guard upstream, so what this block actually covers today is a direct `main` caller: the seam, a
+  // test, and whatever the next lane wires. It is kept for the two-place house style this file
+  // already uses for the agreement flag. Both halves ask the ONE derivation rather than re-spelling
+  // the condition, which is what makes them answer identically — `--stage0` is folded into
+  // `entryFillSourceIsRead` for exactly that reason, so this block being BELOW the `stage0Only`
+  // return and the CLI's being above it can no longer make them disagree.
+  //
+  // It refuses BEFORE the dry-run block on purpose: an incoherent pair of instructions is not
+  // something a preview should describe as though it were a plan. Inert on every configuration
+  // reachable today.
   const duneSourceContradiction = duneFillSourceContradiction(opts, agreementBounds, entryFillSourceKind);
   if (duneSourceContradiction !== null) {
     err('');

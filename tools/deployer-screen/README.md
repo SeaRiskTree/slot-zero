@@ -258,10 +258,10 @@ dropped candidates is on the record so a narrowed batch is visible.
 
 ### Deploying a change to the committed SQL
 
-**`CREATION_SQL` and `COVERAGE_SQL` are committed byte for byte, and `assertSavedQueryMatches`
-compares each against the SAVED query before an execution is spent.** So editing either text in this
-repo is only half the change: **the saved Dune query must be updated in place to match, or the next
-real run refuses the whole Dune leg terminally** — before spending anything, on every run, until they
+**Every statement in the table below is committed byte for byte, and `assertSavedQueryMatches`
+compares each against the SAVED query before an execution is spent.** So editing one of those texts
+in this repo is only half the change: **the saved Dune query must be updated in place to match, or
+the next real run refuses the whole Dune leg terminally** — before spending anything, on every run, until they
 agree. The failure is loud and costs no credits, which is the design; it is still a run with no Dune
 answer for anybody.
 
@@ -270,11 +270,25 @@ answer for anybody.
 | `CREATION_SQL` (`dune.mjs`) | **`8204672`** — the enumeration |
 | `COVERAGE_SQL` (`dune.mjs`) | **`8204603`** — the coverage probe |
 | `ENTRY_SQL` (`dune-fills.mjs`) | **`8235460`** — the opening-window fill tape |
+| `TRADE_COVERAGE_SQL` (`dune-fills.mjs`) | **none — `TRADE_COVERAGE_QUERY_ID` is `null`.** DEPLOY it (see below) |
 
 The first two ids are pinned in `thresholds.json` → `dune`; `ENTRY_SQL`'s is pinned beside the text
 it belongs to, as `dune-fills.mjs` → `ENTRY_QUERY_ID`. Paste the committed text verbatim — comments
 included, since `normaliseSql` compares everything but line endings and trailing whitespace, and the
 comments are where the traps are written down.
+
+**The fourth row is the one that is not deployed at all, and deploying it is a captain decision.**
+`TRADE_COVERAGE_SQL` is the coverage probe for the TRADE tables `ENTRY_SQL` reads — the observed
+watermark captain decision 257a requires, which the enumeration's own probe cannot serve because it
+bounds the CREATE tables and the two surfaces lag differently. It is committed here and held in no
+saved query, so `TRADE_COVERAGE_QUERY_ID` is `null` and **`null` REFUSES rather than skipping the
+probe**: the Dune fill source cannot be built without it, and pointing it at an existing id would
+run a statement the saved query does not match and refuse the leg terminally *after* the probe was
+billed. The step is: take one of the account's free private-query slots (re-list them first — see
+the next paragraph), create a query holding this text byte for byte, and set
+`TRADE_COVERAGE_QUERY_ID` to its id
+in the same commit. `dune-fills.mjs` → `TRADE_COVERAGE_QUERY_ID` owns the reasoning; the run that
+needs it is [the dual-source agreement mode](#one-run-two-fill-sources-and-it-agrees-with-itself-per-candidate).
 
 **The private-query slots are NOT full, and the claim that they were is what this line used to
 say.** The free tier allows 10 and this section stated the account held 10, so a new statement had
@@ -1124,9 +1138,12 @@ unmeasured**, never `0`. It does NOT hold any price or ceiling (255b).
 
 **It now DOES hold the statement.** `ENTRY_SQL` and `ENTRY_QUERY_ID` (saved query **`8235460`**) are
 committed there, with `committedEntryQuery()` assembling them into the `DuneEntryQuery` this module
-already knew how to read. Committing the text did **not** wire it: `screen.mjs` still selects the
-swap-api source and hands this source no statement, so `opts.query` is still injected and **absent
-still refuses every window**. What changed is that the statement has been run against every launch
+already knew how to read. Committing the text did **not** wire it: `screen.mjs` selects the swap-api
+source on every run it can perform today, so `opts.query` is still injected and **absent still
+refuses every window**. The one caller that assembles the statement —
+`screen.mjs` → `buildDuneEntryFillSource` — is reachable only from the dual-source agreement mode,
+which is [gated off](#one-run-two-fill-sources-and-it-agrees-with-itself-per-candidate) and cannot
+run. What changed is that the statement has been run against every launch
 on the committed tape and now carries the same custody `CREATION_SQL` does — see
 [the reproduction](#the-reproduction--the-statement-run-against-every-launch-on-the-tape).
 
@@ -2189,6 +2206,12 @@ and the balance below which the leg refuses, and needs no credential to do it.
 **Stage 2 issues zero keyed requests.** The mint list comes from the `/deployer-hunter/{wallet}`
 profile Stage 1 has already paid for, so the MadeOnSol daily allowance is untouched by the entire
 entry measurement. Everything it fetches is pump.fun's free tape.
+
+**The one mode that would make this false is gated off and prices itself separately:** the
+[dual-source agreement run](#one-run-two-fill-sources-and-it-agrees-with-itself-per-candidate) reads
+a second fill source and so spends Dune credits *inside* Stage 2, metered by
+`entry_source_agreement` and recorded as its own `duneSpend` rather than pooled with the
+enumeration's. It cannot run today, and this table is what every run applies.
 
 | bound | value |
 |---|---|

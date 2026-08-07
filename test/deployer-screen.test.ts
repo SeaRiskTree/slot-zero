@@ -1711,9 +1711,16 @@ describe('the CLI contract', () => {
     // The two facts that make the spend model legible: what is billed and what is not.
     expect(text).toMatch(/CACHED — no execution/);
     expect(text).toMatch(/A FAILED EXECUTION IS STILL BILLED AND IS NEVER RETRIED/);
-    // The monthly denominator and the limit that the tool cannot see the month — the same sentence
-    // the Helius block owes, because the same failure is available on both.
-    expect(text).toMatch(/2,500 credits\/month/);
+    // The monthly ceiling and the limit that the tool cannot see the month — the same sentence the
+    // Helius block owes, because the same failure is available on both. THE DENOMINATOR PRINTED IS
+    // THE OPERATOR'S OWN CAP, which is repo-pinned and so may be stated; the vendor's half is read
+    // live per key and a dry run holds no credential, so it must say it did NOT read it rather than
+    // standing the Free-tier figure in for it (captain ruling 324a).
+    expect(text).toMatch(
+      new RegExp(`operator cap +${T2['dune'].monthlyCreditCapCredits.toLocaleString('en-US')} credits/month`),
+    );
+    expect(text).toMatch(/vendor plan +NOT READ HERE: a dry run holds no credential/);
+    expect(text).toMatch(/Free-tier REFERENCE POINT only, never this run's denominator/);
     expect(text).toMatch(/NOTHING HERE TRACKS THE MONTH/);
     // And the binding condition of the decision, on the plan rather than only in a doc.
     expect(text).toMatch(/EVERY COUNT SHIPS WITH ITS OWN COVERAGE PROBE/);

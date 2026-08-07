@@ -1599,20 +1599,23 @@ export function renderDryRun(plan) {
       );
       L.push('  true count comes back beside them, and it alone falls back to the creation walk.');
       // THE TWO CEILINGS, BOTH OF THEM, BEFORE ANYTHING IS SPENT (captain decision 322a). A live
-      // run compares its worst case against whichever is SMALLER, and prints which one bound; the
-      // dry run cannot read the vendor's live figure without a key, so it names the plan figure and
-      // the operator's own cap and says which is which.
+      // run compares its worst case against whichever is SMALLER, and prints which one bound. THE
+      // DRY RUN HOLDS NO CREDENTIAL, so it cannot read the vendor's half at all — it says so, rather
+      // than standing a pinned figure in for the one a run would be judged against (ruling 324a).
+      L.push('  vendor plan                   NOT READ HERE: a dry run holds no credential, and the figure is per');
+      L.push('                                KEY — a separate credential is a separate ACCOUNT with its own quota');
+      L.push('                                and its own period. The key is UNSHARED — no other holder spends it.');
       L.push(
-        `  vendor plan                   ${DUNE_MONTHLY_CREDITS.toLocaleString('en-US')} credits/month on the Free tier, READ LIVE on --live. A`,
+        `                                Free-tier REFERENCE POINT only, never this run's denominator: ` +
+          `${DUNE_MONTHLY_CREDITS.toLocaleString('en-US')} credits/month.`,
       );
-      L.push('                                separate credential is a separate ACCOUNT with its own quota and its own');
-      L.push('                                period, and the key is UNSHARED — no other holder spends it.');
       L.push(
         `  operator cap                  ${d.monthlyCreditCapCredits.toLocaleString('en-US')} credits/month ` +
           `(thresholds.json -> dune.monthlyCreditCapCredits)`,
       );
-      L.push('                                A live run is refused against whichever of the two is SMALLER, and says');
-      L.push('                                which one bound — so raise the cap, or wait for the period to roll.');
+      L.push('                                A live run is refused against the SMALLER of this cap and whatever the');
+      L.push("                                vendor reports for the period of the key in use, and says which one");
+      L.push('                                bound — so raise the cap, or wait for the period to roll.');
       L.push('  NOTHING HERE TRACKS THE MONTH: this tool holds no state between runs, so how many runs');
       L.push('  to spend the cap on is yours — the same limit the Helius block below states. The cap');
       L.push("  itself binds anyway: it is applied to the PERIOD's own spend rather than to a run — but");

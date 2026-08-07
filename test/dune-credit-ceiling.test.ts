@@ -67,7 +67,13 @@ import {
 import type { DuneCreditLedger } from '../tools/deployer-screen/dune.mjs';
 import { agreementExecutionsFor, tradeFillSpendPlan } from '../tools/deployer-screen/dune-fills.mjs';
 import { buildDuneEntryFillSource } from '../tools/deployer-screen/screen.mjs';
-import { EXIT, main as censusMain, readBounds } from '../tools/creation-census/run.mjs';
+import {
+  EXIT,
+  checkDuneAllowance as censusCheckDuneAllowance,
+  main as censusMain,
+  readBounds,
+} from '../tools/creation-census/run.mjs';
+import { monthlyCreditCapCredits as reproductionCapCredits } from '../tools/deployer-screen/dune-reproduction.mjs';
 
 const SCREEN_CLIENT = fileURLToPath(new URL('../tools/deployer-screen/client.mjs', import.meta.url));
 const CENSUS_CLIENT = fileURLToPath(new URL('../tools/creation-census/client.mjs', import.meta.url));
@@ -801,17 +807,100 @@ describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
     expect(screen.monthlyCreditCapCredits).toBeTypeOf('number');
     expect(screen.monthlyCreditCapCredits).toBeGreaterThan(0);
     expect(census.monthlyCreditCapCredits).toBe(screen.monthlyCreditCapCredits);
-    // AND IT IS NEVER PINNED IN CODE (captain decision 321a's rule, one level up). The guard names
-    // the config key; the VALUE appears in no `.mjs` on either lane.
-    for (const file of [SCREEN_CLIENT, CENSUS_CLIENT]) {
-      const text = readFileSync(file, 'utf8');
-      expect(text).toContain(`export const MONTHLY_CAP_PIN = '${MONTHLY_CAP_PIN}'`);
-      expect(text).not.toMatch(new RegExp(`\\b${screen.monthlyCreditCapCredits}\\b`));
-    }
     // Both lanes must also carry a stated reason for it, like every other pinned bound.
     const j = JSON.parse(readFileSync(THRESHOLDS, 'utf8')).dune.justification;
     expect(j.monthlyCreditCapCredits).toBeTruthy();
     expect(readBounds().justification?.['dune.monthlyCreditCapCredits']).toBeTruthy();
+  });
+
+  it('NO LANE HOLDS A CAP OF ITS OWN: the ceiling applied is whatever configuration says, and only that', async () => {
+    // Captain decision 321a's rule — the cap lives in configuration and never in code — TESTED AS
+    // THE PROPERTY IT IS, rather than by looking for its digits in a source file. A numeric grep is
+    // both too weak and too strong here: it read only the two `client.mjs` files while the lanes
+    // that reach the cap are `dune.mjs`, `run.mjs` and `dune-reproduction.mjs`, and it would have
+    // failed on an unrelated line the moment the captain lowered the cap to a number that already
+    // appears somewhere (`status >= 500`, the 250 ms pacing floor). The cap is a CONFIG value the
+    // captain is expected to change, so the guard must hold at ANY value they choose.
+    //
+    // THE PROPERTY, in two halves, at every wired call site: (1) move the configured number and the
+    // ceiling the lane applies moves with it, in both directions; (2) TAKE THE KEY AWAY and the lane
+    // REFUSES. A lane holding a literal of its own fails half (1) by ignoring the config, and fails
+    // half (2) by clearing a run with no cap configured at all — which is the state 322a exists to
+    // end. That is the guard shown failing rather than asserted, in this file's own idiom.
+    const usage = (used: number, included: number) =>
+      vi.fn(
+        async () => new Response(JSON.stringify(usageBody([period(used, included)])), { status: 200 }),
+      ) as unknown as typeof fetch;
+    /** The three allowance policies both lanes read, with the cap left to each case. */
+    const POLICY = { allowanceReserveCredits: 25, allowanceTightMultiple: 1, allowanceRequired: true };
+    const worstCase = estimatePlanCredits(PLAN).worstCaseCredits;
+    // A balance with plenty of vendor headroom, so the OPERATOR's number is the only thing that can
+    // decide these runs: the vendor plan is far above either configured cap.
+    const USED = 0;
+    const VENDOR_INCLUDED = worstCase * 100;
+    /** Below the run's worst case, so a lane honouring it must refuse. */
+    const TIGHT = worstCase - 1 + POLICY.allowanceReserveCredits;
+    /** Above it, so a lane honouring it must clear. */
+    const ROOMY = worstCase * 10;
+
+    /** Every lane that decides whether Dune may be spent, driven through its own public entry. */
+    const LANES: Record<string, (cap: unknown) => Promise<{ ok: boolean; cap: unknown; reasons: string }>> = {
+      'deployer-screen/dune.mjs': async (cap) => {
+        const client = new ScreenDuneClient({
+          key: SENTINEL_KEY,
+          maxExecutions: 2,
+          maxRequests: 20,
+          minIntervalMs: 0,
+          fetchImpl: usage(USED, VENDOR_INCLUDED),
+          sleepImpl: async () => undefined,
+        });
+        const { decision } = await checkDuneAllowance(client, {
+          bounds: { ...POLICY, monthlyCreditCapCredits: cap } as never,
+          plan: PLAN,
+          nowMs: NOW_MS,
+        });
+        return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
+      },
+      'creation-census/run.mjs': async (cap) => {
+        const client = new CensusDuneClient({
+          key: SENTINEL_KEY,
+          maxExecutions: 2,
+          maxRequests: 20,
+          minIntervalMs: 0,
+          fetchImpl: usage(USED, VENDOR_INCLUDED),
+          sleepImpl: async () => undefined,
+        });
+        const { decision } = await censusCheckDuneAllowance(client, {
+          bounds: { dune: { ...POLICY, monthlyCreditCapCredits: cap } },
+          spendPlan: PLAN,
+          nowMs: NOW_MS,
+        });
+        return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
+      },
+    };
+
+    for (const [lane, decide] of Object.entries(LANES)) {
+      // (1) THE CONFIGURED NUMBER IS THE ONE APPLIED, and moving it moves the verdict — on the same
+      // balance, with the vendor's plan untouched and never the thing that bound.
+      const tight = await decide(TIGHT);
+      expect(tight.cap, `${lane} must apply the configured cap`).toBe(TIGHT);
+      expect(tight.ok, `${lane} must refuse under a cap below its worst case`).toBe(false);
+      const roomy = await decide(ROOMY);
+      expect(roomy.cap, `${lane} must apply the configured cap`).toBe(ROOMY);
+      expect(roomy.ok, `${lane} must clear under a cap above its worst case`).toBe(true);
+      // (2) AND THE KEY IS LOAD-BEARING: remove it and the lane has no cap to fall back on, so it
+      // refuses as unreadable rather than proceeding on the vendor's figure or on one of its own.
+      const absent = await decide(undefined);
+      expect(absent.ok, `${lane} must refuse with no cap configured`).toBe(false);
+      expect(absent.cap, `${lane} has no cap of its own to report`).toBeNull();
+      expect(absent.reasons, `${lane} must name the config key`).toContain(MONTHLY_CAP_PIN);
+    }
+
+    // AND THE THIRD SPENDING LANE, whose cap is not injected because it reads the lane's own
+    // `thresholds.json` itself: what it hands `decideAllowance` is that file's value, so an edit
+    // there moves it and no literal in the module can.
+    const configured = JSON.parse(readFileSync(THRESHOLDS, 'utf8')).dune.monthlyCreditCapCredits;
+    expect(reproductionCapCredits()).toBe(configured);
   });
 });
 

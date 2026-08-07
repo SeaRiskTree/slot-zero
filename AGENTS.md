@@ -29,7 +29,7 @@ what is established and what is open.
   scans `src/` **recursively** for sockets, `process.env` and key-shaped strings. Keep it that
   way; the entire dataset was built keyless and its value depends on staying reproducible offline.
 - **The one network-capable area is `tools/`, and the boundary is the directory.** Each tool there is
-  governed by its own test, and there are five — two of them keyed. `tools/deployer-screen/` holds the
+  governed by its own test, and there are six — three of them keyed. `tools/deployer-screen/` holds the
   keyed MadeOnSol and
   Dune clients; `test/deployer-screen.test.ts` asserts no imports across `src/`↔`tools/`, only
   `client.mjs`/`pumpfun.mjs` may call `fetch` (**a third vendor goes into `client.mjs`, not a new
@@ -38,7 +38,10 @@ what is established and what is open.
   and no file there may contain a key-shaped string or assign a value to a credential variable.
   `tools/creation-census/` is the **second keyed** tool — it holds `DUNE_API_KEY` for the creation
   census, and `test/creation-census.test.ts` holds it to the same shape with `DUNE_API_KEY` alone
-  allow-listed, to `credential.mjs` alone.
+  allow-listed, to `credential.mjs` alone. `tools/venue-label/` is the **third keyed** tool and the
+  smallest — it holds `HELIUS_API_KEY` for the Wallet Identity endpoint, and
+  `test/venue-label.test.ts` holds it to the same shape with `HELIUS_API_KEY` alone allow-listed, to
+  `credential.mjs` alone, plus a **host allow-list of one** (`api.helius.xyz`) asserted as a set.
   `tools/graduated-life-tape/`, `tools/arrival-rate-walk/` and `tools/window-decay-tripwire/` are
   **keyless throughout** — `test/graduated-life-tape.test.ts`, `test/arrival-rate-walk.test.ts` and
   `test/window-decay-tripwire.test.ts` hold them to the same shape with the credential allow-list
@@ -825,6 +828,60 @@ bounds in `thresholds.json` → `creation_walk_helius`.
   truth: **239 of 239 launches found** including `maxxing`, 238/239 bonded flags identical (the one
   difference bonded after the tape was cut), 8 extra launches all created after the tape's newest.
   Stage 0 is offline and untouched by any of it.
+
+## Naming a custodial venue — the standing capability, and the rule that binds every use of it
+
+`tools/venue-label/` — captain decision 366a, 2026-08-07. **The same Helius key, a different API.**
+Full method, bounds and what it cannot answer in its `README.md`; the evidence base is
+`slot-zero-attribution-product-pricing` (held in firstmate's records, not in this repo).
+
+- **THE CITATION RULE IS PART OF THE DECISION, NOT A NICETY, AND IT IS ENFORCED RATHER THAN
+  DOCUMENTED.** Two clauses, and the second is load-bearing. (1) A venue name is a **VENDOR'S CLAIM
+  READ ON A DATE** — unaudited, no published methodology, no error rate — so every label carries the
+  date it was read on and is cited as a claim, never as a property of the chain. (2) **NAMING A WALL
+  DOES NOT LET ANYONE SEE THROUGH IT**: this lab never traces past a custodial wall, two wallets that
+  both touched Coinbase are NOT thereby related and two that touched different exchanges are NOT
+  thereby unrelated, and README → "The ceiling of the method: shared custodial venues" is completely
+  unaffected by any name. **Cheap venue names make that misreading EASIER**, which is why the caveat
+  travels on the label row, the run record and the rendered line rather than living in a document.
+  `identity.mjs` → `CITATION_RULE` is the text and a test asserts it reaches all four surfaces; do
+  not publish a venue name without it, and do not restate the clauses — cite the constant.
+- **THE BATCH ENDPOINT IS THE DEFAULT BECAUSE IT IS A 100x SAVING, AND THE EXPENSIVE PATH IS
+  UNREACHABLE.** `GET /v1/wallet/{address}/identity` and `POST /v1/wallet/batch-identity` **both cost
+  100 credits per REQUEST**, and the batch one answers up to 100 addresses — so 100 addresses singly
+  is 10,000 credits and together is 100. `planLookups` always batches more than one address and a
+  test pins that no configuration produces the other shape. The body field is **`addresses`**, not
+  `wallets`: the published docs implied the latter and the live API returns `400`.
+- **`type: "unknown"` IS THE VENDOR'S ANSWER AND IS PRESERVED AS ONE — and it is NOT the same as a
+  row that never came back.** FOUR states since captain decision 372a, kept apart on purpose:
+  *named*; *unknown*, where `name` is `null` and never `""`, and which says the address is not a
+  venue this vendor knows; *typed but unnamed*, a real `type` with no usable `name`, which is an
+  INCOMPLETE answer and never a declined one — folding it into *unknown* prints "the vendor declines
+  to name this address" over an answer it never gave; and *no answer*, which is OUR coverage failure
+  and is counted and rendered separately. The fourth class is **derived** (`identity.mjs` →
+  `isTypedButUnnamed`) rather than stored on the row, so the committed schema-1 record needed no
+  edit; the summary gaining its count took `RECORD_SCHEMA_VERSION` to **2**. A rejected key
+  reports a refusal rather than every address being unknown, and **a per-run CEILING is reported as
+  OUR bound rather than as the vendor's refusal**, sharing exit `4` only because a request may
+  already have billed. Responses are read **keyed by address,
+  never by position** — the vendor answers in request order today and nothing promises it will.
+  **No message this tool emits can carry the key**: the URL sent carries it as a query parameter and
+  vendors echo request URLs in 4xx bodies, so every vendor- or transport-authored string goes
+  through `credential.mjs` → `redactKey` before it can reach one.
+- **Measured, and it is the committed evidence.** `runs/2026-08-07-funding-walls.json`: one batch
+  request, **100 credits, 6 addresses, 5 named, 1 honestly unknown**. Four funding walls are Coinbase
+  hot wallets; the relay wall `Bukt1ztP…` is declined rather than confabulated; and
+  `62qc2CNX…` returns **"Pump.fun AMM Fees 2"**, independently confirming a classification an earlier
+  investigation reached by structural argument alone — the strongest evidence here that the labels
+  are real, and still **n = 1**. One row carries `name: "Coinbase Hot Wallet 12"` with tag
+  `"Bitstamp Deposit"`: two venues on one address, unresolved, and `TAGS_CAVEAT` rides on any row
+  with tags because of it.
+- **It is a LEAF and it moves no number.** No bar, gate, threshold or verdict in this repository
+  reads a venue name, no other tool imports it (a test pins that), and a lane wanting its labels
+  reads a committed record rather than coupling to a metered client. **The dry run is the default
+  and issues nothing**; a plan over the pinned ceilings is refused before the first request, and
+  every issued attempt is counted as billed because the vendor says nothing about whether a shed
+  request bills.
 
 ## MadeOnSol Deployer Hunter facts
 

@@ -24,8 +24,8 @@ stage. **There is no strategy, backtest, signal or trading logic here.**
 `test/loader.test.ts` proves it; `analysis/` is held to the same list by
 `test/window-population.test.ts`. Every source behind the dataset is keyless and public, and the
 dataset was built with **zero metered provider requests**, and so was its extension past the bond.
-The network-capable area is `tools/`, and the boundary is the directory: `tools/deployer-screen/`
-and `tools/creation-census/` are the **keyed** ones; `tools/graduated-life-tape/`,
+The network-capable area is `tools/`, and the boundary is the directory: `tools/deployer-screen/`,
+`tools/creation-census/` and `tools/venue-label/` are the **keyed** ones; `tools/graduated-life-tape/`,
 `tools/arrival-rate-walk/` and `tools/window-decay-tripwire/` are keyless throughout. None of them is imported by `src/` and none
 imports from it. See each one's `README.md`.
 
@@ -139,6 +139,7 @@ top of this file. Answering it means screening *other* deployers, present tense.
 | **The creation census** — the answer to that ceiling: every deployer creating in one past month, taken whole above a stated count, one keyed Dune execution per month. **3,036** for 2026-07 at ≥30 launches against the feed's 5 | `tools/creation-census/` |
 | **The window-population measurement** — how many profitable windows the tape contains, how long, how fast they close | `analysis/window-population/` |
 | **The window-decay tripwire** — watches the wallet currently being traded and raises **STOP AND ROTATE** when its window closes. Detects the one close on record **24.1 h** after the regime changed, against a close that took **24.7 h**, with **0** false stops in the 83-day window; keyless, zero token | `tools/window-decay-tripwire/` |
+| **Venue labelling** — names the custodial venue behind an address, on the Helius key this project already holds. **100 credits for up to 100 addresses**, so the batch path is the default and the only one a multi-address run can take. It names walls; it never traces past one, and the citation rule that says so travels with every label | `tools/venue-label/` |
 | **CI** — `npm test` on the Node 20 engines floor | `.github/workflows/ci.yml` |
 
 **Stage 2 scores entry and deliberately does not score exit.** Room to enter is not room to leave,
@@ -174,13 +175,14 @@ call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md
 | `config/data-root.mjs` | The one owner of **where the data lives** — see "Where the data lives" above. Its own area because it reads an environment variable, which `src/` and `analysis/` may not, and because a resolver under `tools/` could not be imported by either. |
 | `test/reproduction.test.ts` | The published headline numbers, asserted against the loaded data. |
 | `test/type-guards.test-d.ts` | Compile-time proof that the **four** guards below bite. Type-checked, never executed. |
-| `tools/deployer-screen/` | One of the two keyed, network-capable areas. The competence **gate** (stages 0–1, keyed) plus the keyless **entry score** (stage 2) — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |
+| `tools/deployer-screen/` | One of the three keyed, network-capable areas. The competence **gate** (stages 0–1, keyed) plus the keyless **entry score** (stage 2) — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |
 | `data/graduated-life-tape-2026-08-02/` | The same tape, **extended past the bond**: every fill of the 103 graduated launches from mint to graduation + 1 hour. 503,037 fills, 63% of them on PumpSwap. Closure over the wallets each launch's own committed window already shows rises from **47.2% to 94.4%**. 6,539 keyless requests, EUR 0. Method, coverage proofs and limits in its `README.md`. |
 | `tools/graduated-life-tape/` | The collector behind it. Network-capable and **keyless throughout** — one file opens a socket, one host, and the list of files that may name a credential is empty. |
 | `tools/window-decay-tripwire/` | The decay tripwire. Watches one wallet's create slots — the operation's share of the bottom of its own curve — and latches **STOP AND ROTATE** on two consecutive readings at or above 0.55. **+24.1 h** on the one close on record against a **24.7 h** close, **0** false stops in 104 open-window launches; keyless, two hosts, an empty credential allow-list. The ceiling is on the false-alarm rate rather than the latency, and its `README.md` §4 states it. |
 | `analysis/window-population/` | How many profitable windows the tape contains, how long, and how fast they close. **One window**, 2026-03-12 → 2026-06-04, **83 days**, closed in a single launch over **24.7 hours** — and **n = 1**, so "are windows numerous?" is *unmeasured*. Offline like `src/`. Findings, definitions and limits in its `README.md`. |
 | `tools/arrival-rate-walk/` | The collector that would answer that `n = 1` — the same per-launch series for a **cohort** of deployers, seeded from history rather than from success. **Keyless throughout**; the tool is built and proven on a bounded sample, the multi-day collection is a separate step and has not run. Its cohort query is deployed and is executed by `tools/creation-census/`, which holds the key this directory deliberately does not. Scope, bounds and the limits in its `README.md`. |
 | `tools/creation-census/` | The keyed half of that statement, and the answer to the discovery ceiling: **every deployer that created in one past month, taken whole above a stated count**, one Dune execution per month. The committed 2026-07 run reaches **3,036** deployers at ≥30 launches where the vendor feed sees 5. The floor is a **prolific-ness** cut and not a competence one, and the census says so in its own output. Scope, bounds and both named biases in its `README.md`. |
+| `tools/venue-label/` | The third keyed area, and the smallest: **which venue is this address**, from Helius's Wallet Identity endpoint on the key this project already holds. Both endpoints cost 100 credits per request and one of them answers 100 addresses, so more than one address is **always** batched. `type: "unknown"` is the vendor's own answer and is preserved as one, never smoothed into a guess. **A venue name is a vendor's claim read on a date, and naming a wall does not let anyone see through it** — that rule is enforced onto every label, record and rendered line rather than documented. Scope, bounds and what it cannot answer in its `README.md`. |
 | `.github/workflows/ci.yml` | `npm ci` then `npm test` on Node 20, on PRs and pushes to `main`. The whole check set, on purpose. |
 | `AGENTS.md` | Provider facts that cost real time to learn. Read before touching pump.fun or Solana RPC. |
 
@@ -402,8 +404,10 @@ operation, and so is `5brv79eF…`. What the shared venue adds is the exact read
 "unaffiliated" here means *no on-chain relationship, tested on complete sets* — not *provably
 unrelated*. Those are different claims and no on-chain measurement closes the gap.
 
-**It will not be tested.** Naming the venue and asking it would take off-chain enquiry. That
-option was put and **declined** (captain decision 114a, 2026-07-29). So this is a settled
+**It will not be tested.** Testing the relationship means *asking* the venue, which is off-chain
+enquiry; that option was put and **declined** (captain decision 114a, 2026-07-29). *Naming* a
+venue is now reachable — `tools/venue-label/` reads a vendor's claim for an address — and it
+moves nothing here: a name is not an answer about who is behind the wall. So this is a settled
 boundary of the method, not an open question and not a TODO: the ceiling is permanent, and
 every unaffiliated verdict this lab produces is to be read as carrying it.
 

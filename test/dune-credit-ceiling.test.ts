@@ -72,6 +72,7 @@ import {
   ENTRY_FILL_SOURCE_KIND,
   buildDuneEntryFillSource,
   duneFillSourceContradiction,
+  duneFillSourceCredentialRefusal,
   entrySourceKindsRead,
   loadThresholds as screenLoadThresholds,
   main as screenMain,
@@ -1840,20 +1841,81 @@ describe('the entry fill source is constructed in two phases, and each phase car
   it('PROPERTY 1: an unusable Stage 2 source refuses before ONE seed request is spent', async () => {
     // The keyed-allowance protection the early construction buys, and the reason the billed build
     // could not simply be moved down. A kind this run carries no constructor for is refused by
-    // RESOLUTION, which touches no vendor — so the refusal is honest when it says nothing was spent,
-    // and the transport proves it rather than the sentence asserting it.
+    // RESOLUTION, which touches no vendor.
     try {
       const seen = stubTransport(() => new Response('{}', { status: 200 }));
       const { code, err } = await run([], KEYED_ENV, 'no-such-source');
       expect(code).toBe(SCREEN_EXIT.upstream);
       expect(err).toContain('Refusing to start: Stage 2 has no usable fill source.');
-      expect(err).toContain('Nothing was requested, so no quota was spent.');
-      // NO SEED REQUEST, and nothing billed. The one URL a refusing run does reach is the
-      // enumeration leg's `POST /usage`, which Dune documents as a metadata endpoint consuming no
-      // credits — the deliberate conservatism of reserving the mandatory leg first, and the reason
-      // the refusal's "no quota was spent" is still true.
+      // THE CLAIM IS THE CREDIT ONE AND IT IS THE ONLY ONE THAT SURVIVES INSPECTION. The
+      // enumeration's reservation was hoisted ABOVE this refusal, so a run with a Dune client HAS
+      // issued the free `POST /usage` by now — "nothing was requested" would be false, and the
+      // transport below is what proves it. What is true is that no metered quota went anywhere.
+      expect(err).toContain('No quota was spent');
+      expect(err).not.toContain('Nothing was requested, so no quota was spent.');
+      // NO SEED REQUEST, and nothing billed: the only URL a refusing run reaches is that free
+      // balance read, which Dune documents as a metadata endpoint consuming no credits.
       expect(seen.filter((u) => u.startsWith(MADEONSOL_BASE_URL))).toEqual([]);
       expect(seen.filter((u) => !u.endsWith(USAGE_PATH))).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
+
+  it('PROPERTY 1 covers the CREDENTIAL too: a Dune-reading run with no usable key spends no seed request', async () => {
+    // THE WORST INSTANCE OF THE NARROWING, AND IT IS CLOSED RATHER THAN DOCUMENTED. The Dune
+    // construction is declared BILLED, so the free phase defers it wholesale — which at the cutover
+    // meant a run with no usable `DUNE_API_KEY` spent the entire MadeOnSol seed enumeration and only
+    // then refused, for an answer that is free to obtain. Worse, that configuration buys nothing
+    // with those seeds: `usingDune` is false, so the enumeration leg is skipped, no leg is attempted
+    // and no cliff is priced.
+    try {
+      const seen = stubTransport(() => new Response('{}', { status: 200 }));
+      const { code, err } = await run([], { MADEONSOL_API_KEY: SENTINEL_KEY }, 'dune');
+      expect(code).toBe(SCREEN_EXIT.upstream);
+      expect(err).toContain('Refusing to start: Stage 2 has no usable fill source.');
+      expect(err).toContain('DUNE_API_KEY');
+      // The property, and the transport is what asserts it: not one request of any kind, keyed or
+      // free — with no Dune credential there is no client to read a balance through either.
+      expect(seen).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
+
+  it('the credential rule is ONE rule, and it is inert wherever the Dune source is not read', () => {
+    // Written once and evaluated twice — the free phase asks it, and the constructor keeps asking it
+    // as the backstop for a caller that never went through the free phase. Both call the function
+    // asserted here, so there is no second predicate and no second message to drift.
+    expect(duneFillSourceCredentialRefusal({ available: true } as never)).toBeNull();
+    expect(duneFillSourceCredentialRefusal({ available: false } as never)).toContain('DUNE_API_KEY');
+
+    // AND IT IS GATED ON THE SHARED DERIVATION, not on a second reading of the kind — so every
+    // configuration that reads NO Dune source is untouched by it. `--stage0` (folded into
+    // `entryFillSourceIsRead` last round) and `--no-stage2` both read nothing at all, at the
+    // cutover's kind; and at today's `swap-api` a default run does not read Dune either.
+    for (const argv of [['--stage0'], ['--stage0', '--no-dune'], ['--no-stage2']]) {
+      const parsed = screenParseArgs(argv);
+      if (!parsed.ok) throw new Error('unreachable');
+      expect(entrySourceKindsRead(parsed.opts, undefined, 'dune'), argv.join(' ')).toEqual([]);
+    }
+    const plain = screenParseArgs([]);
+    if (!plain.ok) throw new Error('unreachable');
+    expect(entrySourceKindsRead(plain.opts, undefined)).toEqual([ENTRY_FILL_SOURCE_KIND]);
+    expect(entrySourceKindsRead(plain.opts, undefined).includes('dune')).toBe(false);
+  });
+
+  it('a run with NO Dune credential is unaffected at TODAY’s kind, which is what keeps this inert', async () => {
+    // The inertness control for the check above: the same empty-Dune environment at the shipped
+    // `swap-api` kind reaches the credential refusal it has always reached instead — the MadeOnSol
+    // one — rather than being stopped by a Stage 2 source it never reads.
+    try {
+      const seen = stubTransport(() => new Response('{}', { status: 200 }));
+      const { code, err } = await run([], {}, ENTRY_FILL_SOURCE_KIND);
+      expect(code).toBe(3);
+      expect(err).toContain('CREDENTIAL PROBLEM');
+      expect(err).not.toContain('usable fill source');
+      expect(seen).toEqual([]);
     } finally {
       vi.unstubAllGlobals();
     }

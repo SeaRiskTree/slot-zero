@@ -643,6 +643,39 @@ export function duneFillSourceContradiction(opts, agreementBounds, selectedKind 
 }
 
 /**
+ * THE DUNE FILL SOURCE NEEDS A CREDENTIAL, WRITTEN ONCE AND EVALUATED TWICE.
+ *
+ * **This is ONE RULE with two evaluation points, not two rules that agree.** The construction that
+ * needs the credential is declared BILLED, so the free phase defers it wholesale — which at the Gate
+ * 3 cutover meant a run with no usable `DUNE_API_KEY` spent the whole MadeOnSol seed enumeration and
+ * only then refused, for an answer that costs nothing to obtain and on a configuration where the
+ * seeds buy nothing at all (`usingDune` is false there too, so the enumeration is skipped, no leg is
+ * attempted and no cliff is priced). That is PROPERTY 1's worst instance, so the rule is evaluated
+ * EARLY as well: `main`'s free phase asks it, and the constructor keeps asking it as the backstop
+ * for a caller that never went through the free phase.
+ *
+ * **The predicate and the message live HERE so neither is written twice.** A second site that
+ * independently knew "the Dune source needs a credential" is the duplication class this whole lane
+ * exists to remove — and the free phase does not re-derive WHICH sources a run reads either: it
+ * reads `duneEntrySourceIsRead`, which is `entrySourceKindsRead`'s answer and the same one
+ * {@link duneFillSourceContradiction} and the priced window count use. So `--stage0`'s fold into
+ * {@link entryFillSourceIsRead} reaches this for free, and it is inert while
+ * {@link ENTRY_FILL_SOURCE_KIND} is `swap-api` because nothing then reads the Dune source at all.
+ *
+ * @param {import('./credential.mjs').DuneCredential} credential
+ * @returns {string | null} The refusal, or `null` where the credential is usable.
+ */
+export function duneFillSourceCredentialRefusal(credential) {
+  if (credential.available) return null;
+  return (
+    `the Dune fill source needs ${DUNE_KEY_ENV_VAR} and this run has no usable one. It ` +
+    `refuses to be built rather than falling back to the swap-api: a run asked for a ` +
+    `two-source comparison that silently became a one-source one would report itself ` +
+    `complete having compared nothing.`
+  );
+}
+
+/**
  * THE RUN PATH'S CONSTRUCTION: build the fill source and prove its gate is usable — or build
  * NOTHING, because Stage 2 is off and nothing downstream will ever ask it anything.
  *
@@ -714,12 +747,15 @@ export async function runEntryFillSource(entryFillSources, opts, entryThresholds
  *     cannot be RESOLVED — a kind this run carries no constructor for, or a registration that
  *     disagrees with its own key — refuses BEFORE the MadeOnSol seed enumeration is spent, as does a
  *     plan that does not fit the window ceiling. That is what the early phase buys, and it is why
- *     resolution and the ceiling stay here rather than moving down with the billed build. **It is
- *     NARROWER than the pre-split guarantee and that is the trade the split makes**: a source that
+ *     resolution and the ceiling stay here rather than moving down with the billed build. **THE
+ *     CREDENTIAL IS CHECKED HERE TOO, PRECISELY BECAUSE THE ANSWER COSTS NOTHING** — see
+ *     {@link duneFillSourceCredentialRefusal}; it is not part of the narrowing below. **What IS
+ *     narrower than the pre-split guarantee, and it is the trade the split makes**: a source that
  *     resolves and then fails to BUILD — an undeployed coverage probe, a refused allowance, an
- *     unreadable watermark — now refuses at {@link completeEntrySourcePlan} with the seeds already
- *     sunk. Before the split every such failure refused early; it also billed the probe early, which
- *     is the hazard PROPERTY 2 exists to remove, and the two cannot both be had.
+ *     unreadable watermark, the three failures that can only be learnt by REACHING the vendor — now
+ *     refuses at {@link completeEntrySourcePlan} with the seeds already sunk. Before the split every
+ *     such failure refused early; it also billed the probe early, which is the hazard PROPERTY 2
+ *     exists to remove, and the two cannot both be had.
  *   - **PROPERTY 2**: the OPTIONAL BILLED leg only bills once the MANDATORY leg has ANSWERED, not
  *     merely reserved. `dune.mjs` → `DUNE_LEG_ORDER` orders the two RESERVATIONS; it cannot order
  *     their SPEND, so a Dune enumeration coming back empty for any reason — refused coverage probe,
@@ -1634,14 +1670,11 @@ export async function main(opts, env, out, err, seam = {}) {
               `request(s), ${entryDuneClient.stats().resultBytes} result byte(s)`,
       }),
       build: async () => {
-        if (!duneCredential.available) {
-          throw new Error(
-            `the Dune fill source needs ${DUNE_KEY_ENV_VAR} and this run has no usable one. It ` +
-              `refuses to be built rather than falling back to the swap-api: a run asked for a ` +
-              `two-source comparison that silently became a one-source one would report itself ` +
-              `complete having compared nothing.`,
-          );
-        }
+        // THE SAME RULE THE FREE PHASE ALREADY ASKED, kept here as the backstop for a caller that
+        // never went through it. One text, one predicate, two evaluation points — see
+        // {@link duneFillSourceCredentialRefusal}.
+        const credentialRefusal = duneFillSourceCredentialRefusal(duneCredential);
+        if (credentialRefusal !== null) throw new Error(credentialRefusal);
         entryDuneClient = new DuneClient({
           key: duneCredential.key ?? '',
           // THE CEILING THE PLAN WAS PRICED AT, not the pinned one — one derivation, so what this
@@ -1876,6 +1909,15 @@ export async function main(opts, env, out, err, seam = {}) {
   /** @type {EntrySourcePlan | null} */
   let entrySourcePlan;
   try {
+    // THE CREDENTIAL IS ASKED HERE PRECISELY BECAUSE THE ANSWER COSTS NOTHING. The Dune
+    // construction is declared BILLED, so the free phase would otherwise defer it wholesale and a
+    // run with no usable key would spend the whole seed enumeration before refusing — for a
+    // configuration where the seeds buy nothing, since `usingDune` is false there too. It reads
+    // `duneEntrySourceIsRead`, the derivation already taken above, rather than asking again whether
+    // this is a Dune run; and the rule itself is `duneFillSourceCredentialRefusal`, which the
+    // constructor also asks. One derivation, one rule, two evaluation points.
+    const credentialRefusal = duneEntrySourceIsRead ? duneFillSourceCredentialRefusal(duneCredential) : null;
+    if (credentialRefusal !== null) throw new Error(credentialRefusal);
     entrySourcePlan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds, {
       constructionPhase: 'free-only',
       selectedKind: entryFillSourceKind,
@@ -1884,7 +1926,13 @@ export async function main(opts, env, out, err, seam = {}) {
     err('');
     err('Refusing to start: Stage 2 has no usable fill source.');
     err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
-    err('  Nothing was requested, so no quota was spent.');
+    // NARROWED TO WHAT ACTUALLY HAPPENED. The enumeration's reservation sits ABOVE this, so a run
+    // with a Dune client has already issued the free `POST /usage` balance read by the time this
+    // prints — "nothing was requested" would be false. What is still true, and is the claim an
+    // operator needs, is that no metered quota went anywhere: the keyed seed enumeration has not
+    // started and the balance read consumes no credits.
+    err('  No quota was spent: the keyed seed enumeration has not started, and the only request this');
+    err('  run may have made is the free Dune balance read, which consumes no credits.');
     return EXIT.upstream;
   }
 

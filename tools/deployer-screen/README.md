@@ -1339,14 +1339,25 @@ committed** (captain decisions 317a and 318a, 2026-08-06):
      and therefore all of them, which is why a default run is byte-identical and still proves its
      eligibility gate before Stage 1.
 
-     **READ THE SCOPE, NOT THE HEADLINE: this is NARROWER than what the unsplit construction gave,
-     and the narrowing is the trade.** A source that resolves and then fails to BUILD — an undeployed
-     coverage probe, a refused allowance, an unreadable watermark — now refuses at
-     `completeEntrySourcePlan` with the seed requests already sunk, where before the split it refused
-     ahead of them. It also BILLED the coverage probe ahead of them, which is exactly the hazard
-     PROPERTY 2 removes, so the two cannot both be had. What was traded away is a few seed requests
-     on an already-doomed run; what was bought is that the billing period is not consumed by a run
-     that then produces nothing.
+     **The Dune CREDENTIAL is checked in this phase too, precisely because the answer costs
+     nothing.** That construction is declared billed, so the free phase would otherwise defer it
+     wholesale and a run with no usable `DUNE_API_KEY` would spend the entire seed enumeration
+     before refusing — on a configuration where the seeds buy nothing at all, since `usingDune` is
+     false there too and the enumeration is skipped with no leg attempted and no cliff priced.
+     `screen.mjs` → `duneFillSourceCredentialRefusal` is that rule, written once and asked twice:
+     the free phase asks it, and the constructor keeps asking it as the backstop for a caller that
+     never went through the free phase. The free phase does not re-derive *which* sources a run
+     reads either — it reads the same `entrySourceKindsRead` answer the window ceiling and the
+     `--no-dune` refusal use, so `--stage0`'s fold reaches it for free.
+
+     **READ THE SCOPE, NOT THE HEADLINE: what remains is NARROWER than what the unsplit construction
+     gave, and the narrowing is the trade.** The three failures that can only be learnt by REACHING
+     the vendor — an undeployed coverage probe, a refused allowance, an unreadable watermark — now
+     refuse at `completeEntrySourcePlan` with the seed requests already sunk, where before the split
+     they refused ahead of them. That construction also BILLED the coverage probe ahead of them,
+     which is exactly the hazard PROPERTY 2 removes, so the two cannot both be had. What was traded
+     away is a few seed requests on an already-doomed run; what was bought is that the billing period
+     is not consumed by a run that then produces nothing.
    - **PROPERTY 2, and it is what the late phase buys**: the OPTIONAL BILLED leg only bills once the
      MANDATORY leg has ANSWERED. `completeEntrySourcePlan` builds whatever the early phase deferred —
      the billed constructions, and the UNDECLARED ones, which are treated as billed for captain

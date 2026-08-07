@@ -937,11 +937,18 @@ dev currently?"*, and the shape of the answer is the point:
   enumeration is spent — `runEntrySourcePlan(..., { constructionPhase: 'free-only' })` RESOLVES every
   kind the run will read, so an unknown kind still refuses there and resolution touches no vendor,
   and builds only what the registry DECLARES free (the swap-api, so a default run is byte-identical).
-  **THAT IS NARROWER THAN THE PRE-SPLIT BEHAVIOUR AND THE NARROWING IS DELIBERATE — do not read it as
-  "an unusable source always refuses before anything is spent".** A source that RESOLVES and then
-  fails to BUILD (undeployed coverage probe, refused allowance, unreadable watermark) now refuses at
-  `completeEntrySourcePlan` with the seeds already sunk; before the split it refused ahead of them
-  and BILLED the probe ahead of them, which is the hazard (2) removes, so the two cannot both be had.
+  **The Dune CREDENTIAL is asked in that free phase too, because the answer costs nothing** —
+  `duneFillSourceCredentialRefusal` is one rule with two evaluation points, the free phase and the
+  constructor's own backstop, and the free phase reads `entrySourceKindsRead`'s answer rather than
+  asking again whether this is a Dune run, so the `--stage0` fold reaches it. Without it a
+  Gate 3 run with no usable `DUNE_API_KEY` spent the whole seed enumeration and then refused, on a
+  configuration where the seeds buy nothing (`usingDune` false ⇒ no enumeration, no cliff).
+  **WHAT REMAINS IS STILL NARROWER THAN THE PRE-SPLIT BEHAVIOUR AND THE NARROWING IS DELIBERATE — do
+  not read it as "an unusable source always refuses before anything is spent".** The three failures
+  that can only be learnt by REACHING the vendor (undeployed coverage probe, refused allowance,
+  unreadable watermark) now refuse at `completeEntrySourcePlan` with the seeds already sunk; before
+  the split they refused ahead of them and BILLED the probe ahead of them, which is the hazard (2)
+  removes, so the two cannot both be had.
   (2) The OPTIONAL BILLED leg only bills once the MANDATORY one has ANSWERED —
   `completeEntrySourcePlan` builds the deferred billed and UNDECLARED constructions after the
   enumeration and after `priceWalkFallbackCliff`, still ahead of the gate loop, and its refusal reads

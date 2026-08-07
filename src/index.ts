@@ -1,10 +1,11 @@
 /**
  * slot-zero — the pump.fun launch-microstructure research lab.
  *
- * This package reads the population tape committed under
- * `data/population-tape-2026-07-29/` and exposes it as three views: per launch, per wallet,
- * and per (wallet, launch). It reaches the network never, and reads no credential of any
- * kind: every source behind this dataset is keyless and public.
+ * This package reads the `population-tape-2026-07-29` dataset — wherever
+ * `config/data-root.mjs` says it lives, which defaults to the copy committed here — and exposes
+ * it as three views: per launch, per wallet, and per (wallet, launch). It reaches the network
+ * never, and reads no credential of any kind: every source behind this dataset is keyless and
+ * public.
  *
  * Three things it makes hard to get wrong, because each of them silently corrupted an
  * analysis during the research:

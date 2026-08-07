@@ -34,7 +34,8 @@ npm ci
 npm test        # tsc --noEmit, then vitest run
 ```
 
-CI (`.github/workflows/ci.yml`) runs exactly that on Node 20 for every PR and every push to `main`.
+CI (`.github/workflows/ci.yml`) runs exactly that on Node 20 for every PR and every push to `main`,
+after getting itself the measurement tapes — see "How CI gets them" below.
 
 Private. Nothing here is production.
 

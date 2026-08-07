@@ -13,7 +13,9 @@ what is established and what is open.
 - `npm run test:unit` runs only vitest. No runtime dependencies; `npm ci` is dev-only.
 - CI is `.github/workflows/ci.yml` (PRs and pushes to `main`): `npm ci` then `npm test` on
   Node 20 — the `engines` floor, not the dev box's version. That is the whole check set on
-  purpose; there is no lint script and no coverage, audit or matrix gate to satisfy.
+  purpose; there is no lint script and no coverage, audit or matrix gate to satisfy. The job's
+  only other steps get it the tapes it cannot go green without — see "Where the data lives"
+  below, which owns the modes and the manifest verification.
 - **The type surface is pinned to the engines floor major, not to the dev box.** `@types/node`
   tracks Node 20 so a Node 22-only API cannot type-check clean and then throw on the supported
   runtime. `test/toolchain.test.ts` asserts `engines`, the CI `node-version`, the declared and
@@ -62,8 +64,9 @@ what is established and what is open.
   local tape that are neither library nor tool. `test/window-population.test.ts` scans it for
   sockets, `process.env` and key-shaped strings, and asserts no imports across `analysis/`↔`tools/`.
   It parses the CSVs itself rather than importing `src/`, for the same build-step reason `tools/` does.
-- `tools/` and `analysis/` are plain `.mjs` with JSDoc types so they run on the Node 20 floor with
-  no build step; `tsconfig.json` covers them with `allowJs`+`checkJs`, so `tsc --noEmit` checks them too.
+- `tools/`, `analysis/` and `config/` are plain `.mjs` with JSDoc types so they run on the Node 20
+  floor with no build step; `tsconfig.json` covers them with `allowJs`+`checkJs`, so `tsc --noEmit`
+  checks them too.
 
 ## Citing a report this repo does not hold
 
@@ -99,7 +102,11 @@ guard that makes "this repo reads no credential" a property rather than a promis
 `tools/` and `analysis/`↔`tools/` imports are forbidden in both directions, so a resolver under
 `tools/` could not be the one owner. `test/data-root.test.ts` governs the new area on the same
 terms as the others: no socket, no key-shaped string, no credential variable named, **exactly one
-environment variable read**, and no import from `src/`, `analysis/`, `tools/` or `test/`.
+environment variable read**, and no import from `src/`, `analysis/`, `tools/` or `test/`. That
+env-var guard is a source-text scan with no dataflow analysis, so what it proves is that the
+DIRECT spellings are checked — a floor on the evidence, `roomIsProven`'s shape one area over — and
+a read it cannot resolve to a name fails the guard rather than passing as nothing. The test's own
+doc owns that bound; cite it rather than restating it.
 
 - **Ask it; never compose a path.** `POPULATION_TAPE_DIR` / `GRADUATED_LIFE_TAPE_DIR` for the two
   datasets, `datasetDir(name)` for either, `requireDataset(name, dir)` at the point a reader opens

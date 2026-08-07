@@ -21,10 +21,13 @@ export const DEPLOYER = '7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL';
  * **221 round trips at a 0.977 hit rate for +503.9 SOL** on top of the create-slot record above
  * (`report.md` §4.2) and is **fee-inclusive positive on 100% of the 120 launches priced
  * exactly, for 0.30 SOL of fees in total** (§5.5); and it is the **on-chain `creator` of all
- * 36 coins pump.fun lists it under** — so it launched them rather than being given them, and
- * the same read on the deployer's own 70 finds six that genuinely moved away, which is what
- * makes it a measurement rather than a null result
- * (`slot-zero-uxento-host-reexamine/report.md` §4.2). `43x1zWzj…` and `5P8A9bG…` have a
+ * 36 coins pump.fun lists it under, with no handover visible on any of them** — the same read
+ * on the deployer's own 70 finds six that genuinely moved away, so the field discriminates
+ * rather than always agreeing, which is what makes it a measurement rather than a null result.
+ * That field is settable and movable and reports **current** creator status, so it is evidence
+ * of association and not of origin; exactly one of the 36 (`Cwb8T7Ct…pump`) had its create
+ * transaction read directly and was signed by `2CHrnc2L…` — one coin, not 36
+ * (`slot-zero-uxento-host-reexamine/report.md` §4.2, §8.6). `43x1zWzj…` and `5P8A9bG…` have a
  * genesis byte-identical to the deployer's own — the same 3.500000000 SOL from a custodial hot
  * wallet in the same instruction envelope, then a pump.fun create-and-buy crediting the
  * identical 3.0014616 SOL, minutes later (`kol-cohort-vs-outsider-funding/report.md` §2.1).
@@ -41,9 +44,10 @@ export const DEPLOYER = '7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL';
  * firstmate's records, not in this repo.
  *
  * **Common ownership is still not formally established.** Nothing on-chain proves ownership,
- * and this constant remains a measured grouping. The `?creator=` caveat that used to stand
- * here — that the 36 may mean "launched it" or "was given it" — is the one part that has been
- * settled, and the bonding curves' own `creator` field is what settled it.
+ * and this constant remains a measured grouping. The `?creator=` caveat stands: both it and the
+ * bonding curves' own `creator` field list by **current** creator, so on 35 of the 36 the
+ * reading cannot tell "launched it" from "was given it" — only the create transaction can, and
+ * it has been read for one of them.
  *
  * Ordered by create-slot presence: 235, 235, 235, 174, 173, 88 of 235 taped launches.
  */

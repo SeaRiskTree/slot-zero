@@ -636,7 +636,7 @@ plain `.mjs` with JSDoc types so they run on the Node 20 floor with no build ste
 
 ## Provenance
 
-The dataset and the findings are the work of seven read-only scout investigations — the four
+The dataset and the findings are the work of nine read-only scout investigations — the four
 behind the dataset all carried out with zero metered provider requests. The population-tape report and its brief
 are reproduced in full under `data/population-tape-2026-07-29/`. The three companion reports
 — `kol-deployer-entity-cluster` (the operator behind the launches, and the creator-record
@@ -650,9 +650,12 @@ custodial venue in "The ceiling of the method" above), `slot-zero-june-regime-ch
 create slot's unprofitability for outsiders since 2026-06-04, and the *operation's share of the
 curve's bottom* method that `tools/deployer-screen/` cites) and `kol-bond-timing-vs-dev-exit`
 (the directly measured graduation times behind `data/population-tape-2026-07-29/IMPORT.md`
-corrections 4–7), are likewise not copied here.
-**None of the six companion reports is committed to this repo** — only the population-tape
-report and its brief are — so any figure attributed to one of the six is evidence from elsewhere
+corrections 4–7), are likewise not copied here. Two later ones again,
+`slot-zero-uxento-host-reexamine` and `slot-zero-fee-accounts-protocol-or-tool` (which
+between them withdrew the metadata-host and tool-fee-account discriminators in "Six wallets
+are inside the launch" above, under captain decision 371a), are not copied here either.
+**None of the eight companion reports is committed to this repo** — only the population-tape
+report and its brief are — so any figure attributed to one of them is evidence from elsewhere
 and is not asserted by any test here. Two of them are confirmed in-repo by an independent
 route: `analysis/window-population/` re-derives `slot-zero-june-regime-change`'s 2026-06-04
 date and its closed-regime prize from the local tape, and `test/reproduction.test.ts` asserts

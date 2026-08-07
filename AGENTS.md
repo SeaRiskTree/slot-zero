@@ -73,7 +73,7 @@ what is established and what is open.
 **`data/` holds TAPES, NOT REPORTS. Every companion report and decision record lives in
 firstmate's records, outside this tree, and a `data/<report-name>/report.md` citation is a dead
 path** — it renders as a file the reader can open, and there is no such file. `README.md` →
-"the six companion reports" states the standing position: none of them is committed here, so any
+"None of the eight companion reports" states the standing position: none of them is committed here, so any
 figure attributed to one is evidence from elsewhere and is asserted by no test in this repo. That
 is a deliberate boundary, not an oversight; **do not import one to make a citation resolve** —
 bringing an external document in has a licensing and provenance dimension and is a captain

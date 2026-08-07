@@ -6,8 +6,10 @@ on:
     branches: [main]
 
 permissions:
-  # `contents: read` is what `gh release download` needs for a PRIVATE release asset.
-  # No other scope is added: the data store is read, never written, from CI.
+  # `contents: read` is what `gh release download` needs. The release asset is PUBLIC — this
+  # repository is (captain decision 377a), and a release on a public repository is public — so
+  # this scope is not buying access to anything restricted; it is the least scope that reads a
+  # release at all. No other scope is added: the data store is read, never written, from CI.
   contents: read
 
 concurrency:
@@ -15,18 +17,22 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # WHERE THIS JOB GETS THE MEASUREMENT TAPES. Captain decision 354a.
+  # WHERE THIS JOB GETS THE MEASUREMENT TAPES. Captain decision 354a; phase C, 378a.
   #
-  #   repo    — read the copy in the tree, as every build did before the dry dock. Git is its
-  #             manifest: every byte is content-addressed in the commit that was checked out, so
-  #             there is nothing to fetch and nothing to verify.
-  #   release — fetch them from the private release asset and verify them against the manifest
-  #             the store ships. This is what phase C switches to, once the tapes leave the tree.
+  #   release — fetch them from the public release asset and verify them against the manifest the
+  #             store ships. The ONE mode this job has, since phase C untracked the 705 tape files
+  #             for repository hygiene and a checkout no longer carries them.
   #
-  # Set the repository variable to flip it. It is a VARIABLE and not an inference from whether a
-  # secret happens to be set, so the mode is a decision somebody made rather than a side effect —
-  # and an unrecognised value FAILS below rather than quietly falling back to `repo`.
-  SLOT_ZERO_DATA_SOURCE: ${{ vars.SLOT_ZERO_DATA_SOURCE || 'repo' }}
+  # `repo` — read the copy in the tree — was the other mode and is RETIRED, not deprecated: there
+  # is no copy in the tree to read. It is rejected BY NAME below, with the reason, rather than
+  # folded into the unrecognised-value branch, because a repository variable still set to it from
+  # before phase C is a configuration somebody chose and is owed a sentence saying what happened to
+  # it. Either way the job fails; what differs is whether the log explains itself.
+  #
+  # Set the repository variable to select the mode. It is a VARIABLE and not an inference from
+  # whether a secret happens to be set, so the mode is a decision somebody made rather than a side
+  # effect — and an unrecognised value FAILS below rather than quietly falling back to anything.
+  SLOT_ZERO_DATA_SOURCE: ${{ vars.SLOT_ZERO_DATA_SOURCE || 'release' }}
   SLOT_ZERO_DATA_RELEASE_TAG: ${{ vars.SLOT_ZERO_DATA_RELEASE_TAG || 'data-2026-08-02' }}
   SLOT_ZERO_DATA_ASSET: slot-zero-data.tar.gz
 
@@ -44,30 +50,31 @@ jobs:
       # reaches the network or reads a credential (see CLAUDE.md).
       - run: npm ci
 
-      # THE MODE IS CHECKED BEFORE ANYTHING DEPENDS ON IT. A typo in the repository variable
-      # would otherwise select `repo` by falling through, which reads as a normal green build
-      # while testing something nobody chose.
+      # THE MODE IS CHECKED BEFORE ANYTHING DEPENDS ON IT, and the check is the only reason the
+      # steps below need no condition of their own: nothing downstream runs unless the mode is
+      # `release`, because anything else has already exited non-zero here.
       - name: Check the data source is one this job knows
         run: |
           set -euo pipefail
           case "$SLOT_ZERO_DATA_SOURCE" in
-            repo|release) echo "data source: $SLOT_ZERO_DATA_SOURCE" ;;
-            *) echo "::error::SLOT_ZERO_DATA_SOURCE is '$SLOT_ZERO_DATA_SOURCE'; expected 'repo' or 'release'." >&2
+            release) echo "data source: $SLOT_ZERO_DATA_SOURCE" ;;
+            repo) echo "::error::SLOT_ZERO_DATA_SOURCE is 'repo', which dry dock phase C retired: the 705 tape files are no longer tracked, so a checkout carries no data to read. Unset the SLOT_ZERO_DATA_SOURCE repository variable, or set it to 'release'." >&2
+               exit 1 ;;
+            *) echo "::error::SLOT_ZERO_DATA_SOURCE is '$SLOT_ZERO_DATA_SOURCE'; expected 'release'." >&2
                exit 1 ;;
           esac
 
       # THE FETCH. A release asset rather than a build cache, deliberately: cache entries are
       # evicted after a period without access, so a quiet week would break CI and the breakage
-      # would look like a data problem. The asset is durable, private (this repository is), and
-      # keyed on an IMMUTABLE dated snapshot — `population-tape-2026-07-29` and
-      # `graduated-life-tape-2026-08-02` never change, so this is set up once and not a moving
-      # part of every build.
+      # would look like a data problem. The asset is durable, PUBLIC — as is everything else in
+      # this repository — and keyed on an IMMUTABLE dated snapshot: `population-tape-2026-07-29`
+      # and `graduated-life-tape-2026-08-02` never change, so this is set up once and is not a
+      # moving part of every build.
       #
       # No cache is layered in front. The archive is ~110 MB and compresses by only ~7%, because
       # 342 of the 705 files are already gzipped tapes; the download is seconds on a runner, and a
       # cache would buy that back at the price of an eviction-shaped failure mode.
       - name: Fetch the measurement tapes
-        if: env.SLOT_ZERO_DATA_SOURCE == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -90,7 +97,6 @@ jobs:
       # (705 entries, ~0.2 s) and fails on a missing file, a wrong digest, or an extra file the
       # manifest never listed.
       - name: Verify the fetched tapes against their manifest
-        if: env.SLOT_ZERO_DATA_SOURCE == 'release'
         run: node config/verify-data-root.mjs
 
       # package.json "test" = tsc --noEmit && vitest run. Both halves matter:

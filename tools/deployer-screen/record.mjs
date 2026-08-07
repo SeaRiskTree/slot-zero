@@ -236,7 +236,7 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `unmeasured: 81, present: 53, absent: 94` to `unmeasured: 0, present: 88, absent: 140`, with
  *   `falsePositives: 0` on both sides. The block also gains `adjacencyRuns`, the tripwire on the
  *   `sid` block-index signal, which is persisted because that signal's failure mode is silent.
- *   The correction is recorded in `data/population-tape-2026-07-29/IMPORT.md` → "Corrections";
+ *   The correction is recorded in `population-tape-2026-07-29/IMPORT.md` → "Corrections";
  *   the report and the dataset README are a primary record and are not edited.
  * - **12** — **the unmeasured CAUSE VOCABULARY gains a seventh value** (captain decision 198b). No
  *   key moves anywhere: `PERSISTED_BY_SCHEMA[12]`, `ENTRY_KEYS_BY_SCHEMA[12]`,

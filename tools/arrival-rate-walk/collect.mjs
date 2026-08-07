@@ -3,8 +3,13 @@
  * The collector CLI. Keyless throughout — **zero metered provider requests**, and the credential
  * allow-list for this directory is empty.
  *
+ * `--out` is a directory in the data store rather than in this repository: dry dock phase C
+ * untracked the measurement tapes for repository hygiene, and a multi-day collection written into
+ * the tree grows back exactly what that removed. `~/slot-zero-data` is where the existing datasets
+ * live (`config/data-root.mjs`), and this one has no committed home yet — it has never been run.
+ *
  * ```
- * node tools/arrival-rate-walk/collect.mjs --phase preflight --out data/arrival-rate-2026-08
+ * node tools/arrival-rate-walk/collect.mjs --phase preflight --out ~/slot-zero-data/arrival-rate-2026-08
  * node tools/arrival-rate-walk/collect.mjs --phase plan  --cohort <file> --launch-list <file>
  * node tools/arrival-rate-walk/collect.mjs --phase walk  --launch-list <file> --out <dir> [--dry-run]
  * node tools/arrival-rate-walk/collect.mjs --phase series --out <dir>

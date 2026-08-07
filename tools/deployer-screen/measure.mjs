@@ -173,7 +173,7 @@ export function parseFill(raw) {
  * error is RARE AND ERA-DEPENDENT rather than impossible, and an earlier version of this note said
  * impossible.** Half (a) marks a wallet on nothing but a shared transaction, and a third party can
  * put two strangers in one: measured over the 123 launches of
- * `data/population-tape-2026-07-29/onchain_create_slot_pnl.csv`, half (a) marks 11 non-cohort
+ * `population-tape-2026-07-29/onchain_create_slot_pnl.csv`, half (a) marks 11 non-cohort
  * wallet-instances across 3 era-1 launches, including both wallets `src/cohort.ts` names as settled
  * unaffiliated outsiders, and all 11 run through one wallet that shares create-slot transactions
  * with cohort members and with those outsiders alike — a shared bundling service is the reading

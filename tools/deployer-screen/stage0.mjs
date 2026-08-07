@@ -267,7 +267,7 @@ export function cohortRoomLeft(groups) {
  * that makes the live recipe trustworthy in the first place. A live run has no stored window to use,
  * which is exactly why it needs a pinned span; this one does, so it uses it.
  *
- * @param {string} dataDir Path to `data/population-tape-2026-07-29`.
+ * @param {string} dataDir The `population-tape-2026-07-29` dataset directory, wherever the data root puts it.
  * @returns {TapedLaunch[]} Oldest first.
  */
 export function measureSubjectLaunches(dataDir) {
@@ -1051,7 +1051,7 @@ export function verifyCurveInversion(controls) {
 /**
  * Run the whole of Stage 0 and report whether the screen is fit to be pointed at strangers.
  *
- * @param {string} dataDir Path to `data/population-tape-2026-07-29`.
+ * @param {string} dataDir The `population-tape-2026-07-29` dataset directory, wherever the data root puts it.
  * @param {{ minTokens: number, minCompletionRate: number, minSpanDays: number }} gateThresholds
  * @param {import('./entry.mjs').EntryThresholds & { maxLaunchesPerCandidate: number }} entryThresholds
  * @returns {Stage0Result}
@@ -1088,7 +1088,7 @@ export function runStage0(dataDir, gateThresholds, entryThresholds) {
   // `analysis/window-population/measure.mjs` reads the same regime independently at **0.771**, as
   // does a recomputation from raw fills and one from `wallet_launch_pnl.csv` — three recipes, one
   // answer. So the constant compared against here is `0.771`, and the correction is recorded in
-  // `data/population-tape-2026-07-29/IMPORT.md` → "Corrections", which is where a contradiction of
+  // `population-tape-2026-07-29/IMPORT.md` → "Corrections", which is where a contradiction of
   // the imported prose goes; the report and the dataset README are a primary record and are not
   // edited.
   //

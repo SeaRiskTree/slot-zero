@@ -2,11 +2,12 @@
 /**
  * Roll the collected tape up into `coverage.csv` and print the headline numbers.
  *
- * **Offline.** It opens no socket and reads only committed files, so every number the dataset
- * README publishes is reproducible by running this against the committed tape:
+ * **Offline.** It opens no socket and reads only files already on disk, so every number the dataset
+ * README publishes is reproducible by running this against the published tape — which lives in the
+ * data store, not in this repository:
  *
  * ```bash
- * node tools/graduated-life-tape/summarise.mjs data/graduated-life-tape-2026-08-02
+ * node tools/graduated-life-tape/summarise.mjs ~/slot-zero-data/graduated-life-tape-2026-08-02
  * ```
  *
  * ## What it deliberately does not compute

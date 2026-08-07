@@ -9,7 +9,7 @@
  *
  * `solana-rpc.publicnode.com` is deliberately absent, and so is every RPC host — this collector
  * needs none. The dead-host trap that stalled an earlier job for 40 minutes behind retry backoff
- * (`data/population-tape-2026-07-29/report.md` §9.3) cannot recur in a client with one host.
+ * (`population-tape-2026-07-29/report.md` §9.3) cannot recur in a client with one host.
  *
  * ## Why this duplicates `tools/deployer-screen/pumpfun.mjs`
  *

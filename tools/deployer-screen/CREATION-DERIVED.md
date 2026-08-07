@@ -72,7 +72,7 @@ Creation timestamps matched `created_utc` to the second on all five.
 
 ### 3.1 The subject deployer — exact, complete, from committed ground truth
 
-`data/population-tape-2026-07-29/launches.csv` is a creation-derived census of all 239 launches
+`population-tape-2026-07-29/launches.csv` is a creation-derived census of all 239 launches
 and carries `creator_field_moved` per row. No network was needed for this row.
 
 | reading | launches | bonded | rate |
@@ -360,7 +360,7 @@ ownership listing — the opposite end from the keyless walk, and the better one
 ### 7.5 The whole thing reproduced against the 239-launch ground truth
 
 The strongest available check, run with the production code rather than a probe: the indexed walk
-over `7ufmve7Z…`, compared against `data/population-tape-2026-07-29/launches.csv`.
+over `7ufmve7Z…`, compared against `population-tape-2026-07-29/launches.csv`.
 
 | | |
 |---|---|

@@ -3,6 +3,19 @@ dist/
 *.tsbuildinfo
 .DS_Store
 
+# THE MEASUREMENT TAPES ARE NOT IN THE TREE. Dry dock phase C untracked all 705 of them for
+# repository hygiene — a lighter tree and faster clones — and for nothing else. They are in this
+# repository's public commit history and untracking cannot un-publish them, so the move claims no
+# confidentiality and buys none. They are published as the public `slot-zero-data.tar.gz` asset on
+# the `data-2026-08-02` release, and `config/data-root.mjs` owns where a run reads them from.
+# README.md → "Where the data lives".
+#
+# Both paths are anchored (`/data/…`) so this ignores the two tapes and nothing else that
+# happens to be named the same further down the tree, and they are named ONE PER LINE rather
+# than as `/data/` so a THIRD dataset is not silently ignored the day someone adds one.
+/data/population-tape-2026-07-29/
+/data/graduated-life-tape-2026-08-02/
+
 # There are no credentials in this repo and there must never be. These lines exist so an
 # accidental one is not committed, not because anything here reads them.
 .env

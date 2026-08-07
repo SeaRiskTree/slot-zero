@@ -146,7 +146,7 @@ export function bundledWallets(createSlotFills) {
  * Taken from the deployer rather than from the oldest fill on purpose. A walk that stopped short
  * returns a plausible pile of fills whose earliest slot is merely the earliest it saw, and reading
  * that as the create slot crowns a mid-window sniper as the deployer — the trap
- * `data/population-tape-2026-07-29/report.md` §9.2 records and `createslot.mjs` refuses. If the
+ * `population-tape-2026-07-29/report.md` §9.2 records and `createslot.mjs` refuses. If the
  * deployer's buy is not in the fills at all, there is no create slot to read.
  *
  * @param {readonly Fill[]} fills Any fills of one launch, in any order.

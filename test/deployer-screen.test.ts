@@ -12197,7 +12197,7 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
     }
     // The era-2 constant is PINNED at the median of its own 89-launch population, not at the
     // published cell's rank-43/44 order statistic (captain decision 135c; the decomposition is in
-    // data/population-tape-2026-07-29/IMPORT.md -> Corrections). Asserted so a future lane cannot
+    // population-tape-2026-07-29/IMPORT.md -> Corrections). Asserted so a future lane cannot
     // quietly restore 0.768 — or widen the tolerance, which is what would hide the next defect the
     // way it hid this one.
     const era2 = result.eraSplit.find((e) => e.era.startsWith('2026-06-04'))!;

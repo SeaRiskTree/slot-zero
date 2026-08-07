@@ -5,9 +5,11 @@
  * directory instead of composing one from its own relative path. Before this file existed the
  * answer was written out in eight source files, three tools and five test suites as
  * `new URL('../../data/population-tape-2026-07-29/', import.meta.url)` or the `join()` spelling of
- * the same thing, which meant the data could only ever live inside the repository. The captain has
- * decided it no longer does: the tapes are 118 MB and 705 of the tree's 833 tracked files, and they
- * are moving out.
+ * the same thing, which meant the data could only ever live inside the repository. **It no longer
+ * does.** Dry dock phase C untracked all 705 tape files, and the reason is repository hygiene and
+ * nothing else: they were 118 MB and 705 of the tree's 833 tracked files, so every clone paid for
+ * them. They are in this repository's public commit history and untracking cannot un-publish them;
+ * no confidentiality is claimed by the move and none is bought by it.
  *
  * ## Why this is a fourth area, and not a module in `src/`
  *
@@ -24,43 +26,52 @@
  * `test/data-root.test.ts` asserts it opens no socket, contains no key-shaped string, names no
  * credential variable and reads exactly one environment variable — {@link DATA_ROOT_ENV_VAR}.
  *
- * ## The default, and why it is the in-repository copy
+ * ## The default, and why it moved
  *
- * {@link DEFAULT_DATA_ROOT} is {@link IN_REPO_DATA_ROOT}. Both defaults were defensible and the
- * choice is deliberate:
+ * {@link DEFAULT_DATA_ROOT} is {@link OFF_REPO_DATA_ROOT_HINT} — `~/slot-zero-data`, the store's
+ * canonical name — and until phase C it was the `data/` directory of this repository. Phase B kept
+ * it in-repo on two arguments, and phase C settled both:
  *
- * - Defaulting to the off-repo store would make the tracked copies dead on the day this landed and
- *   would make the untracking phase a pure deletion — but it would break CI *immediately*, because
- *   CI is `actions/checkout` and nothing else (`.github/workflows/ci.yml`), so the only data a CI
- *   runner has is the data in the tree. A change whose job is to be provably neutral must not take
- *   the build red on the way.
- * - It would also make the default configuration machine-specific: a path under someone's `$HOME`
- *   is not reproducible, and this dataset's whole value rests on being reproducible offline.
+ * - **It would have taken CI red on the day it landed**, because CI was `actions/checkout` and
+ *   nothing else, so the only data a runner had was the data in the tree. CI fetches the store now
+ *   and sets {@link DATA_ROOT_ENV_VAR} itself (`.github/workflows/ci.yml`), so this default is not
+ *   what a CI run reads at all.
+ * - **A path under someone's `$HOME` is not reproducible.** That is still true, and it is now the
+ *   better of two unreproducible defaults rather than the worse of one: the in-repo path stopped
+ *   naming anything a clone has. What the choice buys is that a contributor who unpacks the release
+ *   asset where the whole tree already tells them to has a working `npm test` with no configuration
+ *   at all — and, on a machine where phase C left an untracked `data/` behind, that runs are read
+ *   from the store git can vouch for rather than from a stale copy nothing checks.
  *
- * So the default keeps working exactly as it did, and the off-repo store is one variable away. The
- * untracking phase changes this file in ONE place — `DEFAULT_DATA_ROOT` stops being
- * `IN_REPO_DATA_ROOT` — beside deleting the files and telling CI where the data went. Nothing else
- * in the tree has to move, which is the property this phase exists to buy.
+ * Neither default resolves in a bare clone, and that is honest rather than unfortunate: the data is
+ * genuinely not there, and {@link missingDatasetMessage} is what turns that into a sentence a
+ * reader can act on.
  *
  * ## Using it
  *
  * ```bash
- * # read the tapes from outside the repository
- * export SLOT_ZERO_DATA_ROOT=~/slot-zero-data
+ * # the default: unpack the release asset where the store lives
+ * mkdir -p ~/slot-zero-data
+ * tar -xzf slot-zero-data.tar.gz -C ~/slot-zero-data --strip-components=1
+ * npm test
+ *
+ * # or keep it anywhere else
+ * export SLOT_ZERO_DATA_ROOT=/srv/tapes
  * npm test
  * ```
  *
  * The root is a directory holding the datasets by name, so
- * `$SLOT_ZERO_DATA_ROOT/population-tape-2026-07-29/launches.csv` and the in-repo
- * `data/population-tape-2026-07-29/launches.csv` are the same file in the two configurations. It is
- * read once per process, at import: these tools are stateless and short-lived, and a root that
- * could change under a running measurement is a worse thing than one that cannot.
+ * `$SLOT_ZERO_DATA_ROOT/population-tape-2026-07-29/launches.csv` is the same file whichever root is
+ * in use. It is read once per process, at import: these tools are stateless and short-lived, and a
+ * root that could change under a running measurement is a worse thing than one that cannot.
+ *
+ * `README.md` → "Where the data lives" owns the operator's half — fetching the store, verifying it,
+ * and how CI gets it.
  */
 
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 /**
  * The one environment variable this module reads, and the only one anything in `config/` may name.
@@ -75,20 +86,18 @@ import { fileURLToPath } from 'node:url';
 export const DATA_ROOT_ENV_VAR = 'SLOT_ZERO_DATA_ROOT';
 
 /**
- * The data root inside this repository: the `data/` directory, one level up from here.
+ * Where the data store lives when nobody says otherwise: the DEFAULT, and the path every message
+ * this module writes suggests.
  *
- * This is the default (see the module note). It is derived from this file's own URL rather than
- * from `process.cwd()`, so a tool invoked from any directory reads the same tapes.
- */
-export const IN_REPO_DATA_ROOT = fileURLToPath(new URL('../data', import.meta.url));
-
-/**
- * Where the captain's copy of the data lives, as a suggestion for a human reading an error.
+ * It is written with a tilde because that is how it is spoken about everywhere in this tree and in
+ * the release asset's own instructions; {@link DEFAULT_DATA_ROOT} is this same path expanded, so
+ * the two cannot drift apart.
  *
- * It is a HINT and never a fallback: nothing here reads this path unless
- * {@link DATA_ROOT_ENV_VAR} names it. A resolver that quietly tried a second location would make
- * "which copy did this measurement read" unanswerable from the output, which is the failure this
- * repo files under *a confident, well-formed, complete-looking answer that is simply wrong*.
+ * There is still no second location and no fallback chain. If the root this resolves to holds
+ * nothing, that is reported (see {@link missingDatasetMessage}) rather than quietly retried
+ * somewhere else — a resolver that tried a second place would make "which copy did this measurement
+ * read" unanswerable from the output, which is the failure this repo files under *a confident,
+ * well-formed, complete-looking answer that is simply wrong*.
  */
 export const OFF_REPO_DATA_ROOT_HINT = '~/slot-zero-data';
 
@@ -102,10 +111,29 @@ export const GRADUATED_LIFE_TAPE = 'graduated-life-tape-2026-08-02';
 export const DATASETS = Object.freeze([POPULATION_TAPE, GRADUATED_LIFE_TAPE]);
 
 /**
- * The default root when {@link DATA_ROOT_ENV_VAR} is unset. See the module note for why it is the
- * in-repository copy and what the untracking phase changes here.
+ * Expand a leading `~/` (or a bare `~`) against this account's home directory.
+ *
+ * Only that form. `~other` is somebody else's home in shell syntax and a literal directory name
+ * here, which this has no business reimplementing.
+ *
+ * @param {string} path
+ * @returns {string}
  */
-export const DEFAULT_DATA_ROOT = IN_REPO_DATA_ROOT;
+function expandTilde(path) {
+  if (path === '~') return homedir();
+  return path.startsWith('~/') ? join(homedir(), path.slice(2)) : path;
+}
+
+/**
+ * The default root when {@link DATA_ROOT_ENV_VAR} is unset: the store at
+ * {@link OFF_REPO_DATA_ROOT_HINT}, expanded.
+ *
+ * It is DERIVED from the hint rather than written out again, so the path this resolves to and the
+ * path every error message tells a reader to use are the same path by construction. See the module
+ * note for why the default is no longer the copy in this repository — in one line, phase C untracked
+ * that copy, so it named a directory a clone does not have.
+ */
+export const DEFAULT_DATA_ROOT = expandTilde(OFF_REPO_DATA_ROOT_HINT);
 
 /**
  * Resolve the data root from an environment-like object.
@@ -140,18 +168,12 @@ export function resolveDataRoot(env = process.env) {
       `${DATA_ROOT_ENV_VAR} is set but empty (length ${raw.length}), so this run has no data root.\n` +
         `  It was probably assigned from an unset variable. Unset it to read the default root\n` +
         `      ${DEFAULT_DATA_ROOT}\n` +
-        `  or point it at the store:\n` +
-        `      export ${DATA_ROOT_ENV_VAR}=${OFF_REPO_DATA_ROOT_HINT}`,
+        `  or point it at the copy you meant:\n` +
+        `      export ${DATA_ROOT_ENV_VAR}=/somewhere/else`,
     );
   }
 
-  const expanded =
-    trimmed === '~'
-      ? homedir()
-      : trimmed.startsWith('~/')
-        ? join(homedir(), trimmed.slice(2))
-        : trimmed;
-
+  const expanded = expandTilde(trimmed);
   return isAbsolute(expanded) ? expanded : resolve(expanded);
 }
 
@@ -178,15 +200,21 @@ export const GRADUATED_LIFE_TAPE_DIR = datasetDir(GRADUATED_LIFE_TAPE);
 /**
  * What to tell a human when a dataset is not where the root says it is.
  *
- * The data is not part of a fresh clone, so this message is the first thing a new contributor and a
- * fresh CI runner will see. It therefore names three things and not one: WHAT is missing, WHERE it
- * was looked for, and HOW to point the tool somewhere else. A raw `ENOENT` on a `.jsonl.gz` deep
- * inside `window/` says none of them.
+ * The data is not part of a clone, so this message is the first thing a new contributor and a fresh
+ * CI runner will see. It therefore names three things and not one: WHAT is missing, WHERE it was
+ * looked for, and HOW to fix it. A raw `ENOENT` on a `.jsonl.gz` deep inside `window/` says none of
+ * them.
  *
  * The sentence explaining WHERE has to be about the path that was actually looked in. A directory
  * handed in — a `--data-dir` flag, `Tape.load({ dataDir })` — was not decided by the root at all,
  * and explaining it by the root anyway is the confident, well-formed, wrong answer this repo keeps
  * refusing: it sends an operator who mistyped a flag to go and check an environment variable.
+ *
+ * And HOW is two halves since phase C, because the likeliest cause changed with the default. The
+ * first is FETCH THE STORE — the data left the tree and the reader may simply not have it — and only
+ * the second is point the variable somewhere else. Offering only the second would tell somebody who
+ * has no copy at all to go and name the one they have not got, and where the default is
+ * {@link OFF_REPO_DATA_ROOT_HINT} that advice is circular on top of being wrong.
  *
  * @param {string} dataset One of {@link DATASETS}.
  * @param {string} [dir] The directory that was looked in. Defaults to the one `env` resolves to,
@@ -207,10 +235,13 @@ export function missingDatasetMessage(dataset, dir, env = process.env) {
   return (
     `the ${dataset} dataset is not at ${looked}\n` +
     `  ${where}\n` +
-    `  This repository's measurement data is not part of a fresh clone. Point the tools at the\n` +
-    `  store, which holds each dataset under its own name:\n` +
-    `      export ${DATA_ROOT_ENV_VAR}=${OFF_REPO_DATA_ROOT_HINT}\n` +
-    `  and check that ${join(OFF_REPO_DATA_ROOT_HINT, dataset)} exists. See README.md, "Where the data lives".`
+    `  This repository's measurement data is not part of a clone: the tapes are published as the\n` +
+    `  slot-zero-data.tar.gz release asset, and a root holds each dataset under its own name.\n` +
+    `  Unpack it at the default root, which needs no configuration at all:\n` +
+    `      mkdir -p ${OFF_REPO_DATA_ROOT_HINT} && tar -xzf slot-zero-data.tar.gz -C ${OFF_REPO_DATA_ROOT_HINT} --strip-components=1\n` +
+    `  or, if you keep it elsewhere, point this run at that copy:\n` +
+    `      export ${DATA_ROOT_ENV_VAR}=/somewhere/else\n` +
+    `  Either way, check that <root>/${dataset} exists. See README.md, "Where the data lives".`
   );
 }
 

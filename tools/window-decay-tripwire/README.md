@@ -62,7 +62,7 @@ complete-set measurements over the committed tape, replayed through the producti
 
 | surface | used | how it is bounded |
 |---|---|---|
-| `data/population-tape-2026-07-29/` | the whole of §3–§8 | no network at all |
+| `population-tape-2026-07-29/` | the whole of §3–§8 | no network at all |
 | `swap-api.pump.fun/v2/coins/{mint}/trades` | the live watcher's create-slot reads | keyless; `maxPagesPerLaunch` × `maxLaunchesPerRun`, inside a per-run attempt ceiling |
 | `frontend-api-v3.pump.fun/coins?creator=` | the live watcher's launch list | keyless; **one** request per run, and only when `--mints` is not given |
 | MadeOnSol, Helius, Dune, SolanaTracker, CoinGecko | **not contacted, and unreachable** | `HOSTS` in `client.mjs` is the complete host allow-list and the client refuses a URL outside it |

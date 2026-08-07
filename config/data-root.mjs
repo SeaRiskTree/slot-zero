@@ -184,17 +184,20 @@ export const GRADUATED_LIFE_TAPE_DIR = datasetDir(GRADUATED_LIFE_TAPE);
  * inside `window/` says none of them.
  *
  * @param {string} dataset One of {@link DATASETS}.
- * @param {string} [dir] The directory that was looked in. Defaults to the resolved one.
+ * @param {string} [dir] The directory that was looked in. Defaults to the one `env` resolves to,
+ *   never to the ambient one — a message that names a directory the reported root does not point at
+ *   is the confident, well-formed, wrong answer this repo keeps refusing.
  * @param {Record<string, string | undefined>} [env]
  * @returns {string}
  */
-export function missingDatasetMessage(dataset, dir = datasetDir(dataset, process.env), env = process.env) {
+export function missingDatasetMessage(dataset, dir, env = process.env) {
+  const looked = dir ?? datasetDir(dataset, env);
   const configured = env[DATA_ROOT_ENV_VAR] !== undefined;
   const where = configured
     ? `${DATA_ROOT_ENV_VAR} is set, so the root is where that variable points.`
     : `${DATA_ROOT_ENV_VAR} is not set, so the root defaulted to ${DEFAULT_DATA_ROOT}.`;
   return (
-    `the ${dataset} dataset is not at ${dir}\n` +
+    `the ${dataset} dataset is not at ${looked}\n` +
     `  ${where}\n` +
     `  This repository's measurement data is not part of a fresh clone. Point the tools at the\n` +
     `  store, which holds each dataset under its own name:\n` +
@@ -214,9 +217,10 @@ export function missingDatasetMessage(dataset, dir = datasetDir(dataset, process
  *   one. Checked and reported the same way, so an operator who points a tool at the wrong directory
  *   gets the same sentence as one who has no data.
  * @param {Record<string, string | undefined>} [env]
- * @returns {string} `dir`, so this can wrap an assignment.
+ * @returns {string} The directory that was checked, so this can wrap an assignment.
  */
-export function requireDataset(dataset, dir = datasetDir(dataset, process.env), env = process.env) {
-  if (!existsSync(dir)) throw new Error(missingDatasetMessage(dataset, dir, env));
-  return dir;
+export function requireDataset(dataset, dir, env = process.env) {
+  const target = dir ?? datasetDir(dataset, env);
+  if (!existsSync(target)) throw new Error(missingDatasetMessage(dataset, target, env));
+  return target;
 }

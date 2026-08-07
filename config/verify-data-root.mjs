@@ -29,7 +29,8 @@
  *   and `life/` is how several measurements choose their population, so an extra tape is an extra
  *   launch in a published figure.
  *
- * **A missing manifest is itself a failure, and deliberately so.** It cannot be waved through as
+ * **A missing manifest — or one that lists nothing — is itself a failure, and deliberately so.** It
+ * cannot be waved through as
  * "nothing to check": a root with no manifest is a root whose provenance is unknown, and the whole
  * point of the check is that CI stopped getting its data from a place git could vouch for. The
  * in-repo copy needs no manifest because git is its manifest — every byte is content-addressed in
@@ -124,6 +125,15 @@ export function verifyDataRoot(root) {
   }
 
   const entries = parseManifest(readFileSync(manifestPath, 'utf8'));
+  if (entries.length === 0) {
+    throw new Error(
+      `${manifestPath} lists nothing, so it vouches for nothing.\n` +
+        `  An empty manifest is the same condition as no manifest at all, dressed as a pass: every\n` +
+        `  check below would walk zero entries and report a whole store. It is the shape a failed\n` +
+        `  phase-A regeneration leaves behind, and CI would print a green line over a root with no\n` +
+        `  tapes in it. Re-write the manifest beside the tapes, or re-fetch the store.`,
+    );
+  }
   /** @type {string[]} */ const missing = [];
   /** @type {string[]} */ const corrupt = [];
   const listed = new Set(entries.map((e) => e.path));

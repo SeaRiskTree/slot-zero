@@ -39,6 +39,7 @@ import {
 } from '../config/data-root.mjs';
 import { describeVerifyResult, parseManifest, verifyDataRoot } from '../config/verify-data-root.mjs';
 import { KEY_SHAPED, NETWORK_PATTERNS } from './offline-guard.js';
+import { mapAt, parseWorkflowYaml, seqAt, textAt } from './workflow-yaml.js';
 
 const CONFIG_DIR = fileURLToPath(new URL('../config/', import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -121,6 +122,22 @@ describe('the data root resolves', () => {
     // pointed at the wrong place, or it is unset and the default is empty.
     expect(message).toMatch(/is set, so the root is where that variable points/);
     expect(missingDatasetMessage(POPULATION_TAPE, dir, {})).toMatch(/is not set, so the root defaulted/);
+  });
+
+  it('names the directory the SUPPLIED environment resolves to, not the ambient one', () => {
+    // The message states which root was consulted, so it has to be the root that was consulted.
+    // Reporting "the variable points there" beside a path the variable does not point at is the
+    // confident, well-formed, wrong answer, one layer below a measurement.
+    const env = { [DATA_ROOT_ENV_VAR]: '/tmp/no-such-slot-zero-root' };
+    expect(missingDatasetMessage(POPULATION_TAPE, undefined, env)).toContain(
+      join('/tmp/no-such-slot-zero-root', POPULATION_TAPE),
+    );
+    expect(missingDatasetMessage(POPULATION_TAPE, undefined, env)).not.toContain(DEFAULT_DATA_ROOT);
+    expect(() => requireDataset(POPULATION_TAPE, undefined, env)).toThrow(
+      new RegExp(join('/tmp/no-such-slot-zero-root', POPULATION_TAPE)),
+    );
+    // And with no directory it still resolves — and finds — whatever root this run is using.
+    expect(requireDataset(POPULATION_TAPE, undefined, process.env)).toBe(POPULATION_TAPE_DIR);
   });
 
   it('requireDataset throws that message, and returns the directory when it is there', () => {
@@ -212,6 +229,15 @@ describe('a fetched data root is verified, never trusted', () => {
     }
   });
 
+  it('REFUSES a manifest that lists nothing, rather than passing over zero entries', () => {
+    // The shape a failed regeneration leaves behind: the manifest is there, so the missing-manifest
+    // refusal does not fire, and every check walks nothing and reports a whole store. It is the
+    // same condition as no manifest at all wearing a green tick.
+    const root = store({ 'MANIFEST.sha256': '\n' });
+    expect(() => verifyDataRoot(root)).toThrow(/lists nothing/);
+    expect(parseManifest('\n')).toEqual([]);
+  });
+
   it('refuses a manifest line it cannot read, rather than skipping it', () => {
     // A manifest half of which silently does not apply is worse than none: it reports a pass over
     // whatever it happened to understand.
@@ -225,31 +251,112 @@ describe('CI cannot go green without the tapes', () => {
   // Captain decision 354a, requirement 4: a failed or partial fetch must fail the build, and CI
   // must never skip the data-bound suites and report green. Twelve of the eighteen suites need
   // the data, so the property is real; these pin the workflow shape that keeps it.
+  //
+  // The workflow is read as the CONTRACT it is — steps, conditions and their order — and never as
+  // text. Re-indenting a step or moving its script into a block scalar changes nothing GitHub does
+  // and must not fail here; a job-level `if:` or a `continue-on-error:` changes everything and must.
   const ci = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
 
+  interface Step {
+    index: number;
+    name: string | undefined;
+    run: string | undefined;
+    if: string | undefined;
+    continueOnError: string | undefined;
+  }
+
+  const job = (text: string) => mapAt(mapAt(mapAt(parseWorkflowYaml(text), 'ci.yml')['jobs'], 'jobs')['test'], 'jobs.test');
+  const stepsOf = (text: string): Step[] =>
+    seqAt(job(text)['steps'], 'jobs.test.steps').map((node, index) => {
+      const step = mapAt(node, `step ${index}`);
+      return {
+        index,
+        name: textAt(step['name'], 'name'),
+        run: textAt(step['run'], 'run'),
+        if: textAt(step['if'], 'if'),
+        continueOnError: textAt(step['continue-on-error'], 'continue-on-error'),
+      };
+    });
+
+  const steps = stepsOf(ci);
+  const byRun = (needle: string): Step => {
+    const found = steps.filter((s) => s.run !== undefined && s.run.includes(needle));
+    expect(found.length, `exactly one step should run ${needle}`).toBe(1);
+    return found[0] as Step;
+  };
+
+  it('parses the workflow into steps, so the assertions below are about behaviour', () => {
+    // Non-vacuous: a parser that read nothing would satisfy every "must not" below.
+    expect(steps.length).toBeGreaterThanOrEqual(5);
+    expect(steps.some((s) => s.run === 'npm ci')).toBe(true);
+  });
+
   it('runs the whole suite UNCONDITIONALLY — no data-free mode, no skip', () => {
-    // The step that runs the tests carries no `if:`. A conditional here is how a CI quietly stops
-    // exercising the measurement code while still printing a tick.
-    const testStep = /\n {6}- run: npm test\n/.test(ci);
-    expect(testStep, 'ci.yml must run `npm test` as a bare, unconditional step').toBe(true);
-    expect(ci).not.toMatch(/npm test[\s\S]{0,200}?\n {8}if:/);
-    // And no suite is excluded by name anywhere in the job.
-    expect(ci).not.toMatch(/--exclude|\.skip\(|testNamePattern/);
+    // A condition on this step is how a CI quietly stops exercising the measurement code while
+    // still printing a tick; `continue-on-error` is the same thing with the tick left on after it
+    // fails. Both live on the STEP, and one lives on the job, so all three are asserted.
+    const test = byRun('npm test');
+    expect(test.run?.trim()).toBe('npm test');
+    expect(test.if, '`npm test` must carry no condition').toBeUndefined();
+    expect(test.continueOnError).toBeUndefined();
+    expect(job(ci)['if'], 'the job itself must carry no condition').toBeUndefined();
+    expect(job(ci)['continue-on-error']).toBeUndefined();
+    for (const step of steps) expect(step.continueOnError, `step ${step.index}`).toBeUndefined();
+    // And no suite is excluded by name by anything the job actually runs.
+    for (const step of steps) {
+      expect(step.run ?? '', `step ${step.index}`).not.toMatch(/--exclude|\.skip\(|testNamePattern/);
+    }
   });
 
   it('validates the data source before anything depends on it, and fetch implies verify', () => {
     // An unrecognised variable value must FAIL rather than fall through to the in-repo copy: a
-    // typo would otherwise read as a normal green build over something nobody chose.
-    expect(ci).toMatch(/SLOT_ZERO_DATA_SOURCE is '\$SLOT_ZERO_DATA_SOURCE'/);
-    expect(ci).toMatch(/repo\|release\)/);
+    // typo would otherwise read as a normal green build over something nobody chose. So the check
+    // is unconditional and sits ahead of every step that reads the mode.
+    const check = byRun('$SLOT_ZERO_DATA_SOURCE');
+    const fetch = byRun('gh release download');
+    const verify = byRun('config/verify-data-root.mjs');
+    const test = byRun('npm test');
+    expect(check.if).toBeUndefined();
+    expect(check.index).toBeLessThan(fetch.index);
+    expect(check.index).toBeLessThan(verify.index);
+    expect(fetch.index).toBeLessThan(verify.index);
+    expect(verify.index).toBeLessThan(test.index);
+    expect(check.run).toMatch(/repo\|release\)/);
+    expect(check.run).toMatch(/exit 1/);
+
     // The fetch and the verification are gated on the SAME condition, so a fetched root is never
-    // reached by the suites without having been checked against its manifest.
-    const guarded = [...ci.matchAll(/if: env\.SLOT_ZERO_DATA_SOURCE == '(\w+)'/g)].map((m) => m[1]);
-    expect(guarded).toEqual(['release', 'release']);
-    expect(ci).toContain('node config/verify-data-root.mjs');
-    // `set -e` is what turns a failed download into a failed build rather than an empty directory.
-    expect(ci).toMatch(/gh release download[\s\S]*?/);
-    expect((ci.match(/set -euo pipefail/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    // reached by the suites without having been checked against its manifest — and nothing ELSE in
+    // the job is conditional, which is what keeps the suite itself unconditional above.
+    const gated = steps.filter((s) => s.if !== undefined);
+    expect(gated.map((s) => s.index)).toEqual([fetch.index, verify.index]);
+    expect(new Set(gated.map((s) => s.if)).size, 'fetch and verify must share one condition').toBe(1);
+    expect(fetch.if).toBe("env.SLOT_ZERO_DATA_SOURCE == 'release'");
+
+    // `set -e` is what turns a failed download into a failed build rather than an empty directory,
+    // and the first line is where it has to be for the download itself to be covered.
+    for (const step of [check, fetch]) {
+      expect((step.run ?? '').split('\n')[0]?.trim(), `step ${step.index}`).toBe('set -euo pipefail');
+    }
+    // The default mode is the in-repo copy: phase C flips the repository variable, not this file.
+    const env = mapAt(parseWorkflowYaml(ci), 'ci.yml')['env'];
+    expect(textAt(mapAt(env, 'env')['SLOT_ZERO_DATA_SOURCE'], 'env')).toBe(
+      "${{ vars.SLOT_ZERO_DATA_SOURCE || 'repo' }}",
+    );
+  });
+
+  it('SEES a conditional or continued-on-error test step — the shape a text match misses', () => {
+    // The regression this reading exists for: both of these are behaviour changes that leave the
+    // step's own text intact, so they must show up in the model rather than in a substring.
+    const conditional = ci.replace('      - run: npm test', "      - if: false\n        run: npm test");
+    expect(stepsOf(conditional).find((s) => s.run?.trim() === 'npm test')?.if).toBe('false');
+    const continued = ci.replace(
+      '      - run: npm test',
+      '      - continue-on-error: true\n        run: npm test',
+    );
+    expect(stepsOf(continued).find((s) => s.run?.trim() === 'npm test')?.continueOnError).toBe('true');
+    // And re-indenting or re-spelling a step is NOT a change: the model is the same either way.
+    const rewritten = ci.replace('      - run: npm test', '      - run: |\n          npm test');
+    expect(stepsOf(rewritten).find((s) => s.run?.trim() === 'npm test')?.if).toBeUndefined();
   });
 });
 

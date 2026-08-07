@@ -15,8 +15,9 @@
  * arrive here by the door the data root opened.
  */
 
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,6 +37,7 @@ import {
   requireDataset,
   resolveDataRoot,
 } from '../config/data-root.mjs';
+import { describeVerifyResult, parseManifest, verifyDataRoot } from '../config/verify-data-root.mjs';
 import { KEY_SHAPED, NETWORK_PATTERNS } from './offline-guard.js';
 
 const CONFIG_DIR = fileURLToPath(new URL('../config/', import.meta.url));
@@ -140,6 +142,114 @@ describe('the data root resolves', () => {
     // And whatever the root is on this run, the data is actually there — the suite is meaningless
     // otherwise, and this is what turns a mispointed run into one clear failure.
     for (const dataset of DATASETS) expect(existsSync(datasetDir(dataset)), datasetDir(dataset)).toBe(true);
+  });
+});
+
+describe('a fetched data root is verified, never trusted', () => {
+  // Captain decision 354a moved CI's data from `checkout` to a fetch, which puts a transfer
+  // between the store and the suites. The dangerous failure is the PARTIAL one: a root that
+  // exists and holds most of its files reads as data, and several suites choose their population
+  // by reading `window/` and `life/` with readdirSync, so a short fetch moves a published number
+  // instead of raising ENOENT.
+  const write = (files: Record<string, string>): string => {
+    const root = mkdtempSync(join(tmpdir(), 'slot-zero-root-'));
+    for (const [path, content] of Object.entries(files)) {
+      mkdirSync(join(root, path, '..'), { recursive: true });
+      writeFileSync(join(root, path), content);
+    }
+    return root;
+  };
+  const sha = (s: string) => createHash('sha256').update(s).digest('hex');
+  /** A minimal but STRUCTURALLY REAL store: a manifest plus the files it lists. */
+  const store = (extra: Record<string, string> = {}) => {
+    const a = `${POPULATION_TAPE}/launches.csv`;
+    const b = `${GRADUATED_LIFE_TAPE}/coverage.csv`;
+    return write({
+      [a]: 'mint\nx\n',
+      [b]: 'mint\ny\n',
+      'MANIFEST.sha256': `${sha('mint\nx\n')}  ./${a}\n${sha('mint\ny\n')}  ./${b}\n`,
+      ...extra,
+    });
+  };
+
+  it('passes a whole store, and reports what it checked', () => {
+    const result = verifyDataRoot(store());
+    expect(result.ok).toBe(true);
+    expect(result.checked).toBe(2);
+    expect(describeVerifyResult(result)).toMatch(/verified: 2 files/);
+  });
+
+  it('REFUSES a root with no manifest rather than waving it through as nothing to check', () => {
+    // "No manifest" is not "no problem": it is a root whose provenance is unknown, which is the
+    // whole condition CI left behind when it stopped getting the data from a commit.
+    const root = write({ [`${POPULATION_TAPE}/launches.csv`]: 'mint\nx\n' });
+    expect(() => verifyDataRoot(root)).toThrow(/carries no MANIFEST\.sha256/);
+    // And it says why the in-repo copy is exempt, so nobody "fixes" this by generating one.
+    expect(() => verifyDataRoot(root)).toThrow(/git is its manifest/);
+  });
+
+  it('catches the truncated fetch, the truncated FILE, and the stale extra file', () => {
+    const missing = store();
+    rmSync(join(missing, POPULATION_TAPE, 'launches.csv'));
+    expect(verifyDataRoot(missing).missing).toEqual([`${POPULATION_TAPE}/launches.csv`]);
+
+    const corrupt = store();
+    writeFileSync(join(corrupt, POPULATION_TAPE, 'launches.csv'), 'mint\n'); // tail lost
+    expect(verifyDataRoot(corrupt).corrupt).toEqual([`${POPULATION_TAPE}/launches.csv`]);
+
+    // The one a naive `sha256sum -c` misses entirely, and the one that matters most here: an
+    // unlisted tape is an extra LAUNCH in every figure computed by enumerating that directory.
+    const extra = store({ [`${POPULATION_TAPE}/window/ZZZstale.jsonl.gz`]: 'x' });
+    expect(verifyDataRoot(extra).unexpected).toEqual([`${POPULATION_TAPE}/window/ZZZstale.jsonl.gz`]);
+
+    for (const root of [missing, corrupt, extra]) {
+      const result = verifyDataRoot(root);
+      expect(result.ok, root).toBe(false);
+      // A transport failure must not read as a measurement failure, or someone goes looking in
+      // the wrong half of the system.
+      expect(describeVerifyResult(result)).toMatch(/TRANSPORT failure/);
+      expect(describeVerifyResult(result)).toContain(DATA_ROOT_ENV_VAR);
+    }
+  });
+
+  it('refuses a manifest line it cannot read, rather than skipping it', () => {
+    // A manifest half of which silently does not apply is worse than none: it reports a pass over
+    // whatever it happened to understand.
+    const root = store({ 'MANIFEST.sha256': 'not-a-digest  ./x\n' });
+    expect(() => verifyDataRoot(root)).toThrow(/line 1 is not a sha256sum entry/);
+    expect(parseManifest(`${'a'.repeat(64)}  ./p/q\n`)).toEqual([{ digest: 'a'.repeat(64), path: 'p/q' }]);
+  });
+});
+
+describe('CI cannot go green without the tapes', () => {
+  // Captain decision 354a, requirement 4: a failed or partial fetch must fail the build, and CI
+  // must never skip the data-bound suites and report green. Twelve of the eighteen suites need
+  // the data, so the property is real; these pin the workflow shape that keeps it.
+  const ci = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+
+  it('runs the whole suite UNCONDITIONALLY — no data-free mode, no skip', () => {
+    // The step that runs the tests carries no `if:`. A conditional here is how a CI quietly stops
+    // exercising the measurement code while still printing a tick.
+    const testStep = /\n {6}- run: npm test\n/.test(ci);
+    expect(testStep, 'ci.yml must run `npm test` as a bare, unconditional step').toBe(true);
+    expect(ci).not.toMatch(/npm test[\s\S]{0,200}?\n {8}if:/);
+    // And no suite is excluded by name anywhere in the job.
+    expect(ci).not.toMatch(/--exclude|\.skip\(|testNamePattern/);
+  });
+
+  it('validates the data source before anything depends on it, and fetch implies verify', () => {
+    // An unrecognised variable value must FAIL rather than fall through to the in-repo copy: a
+    // typo would otherwise read as a normal green build over something nobody chose.
+    expect(ci).toMatch(/SLOT_ZERO_DATA_SOURCE is '\$SLOT_ZERO_DATA_SOURCE'/);
+    expect(ci).toMatch(/repo\|release\)/);
+    // The fetch and the verification are gated on the SAME condition, so a fetched root is never
+    // reached by the suites without having been checked against its manifest.
+    const guarded = [...ci.matchAll(/if: env\.SLOT_ZERO_DATA_SOURCE == '(\w+)'/g)].map((m) => m[1]);
+    expect(guarded).toEqual(['release', 'release']);
+    expect(ci).toContain('node config/verify-data-root.mjs');
+    // `set -e` is what turns a failed download into a failed build rather than an empty directory.
+    expect(ci).toMatch(/gh release download[\s\S]*?/);
+    expect((ci.match(/set -euo pipefail/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 });
 

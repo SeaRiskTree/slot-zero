@@ -120,6 +120,27 @@ environment variable read**, and no import from `src/`, `analysis/`, `tools/` or
 - **Two readers used to build paths by concatenation** (`analysis/window-population/measure.mjs`,
   `tools/window-decay-tripwire/tape.mjs`) and depended on a trailing separator. The resolver returns
   none; those sites use `join()` now and a test pins the absence.
+- **THIS PROJECT'S TESTS ARE POPULATION ASSERTIONS, NOT FIXTURE TESTS — do not propose sampling the
+  tapes for testing, and do not re-measure it** (captain decision 354a, which records the
+  measurement in full). A properly stratified subset was built and run: 13 strata over regime ×
+  graduated × committed window width × coverage, densest and sparsest create slot in each,
+  **23 launches / 94 files / 16 MB**. Result: **138 tests failed across 11 of the 18 suites**, it
+  converted **exactly one** suite over having no data at all (`data-root`, which only needs the
+  directories to exist), and — the decisive part — **it changed a published finding**: the blind
+  changepoint scan returned `2026-03-26T16:10:24Z` against the published `2026-03-14T17:28:20Z`.
+  The failures are `toHaveLength(239)`, 46,553 pair rows, 107,439 fills, 1,999 create-slot pairs,
+  123 priced launches, 103 graduated — no subset satisfies them, and `counterparties.csv` (2.8 MB,
+  20,388 wallets) has **no `mint` column**, so it cannot be subsetted by launch at all.
+- **CI therefore FETCHES the tapes, and the fetch is verified.** `.github/workflows/ci.yml` has two
+  modes on the repository variable `SLOT_ZERO_DATA_SOURCE`: `repo` (default, the copy in the tree —
+  git is its manifest) and `release` (a private release asset, which phase C switches to). An
+  unrecognised value fails the job rather than falling through. **`config/verify-data-root.mjs`
+  walks the store's own `MANIFEST.sha256` and fails on a missing file, a wrong digest, OR AN EXTRA
+  FILE the manifest never listed** — that third one is why it is a script and not `sha256sum -c`:
+  several suites choose their population with `readdirSync` over `window/` and `life/`, so a
+  partial fetch raises no `ENOENT`, it moves a published number. README → "How CI gets them" owns
+  the provisioning commands; **populating the store is a captain step**, and the archive compresses
+  by only ~7% because 342 of the 705 files are already gzipped.
 
 ## The dataset
 

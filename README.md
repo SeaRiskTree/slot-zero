@@ -243,16 +243,28 @@ the report's name and section inline; they are evidence from elsewhere, not repr
   median is **+0.035 SOL**. *(`wallet_behaviour_profiles.csv`; `counterparties.csv`;
   `onchain_create_slot_pnl.csv` for the fee-inclusive figures.)*
   That the six are *part of the operation* was an inference when the source report was
-  written; the funding graph has since turned it into an artefact. **The discriminator is the
-  operator's own tooling, host and handle on the cohort's own launches:** `2CHrnc2L…` is
-  listed by pump.fun as the current creator of **36 coins, every one on the operator's own
-  metadata host `meta.uxento.io`, one citing `genyrational` — the deployer's own promo
-  handle**; and `43x1zWzj…` and `5P8A9bG…` have a genesis byte-identical to the deployer's —
-  the same 3.500000000 SOL from a custodial hot wallet in the same instruction envelope, then
-  a pump.fun create-and-buy crediting the identical 3.0014616 SOL through the same tool fee
-  accounts, minutes later. **Common ownership is still not formally established:** `?creator=`
-  lists by *current* creator, so the 36 may mean "launched it" or "was given it", and nothing
-  on-chain proves ownership. *(`kol-cohort-vs-outsider-funding/report.md` §2.1, §6.3.)*
+  written; the on-chain record has since turned it into an artefact, and none of what does so
+  rests on a vendor. The create-slot record above is one half — 235 of 235 at 1.08× for
+  0.0009 SOL of fees, no appearance on 70 other deployers' launches, **221 closed round trips
+  at a 0.977 hit rate for +503.9 SOL** gross (§4.2), and, on the 120 launches priced exactly,
+  **+306.0 SOL fee-inclusive and positive on 100% of them for 0.30 SOL of fees in total**
+  (§5.5). The other half is direct: `2CHrnc2L…`
+  **co-signs the operation's three-signer bundle transactions** with `8kzFH4rg…` and
+  `Atgx1JXs…`, which a stranger cannot do, and it is the **on-chain `creator` of all 36 coins
+  pump.fun lists it under**, so it launched them rather than being given them — the same read
+  on the deployer's own 70 finds six that genuinely moved away, which is what makes it a
+  measurement rather than a null result. `43x1zWzj…` and `5P8A9bG…` have a genesis
+  byte-identical to the deployer's — the same 3.500000000 SOL from a custodial hot wallet in
+  the same instruction envelope, then a pump.fun create-and-buy crediting the identical
+  3.0014616 SOL, minutes later. **Common ownership is still not formally established:**
+  nothing on-chain proves ownership, and this stays a measured grouping. **Two discriminators
+  the source report offered are withdrawn rather than softened** — `meta.uxento.io` is a
+  third-party deploy platform serving thousands of unrelated wallets a day, not the
+  operator's own host, and those three launches never shared a tool fee account; the only
+  address common to all three is pump.fun's own protocol fee recipient, which every launch
+  pays. *(`kol-cohort-vs-outsider-funding/report.md` §2.1, §4.4;
+  `slot-zero-uxento-host-reexamine/report.md` §3, §4.2, §5.2;
+  `slot-zero-fee-accounts-protocol-or-tool/report.md` §3.)*
 - **The outsider edge is real, thin, and bought.** `5brv79eF…` keeps **+47.8 SOL of +100.9
   gross** over 49 exactly-priced launches — it pays away over half in priority fees, and is
   still the best result in 20,388 wallets outside the operation's own six. Its outsider status is

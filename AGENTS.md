@@ -193,8 +193,8 @@ view:
 3. **`dev_exit_complete = 0`** marks seven window-truncated launches; `DevExitTruncated`
    has no complete net figure, only a pointer to the correct file.
 
-Four data hazards callers must not undo — the first three the loader handles, the fourth is a
-permanent limit of the evidence:
+Six data hazards callers must not undo — the first three the loader handles, the last three are
+permanent limits of the evidence:
 
 - **Symbols are not unique — key on `mint`.** Two launches are called `maxxing`, one of them
   the operator's best result ever.
@@ -215,6 +215,21 @@ permanent limit of the evidence:
   it was declined (captain decision 114a). `README.md` → "The ceiling of the method: shared
   custodial venues" owns the claim: cite it, do not restate it, and do not let a verdict in a
   new view read broader than it.
+- **A SHARED VENDOR ARTEFACT NEVER ATTRIBUTES A WALLET TO AN OPERATION — a metadata host, a fee
+  account, a deploy preset, a description string.** Before calling any artefact "the operator's
+  own", count the distinct unrelated wallets that also carry it; on pump.fun that count is free and
+  it is usually in the thousands. **This trap fired twice in two days and both times it reached
+  committed prose**: `meta.uxento.io`, named in `README.md` and `src/cohort.ts` as "the operator's
+  own metadata host", is a commercial third-party deploy platform (23 unrelated creator wallets in one
+  33-minute live sample, thousands of launches a day, and this operation in none of them), and the
+  cohort genesis's "same tool fee accounts" were never shared — the only account common to all three
+  launches is pump.fun's own protocol fee recipient, which every launch pays. Both clauses are now
+  deleted and `src/cohort.ts` → `CREATE_SLOT_COHORT` carries the discriminators that actually hold
+  (behavioural and on-chain, no vendor involved). Captain decision 371a; the measurements are
+  `slot-zero-uxento-host-reexamine/report.md` and
+  `slot-zero-fee-accounts-protocol-or-tool/report.md`, both held in firstmate's records, not in this
+  repo — the second's §5.3 (*is this thing reached by unrelated third parties?*) is the general form
+  of the test.
 - **The tape is one deployer over three regimes, and cutting it by month hides them.** The
   create slot paid outsiders only between **2026-03-12 and 2026-06-04** — before that the prize
   was ~0 per launch, after it ~1/4 of the window's. Both boundaries fall out of a blind

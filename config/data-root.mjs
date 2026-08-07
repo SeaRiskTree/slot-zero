@@ -183,19 +183,27 @@ export const GRADUATED_LIFE_TAPE_DIR = datasetDir(GRADUATED_LIFE_TAPE);
  * was looked for, and HOW to point the tool somewhere else. A raw `ENOENT` on a `.jsonl.gz` deep
  * inside `window/` says none of them.
  *
+ * The sentence explaining WHERE has to be about the path that was actually looked in. A directory
+ * handed in — a `--data-dir` flag, `Tape.load({ dataDir })` — was not decided by the root at all,
+ * and explaining it by the root anyway is the confident, well-formed, wrong answer this repo keeps
+ * refusing: it sends an operator who mistyped a flag to go and check an environment variable.
+ *
  * @param {string} dataset One of {@link DATASETS}.
  * @param {string} [dir] The directory that was looked in. Defaults to the one `env` resolves to,
- *   never to the ambient one — a message that names a directory the reported root does not point at
- *   is the confident, well-formed, wrong answer this repo keeps refusing.
+ *   never to the ambient one.
  * @param {Record<string, string | undefined>} [env]
  * @returns {string}
  */
 export function missingDatasetMessage(dataset, dir, env = process.env) {
+  const resolved = DATASETS.includes(dataset) ? datasetDir(dataset, env) : undefined;
   const looked = dir ?? datasetDir(dataset, env);
   const configured = env[DATA_ROOT_ENV_VAR] !== undefined;
-  const where = configured
-    ? `${DATA_ROOT_ENV_VAR} is set, so the root is where that variable points.`
-    : `${DATA_ROOT_ENV_VAR} is not set, so the root defaulted to ${DEFAULT_DATA_ROOT}.`;
+  const where =
+    dir !== undefined && dir !== resolved
+      ? `That directory was supplied directly, so no data root was consulted and ${DATA_ROOT_ENV_VAR} did not choose it.`
+      : configured
+        ? `${DATA_ROOT_ENV_VAR} is set, so the root is where that variable points.`
+        : `${DATA_ROOT_ENV_VAR} is not set, so the root defaulted to ${DEFAULT_DATA_ROOT}.`;
   return (
     `the ${dataset} dataset is not at ${looked}\n` +
     `  ${where}\n` +
@@ -214,13 +222,14 @@ export function missingDatasetMessage(dataset, dir, env = process.env) {
  *
  * @param {string} dataset One of {@link DATASETS}.
  * @param {string} [dir] An explicit directory — a `--data-dir` flag, say — instead of the resolved
- *   one. Checked and reported the same way, so an operator who points a tool at the wrong directory
- *   gets the same sentence as one who has no data.
+ *   one. Checked the same way, and reported as what it is: {@link missingDatasetMessage} is told
+ *   whether the path was handed in or resolved, so the sentence it prints is true of the path it
+ *   names.
  * @param {Record<string, string | undefined>} [env]
  * @returns {string} The directory that was checked, so this can wrap an assignment.
  */
 export function requireDataset(dataset, dir, env = process.env) {
   const target = dir ?? datasetDir(dataset, env);
-  if (!existsSync(target)) throw new Error(missingDatasetMessage(dataset, target, env));
+  if (!existsSync(target)) throw new Error(missingDatasetMessage(dataset, dir, env));
   return target;
 }

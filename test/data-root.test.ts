@@ -21,7 +21,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 import {
   DATASETS,
@@ -197,7 +197,34 @@ describe('the data root resolves', () => {
     // And it distinguishes the two situations, because the fix is different: the variable is
     // pointed at the wrong place, or it is unset and the default is empty.
     expect(message).toMatch(/is set, so the root is where that variable points/);
-    expect(missingDatasetMessage(POPULATION_TAPE, dir, {})).toMatch(/is not set, so the root defaulted/);
+    expect(missingDatasetMessage(POPULATION_TAPE, undefined, {})).toMatch(
+      /is not set, so the root defaulted/,
+    );
+  });
+
+  it('says a SUPPLIED directory was supplied, rather than blaming a root it never consulted', () => {
+    // `--data-dir /wrong` and `Tape.load({ dataDir })` reach this message, and the root had no
+    // part in choosing that path. Explaining it by the variable sends an operator who mistyped a
+    // flag off to check their environment — the confident, well-formed, wrong answer one layer
+    // below a measurement.
+    const supplied = '/tmp/no-such-slot-zero-root/some-other-directory';
+    for (const env of [{}, { [DATA_ROOT_ENV_VAR]: '/tmp/no-such-slot-zero-root' }]) {
+      const message = missingDatasetMessage(POPULATION_TAPE, supplied, env);
+      expect(message).toContain(supplied);
+      expect(message).toMatch(/supplied directly, so no data root was consulted/);
+      expect(message).not.toMatch(/the root is where that variable points|the root defaulted/);
+      // It still says WHAT is missing and HOW to point elsewhere.
+      expect(message).toContain(POPULATION_TAPE);
+      expect(message).toContain(DATA_ROOT_ENV_VAR);
+    }
+    expect(() => requireDataset(POPULATION_TAPE, supplied, {})).toThrow(
+      /supplied directly, so no data root was consulted/,
+    );
+    // A supplied path that IS the resolved one is not "supplied instead of the root", so it keeps
+    // the root's own sentence.
+    expect(missingDatasetMessage(POPULATION_TAPE, datasetDir(POPULATION_TAPE, {}), {})).toMatch(
+      /is not set, so the root defaulted/,
+    );
   });
 
   it('names the directory the SUPPLIED environment resolves to, not the ambient one', () => {
@@ -220,8 +247,8 @@ describe('the data root resolves', () => {
     expect(() => requireDataset(POPULATION_TAPE, '/tmp/no-such-slot-zero-root/population-tape')).toThrow(
       new RegExp(DATA_ROOT_ENV_VAR),
     );
-    // An explicit directory — a `--data-dir` flag, say — is checked and reported the same way, so
-    // an operator who mistypes a path gets the same sentence as one who has no data at all.
+    // An explicit directory — a `--data-dir` flag, say — is checked the same way and reported as
+    // what it is, and it comes back unchanged when the data is there.
     expect(requireDataset(POPULATION_TAPE, POPULATION_TAPE_DIR)).toBe(POPULATION_TAPE_DIR);
   });
 
@@ -244,14 +271,19 @@ describe('a fetched data root is verified, never trusted', () => {
   // exists and holds most of its files reads as data, and several suites choose their population
   // by reading `window/` and `life/` with readdirSync, so a short fetch moves a published number
   // instead of raising ENOENT.
+  const created: string[] = [];
   const write = (files: Record<string, string>): string => {
     const root = mkdtempSync(join(tmpdir(), 'slot-zero-root-'));
+    created.push(root);
     for (const [path, content] of Object.entries(files)) {
       mkdirSync(join(root, path, '..'), { recursive: true });
       writeFileSync(join(root, path), content);
     }
     return root;
   };
+  afterAll(() => {
+    for (const root of created) rmSync(root, { recursive: true, force: true });
+  });
   const sha = (s: string) => createHash('sha256').update(s).digest('hex');
   /** A minimal but STRUCTURALLY REAL store: a manifest plus the files it lists. */
   const store = (extra: Record<string, string> = {}) => {

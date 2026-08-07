@@ -1276,7 +1276,8 @@ committed** (captain decisions 317a and 318a, 2026-08-06):
    **AND THE MANDATORY LEG RESERVES FIRST, BY RULE RATHER THAN BY CONTROL FLOW** (the pre-Gate-3
    hazard round of 2026-08-06, closing a finding of PR 65's review). 320a made both legs draw on one
    reservation; it did not change which of them reserved FIRST, and the control flow had the wrong
-   one there — this leg is built inside `runEntrySourcePlan`, which runs before Stage 1 enumerates.
+   one there — this leg was built whole inside `runEntrySourcePlan`, which runs before Stage 1
+   enumerates.
    So the EXPENSIVE OPTIONAL leg billed its coverage probe, the CHEAP MANDATORY enumeration was then
    priced against what was left, fell back to the RPC walk, and `priceWalkFallbackCliff` refused the
    whole run at exit 2 **before its first walk request** — billed, and with nothing produced. Under
@@ -1548,8 +1549,11 @@ one that would pay.**
 both paths ask — *will this run read an entry fill source at all* — written once because two
 expressions that merely agree is captain decision 144a's defect and is exactly how the run path came
 to sit outside a guard the plan path already had. The run path's half is `screen.mjs` →
-`runEntryFillSource`: it returns `null` when Stage 2 is off, having touched no constructor, and
-otherwise builds, asks and guards exactly as before. It is **not** `planEligibility` and must never
+`runEntrySourcePlan` (with `runEntryFillSource` the single-call form of both of its phases, kept as
+the seam a test substitutes a registry through): it returns `null` when Stage 2 is off, having
+touched no constructor, and otherwise builds, asks and guards exactly as before — since the
+2026-08-06 hazard round, across the two phases described under "AND ORDERING THE RESERVATIONS DOES
+NOT ORDER THE SPEND" above. It is **not** `planEligibility` and must never
 become it — a plan refuses to build a billed or undeclared construction, a run builds both, and the
 existing source-text pins say so. Stage 2's own block is then guarded by `entryFillSource !== null`
 rather than by a second reading of `opts.stage2`, so constructing and scoring are one decision.

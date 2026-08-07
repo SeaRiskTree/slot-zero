@@ -1724,7 +1724,7 @@ export const DUNE_LEG_ORDER = ['enumeration', 'entry'];
  * **RESERVATION ORDER IS A RULE THIS LEDGER ENFORCES, NOT WHATEVER THE CONTROL FLOW HAPPENED TO DO:
  * the CHEAP MANDATORY leg reserves before the EXPENSIVE OPTIONAL one spends.** 320a made both legs
  * draw on one reservation; it did not change which of them reserved FIRST, and the control flow put
- * the wrong one there. Stage 2's entry fill source is built before Stage 1 enumerates, so it
+ * the wrong one there. Stage 2's entry fill source was built before Stage 1 enumerated, so it
  * reserved first, BILLED its trade-coverage result read, and only then was the enumeration priced
  * against what was left. An enumeration priced out there falls back to the RPC walk, and
  * `priceWalkFallbackCliff` refuses the whole run before its first walk request — so the run ended

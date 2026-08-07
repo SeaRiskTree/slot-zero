@@ -1723,8 +1723,10 @@ export async function main(opts, env, out, err, seam = {}) {
     // page.
     //
     // THE RUN PATH NOW GATES ON THE SAME PREDICATE, and the KNOWN GAP recorded here is CLOSED.
-    // `entryFillSourceIsRead` is that one condition; `runEntryFillSource` below is the run path's
-    // half of it. Both are deliberately conditional — see `entryFillSourceIsRead` for the two
+    // `entryFillSourceIsRead` is that one condition; `runEntrySourcePlan` below — the free half of
+    // the run path's two-phase construction — is the run path's half of it, and
+    // `runEntryFillSource` is the single-call form of the same thing for a caller that wants both
+    // phases at once. Both are deliberately conditional — see `entryFillSourceIsRead` for the two
     // defects an unconditional construction becomes at the Gate 3 cutover, and do not restore one.
     if (entryFillSourceIsRead(opts)) {
       try {
@@ -1878,7 +1880,7 @@ export async function main(opts, env, out, err, seam = {}) {
   // rather than a line on a preview. That half is exactly what captain decision 286c left alone.
   //
   // **A RUN WITH STAGE 2 OFF READS NO SOURCE, SO IT BUILDS NONE.** The construction is DELIBERATELY
-  // CONDITIONAL — `runEntryFillSource` returns `null` here rather than paying a billed coverage
+  // CONDITIONAL — `runEntrySourcePlan` returns `null` here rather than paying a billed coverage
   // probe for a leg the operator switched off, or refusing the whole run over a source that leg was
   // never going to use. Restoring the unconditional call would re-open both, invisibly, on the first
   // run that ever exercises a billed source.

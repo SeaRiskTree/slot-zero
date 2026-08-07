@@ -694,10 +694,12 @@ Two spend rules that are not negotiable, both from the vendor's own billing mode
   probe cost 0.751 billed against 0.751 of compute (2.5 kB of result), and the five-wallet
   enumeration cost 1.75 billed against 0.92 of compute (48 kB of result).
 
-The Free tier is **2,500 credits/month and SHARED** with whatever else holds the key, only 10
-private queries exist, and the allowance is now **read and priced against before a run spends** —
-`README.md` → *"The monthly credit ceiling — what it is, and what it cannot see"* owns that guard,
-its four verdicts and the three things it cannot see. What is still the operator's is the arithmetic
+The Free tier is **2,500 credits/month**, the key is the captain's alone and **not shared** with any
+other holder, only 10 private queries exist, and the allowance is now **read and priced against
+before a run spends** — against the SMALLER of the vendor's figure and the operator's own monthly cap
+(`thresholds.json` → `dune.monthlyCreditCapCredits`, captain decision 322a). `README.md` → *"The
+monthly credit ceiling — what it is, and what it cannot see"* owns that guard, its four verdicts, the
+two ceilings and the things it cannot see. What is still the operator's is the arithmetic
 *across* runs: the tool holds no state between them, the same limit `creation_walk_helius` states.
 
 ### 8.5 What the Dune route does NOT measure, and where that shows

@@ -163,3 +163,20 @@ All are stated here rather than left to look like run output:
   internal contradiction, which is evidence and not proof.
 - **Nothing routes through this statement.** `screen.mjs` selects the swap-api fill source on every
   run; Gate 3 has not been convened.
+
+> **CORRECTION, 2026-08-07 — THE "2,500-CREDIT SHARED MONTH" THIS RECORD PRICES AGAINST IS RETIRED
+> ON BOTH HALVES (captain decision 322a, and the captain's own declaration that the key is
+> unshared).** Both post-date this record. **SHARED** is no longer true at all: the key is the
+> captain's alone and no other holder spends it. What that clause was reaching for survives in a
+> different shape — the allowance is still ONE ACCOUNT's, every lane and run of this fleet draws on
+> that one total, and a SEPARATE key is a separate account with its own quota and its own period, so
+> a sufficient reading is evidence and never a reservation. `client.mjs` →
+> `ALLOWANCE_ACCOUNT_WIDE_CAVEAT` is the live wording; read it there rather than here. And **2,500
+> is no longer a fixed ceiling**: 322a makes the binding ceiling the `min()` of the vendor's reported
+> `credits_included` for the period and the operator's own `dune.monthlyCreditCapCredits`, both read
+> or configured rather than pinned in prose, so re-price the re-run against the live figures instead
+> of this sentence's.
+>
+> **NO MEASURED FIGURE IN THIS RECORD MOVES.** The ~495 credits, and every other number and balance
+> reading here, stand exactly as measured on their own date; only the ceiling they were compared
+> against has changed hands. The body is left asserting what was believed then.

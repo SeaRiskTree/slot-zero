@@ -553,15 +553,43 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   read it, and each tool's README section "The monthly credit ceiling", rather than restating the
   numbers. **Three things it cannot see, and they are on every verdict:** the counter LAGS (measured
   +6.0 credits while idle, whole-credit jumps, so a reading over-states what remains — hence a pinned
-  reserve); the key is SHARED, so a sufficient reading is evidence and never a reservation; and Dune
+  reserve); a reading is ONE ACCOUNT's — the key is unshared, but every lane of this fleet draws on
+  that account and a second key is a second account entirely — so a sufficient reading is evidence
+  and never a reservation; and Dune
   publishes NO price table for execution compute, so `worstCaseCreditsPerExecution` is a per-lane pin
   against measured executions of *these* statements — **a query that grows a `dex_solana.trades` join
   is ~9x it with nothing else failing** (measured: 0.75–0.92 credits for the creation queries against
   81.74 and 221.51 for two trade-tape joins). **One field name is an ASSUMPTION**: Dune's docs say
   `billing_periods` in the schema and `billingPeriods` in the example, no live response has been seen
   from here, and both are accepted — narrow it if one is ever settled, do not widen it.
-- **Free tier: 2,500 credits/month, SHARED, and only 10 PRIVATE QUERIES — but the account is NOT at
-  that cap, and "the slots are full" is a stale claim that once blocked a lane on nothing.**
+- **THE CEILING A RUN IS PRICED AGAINST IS THE SMALLER OF TWO REAL NUMBERS, AND THE CAP LIVES IN
+  CONFIGURATION** (captain decision 322a, 2026-08-06). One is the vendor's `credits_included` for the
+  billing period; the other is the CAPTAIN'S OWN fleet-wide monthly cap, pinned as
+  `dune.monthlyCreditCapCredits` in **both** `tools/deployer-screen/thresholds.json` and
+  `tools/creation-census/bounds.json` — never in a `.mjs`, and `test/dune-credit-ceiling.test.ts`
+  pins the two equal because a cap binding one keyed lane is not a fleet-wide total.
+  `client.mjs` → `bindingCreditCeiling` takes the `min()`; `decideAllowance` measures the PERIOD's own
+  `credits_used` against it, which is what makes a monthly cap bind on tools that hold no state
+  between runs. **It is enforced PER ACCOUNT-PERIOD, which is not the same as fleet-wide, and the gap
+  is stated rather than closed: the fleet holds MORE THAN ONE Dune key, separate keys are separate
+  ACCOUNTS with separate quotas and separate period boundaries, so two keys each honouring the cap
+  spend twice it between them with neither run wrong.** One key or a smaller cap on each is the
+  captain's decision. **Neither figure is rewritten into the other** — both, and the name of the one that
+  bound, are on every verdict (`monthlyCapCredits` / `creditsIncludedVendor` / `bindingCeiling`) and
+  in the refusal's own sentences, so an operator reads whether to raise the cap or wait for the period
+  to roll. **It is a `min()` precisely because both sides move, and they moved during the
+  implementation**: one key read 2,500 included / 2,044.357 used over 2026-07-29 → 2026-08-29 (live
+  `POST /usage`, 2026-08-07T01:42:32Z) while a second key reported 4,000 included / 0 used over
+  2026-08-06 → 2026-09-06. **NEVER quote either figure or either period — read them from the response
+  the key in use returned**, which is what the guard does. On the free key the vendor binds and every
+  verdict is what it was before 322a; where the plan equals the cap, a tie is reported as the
+  vendor's, since raising the cap then buys nothing. An unreadable or
+  non-positive cap REFUSES, in the same place and by the same rule as an unpriceable plan, rather
+  than leaving a lane silently uncapped. Each tool's README section "The monthly credit ceiling" owns
+  the rest; do not restate the figures, and re-read the live balance rather than quoting one.
+- **Free tier: 2,500 credits/month on that plan, UNSHARED, and only 10 PRIVATE QUERIES — but
+  the account is NOT at that cap, and "the slots are full" is a stale claim that once blocked a lane
+  on nothing.**
   **Never take a saved-query count on trust; re-checking it is free of credits, not of the key:**
   `GET /api/v1/queries?limit=100` with the `X-Dune-API-Key` header lists them, and creating a
   throwaway with `POST /api/v1/query` then archiving it proves a slot is free without spending an
@@ -971,7 +999,8 @@ dev currently?"*, and the shape of the answer is the point:
 - **THOSE THREE SAMPLING CAPS ARE SOURCE-SCOPED SINCE `thresholds.json` 6.1.0, so 7 / 8 / 10 are the
   SWAP-API source's request arithmetic and nothing else's.** The Dune fill source carries its own
   three in `stage2_entry_dune` — **14 / 20 / 22** since captain decision 289b, derived in CREDITS for
-  windows scanned (308 windows, ~128 credits a run, ~19 runs against the shared 2,500-credit month).
+  windows scanned (308 windows, ~128 credits a run, ~19 runs a month against the vendor figure that
+  applied when 289b was written — read the binding ceiling live, it is now a `min()`; see 322a above).
   The two `maxCandidatesScored` were the same integer until 289b and the coincidence had to be
   disclaimed in prose; now the values themselves show the scoping. **14 is INTERIM, not terminal** —
   27 would serve the whole pooled survivor set but is sized to today's population, so the final size

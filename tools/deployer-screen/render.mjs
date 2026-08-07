@@ -29,7 +29,7 @@ import {
   launchCapPerWallet,
   priceWalkFallbackCliff,
 } from './dune.mjs';
-import { estimatePlanCredits } from './client.mjs';
+import { describeMonthlyCapCredits, estimatePlanCredits } from './client.mjs';
 import { LANDING_TIP_CAVEAT } from './entry.mjs';
 // The reach the plan quotes is DERIVED, never a second copy of the formula: an operator reads this
 // block before authorising a run, so it has to describe the walk `readLaunchWindow` will actually do.
@@ -139,8 +139,17 @@ const MEASURED_MEDIAN_CREDITS = 320;
  * Dune's Free-tier monthly credit allowance, from their pricing page.
  *
  * Printed by the dry run so the Dune worst case has a denominator on the same screen, exactly as
- * {@link HELIUS_MONTHLY_CREDITS} does. Unlike the Helius allowance this one is **shared** with
- * whatever else holds the key, and nothing in this tool tracks the month — the dry run says so.
+ * {@link HELIUS_MONTHLY_CREDITS} does. Like the Helius allowance the key is **unshared** — no other
+ * holder spends it (captain, 2026-08-06) — but every lane of this fleet draws on the same account and
+ * nothing in this tool tracks the month, which the dry run says.
+ *
+ * **IT IS A PUBLISHED PLAN FIGURE AND NOT THIS RUN'S DENOMINATOR, AND THE DRY RUN SAYS SO.** A live
+ * run is compared against the SMALLER of two ceilings (captain decision 322a): the operator's own cap
+ * at `thresholds.json` → `dune.monthlyCreditCapCredits`, and what the vendor actually reports for the
+ * current billing period through `POST /usage`. That second one is read LIVE and per key — a
+ * different Dune credential is a different ACCOUNT with its own quota and its own period — so this
+ * constant is a Free-tier reference point that a dry run can print without a credential, never the
+ * figure any run is judged against.
  */
 const DUNE_MONTHLY_CREDITS = 2_500;
 
@@ -1199,7 +1208,7 @@ export function renderStage1(run) {
  * @param {{ creationQueryId: number, coverageQueryId: number, maxExecutionsPerRun: number,
  *   maxRequestsPerRun: number, maxResultRows: number, maxCoverageLagMs: number,
  *   minIntervalMs: number, worstCaseCreditsPerExecution: number, resultBytesPerRowCeiling: number,
- *   allowanceReserveCredits: number, allowanceTightMultiple: number,
+ *   allowanceReserveCredits: number, monthlyCreditCapCredits: number, allowanceTightMultiple: number,
  *   allowanceRequired: boolean, legFallbackHealthyWalkShare: number,
  *   legFallbackCliffMultiple: number, legFallbackMinCandidates: number }} plan.dune The pinned Dune
  *   bounds.
@@ -1589,11 +1598,31 @@ export function renderDryRun(plan) {
         `  A DEPLOYER ABOVE THE CAP IS REFUSED, NOT TRUNCATED QUIETLY: its rows are a prefix, its`,
       );
       L.push('  true count comes back beside them, and it alone falls back to the creation walk.');
+      // THE TWO CEILINGS, BOTH OF THEM, BEFORE ANYTHING IS SPENT (captain decision 322a). A live
+      // run compares its worst case against whichever is SMALLER, and prints which one bound. THE
+      // DRY RUN HOLDS NO CREDENTIAL, so it cannot read the vendor's half at all — it says so, rather
+      // than standing a pinned figure in for the one a run would be judged against (ruling 324a).
+      L.push('  vendor plan                   NOT READ HERE: a dry run holds no credential, and the figure is per');
+      L.push('                                KEY — a separate credential is a separate ACCOUNT with its own quota');
+      L.push('                                and its own period. The key is UNSHARED — no other holder spends it.');
       L.push(
-        `  Free tier ${DUNE_MONTHLY_CREDITS.toLocaleString('en-US')} credits/month and SHARED with whatever else holds this key.`,
+        `                                Free-tier REFERENCE POINT only, never this run's denominator: ` +
+          `${DUNE_MONTHLY_CREDITS.toLocaleString('en-US')} credits/month.`,
       );
-      L.push('  NOTHING HERE TRACKS THE MONTH: this tool holds no state between runs, so the monthly');
-      L.push('  arithmetic is yours — the same limit the Helius block below states.');
+      // A MISSING OR NON-NUMERIC PIN RENDERS THE NAMED REFUSAL, NEVER A CRASH. This line used to
+      // interpolate the pin directly, so the one operator state 322a's whole config surface is built
+      // to answer legibly — a cap just edited and typoed — produced a bare TypeError here instead.
+      L.push(
+        `  operator cap                  ${describeMonthlyCapCredits(d.monthlyCreditCapCredits)} ` +
+          `(thresholds.json -> dune.monthlyCreditCapCredits)`,
+      );
+      L.push('                                A live run is refused against the SMALLER of this cap and whatever the');
+      L.push("                                vendor reports for the period of the key in use, and says which one");
+      L.push('                                bound — so raise the cap, or wait for the period to roll.');
+      L.push('  NOTHING HERE TRACKS THE MONTH: this tool holds no state between runs, so how many runs');
+      L.push('  to spend the cap on is yours — the same limit the Helius block below states. The cap');
+      L.push("  itself binds anyway: it is applied to the PERIOD's own spend rather than to a run — but");
+      L.push('  PER ACCOUNT, so two keys each honouring it spend twice it between them.');
       L.push(`  pacing                        ${d.minIntervalMs}ms between requests (a courtesy floor; unmeasured)`);
       L.push('');
       L.push('  EVERY COUNT SHIPS WITH ITS OWN COVERAGE PROBE, and a count reaching outside the');

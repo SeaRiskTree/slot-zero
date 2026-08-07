@@ -127,11 +127,32 @@ not).
 
 ### The monthly credit ceiling — checked, not discovered by hitting
 
-**The ceiling is credits per BILLING PERIOD, and the period is not a calendar month.** Free tier:
-2,500 credits, and this account's period was measured running **2026-07-29 → 2026-08-29** — it
-resets on a subscription anniversary. Three units are involved and they are not interchangeable:
-credits are the allowance, **executions** are billed whether or not they succeed, and result
-**bytes** are billed separately at ~20 credits/MB.
+**The ceiling is credits per BILLING PERIOD, the period is not a calendar month, and it is not the
+same period on every key.** One of this fleet's Dune accounts was measured running **2026-07-29 →
+2026-08-29** and another runs **2026-08-06 → 2026-09-06** — they reset on subscription anniversaries.
+**A separate key is a separate ACCOUNT** with its own quota and its own period; read both out of the
+`POST /usage` response the key in use returned, and pin neither. Three units are involved and they are not interchangeable: credits are the allowance,
+**executions** are billed whether or not they succeed, and result **bytes** are billed separately at
+~20 credits/MB.
+
+**TWO CEILINGS APPLY AND THE SMALLER ONE BINDS** (captain decision 322a, 2026-08-06). One is the
+**vendor's** `credits_included` for the current period — 2,500 on the Free tier. The other is the
+**operator's own monthly cap**, `bounds.json` → `dune.monthlyCreditCapCredits`, which is where an
+operator changes it. That cap is a **GLOBAL policy number**: one fleet-wide monthly total
+across every lane and project that touches Dune, so `tools/deployer-screen/thresholds.json` carries
+the same key with the same value and `test/dune-credit-ceiling.test.ts` pins the two equal — neither
+keyed tool may import the other, so one number across both is a duplicated value held together by a
+test, exactly as the credit guard's own text is. **An operator changing the cap changes both files.**
+**What is ENFORCED is per account-period**, because that is the only counter that exists: the fleet
+holds more than one Dune key, and two keys each honouring the cap spend twice it between them with
+neither run wrong. One key, or a smaller cap on each, is the captain's call.
+
+It binds despite this lane holding no state between runs, because `client.mjs` →
+`bindingCreditCeiling` takes the `min()` and the comparison is against the PERIOD's own
+`credits_used`, which is the account's running total rather than a run's. Both figures and the name
+of the one that bound reach every verdict, so a refusal says whether to raise the cap or wait for the
+period to roll. A cap **above** the vendor's figure changes no verdict at all — which is the point:
+a cap that needlessly deferred a census would fail the requirement as surely as an overspend would.
 
 **Consumption is read from `POST /api/v1/usage`** — free, consumes no credits, reporting
 `credits_used` / `credits_included` per period. `client.mjs` → `readUsage` fetches it,
@@ -154,21 +175,30 @@ returned billing period contains the instant of the reading**, so the CURRENT pe
 established (we POST an empty body, which is documented to return exactly that period, so a
 non-bracketing answer means something is wrong and the newest listed period is *not* a substitute);
 or **the plan itself did not price to a finite number of credits**, which a missing or non-numeric
-pinned bound produces. The last one refuses even under `allowanceRequired: false`, because that flag
-waives an unread *balance* and here it is the run's own cost that is unknown.
+pinned bound produces — **and the operator's cap is checked in that same place and by that same
+rule**, so a cap that is missing, zero or non-numeric refuses rather than leaving this lane silently
+uncapped. The last two refuse even under `allowanceRequired: false`, because that flag waives an
+unread *balance* and here it is the run's own cost, or its own ceiling, that is unknown.
 
 **This lane has no fallback** — unlike the screen, which walks the Solana RPC when Dune refuses, a
 census with no Dune answer is no census. So refusing costs one deferred run, while proceeding blind
 costs a billed execution that returns nothing and cannot be retried this period. `--dry-run`, the
-default, prints the worst case with **no key at all**.
+default, prints the worst case with **no key at all** — and where the cap pin itself is missing or
+non-numeric it prints that named refusal in place of a figure, in the same wording a live run refuses
+in (`client.mjs` → `describeMonthlyCapCredits`, the one renderer for both keyed lanes), so a typoed
+cap reads as the named state rather than as `undefined`.
 
 **What the guard cannot see** — and both caveats travel on every verdict, passing ones included:
 
 - **The counter LAGS.** Measured: `credits_used` rose **+6.0 while the account was idle**, in
   whole-credit jumps. A reading is a *floor* on spend and a *ceiling* on what remains, so
   `allowanceReserveCredits` is held back before any comparison.
-- **The key is SHARED.** Another holder can spend the remainder between our reading and our
-  execution. *A sufficient reading is evidence, never a reservation.*
+- **A reading is ONE ACCOUNT's, and the lanes are many.** The key is the captain's alone and is
+  **not shared** with another holder (captain, 2026-08-06) — which is what makes a configured cap
+  enforceable at all — but every lane and run of this fleet draws on that account's total and nothing
+  tracks it between runs, so a sibling run can spend the remainder between our reading and our
+  execution, and a **different key** is a different account this reading cannot see. *A sufficient reading is evidence, never a reservation.* **Unshared is not the same
+  claim as "the counter is exact"**: only the first changed, and the reserve above still comes off.
 - **Execution compute is not predictable from the vendor** — Dune publishes no price table — so
   `worstCaseCreditsPerExecution` is a per-lane pin against measured executions of comparable
   statements. `COHORT_SQL` growing a trade-tape join would break it silently.

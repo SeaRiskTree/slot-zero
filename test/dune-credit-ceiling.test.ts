@@ -1,8 +1,9 @@
 /**
  * **The Dune monthly credit ceiling: a thing this project can SEE and REFUSE against.**
  *
- * Dune bills a SHARED monthly allowance (Free tier: 2,500 credits) and a FAILED execution is billed
- * exactly like a successful one. Before the guard these tests pin, both keyed tools discovered that
+ * Dune bills a monthly allowance per ACCOUNT — capped again by the operator's own configured
+ * number since captain decision 322a, and the smaller of the two binds — and a FAILED execution is
+ * billed exactly like a successful one. Before the guard these tests pin, both keyed tools discovered that
  * ceiling by hitting it — the shape being an HTTP 402 partway through a multi-execution run that
  * leaves neither a result nor the credits to retry. The measured case that motivated the work: one
  * venue-research investigation spent ~350 credits, about 14% of a month, in a single sitting
@@ -30,7 +31,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,9 +43,12 @@ import {
   estimatePlanCredits,
   localCreditEstimate,
   parseUsageResponse,
+  ALLOWANCE_ACCOUNT_WIDE_CAVEAT,
   ALLOWANCE_LAG_CAVEAT,
-  ALLOWANCE_SHARED_CAVEAT,
+  describeMonthlyCapCredits,
   LOCAL_ESTIMATE_CAVEAT,
+  MONTHLY_CAP_PIN,
+  bindingCreditCeiling,
   EXPORT_CREDITS_PER_MB,
   USAGE_PATH,
 } from '../tools/deployer-screen/client.mjs';
@@ -64,7 +68,18 @@ import {
 import type { DuneCreditLedger } from '../tools/deployer-screen/dune.mjs';
 import { agreementExecutionsFor, tradeFillSpendPlan } from '../tools/deployer-screen/dune-fills.mjs';
 import { buildDuneEntryFillSource } from '../tools/deployer-screen/screen.mjs';
-import { EXIT, main as censusMain, readBounds } from '../tools/creation-census/run.mjs';
+import {
+  EXIT,
+  checkDuneAllowance as censusCheckDuneAllowance,
+  main as censusMain,
+  readBounds,
+} from '../tools/creation-census/run.mjs';
+import {
+  ALLOWANCE_RESERVE_CREDITS as REPRODUCTION_RESERVE,
+  checkReproductionAllowance,
+  estimateReproductionCredits,
+  monthlyCreditCapCredits as reproductionCapCredits,
+} from '../tools/deployer-screen/dune-reproduction.mjs';
 
 const SCREEN_CLIENT = fileURLToPath(new URL('../tools/deployer-screen/client.mjs', import.meta.url));
 const CENSUS_CLIENT = fileURLToPath(new URL('../tools/creation-census/client.mjs', import.meta.url));
@@ -99,6 +114,13 @@ function usageBody(
 function period(used: number, included = 2500, start = '2026-07-29', end = '2026-08-29') {
   return { start_date: start, end_date: end, credits_used: used, credits_included: included };
 }
+
+/**
+ * The operator's configured monthly cap, as the two keyed lanes pin it. Above the vendor's 2,500
+ * plan, so the VENDOR figure binds in every case that does not deliberately say otherwise — which is
+ * what keeps the cases below comparable with what this guard did before captain decision 322a.
+ */
+const CAP = 4000;
 
 const PLAN = {
   lane: 'test',
@@ -145,6 +167,7 @@ describe('one rule, two keyed tools, and the copies cannot drift', () => {
         allowance: a.allowance,
         unreadableReasons: a.reasons,
         reserveCredits: 25,
+        monthlyCapCredits: CAP,
         tightMultiple: 2,
         allowanceRequired: true,
       };
@@ -248,6 +271,7 @@ describe('what the vendor says, and what this refuses to read into it', () => {
       allowance: stale.allowance,
       unreadableReasons: stale.reasons,
       reserveCredits: 25,
+      monthlyCapCredits: CAP,
       tightMultiple: 2,
       allowanceRequired: true,
     });
@@ -382,6 +406,7 @@ describe('the decision, and the two things it cannot see', () => {
       allowance,
       unreadableReasons: ['stub'],
       reserveCredits: 25,
+      monthlyCapCredits: CAP,
       tightMultiple: 2,
       allowanceRequired: true,
       ...over,
@@ -456,12 +481,18 @@ describe('the decision, and the two things it cannot see', () => {
         estimate: estimatePlanCredits({ ...PLAN, creditsPerExecution: undefined } as never),
         allowance: rich,
         reserveCredits: 25,
+        monthlyCapCredits: CAP,
         tightMultiple: 2,
         allowanceRequired: true,
       } as never);
       expect(broken.verdict).toBe('unreadable');
       expect(broken.ok).toBe(false);
-      expect(broken.reasons.join(' ')).toMatch(/not a finite number of credits/);
+      expect(broken.reasons.join(' ')).toMatch(/not a finite positive number of credits/);
+      // AND IT NAMES THE BOUND THAT ACTUALLY BROKE. This branch fires for three different causes,
+      // so an operator whose plan or reserve is unpriceable must not be sent to the cap — the one
+      // bound that read fine, and the one whose lever (raise it) would change nothing here.
+      expect(broken.reasons.join(' ')).toMatch(/the plan's worst case priced to/);
+      expect(broken.reasons.join(' ')).not.toContain(MONTHLY_CAP_PIN);
 
       // A non-finite RESERVE is the same failure from the other side: it makes `spendable` NaN.
       const noReserve = decideOne({
@@ -469,11 +500,14 @@ describe('the decision, and the two things it cannot see', () => {
         estimate,
         allowance: rich,
         reserveCredits: Number.NaN,
+        monthlyCapCredits: CAP,
         tightMultiple: 2,
         allowanceRequired: true,
       } as never);
       expect(noReserve.verdict).toBe('unreadable');
       expect(noReserve.ok).toBe(false);
+      expect(noReserve.reasons.join(' ')).toMatch(/the reserve priced to/);
+      expect(noReserve.reasons.join(' ')).not.toContain(MONTHLY_CAP_PIN);
 
       // And `allowanceRequired: false` does NOT waive it — that flag waives an unread BALANCE, and
       // here the plan's own cost is what could not be established, so there is nothing to waive.
@@ -482,6 +516,7 @@ describe('the decision, and the two things it cannot see', () => {
         estimate: estimatePlanCredits({ ...PLAN, bytesPerRow: 'many' } as never),
         allowance: rich,
         reserveCredits: 25,
+        monthlyCapCredits: CAP,
         tightMultiple: 2,
         allowanceRequired: false,
       } as never);
@@ -489,20 +524,539 @@ describe('the decision, and the two things it cannot see', () => {
     }
   });
 
-  it('always carries what it cannot see — the lag and the shared key', () => {
+  it('always carries what it cannot see — the lag, and one account many lanes', () => {
     // These two are the honest limits of the whole guard and they are not optional on any verdict,
     // including the passing ones. A guard whose limitations only appear on failure reads as
     // authoritative exactly when it is being trusted.
+    //
+    // THE SECOND ONE WAS CORRECTED BY CAPTAIN DECISION 322a AND NOT REMOVED. The key is the
+    // captain's alone, so "another holder can spend it between this reading and this run" stopped
+    // being true; every lane and run of this fleet still draws on one monthly total and nothing
+    // tracks it between runs, so a reading is still evidence and never a reservation.
     for (const allowance of [parseUsageResponse(usageBody([period(0)]), NOW_MS).allowance, null]) {
       const d = decide(allowance);
-      expect(d.caveats).toEqual([ALLOWANCE_LAG_CAVEAT, ALLOWANCE_SHARED_CAVEAT]);
+      expect(d.caveats).toEqual([ALLOWANCE_LAG_CAVEAT, ALLOWANCE_ACCOUNT_WIDE_CAVEAT]);
     }
     expect(ALLOWANCE_LAG_CAVEAT).toMatch(/\+6\.0 credits while/);
-    expect(ALLOWANCE_SHARED_CAVEAT).toMatch(/A sufficient reading is evidence, never a reservation/);
+    expect(ALLOWANCE_ACCOUNT_WIDE_CAVEAT).toMatch(/A sufficient reading is evidence, never a reservation/);
     // And the operator-facing rendering carries both, so they reach a terminal and not only a doc.
     const lines = describeAllowanceDecision(decide(null)).join('\n');
     expect(lines).toContain(ALLOWANCE_LAG_CAVEAT);
-    expect(lines).toContain(ALLOWANCE_SHARED_CAVEAT);
+    expect(lines).toContain(ALLOWANCE_ACCOUNT_WIDE_CAVEAT);
+    // "Unshared" and "the counter is exact" are different claims and only the first one changed.
+    // The reserve is still held back, and the lag caveat still says why.
+    expect(ALLOWANCE_ACCOUNT_WIDE_CAVEAT).toMatch(/UNSHARED/);
+    expect(ALLOWANCE_LAG_CAVEAT).toMatch(/subtracts a pinned reserve before comparing/);
+    expect(decide(parseUsageResponse(usageBody([period(0)]), NOW_MS).allowance).reserveCredits).toBe(25);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// CAPTAIN DECISION 322a: the captain's own monthly cap BINDS, and the vendor's plan is only one half
+// of the comparison.
+//
+// The defect: `decideAllowance` compared a plan against `creditsRemaining`, derived from whatever
+// the vendor reported as `credits_included`. Nothing anywhere knew the captain's cap existed. At a
+// plan of 2,500 under a cap of 4,000 that was invisible — and on an account upgraded past the cap it
+// would have spent straight through the captain's number without noticing.
+//
+// BOTH HALVES OF THE REQUIREMENT ARE TESTED, because they fail in opposite directions and a guard
+// that only ever exercises one side of a `min()` has not been tested at all: a cap that can be
+// exceeded fails "I do not want to exceed it", and a cap that needlessly refuses runs fails "still
+// use it all in a smart way".
+
+describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
+  const estimate = estimatePlanCredits(PLAN);
+  const decide = (allowance: unknown, monthlyCapCredits: unknown = CAP) =>
+    screenDecideAllowance({
+      plan: PLAN,
+      estimate,
+      allowance,
+      reserveCredits: 25,
+      monthlyCapCredits,
+      tightMultiple: 2,
+      allowanceRequired: true,
+    } as never);
+
+  /** A vendor plan LARGER than the operator's cap — the configuration this guard exists for. */
+  const upgraded = (used: number) => parseUsageResponse(usageBody([period(used, 10_000)]), NOW_MS).allowance;
+  /** A vendor plan SMALLER than the cap — today's account, where the vendor is what binds. */
+  const freeTier = (used: number) => parseUsageResponse(usageBody([period(used, 2_500)]), NOW_MS).allowance;
+
+  it('resolves the two into the smaller, with a tie going to the vendor', () => {
+    expect(bindingCreditCeiling(4_000, 10_000)).toEqual({
+      ceilingCredits: 4_000,
+      binding: 'operator-cap',
+      monthlyCapCredits: 4_000,
+      vendorCreditsIncluded: 10_000,
+    });
+    expect(bindingCreditCeiling(4_000, 2_500).ceilingCredits).toBe(2_500);
+    expect(bindingCreditCeiling(4_000, 2_500).binding).toBe('vendor-plan');
+    // At equality either label is arithmetically honest, so it goes to the externally-imposed one:
+    // raising the cap then buys nothing, which is what `vendor-plan` tells an operator to expect.
+    expect(bindingCreditCeiling(4_000, 4_000).binding).toBe('vendor-plan');
+  });
+
+  it('THE CAP BINDS when the cap is the smaller number, and the vendor still had room', () => {
+    // 10,000 included, 6,500 used: the vendor says 3,500 remain and would clear this plan easily.
+    // The captain's 4,000 cap says 4,000 - 6,500 is nothing left at all, and the cap is what refuses.
+    const d = decide(upgraded(6_500));
+    expect(d.verdict).toBe('insufficient');
+    expect(d.ok).toBe(false);
+    expect(d.bindingCeiling).toBe('operator-cap');
+    expect(d.creditsIncluded).toBe(4_000);
+    expect(d.creditsRemaining).toBe(0);
+    // NEITHER FIGURE IS SILENTLY REWRITTEN INTO THE OTHER: both survive on the decision and in the
+    // sentences, so an operator can tell a cap they set from a plan they were sold.
+    expect(d.monthlyCapCredits).toBe(4_000);
+    expect(d.creditsIncludedVendor).toBe(10_000);
+    const said = d.reasons.join(' ');
+    expect(said).toMatch(/THE OPERATOR CAP is what refused this run/);
+    expect(said).toContain('4000');
+    expect(said).toContain('10000');
+    expect(said).toContain(MONTHLY_CAP_PIN);
+    // And which lever clears it: raise the cap, or wait. Both are named, and the reserve is stated.
+    expect(said).toMatch(/raising dune\.monthlyCreditCapCredits clears it now/);
+    expect(said).toMatch(/The period rolls on 2026-08-29/);
+    expect(said).toMatch(/25-credit reserve/);
+  });
+
+  it('THE VENDOR FIGURE BINDS when it is the smaller number, and says the cap is not the fix', () => {
+    // The mirror, and the case a `min()` that only ever consulted the cap would get wrong: at the
+    // Free tier the vendor's 2,500 is below the captain's 4,000, so the vendor is what refuses and
+    // raising the cap would change nothing. An operator has to be able to tell these apart.
+    const d = decide(freeTier(2_500 - (estimate.worstCaseCredits - 1)));
+    expect(d.verdict).toBe('insufficient');
+    expect(d.bindingCeiling).toBe('vendor-plan');
+    expect(d.creditsIncluded).toBe(2_500);
+    expect(d.monthlyCapCredits).toBe(4_000);
+    expect(d.creditsIncludedVendor).toBe(2_500);
+    const said = d.reasons.join(' ');
+    expect(said).toMatch(/THE VENDOR'S PLAN is what refused this run/);
+    expect(said).toMatch(/raising dune\.monthlyCreditCapCredits would change nothing/);
+    expect(said).toContain('4000');
+    expect(said).toMatch(/The period rolls on 2026-08-29/);
+  });
+
+  it('THE NEGATIVE CONTROL: the same balance CLEARS once the cap alone is raised', () => {
+    // Without this the refusal above is consistent with a guard that refuses everything, which is a
+    // different kind of broken. One input moves — the operator's own number — and the identical
+    // balance that was refused now passes, so the cap is provably what bound it.
+    const balance = upgraded(6_500);
+    expect(decide(balance, 4_000).ok).toBe(false);
+    const raised = decide(balance, 9_000);
+    expect(raised.ok).toBe(true);
+    expect(raised.bindingCeiling).toBe('operator-cap');
+    expect(raised.creditsRemaining).toBe(2_500);
+    // And raised ABOVE the vendor's plan, the vendor takes over as the binding ceiling — the same
+    // balance, a third verdict, and every one of them names which number produced it.
+    const uncapped = decide(balance, 12_000);
+    expect(uncapped.bindingCeiling).toBe('vendor-plan');
+    expect(uncapped.creditsIncluded).toBe(10_000);
+    expect(uncapped.creditsRemaining).toBe(3_500);
+  });
+
+  it('COSTS A RUN NOTHING when it is not the smaller number — the second half of the requirement', () => {
+    // "I do not want to exceed it but still use it all in a smart way." A cap that refused runs the
+    // account could afford would fail that as surely as an overspend fails the first half. Above the
+    // vendor's plan the decision is arithmetically what it was before this guard existed, and this
+    // pins it field by field against a cap so large it can never bind.
+    for (const used of [0, 1_000, 2_400]) {
+      const at4000 = decide(freeTier(used), 4_000);
+      const atAbsurd = decide(freeTier(used), 1_000_000);
+      expect(at4000.verdict).toBe(atAbsurd.verdict);
+      expect(at4000.creditsRemaining).toBe(atAbsurd.creditsRemaining);
+      expect(at4000.spendableCredits).toBe(atAbsurd.spendableCredits);
+      expect(at4000.creditsIncluded).toBe(2_500);
+      expect(at4000.bindingCeiling).toBe('vendor-plan');
+    }
+    expect(decide(freeTier(0)).verdict).toBe('sufficient');
+  });
+
+  it('states BOTH ceilings on a PASSING verdict too, not only on a refusal', () => {
+    // A figure quoted without the other one is the silent rewrite this decision forbids, and a
+    // guard that only explains itself when it says no is read as authoritative exactly when it is
+    // being trusted.
+    for (const d of [decide(freeTier(0)), decide(upgraded(0)), decide(freeTier(2_000))]) {
+      expect(d.ok).toBe(true);
+      const said = d.reasons.join(' ');
+      expect(said).toMatch(/Two ceilings apply and the SMALLER binds/);
+      expect(said).toContain(String(d.monthlyCapCredits));
+      expect(said).toContain(String(d.creditsIncludedVendor));
+      expect(said).toContain(MONTHLY_CAP_PIN);
+    }
+    // The `tight` warning keeps its own sentence AND both ceilings.
+    const tight = decide(freeTier(2_500 - (estimate.worstCaseCredits * 1.5 + 25)));
+    expect(tight.verdict).toBe('tight');
+    expect(tight.reasons.join(' ')).toMatch(/may be the last one this period can afford/);
+    expect(tight.reasons.join(' ')).toMatch(/Two ceilings apply/);
+  });
+
+  it('REFUSES a cap it cannot read, rather than treating the vendor figure as the only ceiling', () => {
+    // The cap is read from the same untyped JSON as every other pinned bound, so a missing or
+    // non-numeric one reaches here as `undefined` or worse. Falling back to the vendor's figure
+    // would leave a lane silently uncapped — the state this decision exists to end — so an
+    // unreadable cap refuses in the same place, and by the same rule, as an unpriceable plan.
+    const rich = parseUsageResponse(usageBody([period(0)]), NOW_MS).allowance;
+    for (const bad of [undefined, null, 0, -1, Number.NaN, '4000', {}]) {
+      for (const decideOne of [screenDecideAllowance, censusDecideAllowance]) {
+        const d = decideOne({
+          plan: PLAN,
+          estimate,
+          allowance: rich,
+          reserveCredits: 25,
+          monthlyCapCredits: bad,
+          tightMultiple: 2,
+          // And `allowanceRequired: false` does NOT waive it: that flag waives an unread BALANCE,
+          // and here it is the operator's own ceiling that could not be established.
+          allowanceRequired: false,
+        } as never);
+        expect(d.verdict, JSON.stringify(bad)).toBe('unreadable');
+        expect(d.ok, JSON.stringify(bad)).toBe(false);
+        expect(d.reasons.join(' ')).toMatch(/not a finite positive number of credits/);
+        expect(d.reasons.join(' ')).toContain(MONTHLY_CAP_PIN);
+      }
+    }
+  });
+
+  it('keeps the configured cap visible when the BALANCE is what could not be read', () => {
+    // Two different unknowns, and conflating them would hide which one to go and fix.
+    const d = decide(null);
+    expect(d.verdict).toBe('unreadable');
+    expect(d.monthlyCapCredits).toBe(4_000);
+    expect(d.creditsIncludedVendor).toBeNull();
+    expect(d.bindingCeiling).toBeNull();
+    expect(d.reasons.join(' ')).toMatch(/is configured and applies/);
+  });
+
+  it('reads the plan AND the period out of the response, so two keys do not share either', () => {
+    // MEASURED FACT, 2026-08-06/07: this fleet holds more than one Dune key, and separate keys are
+    // separate ACCOUNTS — one reported credits_included 2500 over 2026-07-29 -> 2026-08-29, another
+    // 4000 over 2026-08-06 -> 2026-09-06. Nothing may carry a figure or a period from one to the
+    // other, so the same cap has to reach a different verdict per key with no code change: on the
+    // free account the vendor binds, on the larger one the two are equal and the tie goes to the
+    // vendor. The dates here are FIXTURES exercising that, not pins.
+    const free = parseUsageResponse(
+      usageBody([period(2_044.357, 2_500, '2026-07-29', '2026-08-29')]),
+      NOW_MS,
+    ).allowance;
+    const other = parseUsageResponse(
+      usageBody([period(0, 4_000, '2026-08-06', '2026-09-06')]),
+      Date.parse('2026-08-20T12:00:00.000Z'),
+    ).allowance;
+
+    const onFree = decide(free);
+    expect(onFree.bindingCeiling).toBe('vendor-plan');
+    expect(onFree.creditsIncluded).toBe(2_500);
+    expect(onFree.periodEnd).toBe('2026-08-29');
+
+    const onOther = decide(other);
+    expect(onOther.bindingCeiling).toBe('vendor-plan');
+    expect(onOther.creditsIncluded).toBe(4_000);
+    expect(onOther.periodEnd).toBe('2026-09-06');
+    expect(onOther.creditsRemaining).toBe(4_000);
+    // The cap is the same number on both, and it is the only thing that is.
+    expect(onFree.monthlyCapCredits).toBe(onOther.monthlyCapCredits);
+    // AND THE LIMIT THIS CANNOT FIX, pinned as a property rather than left in prose: each verdict is
+    // computed from ONE account's counter, so both of these clear their own cap independently and
+    // the fleet's combined spend can reach twice it. Only one key, or a smaller cap on each, closes
+    // that — a captain's decision, and the reason the guard says which account it read.
+    expect(onFree.ok && onOther.ok).toBe(true);
+  });
+
+  it("320a's ONE reservation still holds, and it holds against the CAP when the cap is what binds", async () => {
+    // The two decisions compose or neither is worth much: a run's second leg must be priced against
+    // what the first was cleared to spend, AND that arithmetic must happen under the operator's
+    // ceiling rather than the vendor's whenever the operator's is smaller. Here the vendor's plan is
+    // three times the cap and has room for both legs; the cap has room for one.
+    const BOUNDS = {
+      maxExecutionsPerRun: 2,
+      maxResultRows: 20_000,
+      worstCaseCreditsPerExecution: 25,
+      resultBytesPerRowCeiling: 121,
+      allowanceReserveCredits: 25,
+      monthlyCreditCapCredits: CAP,
+      allowanceTightMultiple: 1,
+      allowanceRequired: true,
+    };
+    const legWorstCase = estimatePlanCredits(duneSpendPlan(BOUNDS)).worstCaseCredits;
+    // Spent so that ONE leg fits under the cap and two do not, while the vendor's own remaining
+    // balance is far above both.
+    const used = CAP - (legWorstCase * 2 - 1) - BOUNDS.allowanceReserveCredits;
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify(usageBody([period(used, CAP * 3)])), { status: 200 }),
+    );
+    const c = new ScreenDuneClient({
+      key: SENTINEL_KEY,
+      maxExecutions: 2,
+      maxRequests: 20,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => undefined,
+    });
+    const ledger = openDuneCreditLedger();
+    const first = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, ledger });
+    expect(first.decision.ok).toBe(true);
+    expect(first.decision.bindingCeiling).toBe('operator-cap');
+    expect(ledger.reservedCredits()).toBe(legWorstCase);
+
+    const second = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, ledger });
+    expect(second.decision.ok).toBe(false);
+    expect(second.decision.bindingCeiling).toBe('operator-cap');
+    expect(second.decision.reasons.join(' ')).toMatch(/already held by an earlier leg/);
+    // The vendor never refused either of them — the cap did, after the hold.
+    expect(second.decision.creditsIncludedVendor).toBe(CAP * 3);
+    // And the balance is still read exactly once for the whole run.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('a PLAN that cannot read the cap says so in the live path\'s words, and never crashes', () => {
+    // The two plan printers reach the SAME operator state decideAllowance answers with a named
+    // refusal - a cap just edited and typoed - and used to answer it with a bare TypeError
+    // (`undefined.toLocaleString`) and with the literal text `operator cap undefined`. That is the
+    // failure 322a's naming requirement exists to prevent, on the one config surface 322a adds.
+    for (const bad of [undefined, null, 0, -1, Number.NaN, '4000', {}]) {
+      const said = describeMonthlyCapCredits(bad);
+      expect(said, JSON.stringify(bad)).toContain(MONTHLY_CAP_PIN);
+      expect(said, JSON.stringify(bad)).toMatch(/UNREADABLE/);
+      // It must not imply the vendor's figure takes over - that is exactly what decideAllowance
+      // refuses to do, and a plan saying otherwise would describe a run that cannot happen.
+      expect(said).toMatch(/REFUSES before spending anything/);
+    }
+    // And the usable case is the figure, unchanged in meaning and formatted for a human.
+    expect(describeMonthlyCapCredits(4000)).toBe('4,000 credits/month');
+    // It RENDERS and never decides: the same value still reaches a verdict through decideAllowance,
+    // which is the only thing that refuses.
+    expect(screenDecideAllowance({
+      plan: PLAN,
+      estimate: estimatePlanCredits(PLAN),
+      allowance: parseUsageResponse(usageBody([period(0)]), NOW_MS).allowance,
+      reserveCredits: 25,
+      monthlyCapCredits: undefined,
+      tightMultiple: 2,
+      allowanceRequired: true,
+    } as never).verdict).toBe('unreadable');
+  });
+
+  it('the SCREEN dry run renders the named refusal instead of throwing, on a real plan', async () => {
+    // End to end through the production renderer rather than the helper alone, because the defect
+    // was at the interpolation site. No file is touched: renderDryRun takes the plan object, so the
+    // absent pin is supplied rather than written to the committed thresholds.json - the isolation
+    // rule the previous round established.
+    const { renderDryRun } = await import('../tools/deployer-screen/render.mjs');
+    const { windowReachMs } = await import('../tools/deployer-screen/pumpfun.mjs');
+    const { resolveDuneCredential, resolveSolanaRpcEndpoint } = await import(
+      '../tools/deployer-screen/credential.mjs'
+    );
+    const T = JSON.parse(readFileSync(THRESHOLDS, 'utf8'));
+    const plan = (over: Record<string, unknown>) => ({
+      seedPlan: [],
+      maxCandidates: 12,
+      maxKeyedRequests: 45,
+      consistency: false,
+      maxKeylessRequests: T['budget'].maxKeylessRequests,
+      historySource: 'creation-derived' as const,
+      creationWalk: T['creation_walk'],
+      costBounds: T['stage2_cost'],
+      stage2: true,
+      maxScored: T['stage2_entry'].maxCandidatesScored,
+      entryThresholds: T['stage2_entry'],
+      entryEligibility: {
+        known: true,
+        kind: 'swap-api',
+        minAgeMs: windowReachMs(T['stage2_entry']),
+        billed: false,
+      } as const,
+      spendAuthorised: false,
+      keyDescription: null,
+      rpcEndpoint: resolveSolanaRpcEndpoint({}),
+      indexedWalk: T['creation_walk_helius'],
+      worstCaseCredits: 0,
+      dune: { ...T['dune'], ...over },
+      duneCredential: resolveDuneCredential({ DUNE_API_KEY: SENTINEL_KEY }),
+      usingDune: true,
+      duneRefreshProbe: false,
+      allowWalkFallback: false,
+    });
+    for (const over of [{ monthlyCreditCapCredits: undefined }, { monthlyCreditCapCredits: 'lots' }]) {
+      let text = '';
+      expect(() => {
+        text = renderDryRun(plan(over) as never);
+      }, JSON.stringify(over)).not.toThrow();
+      expect(text).toContain(MONTHLY_CAP_PIN);
+      expect(text).toMatch(/operator cap\s+UNREADABLE/);
+      // `undefined` must not survive into anything an operator reads as a number.
+      expect(text).not.toMatch(/operator cap\s+undefined/);
+    }
+    // The control: with the real pin the line is the figure, so the guard is not swallowing it.
+    expect(renderDryRun(plan({}) as never)).toContain(
+      `operator cap                  ${describeMonthlyCapCredits(T['dune'].monthlyCreditCapCredits)}`,
+    );
+  });
+
+  it('the CENSUS plan line renders through the same helper, not by raw interpolation', async () => {
+    // The census reads its bounds from a fixed path, so its absent-pin path is covered by the helper
+    // above rather than by rewriting the committed bounds.json. What is pinned here is that the site
+    // USES the helper: reverting it to raw interpolation prints `4000 credit(s)/month` where the
+    // shared renderer prints `4,000 credits/month`, and this fails.
+    const lines: string[] = [];
+    const code = await censusMain([], {}, (l) => lines.push(l));
+    expect(code).toBe(EXIT.ok);
+    const cap = readBounds().dune.monthlyCreditCapCredits;
+    expect(lines.join('\n')).toContain(`operator cap   ${describeMonthlyCapCredits(cap)}`);
+  });
+
+  it('is ONE fleet-wide number: both keyed lanes pin the same cap, in configuration', () => {
+    // GLOBAL means one monthly total across every lane that touches Dune. Neither keyed tool may
+    // import the other, so the only way one cap governs both is the same remedy the guard's own
+    // text uses: a duplicated value pinned here. A cap binding one lane and not the other would not
+    // be a fleet-wide total, and the drift would be invisible until an overspend.
+    const screen = JSON.parse(readFileSync(THRESHOLDS, 'utf8')).dune;
+    const census = readBounds().dune;
+    expect(screen.monthlyCreditCapCredits).toBeTypeOf('number');
+    expect(screen.monthlyCreditCapCredits).toBeGreaterThan(0);
+    expect(census.monthlyCreditCapCredits).toBe(screen.monthlyCreditCapCredits);
+    // Both lanes must also carry a stated reason for it, like every other pinned bound.
+    const j = JSON.parse(readFileSync(THRESHOLDS, 'utf8')).dune.justification;
+    expect(j.monthlyCreditCapCredits).toBeTruthy();
+    expect(readBounds().justification?.['dune.monthlyCreditCapCredits']).toBeTruthy();
+  });
+
+  it('NO LANE HOLDS A CAP OF ITS OWN: the ceiling applied is whatever configuration says, and only that', async () => {
+    // Captain decision 321a's rule — the cap lives in configuration and never in code — TESTED AS
+    // THE PROPERTY IT IS, rather than by looking for its digits in a source file. A numeric grep is
+    // both too weak and too strong here: it read only the two `client.mjs` files while the lanes
+    // that reach the cap are `dune.mjs`, `run.mjs` and `dune-reproduction.mjs`, and it would have
+    // failed on an unrelated line the moment the captain lowered the cap to a number that already
+    // appears somewhere (`status >= 500`, the 250 ms pacing floor). The cap is a CONFIG value the
+    // captain is expected to change, so the guard must hold at ANY value they choose.
+    //
+    // THE PROPERTY, in two halves, at every wired call site: (1) move the configured number and the
+    // ceiling the lane applies moves with it, in both directions; (2) TAKE THE KEY AWAY and the lane
+    // REFUSES. A lane holding a literal of its own fails half (1) by ignoring the config, and fails
+    // half (2) by clearing a run with no cap configured at all — which is the state 322a exists to
+    // end. That is the guard shown failing rather than asserted, in this file's own idiom.
+    const usage = (used: number, included: number) =>
+      vi.fn(
+        async () => new Response(JSON.stringify(usageBody([period(used, included)])), { status: 200 }),
+      ) as unknown as typeof fetch;
+    /** The three allowance policies both lanes read, with the cap left to each case. */
+    const POLICY = { allowanceReserveCredits: 25, allowanceTightMultiple: 1, allowanceRequired: true };
+    const worstCase = estimatePlanCredits(PLAN).worstCaseCredits;
+    // A balance with plenty of vendor headroom, so the OPERATOR's number is the only thing that can
+    // decide these runs: the vendor plan is far above either configured cap.
+    const USED = 0;
+    const VENDOR_INCLUDED = worstCase * 100;
+    /** Below the run's worst case, so a lane honouring it must refuse. */
+    const TIGHT = worstCase - 1 + POLICY.allowanceReserveCredits;
+    /** Above it, so a lane honouring it must clear. */
+    const ROOMY = worstCase * 10;
+
+    // The reproduction lane prices its own plan, so its two caps are sized against ITS worst case
+    // rather than against the shared one — the property under test is the same at either size.
+    const BATCHES = [{ month: '2026-07', launches: [], plannedRows: 1_000 }];
+    const reproductionWorst = estimateReproductionCredits(BATCHES).worstCaseCredits;
+    const REPRODUCTION_TIGHT = reproductionWorst - 1 + REPRODUCTION_RESERVE;
+    const REPRODUCTION_ROOMY = reproductionWorst * 10 + REPRODUCTION_RESERVE;
+
+    /** Every lane that decides whether Dune may be spent, driven through its own public entry. */
+    type LaneCase = {
+      decide: (cap: unknown) => Promise<{ ok: boolean; cap: unknown; reasons: string }>;
+      tight: number;
+      roomy: number;
+    };
+    const lane = (
+      tight: number,
+      roomy: number,
+      decide: LaneCase['decide'],
+    ): LaneCase => ({ decide, tight, roomy });
+    const LANES: Record<string, LaneCase> = {
+      'deployer-screen/dune.mjs': lane(TIGHT, ROOMY, async (cap) => {
+        const client = new ScreenDuneClient({
+          key: SENTINEL_KEY,
+          maxExecutions: 2,
+          maxRequests: 20,
+          minIntervalMs: 0,
+          fetchImpl: usage(USED, VENDOR_INCLUDED),
+          sleepImpl: async () => undefined,
+        });
+        const { decision } = await checkDuneAllowance(client, {
+          bounds: { ...POLICY, monthlyCreditCapCredits: cap } as never,
+          plan: PLAN,
+          nowMs: NOW_MS,
+        });
+        return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
+      }),
+      'creation-census/run.mjs': lane(TIGHT, ROOMY, async (cap) => {
+        const client = new CensusDuneClient({
+          key: SENTINEL_KEY,
+          maxExecutions: 2,
+          maxRequests: 20,
+          minIntervalMs: 0,
+          fetchImpl: usage(USED, VENDOR_INCLUDED),
+          sleepImpl: async () => undefined,
+        });
+        const { decision } = await censusCheckDuneAllowance(client, {
+          bounds: { dune: { ...POLICY, monthlyCreditCapCredits: cap } },
+          spendPlan: PLAN,
+          nowMs: NOW_MS,
+        });
+        return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
+      }),
+      // THE THIRD SPENDING LANE, whose cap is not a parameter at all: it reads a `thresholds.json`
+      // on every call, so a CONFIGURATION FILE is what moves here. The one it is pointed at is this
+      // test's own copy under a tmpdir — the committed file is never written, because other test
+      // files and `screen.mjs` read it at run time and vitest runs files in parallel. What is
+      // injected selects a file and never a value, so a literal at the call site still fails below.
+      // The transport answers `POST /usage` and nothing else — a billed call is a second path.
+      'deployer-screen/dune-reproduction.mjs': lane(REPRODUCTION_TIGHT, REPRODUCTION_ROOMY, async (cap) => {
+        const paths: string[] = [];
+        const client = new ScreenDuneClient({
+          key: SENTINEL_KEY,
+          maxExecutions: 2,
+          maxRequests: 20,
+          minIntervalMs: 0,
+          fetchImpl: (async (url: unknown) => {
+            paths.push(String(url).slice(DUNE_API_BASE.length));
+            return new Response(JSON.stringify(usageBody([period(USED, REPRODUCTION_ROOMY * 100)])), {
+              status: 200,
+            });
+          }) as unknown as typeof fetch,
+          sleepImpl: async () => undefined,
+        });
+        const doc = JSON.parse(readFileSync(THRESHOLDS, 'utf8'));
+        if (cap === undefined) delete doc.dune.monthlyCreditCapCredits;
+        else doc.dune.monthlyCreditCapCredits = cap;
+        const configured = join(mkdtempSync(join(tmpdir(), 'slot-zero-cap-')), 'thresholds.json');
+        writeFileSync(configured, JSON.stringify(doc, null, 2));
+        const { decision } = await checkReproductionAllowance(client, BATCHES, NOW_MS, configured);
+        expect(paths, 'the reproduction lane may read the balance and spend nothing').toEqual([USAGE_PATH]);
+        return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
+      }),
+    };
+
+    for (const [name, spec] of Object.entries(LANES)) {
+      // (1) THE CONFIGURED NUMBER IS THE ONE APPLIED, and moving it moves the verdict — on the same
+      // balance, with the vendor's plan untouched and never the thing that bound.
+      const tight = await spec.decide(spec.tight);
+      expect(tight.cap, `${name} must apply the configured cap`).toBe(spec.tight);
+      expect(tight.ok, `${name} must refuse under a cap below its worst case`).toBe(false);
+      const roomy = await spec.decide(spec.roomy);
+      expect(roomy.cap, `${name} must apply the configured cap`).toBe(spec.roomy);
+      expect(roomy.ok, `${name} must clear under a cap above its worst case`).toBe(true);
+      // (2) AND THE KEY IS LOAD-BEARING: remove it and the lane has no cap to fall back on, so it
+      // refuses as unreadable rather than proceeding on the vendor's figure or on one of its own.
+      const absent = await spec.decide(undefined);
+      expect(absent.ok, `${name} must refuse with no cap configured`).toBe(false);
+      expect(absent.cap, `${name} has no cap of its own to report`).toBeNull();
+      expect(absent.reasons, `${name} must name the config key`).toContain(MONTHLY_CAP_PIN);
+    }
+
+    // AND WITH NOTHING SUPPLIED, the reproduction lane reads the COMMITTED configuration — the file
+    // selector above is a test seam and not a second place the cap could come from.
+    expect(reproductionCapCredits()).toBe(
+      JSON.parse(readFileSync(THRESHOLDS, 'utf8')).dune.monthlyCreditCapCredits,
+    );
   });
 });
 
@@ -533,6 +1087,34 @@ describe('THE CENSUS REFUSES BEFORE IT SPENDS, END TO END', () => {
       spy.mockRestore();
     }
   }
+
+  it("refuses a run the VENDOR would have allowed, because the captain's cap is smaller", async () => {
+    // Captain decision 322a end to end, through the real CLI: an account whose plan includes 12,000
+    // credits with 9,000 spent has 3,000 left as far as the vendor is concerned, and this run costs
+    // a fraction of that. The captain's configured cap is 4,000 for the whole month and 9,000 of it
+    // is gone, so the run is refused before the first billed request — a refusal that could not
+    // happen at all before this decision, since nothing anywhere knew the cap existed.
+    const cap = readBounds().dune.monthlyCreditCapCredits as number;
+    const { code, paths, lines } = await run(usageBody([period(cap + 5_000, cap * 3)]));
+
+    expect(code).toBe(EXIT.refused);
+    // ONE request, and it is the free one: no saved-query GET, no execution, no billed result read.
+    expect(paths).toEqual([USAGE_PATH]);
+    expect(lines).toMatch(/dune allowance: INSUFFICIENT/);
+    expect(lines).toMatch(/THE OPERATOR CAP is what refused this run/);
+    // BOTH FIGURES REACH THE OPERATOR'S TERMINAL. Neither is rewritten into the other, so a reader
+    // can see the vendor had room and the cap did not.
+    expect(lines).toContain(String(cap));
+    expect(lines).toContain(String(cap * 3));
+    expect(lines).toMatch(/raising dune\.monthlyCreditCapCredits clears it now/);
+
+    // THE NEGATIVE CONTROL, same shape as 320a's: identical vendor answer, spend moved BELOW the
+    // cap, and the same CLI walks straight past the guard. Without this the refusal above is
+    // consistent with a census that refuses everything.
+    const cleared = await run(usageBody([period(0, cap * 3)]));
+    expect(cleared.lines).toMatch(/dune allowance: (SUFFICIENT|TIGHT)/);
+    expect(cleared.paths.length).toBeGreaterThan(1);
+  });
 
   it('refuses, spends NO execution, and never even verifies the saved query', async () => {
     // The failure this whole task exists to prevent: a multi-query run that burns most of the month,
@@ -623,6 +1205,7 @@ describe('THE SCREEN REFUSES BEFORE ITS FIRST BILLED READ', () => {
     worstCaseCreditsPerExecution: 25,
     resultBytesPerRowCeiling: 121,
     allowanceReserveCredits: 25,
+    monthlyCreditCapCredits: CAP,
     allowanceTightMultiple: 2,
     allowanceRequired: true,
     pollIntervalMs: 0,
@@ -736,6 +1319,7 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
     maxResultRows: 20_000,
     maxCoverageLagMs: 21_600_000,
     allowanceReserveCredits: 25,
+    monthlyCreditCapCredits: CAP,
     allowanceTightMultiple: 2,
     allowanceRequired: true,
   };
@@ -746,6 +1330,7 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
     worstCaseCreditsPerExecution: 25,
     resultBytesPerRowCeiling: 121,
     allowanceReserveCredits: 25,
+    monthlyCreditCapCredits: CAP,
     allowanceTightMultiple: 2,
     allowanceRequired: true,
   };

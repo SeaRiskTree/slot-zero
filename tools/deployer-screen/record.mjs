@@ -288,6 +288,15 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   evidence that a run had headroom. Nothing checked. A schema-12 run that reports two executions
  *   may have been the run that emptied the period, and no committed record can say — which is
  *   exactly the gap this version closes rather than a shortcoming of the older ones.
+ *
+ *   **AND THE SECOND ONE, since captain decision 322a:** the verdict now names WHICH ceiling it was
+ *   measured against — `bindingCeiling`, beside `monthlyCapCredits` (the operator's fleet-wide cap)
+ *   and `creditsIncludedVendor` (the vendor's plan), with `creditsIncluded` holding the smaller of
+ *   the two. **This is NOT a schema bump**: no version pins the key set of `allowance` itself, which
+ *   is the verdict object `client.mjs` owns, and the block-level `dune` keys are unchanged. What it
+ *   means for an older record is narrow and worth knowing: a `creditsIncluded` written before 322a
+ *   is the VENDOR's figure alone, because that is the only ceiling that existed to be compared
+ *   against — never evidence that an operator cap was checked and cleared.
  * - **14** — **the room median states its own incompleteness** (captain decision 208b). `entry` gains
  *   one key, `roomLeftBound`; `PERSISTED_BY_SCHEMA[14]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[14]`,
  *   `SPEND_KEYS_BY_SCHEMA[14]`, `DUNE_KEYS_BY_SCHEMA[14]` and `CREATION_KEYS_BY_SCHEMA[14]` all

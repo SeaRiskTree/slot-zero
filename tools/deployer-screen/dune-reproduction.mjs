@@ -58,8 +58,8 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import {
+  ALLOWANCE_ACCOUNT_WIDE_CAVEAT,
   ALLOWANCE_LAG_CAVEAT,
-  ALLOWANCE_SHARED_CAVEAT,
   DuneClient,
   EXPORT_CREDITS_PER_MB,
   decideAllowance,
@@ -179,6 +179,28 @@ export const WORST_CASE_CREDITS_PER_EXECUTION = 10;
  * lands in whole-credit jumps, so a reading over-states what remains.
  */
 export const ALLOWANCE_RESERVE_CREDITS = 25;
+
+/**
+ * The operator's fleet-wide monthly credit cap, READ FROM CONFIGURATION rather than pinned here.
+ *
+ * Captain decision 322a: the cap is the captain's own number and lives in an operator-editable file,
+ * never in a `.mjs`. This lane has no bounds file of its own — it pins its reserve and its
+ * per-execution worst case above, because both are properties of THIS statement — but the cap is not
+ * a property of any statement. It is one total across every lane that touches Dune, so this lane
+ * reads the screen's `thresholds.json` (same directory, same tool) rather than growing a second
+ * number that could disagree with it.
+ *
+ * @param {URL | string} [thresholdsPath] Which configuration file to read. Defaults to this tool's
+ *   own `thresholds.json`, which is the only file any run reads; a caller supplies one so the wiring
+ *   can be driven at a cap this repository's committed configuration does not hold. It selects a
+ *   FILE and never a value — there is no argument that substitutes a number for the pin.
+ * @returns {unknown} Whatever the pin holds. It is NOT defaulted or coerced: `decideAllowance`
+ *   refuses a cap that is missing or non-numeric, and rescuing it here would hide exactly that.
+ */
+export function monthlyCreditCapCredits(thresholdsPath = new URL('./thresholds.json', import.meta.url)) {
+  const thresholds = JSON.parse(readFileSync(thresholdsPath, 'utf8'));
+  return thresholds?.dune?.monthlyCreditCapCredits;
+}
 
 /**
  * @typedef {object} TapeLaunchRef
@@ -893,11 +915,13 @@ export function compareReproduction(dataDir, planned, rowsByMint) {
  * @param {import('./client.mjs').DuneClient} client
  * @param {readonly ReproductionBatch[]} batches
  * @param {number} nowMs
+ * @param {URL | string} [thresholdsPath] Passed through to {@link monthlyCreditCapCredits}; a run
+ *   supplies nothing and the cap comes from this tool's own configuration.
  * @returns {Promise<{ estimate: import('./client.mjs').DuneSpendEstimate,
  *   allowance: import('./client.mjs').DuneAllowance | null,
  *   decision: import('./client.mjs').AllowanceDecision }>}
  */
-export async function checkReproductionAllowance(client, batches, nowMs) {
+export async function checkReproductionAllowance(client, batches, nowMs, thresholdsPath) {
   const estimate = estimateReproductionCredits(batches);
   /** @type {import('./client.mjs').UsageReading} */
   let reading = { ok: false, allowance: null, reasons: [] };
@@ -923,6 +947,7 @@ export async function checkReproductionAllowance(client, batches, nowMs) {
     allowance: reading.allowance,
     unreadableReasons: reading.reasons,
     reserveCredits: ALLOWANCE_RESERVE_CREDITS,
+    monthlyCapCredits: /** @type {number} */ (monthlyCreditCapCredits(thresholdsPath)),
     // One worst case, not two: this lane runs once against a fixed tape, so "can it be run again
     // this period" is not a property worth refusing over — unlike the screen, which is repeatable.
     tightMultiple: 1,
@@ -1017,7 +1042,7 @@ export const REPRODUCTION_CAVEATS = [
     'same fill tape, so this proves the statement reproduces those fills — not that the resulting P&L ' +
     'is fee-inclusive, which it is not.',
   ALLOWANCE_LAG_CAVEAT,
-  ALLOWANCE_SHARED_CAVEAT,
+  ALLOWANCE_ACCOUNT_WIDE_CAVEAT,
 ];
 
 /**
@@ -1053,7 +1078,8 @@ export const REPRODUCTION_CAVEATS = [
  * fingerprint can only be brought back into agreement by one of two things, and NEITHER is editing
  * the JSON by hand:
  *
- * 1. **Re-run the reproduction** — `--live`, ~495 credits of a 2,500-credit shared month; or
+ * 1. **Re-run the reproduction** — `--live`, ~495 credits against whichever monthly ceiling binds
+ *    (the smaller of the vendor's plan and {@link monthlyCreditCapCredits}, read live); or
  * 2. **Revert the comment**, which costs nothing.
  *
  * A third route exists and is not free either: redeploying the saved query to the edited text, which

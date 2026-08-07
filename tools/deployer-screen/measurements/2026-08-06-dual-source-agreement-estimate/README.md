@@ -253,3 +253,23 @@ Until both land, `--entry-source-agreement` refuses with a sentence naming which
 It is **not the Gate 3 cutover.** `ENTRY_FILL_SOURCE_KIND` is unmoved, `screen.mjs` selects the
 swap-api on every default run, and every field this capability adds is `null` or empty on one. The
 deliverable is evidence FOR the gate, and the cutover is the captain's.
+
+> **THIRD CORRECTION, 2026-08-07 — THE "SHARED KEY" CAVEAT THIS DOCUMENT STATES TWICE IS RETIRED
+> (captain decision 322a, and the captain's own declaration that the key is unshared).** Both
+> post-date this record. Where the body says the Dune key is **SHARED** across every lane in this
+> repo — once beside the balance reading, once in the second correction's *what a ledger still
+> cannot do* — that clause is no longer true: the key is the captain's alone and no other holder
+> spends it. **What the clause was reaching for survives, in a different shape**: the allowance is
+> still ONE ACCOUNT's, every lane and run of this fleet draws on that one total, and a SEPARATE key
+> is a separate account with its own quota and its own period — so a sufficient reading is still
+> evidence and never a reservation, which is the property every figure here rests on.
+> `client.mjs` → `ALLOWANCE_ACCOUNT_WIDE_CAVEAT` is the live wording; read it there rather than
+> anywhere in this file. The counter's LAG and the subscription-anniversary period are unchanged —
+> *unshared* and *the counter is exact* are different claims and only one of them moved.
+>
+> **NO MEASURED FIGURE IN THIS RECORD MOVES.** Every number, every balance reading and every priced
+> row stands exactly as measured on its own date, and the body is left asserting what was believed
+> then. 322a also makes the ceiling a `min()` of the vendor's `credits_included` and the operator's
+> `dune.monthlyCreditCapCredits`, so the guard this document describes may now refuse against a
+> smaller number than the vendor's plan — one more reason to re-read `POST /usage` at the moment of
+> the run rather than quoting this file's tables.

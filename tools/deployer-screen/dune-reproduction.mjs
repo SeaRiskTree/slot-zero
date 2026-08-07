@@ -190,11 +190,15 @@ export const ALLOWANCE_RESERVE_CREDITS = 25;
  * reads the screen's `thresholds.json` (same directory, same tool) rather than growing a second
  * number that could disagree with it.
  *
+ * @param {URL | string} [thresholdsPath] Which configuration file to read. Defaults to this tool's
+ *   own `thresholds.json`, which is the only file any run reads; a caller supplies one so the wiring
+ *   can be driven at a cap this repository's committed configuration does not hold. It selects a
+ *   FILE and never a value — there is no argument that substitutes a number for the pin.
  * @returns {unknown} Whatever the pin holds. It is NOT defaulted or coerced: `decideAllowance`
  *   refuses a cap that is missing or non-numeric, and rescuing it here would hide exactly that.
  */
-export function monthlyCreditCapCredits() {
-  const thresholds = JSON.parse(readFileSync(new URL('./thresholds.json', import.meta.url), 'utf8'));
+export function monthlyCreditCapCredits(thresholdsPath = new URL('./thresholds.json', import.meta.url)) {
+  const thresholds = JSON.parse(readFileSync(thresholdsPath, 'utf8'));
   return thresholds?.dune?.monthlyCreditCapCredits;
 }
 
@@ -911,11 +915,13 @@ export function compareReproduction(dataDir, planned, rowsByMint) {
  * @param {import('./client.mjs').DuneClient} client
  * @param {readonly ReproductionBatch[]} batches
  * @param {number} nowMs
+ * @param {URL | string} [thresholdsPath] Passed through to {@link monthlyCreditCapCredits}; a run
+ *   supplies nothing and the cap comes from this tool's own configuration.
  * @returns {Promise<{ estimate: import('./client.mjs').DuneSpendEstimate,
  *   allowance: import('./client.mjs').DuneAllowance | null,
  *   decision: import('./client.mjs').AllowanceDecision }>}
  */
-export async function checkReproductionAllowance(client, batches, nowMs) {
+export async function checkReproductionAllowance(client, batches, nowMs, thresholdsPath) {
   const estimate = estimateReproductionCredits(batches);
   /** @type {import('./client.mjs').UsageReading} */
   let reading = { ok: false, allowance: null, reasons: [] };
@@ -941,7 +947,7 @@ export async function checkReproductionAllowance(client, batches, nowMs) {
     allowance: reading.allowance,
     unreadableReasons: reading.reasons,
     reserveCredits: ALLOWANCE_RESERVE_CREDITS,
-    monthlyCapCredits: /** @type {number} */ (monthlyCreditCapCredits()),
+    monthlyCapCredits: /** @type {number} */ (monthlyCreditCapCredits(thresholdsPath)),
     // One worst case, not two: this lane runs once against a fixed tape, so "can it be run again
     // this period" is not a property worth refusing over — unlike the screen, which is repeatable.
     tightMultiple: 1,

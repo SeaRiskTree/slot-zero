@@ -906,10 +906,12 @@ describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
         });
         return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
       }),
-      // THE THIRD SPENDING LANE, whose cap is not a parameter at all: it reads the screen's own
-      // `thresholds.json` on every call, so the configuration itself is what moves here. The file is
-      // restored byte for byte whatever the assertion does, and this lane's transport answers
-      // `POST /usage` and nothing else — a billed call would show up as a second path.
+      // THE THIRD SPENDING LANE, whose cap is not a parameter at all: it reads a `thresholds.json`
+      // on every call, so a CONFIGURATION FILE is what moves here. The one it is pointed at is this
+      // test's own copy under a tmpdir — the committed file is never written, because other test
+      // files and `screen.mjs` read it at run time and vitest runs files in parallel. What is
+      // injected selects a file and never a value, so a literal at the call site still fails below.
+      // The transport answers `POST /usage` and nothing else — a billed call is a second path.
       'deployer-screen/dune-reproduction.mjs': lane(REPRODUCTION_TIGHT, REPRODUCTION_ROOMY, async (cap) => {
         const paths: string[] = [];
         const client = new ScreenDuneClient({
@@ -925,18 +927,14 @@ describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
           }) as unknown as typeof fetch,
           sleepImpl: async () => undefined,
         });
-        const original = readFileSync(THRESHOLDS, 'utf8');
-        const doc = JSON.parse(original);
+        const doc = JSON.parse(readFileSync(THRESHOLDS, 'utf8'));
         if (cap === undefined) delete doc.dune.monthlyCreditCapCredits;
         else doc.dune.monthlyCreditCapCredits = cap;
-        try {
-          writeFileSync(THRESHOLDS, JSON.stringify(doc, null, 2));
-          const { decision } = await checkReproductionAllowance(client, BATCHES, NOW_MS);
-          expect(paths, 'the reproduction lane may read the balance and spend nothing').toEqual([USAGE_PATH]);
-          return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
-        } finally {
-          writeFileSync(THRESHOLDS, original);
-        }
+        const configured = join(mkdtempSync(join(tmpdir(), 'slot-zero-cap-')), 'thresholds.json');
+        writeFileSync(configured, JSON.stringify(doc, null, 2));
+        const { decision } = await checkReproductionAllowance(client, BATCHES, NOW_MS, configured);
+        expect(paths, 'the reproduction lane may read the balance and spend nothing').toEqual([USAGE_PATH]);
+        return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
       }),
     };
 
@@ -957,7 +955,8 @@ describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
       expect(absent.reasons, `${name} must name the config key`).toContain(MONTHLY_CAP_PIN);
     }
 
-    // And the file is exactly as it was found, whatever the swaps above did.
+    // AND WITH NOTHING SUPPLIED, the reproduction lane reads the COMMITTED configuration — the file
+    // selector above is a test seam and not a second place the cap could come from.
     expect(reproductionCapCredits()).toBe(
       JSON.parse(readFileSync(THRESHOLDS, 'utf8')).dune.monthlyCreditCapCredits,
     );

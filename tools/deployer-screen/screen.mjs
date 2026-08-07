@@ -33,6 +33,7 @@ import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../../config/data-root.mjs';
 import {
   BoundedClient,
   CeilingReached,
@@ -901,8 +902,12 @@ async function buildEntrySource(kind, entryFillSources, entryThresholds) {
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(HERE, '..', '..');
-const DEFAULT_DATA_DIR = join(REPO_ROOT, 'data', 'population-tape-2026-07-29');
+/**
+ * The population tape's directory. **Where the data lives is `config/data-root.mjs`'s answer, not
+ * this tool's**: it defaults to the copy in this repository and moves with `SLOT_ZERO_DATA_ROOT`.
+ * `--data-dir` still overrides it per run.
+ */
+const DEFAULT_DATA_DIR = POPULATION_TAPE_DIR;
 
 const EXIT = {
   ok: 0,
@@ -993,7 +998,8 @@ OPTIONS
   --out <path>        Write the run record as JSON. Default: nothing is written. An INCOMPLETE run
                       writes <path>.partial.json instead, leaving <path> untouched.
   --json              Print the run record as JSON instead of text.
-  --data-dir <path>   Population tape location. Default data/population-tape-2026-07-29.
+  --data-dir <path>   Population tape location. Defaults to the population tape under
+                      $SLOT_ZERO_DATA_ROOT, which is this repository's own data/ when unset.
   --help              This text.
 
 WHICH HISTORY THE GATE READS
@@ -1377,7 +1383,9 @@ export async function main(opts, env, out, err, seam = {}) {
   /** @type {import('./stage0.mjs').Stage0Result} */
   let stage0;
   try {
-    stage0 = runStage0(opts.dataDir, gateThresholds, entryThresholds);
+    // Checked before the first CSV read so "there is no data here" is reported as itself, with the
+    // variable that moves the root named, rather than as an ENOENT on a file nobody has heard of.
+    stage0 = runStage0(requireDataset(POPULATION_TAPE, opts.dataDir), gateThresholds, entryThresholds);
   } catch (cause) {
     err(`Stage 0 could not run: ${cause instanceof Error ? cause.message : String(cause)}`);
     err(`  Is --data-dir correct? Tried: ${opts.dataDir}`);

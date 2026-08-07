@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { POPULATION_TAPE_DIR } from '../config/data-root.mjs';
 import { MADEONSOL_DAILY_REQUESTS } from '../tools/deployer-screen/client.mjs';
 import {
   ALL_UNMEASURED_MIN_GATED,
@@ -62,7 +63,7 @@ import { KEY_ENV_VAR } from '../tools/deployer-screen/credential.mjs';
 const TOOL_DIR = fileURLToPath(new URL('../tools/deployer-screen/', import.meta.url));
 const COMMITTED_LEDGER = join(TOOL_DIR, 'feed', 'ledger.json');
 const RUNS_DIR = join(TOOL_DIR, 'runs');
-const DATA_DIR = fileURLToPath(new URL('../data/population-tape-2026-07-29/', import.meta.url));
+const DATA_DIR = POPULATION_TAPE_DIR;
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
 const FAKE_KEY = 'msk_test_key_value_padded_to_length_ok_1234';

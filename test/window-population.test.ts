@@ -24,6 +24,7 @@ import {
   unitLedger,
   type LaunchRow,
 } from '../analysis/window-population/measure.mjs';
+import { POPULATION_TAPE_DIR } from '../config/data-root.mjs';
 import { BOOK_MEMBER_OUTSIDER, CREATE_SLOT_COHORT, DEPLOYER } from '../src/index.js';
 import { CREDENTIAL_PATTERNS, KEY_SHAPED, NETWORK_PATTERNS } from './offline-guard.js';
 
@@ -191,7 +192,7 @@ describe('what the tape cannot answer', () => {
     // one launch per creator, no dates, no P&L. This asserts the shape of that gap so a later
     // reader does not mistake 70 rows for 70 observations.
     const control = readFileSync(
-      fileURLToPath(new URL('../data/population-tape-2026-07-29/control_create_slot.csv', import.meta.url)),
+      join(POPULATION_TAPE_DIR, 'control_create_slot.csv'),
       'utf8',
     ).trim().split('\n');
     expect(control.length - 1).toBe(70);
@@ -281,7 +282,7 @@ describe('what the tape cannot answer', () => {
   it('every launch in the tape is the same one deployer', () => {
     // The population of deployers this measurement is drawn from is n = 1.
     const rows = readFileSync(
-      fileURLToPath(new URL('../data/population-tape-2026-07-29/launch_universe.jsonl', import.meta.url)),
+      join(POPULATION_TAPE_DIR, 'launch_universe.jsonl'),
       'utf8',
     ).trim().split('\n');
     expect(rows.length).toBe(239);

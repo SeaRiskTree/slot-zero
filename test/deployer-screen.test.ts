@@ -89,6 +89,7 @@ import {
   toTokenRecords,
   walletTransactions,
 } from '../tools/deployer-screen/measure.mjs';
+import { GRADUATED_LIFE_TAPE_DIR, POPULATION_TAPE_DIR } from '../config/data-root.mjs';
 import type { Fill } from '../tools/deployer-screen/measure.mjs';
 import {
   COVERAGE_ATTRIBUTION_CAVEAT,
@@ -9208,9 +9209,7 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     // 0 at every window of Stage 0's replay and the guard is silent there BY CONSTRUCTION. Stage 0
     // staying green — both halves of the known-negative control included — is therefore not evidence
     // that the guard was checked against it.
-    const launches = measureSubjectLaunches(
-      join(TOOL_DIR, '..', '..', 'data', 'population-tape-2026-07-29'),
-    );
+    const launches = measureSubjectLaunches(POPULATION_TAPE_DIR);
     expect(launches.filter((l) => !roomIsProven(l.createSlot))).toHaveLength(0);
     const room = launches.map((l) => l.createSlot.roomLeft);
     expect(roomBarRobustness(room, 0, 0.55).decided).toBe(true);
@@ -9409,7 +9408,7 @@ describe('the entry verdict, and the leg that must never be able to earn one', (
     // refusals here is the SUPERSEDED shared-transaction-only half, which refuses 60 of 235. That
     // gives real refused windows with real measured room AND a better reading of the same launches
     // (the union's) to check the bound against.
-    const tapeDir = join(TOOL_DIR, '..', '..', 'data', 'population-tape-2026-07-29');
+    const tapeDir = POPULATION_TAPE_DIR;
     const rows = measureSubjectLaunches(tapeDir)
       .map((l) => {
         const groups = createSlotGroups(l.fills)!;
@@ -10157,8 +10156,8 @@ describe('the seek cursor reaches the whole declared slot window, at a MEASURED 
   const tapedWindows = () => {
     if (tapedWindowsCache !== null) return tapedWindowsCache;
     const dirs: [string, boolean][] = [
-      [join(REPO_ROOT, 'data', 'graduated-life-tape-2026-08-02', 'life'), false],
-      [join(REPO_ROOT, 'data', 'population-tape-2026-07-29', 'window'), true],
+      [join(GRADUATED_LIFE_TAPE_DIR, 'life'), false],
+      [join(POPULATION_TAPE_DIR, 'window'), true],
     ];
     const out: TapedWindow[] = [];
     for (const [dir, needsLongWindow] of dirs) {
@@ -11990,7 +11989,7 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
   // Slow by design: it reads all 235 covered window tapes and the 46,553-row P&L table. It is the
   // one test that proves the whole entry stage on real data rather than on a fixture, and it is the
   // reason a regression in Stage 2 cannot ship quietly.
-  const DATA_DIR = join(TOOL_DIR, '..', '..', 'data', 'population-tape-2026-07-29');
+  const DATA_DIR = POPULATION_TAPE_DIR;
   const T = loadThresholds();
   const result = runStage0(
     DATA_DIR,
@@ -12204,10 +12203,7 @@ describe('THE KNOWN-NEGATIVE CONTROL, run against the committed tape', () => {
     const era2 = result.eraSplit.find((e) => e.era.startsWith('2026-06-04'))!;
     expect(era2.publishedOperationShare).toBeCloseTo(0.771, 6);
     expect(era2.published).toMatch(/§5\.1 printed 0\.768 — corrected, see IMPORT\.md/);
-    const importMd = readFileSync(
-      join(TOOL_DIR, '..', '..', 'data', 'population-tape-2026-07-29', 'IMPORT.md'),
-      'utf8',
-    );
+    const importMd = readFileSync(join(POPULATION_TAPE_DIR, 'IMPORT.md'), 'utf8');
     expect(importMd, 'the correction lives in IMPORT.md, never in the primary record itself')
       .toMatch(/rank-43\/44/);
     expect(importMd).toMatch(/0\.7708/);

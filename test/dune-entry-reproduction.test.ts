@@ -24,6 +24,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { POPULATION_TAPE_DIR } from '../config/data-root.mjs';
 import { DuneClient } from '../tools/deployer-screen/client.mjs';
 import { assertSavedQueryMatches, describeExecutionError, executeAndRead } from '../tools/deployer-screen/dune.mjs';
 import {
@@ -58,7 +59,7 @@ import {
 
 const KEY = 'x'.repeat(32);
 const TOOL_DIR = join(import.meta.dirname, '..', 'tools', 'deployer-screen');
-const DATA_DIR = join(import.meta.dirname, '..', 'data', 'population-tape-2026-07-29');
+const DATA_DIR = POPULATION_TAPE_DIR;
 const RECORD_PATH = join(TOOL_DIR, 'measurements', '2026-08-05-dune-entry-reproduction', 'reproduction.json');
 const MINT = '13JbNUE6PUmkhda8YyfMaHqUnYYYvtq1Tgp9SJjepump';
 const OTHER_MINT = '3BhUv3FtuuqBgM1n6yYEhEvQ78dpdR99v4frjmXUpump';
@@ -418,7 +419,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
 
 describe('the plan, and the ceiling that refuses before the first request', () => {
   it('batches within a month and never plans a result the reader would refuse as a page', () => {
-    const launches = readTapeLaunches(join(TOOL_DIR, '..', '..', 'data', 'population-tape-2026-07-29'));
+    const launches = readTapeLaunches(POPULATION_TAPE_DIR);
     expect(launches).toHaveLength(235); // reached_mint, not file existence: 239 files, four truncated
     const batches = planReproduction(launches);
     for (const b of batches) {

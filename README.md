@@ -34,9 +34,81 @@ npm ci
 npm test        # tsc --noEmit, then vitest run
 ```
 
-CI (`.github/workflows/ci.yml`) runs exactly that on Node 20 for every PR and every push to `main`.
+CI (`.github/workflows/ci.yml`) runs exactly that on Node 20 for every PR and every push to `main`,
+after getting itself the measurement tapes — see "How CI gets them" below.
 
 Private. Nothing here is production.
+
+### Where the data lives
+
+**One module owns the answer: `config/data-root.mjs`.** Every reader in `src/`, `analysis/`,
+`tools/` and `test/` asks it for a dataset directory instead of composing a path of its own, so the
+tapes can be read from outside the repository without touching a consumer.
+
+```bash
+# read the tapes from wherever they are kept
+export SLOT_ZERO_DATA_ROOT=~/slot-zero-data
+npm test
+```
+
+The root is a directory holding the datasets **by name**, so
+`$SLOT_ZERO_DATA_ROOT/population-tape-2026-07-29/launches.csv` and the in-repository
+`data/population-tape-2026-07-29/launches.csv` are the same file in the two configurations.
+`SLOT_ZERO_DATA_ROOT` unset means the copy in this repository, which is why a clone still works with
+no setup. It is **not** a credential: it holds a path, it is printed freely, and it is the only
+environment variable anything outside `tools/` reads — which is why the owner is its own area rather
+than a module in `src/`, where reading one at all is banned by `test/loader.test.ts`.
+
+A dataset that is not where the root says it is reports **what is missing, where it was looked for
+and how to point somewhere else**, rather than an `ENOENT` on a file deep inside `window/`.
+
+#### How CI gets them
+
+Captain decision 354a. **CI cannot go green without the tapes and there is no data-free mode** —
+measured against a root pointing at nothing, **12 of the 18 suites fail**, because this project's
+tests are population assertions rather than fixture tests. A committed representative subset was
+built and measured before this was settled: 23 launches, 94 files, 16 MB, and **138 tests still
+failed**; it converted exactly one suite over having no data at all, and it changed a published
+finding (the blind changepoint scan returned a different break date). Any future proposal to sample
+the tapes for testing is refused by that measurement rather than re-measured.
+
+So the workflow has two modes, set by the repository variable `SLOT_ZERO_DATA_SOURCE`:
+
+| | |
+|---|---|
+| `repo` (default) | Read the copy in the tree. Git is its manifest — every byte is content-addressed in the commit that was checked out — so there is nothing to fetch and nothing to verify. This is what runs today. |
+| `release` | Fetch the tapes from a **private release asset** on this repository and verify them against the manifest the store ships. This is what phase C switches to. |
+
+An unrecognised value **fails the job** rather than falling through to `repo`, so the mode is always
+something somebody chose. A release asset rather than a build cache, deliberately: cache entries are
+evicted after a period without access, so a quiet week would break CI and the breakage would look
+like a data problem. The tapes are **immutable dated snapshots**, so the asset is set up once.
+
+Verification is not optional, and it is not `sha256sum -c`'s job alone:
+
+```bash
+node config/verify-data-root.mjs        # or --root <dir>
+```
+
+It walks the store's `MANIFEST.sha256` (705 entries, ~0.2 s) and fails on a **missing** file, a
+**wrong digest**, or an **extra file the manifest never listed**. That third one is the reason this
+is a script rather than one line of shell: several suites choose their population by reading
+`window/` and `life/` with `readdirSync`, so an unlisted tape is an extra *launch* in a published
+figure, and a partial fetch does not raise `ENOENT` — it silently moves a number.
+
+**Populating the store is a captain step**, because it moves the measurement data out of the
+captain's own machine, and once, since the snapshots never change:
+
+```bash
+tar -czf slot-zero-data.tar.gz -C ~ slot-zero-data     # ~105 MB
+gh release create data-2026-08-02 --repo <owner>/slot-zero \
+  --title 'Measurement tapes' --notes 'population-tape-2026-07-29 + graduated-life-tape-2026-08-02'
+gh release upload data-2026-08-02 slot-zero-data.tar.gz --repo <owner>/slot-zero
+gh variable set SLOT_ZERO_DATA_SOURCE --body release    # phase C flips this
+```
+
+Do not reach for a stronger compressor: 342 of the 705 files are already gzipped tapes, so the
+archive compresses by about **7%** and `zstd -19` beats `gzip` by 2 MB in 118.
 
 ---
 
@@ -99,6 +171,7 @@ call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md
 |---|---|
 | `data/population-tape-2026-07-29/` | The population tape. 239 launches, 107,439 fills, 20,388 counterparty wallets, reconstructed keyless. Column semantics in its `README.md`, findings in its `report.md`, import and correction decisions in its `IMPORT.md`. |
 | `src/` | The loader. Per-launch, per-wallet and per-(wallet, launch) views, plus the raw per-fill tape. No runtime dependencies. |
+| `config/data-root.mjs` | The one owner of **where the data lives** — see "Where the data lives" above. Its own area because it reads an environment variable, which `src/` and `analysis/` may not, and because a resolver under `tools/` could not be imported by either. |
 | `test/reproduction.test.ts` | The published headline numbers, asserted against the loaded data. |
 | `test/type-guards.test-d.ts` | Compile-time proof that the **four** guards below bite. Type-checked, never executed. |
 | `tools/deployer-screen/` | One of the two keyed, network-capable areas. The competence **gate** (stages 0–1, keyed) plus the keyless **entry score** (stage 2) — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |

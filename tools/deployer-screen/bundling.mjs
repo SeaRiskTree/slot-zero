@@ -171,6 +171,7 @@ import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../../config/data-root.mjs';
 import { CeilingReached } from './client.mjs';
 import { assertMinAgeUsable } from './fill-source.mjs';
 import { measureCompletion, measureCreateSlot, median, percentile, roomIsProven } from './measure.mjs';
@@ -263,8 +264,12 @@ export async function planCensusEligibility(registration, opts) {
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(HERE, '..', '..');
-const DEFAULT_DATA_DIR = join(REPO_ROOT, 'data', 'population-tape-2026-07-29');
+/**
+ * The population tape's directory. **Where the data lives is `config/data-root.mjs`'s answer, not
+ * this tool's**: it defaults to the copy in this repository and moves with `SLOT_ZERO_DATA_ROOT`.
+ * `--data-dir` still overrides it per run.
+ */
+const DEFAULT_DATA_DIR = POPULATION_TAPE_DIR;
 
 /**
  * The one caveat that must travel with every number this pass produces, into the printed report,
@@ -897,7 +902,8 @@ export function summariseCensus(rows) {
  *   newestWindowAllProven: boolean | null, newestWindowAllBundled: boolean | null }}
  */
 export function subjectEraTrend(dataDir = DEFAULT_DATA_DIR) {
-  const launches = measureSubjectLaunches(dataDir);
+  // Checked before the first CSV read — see the same call in `screen.mjs`.
+  const launches = measureSubjectLaunches(requireDataset(POPULATION_TAPE, dataDir));
   /** @type {Map<string, { launches: number, proven: number, bundled: number, maxWallets: number[], runTx: number[] }>} */
   const months = new Map();
   for (const l of launches) {
@@ -980,7 +986,7 @@ export function renderSubjectEraTrend(t) {
   const L = [];
   L.push('SUBJECT ERA TREND — OFFLINE, n = 1 DEPLOYER, and it is a WITHIN-DEPLOYER trend');
   L.push('');
-  L.push('  Source: data/population-tape-2026-07-29, every taped launch whose create slot is proved.');
+  L.push('  Source: population-tape-2026-07-29, every taped launch whose create slot is proved.');
   L.push('  No request of any kind was issued to produce this table.');
   L.push('');
   L.push(`  ${t.proven} of ${t.launches} taped launches are PROVEN by the union (${t.provenRate}),`);

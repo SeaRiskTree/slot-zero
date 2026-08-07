@@ -25,6 +25,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 
+import { GRADUATED_LIFE_TAPE_DIR, POPULATION_TAPE_DIR } from '../config/data-root.mjs';
 import { KeylessClient, CeilingReached, HttpRefused, BACKOFF, DEFAULT_MIN_INTERVAL_MS } from '../tools/graduated-life-tape/client.mjs';
 import {
   PAGE_LIMIT,
@@ -632,7 +633,7 @@ describe('the committed tape is read the way the dataset requires', () => {
     // Four of the 239 window files never reached the mint. Their oldest slot is merely the oldest
     // the builder's backwards walk happened to see, and reading it as the create slot is exactly
     // what would crown a mid-window sniper as the deployer.
-    const dir = fileURLToPath(new URL('../data/population-tape-2026-07-29/window/', import.meta.url));
+    const dir = join(POPULATION_TAPE_DIR, 'window');
     const truncated = readdirSync(dir)
       .filter((f) => f.endsWith('.meta.json'))
       .filter((f) => JSON.parse(readFileSync(join(dir, f), 'utf8')).reached_mint !== true);
@@ -655,12 +656,7 @@ describe('the committed tape is read the way the dataset requires', () => {
     const committed = JSON.parse(
       gunzipSync(
         readFileSync(
-          fileURLToPath(
-            new URL(
-              '../data/population-tape-2026-07-29/window/13JbNUE6PUmkhda8YyfMaHqUnYYYvtq1Tgp9SJjepump.jsonl.gz',
-              import.meta.url,
-            ),
-          ),
+          join(POPULATION_TAPE_DIR, 'window', '13JbNUE6PUmkhda8YyfMaHqUnYYYvtq1Tgp9SJjepump.jsonl.gz'),
         ),
       )
         .toString('utf8')
@@ -749,7 +745,7 @@ describe('the summary counts closure, and deliberately never counts money', () =
 
 // ---------------------------------------------------------------------------------------------
 
-const OUT_DIR = fileURLToPath(new URL('../data/graduated-life-tape-2026-08-02/', import.meta.url));
+const OUT_DIR = GRADUATED_LIFE_TAPE_DIR;
 
 /**
  * Every string literal in `source` — single-quoted, double-quoted or template — with comments

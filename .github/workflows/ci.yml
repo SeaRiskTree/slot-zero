@@ -6,11 +6,29 @@ on:
     branches: [main]
 
 permissions:
+  # `contents: read` is what `gh release download` needs for a PRIVATE release asset.
+  # No other scope is added: the data store is read, never written, from CI.
   contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # WHERE THIS JOB GETS THE MEASUREMENT TAPES. Captain decision 354a.
+  #
+  #   repo    — read the copy in the tree, as every build did before the dry dock. Git is its
+  #             manifest: every byte is content-addressed in the commit that was checked out, so
+  #             there is nothing to fetch and nothing to verify.
+  #   release — fetch them from the private release asset and verify them against the manifest
+  #             the store ships. This is what phase C switches to, once the tapes leave the tree.
+  #
+  # Set the repository variable to flip it. It is a VARIABLE and not an inference from whether a
+  # secret happens to be set, so the mode is a decision somebody made rather than a side effect —
+  # and an unrecognised value FAILS below rather than quietly falling back to `repo`.
+  SLOT_ZERO_DATA_SOURCE: ${{ vars.SLOT_ZERO_DATA_SOURCE || 'repo' }}
+  SLOT_ZERO_DATA_RELEASE_TAG: ${{ vars.SLOT_ZERO_DATA_RELEASE_TAG || 'data-2026-08-02' }}
+  SLOT_ZERO_DATA_ASSET: slot-zero-data.tar.gz
 
 jobs:
   test:
@@ -25,7 +43,64 @@ jobs:
       # Dev-only install; the repo has no runtime dependencies and no test
       # reaches the network or reads a credential (see CLAUDE.md).
       - run: npm ci
+
+      # THE MODE IS CHECKED BEFORE ANYTHING DEPENDS ON IT. A typo in the repository variable
+      # would otherwise select `repo` by falling through, which reads as a normal green build
+      # while testing something nobody chose.
+      - name: Check the data source is one this job knows
+        run: |
+          set -euo pipefail
+          case "$SLOT_ZERO_DATA_SOURCE" in
+            repo|release) echo "data source: $SLOT_ZERO_DATA_SOURCE" ;;
+            *) echo "::error::SLOT_ZERO_DATA_SOURCE is '$SLOT_ZERO_DATA_SOURCE'; expected 'repo' or 'release'." >&2
+               exit 1 ;;
+          esac
+
+      # THE FETCH. A release asset rather than a build cache, deliberately: cache entries are
+      # evicted after a period without access, so a quiet week would break CI and the breakage
+      # would look like a data problem. The asset is durable, private (this repository is), and
+      # keyed on an IMMUTABLE dated snapshot — `population-tape-2026-07-29` and
+      # `graduated-life-tape-2026-08-02` never change, so this is set up once and not a moving
+      # part of every build.
+      #
+      # No cache is layered in front. The archive is ~110 MB and compresses by only ~7%, because
+      # 342 of the 705 files are already gzipped tapes; the download is seconds on a runner, and a
+      # cache would buy that back at the price of an eviction-shaped failure mode.
+      - name: Fetch the measurement tapes
+        if: env.SLOT_ZERO_DATA_SOURCE == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          dest="$RUNNER_TEMP/slot-zero-data"
+          mkdir -p "$dest"
+          # `gh` fails non-zero on a missing release, a missing asset or a transport error, and
+          # `set -e` turns every one of those into a failed build rather than an empty directory.
+          gh release download "$SLOT_ZERO_DATA_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$SLOT_ZERO_DATA_ASSET" \
+            --dir "$RUNNER_TEMP"
+          tar -xzf "$RUNNER_TEMP/$SLOT_ZERO_DATA_ASSET" -C "$dest" --strip-components=1
+          echo "SLOT_ZERO_DATA_ROOT=$dest" >> "$GITHUB_ENV"
+
+      # AND THE TRANSFER IS CHECKED, NOT TRUSTED. A download that dies half way leaves a root that
+      # exists and holds most of its files; several suites choose their population by reading
+      # `window/` and `life/` with readdirSync, so a short fetch does not raise ENOENT — it moves
+      # a published number. `config/verify-data-root.mjs` walks the store's own MANIFEST.sha256
+      # (705 entries, ~0.2 s) and fails on a missing file, a wrong digest, or an extra file the
+      # manifest never listed.
+      - name: Verify the fetched tapes against their manifest
+        if: env.SLOT_ZERO_DATA_SOURCE == 'release'
+        run: node config/verify-data-root.mjs
+
       # package.json "test" = tsc --noEmit && vitest run. Both halves matter:
       # test/type-guards.test-d.ts asserts at compile time, so it fails tsc,
       # not vitest.
+      #
+      # THIS JOB CANNOT GO GREEN WITHOUT THE TAPES, AND THAT IS THE POINT. Measured against a root
+      # pointing at nothing: 12 of the 18 suites fail. There is no skip, no conditional suite and
+      # no "data-free subset" mode — a CI that quietly stopped exercising the measurement code
+      # would be worse than one that stopped working. (Captain decision 354a; 353c's fixture-subset
+      # route was measured and ruled out — this project's tests are population assertions, not
+      # fixture tests.)
       - run: npm test

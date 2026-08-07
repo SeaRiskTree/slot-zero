@@ -2,9 +2,10 @@
  * How many profitable windows the population tape contains, how long they lasted, how fast
  * they closed, and how many ran at once.
  *
- * **Offline by construction.** This directory reads `data/population-tape-2026-07-29/` and
- * nothing else: no network, no credential, no clock. `test/window-population.test.ts` asserts
- * that structurally, the same way `test/loader.test.ts` asserts it for `src/`.
+ * **Offline by construction.** This directory reads the population tape and nothing else: no
+ * network, no credential, no clock. `test/window-population.test.ts` asserts that structurally, the
+ * same way `test/loader.test.ts` asserts it for `src/`. Which directory the tape is IN is
+ * `config/data-root.mjs`'s answer — see {@link DATA_DIR}.
  *
  * The findings and the definitions they rest on are in `README.md` beside this file. This
  * module is the arithmetic; run it with `node analysis/window-population/measure.mjs`.
@@ -16,11 +17,21 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 
-/** @type {string} Absolute path of the dataset directory. */
-export const DATA_DIR = fileURLToPath(new URL('../../data/population-tape-2026-07-29/', import.meta.url));
+import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../../config/data-root.mjs';
+
+/**
+ * @type {string} Absolute path of the dataset directory.
+ *
+ * **Where the data lives is `config/data-root.mjs`'s to answer**, not this module's: it defaults to
+ * the copy in this repository and moves with `SLOT_ZERO_DATA_ROOT`. `analysis/` may not read an
+ * environment variable itself (`test/window-population.test.ts`, the same guard `src/` is held to),
+ * so the one owner lives in its own area and this is the import of it. **No trailing separator** —
+ * it used to have one and paths were built by concatenation; they are built with `join()` now.
+ */
+export const DATA_DIR = POPULATION_TAPE_DIR;
 
 /** The deployer under study. Same constant as `src/cohort.ts`; see the note above on imports. */
 export const DEPLOYER = '7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL';
@@ -103,7 +114,9 @@ const csvCache = new Map();
 export function readCsv(name) {
   const cached = csvCache.get(name);
   if (cached !== undefined) return cached;
-  const rows = parseCsv(readFileSync(DATA_DIR + name, 'utf8'));
+  // The first read of the run, and therefore where a missing dataset is reported as a missing
+  // dataset rather than as an ENOENT on a CSV nobody has heard of.
+  const rows = parseCsv(readFileSync(join(requireDataset(POPULATION_TAPE, DATA_DIR), name), 'utf8'));
   const head = rows[0];
   if (head === undefined) throw new Error(`${name}: empty`);
   /** @type {Array<Record<string, string>>} */ const out = [];
@@ -596,8 +609,8 @@ function lastCreateSlotFillPrice(mint, createSlot) {
   if (cached !== undefined) return cached;
   /** @type {number | null} */ let price = null;
   const slot = createSlot.get(mint);
-  const metaPath = `${DATA_DIR}window/${mint}.meta.json`;
-  const tapePath = `${DATA_DIR}window/${mint}.jsonl.gz`;
+  const metaPath = join(DATA_DIR, 'window', `${mint}.meta.json`);
+  const tapePath = join(DATA_DIR, 'window', `${mint}.jsonl.gz`);
   if (slot !== undefined && existsSync(metaPath) && existsSync(tapePath)) {
     const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
     if (meta?.reached_mint === true) {

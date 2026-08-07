@@ -64,6 +64,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../../config/data-root.mjs';
 import { BoundedClient, CeilingReached, MADEONSOL_DAILY_REQUESTS, VendorRefused } from './client.mjs';
 import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import {
@@ -93,8 +94,12 @@ import { runStage0 } from './stage0.mjs';
 import { exitForRefusal, loadThresholds, partialOutPath } from './screen.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = resolve(HERE, '..', '..');
-const DEFAULT_DATA_DIR = join(REPO_ROOT, 'data', 'population-tape-2026-07-29');
+/**
+ * The population tape's directory. **Where the data lives is `config/data-root.mjs`'s answer, not
+ * this tool's**: it defaults to the copy in this repository and moves with `SLOT_ZERO_DATA_ROOT`.
+ * `--data-dir` still overrides it per run.
+ */
+const DEFAULT_DATA_DIR = POPULATION_TAPE_DIR;
 const DEFAULT_LEDGER = join(HERE, 'feed', 'ledger.json');
 const DEFAULT_RUNS_DIR = join(HERE, 'runs');
 
@@ -186,7 +191,8 @@ OPTIONS
   --out <path>        Write this run's feed record as JSON. An INCOMPLETE run writes
                       <path>.partial.json instead, leaving <path> untouched.
   --json              Print the feed record as JSON instead of text.
-  --data-dir <path>   Population tape location, for Stage 0. Default data/population-tape-2026-07-29.
+  --data-dir <path>   Population tape location, for Stage 0. Defaults to the population tape under
+                      $SLOT_ZERO_DATA_ROOT, which is this repository's own data/ when unset.
   --help              This text.
 
 WHAT ONE RUN COSTS
@@ -475,7 +481,8 @@ export async function main(opts, env, out, err, deps = {}) {
   // answers we already hold, a feed built on it produces a queue nobody should act on — and unlike
   // a one-off screen run, it would keep producing one on a schedule.
   try {
-    const stage0 = runStage0(opts.dataDir, gateThresholds, { ...T['stage2_entry'] });
+    // Checked before the first CSV read — see the same call in `screen.mjs`.
+    const stage0 = runStage0(requireDataset(POPULATION_TAPE, opts.dataDir), gateThresholds, { ...T['stage2_entry'] });
     if (!stage0.passed) {
       err('Refusing to run: Stage 0 failed, so the gate no longer reproduces the answers we hold.');
       for (const failure of stage0.failures) err(`  - ${failure}`);

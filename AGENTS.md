@@ -90,6 +90,37 @@ dead path it is listed for — so the list cannot go stale, and it is the workli
 A citation added from today is not on that list and fails immediately. **Adding an entry to it is
 not how you make the check pass**; fix the citation.
 
+## Where the data lives — one owner, and it is NOT `data/`
+
+**`config/data-root.mjs` is the single owner of where the tapes are read from, and it is its own
+area for two structural reasons.** It reads one environment variable, `SLOT_ZERO_DATA_ROOT`, and
+`src/` and `analysis/` are both banned from reading ANY variable by `test/offline-guard.ts` — the
+guard that makes "this repo reads no credential" a property rather than a promise. And `src/`↔
+`tools/` and `analysis/`↔`tools/` imports are forbidden in both directions, so a resolver under
+`tools/` could not be the one owner. `test/data-root.test.ts` governs the new area on the same
+terms as the others: no socket, no key-shaped string, no credential variable named, **exactly one
+environment variable read**, and no import from `src/`, `analysis/`, `tools/` or `test/`.
+
+- **Ask it; never compose a path.** `POPULATION_TAPE_DIR` / `GRADUATED_LIFE_TAPE_DIR` for the two
+  datasets, `datasetDir(name)` for either, `requireDataset(name, dir)` at the point a reader opens
+  its FIRST file — that last one is what turns "there is no data here" into a sentence naming what
+  is missing, where it was looked for and how to point elsewhere, instead of an `ENOENT` five
+  directories down. A test scans `src/`, `analysis/`, `tools/` and `test/` for a dataset name in
+  executable text and fails on a new one; its allow-list holds exactly one entry, and it is a
+  printed report label rather than a path.
+- **The default is the copy in this repository, deliberately.** Pointing it at the off-repo store
+  instead would make untracking a pure deletion but would take CI red on the day it landed, because
+  CI is `actions/checkout` and nothing else, and it would make the default configuration
+  machine-specific. So the untracking phase changes `DEFAULT_DATA_ROOT` and nothing else in the
+  tree. The module's own doc owns that argument; cite it rather than restating it.
+- **Both configurations are proven, not assumed.** `SLOT_ZERO_DATA_ROOT=~/slot-zero-data npm test`
+  and the default run are both green, and a root pointed at nothing fails **12 of the 18 suites**
+  — which is also the measure of how much of this suite is data-bound, and the reason CI cannot
+  simply lose the tapes.
+- **Two readers used to build paths by concatenation** (`analysis/window-population/measure.mjs`,
+  `tools/window-decay-tripwire/tape.mjs`) and depended on a trailing separator. The resolver returns
+  none; those sites use `join()` now and a test pins the absence.
+
 ## The dataset
 
 `data/population-tape-2026-07-29/` is a **primary record — never reformat, re-sort or

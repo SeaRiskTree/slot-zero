@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
+import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../config/data-root.mjs';
 import { bool, num, numOrNull, readCsv, str, type CsvRow } from './csv.js';
 import { isCohort } from './cohort.js';
 import { grossSol, lamportsToNetSol, netSol, type GrossSol, type NetSol } from './units.js';
@@ -18,10 +18,16 @@ import type {
   WalletLaunchPair,
 } from './types.js';
 
-/** The imported dataset. Everything is on disk; nothing here opens a socket. */
-export const DEFAULT_DATA_DIR = fileURLToPath(
-  new URL('../data/population-tape-2026-07-29/', import.meta.url),
-);
+/**
+ * The imported dataset. Everything is on disk; nothing here opens a socket.
+ *
+ * **Where the data lives is `config/data-root.mjs`'s to answer, not this module's.** It defaults to
+ * the copy in this repository and moves with `SLOT_ZERO_DATA_ROOT`. `src/` may not read an
+ * environment variable itself — `test/loader.test.ts` scans this directory for the expression that
+ * would, which is what makes "this repo reads no credential" structural — so the one owner lives in
+ * its own area and this is the import of it.
+ */
+export const DEFAULT_DATA_DIR = POPULATION_TAPE_DIR;
 
 const g = (row: CsvRow, col: string): GrossSol => grossSol(num(row, col));
 const gOrNull = (row: CsvRow, col: string): GrossSol | null => {
@@ -276,7 +282,10 @@ export class Tape {
   }
 
   static load(options: TapeOptions = {}): Tape {
-    const dir = options.dataDir ?? DEFAULT_DATA_DIR;
+    // Two different failures, and they call for different sentences. A missing DIRECTORY is
+    // usually a fresh clone with no data at all, so `requireDataset` names the variable that
+    // moves the root; a directory that exists without `launches.csv` in it is a wrong path.
+    const dir = requireDataset(POPULATION_TAPE, options.dataDir ?? DEFAULT_DATA_DIR);
     if (!existsSync(join(dir, 'launches.csv'))) {
       throw new Error(`no population tape at ${dir} (expected launches.csv)`);
     }

@@ -57,6 +57,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { POPULATION_TAPE_DIR } from '../../config/data-root.mjs';
+
 import {
   ALLOWANCE_ACCOUNT_WIDE_CAVEAT,
   ALLOWANCE_LAG_CAVEAT,
@@ -1119,7 +1121,8 @@ export { ENTRY_QUERY_ID, ENTRY_SQL };
  */
 export function parseArgs(argv) {
   let live = false;
-  let dataDir = 'data/population-tape-2026-07-29';
+  // Where the tape lives is `config/data-root.mjs`'s answer, not this tool's; `--data` overrides.
+  let dataDir = POPULATION_TAPE_DIR;
   /** @type {string | null} */
   let out = null;
   /** @type {string | null} */

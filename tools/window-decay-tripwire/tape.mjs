@@ -11,11 +11,19 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 
-/** @type {string} Absolute path of the population tape directory. */
-export const DATA_DIR = fileURLToPath(new URL('../../data/population-tape-2026-07-29/', import.meta.url));
+import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../../config/data-root.mjs';
+
+/**
+ * @type {string} Absolute path of the population tape directory.
+ *
+ * **Where it lives is `config/data-root.mjs`'s answer, not this tool's**: it defaults to the copy in
+ * this repository and moves with `SLOT_ZERO_DATA_ROOT`. **No trailing separator** — it used to have
+ * one and paths were built by concatenation; they are built with `join()` now.
+ */
+export const DATA_DIR = POPULATION_TAPE_DIR;
 
 /**
  * The deployer this tape is one long observation of.
@@ -88,7 +96,8 @@ const csvCache = new Map();
 export function readCsv(name) {
   const cached = csvCache.get(name);
   if (cached !== undefined) return cached;
-  const rows = parseCsv(readFileSync(DATA_DIR + name, 'utf8'));
+  // The backtest's first read of the tape, and so where an absent dataset is named as one.
+  const rows = parseCsv(readFileSync(join(requireDataset(POPULATION_TAPE, DATA_DIR), name), 'utf8'));
   const head = rows[0];
   if (head === undefined) throw new Error(`${name}: empty`);
   /** @type {Array<Record<string, string>>} */ const out = [];
@@ -150,8 +159,8 @@ let tapedLaunchCache = null;
  * @returns {import('./detector.mjs').Fill[]}
  */
 export function readWindowFills(mint) {
-  const metaPath = `${DATA_DIR}window/${mint}.meta.json`;
-  const tapePath = `${DATA_DIR}window/${mint}.jsonl.gz`;
+  const metaPath = join(DATA_DIR, 'window', `${mint}.meta.json`);
+  const tapePath = join(DATA_DIR, 'window', `${mint}.jsonl.gz`);
   if (!existsSync(metaPath) || !existsSync(tapePath)) return [];
   const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
   if (meta?.reached_mint !== true) return [];

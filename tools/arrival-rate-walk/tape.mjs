@@ -24,12 +24,17 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
+import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../../config/data-root.mjs';
 import { slotOf } from './trades.mjs';
 
-/** The committed primary record. Never reformatted, re-sorted or "cleaned" — read only. */
-export const TAPE_DIR = fileURLToPath(new URL('../../data/population-tape-2026-07-29/', import.meta.url));
+/**
+ * The committed primary record. Never reformatted, re-sorted or "cleaned" — read only.
+ *
+ * **Where it lives is `config/data-root.mjs`'s answer, not this tool's**: it defaults to the copy in
+ * this repository and moves with `SLOT_ZERO_DATA_ROOT`.
+ */
+export const TAPE_DIR = POPULATION_TAPE_DIR;
 
 /**
  * Parse RFC-4180 CSV, honouring quoted fields.
@@ -124,7 +129,8 @@ export function csvRecords(rows) {
  * @returns {LaunchRow[]}
  */
 export function readLaunches(dir = TAPE_DIR) {
-  const rows = parseCsv(readFileSync(join(dir, 'launches.csv'), 'utf8'));
+  // The tool's first read of the tape, and so where an absent dataset is named as one.
+  const rows = parseCsv(readFileSync(join(requireDataset(POPULATION_TAPE, dir), 'launches.csv'), 'utf8'));
   const header = /** @type {string[]} */ (rows[0]);
   const at = (/** @type {string} */ name) => {
     const i = header.indexOf(name);

@@ -38,6 +38,29 @@ CI (`.github/workflows/ci.yml`) runs exactly that on Node 20 for every PR and ev
 
 Private. Nothing here is production.
 
+### Where the data lives
+
+**One module owns the answer: `config/data-root.mjs`.** Every reader in `src/`, `analysis/`,
+`tools/` and `test/` asks it for a dataset directory instead of composing a path of its own, so the
+tapes can be read from outside the repository without touching a consumer.
+
+```bash
+# read the tapes from wherever they are kept
+export SLOT_ZERO_DATA_ROOT=~/slot-zero-data
+npm test
+```
+
+The root is a directory holding the datasets **by name**, so
+`$SLOT_ZERO_DATA_ROOT/population-tape-2026-07-29/launches.csv` and the in-repository
+`data/population-tape-2026-07-29/launches.csv` are the same file in the two configurations.
+`SLOT_ZERO_DATA_ROOT` unset means the copy in this repository, which is why a clone still works with
+no setup. It is **not** a credential: it holds a path, it is printed freely, and it is the only
+environment variable anything outside `tools/` reads — which is why the owner is its own area rather
+than a module in `src/`, where reading one at all is banned by `test/loader.test.ts`.
+
+A dataset that is not where the root says it is reports **what is missing, where it was looked for
+and how to point somewhere else**, rather than an `ENOENT` on a file deep inside `window/`.
+
 ---
 
 ## Where the lab stands
@@ -99,6 +122,7 @@ call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md
 |---|---|
 | `data/population-tape-2026-07-29/` | The population tape. 239 launches, 107,439 fills, 20,388 counterparty wallets, reconstructed keyless. Column semantics in its `README.md`, findings in its `report.md`, import and correction decisions in its `IMPORT.md`. |
 | `src/` | The loader. Per-launch, per-wallet and per-(wallet, launch) views, plus the raw per-fill tape. No runtime dependencies. |
+| `config/data-root.mjs` | The one owner of **where the data lives** — see "Where the data lives" above. Its own area because it reads an environment variable, which `src/` and `analysis/` may not, and because a resolver under `tools/` could not be imported by either. |
 | `test/reproduction.test.ts` | The published headline numbers, asserted against the loaded data. |
 | `test/type-guards.test-d.ts` | Compile-time proof that the **four** guards below bite. Type-checked, never executed. |
 | `tools/deployer-screen/` | One of the two keyed, network-capable areas. The competence **gate** (stages 0–1, keyed) plus the keyless **entry score** (stage 2) — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |

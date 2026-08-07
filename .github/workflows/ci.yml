@@ -28,4 +28,13 @@ jobs:
       # package.json "test" = tsc --noEmit && vitest run. Both halves matter:
       # test/type-guards.test-d.ts asserts at compile time, so it fails tsc,
       # not vitest.
+      #
+      # THE DATA COMES FROM `checkout` AND FROM NOTHING ELSE. `config/data-root.mjs`
+      # defaults to the copy in this repository, so a runner reads the tapes it
+      # cloned; `SLOT_ZERO_DATA_ROOT` would point it somewhere else, and no step
+      # here sets it. MEASURED against a root pointing at nothing: 12 of the 18
+      # suites fail, so this job cannot pass without the tapes being reachable.
+      # Untracking them therefore needs a decision about how a runner gets them
+      # (a fetch step, a cache, or a reduced check set) — it is not a matter of
+      # setting the variable.
       - run: npm test

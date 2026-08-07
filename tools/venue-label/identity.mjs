@@ -467,6 +467,19 @@ export function renderLabels(labels, addresses) {
   /** @type {string[]} */
   const lines = [];
   let anyTags = false;
+  /**
+   * The evidence a row carries besides its name. One spelling, so a class that prints it cannot
+   * drift from another in whether the caveat is raised with it.
+   *
+   * @param {VenueLabel} label
+   */
+  const pushEvidence = (label) => {
+    if (label.tags.length > 0) {
+      anyTags = true;
+      lines.push(`    tags: ${label.tags.join(', ')}   <- read these, see the note below`);
+    }
+    if (label.website !== null) lines.push(`    website: ${label.website}`);
+  };
   labels.forEach((label, i) => {
     const address = addresses[i] ?? '(unknown address)';
     if (label === null) {
@@ -478,6 +491,12 @@ export function renderLabels(labels, addresses) {
       lines.push(`${address}  UNNAMED  (vendor type: ${label.type}, read ${label.readAtUtc})`);
       lines.push('    The vendor answered with a type and no usable name. It did NOT decline to');
       lines.push('    name this address, so this is not "unknown" — it is an incomplete answer.');
+      // On a row the vendor typed but did not name, a TAG is often the only venue evidence there
+      // is, and captain decision 366a requires the caveat to travel wherever a label is published.
+      // `readIdentityRow` already attaches TAGS_CAVEAT and the record already keeps it, so this
+      // block was the one surface dropping it. Scoped to 372a's class deliberately: the `unknown`
+      // branch below is unchanged, and that asymmetry is a scope boundary rather than an oversight.
+      pushEvidence(label);
       return;
     }
     if (!label.named) {
@@ -490,11 +509,7 @@ export function renderLabels(labels, addresses) {
       .filter((p) => p !== '')
       .join(' ');
     lines.push(`${address}  ${parts}  (type: ${label.type}, read ${label.readAtUtc})`);
-    if (label.tags.length > 0) {
-      anyTags = true;
-      lines.push(`    tags: ${label.tags.join(', ')}   <- read these, see the note below`);
-    }
-    if (label.website !== null) lines.push(`    website: ${label.website}`);
+    pushEvidence(label);
   });
 
   lines.push('');

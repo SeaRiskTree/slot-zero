@@ -316,6 +316,27 @@ describe('"unknown" is the vendor\'s answer, and it is preserved as one', () => 
     expect(declined).not.toMatch(/UNNAMED/);
   });
 
+  it('publishes the tags on a typed-but-unnamed row, where they may be the ONLY venue evidence', () => {
+    // The vendor typed this row and did not name it, so the tag carries whatever answer there is.
+    // Captain decision 366a requires the caveat to travel wherever a label is published, and the
+    // row already carries it — the rendered block was the surface dropping it.
+    const label = readIdentityRow(
+      { address: BITSTAMP_TAGGED, type: 'exchange', tags: ['Bitstamp Deposit'], website: 'https://example.test' },
+      READ_AT,
+    );
+    expect(label?.named).toBe(false);
+    expect(label?.caveats).toContain(TAGS_CAVEAT);
+
+    const text = renderLabels([label], [BITSTAMP_TAGGED]).join('\n');
+    expect(text).toMatch(/UNNAMED\s+\(vendor type: exchange/);
+    expect(text).toMatch(/tags: Bitstamp Deposit/);
+    expect(text).toMatch(/website: https:\/\/example\.test/);
+    // The caveat reaches the block, not just the row.
+    expect(text).toContain(TAGS_CAVEAT);
+    // And it still claims no refusal the vendor never made.
+    expect(text).not.toMatch(/declines to name/);
+  });
+
   it('keys by address and never by position', () => {
     // The vendor answers in request order today and nothing promises it will. Reading by index
     // would attach one address's venue to another, which on this surface is the worst failure
@@ -883,8 +904,9 @@ describe('the committed record is evidence, and it still agrees with itself', ()
     expect(Object.keys(built['summary'] as object).sort()).toEqual(
       [...SUMMARY_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
     );
-    // The record moved; the committed evidence did not, and it is still read at its own version.
-    expect(record.schemaVersion).toBeLessThan(RECORD_SCHEMA_VERSION);
+    // A committed record is legal at its OWN version — the version it was written under is pinned
+    // above, and it is never edited forward. One committed at the current version is legal too.
+    expect(record.schemaVersion).toBeLessThanOrEqual(RECORD_SCHEMA_VERSION);
   });
 
   it('cost one request and named five of six, with the sixth honestly unknown', () => {

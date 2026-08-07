@@ -135,8 +135,9 @@ The Stage 1 gate can be applied to either of two histories, and `README.md` →
 "Which history the gate counts" owns the difference:
 
 - **creation-derived** — which tokens the wallet *created*. Correct, and metered: with `DUNE_API_KEY`
-  set the enumeration is one Dune execution for a whole batch, billed against a shared monthly credit
-  allowance; the fallback is the Solana RPC walk — keyless ~100 requests per candidate at 2.5s apart,
+  set the enumeration is one Dune execution for a whole batch, billed against an account-wide monthly
+  credit allowance that the operator's own cap narrows further (`README.md` → "The monthly credit
+  ceiling"); the fallback is the Solana RPC walk — keyless ~100 requests per candidate at 2.5s apart,
   so one default `screen.mjs` run is budgeted in *hours*, or with `HELIUS_API_KEY` set the indexed
   walk, fast but metered in credits (`README.md` → "Bounds"). **This lane carries none of them**: its
   bounds pin zero keyless requests, no Solana RPC spend and no Dune execution at all.

@@ -3292,6 +3292,9 @@ const DUNE_ALLOWANCE_CLEARED = {
   worstCaseCredits: 1,
   creditsUsed: 0,
   creditsIncluded: 2500,
+  monthlyCapCredits: 4000,
+  creditsIncludedVendor: 2500,
+  bindingCeiling: 'vendor-plan' as const,
   creditsRemaining: 2500,
   reserveCredits: 25,
   spendableCredits: 2475,
@@ -5841,7 +5844,7 @@ describe('the keyless boundary holds in both directions', () => {
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
   // unpinned for two rounds and grew in both of them with nothing failing and the README's schema
   // table needing a hand edit to keep up — the same hole CREATION_KEYS_BY_SCHEMA closes one level
-  // down. Dune is metered in its own units (executions and bytes against a SHARED monthly
+  // down. Dune is metered in its own units (executions and bytes against an ACCOUNT-wide monthly
   // allowance, where a FAILED execution is billed exactly like a successful one), which is why it is
   // a block of its own rather than five more `spend` keys.
   const DUNE_KEYS_9 = [

@@ -1709,8 +1709,10 @@ export function duneSpendPlan(bounds) {
  *
  * **WHAT IT STILL CANNOT DO, and the three caveats travel with every verdict unchanged:** the
  * vendor's counter LAGS, so a reading over-states what remains and `allowanceReserveCredits` is held
- * back for it; the key is SHARED with every other lane, so a sufficient reading is evidence and never
- * a guarantee; and the period is a subscription ANNIVERSARY rather than a calendar month. A ledger
+ * back for it; the key is UNSHARED but the ACCOUNT is one and every lane of this fleet draws on the
+ * same monthly total, so a sufficient reading is evidence and never a guarantee; and the period is a
+ * subscription ANNIVERSARY rather than a calendar month. The operator's own fleet-wide cap (captain
+ * decision 322a) narrows the ceiling a leg is priced against; it does not make a reading firmer. A ledger
  * makes ONE RUN self-consistent. It cannot reserve against a sibling lane, and nothing here pretends
  * otherwise.
  *
@@ -1736,6 +1738,10 @@ export function openDuneCreditLedger() {
         allowance: reading.allowance === null ? null : netOfReservations(reading.allowance, held),
         unreadableReasons: reading.reasons,
         reserveCredits: input.bounds.allowanceReserveCredits,
+        // Passed straight through rather than defaulted: an absent pin arrives as `undefined` and
+        // `decideAllowance` refuses it, which is captain decision 322a's whole point. A `?? null`
+        // here would turn a config the operator forgot to write into a lane with no cap at all.
+        monthlyCapCredits: input.bounds.monthlyCreditCapCredits,
         tightMultiple: input.bounds.allowanceTightMultiple,
         allowanceRequired: input.bounds.allowanceRequired,
       });
@@ -1765,7 +1771,8 @@ export function openDuneCreditLedger() {
 /**
  * @typedef {object} DuneCreditLedger
  * @property {(client: import('./client.mjs').DuneClient, input: { plan: import('./client.mjs').DuneSpendPlan,
- *   bounds: { allowanceReserveCredits: number, allowanceTightMultiple: number, allowanceRequired: boolean },
+ *   bounds: { allowanceReserveCredits: number, monthlyCreditCapCredits: number,
+ *     allowanceTightMultiple: number, allowanceRequired: boolean },
  *   nowMs: number }) => Promise<{ plan: import('./client.mjs').DuneSpendPlan,
  *   estimate: import('./client.mjs').DuneSpendEstimate,
  *   allowance: import('./client.mjs').DuneAllowance | null,
@@ -1844,8 +1851,8 @@ function round3(n) {
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} input
  * @param {{ maxExecutionsPerRun?: number, maxResultRows?: number, worstCaseCreditsPerExecution?: number,
- *   resultBytesPerRowCeiling?: number, allowanceReserveCredits: number, allowanceTightMultiple: number,
- *   allowanceRequired: boolean }} input.bounds
+ *   resultBytesPerRowCeiling?: number, allowanceReserveCredits: number, monthlyCreditCapCredits: number,
+ *   allowanceTightMultiple: number, allowanceRequired: boolean }} input.bounds
  * @param {number} input.nowMs
  * @param {import('./client.mjs').DuneSpendPlan} [input.plan] The asking leg's own ceilings. Absent
  *   means the ENUMERATION's, priced from `input.bounds` by {@link duneSpendPlan} exactly as before.

@@ -327,9 +327,13 @@ export async function planEntryEligibility(kind, sources, opts) {
  * balance unexamined.
  *
  * **The balance is a READING and never a reservation.** It is not pinned, cached or carried in a
- * document anywhere: the key is SHARED, so another holder may spend between the reading and the
- * execution; the vendor's counter LAGS, which is what `dune.allowanceReserveCredits` is held back
- * for; and the period is a subscription anniversary rather than a calendar month. Those three limits
+ * document anywhere: the key is unshared but the ACCOUNT is one, so a sibling lane of this fleet may
+ * spend between the reading and the execution; the vendor's counter LAGS, which is what
+ * `dune.allowanceReserveCredits` is held back for; and the period is a subscription anniversary
+ * rather than a calendar month. **The operator's own monthly cap IS pinned, and it is the one figure
+ * here that is** (captain decision 322a): it is the captain's number rather than a vendor's, it
+ * lives in `thresholds.json` → `dune.monthlyCreditCapCredits`, and the balance it is compared with
+ * is still read live. Those three limits
  * travel with the decision — `decideAllowance` attaches them as caveats — and are the reason a
  * sufficient reading is evidence and not a guarantee.
  *
@@ -360,7 +364,8 @@ export async function planEntryEligibility(kind, sources, opts) {
  * @param {{ maxExecutionsPerRun: number, maxRequestsPerRun: number, maxResultRowsPerWindow: number,
  *   resultBytesPerRowCeiling: number, worstCaseComputeCreditsPerExecution: number }} opts.agreementBounds
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number,
- *   maxCoverageLagMs: number, allowanceReserveCredits: number, allowanceTightMultiple: number,
+ *   maxCoverageLagMs: number, allowanceReserveCredits: number, monthlyCreditCapCredits: number,
+ *   allowanceTightMultiple: number,
  *   allowanceRequired: boolean }} opts.duneBounds
  * @param {number} opts.windowsPlanned Windows this run will score through this source.
  * @param {boolean} opts.refreshProbe
@@ -1651,9 +1656,10 @@ export async function main(opts, env, out, err) {
       }
       try {
         // ---- THE MONTHLY CREDIT CEILING, BEFORE THE FIRST DUNE REQUEST OF THE RUN. ------------
-        // Dune bills a SHARED monthly allowance and a FAILED execution is billed like a successful
-        // one, so the failure worth preventing is a leg that starts, dies partway and leaves
-        // neither a result nor the credits to retry. The reading is free and it happens before the
+        // Dune bills an ACCOUNT-wide monthly allowance — capped again by the operator's own
+        // fleet-wide number, and the SMALLER of the two binds (captain decision 322a) — and a
+        // FAILED execution is billed like a successful one, so the failure worth preventing is a
+        // leg that starts, dies partway and leaves neither a result nor the credits to retry. The reading is free and it happens before the
         // coverage probe, which is itself a billed read. A refusal degrades this leg to the RPC
         // walk exactly as any other Dune failure does — slower rather than wrong.
         //

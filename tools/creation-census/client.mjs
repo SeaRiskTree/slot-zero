@@ -107,9 +107,9 @@ export function describeDuneStatus(status, path, excerpt) {
   }
   if (status === 402) {
     return (
-      `HTTP 402 on ${path} — the Dune plan's allowance is spent. The Free tier is 2,500 credits a ` +
-      `month, SHARED with whatever else holds this key, and nothing in this tool tracks the month: ` +
-      `it is stateless between runs and the monthly arithmetic is the operator's.${tail}`
+      `HTTP 402 on ${path} — the Dune plan's allowance is spent. The key is UNSHARED, so this is ` +
+      `this fleet's own spend, and nothing in this tool tracks the month: it is stateless between ` +
+      `runs and the monthly arithmetic is the operator's.${tail}`
     );
   }
   if (status === 429) {
@@ -407,11 +407,37 @@ export class DuneClient {
 // rule is a duplicated text pinned by a test — the same remedy `COHORT_SQL` already uses across the
 // same boundary. Do not "fix" it by importing across the boundary, and do not edit one copy.
 //
-// WHAT IT GUARDS. Dune bills a SHARED monthly allowance (Free tier: 2,500 credits) in credits, and
-// a FAILED execution is billed exactly like a successful one. Before this block existed, both tools
-// discovered the ceiling by hitting it — an HTTP 402 partway through a multi-execution run leaves
-// neither a result nor the credits to retry. The measured case that motivated it: one venue-research
-// investigation spent ~350 credits, 14% of a month, in a single sitting.
+// WHAT IT GUARDS. Dune bills a monthly allowance in credits, and a FAILED execution is billed
+// exactly like a successful one. Before this block existed, both tools discovered the ceiling by
+// hitting it — an HTTP 402 partway through a multi-execution run leaves neither a result nor the
+// credits to retry. The measured case that motivated it: one venue-research investigation spent
+// ~350 credits, 14% of a month, in a single sitting.
+//
+// TWO CEILINGS APPLY AND THE SMALLER BINDS (captain decision 322a). The vendor reports what its
+// PLAN includes for the current billing period; the OPERATOR configures a monthly cap of their own,
+// pinned in each lane's own bounds file as `dune.monthlyCreditCapCredits` and never written in
+// code. Neither figure is rewritten into the other: both of them, and the NAME of the one that
+// bound, travel on every verdict this block returns, so an operator reading a refusal can tell
+// whether to wait for the period to roll or to raise their own number. It is a `min()` rather than
+// a chosen figure because BOTH sides move — a plan can be upgraded mid-period, and the cap is the
+// captain's to change — and a `min()` needs no edit when either of them does.
+//
+// THE CAP IS A POLICY NUMBER AND IT IS ENFORCED PER ACCOUNT-PERIOD, WHICH IS NOT THE SAME THING.
+// The captain's cap is one fleet-wide monthly total across every lane and project that touches Dune,
+// and nothing here tracks spend across runs. It binds anyway WITHIN one account, because
+// `credits_used` is that account's own running total for the billing period: a cap applied to the
+// PERIOD's total rather than to a run is enforced by subtraction on every run, without any lane
+// having to know what the others spent.
+//
+// **WHAT IT THEREFORE CANNOT DO, stated because the fleet already holds more than one Dune key.**
+// Separate keys are separate ACCOUNTS with separate quotas and separate period boundaries, and each
+// counter knows only its own account's spend. So this guard holds a run to the cap on WHICHEVER KEY
+// IT USED, and two keys each honouring a 4,000-credit cap spend 8,000 between them with neither one
+// wrong. Nothing in a `POST /usage` response can close that; only one key, or a smaller cap on each,
+// can — and which of those is a captain's decision rather than a guard's. **Read the included figure
+// and the period out of the response the key in use returned.** Do not carry either across keys and
+// do not write either down: both are the vendor's, both move, and they are not the same numbers on
+// two accounts.
 //
 // THREE UNITS, AND THEY ARE NOT INTERCHANGEABLE. Credits are the monthly allowance. Executions are
 // billed whether or not they succeed and are what {@link DuneClient} already ceilings. Result BYTES
@@ -450,16 +476,40 @@ export const ALLOWANCE_LAG_CAVEAT =
   'never a measurement of either, so the allowance check subtracts a pinned reserve before comparing.';
 
 /**
- * The half of the allowance no reading can bound: the key is shared.
+ * The half of the allowance no reading can bound: it is ONE ACCOUNT's, and the fleet holds more than
+ * one.
  *
- * The Free-tier allowance belongs to the ACCOUNT, not to this run, and this repository's own
- * `CLAUDE.md` records the key as shared with whatever else holds it. Another holder can spend the
- * whole remainder between our reading and our execution and nothing here would see it. The reserve
- * makes that less likely; it cannot make it impossible.
+ * **The keys are the CAPTAIN'S ALONE and are no longer shared with another holder** (captain
+ * decision 322a — which is what makes a configured monthly cap enforceable at all: a cap on an
+ * allowance a stranger also draws on would be a wish). Two things a reading still cannot bound.
+ * WITHIN the account: the screen, the census, the reproduction lane and any browser session spend
+ * the same total, nothing here holds state between runs, and a sibling run can take the remainder
+ * between our reading and our first execution. ACROSS accounts: separate keys are separate accounts
+ * with their own quotas and their own period boundaries, so this reading describes the key this run
+ * used and says nothing whatever about the others. The reserve makes the first less likely; it
+ * cannot make it impossible, and it does not touch the second at all.
+ *
+ * **This is NOT the lag caveat and neither stands in for the other.** "Unshared" says no stranger is
+ * spending the balance. {@link ALLOWANCE_LAG_CAVEAT} says the counter itself is behind the truth.
+ * Only the first of those changed, and reading the change as "the counter is exact now" would spend
+ * the reserve on a claim nobody made.
  */
-export const ALLOWANCE_SHARED_CAVEAT =
-  'The Dune allowance is the ACCOUNT\'s and the key is shared, so another holder can spend it between ' +
-  'this reading and this run\'s first execution. A sufficient reading is evidence, never a reservation.';
+export const ALLOWANCE_ACCOUNT_WIDE_CAVEAT =
+  'The Dune allowance is ONE ACCOUNT\'s — the key this run used. That key is UNSHARED, but every lane ' +
+  'and run of this fleet draws on the same account total, nothing tracks it between runs, and a ' +
+  'SEPARATE key is a separate account with its own quota and its own period. A sufficient reading is ' +
+  'evidence, never a reservation.';
+
+/**
+ * Where the operator's own monthly cap is edited, named in the sentences a refusal prints.
+ *
+ * Captain decision 322a puts the cap in CONFIGURATION and nowhere else — this string is a POINTER
+ * to that key, never the value, which is the whole reason it may live in code. Both keyed lanes
+ * spell the key identically under their own bounds file (`tools/deployer-screen/thresholds.json` and
+ * `tools/creation-census/bounds.json`), so one lane-neutral pointer is honest for both and this
+ * region stays duplicable byte for byte.
+ */
+export const MONTHLY_CAP_PIN = 'dune.monthlyCreditCapCredits';
 
 /**
  * What a run's own arithmetic is worth once it has started spending.
@@ -481,8 +531,10 @@ export const LOCAL_ESTIMATE_CAVEAT =
  * @property {number} creditsIncluded  The period's allowance. 2,500 on the Free tier.
  * @property {number} creditsRemaining `creditsIncluded - creditsUsed`, floored at 0.
  * @property {string} periodStart      `YYYY-MM-DD`, the vendor's own string.
- * @property {string} periodEnd        `YYYY-MM-DD`. **NOT a calendar month** — this account's period
- *   was measured running 2026-07-29 -> 2026-08-29, i.e. it resets on a subscription anniversary.
+ * @property {string} periodEnd        `YYYY-MM-DD`. **NOT a calendar month** — one of this fleet's
+ *   Dune accounts was measured running 2026-07-29 -> 2026-08-29, i.e. it resets on a subscription
+ *   anniversary, and a DIFFERENT key is a different account on a different period. Always read this
+ *   out of the response the key in use returned; never carry a period across keys.
  * @property {number} periodsReturned  How many periods the response carried.
  * @property {number} readAtMs         When this reading was taken. A reading ages badly; see the lag.
  * @property {number | null} privateQueries Saved private queries in use, when the response says. The
@@ -649,12 +701,59 @@ export function estimatePlanCredits(plan) {
 }
 
 /**
+ * @typedef {object} CreditCeiling
+ * @property {number} ceilingCredits   The SMALLER of the two, and the only one a decision spends
+ *   against.
+ * @property {'operator-cap' | 'vendor-plan'} binding Which one that was.
+ * @property {number} monthlyCapCredits     The operator's configured cap, unchanged.
+ * @property {number} vendorCreditsIncluded The vendor's reported plan, unchanged.
+ */
+
+/**
+ * Resolve the operator's monthly cap and the vendor's reported plan into the one that binds.
+ *
+ * **BOTH ARE REAL NUMBERS AND THE SMALLER ONE WINS — that is the whole of captain decision 322a.**
+ * Before it, the guard followed whatever the vendor happened to report as included and the
+ * operator's own monthly limit was enforced nowhere: at a plan of 2,500 against a cap of 4,000 the
+ * cap looked harmless, and an account upgraded past the cap would have spent straight through it
+ * with nothing noticing.
+ *
+ * **NEITHER FIGURE IS REWRITTEN INTO THE OTHER.** Both come back beside the answer so every
+ * sentence downstream can state which ceiling bound and by how much, rather than presenting one
+ * number as though it were the only one there ever was.
+ *
+ * **A TIE IS REPORTED AS THE VENDOR'S.** The two are then the same number and either label is
+ * arithmetically honest, so it goes to the externally-imposed one: at equality, raising the cap buys
+ * nothing, which is what `vendor-plan` tells an operator to expect.
+ *
+ * @param {number} monthlyCapCredits     The operator's configured monthly cap, already validated.
+ * @param {number} vendorCreditsIncluded What `POST /usage` reported for the current period.
+ * @returns {CreditCeiling}
+ */
+export function bindingCreditCeiling(monthlyCapCredits, vendorCreditsIncluded) {
+  const capBinds = monthlyCapCredits < vendorCreditsIncluded;
+  return {
+    ceilingCredits: capBinds ? monthlyCapCredits : vendorCreditsIncluded,
+    binding: capBinds ? 'operator-cap' : 'vendor-plan',
+    monthlyCapCredits,
+    vendorCreditsIncluded,
+  };
+}
+
+/**
  * @typedef {object} AllowanceDecision
  * @property {'sufficient' | 'tight' | 'insufficient' | 'unreadable'} verdict
  * @property {boolean} ok                  Whether the run may spend. `tight` is a WARNING and passes.
  * @property {number} worstCaseCredits     What the plan could cost.
  * @property {number | null} creditsUsed
- * @property {number | null} creditsIncluded
+ * @property {number | null} creditsIncluded The EFFECTIVE ceiling — the smaller of the operator's
+ *   cap and the vendor's plan, which is what the balance was actually measured against. The two
+ *   inputs survive beside it in `monthlyCapCredits` and `creditsIncludedVendor`, and
+ *   `bindingCeiling` names which of them this is.
+ * @property {number | null} monthlyCapCredits     The operator's configured cap, as configured.
+ * @property {number | null} creditsIncludedVendor The vendor's reported plan, as reported.
+ * @property {'operator-cap' | 'vendor-plan' | null} bindingCeiling Which ceiling bound. `null` when
+ *   no comparison happened at all, which is not the same as neither binding.
  * @property {number | null} creditsRemaining
  * @property {number} reserveCredits       Held back for the counter's lag; never spendable.
  * @property {number | null} spendableCredits `creditsRemaining - reserveCredits`, floored at 0.
@@ -689,12 +788,21 @@ export function estimatePlanCredits(plan) {
  * checked BEFORE any comparison rather than at each one, and no `allowanceRequired: false` opts out
  * of it: the question was never answered, so there is nothing for a lane to waive.
  *
+ * **THE OPERATOR'S MONTHLY CAP IS CHECKED IN THAT SAME PLACE AND IS REQUIRED** (captain decision
+ * 322a). It is read from the same untyped JSON and reaches the same comparison, so it fails the same
+ * way; and it is required rather than optional because an absent cap would be a lane silently
+ * uncapped, which is the state this decision exists to end. A lane that wants headroom raises the
+ * number where an operator can see it. {@link bindingCreditCeiling} then decides which of the two
+ * ceilings the balance is measured against, and BOTH figures reach the reasons either way.
+ *
  * @param {object} input
  * @param {DuneSpendPlan} input.plan
  * @param {DuneSpendEstimate} input.estimate
  * @param {DuneAllowance | null} input.allowance
  * @param {readonly string[]} [input.unreadableReasons] Why there is no allowance, when there is none.
  * @param {number} input.reserveCredits
+ * @param {number} input.monthlyCapCredits The OPERATOR's fleet-wide monthly cap, from this lane's
+ *   pinned bounds. Must be a finite positive number of credits; anything else refuses.
  * @param {number} input.tightMultiple    How many worst cases must fit before a run is not "tight".
  * @param {boolean} input.allowanceRequired
  * @returns {AllowanceDecision}
@@ -702,18 +810,25 @@ export function estimatePlanCredits(plan) {
 export function decideAllowance(input) {
   const reserve = Math.max(0, input.reserveCredits);
   const worst = input.estimate.worstCaseCredits;
-  const caveats = [ALLOWANCE_LAG_CAVEAT, ALLOWANCE_SHARED_CAVEAT];
+  const cap = input.monthlyCapCredits;
+  const capIsUsable = typeof cap === 'number' && Number.isFinite(cap) && cap > 0;
+  const caveats = [ALLOWANCE_LAG_CAVEAT, ALLOWANCE_ACCOUNT_WIDE_CAVEAT];
 
-  if (!Number.isFinite(worst) || !Number.isFinite(reserve)) {
+  if (!Number.isFinite(worst) || !Number.isFinite(reserve) || !capIsUsable) {
     const broken = !Number.isFinite(worst)
       ? `the plan's worst case priced to ${String(worst)}`
-      : `the reserve priced to ${String(input.reserveCredits)}`;
+      : !Number.isFinite(reserve)
+        ? `the reserve priced to ${String(input.reserveCredits)}`
+        : `the operator's monthly cap read as ${String(cap)}`;
     return {
       verdict: 'unreadable',
       ok: false,
       worstCaseCredits: worst,
       creditsUsed: null,
       creditsIncluded: null,
+      monthlyCapCredits: null,
+      creditsIncludedVendor: null,
+      bindingCeiling: null,
       creditsRemaining: null,
       reserveCredits: reserve,
       spendableCredits: null,
@@ -722,9 +837,10 @@ export function decideAllowance(input) {
       periodEnd: null,
       readAtUtc: null,
       reasons: [
-        `REFUSED before spending anything: ${broken}, not a finite number of credits, so ` +
-          `${input.plan.lane} cannot say what this run could cost and no comparison against the ` +
-          `balance would mean anything. A pinned bound is missing or non-numeric.`,
+        `REFUSED before spending anything: ${broken}, not a finite positive number of credits, so ` +
+          `${input.plan.lane} cannot say what this run could cost or what it may spend, and no ` +
+          `comparison against the balance would mean anything. A pinned bound is missing or ` +
+          `non-numeric — the cap itself lives in configuration, at ${MONTHLY_CAP_PIN}.`,
       ],
       caveats,
     };
@@ -738,6 +854,9 @@ export function decideAllowance(input) {
       worstCaseCredits: worst,
       creditsUsed: null,
       creditsIncluded: null,
+      monthlyCapCredits: cap,
+      creditsIncludedVendor: null,
+      bindingCeiling: null,
       creditsRemaining: null,
       reserveCredits: reserve,
       spendableCredits: null,
@@ -751,19 +870,41 @@ export function decideAllowance(input) {
           (input.allowanceRequired
             ? `Refused before spending anything — an unreadable balance is not headroom.`
             : `Proceeding UNGUARDED because this lane was configured not to require the reading.`),
+        `The operator's monthly cap of ${cap} credit(s) (${MONTHLY_CAP_PIN}) is configured and ` +
+          `applies; what could not be read is the vendor's own figure and this period's spend, so ` +
+          `neither ceiling could be compared against anything.`,
         ...why,
       ],
       caveats,
     };
   }
 
-  const remaining = input.allowance.creditsRemaining;
+  // THE `min()` CAPTAIN DECISION 322a ASKS FOR, and the reason it needs no cross-run bookkeeping:
+  // `creditsUsed` is the ACCOUNT's running total for the whole billing period, so measuring it
+  // against the smaller of the two ceilings enforces a fleet-wide monthly cap on every run without
+  // any lane knowing what the others spent. When the vendor's plan is the smaller number this is
+  // arithmetically what the guard already did, which is why an uncapped-in-practice cap costs a run
+  // nothing at all — a cap that needlessly refused runs would fail the captain's second requirement
+  // exactly as an overspend fails the first.
+  const ceiling = bindingCreditCeiling(cap, input.allowance.creditsIncluded);
+  const capBinds = ceiling.binding === 'operator-cap';
+  const remaining = capBinds
+    ? Math.max(0, round3(ceiling.ceilingCredits - input.allowance.creditsUsed))
+    : input.allowance.creditsRemaining;
   const spendable = Math.max(0, round3(remaining - reserve));
   const shortfall = spendable >= worst ? 0 : round3(worst - spendable);
   const period = `${input.allowance.periodStart} -> ${input.allowance.periodEnd}`;
   const balance =
-    `${input.allowance.creditsUsed} of ${input.allowance.creditsIncluded} credit(s) used in the billing ` +
+    `${input.allowance.creditsUsed} of ${ceiling.ceilingCredits} credit(s) used in the billing ` +
     `period ${period}; ${remaining} remain, ${spendable} spendable after the ${reserve}-credit reserve.`;
+  // BOTH FIGURES SURVIVE, ON EVERY VERDICT INCLUDING THE PASSING ONES. Printing only the binding one
+  // would silently rewrite the operator's number into the vendor's or the other way about, and an
+  // operator could not tell a cap they set from a plan they were sold.
+  const ceilings =
+    `Two ceilings apply and the SMALLER binds: the operator's monthly cap of ${cap} credit(s) ` +
+    `(${MONTHLY_CAP_PIN}) and the vendor's reported plan of ${ceiling.vendorCreditsIncluded} for ` +
+    `this key's own billing period. ` +
+    `${capBinds ? 'THE OPERATOR CAP' : "THE VENDOR'S PLAN"} binds, at ${ceiling.ceilingCredits} credit(s).`;
 
   if (spendable < worst) {
     return {
@@ -771,7 +912,10 @@ export function decideAllowance(input) {
       ok: false,
       worstCaseCredits: worst,
       creditsUsed: input.allowance.creditsUsed,
-      creditsIncluded: input.allowance.creditsIncluded,
+      creditsIncluded: ceiling.ceilingCredits,
+      monthlyCapCredits: cap,
+      creditsIncludedVendor: ceiling.vendorCreditsIncluded,
+      bindingCeiling: ceiling.binding,
       creditsRemaining: remaining,
       reserveCredits: reserve,
       spendableCredits: spendable,
@@ -784,8 +928,20 @@ export function decideAllowance(input) {
           `execution(s) and ${input.plan.resultReads} result read(s), a worst case of ${worst} credit(s), ` +
           `and it is ${shortfall} credit(s) short.`,
         balance,
+        ceilings,
+        // WHICH LEVER CLEARS IT, stated rather than left to be inferred from two numbers. An
+        // operator reading a refusal has exactly two moves — wait, or raise their own cap — and only
+        // one of them is on their side of the vendor.
+        capBinds
+          ? `THE OPERATOR CAP is what refused this run: raising ${MONTHLY_CAP_PIN} clears it now, and ` +
+            `so does the counter resetting. The period rolls on ${input.allowance.periodEnd}. The ` +
+            `vendor's plan of ${ceiling.vendorCreditsIncluded} credit(s) still had room and is not ` +
+            `what refused.`
+          : `THE VENDOR'S PLAN is what refused this run: raising ${MONTHLY_CAP_PIN} would change ` +
+            `nothing, because ${ceiling.vendorCreditsIncluded} is the smaller of the two ceilings. ` +
+            `The period rolls on ${input.allowance.periodEnd}.`,
         `An execution is billed whether or not it succeeds, so a run that starts and cannot finish ` +
-          `leaves neither a result nor the credits to retry. The period rolls on ${input.allowance.periodEnd}.`,
+          `leaves neither a result nor the credits to retry.`,
       ],
       caveats,
     };
@@ -797,7 +953,10 @@ export function decideAllowance(input) {
     ok: true,
     worstCaseCredits: worst,
     creditsUsed: input.allowance.creditsUsed,
-    creditsIncluded: input.allowance.creditsIncluded,
+    creditsIncluded: ceiling.ceilingCredits,
+    monthlyCapCredits: cap,
+    creditsIncludedVendor: ceiling.vendorCreditsIncluded,
+    bindingCeiling: ceiling.binding,
     creditsRemaining: remaining,
     reserveCredits: reserve,
     spendableCredits: spendable,
@@ -810,8 +969,9 @@ export function decideAllowance(input) {
           `TIGHT: the worst case of ${worst} credit(s) fits, but fewer than ${input.tightMultiple} of ` +
             `them do, so this run may be the last one this period can afford.`,
           balance,
+          ceilings,
         ]
-      : [balance],
+      : [balance, ceilings],
     caveats,
   };
 }

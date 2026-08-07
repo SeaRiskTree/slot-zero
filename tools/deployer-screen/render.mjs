@@ -139,8 +139,17 @@ const MEASURED_MEDIAN_CREDITS = 320;
  * Dune's Free-tier monthly credit allowance, from their pricing page.
  *
  * Printed by the dry run so the Dune worst case has a denominator on the same screen, exactly as
- * {@link HELIUS_MONTHLY_CREDITS} does. Unlike the Helius allowance this one is **shared** with
- * whatever else holds the key, and nothing in this tool tracks the month — the dry run says so.
+ * {@link HELIUS_MONTHLY_CREDITS} does. Like the Helius allowance the key is **unshared** — no other
+ * holder spends it (captain, 2026-08-06) — but every lane of this fleet draws on the same account and
+ * nothing in this tool tracks the month, which the dry run says.
+ *
+ * **IT IS A PUBLISHED PLAN FIGURE AND NOT THIS RUN'S DENOMINATOR, AND THE DRY RUN SAYS SO.** A live
+ * run is compared against the SMALLER of two ceilings (captain decision 322a): the operator's own cap
+ * at `thresholds.json` → `dune.monthlyCreditCapCredits`, and what the vendor actually reports for the
+ * current billing period through `POST /usage`. That second one is read LIVE and per key — a
+ * different Dune credential is a different ACCOUNT with its own quota and its own period — so this
+ * constant is a Free-tier reference point that a dry run can print without a credential, never the
+ * figure any run is judged against.
  */
 const DUNE_MONTHLY_CREDITS = 2_500;
 
@@ -1199,7 +1208,7 @@ export function renderStage1(run) {
  * @param {{ creationQueryId: number, coverageQueryId: number, maxExecutionsPerRun: number,
  *   maxRequestsPerRun: number, maxResultRows: number, maxCoverageLagMs: number,
  *   minIntervalMs: number, worstCaseCreditsPerExecution: number, resultBytesPerRowCeiling: number,
- *   allowanceReserveCredits: number, allowanceTightMultiple: number,
+ *   allowanceReserveCredits: number, monthlyCreditCapCredits: number, allowanceTightMultiple: number,
  *   allowanceRequired: boolean, legFallbackHealthyWalkShare: number,
  *   legFallbackCliffMultiple: number, legFallbackMinCandidates: number }} plan.dune The pinned Dune
  *   bounds.
@@ -1589,11 +1598,25 @@ export function renderDryRun(plan) {
         `  A DEPLOYER ABOVE THE CAP IS REFUSED, NOT TRUNCATED QUIETLY: its rows are a prefix, its`,
       );
       L.push('  true count comes back beside them, and it alone falls back to the creation walk.');
+      // THE TWO CEILINGS, BOTH OF THEM, BEFORE ANYTHING IS SPENT (captain decision 322a). A live
+      // run compares its worst case against whichever is SMALLER, and prints which one bound; the
+      // dry run cannot read the vendor's live figure without a key, so it names the plan figure and
+      // the operator's own cap and says which is which.
       L.push(
-        `  Free tier ${DUNE_MONTHLY_CREDITS.toLocaleString('en-US')} credits/month and SHARED with whatever else holds this key.`,
+        `  vendor plan                   ${DUNE_MONTHLY_CREDITS.toLocaleString('en-US')} credits/month on the Free tier, READ LIVE on --live. A`,
       );
-      L.push('  NOTHING HERE TRACKS THE MONTH: this tool holds no state between runs, so the monthly');
-      L.push('  arithmetic is yours — the same limit the Helius block below states.');
+      L.push('                                separate credential is a separate ACCOUNT with its own quota and its own');
+      L.push('                                period, and the key is UNSHARED — no other holder spends it.');
+      L.push(
+        `  operator cap                  ${d.monthlyCreditCapCredits.toLocaleString('en-US')} credits/month ` +
+          `(thresholds.json -> dune.monthlyCreditCapCredits)`,
+      );
+      L.push('                                A live run is refused against whichever of the two is SMALLER, and says');
+      L.push('                                which one bound — so raise the cap, or wait for the period to roll.');
+      L.push('  NOTHING HERE TRACKS THE MONTH: this tool holds no state between runs, so how many runs');
+      L.push('  to spend the cap on is yours — the same limit the Helius block below states. The cap');
+      L.push("  itself binds anyway: it is applied to the PERIOD's own spend rather than to a run — but");
+      L.push('  PER ACCOUNT, so two keys each honouring it spend twice it between them.');
       L.push(`  pacing                        ${d.minIntervalMs}ms between requests (a courtesy floor; unmeasured)`);
       L.push('');
       L.push('  EVERY COUNT SHIPS WITH ITS OWN COVERAGE PROBE, and a count reaching outside the');

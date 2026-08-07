@@ -491,6 +491,12 @@ export async function checkDuneAllowance(client, input) {
     allowance: reading.allowance,
     unreadableReasons: reading.reasons,
     reserveCredits: input.bounds.dune.allowanceReserveCredits,
+    // The operator's fleet-wide monthly cap, passed straight through: an absent pin arrives as
+    // `undefined` and `decideAllowance` refuses it (captain decision 322a). The two keyed lanes
+    // carry the same number under the same key name in their own bounds file, and
+    // `test/dune-credit-ceiling.test.ts` pins the copies equal — a cap that bound one lane and not
+    // the other would not be a fleet-wide total.
+    monthlyCapCredits: input.bounds.dune.monthlyCreditCapCredits,
     tightMultiple: input.bounds.dune.allowanceTightMultiple,
     allowanceRequired: input.bounds.dune.allowanceRequired,
   });
@@ -541,6 +547,15 @@ export async function main(argv, env, say) {
     `  worst case     ${estimate.worstCaseCredits} credit(s) — ${spendPlan.executions} execution(s) at ` +
       `${spendPlan.creditsPerExecution} = ${estimate.executionCredits}, plus ${spendPlan.resultReads} read(s) of at ` +
       `most ${spendPlan.rowsPerRead} row(s) at ${spendPlan.bytesPerRow} bytes = ${estimate.exportCredits}`,
+  );
+  // THE OPERATOR'S OWN CEILING, printed beside the plan's cost even here, where the vendor's figure
+  // cannot be read (captain decision 322a). A --live run compares the worst case above against
+  // whichever of the two is SMALLER and names the one that bound.
+  say(
+    `  operator cap   ${bounds.dune.monthlyCreditCapCredits} credit(s)/month ` +
+      `(bounds.json -> dune.monthlyCreditCapCredits), applied to the billing period of whichever ` +
+      `key this run uses; the vendor's own figure for that period is the other ceiling, is read ` +
+      `LIVE on --live, and the SMALLER of the two binds`,
   );
   say('');
 

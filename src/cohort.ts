@@ -10,7 +10,7 @@ export const DEPLOYER = '7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL';
  * The six wallets in the create slot of essentially every launch (`report.md` §4.3, §5.4).
  *
  * **Evidence**: presence on every launch across eight months; entry as two three-signer
- * transactions paying 0.0009 SOL of fees; fills at 1.08–1.41× the deployer's own price
+ * transactions paying 0.0009 SOL of fees; fills at 1.08–1.91× the deployer's own price
  * where outsiders pay 2–3×; and **zero appearances across 70 other deployers' launches**
  * (`report.md` §6) while genuine general-purpose snipers appear on 9 and 8 of them.
  *

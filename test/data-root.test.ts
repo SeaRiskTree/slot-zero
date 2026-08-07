@@ -71,20 +71,34 @@ function withoutComments(source: string): string {
 }
 
 /**
- * Every environment variable NAME a source file reads, in the four spellings this area uses:
- * `process.env.NAME`, `env['NAME']`, `env[CONSTANT]` — the idiom `config/data-root.mjs` actually
- * writes, resolved through the constant's own declaration — and a bare `process.env` handed on
- * whole, which is only a read at all when it is bound as a default and then subscripted by one of
- * the first three.
+ * Every environment variable NAME a source file reads, in every spelling the environment can be
+ * reached by here: `process.env.NAME` and the same dot form off a BOUND parameter (`env.NAME`),
+ * `env['NAME']`, `env[CONSTANT]` — the idiom `config/data-root.mjs` actually writes, resolved
+ * through the constant's own declaration — a destructuring pattern off either (`const { NAME } =
+ * process.env`), and a bare `process.env` handed on whole, which is only a read at all when it is
+ * bound as a default and then reached by one of the forms above.
  *
- * A subscript this cannot resolve to a literal, and a bare `process.env` that is NOT such a
- * binding, are both reported as unnameable reads rather than skipped: a guard that silently sees
- * nothing is the vacuous pass it exists to prevent.
+ * A subscript this cannot resolve to a literal, a computed or rest element in a destructuring
+ * pattern, and a bare `process.env` that is NOT such a binding, are all reported as unnameable
+ * reads rather than skipped: a guard that silently sees nothing is the vacuous pass it exists to
+ * prevent, and each of these spellings once WAS that pass.
  */
 export function environmentNamesRead(source: string): string[] {
   const code = withoutComments(source);
   const names: string[] = [];
-  for (const match of code.matchAll(/process\.env\.([A-Za-z0-9_$]+)/g)) names.push(match[1] as string);
+  for (const match of code.matchAll(/\benv\.([A-Za-z0-9_$]+)/g)) names.push(match[1] as string);
+  for (const match of code.matchAll(/\{([^{}]*)\}\s*=\s*(?:process\.)?env\b/g)) {
+    for (const part of (match[1] as string).split(',')) {
+      const bound = part.trim();
+      if (bound === '') continue;
+      if (bound.startsWith('...')) {
+        names.push('<the whole environment>');
+        continue;
+      }
+      const key = /^([A-Za-z_$][\w$]*)/.exec(bound);
+      names.push(key?.[1] ?? `<${bound}, which is not a literal in this file>`);
+    }
+  }
   for (const match of code.matchAll(/\benv\[([^\]]*)\]/g)) {
     const subscript = (match[1] as string).trim();
     const quoted = /^(['"])([^'"]*)\1$/.exec(subscript);
@@ -456,6 +470,17 @@ describe('config/ is governed like the other areas', () => {
     expect(environmentNamesRead("process.env['SLOT_ZERO_CACHE_DIR']")).toEqual(['SLOT_ZERO_CACHE_DIR']);
     expect(environmentNamesRead('process.env.SLOT_ZERO_CACHE_DIR')).toEqual(['SLOT_ZERO_CACHE_DIR']);
     expect(environmentNamesRead('const v = env[pickAVariable()];')[0]).toMatch(/not a literal in this file/);
+    // The DOT form off a bound parameter, and DESTRUCTURING off either spelling: both reached the
+    // environment while the scan reported an empty list, which is the vacuous pass one spelling
+    // over from the one it had just closed.
+    expect(
+      environmentNamesRead('function f(env = process.env) { return env.SLOT_ZERO_CACHE_DIR; }'),
+    ).toEqual(['SLOT_ZERO_CACHE_DIR']);
+    expect(environmentNamesRead('const { SLOT_ZERO_OTHER } = process.env;')).toEqual(['SLOT_ZERO_OTHER']);
+    expect(environmentNamesRead('function f(env = process.env) { const { SLOT_ZERO_OTHER: o } = env; }')).toEqual(
+      ['SLOT_ZERO_OTHER'],
+    );
+    expect(environmentNamesRead('const { ...rest } = process.env;')).toEqual(['<the whole environment>']);
     // A bare `process.env` is a read of the WHOLE environment unless it is bound and then
     // subscripted — the resolver's own `env = process.env` default is the bound form.
     expect(environmentNamesRead('doThings(); process.env;')).toEqual(['<the whole environment>']);

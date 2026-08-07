@@ -71,18 +71,26 @@ function withoutComments(source: string): string {
 }
 
 /**
- * Every environment variable NAME a source file reads, in every spelling the environment can be
- * reached by here. The environment is first followed through the names it is BOUND to — a
- * parameter default, a `const` alias, a plain assignment — and every one of those, plus
- * `process.env` itself, is then read for `NAME`, `['NAME']`, `[CONSTANT]` (the idiom
- * `config/data-root.mjs` actually writes, resolved through the constant's own declaration) and a
- * destructuring pattern. A bare `process.env` is a read of the whole environment unless it is such
- * a binding, in which case the binding's own reads are the ones counted.
+ * Every environment variable NAME a source file reads DIRECTLY, and what it cannot name.
  *
- * A subscript this cannot resolve to a literal, a computed or rest element in a destructuring
- * pattern, and a bare `process.env` that is NOT such a binding, are all reported as unnameable
- * reads rather than skipped: a guard that silently sees nothing is the vacuous pass it exists to
- * prevent, and each of these spellings once WAS that pass.
+ * The environment is followed through the names it is BOUND to — a parameter default, a `const`
+ * alias, a plain assignment — and every one of those, plus `process.env` itself, is then read for
+ * `NAME`, `['NAME']`, `[CONSTANT]` (the idiom `config/data-root.mjs` actually writes, resolved
+ * through the constant's own declaration) and a destructuring pattern.
+ *
+ * **THIS IS A SOURCE-TEXT SCAN AND IT IS A FLOOR ON THE EVIDENCE, NOT A PROOF OF ABSENCE.** It has
+ * no dataflow analysis, so it cannot follow the environment through an arbitrary call — hand
+ * `process.env`, or a name bound to it, to another function and the read happens inside a
+ * parameter this scan never connects to the environment. Four rounds of review each named one more
+ * indirection; the class is open, and the honest statement of what this buys is *these direct
+ * spellings are checked*, in the same way `roomIsProven` is a floor on create-slot evidence rather
+ * than a claim about the operation.
+ *
+ * What it will not do is pass silently. A subscript it cannot resolve to a literal, a computed or
+ * rest element in a destructuring pattern, and a bare `process.env` that is not a binding — which
+ * includes handing it to a call — are all reported as unnameable reads rather than skipped, so the
+ * guard above fails on them and a human decides. Each of those spellings once returned nothing at
+ * all, which is the vacuous pass this exists to prevent.
  */
 export function environmentNamesRead(source: string): string[] {
   const code = withoutComments(source);
@@ -121,7 +129,7 @@ export function environmentNamesRead(source: string): string[] {
   }
   for (const match of code.matchAll(/process\.env\b(?![.[])/g)) {
     const before = code.slice(Math.max(0, (match.index ?? 0) - 40), match.index);
-    if (!/[=(,]\s*$/.test(before)) names.push('<the whole environment>');
+    if (!/=\s*$/.test(before)) names.push('<the whole environment>');
   }
   return names;
 }
@@ -471,10 +479,17 @@ describe('config/ is governed like the other areas', () => {
     expect(readsSeen).toBe(resolverReads.length);
   });
 
-  it('SEES a second variable in every spelling this area could write one in, or refuses to name it', () => {
+  it('NAMES a second variable in the direct spellings, and refuses to be silent about the rest', () => {
     // The regression: each of these passed the old scan untouched. A name other than the data
-    // root's — or a subscript that cannot be resolved to one — must come back and fail the guard
-    // above, rather than leaving it iterating an empty list.
+    // root's — or a read that cannot be resolved to one — must come back and fail the guard above,
+    // rather than leaving it iterating an empty list.
+    //
+    // THE BOUND IS PART OF THE CLAIM. This is a source-text scan with no dataflow analysis, so
+    // what it proves is that these DIRECT spellings are checked, not that no second variable can
+    // be read at all: the environment handed to another function is read inside a parameter this
+    // scan cannot connect back to it. It is a floor on the evidence, and the last case below is
+    // where the floor stops — an indirect read is reported as UNNAMEABLE, which fails the guard
+    // and puts a human on it, rather than passing as nothing.
     expect(environmentNamesRead("const OTHER = 'SLOT_ZERO_CACHE_DIR';\nconst v = env[OTHER];")).toEqual([
       'SLOT_ZERO_CACHE_DIR',
     ]);
@@ -510,6 +525,15 @@ describe('config/ is governed like the other areas', () => {
 const DATA_ROOT_ENV_VAR = '${DATA_ROOT_ENV_VAR}';`)).toEqual([DATA_ROOT_ENV_VAR]);
     // And a mention inside a doc comment is not a read.
     expect(environmentNamesRead('/** bans the literal `process.env` outright */')).toEqual([]);
+    // WHERE THE FLOOR STOPS: the environment handed to a call is read inside a parameter this scan
+    // cannot connect back to it, so the NAME is out of reach — but the handover itself is visible,
+    // and it is reported as the whole environment rather than as nothing, which fails the guard.
+    expect(
+      environmentNamesRead('function get(cfg) { return cfg.SLOT_ZERO_CACHE_DIR; }\nconst v = get(process.env);'),
+    ).toContain('<the whole environment>');
+    expect(environmentNamesRead('const v = readVar(process.env, "SLOT_ZERO_CACHE_DIR");')).toEqual([
+      '<the whole environment>',
+    ]);
   });
 
   it('OWNS the answer: no other code file composes a path to a dataset', () => {

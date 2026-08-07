@@ -1,0 +1,21 @@
+{
+  "version": "1.0.0",
+  "lookup": {
+    "batchMaxAddresses": 100,
+    "creditsPerRequest": 100,
+    "minIntervalMs": 250
+  },
+  "budget": {
+    "maxAddressesPerRun": 300,
+    "maxRequestsPerRun": 12,
+    "maxCreditsPerRun": 1200
+  },
+  "justification": {
+    "lookup.batchMaxAddresses": "A VENDOR LIMIT, not ours: Helius documents the batch endpoint as resolving up to 100 addresses in a single request, and bills that request the same 100 credits a single-address lookup costs. It is pinned here so `planLookups` and the client cannot disagree about where a batch ends, and a test pins it equal to `identity.mjs` -> BATCH_MAX_ADDRESSES. Raising it means the vendor changed its documentation, not that we want larger batches.",
+    "lookup.creditsPerRequest": "A VENDOR PRICE, from its own billing table (helius.dev/docs/billing/credits, read 2026-08-07): every Wallet API request costs 100 credits, the batch lookup included. It is duplicated here from `client.mjs` -> CREDITS_PER_REQUEST so the plan can be priced without importing the network client, and a test pins the two equal. This is the whole reason the batch path is the default: 100 addresses one at a time is 10,000 credits and together they are 100.",
+    "lookup.minIntervalMs": "NO MEASUREMENT BACKS THIS ON THIS ENDPOINT, and here is what would. A pacing ladder down to 0 ms shed nothing on Helius's RPC route at 161 requests/second (AGENTS.md -> Helius facts), and the Developer plan allows 50 requests/second, but nothing has measured the Wallet API itself. 250 ms is therefore a courtesy floor rather than a shed-avoidance figure, and it is nearly free at this lane's single-digit request counts. A ladder against these two endpoints would replace it with a measured number.",
+    "budget.maxAddressesPerRun": "A SPEND BOUND, not a vendor limit. Three full batches. The authorising decision sizes this lane at a handful of lookups a month, and the honest failure mode is a caller pasting a whole counterparty tape (20,388 wallets, about 20,400 credits) into a tool that reads as free. 300 keeps a mistake at three requests while leaving room for every named-address list this project has produced, and a larger list is a captain step rather than a flag.",
+    "budget.maxRequestsPerRun": "DERIVED, not chosen: 3 batch requests at the client's retry depth of 3 attempts each is 9, plus 3 of headroom so a transport failure does not turn a legitimate plan into a refusal. It bounds ATTEMPTS rather than logical requests, because a retry spends the same 100 credits a first try does and the vendor publishes nothing about whether a shed request is billed. The plan is refused before the first request when it does not fit.",
+    "budget.maxCreditsPerRun": "maxRequestsPerRun times creditsPerRequest, and a test pins that equality rather than letting the two drift. 1,200 credits is 0.012% of the plan's 10,000,000 a month, against a deployer-screen creation walk that ranges 20-4,940 credits per candidate and about 62,000 expected for a full 195-candidate run. The point of the ceiling is not the size of this lane's bill; it is that a lane drawing on an allowance another lane depends on must refuse before it spends rather than discover the ceiling by reaching it."
+  }
+}

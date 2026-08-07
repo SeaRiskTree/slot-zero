@@ -24,8 +24,8 @@ stage. **There is no strategy, backtest, signal or trading logic here.**
 `test/loader.test.ts` proves it; `analysis/` is held to the same list by
 `test/window-population.test.ts`. Every source behind the dataset is keyless and public, and the
 dataset was built with **zero metered provider requests**, and so was its extension past the bond.
-The network-capable area is `tools/`, and the boundary is the directory: `tools/deployer-screen/`
-and `tools/creation-census/` are the **keyed** ones; `tools/graduated-life-tape/`,
+The network-capable area is `tools/`, and the boundary is the directory: `tools/deployer-screen/`,
+`tools/creation-census/` and `tools/venue-label/` are the **keyed** ones; `tools/graduated-life-tape/`,
 `tools/arrival-rate-walk/` and `tools/window-decay-tripwire/` are keyless throughout. None of them is imported by `src/` and none
 imports from it. See each one's `README.md`.
 
@@ -139,6 +139,7 @@ top of this file. Answering it means screening *other* deployers, present tense.
 | **The creation census** — the answer to that ceiling: every deployer creating in one past month, taken whole above a stated count, one keyed Dune execution per month. **3,036** for 2026-07 at ≥30 launches against the feed's 5 | `tools/creation-census/` |
 | **The window-population measurement** — how many profitable windows the tape contains, how long, how fast they close | `analysis/window-population/` |
 | **The window-decay tripwire** — watches the wallet currently being traded and raises **STOP AND ROTATE** when its window closes. Detects the one close on record **24.1 h** after the regime changed, against a close that took **24.7 h**, with **0** false stops in the 83-day window; keyless, zero token | `tools/window-decay-tripwire/` |
+| **Venue labelling** — names the custodial venue behind an address, on the Helius key this project already holds. **100 credits for up to 100 addresses**, so the batch path is the default and the only one a multi-address run can take. It names walls; it never traces past one, and the citation rule that says so travels with every label | `tools/venue-label/` |
 | **CI** — `npm test` on the Node 20 engines floor | `.github/workflows/ci.yml` |
 
 **Stage 2 scores entry and deliberately does not score exit.** Room to enter is not room to leave,
@@ -181,6 +182,7 @@ call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md
 | `analysis/window-population/` | How many profitable windows the tape contains, how long, and how fast they close. **One window**, 2026-03-12 → 2026-06-04, **83 days**, closed in a single launch over **24.7 hours** — and **n = 1**, so "are windows numerous?" is *unmeasured*. Offline like `src/`. Findings, definitions and limits in its `README.md`. |
 | `tools/arrival-rate-walk/` | The collector that would answer that `n = 1` — the same per-launch series for a **cohort** of deployers, seeded from history rather than from success. **Keyless throughout**; the tool is built and proven on a bounded sample, the multi-day collection is a separate step and has not run. Its cohort query is deployed and is executed by `tools/creation-census/`, which holds the key this directory deliberately does not. Scope, bounds and the limits in its `README.md`. |
 | `tools/creation-census/` | The keyed half of that statement, and the answer to the discovery ceiling: **every deployer that created in one past month, taken whole above a stated count**, one Dune execution per month. The committed 2026-07 run reaches **3,036** deployers at ≥30 launches where the vendor feed sees 5. The floor is a **prolific-ness** cut and not a competence one, and the census says so in its own output. Scope, bounds and both named biases in its `README.md`. |
+| `tools/venue-label/` | The third keyed area, and the smallest: **which venue is this address**, from Helius's Wallet Identity endpoint on the key this project already holds. Both endpoints cost 100 credits per request and one of them answers 100 addresses, so more than one address is **always** batched. `type: "unknown"` is the vendor's own answer and is preserved as one, never smoothed into a guess. **A venue name is a vendor's claim read on a date, and naming a wall does not let anyone see through it** — that rule is enforced onto every label, record and rendered line rather than documented. Scope, bounds and what it cannot answer in its `README.md`. |
 | `.github/workflows/ci.yml` | `npm ci` then `npm test` on Node 20, on PRs and pushes to `main`. The whole check set, on purpose. |
 | `AGENTS.md` | Provider facts that cost real time to learn. Read before touching pump.fun or Solana RPC. |
 

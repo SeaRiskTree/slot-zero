@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "tool": "tools/venue-label",
+  "source": "helius-wallet-identity",
+  "readAtUtc": "2026-08-07T16:32:49.888Z",
+  "citationRule": [
+    "A VENUE NAME IS A VENDOR CLAIM READ ON A DATE, NOT A PROPERTY OF THE CHAIN. It is unaudited, with no published methodology and no error rate. Cite it as \"Helius Wallet Identity, read <date>\" and never as a fact about the address.",
+    "NAMING A WALL DOES NOT LET YOU SEE THROUGH IT. This lab never traces past a custodial wall. Two wallets that both touched Coinbase are NOT thereby related, and two that touched different exchanges are NOT thereby unrelated; the permanent ceiling on this method is unchanged by any name. Cheap venue names make that misreading EASIER, which is why this sentence travels with the label."
+  ],
+  "authoritativeRecord": "`slot-zero-attribution-product-pricing` §5 and captain decision 366a (both held in firstmate's records, not in this repo)",
+  "summary": {
+    "requested": 6,
+    "named": 5,
+    "unknown": 1,
+    "unreadable": 0,
+    "missing": 0
+  },
+  "labels": [
+    {
+      "address": "GJRs4FwHtemZ5ZE9x3FNvJ8TMwitKTh21yxdRPqn7npE",
+      "type": "exchange",
+      "name": "Coinbase Hot Wallet 11",
+      "category": "Centralized Exchange",
+      "tags": [],
+      "website": "https://www.coinbase.com/",
+      "named": true,
+      "readAtUtc": "2026-08-07T16:32:49.888Z",
+      "source": "helius-wallet-identity",
+      "citation": "Helius Wallet Identity, read 2026-08-07T16:32:49.888Z — a vendor claim on that date, not a property of the chain, and naming a wall does not let you see through it. Rule: `slot-zero-attribution-product-pricing` §5 and captain decision 366a (both held in firstmate's records, not in this repo).",
+      "caveats": [
+        "A VENUE NAME IS A VENDOR CLAIM READ ON A DATE, NOT A PROPERTY OF THE CHAIN. It is unaudited, with no published methodology and no error rate. Cite it as \"Helius Wallet Identity, read <date>\" and never as a fact about the address.",
+        "NAMING A WALL DOES NOT LET YOU SEE THROUGH IT. This lab never traces past a custodial wall. Two wallets that both touched Coinbase are NOT thereby related, and two that touched different exchanges are NOT thereby unrelated; the permanent ceiling on this method is unchanged by any name. Cheap venue names make that misreading EASIER, which is why this sentence travels with the label."
+      ]
+    },
+    {
+      "address": "H8sMJSCQxfKiFTCfDR3DUMLPwcRbM61LGFJ8N4dK3WjS",
+      "type": "exchange",
+      "name": "Coinbase Hot Wallet 12",
+      "category": "Centralized Exchange",
+      "tags": [
+        "Bitstamp Deposit"
+      ],
+      "website": "https://www.coinbase.com/",
+      "named": true,
+      "readAtUtc": "2026-08-07T16:32:49.888Z",
+      "source": "helius-wallet-identity",
+      "citation": "Helius Wallet Identity, read 2026-08-07T16:32:49.888Z — a vendor claim on that date, not a property of the chain, and naming a wall does not let you see through it. Rule: `slot-zero-attribution-product-pricing` §5 and captain decision 366a (both held in firstmate's records, not in this repo).",
+      "caveats": [
+        "A VENUE NAME IS A VENDOR CLAIM READ ON A DATE, NOT A PROPERTY OF THE CHAIN. It is unaudited, with no published methodology and no error rate. Cite it as \"Helius Wallet Identity, read <date>\" and never as a fact about the address.",
+        "NAMING A WALL DOES NOT LET YOU SEE THROUGH IT. This lab never traces past a custodial wall. Two wallets that both touched Coinbase are NOT thereby related, and two that touched different exchanges are NOT thereby unrelated; the permanent ceiling on this method is unchanged by any name. Cheap venue names make that misreading EASIER, which is why this sentence travels with the label.",
+        "THIS ROW CARRIES TAGS AS WELL AS A NAME AND THEY MAY NAME DIFFERENT VENUES. One measured row reads name \"Coinbase Hot Wallet 12\" with tag \"Bitstamp Deposit\"; whether that is a real relationship, a stale tag or a labelling error is unresolved. Publish the tags with the name."
+      ]
+    },
+    {
+      "address": "9obNtb5GyUegcs3a1CbBkLuc5hEWynWfJC6gjz5uWQkE",
+      "type": "exchange",
+      "name": "Coinbase Hot Wallet 1",
+      "category": "Centralized Exchange",
+      "tags": [],
+      "website": "https://www.coinbase.com/",
+      "named": true,
+      "readAtUtc": "2026-08-07T16:32:49.888Z",
+      "source": "helius-wallet-identity",
+      "citation": "Helius Wallet Identity, read 2026-08-07T16:32:49.888Z — a vendor claim on that date, not a property of the chain, and naming a wall does not let you see through it. Rule: `slot-zero-attribution-product-pricing` §5 and captain decision 366a (both held in firstmate's records, not in this repo).",
+      "caveats": [
+        "A VENUE NAME IS A VENDOR CLAIM READ ON A DATE, NOT A PROPERTY OF THE CHAIN. It is unaudited, with no published methodology and no error rate. Cite it as \"Helius Wallet Identity, read <date>\" and never as a fact about the address.",
+        "NAMING A WALL DOES NOT LET YOU SEE THROUGH IT. This lab never traces past a custodial wall. Two wallets that both touched Coinbase are NOT thereby related, and two that touched different exchanges are NOT thereby unrelated; the permanent ceiling on this method is unchanged by any name. Cheap venue names make that misreading EASIER, which is why this sentence travels with the label."
+      ]
+    },
+    {
+      "address": "4NyK1AdJBNbgaJ9EsKz3J4rfeHsuYdjkTPg3JaNdLeFw",
+      "type": "exchange",
+      "name": "Coinbase Hot Wallet 8",
+      "category": "Centralized Exchange",
+      "tags": [],
+      "website": "https://www.coinbase.com/",
+      "named": true,
+      "readAtUtc": "2026-08-07T16:32:49.888Z",
+      "source": "helius-wallet-identity",
+      "citation": "Helius Wallet Identity, read 2026-08-07T16:32:49.888Z — a vendor claim on that date, not a property of the chain, and naming a wall does not let you see through it. Rule: `slot-zero-attribution-product-pricing` §5 and captain decision 366a (both held in firstmate's records, not in this repo).",
+      "caveats": [
+        "A VENUE NAME IS A VENDOR CLAIM READ ON A DATE, NOT A PROPERTY OF THE CHAIN. It is unaudited, with no published methodology and no error rate. Cite it as \"Helius Wallet Identity, read <date>\" and never as a fact about the address.",
+        "NAMING A WALL DOES NOT LET YOU SEE THROUGH IT. This lab never traces past a custodial wall. Two wallets that both touched Coinbase are NOT thereby related, and two that touched different exchanges are NOT thereby unrelated; the permanent ceiling on this method is unchanged by any name. Cheap venue names make that misreading EASIER, which is why this sentence travels with the label."
+      ]
+    },
+    {
+      "address": "Bukt1ztP1AetQPdfHKUjFp7cVJPFusCNi98bvZcL7Ug5",
+      "type": "unknown",
+      "name": null,
+      "category": null,
+      "tags": [],
+      "website": null,
+      "named": false,
+      "readAtUtc": "2026-08-07T16:32:49.888Z",
+      "source": "helius-wallet-identity",
+      "citation": "Helius Wallet Identity, read 2026-08-07T16:32:49.888Z — a vendor claim on that date, not a property of the chain, and naming a wall does not let you see through it. Rule: `slot-zero-attribution-product-pricing` §5 and captain decision 366a (both held in firstmate's records, not in this repo).",
+      "caveats": [
+        "A VENUE NAME IS A VENDOR CLAIM READ ON A DATE, NOT A PROPERTY OF THE CHAIN. It is unaudited, with no published methodology and no error rate. Cite it as \"Helius Wallet Identity, read <date>\" and never as a fact about the address.",
+        "NAMING A WALL DOES NOT LET YOU SEE THROUGH IT. This lab never traces past a custodial wall. Two wallets that both touched Coinbase are NOT thereby related, and two that touched different exchanges are NOT thereby unrelated; the permanent ceiling on this method is unchanged by any name. Cheap venue names make that misreading EASIER, which is why this sentence travels with the label."
+      ]
+    },
+    {
+      "address": "62qc2CNXwrYqQScmEdiZFFAnJR262PxWEuNQtxfafNgV",
+      "type": "protocol",
+      "name": "Pump.fun AMM Fees 2",
+      "category": "Fees",
+      "tags": [
+        "Squads Multisig v4"
+      ],
+      "website": "https://pump.fun/",
+      "named": true,
+      "readAtUtc": "2026-08-07T16:32:49.888Z",
+      "source": "helius-wallet-identity",
+      "citation": "Helius Wallet Identity, read 2026-08-07T16:32:49.888Z — a vendor claim on that date, not a property of the chain, and naming a wall does not let you see through it. Rule: `slot-zero-attribution-product-pricing` §5 and captain decision 366a (both held in firstmate's records, not in this repo).",
+      "caveats": [
+        "A VENUE NAME IS A VENDOR CLAIM READ ON A DATE, NOT A PROPERTY OF THE CHAIN. It is unaudited, with no published methodology and no error rate. Cite it as \"Helius Wallet Identity, read <date>\" and never as a fact about the address.",
+        "NAMING A WALL DOES NOT LET YOU SEE THROUGH IT. This lab never traces past a custodial wall. Two wallets that both touched Coinbase are NOT thereby related, and two that touched different exchanges are NOT thereby unrelated; the permanent ceiling on this method is unchanged by any name. Cheap venue names make that misreading EASIER, which is why this sentence travels with the label.",
+        "THIS ROW CARRIES TAGS AS WELL AS A NAME AND THEY MAY NAME DIFFERENT VENUES. One measured row reads name \"Coinbase Hot Wallet 12\" with tag \"Bitstamp Deposit\"; whether that is a real relationship, a stale tag or a labelling error is unresolved. Publish the tags with the name."
+      ]
+    }
+  ],
+  "unanswered": {
+    "missing": [],
+    "unreadableRows": 0,
+    "unexpected": [],
+    "refusedByShape": 0,
+    "duplicatesDropped": 0
+  },
+  "spend": {
+    "requests": 1,
+    "creditsAssumedSpent": 100,
+    "shed": 0,
+    "transportFailures": 0
+  },
+  "bounds": {
+    "maxAddressesPerRun": 300,
+    "maxRequestsPerRun": 12,
+    "maxCreditsPerRun": 1200,
+    "batchMaxAddresses": 100,
+    "creditsPerRequest": 100,
+    "minIntervalMs": 250,
+    "version": "1.0.0"
+  }
+}

@@ -67,9 +67,12 @@ import {
   openDuneCreditLedger,
 } from '../tools/deployer-screen/dune.mjs';
 import type { DuneCreditLedger } from '../tools/deployer-screen/dune.mjs';
-import { agreementExecutionsFor, tradeFillSpendPlan } from '../tools/deployer-screen/dune-fills.mjs';
+import { ENTRY_QUERY_ID, agreementExecutionsFor, tradeFillSpendPlan } from '../tools/deployer-screen/dune-fills.mjs';
 import {
+  ENTRY_FILL_SOURCE_KIND,
   buildDuneEntryFillSource,
+  duneFillSourceContradiction,
+  loadThresholds as screenLoadThresholds,
   main as screenMain,
   parseArgs as screenParseArgs,
 } from '../tools/deployer-screen/screen.mjs';
@@ -1797,6 +1800,33 @@ describe('the entry fill source is constructed in two phases, and each phase car
 
   const KEYED_ENV = { MADEONSOL_API_KEY: SENTINEL_KEY, DUNE_API_KEY: SENTINEL_KEY };
 
+  /**
+   * THE ORDER PROPERTY, AND IT IS THE ONE THAT SURVIVES THE CUTOVER.
+   *
+   * Asserting an exit code or a refusal sentence discriminates only while `TRADE_COVERAGE_QUERY_ID`
+   * is null, because that is what makes an early build THROW. Deploy the probe id — which is exactly
+   * what Gate 3 does — and a regressed early build would SUCCEED, bill its coverage probe and let
+   * the run reach the same cliff with the same stderr, so the guard would go green against the
+   * regression at the moment the hazard becomes real.
+   *
+   * What does not expire is WHICH Dune request came first. `POST /usage` is free — Dune documents it
+   * as a metadata endpoint consuming no credits — so the first BILLED Dune request of a run must
+   * belong to the enumeration's own saved queries. The entry fill source reads different ids
+   * (`ENTRY_QUERY_ID` and the trade coverage probe), so a build that ran ahead of the enumeration
+   * puts one of those first and fails this whatever the exit code turns out to be.
+   */
+  function assertNoBilledDuneRequestBeforeEnumeration(seen: string[]): void {
+    const bounds = screenLoadThresholds()['dune'] as { creationQueryId: number; coverageQueryId: number };
+    const enumerationIds = [bounds.creationQueryId, bounds.coverageQueryId].map(String);
+    const billed = seen.filter((u) => u.startsWith(DUNE_API_BASE) && !u.endsWith(USAGE_PATH));
+    for (const url of billed) {
+      // The entry leg's own surfaces, named so a future reader sees what is being excluded.
+      expect(url).not.toContain(String(ENTRY_QUERY_ID));
+      if (enumerationIds.some((id) => url.includes(id))) return;
+      throw new Error(`a Dune request that is neither free nor the enumeration's came first: ${url}`);
+    }
+  }
+
   function run(argv: string[], env: Record<string, string>, kind: string) {
     const parsed = screenParseArgs(argv);
     if (!parsed.ok) throw new Error('unreachable');
@@ -1851,6 +1881,8 @@ describe('the entry fill source is constructed in two phases, and each phase car
       // And the seeds WERE spent before the cliff, so this is the degraded path rather than an
       // early refusal wearing a different exit code.
       expect(seen.filter((u) => u.startsWith(MADEONSOL_BASE_URL)).length).toBeGreaterThan(0);
+      // THE ASSERTION THAT DOES NOT EXPIRE AT THE CUTOVER — see the helper for why the two above do.
+      assertNoBilledDuneRequestBeforeEnumeration(seen);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -1858,11 +1890,14 @@ describe('the entry fill source is constructed in two phases, and each phase car
 
   it('PROPERTY 2, the other direction: a run that gets past the enumeration DOES build the billed source', async () => {
     // Without this the property above would be satisfied by never building the source at all. The
-    // enumeration is switched off with `--no-dune`, so there is no leg to come back empty and no
-    // cliff; the run reaches the late phase, the Dune source refuses to be built — its coverage
-    // probe is undeployed, which is the resting state Gate 3 changes — and the refusal lands with
-    // the seeds already sunk. Its wording says "score" rather than "start" and, deliberately, makes
-    // no claim that nothing was spent.
+    // seeds return NO wallet, so there is no batch for the enumeration leg to be attempted on and no
+    // cliff to price; the run reaches the late phase, the Dune source refuses to be built — its
+    // coverage probe is undeployed, which is the resting state Gate 3 changes — and the refusal
+    // lands with the seed requests already sunk. Its wording says "score" rather than "start" and,
+    // deliberately, makes no claim that nothing was spent.
+    //
+    // IT DOES NOT USE `--no-dune` TO GET HERE, and that is not incidental: that combination is now
+    // refused outright, because "reach no Dune surface" and "score Stage 2 through Dune" contradict.
     try {
       const seen = stubTransport((url) => {
         if (url.startsWith(MADEONSOL_BASE_URL)) return new Response(JSON.stringify(seedBody(0)), { status: 200 });
@@ -1871,15 +1906,74 @@ describe('the entry fill source is constructed in two phases, and each phase car
         }
         return new Response('Query not found', { status: 404 });
       });
-      const { code, err } = await run(['--no-dune'], KEYED_ENV, 'dune');
+      const { code, err } = await run([], KEYED_ENV, 'dune');
       expect(code).toBe(SCREEN_EXIT.upstream);
       expect(err).toContain('Refusing to score: Stage 2 has no usable fill source.');
       expect(err).not.toContain('Nothing was requested, so no quota was spent.');
-      expect(seen.filter((u) => u.startsWith(MADEONSOL_BASE_URL)).length).toBeGreaterThan(0);
+      // THE ORDER, not just the wording: whatever the entry source's construction goes on to cost
+      // once Gate 3 deploys the probe, it happens AFTER the seed enumeration is spent. That is what
+      // "the billed leg builds late" means observably, and it keeps discriminating past the cutover.
+      // The free `POST /usage` is excluded deliberately — the mandatory leg reserves above Stage 1,
+      // so it legitimately precedes the seeds and costs no credit.
+      const lastSeed = seen.map((u) => u.startsWith(MADEONSOL_BASE_URL)).lastIndexOf(true);
+      expect(lastSeed).toBeGreaterThan(-1);
+      const firstBilledDune = seen.findIndex((u) => u.startsWith(DUNE_API_BASE) && !u.endsWith(USAGE_PATH));
+      expect(firstBilledDune === -1 || firstBilledDune > lastSeed).toBe(true);
     } finally {
       vi.unstubAllGlobals();
     }
   }, 60_000);
+
+  it('REFUSES a run told both to reach no Dune surface and to score Stage 2 through Dune', async () => {
+    // The two instructions contradict, and the tool names that rather than picking one. Honouring
+    // the flag would silently discard the configured fill source; honouring the source would bill a
+    // vendor the flag forbade — the run would reach Dune having declared it would not, and file a
+    // record saying `dune.used: false`. Driven through the `entryFillSourceKind` seam because
+    // `ENTRY_FILL_SOURCE_KIND` is Gate 3's own edit and this lane may not make it.
+    for (const flag of ['--no-dune', '--ownership-only']) {
+      try {
+        const seen = stubTransport(() => new Response('{}', { status: 200 }));
+        const { code, err } = await run([flag], KEYED_ENV, 'dune');
+        expect(code).toBe(SCREEN_EXIT.usage);
+        expect(err).toContain('reach no Dune surface');
+        // It names BOTH asks and says which to drop, rather than reporting a bare rejection.
+        expect(err).toContain(flag);
+        expect(err).toContain('ENTRY_FILL_SOURCE_KIND');
+        // And it refuses before ANYTHING is reached — not one seed request, not the free balance
+        // read the mandatory leg would otherwise take.
+        expect(seen).toEqual([]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
+  }, 60_000);
+
+  it('is INERT on every configuration reachable today, which is what makes it a fix and not a regression', () => {
+    // `ENTRY_FILL_SOURCE_KIND` is `swap-api`, so no CLI a captain can type today produces the
+    // contradiction — the guard arms itself at the cutover and changes nothing before it. Asserted
+    // through `parseArgs`, which is the surface an operator meets, and at the default kind rather
+    // than the seam's.
+    expect(ENTRY_FILL_SOURCE_KIND).toBe('swap-api');
+    for (const argv of [['--no-dune'], ['--ownership-only'], ['--no-stage2', '--no-dune'], ['--no-stage2']]) {
+      expect(screenParseArgs(argv).ok, argv.join(' ')).toBe(true);
+    }
+    // And `--no-stage2` is not merely tolerated by luck: Stage 2 reads NO source, so the shared
+    // derivation returns nothing and there is no contradiction to refuse — it falls out of asking
+    // the one derivation rather than out of a special case. It holds at the cutover's kind too.
+    const off = { stage2: false, noDune: true, ownershipOnly: false };
+    expect(duneFillSourceContradiction(off, undefined, 'dune')).toBeNull();
+    // The pre-existing refusal of the agreement flag beside these two is untouched.
+    expect(screenParseArgs(['--entry-source-agreement', '--no-dune']).ok).toBe(false);
+    // And a run that asked for neither flag is never refused, whatever source it reads.
+    const on = { stage2: true, noDune: false, ownershipOnly: false };
+    expect(duneFillSourceContradiction(on, undefined, 'dune')).toBeNull();
+    // THE ARMED CASE, which is the derivation `parseArgs` consumes with no bounds to read: at the
+    // cutover's kind the same inputs that pass today are refused, and the message names both asks.
+    const armed = duneFillSourceContradiction({ stage2: true, noDune: true, ownershipOnly: false }, undefined, 'dune');
+    expect(armed).toContain('--no-dune');
+    expect(armed).toContain('reaches no Dune surface');
+    expect(armed).toContain('ENTRY_FILL_SOURCE_KIND');
+  });
 
   it('the DEFAULT run is unchanged: the one source it reads is free, so both phases still build it once', async () => {
     // The regression guard on "a default run is byte-identical". The swap-api construction is

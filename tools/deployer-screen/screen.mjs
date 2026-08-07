@@ -481,7 +481,7 @@ export function assertAgreementWindowsFit(entryThresholds, agreementBounds) {
   }
   if (windowsPlanned > ceiling) {
     throw new Error(
-      `the dual-source Stage 2 plan admits ${windowsPlanned} Dune windows — stage2_entry ` +
+      `this run's Stage 2 plan admits ${windowsPlanned} Dune windows — stage2_entry ` +
         `maxCandidatesScored ${entryThresholds.maxCandidatesScored} x maxLaunchesPerCandidate ` +
         `${entryThresholds.maxLaunchesPerCandidate} — against entry_source_agreement ` +
         `maxWindowsPerRun of ${ceiling}. Every credit figure this leg was approved on is derived ` +
@@ -564,6 +564,63 @@ export function entrySourceKindsRead(opts, agreementBounds, selectedKind = ENTRY
     ];
   }
   return [selectedKind];
+}
+
+/**
+ * "REACH NO DUNE SURFACE" AND "SCORE STAGE 2 THROUGH DUNE" ARE TWO INSTRUCTIONS THAT CONTRADICT, AND
+ * THIS IS WHERE THAT IS NAMED RATHER THAN QUIETLY RESOLVED.
+ *
+ * `--no-dune` and `--ownership-only` are a declaration about the WHOLE RUN — its own refusal of
+ * `--allow-walk-fallback` says so, and so does the flag's name. But they were only ever checked
+ * against `--entry-source-agreement`, which is the one thing the Gate 3 cutover does not touch: move
+ * {@link ENTRY_FILL_SOURCE_KIND} to `dune` and a `--no-dune` run with a usable credential proceeds,
+ * builds its own Dune client inside the registry, bills the trade-coverage result read and then one
+ * execution per window — having declared it would reach no Dune surface, and filing a record that
+ * says `dune.used: false`. That is this lane's own defect one flag over: a guard denominated in the
+ * variable that does not move.
+ *
+ * **IT REFUSES AND DOES NOT SUPPRESS**, which is the captain's call and the reason this is a
+ * function rather than an `if`. Honouring the flag by silently dropping the configured fill source
+ * discards the source Stage 2 was configured with; honouring the source reaches a vendor the flag
+ * forbade. Refusing costs a run that was already incoherent — suppressing costs credits the operator
+ * believed they had forbidden, and a period they cannot get back. So the message names BOTH asks and
+ * says which one to drop, rather than picking.
+ *
+ * **IT ASKS {@link entrySourceKindsRead} RATHER THAN RE-SPELLING THE CONDITION.** Two expressions
+ * that merely agree about which sources a run reads is the whole subject of this lane. `--no-stage2`
+ * therefore needs no special case: Stage 2 reads no source, the derivation returns nothing, and
+ * there is no contradiction to refuse.
+ *
+ * **INERT TODAY, BY CONSTRUCTION.** `ENTRY_FILL_SOURCE_KIND` is `swap-api`, so no configuration
+ * reachable from today's CLI produces a Dune kind here and this returns `null` on every one of them;
+ * it arms itself at the cutover. A test asserts that inertness — a refusal that fired today would be
+ * a regression rather than a fix.
+ *
+ * @param {{ stage2: boolean, entrySourceAgreement?: boolean, noDune: boolean, ownershipOnly: boolean }} opts
+ * @param {{ active?: boolean, primarySource?: string, crossCheckSource?: string }} [agreementBounds]
+ *   Absent where the caller cannot read `thresholds.json` — `parseArgs` is exactly that caller, and
+ *   the single-source case it CAN answer is the cutover's own, since the kind is a module constant.
+ * @param {import('./fill-source.mjs').FillSourceKind} [selectedKind]
+ * @returns {string | null} The refusal, or `null` where the two instructions do not conflict.
+ */
+export function duneFillSourceContradiction(opts, agreementBounds, selectedKind = ENTRY_FILL_SOURCE_KIND) {
+  const declared = [
+    ...(opts.noDune ? ['--no-dune'] : []),
+    ...(opts.ownershipOnly ? ['--ownership-only'] : []),
+  ];
+  if (declared.length === 0) return null;
+  if (!entrySourceKindsRead(opts, agreementBounds, selectedKind).includes('dune')) return null;
+  return (
+    `${declared.join(' and ')} declare${declared.length === 1 ? 's' : ''} that this run reaches no ` +
+    `Dune surface, and Stage 2's entry fill source is configured to READ Dune — which bills a ` +
+    `trade-coverage result read to build and one execution per window to score. Both were asked ` +
+    `for and they contradict. This run refuses rather than choosing between them: dropping the ` +
+    `fill source would silently discard the source Stage 2 was configured with, and honouring it ` +
+    `would reach a vendor the flag forbade, spending credits the operator believes they have ` +
+    `forbidden. Drop ${declared.join(' / ')}, or point Stage 2's entry fill source away from Dune ` +
+    `(screen.mjs -> ENTRY_FILL_SOURCE_KIND, or thresholds.json -> entry_source_agreement). Nothing ` +
+    `was requested and nothing was billed.`
+  );
 }
 
 /**
@@ -1105,6 +1162,16 @@ export function parseArgs(argv) {
         'tool refuses. Drop one of them.',
     };
   }
+  // **AND THE SAME DECLARATION AGAINST THE SELECTED FILL SOURCE, WHICH IS THE HALF THE FLAG ABOVE
+  // CANNOT SEE.** The guard above is denominated in `--entry-source-agreement`, and the Gate 3
+  // cutover does not touch that flag — it moves `ENTRY_FILL_SOURCE_KIND`. `parseArgs` cannot read
+  // `thresholds.json`, and for this it does not need to: with no agreement flag the derivation is
+  // over a module constant, so the cutover's own configuration is decidable right here. The half
+  // that CAN see the pinned bounds lives in `main`, the same two-place pattern the agreement flag
+  // already uses. See {@link duneFillSourceContradiction} for why this refuses rather than
+  // suppresses, and why it is inert on every configuration reachable today.
+  const contradiction = duneFillSourceContradiction(opts, undefined);
+  if (contradiction !== null) return { ok: false, message: contradiction };
 
   return { ok: true, opts };
 }
@@ -1457,6 +1524,20 @@ export async function main(opts, env, out, err, seam = {}) {
   // the probe is billed, and the run then dies on `CeilingReached` mid-flight. See
   // {@link entrySourceKindsRead}, which is the one place that question is answered.
   const duneEntrySourceIsRead = entrySourceKindsRead(opts, agreementBounds, entryFillSourceKind).includes('dune');
+  // **"REACH NO DUNE SURFACE" AND "SCORE THROUGH DUNE" CANNOT BOTH BE HONOURED**, and this is the
+  // half of that refusal which can see the pinned bounds — a `--entry-source-agreement` run whose
+  // `primarySource`/`crossCheckSource` names Dune. `parseArgs` holds the CLI-contract half and
+  // answers the cutover's own single-source case, which needs no bounds. Both ask the ONE derivation
+  // rather than re-spelling the condition. It refuses BEFORE the dry-run block on purpose: an
+  // incoherent pair of instructions is not something a preview should describe as though it were a
+  // plan. Inert on every configuration reachable today.
+  const duneSourceContradiction = duneFillSourceContradiction(opts, agreementBounds, entryFillSourceKind);
+  if (duneSourceContradiction !== null) {
+    err('');
+    err('Refusing to run: this run was told both to reach no Dune surface and to score Stage 2 through Dune.');
+    err(`  ${duneSourceContradiction}`);
+    return EXIT.usage;
+  }
   /** @type {number} */
   let duneEntryWindowsPlanned = 0;
   if (duneEntrySourceIsRead) {
@@ -1466,8 +1547,12 @@ export async function main(opts, env, out, err, seam = {}) {
         agreementBounds,
       ).windowsPlanned;
     } catch (cause) {
+      // THE WORDING IS THE CONDITION'S. This block is reached whenever the DUNE source will be read,
+      // which since the priced count stopped following the agreement flag includes a SINGLE-source
+      // Dune run with no flag passed — so telling that operator their run is "dual-source" would
+      // describe a mode they did not ask for.
       err('');
-      err('Refusing to run: the dual-source Stage 2 plan does not fit its own window ceiling.');
+      err("Refusing to run: this run's Dune Stage 2 plan does not fit its own window ceiling.");
       err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
       return EXIT.ceiling;
     }

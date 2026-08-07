@@ -1290,6 +1290,24 @@ committed** (captain decisions 317a and 318a, 2026-08-06):
    behind it blocked, which fails towards refusing. A leg handed no ledger is the SOLE leg by
    definition and queues behind nothing, so every single-leg path is byte-identical.
 
+   **AND `--no-dune` / `--ownership-only` NOW BIND THE FILL SOURCE TOO, WHICH IS THE SAME DEFECT ONE
+   FLAG OVER.** Those two declare something about the WHOLE RUN, but they were only ever checked
+   against `--entry-source-agreement` — the one thing the Gate 3 cutover does not touch. Move
+   `ENTRY_FILL_SOURCE_KIND` to `dune` and a `--no-dune` run with a usable credential proceeds, builds
+   its own Dune client inside the registry, bills the trade-coverage result read and then one
+   execution per window, having declared it would reach no Dune surface — and files a record saying
+   `dune.used: false`. `screen.mjs` → `duneFillSourceContradiction` asks the SAME
+   `entrySourceKindsRead` derivation and **refuses rather than suppressing**: dropping the fill
+   source would silently discard the source Stage 2 was configured with, while honouring it would
+   spend credits the operator believes they have forbidden, so the message names both asks and says
+   which to drop. It is checked in TWO places for the reason the agreement flag already is —
+   `parseArgs` holds the CLI contract and can answer the cutover's single-source case from a module
+   constant without reading `thresholds.json`, and `main` holds the half that can see the pinned
+   `primarySource`/`crossCheckSource`. **`--no-dune`, `--ownership-only` and `--no-stage2 --no-dune`
+   are unchanged and still valid**: at today's `swap-api` kind the derivation never names Dune, and
+   with Stage 2 off it returns no source at all, so the guard is inert on every configuration
+   reachable today and arms itself at the cutover.
+
    **AND ORDERING THE RESERVATIONS DOES NOT ORDER THE SPEND, SO THE CONSTRUCTION IS SPLIT IN TWO —
    TWO PROPERTIES, AND NEITHER MAY LOSE.** A ledger can hold a leg until its predecessors have
    *settled*; it cannot hold one until they have *answered*. With the whole construction still above

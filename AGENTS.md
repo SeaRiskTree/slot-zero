@@ -944,7 +944,14 @@ dev currently?"*, and the shape of the answer is the point:
   control flow deliberately: it is the guard that survives a future reordering. `main` carries a
   `seam.entryFillSourceKind` so a Dune-selected run is reachable from a test — the constant is Gate
   3's own edit — and both directions of both properties are driven through `main` over a stubbed
-  transport. Neither guard can fire on the default branch; the first run that exercises
+  transport. **AND `--no-dune` / `--ownership-only` NOW BIND THE FILL SOURCE, NOT JUST THE
+  ENUMERATION** — the same defect one flag over, since they were checked only against
+  `--entry-source-agreement`, which the cutover does not touch: at Gate 3 a `--no-dune` run would
+  have built its own Dune client, billed the coverage probe and one execution per window, and filed
+  `dune.used: false`. `screen.mjs` → `duneFillSourceContradiction` asks the same derivation and
+  **REFUSES rather than suppressing** (suppressing discards the configured source; honouring spends
+  what the flag forbade), in `parseArgs` and again in `main` where the pinned bounds are readable.
+  Neither guard can fire on the default branch; the first run that exercises
   the Dune fill source is Gate 3's.
 - **`node tools/deployer-screen/screen.mjs` WITH NO MODE FLAG IS A LIVE RUN AND SPENDS, and the
   agent environment normally has all three keys set.** It costs MadeOnSol keyed requests immediately

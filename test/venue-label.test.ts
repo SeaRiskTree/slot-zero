@@ -39,6 +39,7 @@ import {
   KEY_MIN_LENGTH,
   WALLET_API_HOST,
   describeKey,
+  redactKey,
   resolveHeliusCredential,
   walletIdentityUrl,
 } from '../tools/venue-label/credential.mjs';
@@ -64,6 +65,7 @@ import {
   VENDOR_CLAIM_CAVEAT,
   WALL_CAVEAT,
   buildRecord,
+  isTypedButUnnamed,
   labelCitation,
   planLookups,
   readIdentityResponse,
@@ -71,7 +73,14 @@ import {
   renderLabels,
   summariseLabels,
 } from '../tools/venue-label/identity.mjs';
-import { EXIT, main, parseAddressFile, parseArgs, readBounds } from '../tools/venue-label/label.mjs';
+import {
+  EXIT,
+  main,
+  parseAddressFile,
+  parseArgs,
+  readBounds,
+  reportRunStopped,
+} from '../tools/venue-label/label.mjs';
 import { CREDENTIAL_PATTERNS, KEY_SHAPED } from './offline-guard.js';
 
 const TOOL_DIR = fileURLToPath(new URL('../tools/venue-label/', import.meta.url));
@@ -248,7 +257,63 @@ describe('"unknown" is the vendor\'s answer, and it is preserved as one', () => 
     expect(reading.unreadableRows).toBe(1);
 
     const summary = summariseLabels([COINBASE, RELAY_WALL, PUMPFUN_FEES], reading);
-    expect(summary).toEqual({ requested: 3, named: 1, unknown: 1, unreadable: 1, missing: 1 });
+    expect(summary).toEqual({
+      requested: 3,
+      named: 1,
+      unknown: 1,
+      typedUnnamed: 0,
+      unreadable: 1,
+      missing: 1,
+    });
+  });
+
+  it('keeps a FOURTH state apart: a real type with no usable name is not "unknown"', () => {
+    // Captain decision 372a. The vendor answering `exchange` with no name declined nothing; it
+    // answered incompletely. Counting it as unknown asserts a refusal the vendor never made.
+    const typed = readIdentityRow({ address: COINBASE, type: 'exchange', name: '  ' }, READ_AT);
+    expect(typed?.type).toBe('exchange');
+    expect(typed?.name).toBeNull();
+    expect(typed?.named).toBe(false);
+    expect(isTypedButUnnamed(typed!)).toBe(true);
+    // The vendor's own "unknown" is NOT this class, and a named row is neither.
+    expect(isTypedButUnnamed(readIdentityRow({ address: RELAY_WALL, type: UNKNOWN_TYPE }, READ_AT)!)).toBe(false);
+    expect(isTypedButUnnamed(readIdentityRow(namedRow(PUMPFUN_FEES), READ_AT)!)).toBe(false);
+
+    const reading = readIdentityResponse(
+      [
+        { address: COINBASE, type: 'exchange' },
+        { address: RELAY_WALL, type: UNKNOWN_TYPE },
+        namedRow(PUMPFUN_FEES),
+      ],
+      [COINBASE, RELAY_WALL, PUMPFUN_FEES],
+      READ_AT,
+    );
+    expect(summariseLabels([COINBASE, RELAY_WALL, PUMPFUN_FEES], reading)).toEqual({
+      requested: 3,
+      named: 1,
+      unknown: 1,
+      typedUnnamed: 1,
+      unreadable: 0,
+      missing: 0,
+    });
+  });
+
+  it('renders a typed-but-unnamed row apart from unknown, and claims no refusal for it', () => {
+    const typed = readIdentityRow({ address: COINBASE, type: 'exchange' }, READ_AT);
+    const text = renderLabels([typed], [COINBASE]).join('\n');
+    expect(text).toMatch(/UNNAMED\s+\(vendor type: exchange/);
+    expect(text).toMatch(/incomplete answer/);
+    // The three sentences that belong to the OTHER outcomes must not appear over this row.
+    expect(text).not.toMatch(/declines to name/);
+    expect(text).not.toMatch(/vendor type: unknown/);
+    expect(text).not.toMatch(/NO ANSWER/);
+    // And the genuine unknown keeps its own wording, unchanged.
+    const declined = renderLabels(
+      [readIdentityRow({ address: RELAY_WALL, type: UNKNOWN_TYPE }, READ_AT)],
+      [RELAY_WALL],
+    ).join('\n');
+    expect(declined).toMatch(/declines to name/);
+    expect(declined).not.toMatch(/UNNAMED/);
   });
 
   it('keys by address and never by position', () => {
@@ -454,6 +519,43 @@ describe('the credential is resolved, and never said out loud', () => {
     expect(calls[0]).toContain(SENTINEL_KEY);
   });
 
+  it('strikes the key out of a vendor body that ECHOES the keyed request URL back at us', async () => {
+    // The case the previous test cannot reach, because it picks a body with no sentinel in it. The
+    // URL we send carries the key as a query parameter and vendors and gateways commonly quote the
+    // request URL inside a 4xx body — so the body excerpt is a real route from the wire to stdout.
+    const echoed = `{"error":"bad request for https://api.helius.xyz/v1/wallet/batch-identity?api-key=${SENTINEL_KEY}"}`;
+    const messages: string[] = [];
+
+    for (const status of [400, 401, 403, 429, 500]) {
+      const { c } = client(() => new Response(echoed, { status }), { retryBackoffMs: [] });
+      await c.batchIdentity([COINBASE]).catch((e) => messages.push(String(e?.message ?? e)));
+    }
+    // A 200 whose body is not JSON is quoted too, by a different path.
+    const { c: broken } = client(() => new Response(echoed.slice(0, 40), { status: 200 }), {
+      retryBackoffMs: [],
+    });
+    await broken.batchIdentity([COINBASE]).catch((e) => messages.push(String(e?.message ?? e)));
+    // As is a transport failure, whose own message can name the URL it failed to reach.
+    const { c: dead } = client(() => {
+      throw new Error(`connect ECONNREFUSED for ?api-key=${SENTINEL_KEY}`);
+    }, { retryBackoffMs: [] });
+    await dead.identity(COINBASE).catch((e) => messages.push(String(e?.message ?? e)));
+
+    expect(messages.length).toBe(7);
+    for (const m of messages) expect(m, m).not.toContain(SENTINEL_KEY);
+    // Redacted rather than dropped: the excerpt is still there, minus the credential.
+    expect(messages.slice(0, 5).join('\n')).toContain('<not shown>');
+    expect(messages.slice(0, 5).join('\n')).toContain('bad request for');
+  });
+
+  it('redacts a key even when the excerpt would have been truncated through it', () => {
+    // Truncating first can leave a usable prefix of the key behind, so the redaction runs first.
+    const long = `${'x'.repeat(190)} ${SENTINEL_KEY}`;
+    expect(redactKey(long, SENTINEL_KEY).slice(0, 200)).not.toContain(SENTINEL_KEY.slice(0, 12));
+    expect(redactKey(`a${encodeURIComponent('a b/c')}z`, 'a b/c')).toBe('a<not shown>z');
+    expect(redactKey('nothing to strike', SENTINEL_KEY)).toBe('nothing to strike');
+  });
+
   it('exits on the credential rather than reporting an unknown address', async () => {
     const lines: string[] = [];
     const fetchImpl = vi.fn();
@@ -612,7 +714,9 @@ describe('the CLI plans before it spends', () => {
     );
     expect(code).toBe(EXIT.ok);
     expect(fetchImpl).toHaveBeenCalledTimes(1); // three addresses, ONE request, 100 credits
-    expect(lines.join('\n')).toMatch(/2 named, 1 unknown \(the vendor's own answer\), 0 unreadable, 0 unanswered/);
+    expect(lines.join('\n')).toMatch(
+      /2 named, 1 unknown \(the vendor's own answer\), 0 typed but unnamed \(an incomplete answer, not a declined one\), 0 unreadable, 0 unanswered/,
+    );
     expect(lines.join('\n')).toMatch(/1 request\(s\), 100 credits assumed spent/);
 
     const record = JSON.parse(String(written[0]?.[1]));
@@ -631,6 +735,44 @@ describe('the CLI plans before it spends', () => {
     const text = lines.join('\n');
     expect(text).toMatch(/vendor refused/);
     expect(text).toMatch(/NOT an "unknown" result for any address/);
+  });
+
+  it('reports OUR OWN per-run ceiling as ours, never as a Helius refusal', () => {
+    // A ceiling pinned in this repository's bounds.json is not a vendor verdict, and printing it as
+    // one sends an operator to Helius to debug a number that is in the tree. Driven directly rather
+    // than through a run, because the ceiling is unreachable from one — see the assertion below.
+    const ceiling: string[] = [];
+    reportRunStopped(new CeilingReached('credits', 1200), (l) => ceiling.push(l), 4, 400);
+    const text = ceiling.join('\n');
+    expect(text).toMatch(/OUR OWN per-run credits ceiling/);
+    expect(text).toMatch(/Helius refused nothing/);
+    expect(text).toMatch(/bounds\.json/);
+    expect(text).not.toMatch(/vendor refused/);
+    // It still says spend may have happened, which is why it shares the vendor exit code.
+    expect(text).toMatch(/4 request\(s\) issued, 400 credits assumed spent/);
+    expect(text).toMatch(/NOT an "unknown" result for any address/);
+
+    // A real vendor refusal keeps its own wording and claims nothing about our bounds.
+    const refused: string[] = [];
+    reportRunStopped(new HeliusRefused(401, describeHeliusStatus(401, ''), true), (l) => refused.push(l), 1, 100);
+    const vendorText = refused.join('\n');
+    expect(vendorText).toMatch(/vendor refused/);
+    expect(vendorText).not.toMatch(/OUR OWN/);
+    expect(vendorText).not.toMatch(/bounds\.json/);
+  });
+
+  it('cannot reach that ceiling from a real run, because the plan is priced at the retry depth', () => {
+    // Why the report above is driven directly. `planLookups` prices a plan at the client's own retry
+    // depth and refuses it before the first request, so the client's ceiling is a backstop against a
+    // future bounds change rather than a state a current run can enter. If this stops holding, the
+    // ceiling becomes live and its sentence starts being read by operators.
+    const attempts = RETRY_BACKOFF_MS.length + 1;
+    const full = Array.from({ length: BOUNDS.budget.maxAddressesPerRun }, (_, i) => fakeAddress(i));
+    const plan = planLookups(full, { ...PLAN_BOUNDS, attemptsPerRequest: attempts });
+    expect(plan.refusals).toEqual([]);
+    // The worst case a permitted plan can spend is exactly what the client is allowed to spend.
+    expect(plan.requests.length * attempts).toBeLessThanOrEqual(BOUNDS.budget.maxRequestsPerRun);
+    expect(plan.creditsIfEveryRequestRetried).toBeLessThanOrEqual(BOUNDS.budget.maxCreditsPerRun);
   });
 });
 
@@ -667,20 +809,26 @@ describe('the committed record is evidence, and it still agrees with itself', ()
   // The record's key set PER VERSION. Committed records are never retro-edited, so a record stays
   // legal at the version it was written under while a later build writes a wider shape. The VERSION
   // decides whether to assert, never the block's presence.
-  const KEYS_BY_SCHEMA: Record<number, string[]> = {
-    1: [
-      'schemaVersion',
-      'tool',
-      'source',
-      'readAtUtc',
-      'citationRule',
-      'authoritativeRecord',
-      'summary',
-      'labels',
-      'unanswered',
-      'spend',
-      'bounds',
-    ],
+  const TOP_LEVEL_KEYS = [
+    'schemaVersion',
+    'tool',
+    'source',
+    'readAtUtc',
+    'citationRule',
+    'authoritativeRecord',
+    'summary',
+    'labels',
+    'unanswered',
+    'spend',
+    'bounds',
+  ];
+  const KEYS_BY_SCHEMA: Record<number, string[]> = { 1: TOP_LEVEL_KEYS, 2: TOP_LEVEL_KEYS };
+  // The summary's key set is what moved at 2 (captain decision 372a added `typedUnnamed`), so it is
+  // pinned per version too. A committed schema-1 record stays legal at the version it was written
+  // under; nothing in it is edited to match a shape that did not exist when it was read.
+  const SUMMARY_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    1: ['requested', 'named', 'unknown', 'unreadable', 'missing'],
+    2: ['requested', 'named', 'unknown', 'typedUnnamed', 'unreadable', 'missing'],
   };
   const LABEL_KEYS = [
     'address',
@@ -700,8 +848,9 @@ describe('the committed record is evidence, and it still agrees with itself', ()
     expect(KEYS_BY_SCHEMA[record.schemaVersion], 'the committed record declares an unknown schema').toBeDefined();
     expect(Object.keys(record).sort()).toEqual([...KEYS_BY_SCHEMA[record.schemaVersion]!].sort());
     for (const label of record.labels) expect(Object.keys(label).sort()).toEqual([...LABEL_KEYS].sort());
+    expect(SUMMARY_KEYS_BY_SCHEMA[record.schemaVersion], 'no summary key set for that schema').toBeDefined();
     expect(Object.keys(record.summary).sort()).toEqual(
-      ['requested', 'named', 'unknown', 'unreadable', 'missing'].sort(),
+      [...SUMMARY_KEYS_BY_SCHEMA[record.schemaVersion]!].sort(),
     );
     expect(Object.keys(record.unanswered).sort()).toEqual(
       ['missing', 'unreadableRows', 'unexpected', 'refusedByShape', 'duplicatesDropped'].sort(),
@@ -727,6 +876,15 @@ describe('the committed record is evidence, and it still agrees with itself', ()
     expect(built['schemaVersion']).toBe(RECORD_SCHEMA_VERSION);
     expect(KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION], 'the current version has no pinned key set').toBeDefined();
     expect(Object.keys(built).sort()).toEqual([...KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
+    expect(
+      SUMMARY_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION],
+      'the current version has no pinned summary key set',
+    ).toBeDefined();
+    expect(Object.keys(built['summary'] as object).sort()).toEqual(
+      [...SUMMARY_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
+    // The record moved; the committed evidence did not, and it is still read at its own version.
+    expect(record.schemaVersion).toBeLessThan(RECORD_SCHEMA_VERSION);
   });
 
   it('cost one request and named five of six, with the sixth honestly unknown', () => {
@@ -742,9 +900,13 @@ describe('the committed record is evidence, and it still agrees with itself', ()
       record.labels.map((l: { address: string }) => l.address),
       record.readAtUtc,
     );
-    expect(summariseLabels(record.labels.map((l: { address: string }) => l.address), reading)).toEqual(
-      record.summary,
-    );
+    const derived = summariseLabels(record.labels.map((l: { address: string }) => l.address), reading);
+    // Every count the record was written with still re-derives from its own rows. `typedUnnamed`
+    // did not exist at schema 1, so it is asserted separately rather than by editing the evidence:
+    // no row of that read carries a type without a name, which is why the split changes nothing here.
+    expect(derived).toMatchObject(record.summary);
+    expect(derived.typedUnnamed).toBe(0);
+    expect(Object.keys(record.summary)).not.toContain('typedUnnamed');
   });
 
   it('holds the two rows the authorising investigation turns on', () => {

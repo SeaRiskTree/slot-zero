@@ -31,17 +31,26 @@
  *
  * ---
  *
- * ## Three outcomes, and they are not interchangeable
+ * ## Four outcomes, and they are not interchangeable
  *
  * - **named** — the vendor returned a `type` and a `name`.
  * - **unknown** — the vendor returned `type: "unknown"`. **That is the correct answer and it is
  *   preserved as "unknown"**, never smoothed into a guess, a blank or an empty string. It is
  *   information: it says the address is not a venue this vendor knows, which is a different object
  *   from one it does.
+ * - **typed but unnamed** — the vendor returned a real `type` (`exchange`, say) and no usable
+ *   `name`. **It did not decline to name the address; it gave an incomplete answer**, and captain
+ *   decision 372a keeps it apart from `unknown` in both the count and the rendered block for
+ *   exactly that reason. Folding it into `unknown` prints "the vendor declines to name this
+ *   address" over an answer the vendor never gave — the collapse this whole design exists to
+ *   prevent, one row deeper than where it was first guarded.
  * - **unreadable** — the row was missing, or was there and could not be parsed. **That is OUR
  *   failure, not the vendor's answer**, and it is kept apart from `unknown` for the same reason
  *   every other lane in this repository keeps "no evidence" apart from "evidence of no": an address
  *   whose row never arrived has not been declined, it has not been asked.
+ *
+ * The fourth class is DERIVED from the fields a row already carries ({@link isTypedButUnnamed})
+ * rather than stored on it, so every committed record's label rows stay valid as written.
  */
 
 /**
@@ -100,8 +109,13 @@ export const TAGS_CAVEAT =
 /** The citation rule as it reaches a record, a rendered block and a reader. */
 export const CITATION_RULE = Object.freeze([VENDOR_CLAIM_CAVEAT, WALL_CAVEAT]);
 
-/** Bump, never retro-edit — a committed record is evidence of what was read and when. */
-export const RECORD_SCHEMA_VERSION = 1;
+/**
+ * Bump, never retro-edit — a committed record is evidence of what was read and when.
+ *
+ * 2 — captain decision 372a: the summary counts `typedUnnamed` apart from `unknown`. A schema-1
+ * record stays legal at the version it was written under; nothing in it is edited to match.
+ */
+export const RECORD_SCHEMA_VERSION = 2;
 
 /**
  * @typedef {object} VenueLabel
@@ -184,6 +198,21 @@ export function readIdentityRow(row, readAtUtc) {
     citation: labelCitation(readAtUtc),
     caveats: Object.freeze(caveats),
   };
+}
+
+/**
+ * Whether the vendor answered with a real `type` but no usable `name`.
+ *
+ * **Derived, never stored**, so a record written before captain decision 372a needs no edit to be
+ * read under this rule. It is the predicate that keeps an incomplete answer out of `unknown`: a row
+ * counted or rendered as unknown asserts the vendor declined to name the address, and on a row like
+ * this it never did.
+ *
+ * @param {VenueLabel} label
+ * @returns {boolean}
+ */
+export function isTypedButUnnamed(label) {
+  return !label.named && label.type !== UNKNOWN_TYPE;
 }
 
 /**
@@ -347,7 +376,10 @@ export function planLookups(input, bounds) {
  * @typedef {object} LabelSummary
  * @property {number} requested
  * @property {number} named
- * @property {number} unknown     The vendor's own answer. NOT a failure.
+ * @property {number} unknown     The vendor's own answer, `type: "unknown"`. NOT a failure, and NOT
+ *   a row it merely failed to name — see {@link isTypedButUnnamed}.
+ * @property {number} typedUnnamed The vendor answered with a real type and no usable name. An
+ *   INCOMPLETE answer, counted apart from `unknown` because the vendor declined nothing.
  * @property {number} unreadable  Our failure: a row that could not be parsed.
  * @property {number} missing     Requested and never answered. Also our failure, not an answer.
  */
@@ -360,16 +392,19 @@ export function planLookups(input, bounds) {
 export function summariseLabels(requested, reading) {
   let named = 0;
   let unknown = 0;
+  let typedUnnamed = 0;
   for (const address of requested) {
     const label = reading.byAddress.get(address);
     if (label === undefined) continue;
     if (label.named) named += 1;
+    else if (isTypedButUnnamed(label)) typedUnnamed += 1;
     else unknown += 1;
   }
   return {
     requested: requested.length,
     named,
     unknown,
+    typedUnnamed,
     unreadable: reading.unreadableRows,
     missing: reading.missing.length,
   };
@@ -437,6 +472,12 @@ export function renderLabels(labels, addresses) {
     if (label === null) {
       lines.push(`${address}  NO ANSWER — the vendor returned no readable row for this address.`);
       lines.push('    That is not "unknown": it was not declined, it was not answered.');
+      return;
+    }
+    if (isTypedButUnnamed(label)) {
+      lines.push(`${address}  UNNAMED  (vendor type: ${label.type}, read ${label.readAtUtc})`);
+      lines.push('    The vendor answered with a type and no usable name. It did NOT decline to');
+      lines.push('    name this address, so this is not "unknown" — it is an incomplete answer.');
       return;
     }
     if (!label.named) {

@@ -837,11 +837,21 @@ Full method, bounds and what it cannot answer in its `README.md`; the evidence b
   test pins that no configuration produces the other shape. The body field is **`addresses`**, not
   `wallets`: the published docs implied the latter and the live API returns `400`.
 - **`type: "unknown"` IS THE VENDOR'S ANSWER AND IS PRESERVED AS ONE — and it is NOT the same as a
-  row that never came back.** Three states, kept apart on purpose: *named*; *unknown*, where `name`
-  is `null` and never `""`, and which says the address is not a venue this vendor knows; and *no
-  answer*, which is OUR coverage failure and is counted and rendered separately. A rejected key
-  reports a refusal rather than every address being unknown. Responses are read **keyed by address,
+  row that never came back.** FOUR states since captain decision 372a, kept apart on purpose:
+  *named*; *unknown*, where `name` is `null` and never `""`, and which says the address is not a
+  venue this vendor knows; *typed but unnamed*, a real `type` with no usable `name`, which is an
+  INCOMPLETE answer and never a declined one — folding it into *unknown* prints "the vendor declines
+  to name this address" over an answer it never gave; and *no answer*, which is OUR coverage failure
+  and is counted and rendered separately. The fourth class is **derived** (`identity.mjs` →
+  `isTypedButUnnamed`) rather than stored on the row, so the committed schema-1 record needed no
+  edit; the summary gaining its count took `RECORD_SCHEMA_VERSION` to **2**. A rejected key
+  reports a refusal rather than every address being unknown, and **a per-run CEILING is reported as
+  OUR bound rather than as the vendor's refusal**, sharing exit `4` only because a request may
+  already have billed. Responses are read **keyed by address,
   never by position** — the vendor answers in request order today and nothing promises it will.
+  **No message this tool emits can carry the key**: the URL sent carries it as a query parameter and
+  vendors echo request URLs in 4xx bodies, so every vendor- or transport-authored string goes
+  through `credential.mjs` → `redactKey` before it can reach one.
 - **Measured, and it is the committed evidence.** `runs/2026-08-07-funding-walls.json`: one batch
   request, **100 credits, 6 addresses, 5 named, 1 honestly unknown**. Four funding walls are Coinbase
   hot wallets; the relay wall `Bukt1ztP…` is declined rather than confabulated; and

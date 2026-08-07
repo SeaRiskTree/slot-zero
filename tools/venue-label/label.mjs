@@ -20,7 +20,9 @@
  * ```
  *
  * Exit codes: `0` ran, `1` usage, `2` refused before spending (a real answer about the plan, not a
- * fault), `3` credential, `4` the vendor refused — and on `4` the request may already have billed.
+ * fault), `3` credential, `4` the run stopped once it had started issuing requests — either the
+ * vendor refused or one of OUR OWN per-run ceilings was reached, and the two say which in their own
+ * words. On `4` a request may already have billed, which is why the local ceiling shares it.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -140,6 +142,37 @@ function printUsage(out) {
   out(`  and one request resolves up to ${BATCH_MAX_ADDRESSES} addresses.`);
 }
 
+/**
+ * Say why a run that had already started issuing requests stopped, and whose bound stopped it.
+ *
+ * **A per-run ceiling is OURS, not Helius's**, and the two get different sentences: reporting a
+ * number pinned in this tool's own `bounds.json` as a vendor refusal sends an operator to the
+ * vendor to debug something that is in the tree. They share exit `EXIT.vendor` because that code
+ * means only one thing that matters here — a request may already have billed — which is exactly
+ * what separates both from `EXIT.refused`, where nothing was sent.
+ *
+ * Exported and driven directly because the committed ceilings make {@link CeilingReached}
+ * unreachable from a real run: `planLookups` prices a plan at the client's own retry depth and
+ * refuses it before the first request, so the client's ceiling is a backstop against a future
+ * bounds change rather than a state a current run can enter.
+ *
+ * @param {HeliusRefused | CeilingReached} cause
+ * @param {Out} out
+ * @param {number} issued
+ * @param {number} credits
+ */
+export function reportRunStopped(cause, out, issued, credits) {
+  if (cause instanceof CeilingReached) {
+    out(`stopped by OUR OWN per-run ${cause.kind} ceiling — Helius refused nothing.`);
+    out(`  ${cause.message}`);
+    out('  That ceiling is pinned in tools/venue-label/bounds.json -> budget, not by the vendor.');
+  } else {
+    out(`vendor refused: ${cause.message}`);
+  }
+  out(`  ${issued} request(s) issued, ${credits} credits assumed spent.`);
+  out('  Nothing was named. This is NOT an "unknown" result for any address.');
+}
+
 /** @param {Out} out */
 function printCitationRule(out) {
   out('THE CITATION RULE — it travels with every label below, and with every label you publish:');
@@ -255,9 +288,7 @@ export async function main(argv, env, out, seam = {}) {
     }
   } catch (cause) {
     if (cause instanceof HeliusRefused || cause instanceof CeilingReached) {
-      out(`vendor refused: ${cause.message}`);
-      out(`  ${client.issued()} request(s) issued, ${client.creditsSpent()} credits assumed spent.`);
-      out('  Nothing was named. This is NOT an "unknown" result for any address.');
+      reportRunStopped(cause, out, client.issued(), client.creditsSpent());
       return EXIT.vendor;
     }
     throw cause;
@@ -271,6 +302,7 @@ export async function main(argv, env, out, seam = {}) {
   out('');
   out(
     `  ${summary.named} named, ${summary.unknown} unknown (the vendor's own answer), ` +
+      `${summary.typedUnnamed} typed but unnamed (an incomplete answer, not a declined one), ` +
       `${summary.unreadable} unreadable, ${summary.missing} unanswered.`,
   );
   out(`  ${client.issued()} request(s), ${client.creditsSpent()} credits assumed spent.`);

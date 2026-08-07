@@ -173,6 +173,36 @@ export function walletIdentityUrl(key, path) {
   if (!path.startsWith('/')) throw new TypeError('path must begin with "/"');
   return {
     url: `${WALLET_API_HOST}${path}?api-key=${encodeURIComponent(key)}`,
-    safe: `${WALLET_API_HOST}${path}?api-key=<not shown>`,
+    safe: `${WALLET_API_HOST}${path}?api-key=${REDACTED_KEY}`,
   };
+}
+
+/**
+ * The one spelling of a redacted credential. {@link walletIdentityUrl} puts it in the safe URL and
+ * {@link redactKey} puts it over anything that came back from the vendor, so a reader never has to
+ * learn two markers to recognise one.
+ */
+export const REDACTED_KEY = '<not shown>';
+
+/**
+ * Strike a key out of text this repository did not author.
+ *
+ * **The safe spelling of our own URL is not enough on its own.** The address we fetch carries the
+ * key as a query parameter, and vendors and gateways commonly echo the request URL back inside a
+ * 4xx body — so a body excerpt quoted into an error message is a route by which a live credential
+ * reaches stdout, a log file or a run record. Every piece of vendor-authored or transport-authored
+ * text goes through here before it can reach a message, which is what makes "no message this tool
+ * produces carries the key" a property of the shapes rather than a claim about the vendor's
+ * behaviour. The URL-encoded spelling is struck too, since that is the form that was sent.
+ *
+ * @param {string} text
+ * @param {string} key
+ * @returns {string}
+ */
+export function redactKey(text, key) {
+  if (key === '') return text;
+  let out = text.split(key).join(REDACTED_KEY);
+  const encoded = encodeURIComponent(key);
+  if (encoded !== key) out = out.split(encoded).join(REDACTED_KEY);
+  return out;
 }

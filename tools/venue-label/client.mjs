@@ -4,8 +4,12 @@
  * It talks to exactly one host — Helius's Wallet API, `credential.mjs` → `WALLET_API_HOST` — and to
  * exactly two paths on it. It never names an environment variable: the key arrives as a constructor
  * argument, lives in a private field, and reaches nothing but {@link walletIdentityUrl}. Every
- * message this module can produce is built from the *safe* spelling of the URL, and a test drives
- * every failure path against a sentinel key and asserts the sentinel reaches none of them.
+ * message this module can produce is built from the *safe* spelling of the URL, and every piece of
+ * text that came from somewhere else — a vendor body excerpt, a transport failure's own message —
+ * is put through `credential.mjs` → `redactKey` before it can reach one, because the URL we send
+ * carries the key and vendors routinely echo a request URL back in a 4xx body. A test drives every
+ * failure path against a sentinel key, including one where the vendor echoes the whole keyed URL,
+ * and asserts the sentinel reaches none of them.
  *
  * ## The cheap path is the default, and it is a 100x saving
  *
@@ -37,7 +41,7 @@
  *   the batch endpoint requires the field `addresses` and rejects `wallets` with a `400`.
  */
 
-import { walletIdentityUrl } from './credential.mjs';
+import { redactKey, walletIdentityUrl } from './credential.mjs';
 
 /**
  * Credits a single Wallet API request costs, from the vendor's own billing table
@@ -213,6 +217,18 @@ export class WalletIdentityClient {
   /** @type {number} */ #transportFailures = 0;
   /** @type {number} */ #lastStartedAt = 0;
 
+  /**
+   * Strike the key out of text this module did not author. Every vendor body excerpt and every
+   * transport failure's message passes through here before it can reach an error, a log line or a
+   * record — see `credential.mjs` → `redactKey`.
+   *
+   * @param {string} text
+   * @returns {string}
+   */
+  #redact(text) {
+    return redactKey(text, this.#key);
+  }
+
   /** Attempts issued, retries included. */
   issued() {
     return this.#issued;
@@ -302,7 +318,11 @@ export class WalletIdentityClient {
         });
       } catch (cause) {
         this.#transportFailures += 1;
-        last = new HeliusRefused(null, cause instanceof Error ? cause.message : String(cause), false);
+        last = new HeliusRefused(
+          null,
+          this.#redact(cause instanceof Error ? cause.message : String(cause)),
+          false,
+        );
         this.#onRequest?.({ url: safe, status: null, ok: false, issued: this.#issued, credits: this.creditsSpent() });
         continue;
       }
@@ -324,13 +344,15 @@ export class WalletIdentityClient {
           // so no caller can read it as an empty answer.
           throw new HeliusRefused(
             response.status,
-            `body was not JSON: ${cause instanceof Error ? cause.message : String(cause)}`,
+            this.#redact(`body was not JSON: ${cause instanceof Error ? cause.message : String(cause)}`),
             true,
           );
         }
       }
 
-      const excerpt = (await response.text().catch(() => '')).slice(0, 200);
+      // Redacted BEFORE the truncation, not after: truncating first can cut a key in half and leave
+      // a usable prefix of it inside the excerpt, which the replacement would then no longer match.
+      const excerpt = this.#redact(await response.text().catch(() => '')).slice(0, 200);
       const retryable = response.status === 429 || response.status >= 500;
       last = new HeliusRefused(response.status, describeHeliusStatus(response.status, excerpt), !retryable);
       if (!retryable) throw last;

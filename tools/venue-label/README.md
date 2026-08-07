@@ -72,13 +72,19 @@ to disagree, so `client.mjs` asserts it rather than remembering it.
 
 ---
 
-## Three outcomes, and they never collapse into each other
+## Four outcomes, and they never collapse into each other
 
 - **named** — the vendor returned a `type` and a `name`.
 - **unknown** — the vendor returned `type: "unknown"`. **That is the correct answer and it is
   preserved**, never smoothed into a guess, a blank or an empty string. It is information: the
   address is not a venue this vendor knows, which is a different object from one it does. `name` is
   `null` on such a row, never `""`.
+- **typed but unnamed** — the vendor returned a real `type` and no usable `name`. **It declined
+  nothing; it answered incompletely**, so counting it as `unknown` would print *"the vendor declines
+  to name this address"* over an answer it never gave. Captain decision 372a keeps it apart in the
+  summary count (`typedUnnamed`) and in the rendered block (`UNNAMED`). The class is **derived** from
+  the fields a row already carries, so no committed record's label rows change shape; the summary
+  gaining a count is what took the record schema to **2**.
 - **no answer** — the row was missing, or was there and could not be parsed. **That is our failure,
   not the vendor's answer.** An address whose row never arrived has not been declined; it has not
   been asked. It is counted apart and rendered as `NO ANSWER`, and a rejected key is reported as a
@@ -121,7 +127,11 @@ works that way: the unit cannot be taken back. It prints the plan, the exact cre
 ceiling and the citation rule, and it works on a machine holding no key.
 
 Exit codes: `0` ran, `1` usage, `2` refused before spending (a real answer about the plan, not a
-fault), `3` credential, `4` the vendor refused — and on `4` the request may already have billed.
+fault), `3` credential, `4` the run stopped after it had started issuing requests — **either the
+vendor refused or one of our own per-run ceilings was reached**, and the printed sentence says which,
+because a ceiling pinned in `bounds.json` is not a Helius verdict and an operator must not be sent to
+the vendor to debug it. On `4` a request may already have billed, which is why the local ceiling
+shares the code rather than taking `2`, which promises nothing was spent.
 
 ---
 

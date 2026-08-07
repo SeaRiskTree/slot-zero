@@ -110,7 +110,11 @@ import { assertMinAgeUsable } from './fill-source.mjs';
  *
  * @typedef {object} FillSourceRegistration
  * @property {FillSourceConstruction} construction
- * @property {() => import('./fill-source.mjs').FillSource} build
+ * @property {() => import('./fill-source.mjs').FillSource
+ *   | Promise<import('./fill-source.mjs').FillSource>} build A thunk, and it MAY be async. A
+ *   free construction returns its source directly; a BILLED one reaches a vendor to find out
+ *   what it can vouch for, which is what makes it billed, so it cannot be synchronous.
+ *   {@link planEligibility} awaits it either way.
  */
 
 /**
@@ -259,7 +263,12 @@ export async function planEligibility(input) {
   }
 
   try {
-    const source = build();
+    // AWAITED, because a BILLED construction is inherently asynchronous: what makes it billed is
+    // that it reaches a vendor, and the Dune source's watermark is a coverage probe read over the
+    // wire. A free construction returns its source directly and `await` on a non-promise is a
+    // no-op, so nothing about the free path changes — including that `build` is still called
+    // exactly once, and still not at all on the two branches above.
+    const source = await build();
     const minAgeMs = await source.minAgeMs(input.bounds);
     // The same guard the run path and the census apply at their own consumption sites. A non-finite
     // floor printed here would be `younger than Infinityms` — an unknown wearing a measurement's

@@ -573,7 +573,14 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   an instance of exactly why, because the SAME DAY it read 10 it re-listed again at **3** once those
   probes were archived, and the entry-reproduction lane then created a fourth. **At the cap there is
   no slot for a throwaway**, so a lane that needs to validate new SQL either archives a retired probe
-  first or deploys to the production id and measures through it. The four production queries
+  first or deploys to the production id and measures through it. **THERE IS NOW A FIFTH COMMITTED
+  SQL TEXT AND IT IS DELIBERATELY UNDEPLOYED**: `tools/deployer-screen/dune-fills.mjs` →
+  `TRADE_COVERAGE_SQL`, the coverage probe for the TRADE tables `ENTRY_SQL` reads, whose
+  `TRADE_COVERAGE_QUERY_ID` is `null`. The Dune FILL source cannot be built without it — eligibility
+  there is an observed watermark (257a) and the enumeration's probe bounds the CREATE tables only,
+  which lag differently — so `null` refuses rather than "skips the probe", and pointing it at an
+  existing id would refuse the leg terminally after a billed probe. Deploying it takes a slot and is
+  a captain decision. The four production queries
   are deployed in place: `8204672` enumeration and `8204603` coverage, whose SQL is committed in
   `dune.mjs`, `8235460` the Stage 2 opening-window fill tape, whose SQL is committed in
   `tools/deployer-screen/dune-fills.mjs` → `ENTRY_SQL` and whose id is pinned beside it as
@@ -832,6 +839,47 @@ dev currently?"*, and the shape of the answer is the point:
   `tools/deployer-screen/README.md` → "Where the fills come from is INJECTED" owns it, including
   what the change does **not** claim — after the cutover a Dune value *will* reach `entry.roomLeft`;
   what survives is that nothing deciding anything knows which vendor produced its input.
+- **A RUN CAN NOW CARRY BOTH FILL SOURCES AND AGREE WITH ITSELF PER CANDIDATE, AND IT IS OFF**
+  (Gate 3 precondition 4, record **schema 18**). `--entry-source-agreement` scores every candidate
+  through both sources, records `entrySource` per candidate — `enumerationSource`'s shape one stage
+  over, Dune primary with a per-candidate swap-api fallback — and classifies the two verdicts on the
+  candidate. **It emits COUNTS BY CLASS AND NEVER A RATE**: captain decision 143a, because a 98.4%
+  whole-window agreement figure on this project hid a total failure confined to the create slot, so
+  `agreed` / `disagreed` / `only-<kind>-answered` / `neither-answered` are kept apart and
+  `only-<kind>-answered` is a COVERAGE difference rather than a disagreement (174b, one level up).
+  **BOTH SOURCES SCORE AT ONE RECIPE** (`stage2_entry`), or a difference would be the sampling caps'
+  and not the transport's — which also keeps `grade.mjs` reading back the caps that were applied.
+  **THREE THINGS GATE IT AND ALL THREE ARE UNMET**: `entry_source_agreement.active` is `false`, the
+  trade coverage probe is undeployed (Dune section above), and the spend is unapproved —
+  `tools/deployer-screen/measurements/2026-08-06-dual-source-agreement-estimate/` prices the run
+  against a live `POST /usage` balance and records that the proposed shape did NOT fit the
+  2026-07-29 → 2026-08-29 period; cite it rather than restating its figures, since the balance moves.
+  **This is NOT the cutover** — `ENTRY_FILL_SOURCE_KIND` is unmoved and a default run is unchanged.
+  One consequence for any lane touching `plan-source.mjs`: a registration's `build` **may now be
+  async**, because a billed construction reaches a vendor.
+  **AND TWO GUARDS RUN BEFORE THE FIRST BILLED REQUEST, BECAUSE NEITHER DID WHEN THE MODE WAS FIRST
+  WRITTEN** (captain decisions 317a and 318a, `thresholds.json` 6.5.0). (1) `screen.mjs` →
+  `buildDuneEntryFillSource` reads the monthly credit balance from the free `POST /usage`, prices
+  this leg through `dune-fills.mjs` → `tradeFillSpendPlan`, and refuses through the SAME
+  `decideAllowance` every other keyed lane uses — **before the trade coverage probe, which is the
+  first billed read.** The balance is a READING and is pinned NOWHERE; the estimate document's
+  correction note says so and says the guard post-dates it. `worstCaseComputeCreditsPerExecution` is
+  a new pin and no new anchor: it is `worstCaseCreditsPerWindow`'s own compute term, split out
+  because both credit pricers derive retrieval from bytes themselves and the composite counted it
+  twice. (2) `assertAgreementWindowsFit` makes `maxWindowsPerRun` BIND — it was reported by the
+  record and enforced by nothing, so 82 windows could run against a ceiling of 80. **80 and 82 stay
+  unequal on purpose** (`82 = 80 + probe + headroom`); do not reconcile them.
+  **AND THE BALANCE IS READ ONCE PER RUN AND RESERVED, AND A RUN IS CHARGED FOR WHAT IT PLANS**
+  (captain decisions 320a and 321a, `thresholds.json` 6.6.0, no value moved). `dune.mjs` →
+  `openDuneCreditLedger` is the run's ONE reservation: the entry leg and the enumeration each read
+  `POST /usage` and each decided alone, so two verdicts from the same reading could both pass while
+  their combined worst case overran. A cleared leg's worst case is now HELD, so the next leg is
+  priced against what is left — one mechanism, not two guards subtracting each other, and
+  `checkDuneAllowance` IS one reservation against it. And `dune-fills.mjs` →
+  `agreementExecutionsFor` prices `windowsPlanned + probe + headroom` (capped by the pins, and the
+  same figure bounds the client) instead of the ceiling, because pricing the ceiling refused
+  `--score 2` identically to a full run — **under a fixed monthly Dune budget a reduced-scale run is
+  the normal operating mode**. The monthly budget itself is the captain's and is pinned NOWHERE.
 - **A DRY RUN IS FREE AND ALWAYS PRINTS THE PLAN, AND THOSE TWO STOPPED BEING COMPATIBLE — SO THE
   CAPTAIN SPLIT IT** (decision 286c). 281a/284a/285a made the plan state the eligibility bound the
   SELECTED source applies instead of re-deriving it; asking a source anything needs the source to

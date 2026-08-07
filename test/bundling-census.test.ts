@@ -687,7 +687,7 @@ describe('it measures bundling and nothing else', () => {
     // agreement is asserted here instead: same provenance, same answer, on the same bounds.
     const keyless = () => new KeylessClient({ maxRequests: 1, minIntervalMs: 0 });
     const census = censusFillSource(keyless());
-    const screen = selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, {
+    const screen = await selectEntryFillSource(ENTRY_FILL_SOURCE_KIND, {
       'swap-api': () => swapApiFillSource(keyless()),
     });
     expect(census.kind).toBe(ENTRY_FILL_SOURCE_KIND);

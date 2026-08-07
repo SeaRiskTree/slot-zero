@@ -222,6 +222,20 @@ export function applyGate(input, t) {
  *   {@link Verdict}: competence and entry room are different claims, and collapsing them would put
  *   this module back in the business of recommending.
  * @property {import('./stage2.mjs').Stage2Coverage | null} entryCoverage
+ * @property {import('./fill-source.mjs').FillSourceKind | null} entrySource WHICH FILL SOURCE
+ *   PRODUCED {@link Candidate.entry}, per candidate rather than per run — `enumerationSource`'s
+ *   shape one stage over, and for the same reason: on a dual-source run the primary can fail to
+ *   answer for one candidate while answering for the rest. `null` means Stage 2 produced no score
+ *   at all (no gate pass, `--no-stage2`, or the scoring cap), never "a source that was not named".
+ *   Every default run records `swap-api` here, which is what it has always read.
+ * @property {string[]} entrySourceFallbackReasons Why this candidate's recorded reading came from
+ *   the CROSS-CHECK source rather than the primary, empty when it did not. Empty on every
+ *   single-source run — there is no fallback to take.
+ * @property {import('./entry-agreement.mjs').EntryAgreementRow | null} entryAgreement The
+ *   per-candidate comparison of the two readings, `null` on a single-source run. **Per candidate is
+ *   the point**: captain decision 143a established on this project that a whole-run agreement
+ *   percentage is untrustworthy — 98.4% whole-window agreement there hid a total failure confined
+ *   to the create slot — so the class lives on the candidate and the run level carries counts only.
  * @property {'creation-derived' | 'ownership-only'} historySource
  * @property {import('./measure.mjs').CompletionMeasurement} vendorCompletion The ownership-derived
  *   reading this gate used before creation-derived history landed. Kept so the gap stays visible.

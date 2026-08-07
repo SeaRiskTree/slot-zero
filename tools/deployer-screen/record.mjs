@@ -430,8 +430,45 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   identical to one written before it. What makes these predictions rather than postdictions is
  *   that the document is committed in its own commit before the run, exactly as `thresholds.json`
  *   is; the record cannot prove that and does not claim to.
+ *
+ * - **18** — THE DUAL-SOURCE STAGE 2 RUN. Gate 3 precondition 4, and it is EVIDENCE FOR that gate
+ *   rather than the cutover: a default run still selects the swap-api fill source, still reads it,
+ *   and every field below is `null`/empty on one.
+ *
+ *   Three per-candidate fields and one run-level block. `entrySource` names WHICH fill source
+ *   produced this candidate's `entry` — `enumerationSource`'s shape one stage over (captain
+ *   decisions 156a and 191a), per candidate for the same reason: a primary source can fail to
+ *   answer for one wallet while answering for the rest, and a run-level field could not say which.
+ *   `null` there means Stage 2 produced NO score (no gate pass, `--no-stage2`, or the scoring cap),
+ *   never "a source that was not named". `entrySourceFallbackReasons` says why a candidate's
+ *   recorded reading came from the cross-check source instead of the primary, and is empty on every
+ *   single-source run. `entryAgreement` carries the per-candidate comparison class.
+ *
+ *   **THE RUN-LEVEL BLOCK CARRIES COUNTS AND NEVER A RATE, AND THAT IS THE CONTRACT RATHER THAN A
+ *   PREFERENCE.** Captain decision 143a: a 98.4% whole-window agreement figure on this project hid
+ *   a total failure confined to the create slot, because an aggregate is dominated by the easy
+ *   majority. So `entrySourceAgreement.byClass` counts `agreed`, `disagreed`, `only-<kind>-answered`
+ *   and `neither-answered` apart, `noAggregateRate` travels with them, and the class that can be
+ *   wrong lives on the candidate. **`only-<kind>-answered` is a COVERAGE difference and not a
+ *   disagreement** — captain decision 174b, one level up: an unmeasured verdict is no answer, and
+ *   every producer of one is our own coverage.
+ *
+ *   **`entrySourceAgreement.duneSpend` STATES THE PERMISSION AND THE APPLICATION SIDE BY SIDE**
+ *   (captain decision 323a). `executionCeiling` and `windowCeiling` are the PINS — what the tool
+ *   allows any run of this leg — while `executionBoundApplied` (the `maxExecutions` this run's
+ *   `DuneClient` was constructed with) and `windowsPlanned` (the window count its credit plan was
+ *   priced and approved at) are what THIS RUN could have cost. Since the plan is derived from the
+ *   windows a run plans, a block carrying only the pins would describe a bound no run applied, and
+ *   one carrying only the application would lose the limit a reader judges it against. A record is
+ *   never retro-edited, so either half-truth would be permanent. Do not pool the two.
+ *
+ *   `prediction.entryReading` became SOURCE-AWARE at this version. It named the swap-api gate
+ *   specifically, which was true only while one source was ever selected; a Dune-sourced claim filed
+ *   under that sentence would describe a gate it did not use, permanently, since a record is never
+ *   retro-edited. `prediction.mjs` → `entryReadingFor` refuses an unknown source rather than
+ *   defaulting to another's.
  */
-export const RECORD_SCHEMA_VERSION = 17;
+export const RECORD_SCHEMA_VERSION = 18;
 
 /**
  * The predictions-document contract version, carried inside the document itself.

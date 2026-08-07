@@ -1494,6 +1494,14 @@ export async function executeAndRead(client, queryId, parameters, bounds) {
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} opts
  * @param {number} opts.queryId
+ * @param {string} [opts.sql] The committed text this saved query must still match. Defaults to
+ *   {@link COVERAGE_SQL}, the create surfaces the enumeration reads. **It is a parameter because
+ *   there is now a SECOND probe of the same shape** — `dune-fills.mjs` → `TRADE_COVERAGE_SQL`, which
+ *   bounds the TRADE tables Stage 2's entry statement reads. The two surfaces lag differently and a
+ *   create-table watermark read as a trade-table one admits launches against tables that do not yet
+ *   hold their fills, so they must be probed apart. What must NOT be duplicated is the machinery
+ *   around them — the custody check, the refresh-then-cache order, the billed-execution fallback of
+ *   captain decision 298a — because two copies of that is two answers to "may this surface be read".
  * @param {boolean} opts.refresh Execute instead of reading the cache.
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number }} opts.bounds
  * @param {CoverageProbe | null} [opts.fallbackProbe] A cached probe the caller ALREADY holds. Supplied
@@ -1510,7 +1518,7 @@ export async function executeAndRead(client, queryId, parameters, bounds) {
  * @returns {Promise<CoverageProbe>}
  */
 export async function readCoverageProbe(client, opts) {
-  await assertSavedQueryMatches(client, opts.queryId, COVERAGE_SQL);
+  await assertSavedQueryMatches(client, opts.queryId, opts.sql ?? COVERAGE_SQL);
   if (opts.refresh) {
     try {
       const executed = await executeAndRead(client, opts.queryId, {}, opts.bounds);
@@ -1672,6 +1680,145 @@ export function duneSpendPlan(bounds) {
 }
 
 /**
+ * ONE RESERVATION FOR THE WHOLE RUN, DRAWN ON BY EVERY LEG THAT SPENDS DUNE CREDITS (captain
+ * decision 320a).
+ *
+ * **The defect it closes is time-of-check-to-time-of-use, and it arrived the moment a second leg
+ * started spending.** Stage 2's entry fill source and the Stage 1 enumeration each read `POST /usage`
+ * and each decided alone, so two verdicts computed from the SAME balance could both say "this fits"
+ * while their COMBINED worst case did not — at ~1,500 credits remaining, a ~1,211-credit entry leg
+ * and a ~292-credit enumeration both pass and together overrun. The estimate artefact already states
+ * the principle that breaks: **a balance reading is never a reservation.**
+ *
+ * **So the balance is read ONCE and every subsequent leg is priced against what is left AFTER the
+ * ones already approved.** A cleared plan's worst case is held immediately — before it has spent
+ * anything — because the question is whether the run as a whole can afford itself, and a leg that
+ * has been told it may spend is a leg that will. That is one mechanism rather than two guards taught
+ * to subtract each other's worst case, which is captain decision 144a's defect wearing an
+ * arithmetic's clothes.
+ *
+ * **The reading is cached even when it FAILED.** A second read after a transport failure would be a
+ * second answer to one question, and the run would then hold two different beliefs about a balance
+ * it could not see. An unreadable balance refuses every leg, once.
+ *
+ * **RESERVATION ORDER IS CONTROL-FLOW ORDER, and both outcomes are refusals before spending.** The
+ * entry leg is built before Stage 1 enumerates, so it reserves first; an enumeration then priced out
+ * falls back to the RPC walk, which `priceWalkFallbackCliff` refuses before its first request when
+ * the fallback is a spend cliff rather than the slower road. Neither ordering can produce a silent
+ * overspend, which is why the order is left where the control flow already put it.
+ *
+ * **WHAT IT STILL CANNOT DO, and the three caveats travel with every verdict unchanged:** the
+ * vendor's counter LAGS, so a reading over-states what remains and `allowanceReserveCredits` is held
+ * back for it; the key is SHARED with every other lane, so a sufficient reading is evidence and never
+ * a guarantee; and the period is a subscription ANNIVERSARY rather than a calendar month. A ledger
+ * makes ONE RUN self-consistent. It cannot reserve against a sibling lane, and nothing here pretends
+ * otherwise.
+ *
+ * @returns {DuneCreditLedger}
+ */
+export function openDuneCreditLedger() {
+  /** @type {import('./client.mjs').UsageReading | null} */
+  let reading = null;
+  let reserved = 0;
+
+  return {
+    reservedCredits: () => reserved,
+    async reserve(client, input) {
+      const plan = input.plan;
+      const estimate = estimatePlanCredits(plan);
+      if (reading === null) reading = await readUsageOnce(client, input.nowMs);
+      const held = reserved;
+      const decision = decideAllowance({
+        plan,
+        estimate,
+        // THE RESERVATION ITSELF: what an earlier leg was cleared to spend is subtracted before this
+        // one is compared, so the balance a second leg sees is the balance a second leg may have.
+        allowance: reading.allowance === null ? null : netOfReservations(reading.allowance, held),
+        unreadableReasons: reading.reasons,
+        reserveCredits: input.bounds.allowanceReserveCredits,
+        tightMultiple: input.bounds.allowanceTightMultiple,
+        allowanceRequired: input.bounds.allowanceRequired,
+      });
+      if (decision.ok) reserved = round3(held + estimate.worstCaseCredits);
+      return {
+        plan,
+        estimate,
+        allowance: reading.allowance,
+        decision:
+          held === 0
+            ? decision
+            : {
+                ...decision,
+                reasons: [
+                  ...decision.reasons,
+                  `${held} credit(s) of this period's balance are already held by an earlier leg of ` +
+                    `this same run and were subtracted before the comparison above. The vendor has ` +
+                    `not been billed for them yet; a run that cleared two legs against one unreduced ` +
+                    `reading could overrun the balance both were approved on.`,
+                ],
+              },
+      };
+    },
+  };
+}
+
+/**
+ * @typedef {object} DuneCreditLedger
+ * @property {(client: import('./client.mjs').DuneClient, input: { plan: import('./client.mjs').DuneSpendPlan,
+ *   bounds: { allowanceReserveCredits: number, allowanceTightMultiple: number, allowanceRequired: boolean },
+ *   nowMs: number }) => Promise<{ plan: import('./client.mjs').DuneSpendPlan,
+ *   estimate: import('./client.mjs').DuneSpendEstimate,
+ *   allowance: import('./client.mjs').DuneAllowance | null,
+ *   decision: import('./client.mjs').AllowanceDecision }>} reserve
+ * @property {() => number} reservedCredits What this run has already been cleared to spend.
+ */
+
+/**
+ * The free balance read, with every failure yielding NO allowance rather than an optimistic one.
+ *
+ * @param {import('./client.mjs').DuneClient} client
+ * @param {number} nowMs
+ * @returns {Promise<import('./client.mjs').UsageReading>}
+ */
+async function readUsageOnce(client, nowMs) {
+  try {
+    return parseUsageResponse(await client.readUsage(), nowMs);
+  } catch (cause) {
+    // The message carries a path and a body excerpt and never a credential — the key is a HEADER,
+    // interpolated in exactly one place, so no URL or message this client builds can hold it.
+    return {
+      ok: false,
+      allowance: null,
+      reasons: [`POST /usage could not be read: ${cause instanceof Error ? cause.message : String(cause)}`],
+    };
+  }
+}
+
+/**
+ * One reading, net of what this run has already been cleared to spend.
+ *
+ * `creditsUsed` moves with `creditsRemaining` on purpose: `decideAllowance` prints the balance as a
+ * sentence, and a reading whose two halves disagreed would report a period that does not add up. The
+ * ledger's own reason line beside it is what says the difference is a HOLD rather than a bill.
+ *
+ * @param {import('./client.mjs').DuneAllowance} allowance
+ * @param {number} held
+ * @returns {import('./client.mjs').DuneAllowance}
+ */
+function netOfReservations(allowance, held) {
+  return {
+    ...allowance,
+    creditsUsed: round3(allowance.creditsUsed + held),
+    creditsRemaining: Math.max(0, round3(allowance.creditsRemaining - held)),
+  };
+}
+
+/** @param {number} n @returns {number} */
+function round3(n) {
+  return Number(n.toFixed(3));
+}
+
+/**
  * Read the account's credit allowance and decide whether this leg may spend — **before the coverage
  * probe, which is itself a billed read**, and long before the execution.
  *
@@ -1681,43 +1828,43 @@ export function duneSpendPlan(bounds) {
  * documents `/usage` as a metadata endpoint consuming no credits) and is retried once inside the
  * client, so one hiccup does not decide a run cannot afford itself.
  *
+ * **A SECOND LEG MAY SUPPLY ITS OWN PLAN, AND IT STILL GETS THIS ONE VERDICT.** Stage 2's entry fill
+ * source executes per WINDOW where the enumeration answers a whole batch in one execution, so its
+ * ceilings are different numbers in different keys — but "may this run spend" must have exactly one
+ * answer, and a second reader of `POST /usage` beside a second `decideAllowance` would be two.
+ * `dune-fills.mjs` → `tradeFillSpendPlan` builds that plan; everything below is shared unchanged,
+ * and `input.bounds` then supplies only the three allowance policies.
+ *
+ * **AND A RUN WITH TWO SPENDING LEGS HANDS IN ITS LEDGER** (captain decision 320a). This function is
+ * one reservation against {@link openDuneCreditLedger} — the whole of it, so there is ONE mechanism
+ * and not two that agree. Without a ledger it opens a private one, which is the single-leg case and
+ * is byte-identical to what it did before: one balance read, one verdict, nothing held. With one, the
+ * legs share a reading and each is priced against what the earlier ones were cleared to spend.
+ *
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} input
- * @param {{ maxExecutionsPerRun: number, maxResultRows: number, worstCaseCreditsPerExecution: number,
- *   resultBytesPerRowCeiling: number, allowanceReserveCredits: number, allowanceTightMultiple: number,
+ * @param {{ maxExecutionsPerRun?: number, maxResultRows?: number, worstCaseCreditsPerExecution?: number,
+ *   resultBytesPerRowCeiling?: number, allowanceReserveCredits: number, allowanceTightMultiple: number,
  *   allowanceRequired: boolean }} input.bounds
  * @param {number} input.nowMs
+ * @param {import('./client.mjs').DuneSpendPlan} [input.plan] The asking leg's own ceilings. Absent
+ *   means the ENUMERATION's, priced from `input.bounds` by {@link duneSpendPlan} exactly as before.
+ * @param {DuneCreditLedger} [input.ledger] The RUN's reservation. Absent means this is the only leg
+ *   that spends, and a private ledger is opened for it.
  * @returns {Promise<{ plan: import('./client.mjs').DuneSpendPlan,
  *   estimate: import('./client.mjs').DuneSpendEstimate,
  *   allowance: import('./client.mjs').DuneAllowance | null,
  *   decision: import('./client.mjs').AllowanceDecision }>}
  */
 export async function checkDuneAllowance(client, input) {
-  const plan = duneSpendPlan(input.bounds);
-  const estimate = estimatePlanCredits(plan);
-  /** @type {import('./client.mjs').UsageReading} */
-  let reading = { ok: false, allowance: null, reasons: [] };
-  try {
-    reading = parseUsageResponse(await client.readUsage(), input.nowMs);
-  } catch (cause) {
-    // The message carries a path and a body excerpt and never a credential — the key is a HEADER,
-    // interpolated in exactly one place, so no URL or message this client builds can hold it.
-    reading = {
-      ok: false,
-      allowance: null,
-      reasons: [`POST /usage could not be read: ${cause instanceof Error ? cause.message : String(cause)}`],
-    };
-  }
-  const decision = decideAllowance({
-    plan,
-    estimate,
-    allowance: reading.allowance,
-    unreadableReasons: reading.reasons,
-    reserveCredits: input.bounds.allowanceReserveCredits,
-    tightMultiple: input.bounds.allowanceTightMultiple,
-    allowanceRequired: input.bounds.allowanceRequired,
-  });
-  return { plan, estimate, allowance: reading.allowance, decision };
+  const plan =
+    input.plan ??
+    duneSpendPlan(
+      /** @type {{ maxExecutionsPerRun: number, maxResultRows: number, worstCaseCreditsPerExecution: number,
+       *   resultBytesPerRowCeiling: number }} */ (input.bounds),
+    );
+  const ledger = input.ledger ?? openDuneCreditLedger();
+  return ledger.reserve(client, { plan, bounds: input.bounds, nowMs: input.nowMs });
 }
 
 /**

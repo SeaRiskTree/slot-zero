@@ -258,10 +258,10 @@ dropped candidates is on the record so a narrowed batch is visible.
 
 ### Deploying a change to the committed SQL
 
-**`CREATION_SQL` and `COVERAGE_SQL` are committed byte for byte, and `assertSavedQueryMatches`
-compares each against the SAVED query before an execution is spent.** So editing either text in this
-repo is only half the change: **the saved Dune query must be updated in place to match, or the next
-real run refuses the whole Dune leg terminally** — before spending anything, on every run, until they
+**Every statement in the table below is committed byte for byte, and `assertSavedQueryMatches`
+compares each against the SAVED query before an execution is spent.** So editing one of those texts
+in this repo is only half the change: **the saved Dune query must be updated in place to match, or
+the next real run refuses the whole Dune leg terminally** — before spending anything, on every run, until they
 agree. The failure is loud and costs no credits, which is the design; it is still a run with no Dune
 answer for anybody.
 
@@ -270,11 +270,25 @@ answer for anybody.
 | `CREATION_SQL` (`dune.mjs`) | **`8204672`** — the enumeration |
 | `COVERAGE_SQL` (`dune.mjs`) | **`8204603`** — the coverage probe |
 | `ENTRY_SQL` (`dune-fills.mjs`) | **`8235460`** — the opening-window fill tape |
+| `TRADE_COVERAGE_SQL` (`dune-fills.mjs`) | **none — `TRADE_COVERAGE_QUERY_ID` is `null`.** DEPLOY it (see below) |
 
 The first two ids are pinned in `thresholds.json` → `dune`; `ENTRY_SQL`'s is pinned beside the text
 it belongs to, as `dune-fills.mjs` → `ENTRY_QUERY_ID`. Paste the committed text verbatim — comments
 included, since `normaliseSql` compares everything but line endings and trailing whitespace, and the
 comments are where the traps are written down.
+
+**The fourth row is the one that is not deployed at all, and deploying it is a captain decision.**
+`TRADE_COVERAGE_SQL` is the coverage probe for the TRADE tables `ENTRY_SQL` reads — the observed
+watermark captain decision 257a requires, which the enumeration's own probe cannot serve because it
+bounds the CREATE tables and the two surfaces lag differently. It is committed here and held in no
+saved query, so `TRADE_COVERAGE_QUERY_ID` is `null` and **`null` REFUSES rather than skipping the
+probe**: the Dune fill source cannot be built without it, and pointing it at an existing id would
+run a statement the saved query does not match and refuse the leg terminally *after* the probe was
+billed. The step is: take one of the account's free private-query slots (re-list them first — see
+the next paragraph), create a query holding this text byte for byte, and set
+`TRADE_COVERAGE_QUERY_ID` to its id
+in the same commit. `dune-fills.mjs` → `TRADE_COVERAGE_QUERY_ID` owns the reasoning; the run that
+needs it is [the dual-source agreement mode](#one-run-two-fill-sources-and-it-agrees-with-itself-per-candidate).
 
 **The private-query slots are NOT full, and the claim that they were is what this line used to
 say.** The free tier allows 10 and this section stated the account held 10, so a new statement had
@@ -925,6 +939,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 15 | no new candidate ROW field, no new `entry` field, no new `entry.coverage` field, no new `spend` field and no new `dune` field: `PERSISTED_BY_SCHEMA[15]`, `ENTRY_KEYS_BY_SCHEMA[15]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[15]`, `SPEND_KEYS_BY_SCHEMA[15]` and `DUNE_KEYS_BY_SCHEMA[15]` all equal `[14]`. **`creation` gains THREE keys — `mayhemLaunches`, `mayhemFlagReadable` and `mayhemShare` — and with them pump.fun's mayhem-mode flag becomes something this screen records** (captain decision 227a). `pump_evt_createevent` has always carried an `is_mayhem_mode` boolean and this repo never selected it; `slot-zero-graduation-regime-remeasure` §§1.4 and 3 (held in firstmate's records, not in this repo) measured what it is worth: **27.1% of 2026-07's pump.fun launches carried it, they graduated at 4.1–4.7% against 1.8–2.1% for the rest, and they supplied 46.3% of that month's graduations** — so roughly two-thirds of the graduation-rate regime change traces to this one flag. It matters to both halves of this screen: a completion rate that cannot tell the buckets apart measures two things through one number, and pump.fun documents the mode as one in which **an AI agent trades the token** (vendor documentation, NOT verified on-chain here), which would put a house agent in a create slot Stage 2's entry model assumes holds independent snipers. `CREATION_SQL` now selects the flag as a SIXTH column. `mayhemLaunches` counts the enumerated launches carrying it; **`mayhemFlagReadable` is the share's DENOMINATOR and is not `duneLaunches`** — `pump_call_create` has no such column, so a history reaching back past `pump_evt_createevent` holds launches the flag cannot be read on, and the difference between the two fields is how many; `mayhemShare` is the quotient. **It is REPORTING and nothing reads it**: no bar, gate, rate or verdict takes it as an input, no launch is dropped or weighted for carrying it, and a test pins that verdicts are identical with the column populated, absent and malformed. Excluding mayhem launches from the competence measure (227b) and excluding mayhem-heavy deployers outright (227c) were both declined — do not read this version as a step towards either. **The one that will bite: all three are `null` on a candidate the creation walk answered, and that null is UNMEASURED, never 0%.** The flag is a column on Dune's decoded create event and the walk reads transactions and curve accounts, so read `enumerationSource` beside it — the same trap `creatorMovementUnmeasured` carries in the other direction. A schema-≤14 record carries no mayhem reading at all and one cannot be reconstructed from it. |
 | 16 | no new `entry`, `entry.coverage`, `spend`, `dune` or `creation` field: `ENTRY_KEYS_BY_SCHEMA[16]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[16]`, `SPEND_KEYS_BY_SCHEMA[16]`, `DUNE_KEYS_BY_SCHEMA[16]` and `CREATION_KEYS_BY_SCHEMA[16]` all equal `[15]`. **A run states what it PREDICTED, in a form a later run can score.** Every candidate row gains `prediction` and the record gains a run-level `predictions` block. **Why a version for something that measures nothing: a run that did not record what it predicted can NEVER be graded** — not "gradeable later", never, because neither the claim nor the instant it stops being in-sample survives anywhere else — so every record at schema <=15 is permanently unfalsifiable, and that is a property of those records rather than a shortcoming of their measurements. `prediction.claims` is a LIST keyed by `subject`, each entry holding the beatable / not-beatable call, the verdict it was read off, whether that verdict was MEASURED (`entry.mjs` -> `isDeployerAttributable`) and why there is no claim when there is none. `prediction.madeAtIso` is the run's own `finishedAtIso` and is the **out-of-sample boundary**, copied onto every row so one row is a self-contained claim; `prediction.gateReading` copies `historySource` and `prediction.entryReading` names Stage 2's surface, because the two readings behind a claim are different surfaces and this record is not where they get pooled. **Two ways to misread it.** (1) A claim is absent for two different reasons and the block keeps them apart -- `not-scored` (Stage 2 never ran on this candidate) and `entry-unmeasured` (it ran and could not answer); **neither is a prediction of "not beatable"**, because reading an unmeasured verdict as a claim would let the screen grade itself right whenever its own budget ran out, which is captain decision 174b's failure mode wearing a hit rate. (2) The counts are CLAIMS, not results -- nothing in a run record is ever graded, and a committed record is never retro-edited to carry a grade; `feedback/grades.json` holds those. **Stage 3 is deferred, not cancelled** (captain decision 237a): `predictions.subjectsDeferred` records `exit` as a subject this build deliberately did not predict, so a later build appending an exit claim to the same list invalidates no record written under 16. |
 | 17 | no new candidate ROW field, no new `entry` field, no new `entry.coverage` field, no new `spend` field, no new `dune` field and no new `creation` field: `PERSISTED_BY_SCHEMA[17]`, `ENTRY_KEYS_BY_SCHEMA[17]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[17]`, `SPEND_KEYS_BY_SCHEMA[17]`, `DUNE_KEYS_BY_SCHEMA[17]` and `CREATION_KEYS_BY_SCHEMA[17]` all equal `[16]`. **A run can now carry the PREDICTIONS it was made to test, in a new run-level `declaredPredictions` block** (captain decision 232c). Until this version there was nowhere in a record to say what a run expected before it looked, so every prediction lived in a companion document that could be written, revised or lost independently of the measurement it was about — and a sidecar is a second copy of a claim, which drifts until whichever one a reader opens becomes the truth. This section's own opening line has always declared these files the grading lane's input; schema 17 is what makes that true of predictions as well as outcomes. `--predict <path>` reads a document, `record.mjs` → `readPredictions` validates its SHAPE, and it is embedded **verbatim**: `documentVersion`, `lane`, `leg`, `madeAtIso`, `basis`, `source` (the path it came from) and `predictions`, each row being `{id, statement, reading, metric, comparator, value, rationale}`. `metric` is **either** a dotted path into this record **or** a `derived:` name from `record.mjs` → `DERIVED_PREDICTION_METRICS`, and `resolvePredictionMetric` is the single resolver for both, so a grader reads the field the prediction named rather than one it re-derived; a path that does not resolve is UNGRADEABLE, never a miss. The derived half exists because the questions worth predicting are mostly **counts over `candidates[]`** rather than scalars the record holds — *how many did this leg admit* is not a field — and every rate metric in that vocabulary names its READING in its own name (`medianGateCompletionRate` against `medianVendorPageCompletionRate`), because a metric called `medianCompletionRate` would be exactly the ambiguity 231a removed. **`reading` is required and refusing to default it is the point**: a completion rate is two different quantities here — the creation-derived merged history the gate reads and the vendor 70-record page — differing by an order of magnitude on the same wallets, and captain decision 231a exists because a bar was once stated without naming which, so a prediction that does not say which rate it is about is refused rather than guessed. `metric: null` is legitimate and means the claim is not resolvable from a record alone; it then carries no comparator and no value. **Nothing here is evaluated by the screen, deliberately** — it records the claim and measures the run, and scoring one against the other belongs to the lane that grades; a tool marking its own paper is not a hit rate. **It is NOT schema 16's `predictions`, and the two names are kept apart on purpose:** schema 16's `predictions` is what the SCREEN predicted about its candidates, emitted from its own verdicts, while `declaredPredictions` is what the LANE predicted about the run before it looked — operator-supplied, carried verbatim and graded elsewhere. **The one that will bite:** `declaredPredictions: null` is the normal state of a run made without `--predict` and means *nothing was predicted*, never *the predictions failed*; and the block is shape-checked but **not content-checked** — a document written after the run would look identical to one written before it, so what makes these predictions rather than postdictions is that the document is committed in its own commit ahead of the run, exactly as `thresholds.json` is. The record cannot prove that and does not claim to. |
+| 18 | **A run can carry BOTH Stage 2 entry fill sources and say, PER CANDIDATE, which one answered it** — Gate 3 precondition 4, and it is EVIDENCE FOR that gate rather than the cutover: `ENTRY_FILL_SOURCE_KIND` is unmoved, a default run still reads the swap-api, and every field below is `null`/empty on one. Three new candidate ROW fields — `PERSISTED_BY_SCHEMA[18]` — and one new run-level block; `ENTRY_KEYS_BY_SCHEMA[18]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[18]`, `SPEND_KEYS_BY_SCHEMA[18]`, `DUNE_KEYS_BY_SCHEMA[18]` and `CREATION_KEYS_BY_SCHEMA[18]` all equal `[17]`, because both sources score at ONE recipe and a finding's shape does not depend on which transport produced it. `entrySource` names which fill source produced this candidate's `entry` (`swap-api` | `dune`), and it is **`enumerationSource`'s shape one stage over** (captain decisions 156a and 191a) — per candidate for the same reason, since a primary source can fail to answer for one wallet while answering for the rest. `null` there means Stage 2 produced NO score at all (no gate pass, `--no-stage2`, or the scoring cap), never "a source that was not named"; on a record at schema ≤17 its ABSENCE is unambiguous, because every such run read the swap-api and nothing else. `entrySourceFallbackReasons` says why a candidate's recorded reading came from the cross-check source instead of the primary. `entryAgreement` carries that candidate's comparison class. **The run-level `entrySourceAgreement` block carries COUNTS BY CLASS AND NEVER A RATE, and that is the contract rather than a preference:** captain decision 143a, because a 98.4% whole-window agreement figure on this project hid a total failure confined to the create slot — an aggregate is dominated by the easy majority, and the unit that can be wrong is the candidate. So `byClass` counts `agreed`, `disagreed`, `only-<kind>-answered` and `neither-answered` apart, `noAggregateRate` travels with them, and the class lives on the row. **`only-<kind>-answered` is a COVERAGE difference and not a disagreement** — captain decision 174b one level up: an unmeasured verdict is no answer, not a wrong one, and every producer of one is our own coverage. The block also carries `recipeBlock` (both sources scored at `stage2_entry`, so a verdict difference is attributable to the TRANSPORT rather than to the caps) and `duneSpend`, the entry leg's own Dune meter — kept out of the run-level `dune` block because that one bounds an enumeration answering a whole batch in ONE execution and this one bounds a leg executing per window. **`duneSpend` states the PERMISSION and the APPLICATION side by side and the two must not be pooled:** `executionCeiling`/`windowCeiling` are the pins, what this tool allows any run of this leg, while `executionBoundApplied` (the `maxExecutions` this run's `DuneClient` was constructed with) and `windowsPlanned` (the window count its credit plan was priced and approved at) are what THIS RUN could have cost — a plan is derived from the windows it plans, so a block carrying only the pins would describe a bound no run applied, and one carrying only the application would lose the limit a reader judges it against. A record is never retro-edited, so either half-truth would be permanent. Finally, `prediction.entryReading` became **source-aware** at this version: it named the swap-api gate specifically, which was true only while one source was ever selected, and a Dune-sourced claim filed under that sentence would describe a gate it did not use — permanently, since a record is never retro-edited. `prediction.mjs` → `entryReadingFor` refuses an unknown source rather than defaulting to another's. |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -1123,9 +1138,12 @@ unmeasured**, never `0`. It does NOT hold any price or ceiling (255b).
 
 **It now DOES hold the statement.** `ENTRY_SQL` and `ENTRY_QUERY_ID` (saved query **`8235460`**) are
 committed there, with `committedEntryQuery()` assembling them into the `DuneEntryQuery` this module
-already knew how to read. Committing the text did **not** wire it: `screen.mjs` still selects the
-swap-api source and hands this source no statement, so `opts.query` is still injected and **absent
-still refuses every window**. What changed is that the statement has been run against every launch
+already knew how to read. Committing the text did **not** wire it: `screen.mjs` selects the swap-api
+source on every run it can perform today, so `opts.query` is still injected and **absent still
+refuses every window**. The one caller that assembles the statement —
+`screen.mjs` → `buildDuneEntryFillSource` — is reachable only from the dual-source agreement mode,
+which is [gated off](#one-run-two-fill-sources-and-it-agrees-with-itself-per-candidate) and cannot
+run. What changed is that the statement has been run against every launch
 on the committed tape and now carries the same custody `CREATION_SQL` does — see
 [the reproduction](#the-reproduction--the-statement-run-against-every-launch-on-the-tape).
 
@@ -1151,6 +1169,120 @@ name nor a quantity in the other unit would still pass, and the test names that 
 
 `grade.mjs` builds the same two sources the screen does, so there is still exactly one Stage 2 and
 the grader cannot drift from the screen it grades.
+
+### ONE run, TWO fill sources, and it agrees with itself PER CANDIDATE
+
+**Gate 3 precondition 4, 2026-08-06. It is EVIDENCE FOR the cutover and not the cutover** — a
+default run is unchanged: `ENTRY_FILL_SOURCE_KIND` is still `swap-api`, `screen.mjs` still selects
+it on every run, and every field this section describes is `null` or empty on one.
+
+`--entry-source-agreement` scores every candidate through **both** entry fill sources and records,
+per candidate, which one answered it. The shape is the ENUMERATION lane's, reused rather than
+reinvented (captain decisions 156a and 191a): a **PRIMARY** source — Dune — whose reading is
+recorded where it answered, a **per-candidate fallback** to the swap-api where it did not, and a
+sentence on the candidate saying why. `entrySource` is the field, and it is `enumerationSource` one
+stage over. `null` there means Stage 2 produced **no score at all**, never "a source that was not
+named".
+
+**PER CANDIDATE IS THE WHOLE POINT, AND A PERCENTAGE WOULD NOT SATISFY THE BAR.** Captain decision
+143a established on this project that the aggregate form of this question is untrustworthy: **98.4%
+whole-window agreement hid a total failure confined to the create slot**, because an aggregate is
+dominated by the easy majority. So `entry-agreement.mjs` emits **counts by class and no rate at
+all**, the class that can be wrong lives on `candidates[].entryAgreement`, and the run level carries
+only the totals with `noAggregateRate` attached to them.
+
+| class | what it means |
+|---|---|
+| `agreed` | both sources reached a MEASURED verdict and it is the same one |
+| `disagreed` | both reached a measured verdict and they differ. **The finding** |
+| `only-<kind>-answered` | exactly one reached a measured verdict. **A COVERAGE difference, NOT a disagreement** |
+| `neither-answered` | neither did. Says nothing about either source and nothing about the deployer |
+
+"Answered" is `entry.mjs` → `isDeployerAttributable`, which is captain decision 174b's predicate
+rather than a second expression that merely agrees with it. **A source that returned
+`entry-unmeasured` did not disagree — it said nothing**, and every producer of an unmeasured verdict
+is our own coverage. Counting one as a disagreement would make the comparison read worse the more of
+our own budget ran out; counting it as agreement would make it read better. The classifier therefore
+checks the answered COUNT before it compares verdicts at all: the other order reports `agreed` for
+two identical `entry-unmeasured` values, which is a screen agreeing with itself about having
+measured nothing.
+
+**BOTH SOURCES SCORE AT ONE RECIPE — `thresholds.json` → `entry_source_agreement.recipeBlock`, which
+is `stage2_entry`.** The two sources carry deliberately different sampling caps, so scoring each at
+its own would make a disagreement uninterpretable: a candidate could differ because the fills
+differ, or because one reading needed 20 scored launches and the other 8. That is a comparison of
+two RECIPES wearing the clothes of a comparison of two TRANSPORTS. `stage2_entry` is the only one of
+the two blocks the swap-api source can afford, which makes the choice forced rather than picked —
+and holding it fixed is also what keeps `grade.mjs` → `REQUIRED_ENTRY_RECIPE` reading back the caps
+that were actually applied, which is the hazard `stage2_entry_dune`'s block comment files against a
+Gate 3 wiring. **The cost of that choice runs against this lane and is stated rather than buried:
+the Dune source is exercised at a sample SMALLER than `stage2_entry_dune` sizes it for, so this run
+says nothing about whether 20-of-22 is affordable or reachable.**
+
+**The entry-cost leg runs once PER SOURCE, and that is deliberate.** Sharing a priced-transaction
+cache between the two readings would make their costs identical by construction and hide a cost-leg
+divergence inside a result that looks like agreement. It roughly doubles this leg's Solana RPC,
+which costs wall clock against a keyless host and nothing else.
+
+**It spends Dune credits inside Stage 2, which no other mode does, so the flag is not enough on its
+own.** `entry_source_agreement.active` must also be true and it is **false** today — captain
+decision 298a puts a Dune spend behind an explicit approval rather than behind one flag. Two further
+things must land before any such run can start, and both are captain decisions:
+
+1. **`dune-fills.mjs` → `TRADE_COVERAGE_QUERY_ID` is `null`.** `TRADE_COVERAGE_SQL` is committed and
+   the saved query holding the identical text has not been deployed. The Dune fill source **cannot
+   be built without it**: eligibility on that route is an OBSERVED watermark (captain decision 257a),
+   the enumeration's probe bounds the CREATE tables and says nothing about when the TRADE tables hold
+   a launch's fills, and writing a lag constant instead is captain decision 144a's defect verbatim.
+   See "Deploying a change to the committed SQL" for the step.
+2. **The spend is approved.** `measurements/2026-08-06-dual-source-agreement-estimate/` prices the
+   run against a balance read from `POST /usage`, states the arithmetic term by term, and records
+   that the proposed 7-candidate shape does **not** fit in what was left of the 2026-07-29 →
+   2026-08-29 period. Cite that document rather than restating its figures; the balance moves and it
+   says so itself.
+
+Until all three land the mode refuses with a sentence naming which one is missing, and **nothing is
+requested and nothing is billed**.
+
+**AND TWO GUARDS RUN BEFORE THE FIRST BILLED REQUEST, because neither did when this mode was first
+committed** (captain decisions 317a and 318a, 2026-08-06):
+
+1. **THE MONTHLY CREDIT ALLOWANCE, read LIVE, and RESERVED for the whole run.** `screen.mjs` →
+   `buildDuneEntryFillSource` prices this leg through `dune-fills.mjs` → `tradeFillSpendPlan` and
+   refuses through the **same** `client.mjs` → `decideAllowance` every other keyed lane uses,
+   **before the trade-table coverage probe**, which is this leg's first billed request. As first
+   committed it built its client and went straight to that probe, and the run's only allowance check
+   belonged to the enumeration leg, downstream and priced against a different plan.
+
+   **The balance is read ONCE PER RUN and every spending leg draws on one reservation** (captain
+   decision 320a). `dune.mjs` → `openDuneCreditLedger` holds what each cleared leg may spend, so the
+   Stage 1 enumeration is priced against what is left after Stage 2's entry source was approved.
+   Before it, the two legs each read `POST /usage` and each decided alone — two verdicts from the
+   same reading can both say "this fits" while their combined worst case does not, which is
+   time-of-check-to-time-of-use and is the thing this tool's own rule (*a balance reading is never a
+   reservation*) warns against. One mechanism, not two guards taught to subtract each other.
+
+   **A run is charged for the windows it PLANS, not for the ceiling it is permitted** (captain
+   decision 321a). `agreementExecutionsFor` derives `windowsPlanned + probe + headroom` executions,
+   capped by `maxExecutionsPerRun`, and the same figure bounds the client — so what the leg may issue
+   and what it was approved for are one number. Priced at the ceiling instead, `--score 2` was
+   refused identically to a full run, which is the reduced-scale option the estimate artefact
+   recommends; under a fixed monthly Dune budget that is the normal operating mode rather than a
+   fallback. The error still runs toward refusal: every window is charged the busiest window this
+   repo has ever measured.
+
+   The balance itself is pinned nowhere, and the three limits that travel with it — the counter lags,
+   the key is shared, the period is a subscription anniversary — are the `dune` block's and
+   unchanged. A ledger makes one RUN self-consistent; it reserves nothing against a sibling lane.
+2. **THE WINDOW CEILING now binds.** `entry_source_agreement.maxWindowsPerRun` was reported by the
+   run record as a ceiling and enforced by nothing; the only thing that stopped a window was the
+   client's `maxExecutionsPerRun`, and a cached coverage probe costs no execution, so 82 windows
+   could run against a ceiling a saved record called 80. `screen.mjs` → `assertAgreementWindowsFit`
+   refuses a plan whose `stage2_entry` `maxCandidatesScored × maxLaunchesPerCandidate` exceeds it, on
+   both the plan and the run path, before a source is constructed. **The 80 and the 82 stay
+   deliberately unequal** — `82 = 80 windows + 1 probe + 1 headroom`, and that inequality is the
+   derivation; the block's `justification` owns it. At today's caps (7 × 10 = 70) it is inert, which
+   is what a backstop is: it bites the moment a sampling cap is raised without re-pricing this leg.
 
 ### The reproduction — the statement run against every launch on the tape
 
@@ -2074,6 +2206,12 @@ and the balance below which the leg refuses, and needs no credential to do it.
 **Stage 2 issues zero keyed requests.** The mint list comes from the `/deployer-hunter/{wallet}`
 profile Stage 1 has already paid for, so the MadeOnSol daily allowance is untouched by the entire
 entry measurement. Everything it fetches is pump.fun's free tape.
+
+**The one mode that would make this false is gated off and prices itself separately:** the
+[dual-source agreement run](#one-run-two-fill-sources-and-it-agrees-with-itself-per-candidate) reads
+a second fill source and so spends Dune credits *inside* Stage 2, metered by
+`entry_source_agreement` and recorded as its own `duneSpend` rather than pooled with the
+enumeration's. It cannot run today, and this table is what every run applies.
 
 | bound | value |
 |---|---|

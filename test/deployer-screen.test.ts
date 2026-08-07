@@ -128,12 +128,25 @@ import { rpcCostSource } from '../tools/deployer-screen/rpc-costs.mjs';
 import {
   ENTRY_FILL_SOURCE_KIND,
   SWAP_API_CONSTRUCTION,
+  assertAgreementWindowsFit,
+  buildDuneEntryFillSource,
   entryFillSourceIsRead,
   planEntryEligibility,
   resolveEntryFillSource,
   runEntryFillSource,
+  runEntrySourcePlan,
   selectEntryFillSource,
 } from '../tools/deployer-screen/screen.mjs';
+import {
+  AGREEMENT_CLASSES,
+  NO_AGGREGATE_RATE,
+  classifyEntryAgreement,
+  entrySourceAgreementRecordRow,
+  pickRecordedReading,
+  readEntryReading,
+  summariseEntryAgreement,
+} from '../tools/deployer-screen/entry-agreement.mjs';
+
 import { renderDryRun as renderCensusDryRun } from '../tools/deployer-screen/bundling.mjs';
 import {
   PLAN_NOTE_WIDTH,
@@ -148,10 +161,12 @@ import {
   undeclaredConstruction,
 } from '../tools/deployer-screen/plan-source.mjs';
 import {
+  agreementExecutionsFor,
   duneFillSource,
   duneRowsToWindow,
   parseDuneTradeRow,
   rebuildSid,
+  tradeFillSpendPlan,
 } from '../tools/deployer-screen/dune-fills.mjs';
 import {
   CREATE_SLOT_COHORT,
@@ -237,7 +252,11 @@ import {
   unmeasuredBecause,
   unmeasuredNoSource,
 } from '../tools/deployer-screen/record.mjs';
-import { ENTRY_PREDICTION_READING } from '../tools/deployer-screen/prediction.mjs';
+import {
+  ENTRY_PREDICTION_READING,
+  ENTRY_PREDICTION_READING_DUNE,
+  entryReadingFor,
+} from '../tools/deployer-screen/prediction.mjs';
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
 
@@ -1090,6 +1109,12 @@ describe('ordering is deterministic and not a league table', () => {
           ? null
           : ({ roomLeft: { ...distribution([roomMedian]) } } as unknown as EntryScore),
       entryCoverage: null,
+      // Schema 18. Present on every Candidate — `entrySource` is `null` for "Stage 2 produced no
+      // score", never "a source that was not named", and the agreement fields are what a
+      // single-source run carries.
+      entrySource: null,
+      entrySourceFallbackReasons: [],
+      entryAgreement: null,
     };
   };
 
@@ -5470,6 +5495,19 @@ describe('the keyless boundary holds in both directions', () => {
   // is read by nothing in this tool; schema 16's `prediction` is the SCREEN's own claim about a
   // candidate, which is a different thing under a deliberately different name.
   PERSISTED_BY_SCHEMA[17] = PERSISTED_BY_SCHEMA[16]!;
+  // Schema 18 adds THREE candidate row fields, and the first of them is the one a reader of an
+  // older record must not guess at. `entrySource` names WHICH fill source produced this
+  // candidate's `entry` — `enumerationSource`'s shape one stage over — and every record at
+  // schema ≤17 was produced by a run that read the swap-api and nothing else, so its ABSENCE is
+  // not ambiguous there. `entrySourceFallbackReasons` and `entryAgreement` are empty and `null`
+  // respectively on every single-source run, which is every default run: Stage 2 still reads the
+  // swap-api until the captain passes Gate 3.
+  PERSISTED_BY_SCHEMA[18] = [
+    ...PERSISTED_BY_SCHEMA[17]!,
+    'entryAgreement',
+    'entrySource',
+    'entrySourceFallbackReasons',
+  ].sort();
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -5579,6 +5617,11 @@ describe('the keyless boundary holds in both directions', () => {
     // whole leg, and nothing in it reaches an entry number — the same boundary schemas 9, 13 and 15
     // drew.
     17: ENTRY_KEYS_14,
+    // Schema 18 leaves this block alone. The dual-source Stage 2 run adds three CANDIDATE ROW
+    // fields and one run-level block, and nothing inside the blocks either source scores
+    // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
+    // .recipeBlock), so a finding's shape does not depend on which transport produced it.
+    18: ENTRY_KEYS_14,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -5658,6 +5701,11 @@ describe('the keyless boundary holds in both directions', () => {
     16: CREATION_KEYS_15,
     // Schema 17 is a run-level block. Enumeration is untouched.
     17: CREATION_KEYS_15,
+    // Schema 18 leaves this block alone. The dual-source Stage 2 run adds three CANDIDATE ROW
+    // fields and one run-level block, and nothing inside the blocks either source scores
+    // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
+    // .recipeBlock), so a finding's shape does not depend on which transport produced it.
+    18: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -5709,6 +5757,11 @@ describe('the keyless boundary holds in both directions', () => {
     16: ENTRY_COVERAGE_KEYS_6,
     // Schema 17 adds a run-level block and no per-launch accounting of any kind.
     17: ENTRY_COVERAGE_KEYS_6,
+    // Schema 18 leaves this block alone. The dual-source Stage 2 run adds three CANDIDATE ROW
+    // fields and one run-level block, and nothing inside the blocks either source scores
+    // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
+    // .recipeBlock), so a finding's shape does not depend on which transport produced it.
+    18: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -5778,6 +5831,11 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 17 costs no request, no execution and no host: `--predict` reads ONE local file
     // before the plan is even built. There is no fourth unit for this block to grow.
     17: SPEND_KEYS_8,
+    // Schema 18 leaves this block alone. The dual-source Stage 2 run adds three CANDIDATE ROW
+    // fields and one run-level block, and nothing inside the blocks either source scores
+    // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
+    // .recipeBlock), so a finding's shape does not depend on which transport produced it.
+    18: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -5828,6 +5886,11 @@ describe('the keyless boundary holds in both directions', () => {
     16: DUNE_KEYS_13,
     // Schema 17 is a run-level block that no vendor answers.
     17: DUNE_KEYS_13,
+    // Schema 18 leaves this block alone. The dual-source Stage 2 run adds three CANDIDATE ROW
+    // fields and one run-level block, and nothing inside the blocks either source scores
+    // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
+    // .recipeBlock), so a finding's shape does not depend on which transport produced it.
+    18: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -5861,6 +5924,11 @@ describe('the keyless boundary holds in both directions', () => {
     16: DUNE_COVERAGE_KEYS_9,
     // Schema 17 does not touch the probe.
     17: DUNE_COVERAGE_KEYS_9,
+    // Schema 18 leaves this block alone. The dual-source Stage 2 run adds three CANDIDATE ROW
+    // fields and one run-level block, and nothing inside the blocks either source scores
+    // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
+    // .recipeBlock), so a finding's shape does not depend on which transport produced it.
+    18: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -5881,6 +5949,11 @@ describe('the keyless boundary holds in both directions', () => {
     15: DUNE_COVERAGE_TABLE_KEYS_9,
     16: DUNE_COVERAGE_TABLE_KEYS_9,
     17: DUNE_COVERAGE_TABLE_KEYS_9,
+    // Schema 18 leaves this block alone. The dual-source Stage 2 run adds three CANDIDATE ROW
+    // fields and one run-level block, and nothing inside the blocks either source scores
+    // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
+    // .recipeBlock), so a finding's shape does not depend on which transport produced it.
+    18: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -5907,6 +5980,61 @@ describe('the keyless boundary holds in both directions', () => {
     // PREDICTED, which is not the same as a prediction that failed. The name is deliberately not
     // schema 16's `predictions`, which is the screen's own claim about its candidates.
     17: ['declaredPredictions'],
+    // Schema 18: the dual-source Stage 2 run's own block. `null` on every run that read ONE source,
+    // which is every default run. It carries COUNTS BY CLASS and never a rate — captain decision
+    // 143a, because a 98.4% whole-window agreement figure on this project once hid a total failure
+    // confined to the create slot — and the class that can be wrong lives on the candidate row.
+    18: ['entrySourceAgreement'],
+  };
+
+  // The run-level `entrySourceAgreement` block's OWN key set, and `duneSpend` one level below it —
+  // the same gap `SPEND_KEYS_BY_SCHEMA` and `DUNE_COVERAGE_KEYS_BY_SCHEMA` were added to close, one
+  // block over. `RUN_LEVEL_KEYS_ADDED_BY_SCHEMA[18]` pins only that the KEY appears; without these
+  // the block could grow a field at an unchanged version with every other assertion still green,
+  // and this is the block a Gate 3 approval decision would be read from.
+  //
+  // `candidates` / `byClass` / `noAggregateRate` come from `summariseEntryAgreement` and carry
+  // COUNTS AND NO RATE, captain decision 143a. A denominator appearing here is precisely the drift
+  // worth failing on.
+  const ENTRY_SOURCE_AGREEMENT_KEYS_18 = [
+    'primary',
+    'crossCheck',
+    'recipeBlock',
+    'candidates',
+    'byClass',
+    'noAggregateRate',
+    'duneSpend',
+  ];
+  const ENTRY_SOURCE_AGREEMENT_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    18: ENTRY_SOURCE_AGREEMENT_KEYS_18,
+  };
+  // This leg's own Dune meter. It is deliberately NOT folded into the run-level `dune` block: that
+  // one bounds an enumeration answering a whole batch in ONE execution, this one bounds a leg
+  // executing per window, and adding them would imply a single budget where there are two ceilings.
+  // It states the PERMISSION and the APPLICATION side by side (captain decision 323a):
+  // `executionCeiling`/`windowCeiling` are the pins — what the tool allows any run of this leg —
+  // while `executionBoundApplied`/`windowsPlanned` are what THIS run was bounded and approved at,
+  // which since 321a is derived from the windows it plans. Reporting only the pin describes a bound
+  // no run applied; reporting only the application loses the limit a reader judges it against.
+  const AGREEMENT_DUNE_SPEND_KEYS_18 = [
+    'executions',
+    'executionCeiling',
+    'executionBoundApplied',
+    'requests',
+    'resultBytes',
+    'windowCeiling',
+    'windowsPlanned',
+    'worstCaseCreditsPerWindow',
+    'localEstimate',
+  ];
+  const AGREEMENT_DUNE_SPEND_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    18: AGREEMENT_DUNE_SPEND_KEYS_18,
+  };
+  // And the per-candidate row, which is where the class that can be WRONG lives. The run level only
+  // counts these, so a field vanishing here would be invisible to every pin above it.
+  const ENTRY_AGREEMENT_KEYS_18 = ['primary', 'recorded', 'class', 'readings', 'note'];
+  const ENTRY_AGREEMENT_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    18: ENTRY_AGREEMENT_KEYS_18,
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -6493,8 +6621,52 @@ describe('the keyless boundary holds in both directions', () => {
           }
         }
       }
+      // The run-level `entrySourceAgreement` block, read out of the SAVED record. `null` is the
+      // legitimate value on every single-source run — which is every default run, and every record
+      // committed so far — and the KEY's own presence is pinned one level up by
+      // RUN_LEVEL_KEYS_ADDED_BY_SCHEMA, so this null guard cannot hide a vanished block. The
+      // VERSION decides whether to assert, never the block's presence.
+      const agreementExpected = ENTRY_SOURCE_AGREEMENT_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+      if (agreementExpected !== undefined) {
+        const agreement = (parsed as Record<string, unknown>)['entrySourceAgreement'];
+        expect(
+          agreement,
+          `${file} declares a schema whose record carries an entrySourceAgreement key, and has none`,
+        ).not.toBeUndefined();
+        if (agreement !== null) {
+          expect(Object.keys(agreement as object).sort(), `${file} entrySourceAgreement`).toEqual(
+            [...agreementExpected].sort(),
+          );
+          const spendExpectedKeys = AGREEMENT_DUNE_SPEND_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+          expect(spendExpectedKeys, `${file} entrySourceAgreement.duneSpend at an unknown schemaVersion`)
+            .toBeDefined();
+          expect(
+            Object.keys((agreement as Record<string, unknown>)['duneSpend'] as object).sort(),
+            `${file} entrySourceAgreement.duneSpend`,
+          ).toEqual([...spendExpectedKeys!].sort());
+          // And no denominator anywhere in the counts. Captain decision 143a: a single agreement
+          // percentage on this project once read 98.4% while hiding a total failure confined to the
+          // create slot, so the absence of a rate is the deliverable's shape and not an omission.
+          expect(
+            Object.keys(agreement as object),
+            `${file} entrySourceAgreement must carry counts and no rate`,
+          ).not.toContain('agreementRate');
+        }
+      }
       for (const row of parsed.candidates) {
         expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(expected);
+        // And the per-candidate agreement row one level down, in the same idiom as `entry`: `null`
+        // on every single-source run, key presence pinned by the candidate-row assertion above.
+        const rowAgreementExpected = ENTRY_AGREEMENT_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+        if (rowAgreementExpected !== undefined) {
+          const rowAgreement = row['entryAgreement'];
+          expect(rowAgreement, `${file} candidate row has no entryAgreement key`).not.toBeUndefined();
+          if (rowAgreement !== null) {
+            expect(Object.keys(rowAgreement as object).sort(), `${file} entryAgreement`).toEqual(
+              [...rowAgreementExpected].sort(),
+            );
+          }
+        }
         expect(FORBIDDEN.test(JSON.stringify(row)), `${file} holds per-token vendor data`).toBe(false);
         // And the `entry` block's own key set, for the same reason one level down: schema 5 changed
         // nothing about a candidate row and everything about what `entry` means.
@@ -6801,6 +6973,35 @@ describe('the keyless boundary holds in both directions', () => {
     const projectedMonths = (duneCoverageRow.tables[0] as { months: unknown }).months;
     expect(typeof projectedMonths, '`months` must be the derived COUNT, not the vendor rows').toBe('number');
     expect(projectedMonths).toBe(2);
+
+    // And the run-level `entrySourceAgreement` block, against the REAL projection rather than its
+    // source text — the same way `entry` and `dune.coverage` are pinned above. The loop over
+    // `runs/` cannot see this block at this version because every committed record is single-source
+    // and carries `null` there, so without this the whole block could grow at an unchanged version.
+    const agreementRow = entrySourceAgreementRecordRow({
+      primary: 'dune',
+      crossCheck: 'swap-api',
+      rows: [],
+      bounds: loadThresholds()['entry_source_agreement'] as never,
+      applied: { executionBound: 22, windowsPlanned: 20 },
+      stats: { executions: 3, requests: 11, resultBytes: 2_000_000 },
+    }) as Record<string, unknown>;
+    expect(Object.keys(agreementRow).sort()).toEqual(
+      [...ENTRY_SOURCE_AGREEMENT_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
+    expect(Object.keys(agreementRow['duneSpend'] as object).sort()).toEqual(
+      [...AGREEMENT_DUNE_SPEND_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
+
+    // And the per-candidate row, straight out of the production classifier.
+    const agreementCandidateRow = classifyEntryAgreement({
+      primary: 'dune',
+      recorded: 'dune',
+      readings: [],
+    }) as unknown as Record<string, unknown>;
+    expect(Object.keys(agreementCandidateRow).sort()).toEqual(
+      [...ENTRY_AGREEMENT_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
   });
 });
 
@@ -13096,7 +13297,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         // concretely. A plan refuses both; a run builds both.
         const sources = declared ? { dune: { construction: duneConstruction(), build } } : { dune: build };
         // The RUN path: built, and the source's own answer available from it.
-        const source = selectEntryFillSource('dune', sources);
+        const source = await selectEntryFillSource('dune', sources);
         expect(constructed).toBe(1);
         expect(source.kind).toBe('dune');
         expect(await source.minAgeMs(BOUNDS)).toBe(LAG_MS);
@@ -13126,10 +13327,17 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       // `runEntryFillSource`, in this same file, and are unchanged in text and in order. What
       // changed is only WHETHER they run — see the block below. A run that reads the source still
       // builds it and still pays whatever that costs.
+      // AND STILL TRUE AFTER THE RUN PATH BECAME DUAL-SOURCE (schema 18): the three steps are the
+      // body of `runEntrySourcePlan`'s loop, unchanged in order and in what they mean. What moved is
+      // that the kind is now resolved BEFORE the loop — a default run's is `ENTRY_FILL_SOURCE_KIND`
+      // and an agreement run's primary is the pinned `entry_source_agreement.primarySource` — so the
+      // select step is spelled with the loop variable. The `await` on `selectEntryFillSource` is
+      // likewise new and load-bearing: a BILLED construction reaches a vendor and cannot be
+      // synchronous. Every step still runs per source and still pays whatever that source costs.
       const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
-      expect(screen).toMatch(/entryFillSource = selectEntryFillSource\(ENTRY_FILL_SOURCE_KIND, entryFillSources\);/);
-      expect(screen).toMatch(/entryMinAgeMs = await entryFillSource\.minAgeMs\(entryFillBounds\(entryThresholds, Date\.now\(\)\)\);/);
-      expect(screen).toMatch(/assertMinAgeUsable\(entryFillSource, entryMinAgeMs\);/);
+      expect(screen).toMatch(/const source = await selectEntryFillSource\(kind, entryFillSources\);/);
+      expect(screen).toMatch(/const minAgeMs = await source\.minAgeMs\(entryFillBounds\(entryThresholds, Date\.now\(\)\)\);/);
+      expect(screen).toMatch(/assertMinAgeUsable\(source, minAgeMs\);/);
       // And the plan path is the ONLY caller of the split, so nothing else can acquire its refusal.
       expect(screen.match(/planEntryEligibility\(/g)).toHaveLength(2); // the definition and the one call
       // `plan-source.mjs` is reachable from no scoring module — the allow-list above pins that
@@ -13260,20 +13468,26 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         // the behavioural tests above, never instead of them; the same rule 287c states for the
         // three pins in the test immediately preceding this block.
         const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
-        // The run path calls the gated constructor and nothing else.
+        // The run path calls the gated constructor and nothing else. The constructor now returns a
+        // PLAN — one source on a default run, two under `--entry-source-agreement` — and the gate
+        // is unchanged: `runEntrySourcePlan` still returns `null` exactly when Stage 2 reads no
+        // source, and `runEntryFillSource` is kept beside it as the single-source view.
         expect(screen).toContain(
-          'entryFillSource = await runEntryFillSource(entryFillSources, opts, entryThresholds);',
+          'entrySourcePlan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds);',
         );
-        // ...and the ONLY unconditional caller of `selectEntryFillSource` left in this file is
-        // inside `runEntryFillSource`, behind its own early return.
-        expect(screen.match(/selectEntryFillSource\(ENTRY_FILL_SOURCE_KIND, entryFillSources\)/g)).toHaveLength(1);
+        // ...and the ONLY caller of `selectEntryFillSource` left in this file is inside
+        // `runEntrySourcePlan`, behind its own early return. It is no longer spelled with
+        // `ENTRY_FILL_SOURCE_KIND` because the plan resolves the kind first — a dual-source run's
+        // primary is the pinned `entry_source_agreement.primarySource` — so what is pinned is the
+        // COUNT of construction sites, which is the property the original spelling stood for.
+        expect(screen.match(/await selectEntryFillSource\(/g)).toHaveLength(1);
         expect(screen).toContain('if (!entryFillSourceIsRead(opts)) return null;');
         // Three occurrences and no more: the definition, the run path's early return, and the plan
         // path's guard. A fourth would be a third site deciding this on its own.
         expect(screen.match(/entryFillSourceIsRead\(opts\)/g)).toHaveLength(3);
         expect(screen).toContain('if (entryFillSourceIsRead(opts)) {');
         // And Stage 2 scores exactly where a source was built, rather than re-reading the flag.
-        expect(screen).toContain('if (entryFillSource !== null) {');
+        expect(screen).toContain('if (entrySourcePlan !== null) {');
         // The comment that has to survive a refactor: the conditional is deliberate and says why.
         expect(screen).toContain('A RUN WITH STAGE 2 OFF READS NO SOURCE, SO IT BUILDS NONE.');
 
@@ -13301,7 +13515,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
         const refusal = screen.indexOf('return EXIT.credentialMissing;');
         const construction = screen.indexOf(
-          'entryFillSource = await runEntryFillSource(entryFillSources, opts, entryThresholds);',
+          'entrySourcePlan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds);',
         );
         expect(refusal).toBeGreaterThan(-1);
         expect(construction).toBeGreaterThan(refusal);
@@ -13592,7 +13806,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     });
 
     // Selected the way `screen.mjs` selects, and handed to the production Stage 2 unchanged.
-    const chosen = selectEntryFillSource('dune', { dune: () => source });
+    const chosen = await selectEntryFillSource('dune', { dune: () => source });
     const { score, coverage } = await scoreLaunchRefsEntry(chosen, {
       wallet: 'dev',
       refs: [{ mint: MINT, deployedAtMs: CREATED }],
@@ -13696,5 +13910,477 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     // And the accounting guard holds a source to counters that reconcile.
     expect(() => assertCostWalkAccounted(first, targets.length)).not.toThrow();
     expect(() => assertCostWalkAccounted({ ...first, viaBlock: 5 }, targets.length)).toThrow(/routes account for/);
+  });
+});
+
+describe('ONE run, TWO entry fill sources, and it agrees with itself PER CANDIDATE', () => {
+  // Gate 3 precondition 4. Everything here is behavioural: the sources are substituted through the
+  // registry — the seam this file already uses — and the classification is driven through the
+  // production `isDeployerAttributable`, never asserted against source text.
+  //
+  // THE BAR, and why it is not a percentage. The captain's amendment asks for one run carrying both
+  // sources whose verdicts match PER CANDIDATE. Captain decision 143a established on this project
+  // that the aggregate form of that question is untrustworthy: 98.4% whole-window agreement hid a
+  // total failure confined to the create slot, because an aggregate is dominated by the easy
+  // majority. So the classes are counted apart and a rate is never emitted.
+  const T = loadThresholds()['stage2_entry'] as Record<string, number>;
+  const AGREE = loadThresholds()['entry_source_agreement'] as Record<string, unknown>;
+
+  /** A fill source of the given kind that opens no socket. */
+  const stubSource = (kind: 'swap-api' | 'dune', minAgeMs = 85_000) => ({
+    ...swapApiFillSource(new KeylessClient({ maxRequests: 1, minIntervalMs: 0 })),
+    kind,
+    minAgeMs: async () => minAgeMs,
+  });
+
+  /** An `EntryScore` carrying the given verdict, built from the production scorer. */
+  const scored = (verdict: string, over: Partial<EntryScore> = {}) =>
+    ({
+      ...scoreEntry([], ENTRY_T),
+      verdict,
+      // A MEASURED verdict carries no unmeasured cause; `isDeployerAttributable` reads both, and
+      // handing it a measured verdict with a cause attached would be a shape no scorer produces.
+      unmeasuredCause: verdict === 'entry-unmeasured' ? 'launch-sample-short' : null,
+      ...over,
+    }) as unknown as EntryScore;
+
+  describe('selecting both sources inside one run', () => {
+    it('a DEFAULT run selects ONE source, and it is the swap-api — nothing about it moved', async () => {
+      // Acceptance criterion 4, at the seam rather than in prose. This is the resting state: Gate 3
+      // has not been convened, so a run that did not ask for the comparison gets exactly the plan it
+      // got before this capability existed — one source, no cross-check, no second budget.
+      let duneBuilt = 0;
+      const plan = await runEntrySourcePlan(
+        {
+          'swap-api': { construction: SWAP_API_CONSTRUCTION, build: () => stubSource('swap-api') },
+          dune: () => {
+            duneBuilt += 1;
+            return stubSource('dune');
+          },
+        },
+        { stage2: true },
+        T as never,
+      );
+      expect(plan?.primary).toBe(ENTRY_FILL_SOURCE_KIND);
+      expect(plan?.crossCheck).toBeNull();
+      expect(plan?.sources.map((s) => s.kind)).toEqual(['swap-api']);
+      // The unselected constructor is never called — which is what keeps a billed construction from
+      // being paid for by a run that will not read it.
+      expect(duneBuilt).toBe(0);
+      // And Stage 2 off still builds nothing at all, exactly as before.
+      expect(await runEntrySourcePlan({}, { stage2: false }, T as never)).toBeNull();
+    });
+
+    it('the agreement mode carries BOTH, in primary-then-cross-check order', async () => {
+      const built: string[] = [];
+      const plan = await runEntrySourcePlan(
+        {
+          'swap-api': () => {
+            built.push('swap-api');
+            return stubSource('swap-api');
+          },
+          dune: () => {
+            built.push('dune');
+            return stubSource('dune', 320_000);
+          },
+        },
+        { stage2: true, entrySourceAgreement: true },
+        T as never,
+        {
+          active: true,
+          primarySource: 'dune',
+          crossCheckSource: 'swap-api',
+          // The window ceiling binds (captain decision 318a), so a plan has to carry one to be
+          // admissible at all — an unpriceable plan is not a cleared one.
+          maxWindowsPerRun: AGREE['maxWindowsPerRun'] as number,
+        },
+      );
+      expect(plan?.primary).toBe('dune');
+      expect(plan?.crossCheck).toBe('swap-api');
+      expect(plan?.sources.map((s) => s.kind)).toEqual(['dune', 'swap-api']);
+      expect(built).toEqual(['dune', 'swap-api']);
+      // Each source answers eligibility for ITSELF, and the two genuinely differ — the swap-api's
+      // is its own cursor reach, the Dune route's an observed watermark plus that reach. A plan that
+      // returned one figure for both would be the defect captain decision 257a removed.
+      const bounds = entryFillBounds(T as never, Date.now());
+      expect(await plan!.sources[0]!.source.minAgeMs(bounds)).toBe(320_000);
+      expect(await plan!.sources[1]!.source.minAgeMs(bounds)).toBe(85_000);
+    });
+
+    it('the CLI flag alone cannot arm it — the pinned bounds must agree, and today they do not', async () => {
+      // Captain decision 298a: a Dune spend goes behind an explicit approval, not behind one flag.
+      // `active` is false in the committed thresholds, so the shipped configuration cannot reach the
+      // Dune source at all — which is what makes this branch inert until the captain says otherwise.
+      expect(AGREE['active']).toBe(false);
+      await expect(
+        runEntrySourcePlan(
+          { 'swap-api': () => stubSource('swap-api'), dune: () => stubSource('dune') },
+          { stage2: true, entrySourceAgreement: true },
+          T as never,
+          AGREE as never,
+        ),
+      ).rejects.toThrow(/refuses to build a second fill source/);
+    });
+
+    it('the window ceiling BINDS, and it refuses before a source is built', async () => {
+      // Captain decision 318a. `maxWindowsPerRun` used to be read by exactly one line — the run
+      // record, which PRINTED it as a ceiling — while the only thing that stopped a window was the
+      // client's own execution ceiling, and a cached coverage probe costs no execution. So a plan
+      // could put more windows through than the ceiling a saved record described.
+      let built = 0;
+      const registry = {
+        'swap-api': () => {
+          built += 1;
+          return stubSource('swap-api');
+        },
+        dune: () => {
+          built += 1;
+          return stubSource('dune');
+        },
+      };
+      const bounds = { active: true, primarySource: 'dune', crossCheckSource: 'swap-api' };
+      // A recipe whose caps admit MORE windows than this leg was priced for is refused whole — and
+      // the refusal lands before either constructor runs, which on the Dune route is what keeps a
+      // billed coverage probe from being paid for a plan that was never affordable.
+      await expect(
+        runEntrySourcePlan(
+          registry,
+          { stage2: true, entrySourceAgreement: true },
+          { ...T, maxCandidatesScored: 9, maxLaunchesPerCandidate: 10 } as never,
+          { ...bounds, maxWindowsPerRun: 80 },
+        ),
+      ).rejects.toThrow(/admits 90 Dune windows/);
+      expect(built).toBe(0);
+      // A missing or non-numeric ceiling is refused too: an unpriceable plan is not a cleared one.
+      await expect(
+        runEntrySourcePlan(registry, { stage2: true, entrySourceAgreement: true }, T as never, bounds),
+      ).rejects.toThrow(/not a finite number of windows/);
+      expect(built).toBe(0);
+      // And the committed configuration fits, which is what makes this a backstop rather than a bar:
+      // it bites the moment a sampling cap is raised without re-pricing this leg.
+      const fit = assertAgreementWindowsFit(T as never, AGREE as never);
+      expect(fit.windowsPlanned).toBe(T['maxCandidatesScored']! * T['maxLaunchesPerCandidate']!);
+      expect(fit.windowsPlanned).toBeLessThanOrEqual(fit.ceiling);
+      // The 80 and the client's 82 are deliberately unequal: 82 = 80 windows + the probe's own
+      // execution + one of headroom. Setting them equal would delete two terms of that derivation.
+      expect(AGREE['maxExecutionsPerRun']).toBe((AGREE['maxWindowsPerRun'] as number) + 2);
+      // AND THE WINDOW COUNT IS WHAT THE LEG IS PRICED ON (captain decision 321a), so a reduced-scale
+      // run yields a smaller one — the `--score` cap reaches this function, not just the pinned cap.
+      const reduced = assertAgreementWindowsFit(
+        { maxCandidatesScored: 2, maxLaunchesPerCandidate: T['maxLaunchesPerCandidate']! },
+        AGREE as never,
+      );
+      expect(reduced.windowsPlanned).toBe(2 * T['maxLaunchesPerCandidate']!);
+      expect(reduced.windowsPlanned).toBeLessThan(fit.windowsPlanned);
+    });
+
+    it('the record states what the tool PERMITS and what this run APPLIED, side by side', () => {
+      // Captain decision 323a. Since 321a a run is bounded and approved at a figure derived from the
+      // windows it plans, so a `duneSpend` block reporting only the pinned ceiling describes a bound
+      // no run applied — 318a's defect in this same block, pointing the other way. Reporting only
+      // the application would lose the limit a reader judges the run against, so both are stated.
+      const bounds = AGREE as unknown as {
+        maxExecutionsPerRun: number;
+        maxWindowsPerRun: number;
+      };
+      const windowsPlanned = 2 * T['maxLaunchesPerCandidate']!;
+      const executionBound = agreementExecutionsFor(bounds, windowsPlanned);
+      const spend = (
+        entrySourceAgreementRecordRow({
+          primary: 'dune',
+          crossCheck: 'swap-api',
+          rows: [],
+          bounds: AGREE as never,
+          applied: { executionBound, windowsPlanned },
+          stats: { executions: 0, requests: 0, resultBytes: 0 },
+        }) as Record<string, Record<string, number>>
+      )['duneSpend']!;
+
+      // The PERMISSION: what the tool allows any run of this leg, unmoved by this run's size.
+      expect(spend['executionCeiling']).toBe(bounds.maxExecutionsPerRun);
+      expect(spend['windowCeiling']).toBe(bounds.maxWindowsPerRun);
+      // The APPLICATION: what THIS run was bounded and approved at, and on a reduced-scale run the
+      // two genuinely differ — which is the case a record that carried only the pins misdescribed.
+      expect(spend['windowsPlanned']).toBe(windowsPlanned);
+      expect(spend['executionBoundApplied']).toBe(executionBound);
+      expect(spend['executionBoundApplied']).toBeLessThan(spend['executionCeiling']!);
+      expect(spend['windowsPlanned']).toBeLessThan(spend['windowCeiling']!);
+
+      // And a FULL-SIZE plan makes them coincide, which is 318a's derivation holding: the ceiling is
+      // exactly what the largest admissible plan derives, so the two are equal there and only there.
+      const full = (
+        entrySourceAgreementRecordRow({
+          primary: 'dune',
+          crossCheck: 'swap-api',
+          rows: [],
+          bounds: AGREE as never,
+          applied: {
+            executionBound: agreementExecutionsFor(bounds, bounds.maxWindowsPerRun),
+            windowsPlanned: bounds.maxWindowsPerRun,
+          },
+          stats: null,
+        }) as Record<string, Record<string, number>>
+      )['duneSpend']!;
+      expect(full['executionBoundApplied']).toBe(full['executionCeiling']);
+      expect(full['windowsPlanned']).toBe(full['windowCeiling']);
+    });
+
+    it('refuses to compare a source against itself', async () => {
+      // A run that scored one source twice would report perfect agreement having compared nothing,
+      // which is the shape of finding this whole precondition exists to refuse.
+      await expect(
+        runEntrySourcePlan(
+          { 'swap-api': () => stubSource('swap-api') },
+          { stage2: true, entrySourceAgreement: true },
+          T as never,
+          { active: true, primarySource: 'swap-api', crossCheckSource: 'swap-api' },
+        ),
+      ).rejects.toThrow(/both the primary and the cross-check/);
+    });
+
+    it('the CLI refuses the flag where there is no comparison to make', () => {
+      // Stage 2 off runs neither source; `--no-dune`/`--ownership-only` declare that this run
+      // reaches no Dune surface, and getting there anyway through a second flag is the silent
+      // substitution this tool refuses everywhere else.
+      for (const argv of [['--entry-source-agreement', '--no-stage2'], ['--entry-source-agreement', '--no-dune'], ['--entry-source-agreement', '--ownership-only']]) {
+        const parsed = parseArgs(argv);
+        expect(parsed.ok, argv.join(' ')).toBe(false);
+      }
+      const ok = parseArgs(['--entry-source-agreement']);
+      expect(ok.ok).toBe(true);
+      // And it is OFF unless asked for, which is what makes every committed record single-source.
+      expect(parseArgs([]).ok && parseArgs([])).toMatchObject({ opts: { entrySourceAgreement: false } });
+    });
+  });
+
+  describe('which reading is RECORDED — the enumeration lane`s pattern, one stage over', () => {
+    it('records the PRIMARY when it answered, and names no fallback', () => {
+      const readings = [
+        readEntryReading('dune', scored('entry-room-absent')),
+        readEntryReading('swap-api', scored('entry-open-after-costs')),
+      ];
+      const picked = pickRecordedReading({ primary: 'dune', readings });
+      expect(picked.kind).toBe('dune');
+      expect(picked.fellBack).toBe(false);
+      expect(picked.fallbackReasons).toEqual([]);
+    });
+
+    it('falls back to the cross-check ONLY when the primary did not ANSWER, and says why', () => {
+      // `enumerationSource`'s rule: the fallback is on whether the primary could vouch for this
+      // candidate, never on a comparison of the two findings. Choosing whichever reading looked
+      // better would be a bar that differs by source arriving through the selection.
+      const readings = [
+        readEntryReading('dune', scored('entry-unmeasured')),
+        readEntryReading('swap-api', scored('entry-room-absent')),
+      ];
+      const picked = pickRecordedReading({ primary: 'dune', readings });
+      expect(picked.kind).toBe('swap-api');
+      expect(picked.fellBack).toBe(true);
+      expect(picked.fallbackReasons.join(' ')).toContain('our own coverage');
+    });
+
+    it('keeps the primary`s unmeasured reading when NOBODY answered, rather than dropping the candidate', () => {
+      // Captain decision 174b: an unmeasured verdict is no answer and is carried forward, surfaced
+      // and counted — never filtered out. Dropping the candidate would delete it from the run over
+      // a limit of OUR coverage.
+      const readings = [
+        readEntryReading('dune', scored('entry-unmeasured')),
+        readEntryReading('swap-api', scored('entry-unmeasured')),
+      ];
+      const picked = pickRecordedReading({ primary: 'dune', readings });
+      expect(picked.kind).toBe('dune');
+      expect(picked.fellBack).toBe(false);
+      expect(picked.fallbackReasons).toEqual([]);
+    });
+  });
+
+  describe('the per-candidate comparison, and the three outcomes it keeps apart', () => {
+    const classify = (dune: string, swap: string) =>
+      classifyEntryAgreement({
+        primary: 'dune',
+        recorded: 'dune',
+        readings: [readEntryReading('dune', scored(dune)), readEntryReading('swap-api', scored(swap))],
+      });
+
+    it('MATCHING measured verdicts are `agreed`', () => {
+      expect(classify('entry-room-absent', 'entry-room-absent').class).toBe('agreed');
+      expect(classify('entry-open-after-costs', 'entry-open-after-costs').class).toBe('agreed');
+    });
+
+    it('DIFFERING measured verdicts are `disagreed` — the finding, and it is never averaged away', () => {
+      const row = classify('entry-open-after-costs', 'entry-room-absent');
+      expect(row.class).toBe('disagreed');
+      expect(row.note).toContain('never as a share of the run');
+      // Both readings survive on the row, so a reader can see WHAT disagreed rather than only that
+      // something did.
+      expect(row.readings.map((r) => r.verdict).sort()).toEqual(['entry-open-after-costs', 'entry-room-absent']);
+    });
+
+    it('ONE answer is a COVERAGE difference and NOT a disagreement — captain decision 174b, one level up', () => {
+      // The distinction a rate destroys. A source that reached `entry-unmeasured` said nothing; it
+      // did not say something different. Counting it as a disagreement would make the comparison
+      // read worse the more of our own budget ran out, and counting it as agreement would make it
+      // read better — both are the screen scoring itself on its own coverage.
+      const duneSilent = classify('entry-unmeasured', 'entry-room-absent');
+      expect(duneSilent.class).toBe('only-swap-api-answered');
+      expect(duneSilent.note).toContain('COVERAGE difference');
+      const swapSilent = classify('entry-room-absent', 'entry-unmeasured');
+      expect(swapSilent.class).toBe('only-dune-answered');
+    });
+
+    it('TWO unmeasured verdicts are `neither-answered`, and emphatically NOT `agreed`', () => {
+      // The ordering inside the classifier is the whole semantics: answered-count first, equality
+      // second. Comparing verdicts first would report `agreed` for two identical
+      // `entry-unmeasured` values — a screen agreeing with itself about having measured nothing.
+      const row = classify('entry-unmeasured', 'entry-unmeasured');
+      expect(row.class).toBe('neither-answered');
+      expect(row.class).not.toBe('agreed');
+      expect(row.note).toContain('nothing about either source');
+    });
+
+    it('a source that was NOT ASKED reads apart from one that was asked and could not answer', () => {
+      const row = classifyEntryAgreement({
+        primary: 'dune',
+        recorded: 'dune',
+        readings: [readEntryReading('dune', scored('entry-room-absent')), readEntryReading('swap-api', null)],
+      });
+      expect(row.class).toBe('only-dune-answered');
+      expect(row.note).toContain('was not asked');
+      const silent = row.readings.find((r) => r.kind === 'swap-api')!;
+      expect(silent.attempted).toBe(false);
+      expect(silent.verdict).toBeNull();
+    });
+
+    it('the VERDICT decides agreement, not the room median — a matching verdict is agreement', () => {
+      // Two readings can differ in every observation and still agree on the thing the bar is on.
+      // Treating a moved median as a near miss would import a second, unpinned bar into a
+      // comparison whose whole job is to compare the pinned one.
+      const row = classifyEntryAgreement({
+        primary: 'dune',
+        recorded: 'dune',
+        readings: [
+          readEntryReading('dune', scored('entry-room-absent', { roomLeft: distribution([0.05]) } as never)),
+          readEntryReading('swap-api', scored('entry-room-absent', { roomLeft: distribution([0.94]) } as never)),
+        ],
+      });
+      expect(row.class).toBe('agreed');
+      // ...and the two medians are still ON the row, so the divergence is visible rather than lost.
+      expect(row.readings.map((r) => r.roomLeftMedian)).toEqual([0.05, 0.94]);
+    });
+  });
+
+  describe('the summary carries COUNTS and never a rate', () => {
+    const rows = [
+      classifyEntryAgreement({
+        primary: 'dune',
+        recorded: 'dune',
+        readings: [readEntryReading('dune', scored('entry-room-absent')), readEntryReading('swap-api', scored('entry-room-absent'))],
+      }),
+      classifyEntryAgreement({
+        primary: 'dune',
+        recorded: 'swap-api',
+        readings: [readEntryReading('dune', scored('entry-unmeasured')), readEntryReading('swap-api', scored('entry-room-absent'))],
+      }),
+      classifyEntryAgreement({
+        primary: 'dune',
+        recorded: 'dune',
+        readings: [readEntryReading('dune', scored('entry-unmeasured')), readEntryReading('swap-api', scored('entry-unmeasured'))],
+      }),
+    ];
+
+    it('counts every class apart, including the ones that did not arise', () => {
+      const summary = summariseEntryAgreement(rows);
+      expect(summary.candidates).toBe(3);
+      expect(summary.byClass).toEqual({
+        agreed: 1,
+        disagreed: 0,
+        'only-swap-api-answered': 1,
+        'only-dune-answered': 0,
+        'neither-answered': 1,
+      });
+      // A class absent from the object would read as "did not arise" only to someone who knows the
+      // list, and a missing `disagreed` key is the one absence a reader must never have to infer.
+      expect(Object.keys(summary.byClass).sort()).toEqual([...AGREEMENT_CLASSES].sort());
+      // The counts account for every candidate — no row is classified nowhere.
+      expect(Object.values(summary.byClass).reduce((a, b) => a + b, 0)).toBe(summary.candidates);
+    });
+
+    it('emits NO rate, share or percentage anywhere in its output', () => {
+      // Captain decision 143a as a property of the output rather than a promise in a doc. Checked
+      // over the VALUES too, not only the key names: every number here is a count, so none of them
+      // may be a fraction.
+      const summary = summariseEntryAgreement(rows);
+      // Over the NUMERIC keys — the ones a reader could quote as a figure. `noAggregateRate` is the
+      // caveat and names the very thing it refuses, which is the point of its name.
+      const numericKeys = ['candidates', ...Object.keys(summary.byClass)];
+      for (const key of numericKeys) {
+        expect(key, `${key} names a rate`).not.toMatch(/rate$|share|percent|pct|ratio|fraction/i);
+      }
+      for (const n of [summary.candidates, ...Object.values(summary.byClass)]) {
+        expect(Number.isInteger(n)).toBe(true);
+      }
+      // And the caveat travels WITH the counts, so they cannot be collapsed by a reader who never
+      // opened the module.
+      expect(summary.noAggregateRate).toBe(NO_AGGREGATE_RATE);
+      expect(summary.noAggregateRate).toContain('143a');
+    });
+
+    it('refuses a class it does not recognise rather than counting it nowhere', () => {
+      expect(() => summariseEntryAgreement([{ ...rows[0]!, class: 'mostly-agreed' }])).toThrow(
+        /not one of the declared classes/,
+      );
+    });
+  });
+
+  describe('a claim names the reading it was actually taken from', () => {
+    // The binding precondition `thresholds.json` -> `stage2_entry_dune` records against a wiring
+    // that routes Stage 2 through a second source. `ENTRY_PREDICTION_READING` named the swap-api
+    // gate specifically, which was true only while one source was ever selected — and a record is
+    // never retro-edited, so a Dune-sourced claim filed under it would describe a gate it did not
+    // use, permanently and invisibly.
+    it('the two readings differ in the clause that matters: where the eligibility gate comes from', () => {
+      expect(ENTRY_PREDICTION_READING).toContain('swap-api');
+      expect(ENTRY_PREDICTION_READING).toContain('windowReachMs');
+      expect(ENTRY_PREDICTION_READING_DUNE).toContain('OBSERVED WATERMARK');
+      expect(ENTRY_PREDICTION_READING_DUNE).not.toContain('85,000ms');
+      // Both name the SAME recipe, because a dual-source run holds the recipe fixed and varies only
+      // the transport — which is what makes a verdict difference attributable to the transport.
+      for (const reading of [ENTRY_PREDICTION_READING, ENTRY_PREDICTION_READING_DUNE]) {
+        expect(reading).toContain('stage2_entry');
+        expect(reading).toContain('stage2_cost');
+      }
+    });
+
+    it('a candidate`s claim takes its source`s sentence, and an absent source is the swap-api', () => {
+      expect(entryReadingFor('dune')).toBe(ENTRY_PREDICTION_READING_DUNE);
+      expect(entryReadingFor('swap-api')).toBe(ENTRY_PREDICTION_READING);
+      // `null` is "Stage 2 produced no score", and every run before the dual-source mode read the
+      // swap-api — so the sentence describing the reading that WOULD have been taken is correct,
+      // and every committed record keeps the meaning it was written with.
+      expect(entryReadingFor(null)).toBe(ENTRY_PREDICTION_READING);
+      expect(entryReadingFor(undefined)).toBe(ENTRY_PREDICTION_READING);
+    });
+
+    it('refuses an unknown source rather than defaulting to another`s reading', () => {
+      expect(() => entryReadingFor('helius')).toThrow(/refuses rather than falling back/);
+    });
+  });
+
+  it('BOTH sources score at ONE recipe, so a verdict difference is the TRANSPORT`s and not the caps`', () => {
+    // The design decision the whole comparison rests on. The two sources carry deliberately
+    // different sampling caps — `stage2_entry` is sized on request arithmetic, `stage2_entry_dune`
+    // on a credit bound — and scoring each at its own would make a disagreement uninterpretable: a
+    // candidate could differ because the fills differ, or because one reading needed 20 scored
+    // launches and the other 8. `stage2_entry` is the one that fits BOTH, which makes the choice
+    // forced rather than picked.
+    const swap = loadThresholds()['stage2_entry'] as Record<string, number>;
+    const dune = loadThresholds()['stage2_entry_dune'] as Record<string, number>;
+    expect(AGREE['recipeBlock']).toBe('stage2_entry');
+    // The two blocks genuinely disagree on the two keys `grade.mjs` reads back out of a record, so
+    // this is a real choice rather than a distinction without a difference.
+    expect(dune['minLaunchesSampled']).not.toBe(swap['minLaunchesSampled']);
+    expect(dune['maxLaunchesPerCandidate']).not.toBe(swap['maxLaunchesPerCandidate']);
+    // And the recipe named is one this file's own thresholds actually hold.
+    expect(loadThresholds()[AGREE['recipeBlock'] as string]).toBeTruthy();
   });
 });

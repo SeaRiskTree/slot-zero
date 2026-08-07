@@ -265,7 +265,7 @@ the next real run refuses the whole Dune leg terminally** — before spending an
 agree. The failure is loud and costs no credits, which is the design; it is still a run with no Dune
 answer for anybody.
 
-| what changed | saved query to update, in place |
+| what changed | saved query to update, in place, **in the workspace that holds it** |
 |---|---|
 | `CREATION_SQL` (`dune.mjs`) | **`8204672`** — the enumeration |
 | `COVERAGE_SQL` (`dune.mjs`) | **`8204603`** — the coverage probe |
@@ -276,6 +276,25 @@ The first two ids are pinned in `thresholds.json` → `dune`; `ENTRY_SQL`'s is p
 it belongs to, as `dune-fills.mjs` → `ENTRY_QUERY_ID`. Paste the committed text verbatim — comments
 included, since `normaliseSql` compares everything but line endings and trailing whitespace, and the
 comments are where the traps are written down.
+
+**A SAVED-QUERY ID IS SCOPED TO A WORKSPACE, NOT TO A LOGIN — and a key that cannot see these
+queries does not fail cheaply.** The ids above are not account-independent and not portable: a
+SECOND key belonging to the same person, on the same login, may list **none** of them, because it is
+a different account with its own private-query slots. What that costs is availability rather than
+money, and it is the same failure shape the rest of this section is about — the coverage probe 404s,
+the enumeration leg then answers for **nobody**, and the run exits 2 at
+[the walk-fallback spend cliff](#a-whole-leg-dune-failure-is-a-spend-cliff-and-it-is-refused-before-it-is-paid)
+*after* the MadeOnSol seed allowance has already been spent. So the key a run uses and the workspace holding these queries
+are one choice, not two. **Do not treat any specific id above as authoritative** — the set is being
+reissued under captain decision 326a, and the standing discipline applies: re-list with
+`GET /api/v1/queries?limit=100` under the key you are actually going to run with, rather than
+quoting a number from prose.
+
+*Evidence, and no test in this repo asserts it:* enumerated 2026-08-07 under both keys — the older
+key lists all four production queries, the newer (paid) key lists **zero**, and that key's own
+`POST /usage` reports `privateQueries 0`. An incidental HTTP 404 (`Query not found`) on
+`/query/8204603` under the newer key corroborates it. The enumeration is held in firstmate's
+records, outside this repo; nothing here reproduces it offline.
 
 **The fourth row is the one that is not deployed at all, and deploying it is a captain decision.**
 `TRADE_COVERAGE_SQL` is the coverage probe for the TRADE tables `ENTRY_SQL` reads — the observed

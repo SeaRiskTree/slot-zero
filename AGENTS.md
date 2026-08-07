@@ -609,7 +609,8 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   which lag differently — so `null` refuses rather than "skips the probe", and pointing it at an
   existing id would refuse the leg terminally after a billed probe. Deploying it takes a slot and is
   a captain decision. The four production queries
-  are deployed in place: `8204672` enumeration and `8204603` coverage, whose SQL is committed in
+  are deployed, **each in ONE workspace and reachable only by a key on that account**: `8204672`
+  enumeration and `8204603` coverage, whose SQL is committed in
   `dune.mjs`, `8235460` the Stage 2 opening-window fill tape, whose SQL is committed in
   `tools/deployer-screen/dune-fills.mjs` → `ENTRY_SQL` and whose id is pinned beside it as
   `ENTRY_QUERY_ID`, and `8214953` creation census, whose SQL is committed in
@@ -623,6 +624,13 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   `tools/deployer-screen/README.md` →
   "Deploying a change to the committed SQL" owns the step for the screen's three and names which id
   goes with which text; `tools/creation-census/README.md` owns it for `8214953`.
+  **A SAVED-QUERY ID IS SCOPED TO A WORKSPACE, SO A SECOND KEY ON THE SAME LOGIN MAY SEE NONE OF
+  THEM — and a run pointed at such a key does NOT fail cheaply**: it exits 2 at the walk-fallback
+  spend cliff with the MadeOnSol seed allowance already spent. That is another instance of why the
+  discipline above is *re-list rather than quote*, under the key the run will actually use — and the
+  ids are being reissued under captain decision 326a, so no number in this bullet is authoritative.
+  `tools/deployer-screen/README.md` → "Deploying a change to the committed SQL" owns the operational
+  detail and the (untested, off-tree, 2026-08-07) evidence.
   **Nothing tracks the month ACROSS runs** — each run checks the ceiling itself (bullet above) and
   then forgets; the tools are stateless between runs. Auth is the `X-Dune-API-Key`
   **header**, never `Bearer`.

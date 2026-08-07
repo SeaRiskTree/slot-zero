@@ -13484,7 +13484,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         // is unchanged: `runEntrySourcePlan` still returns `null` exactly when Stage 2 reads no
         // source, and `runEntryFillSource` is kept beside it as the single-source view.
         expect(screen).toContain(
-          'entrySourcePlan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds);',
+          'entrySourcePlan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds, {',
         );
         // ...and the ONLY caller of `selectEntryFillSource` left in this file is inside
         // `runEntrySourcePlan`, behind its own early return. It is no longer spelled with
@@ -13531,7 +13531,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
         const refusal = screen.indexOf('return EXIT.credentialMissing;');
         const construction = screen.indexOf(
-          'entrySourcePlan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds);',
+          'entrySourcePlan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds, {',
         );
         expect(refusal).toBeGreaterThan(-1);
         expect(construction).toBeGreaterThan(refusal);
@@ -14240,7 +14240,7 @@ describe('ONE run, TWO entry fill sources, and it agrees with itself PER CANDIDA
         // re-reading the flag beside it. The idiom is this file's, where `main` offers no seam.
         const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
         expect(screen).toContain(
-          "const duneEntrySourceIsRead = entrySourceKindsRead(opts, agreementBounds).includes('dune');",
+          "const duneEntrySourceIsRead = entrySourceKindsRead(opts, agreementBounds, entryFillSourceKind).includes('dune');",
         );
         expect(screen).toContain('if (duneEntrySourceIsRead) {');
         // The old spelling is gone from the file entirely, executable and prose alike, except where

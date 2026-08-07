@@ -929,7 +929,22 @@ dev currently?"*, and the shape of the answer is the point:
   `checkDuneAllowance`'s `leg` is REQUIRED with no default, a leg that will not spend must
   `declineToSpend` rather than be skipped (silence blocks the legs behind it, which fails towards
   refusing), and a ledgerless call is the SOLE leg and queues behind nothing — so every single-leg
-  path is byte-identical. Neither guard can fire on the default branch; the first run that exercises
+  path is byte-identical. **AND ORDERING THE RESERVATIONS DOES NOT ORDER THE SPEND**, which the
+  review of that round caught: a ledger holds a leg until its predecessors have SETTLED, never until
+  they have ANSWERED, so the entry probe could still be billed and the run then refused whole at the
+  cliff. The construction is therefore SPLIT and carries **two properties, neither of which may
+  lose**. (1) A run whose Stage 2 fill source is unusable refuses BEFORE the MadeOnSol seed
+  enumeration is spent — `runEntrySourcePlan(..., { constructionPhase: 'free-only' })` RESOLVES every
+  kind the run will read, so an unknown kind still refuses there and resolution touches no vendor,
+  and builds only what the registry DECLARES free (the swap-api, so a default run is byte-identical).
+  (2) The OPTIONAL BILLED leg only bills once the MANDATORY one has ANSWERED —
+  `completeEntrySourcePlan` builds the deferred billed and UNDECLARED constructions after the
+  enumeration and after `priceWalkFallbackCliff`, still ahead of the gate loop, and its refusal reads
+  *"Refusing to score"* and may NOT claim nothing was spent. `DUNE_LEG_ORDER` is KEPT beside the
+  control flow deliberately: it is the guard that survives a future reordering. `main` carries a
+  `seam.entryFillSourceKind` so a Dune-selected run is reachable from a test — the constant is Gate
+  3's own edit — and both directions of both properties are driven through `main` over a stubbed
+  transport. Neither guard can fire on the default branch; the first run that exercises
   the Dune fill source is Gate 3's.
 - **`node tools/deployer-screen/screen.mjs` WITH NO MODE FLAG IS A LIVE RUN AND SPENDS, and the
   agent environment normally has all three keys set.** It costs MadeOnSol keyed requests immediately

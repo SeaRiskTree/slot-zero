@@ -1290,6 +1290,37 @@ committed** (captain decisions 317a and 318a, 2026-08-06):
    behind it blocked, which fails towards refusing. A leg handed no ledger is the SOLE leg by
    definition and queues behind nothing, so every single-leg path is byte-identical.
 
+   **AND ORDERING THE RESERVATIONS DOES NOT ORDER THE SPEND, SO THE CONSTRUCTION IS SPLIT IN TWO —
+   TWO PROPERTIES, AND NEITHER MAY LOSE.** A ledger can hold a leg until its predecessors have
+   *settled*; it cannot hold one until they have *answered*. With the whole construction still above
+   Stage 1, a run could clear both legs against one balance, bill this leg's coverage probe, watch
+   the enumeration come back empty for any of the four reasons the cliff treats alike — a refused
+   coverage probe, an unreadable row, a failed execution, a refused allowance — and be refused whole
+   at exit 2 anyway. So `screen.mjs` builds the entry source in two phases:
+
+   - **PROPERTY 1, and it is what the early phase buys**: a run whose Stage 2 fill source is
+     unusable refuses BEFORE the MadeOnSol seed enumeration is spent. Where the construction sits
+     today, `runEntrySourcePlan(..., { constructionPhase: 'free-only' })` RESOLVES every kind the run
+     will read — so an unknown kind, or a registration disagreeing with its own key, still refuses
+     there, and resolution touches no vendor — checks the window ceiling, and builds only the
+     constructions the registry DECLARES free. On a default run that is the swap-api and therefore
+     all of them, which is why a default run is byte-identical and still proves its eligibility gate
+     before Stage 1.
+   - **PROPERTY 2, and it is what the late phase buys**: the OPTIONAL BILLED leg only bills once the
+     MANDATORY leg has ANSWERED. `completeEntrySourcePlan` builds whatever the early phase deferred —
+     the billed constructions, and the UNDECLARED ones, which are treated as billed for captain
+     decision 286c's fail-safe reason — after the enumeration and after `priceWalkFallbackCliff`, and
+     still ahead of the gate loop and Stage 2. Its refusal reads *"Refusing to score"* and does NOT
+     claim that nothing was spent, because by then the seeds are sunk and the enumeration has been
+     billed for its probe read; the record is written for the same reason the cliff's is.
+
+   **`DUNE_LEG_ORDER` IS KEPT BESIDE THIS DELIBERATELY.** It is now belt-and-braces with the control
+   flow rather than the only thing holding the order, and it is the half that survives a future
+   reordering of these blocks. Both directions of both properties are driven through `main` over a
+   stubbed transport in `test/dune-credit-ceiling.test.ts`; `main`'s `seam.entryFillSourceKind` is
+   what makes a Dune-selected run reachable from a test at all, since the constant is Gate 3's own
+   edit.
+
    The balance itself is pinned nowhere, and the three limits that travel with it — the counter lags,
    the key is shared, the period is a subscription anniversary — are the `dune` block's and
    unchanged. A ledger makes one RUN self-consistent; it reserves nothing against a sibling lane.

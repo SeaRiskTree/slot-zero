@@ -68,7 +68,12 @@ import {
 } from '../tools/deployer-screen/dune.mjs';
 import type { DuneCreditLedger } from '../tools/deployer-screen/dune.mjs';
 import { agreementExecutionsFor, tradeFillSpendPlan } from '../tools/deployer-screen/dune-fills.mjs';
-import { buildDuneEntryFillSource } from '../tools/deployer-screen/screen.mjs';
+import {
+  buildDuneEntryFillSource,
+  main as screenMain,
+  parseArgs as screenParseArgs,
+} from '../tools/deployer-screen/screen.mjs';
+import { BASE_URL as MADEONSOL_BASE_URL } from '../tools/deployer-screen/client.mjs';
 import {
   EXIT,
   checkDuneAllowance as censusCheckDuneAllowance,
@@ -1738,4 +1743,160 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
     expect(paths).toEqual([USAGE_PATH]);
     expect(c.executions()).toBe(0);
   });
+});
+
+/**
+ * **THE TWO PROPERTIES THE FILL SOURCE'S TWO-PHASE CONSTRUCTION CARRIES, DRIVEN THROUGH `main`.**
+ *
+ * The ordering pins above are POSITIONAL and stand where `main` offered no seam. These stand beside
+ * them and observe the run instead: a stubbed transport records every URL, and the exit code plus
+ * the refusal wording say which phase refused. Both directions of both properties are here, and each
+ * negative control was confirmed to go RED against the construction sitting in the other phase.
+ *
+ * `main`'s `seam.entryFillSourceKind` is what makes any of this reachable. `ENTRY_FILL_SOURCE_KIND`
+ * is the Gate 3 cutover's own edit and this lane may not make it, so a run that SELECTS the Dune
+ * source — the case both spend hazards are about — cannot otherwise be produced from a test.
+ * Nothing here opens a gate: the constant, `TRADE_COVERAGE_QUERY_ID` and
+ * `entry_source_agreement.active` are all untouched, and the Dune source still refuses to be built
+ * because its coverage probe is undeployed, which is exactly the refusal these tests observe.
+ */
+describe('the entry fill source is constructed in two phases, and each phase carries one property', () => {
+  /** Screen exit codes. `EXIT` in `screen.mjs` is module-private, so they are named here. */
+  const SCREEN_EXIT = { usage: 2, upstream: 7 };
+
+  /** Distinct, base58-shaped, and never a wallet this project has measured. */
+  const seedWallet = (i: number) => `${WALLET.slice(0, -2)}${'abcdefghijkmnpqrstuv'[i]}L`;
+
+  function seedBody(count: number): unknown {
+    return {
+      deployers: Array.from({ length: count }, (_, i) => ({
+        wallet_address: seedWallet(i),
+        total_tokens_deployed: 60,
+        total_bonded: 20,
+      })),
+    };
+  }
+
+  /**
+   * Every URL the run reaches, in order, with nothing leaving the process.
+   *
+   * The clients read `globalThis.fetch` at construction and `main` constructs its own, so stubbing
+   * the global is the whole injection. A URL this handler does not recognise answers 404 — the
+   * status the live Dune account actually returned for these saved queries — which is terminal and
+   * unretried, so a failing leg fails fast rather than backing off.
+   */
+  function stubTransport(handler: (url: string) => Response): string[] {
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', async (input: unknown) => {
+      const url = String(input);
+      seen.push(url);
+      return handler(url);
+    });
+    return seen;
+  }
+
+  const KEYED_ENV = { MADEONSOL_API_KEY: SENTINEL_KEY, DUNE_API_KEY: SENTINEL_KEY };
+
+  function run(argv: string[], env: Record<string, string>, kind: string) {
+    const parsed = screenParseArgs(argv);
+    if (!parsed.ok) throw new Error('unreachable');
+    const errs: string[] = [];
+    return screenMain(parsed.opts, env, () => {}, (l: string) => errs.push(l), {
+      entryFillSourceKind: kind as never,
+    }).then((code: number) => ({ code, err: errs.join('\n') }));
+  }
+
+  it('PROPERTY 1: an unusable Stage 2 source refuses before ONE seed request is spent', async () => {
+    // The keyed-allowance protection the early construction buys, and the reason the billed build
+    // could not simply be moved down. A kind this run carries no constructor for is refused by
+    // RESOLUTION, which touches no vendor — so the refusal is honest when it says nothing was spent,
+    // and the transport proves it rather than the sentence asserting it.
+    try {
+      const seen = stubTransport(() => new Response('{}', { status: 200 }));
+      const { code, err } = await run([], KEYED_ENV, 'no-such-source');
+      expect(code).toBe(SCREEN_EXIT.upstream);
+      expect(err).toContain('Refusing to start: Stage 2 has no usable fill source.');
+      expect(err).toContain('Nothing was requested, so no quota was spent.');
+      // NO SEED REQUEST, and nothing billed. The one URL a refusing run does reach is the
+      // enumeration leg's `POST /usage`, which Dune documents as a metadata endpoint consuming no
+      // credits — the deliberate conservatism of reserving the mandatory leg first, and the reason
+      // the refusal's "no quota was spent" is still true.
+      expect(seen.filter((u) => u.startsWith(MADEONSOL_BASE_URL))).toEqual([]);
+      expect(seen.filter((u) => !u.endsWith(USAGE_PATH))).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
+
+  it('PROPERTY 2: a Dune enumeration that answers for NOBODY reaches the cliff with the entry source unbuilt', async () => {
+    // THE HAZARD ITSELF. The ledger orders the two RESERVATIONS and cannot order their SPEND, so
+    // with the billed construction above Stage 1 this run would bill the entry leg's trade-coverage
+    // read, watch the enumeration come back empty, and be refused whole — period consumed, nothing
+    // produced. Here the enumeration's saved query 404s (the live failure shape), the leg answers
+    // for nobody, and the walk-fallback cliff is what the operator gets.
+    try {
+      const seen = stubTransport((url) => {
+        if (url.startsWith(MADEONSOL_BASE_URL)) return new Response(JSON.stringify(seedBody(12)), { status: 200 });
+        if (url.endsWith(USAGE_PATH)) {
+          return new Response(JSON.stringify(usageBody([period(0, 4_000)])), { status: 200 });
+        }
+        return new Response('Query not found', { status: 404 });
+      });
+      const { code, err } = await run([], KEYED_ENV, 'dune');
+      expect(code).toBe(SCREEN_EXIT.usage);
+      expect(err).toContain('the Dune enumeration leg answered for NO candidate');
+      // THE NEGATIVE CONTROL, and it is the finding: with the construction in the early phase this
+      // run exits 7 with the fill-source refusal instead, having never enumerated at all.
+      expect(err).not.toContain('has no usable fill source');
+      // And the seeds WERE spent before the cliff, so this is the degraded path rather than an
+      // early refusal wearing a different exit code.
+      expect(seen.filter((u) => u.startsWith(MADEONSOL_BASE_URL)).length).toBeGreaterThan(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
+
+  it('PROPERTY 2, the other direction: a run that gets past the enumeration DOES build the billed source', async () => {
+    // Without this the property above would be satisfied by never building the source at all. The
+    // enumeration is switched off with `--no-dune`, so there is no leg to come back empty and no
+    // cliff; the run reaches the late phase, the Dune source refuses to be built — its coverage
+    // probe is undeployed, which is the resting state Gate 3 changes — and the refusal lands with
+    // the seeds already sunk. Its wording says "score" rather than "start" and, deliberately, makes
+    // no claim that nothing was spent.
+    try {
+      const seen = stubTransport((url) => {
+        if (url.startsWith(MADEONSOL_BASE_URL)) return new Response(JSON.stringify(seedBody(0)), { status: 200 });
+        if (url.endsWith(USAGE_PATH)) {
+          return new Response(JSON.stringify(usageBody([period(0, 4_000)])), { status: 200 });
+        }
+        return new Response('Query not found', { status: 404 });
+      });
+      const { code, err } = await run(['--no-dune'], KEYED_ENV, 'dune');
+      expect(code).toBe(SCREEN_EXIT.upstream);
+      expect(err).toContain('Refusing to score: Stage 2 has no usable fill source.');
+      expect(err).not.toContain('Nothing was requested, so no quota was spent.');
+      expect(seen.filter((u) => u.startsWith(MADEONSOL_BASE_URL)).length).toBeGreaterThan(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
+
+  it('the DEFAULT run is unchanged: the one source it reads is free, so both phases still build it once', async () => {
+    // The regression guard on "a default run is byte-identical". The swap-api construction is
+    // DECLARED free, so the early phase builds it and the late phase finds nothing left to do — and
+    // the run goes on to fail on the credential it has always failed on, rather than on a source.
+    try {
+      const seen = stubTransport(() => new Response('{}', { status: 200 }));
+      const parsed = screenParseArgs([]);
+      if (!parsed.ok) throw new Error('unreachable');
+      const errs: string[] = [];
+      const code = await screenMain(parsed.opts, {}, () => {}, (l: string) => errs.push(l));
+      expect(code).toBe(3);
+      expect(errs.join('\n')).toContain('CREDENTIAL PROBLEM');
+      expect(errs.join('\n')).not.toContain('usable fill source');
+      expect(seen).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
 });

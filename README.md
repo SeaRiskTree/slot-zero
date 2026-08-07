@@ -243,16 +243,34 @@ the report's name and section inline; they are evidence from elsewhere, not repr
   median is **+0.035 SOL**. *(`wallet_behaviour_profiles.csv`; `counterparties.csv`;
   `onchain_create_slot_pnl.csv` for the fee-inclusive figures.)*
   That the six are *part of the operation* was an inference when the source report was
-  written; the funding graph has since turned it into an artefact. **The discriminator is the
-  operator's own tooling, host and handle on the cohort's own launches:** `2CHrnc2L…` is
-  listed by pump.fun as the current creator of **36 coins, every one on the operator's own
-  metadata host `meta.uxento.io`, one citing `genyrational` — the deployer's own promo
-  handle**; and `43x1zWzj…` and `5P8A9bG…` have a genesis byte-identical to the deployer's —
-  the same 3.500000000 SOL from a custodial hot wallet in the same instruction envelope, then
-  a pump.fun create-and-buy crediting the identical 3.0014616 SOL through the same tool fee
-  accounts, minutes later. **Common ownership is still not formally established:** `?creator=`
-  lists by *current* creator, so the 36 may mean "launched it" or "was given it", and nothing
-  on-chain proves ownership. *(`kol-cohort-vs-outsider-funding/report.md` §2.1, §6.3.)*
+  written; the on-chain record has since turned it into an artefact, and none of what does so
+  rests on a vendor. The create-slot record above is one half — 235 of 235 at 1.08× for
+  0.0009 SOL of fees, no appearance on 70 other deployers' launches, **221 closed round trips
+  at a 0.977 hit rate for +503.9 SOL** gross (`report.md` §4.2), and, on the 120 launches priced
+  exactly, **+306.0 SOL fee-inclusive and positive on 100% of them for 0.30 SOL of fees in total**
+  (`report.md` §5.5). The other half is direct: `2CHrnc2L…`
+  **co-signs the operation's three-signer bundle transactions** with `8kzFH4rg…` and
+  `Atgx1JXs…`, which a stranger cannot do, and it is the **on-chain `creator` of all 36 coins
+  pump.fun lists it under, with no handover visible on any of them** — the same read on the
+  deployer's own 70 finds six that genuinely moved away, which is what makes it a measurement
+  rather than a null result. That field is settable and movable and reports **current** creator
+  status, so it is evidence of association and not of origin; one of the 36 (`Cwb8T7Ct…pump`)
+  had its create transaction read directly and was signed by `2CHrnc2L…` — one coin, not 36.
+  `43x1zWzj…` and `5P8A9bG…` have a genesis
+  byte-identical to the deployer's — the same 3.500000000 SOL from a custodial hot wallet in
+  the same instruction envelope, then a pump.fun create-and-buy crediting the identical
+  3.0014616 SOL, minutes later. **Common ownership is still not formally established:**
+  nothing on-chain proves ownership, this stays a measured grouping, and on 35 of the 36 coins
+  the creator reading cannot tell "launched it" from "was given it". **Two discriminators
+  the source report offered are withdrawn rather than softened** — `meta.uxento.io` is a
+  third-party deploy platform serving thousands of launches a day, with 23 distinct unrelated
+  creator wallets writing metadata there inside one 33-minute live sample, not the
+  operator's own host, and those three launches never shared a tool fee account; the only
+  address common to all three is pump.fun's own protocol fee recipient, which every launch
+  pays. *(`kol-cohort-vs-outsider-funding/report.md` §2.1, §4.4;
+  `slot-zero-uxento-host-reexamine/report.md` §3, §4.2, §5.2, §8.6;
+  `slot-zero-fee-accounts-protocol-or-tool/report.md` §3 — all three held in firstmate's
+  records, not in this repo.)*
 - **The outsider edge is real, thin, and bought.** `5brv79eF…` keeps **+47.8 SOL of +100.9
   gross** over 49 exactly-priced launches — it pays away over half in priority fees, and is
   still the best result in 20,388 wallets outside the operation's own six. Its outsider status is
@@ -618,7 +636,7 @@ plain `.mjs` with JSDoc types so they run on the Node 20 floor with no build ste
 
 ## Provenance
 
-The dataset and the findings are the work of seven read-only scout investigations — the four
+The dataset and the findings are the work of nine read-only scout investigations — the four
 behind the dataset all carried out with zero metered provider requests. The population-tape report and its brief
 are reproduced in full under `data/population-tape-2026-07-29/`. The three companion reports
 — `kol-deployer-entity-cluster` (the operator behind the launches, and the creator-record
@@ -632,9 +650,12 @@ custodial venue in "The ceiling of the method" above), `slot-zero-june-regime-ch
 create slot's unprofitability for outsiders since 2026-06-04, and the *operation's share of the
 curve's bottom* method that `tools/deployer-screen/` cites) and `kol-bond-timing-vs-dev-exit`
 (the directly measured graduation times behind `data/population-tape-2026-07-29/IMPORT.md`
-corrections 4–7), are likewise not copied here.
-**None of the six companion reports is committed to this repo** — only the population-tape
-report and its brief are — so any figure attributed to one of the six is evidence from elsewhere
+corrections 4–7), are likewise not copied here. Two later ones again,
+`slot-zero-uxento-host-reexamine` and `slot-zero-fee-accounts-protocol-or-tool` (which
+between them withdrew the metadata-host and tool-fee-account discriminators in "Six wallets
+are inside the launch" above, under captain decision 371a), are not copied here either.
+**None of the eight companion reports is committed to this repo** — only the population-tape
+report and its brief are — so any figure attributed to one of them is evidence from elsewhere
 and is not asserted by any test here. Two of them are confirmed in-repo by an independent
 route: `analysis/window-population/` re-derives `slot-zero-june-regime-change`'s 2026-06-04
 date and its closed-regime prize from the local tape, and `test/reproduction.test.ts` asserts

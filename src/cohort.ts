@@ -10,23 +10,44 @@ export const DEPLOYER = '7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL';
  * The six wallets in the create slot of essentially every launch (`report.md` §4.3, §5.4).
  *
  * **Evidence**: presence on every launch across eight months; entry as two three-signer
- * transactions paying 0.0009 SOL of fees; fills at 1.08–1.41× the deployer's own price
+ * transactions paying 0.0009 SOL of fees; fills at 1.08–1.91× the deployer's own price
  * where outsiders pay 2–3×; and **zero appearances across 70 other deployers' launches**
  * (`report.md` §6) while genuine general-purpose snipers appear on 9 and 8 of them.
  *
  * **That they are part of the operation** was an inference when the tape report was written
- * and the funding graph has since turned it into an artefact
- * (`kol-cohort-vs-outsider-funding/report.md`). `2CHrnc2L…` is listed by pump.fun as the
- * current creator of **36 coins, every one on the operator's own metadata host
- * `meta.uxento.io`, one citing `genyrational` — the deployer's own promo handle** (§6.3);
- * and `43x1zWzj…` and `5P8A9bG…` have a genesis byte-identical to the deployer's own — the
- * same 3.500000000 SOL from a custodial hot wallet in the same instruction envelope, then a
- * pump.fun create-and-buy crediting the identical 3.0014616 SOL through the same tool fee
- * accounts, minutes later (§2.1).
+ * and the on-chain record has since turned it into an artefact. **Nothing that does so is a
+ * vendor artefact.** `2CHrnc2L…` co-signs the operation's three-signer bundle transactions
+ * with `8kzFH4rg…` and `Atgx1JXs…` (`kol-cohort-vs-outsider-funding/report.md` §4.4); it closes
+ * **221 round trips at a 0.977 hit rate for +503.9 SOL** on top of the create-slot record above
+ * (`report.md` §4.2) and is **fee-inclusive positive on 100% of the 120 launches priced
+ * exactly, for 0.30 SOL of fees in total** (§5.5); and it is the **on-chain `creator` of all
+ * 36 coins pump.fun lists it under, with no handover visible on any of them** — the same read
+ * on the deployer's own 70 finds six that genuinely moved away, so the field discriminates
+ * rather than always agreeing, which is what makes it a measurement rather than a null result.
+ * That field is settable and movable and reports **current** creator status, so it is evidence
+ * of association and not of origin; exactly one of the 36 (`Cwb8T7Ct…pump`) had its create
+ * transaction read directly and was signed by `2CHrnc2L…` — one coin, not 36
+ * (`slot-zero-uxento-host-reexamine/report.md` §4.2, §8.6). `43x1zWzj…` and `5P8A9bG…` have a
+ * genesis byte-identical to the deployer's own — the same 3.500000000 SOL from a custodial hot
+ * wallet in the same instruction envelope, then a pump.fun create-and-buy crediting the
+ * identical 3.0014616 SOL, minutes later (`kol-cohort-vs-outsider-funding/report.md` §2.1).
  *
- * **Common ownership is still not formally established.** `?creator=` lists by *current*
- * creator (see AGENTS.md), so the 36 may mean "launched it" or "was given it", and nothing
- * on-chain proves ownership. This constant remains a measured grouping.
+ * **Two discriminators the source report offered are withdrawn, not softened.**
+ * `meta.uxento.io` is a commercial third-party deploy platform — 23 unrelated creator wallets
+ * wrote metadata there inside one 33-minute live sample and this operation was in none of
+ * them — so sharing it is worth what sharing an exchange is worth
+ * (`slot-zero-uxento-host-reexamine/report.md` §3). And the three genesis launches never ran
+ * through the same tool fee accounts: the deployer paid `astrazznx…`, the two cohort wallets
+ * paid `astraubk…`, and the only account common to all three is pump.fun's own protocol fee
+ * recipient, which every pump.fun launch ever made pays
+ * (`slot-zero-fee-accounts-protocol-or-tool/report.md` §3). All three reports are held in
+ * firstmate's records, not in this repo.
+ *
+ * **Common ownership is still not formally established.** Nothing on-chain proves ownership,
+ * and this constant remains a measured grouping. The `?creator=` caveat stands: both it and the
+ * bonding curves' own `creator` field list by **current** creator, so on 35 of the 36 the
+ * reading cannot tell "launched it" from "was given it" — only the create transaction can, and
+ * it has been read for one of them.
  *
  * Ordered by create-slot presence: 235, 235, 235, 174, 173, 88 of 235 taped launches.
  */

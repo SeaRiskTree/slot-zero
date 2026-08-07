@@ -31,7 +31,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -73,7 +73,12 @@ import {
   main as censusMain,
   readBounds,
 } from '../tools/creation-census/run.mjs';
-import { monthlyCreditCapCredits as reproductionCapCredits } from '../tools/deployer-screen/dune-reproduction.mjs';
+import {
+  ALLOWANCE_RESERVE_CREDITS as REPRODUCTION_RESERVE,
+  checkReproductionAllowance,
+  estimateReproductionCredits,
+  monthlyCreditCapCredits as reproductionCapCredits,
+} from '../tools/deployer-screen/dune-reproduction.mjs';
 
 const SCREEN_CLIENT = fileURLToPath(new URL('../tools/deployer-screen/client.mjs', import.meta.url));
 const CENSUS_CLIENT = fileURLToPath(new URL('../tools/creation-census/client.mjs', import.meta.url));
@@ -482,6 +487,11 @@ describe('the decision, and the two things it cannot see', () => {
       expect(broken.verdict).toBe('unreadable');
       expect(broken.ok).toBe(false);
       expect(broken.reasons.join(' ')).toMatch(/not a finite positive number of credits/);
+      // AND IT NAMES THE BOUND THAT ACTUALLY BROKE. This branch fires for three different causes,
+      // so an operator whose plan or reserve is unpriceable must not be sent to the cap — the one
+      // bound that read fine, and the one whose lever (raise it) would change nothing here.
+      expect(broken.reasons.join(' ')).toMatch(/the plan's worst case priced to/);
+      expect(broken.reasons.join(' ')).not.toContain(MONTHLY_CAP_PIN);
 
       // A non-finite RESERVE is the same failure from the other side: it makes `spendable` NaN.
       const noReserve = decideOne({
@@ -495,6 +505,8 @@ describe('the decision, and the two things it cannot see', () => {
       } as never);
       expect(noReserve.verdict).toBe('unreadable');
       expect(noReserve.ok).toBe(false);
+      expect(noReserve.reasons.join(' ')).toMatch(/the reserve priced to/);
+      expect(noReserve.reasons.join(' ')).not.toContain(MONTHLY_CAP_PIN);
 
       // And `allowanceRequired: false` does NOT waive it — that flag waives an unread BALANCE, and
       // here the plan's own cost is what could not be established, so there is nothing to waive.
@@ -843,9 +855,26 @@ describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
     /** Above it, so a lane honouring it must clear. */
     const ROOMY = worstCase * 10;
 
+    // The reproduction lane prices its own plan, so its two caps are sized against ITS worst case
+    // rather than against the shared one — the property under test is the same at either size.
+    const BATCHES = [{ month: '2026-07', launches: [], plannedRows: 1_000 }];
+    const reproductionWorst = estimateReproductionCredits(BATCHES).worstCaseCredits;
+    const REPRODUCTION_TIGHT = reproductionWorst - 1 + REPRODUCTION_RESERVE;
+    const REPRODUCTION_ROOMY = reproductionWorst * 10 + REPRODUCTION_RESERVE;
+
     /** Every lane that decides whether Dune may be spent, driven through its own public entry. */
-    const LANES: Record<string, (cap: unknown) => Promise<{ ok: boolean; cap: unknown; reasons: string }>> = {
-      'deployer-screen/dune.mjs': async (cap) => {
+    type LaneCase = {
+      decide: (cap: unknown) => Promise<{ ok: boolean; cap: unknown; reasons: string }>;
+      tight: number;
+      roomy: number;
+    };
+    const lane = (
+      tight: number,
+      roomy: number,
+      decide: LaneCase['decide'],
+    ): LaneCase => ({ decide, tight, roomy });
+    const LANES: Record<string, LaneCase> = {
+      'deployer-screen/dune.mjs': lane(TIGHT, ROOMY, async (cap) => {
         const client = new ScreenDuneClient({
           key: SENTINEL_KEY,
           maxExecutions: 2,
@@ -860,8 +889,8 @@ describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
           nowMs: NOW_MS,
         });
         return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
-      },
-      'creation-census/run.mjs': async (cap) => {
+      }),
+      'creation-census/run.mjs': lane(TIGHT, ROOMY, async (cap) => {
         const client = new CensusDuneClient({
           key: SENTINEL_KEY,
           maxExecutions: 2,
@@ -876,31 +905,62 @@ describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
           nowMs: NOW_MS,
         });
         return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
-      },
+      }),
+      // THE THIRD SPENDING LANE, whose cap is not a parameter at all: it reads the screen's own
+      // `thresholds.json` on every call, so the configuration itself is what moves here. The file is
+      // restored byte for byte whatever the assertion does, and this lane's transport answers
+      // `POST /usage` and nothing else — a billed call would show up as a second path.
+      'deployer-screen/dune-reproduction.mjs': lane(REPRODUCTION_TIGHT, REPRODUCTION_ROOMY, async (cap) => {
+        const paths: string[] = [];
+        const client = new ScreenDuneClient({
+          key: SENTINEL_KEY,
+          maxExecutions: 2,
+          maxRequests: 20,
+          minIntervalMs: 0,
+          fetchImpl: (async (url: unknown) => {
+            paths.push(String(url).slice(DUNE_API_BASE.length));
+            return new Response(JSON.stringify(usageBody([period(USED, REPRODUCTION_ROOMY * 100)])), {
+              status: 200,
+            });
+          }) as unknown as typeof fetch,
+          sleepImpl: async () => undefined,
+        });
+        const original = readFileSync(THRESHOLDS, 'utf8');
+        const doc = JSON.parse(original);
+        if (cap === undefined) delete doc.dune.monthlyCreditCapCredits;
+        else doc.dune.monthlyCreditCapCredits = cap;
+        try {
+          writeFileSync(THRESHOLDS, JSON.stringify(doc, null, 2));
+          const { decision } = await checkReproductionAllowance(client, BATCHES, NOW_MS);
+          expect(paths, 'the reproduction lane may read the balance and spend nothing').toEqual([USAGE_PATH]);
+          return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
+        } finally {
+          writeFileSync(THRESHOLDS, original);
+        }
+      }),
     };
 
-    for (const [lane, decide] of Object.entries(LANES)) {
+    for (const [name, spec] of Object.entries(LANES)) {
       // (1) THE CONFIGURED NUMBER IS THE ONE APPLIED, and moving it moves the verdict — on the same
       // balance, with the vendor's plan untouched and never the thing that bound.
-      const tight = await decide(TIGHT);
-      expect(tight.cap, `${lane} must apply the configured cap`).toBe(TIGHT);
-      expect(tight.ok, `${lane} must refuse under a cap below its worst case`).toBe(false);
-      const roomy = await decide(ROOMY);
-      expect(roomy.cap, `${lane} must apply the configured cap`).toBe(ROOMY);
-      expect(roomy.ok, `${lane} must clear under a cap above its worst case`).toBe(true);
+      const tight = await spec.decide(spec.tight);
+      expect(tight.cap, `${name} must apply the configured cap`).toBe(spec.tight);
+      expect(tight.ok, `${name} must refuse under a cap below its worst case`).toBe(false);
+      const roomy = await spec.decide(spec.roomy);
+      expect(roomy.cap, `${name} must apply the configured cap`).toBe(spec.roomy);
+      expect(roomy.ok, `${name} must clear under a cap above its worst case`).toBe(true);
       // (2) AND THE KEY IS LOAD-BEARING: remove it and the lane has no cap to fall back on, so it
       // refuses as unreadable rather than proceeding on the vendor's figure or on one of its own.
-      const absent = await decide(undefined);
-      expect(absent.ok, `${lane} must refuse with no cap configured`).toBe(false);
-      expect(absent.cap, `${lane} has no cap of its own to report`).toBeNull();
-      expect(absent.reasons, `${lane} must name the config key`).toContain(MONTHLY_CAP_PIN);
+      const absent = await spec.decide(undefined);
+      expect(absent.ok, `${name} must refuse with no cap configured`).toBe(false);
+      expect(absent.cap, `${name} has no cap of its own to report`).toBeNull();
+      expect(absent.reasons, `${name} must name the config key`).toContain(MONTHLY_CAP_PIN);
     }
 
-    // AND THE THIRD SPENDING LANE, whose cap is not injected because it reads the lane's own
-    // `thresholds.json` itself: what it hands `decideAllowance` is that file's value, so an edit
-    // there moves it and no literal in the module can.
-    const configured = JSON.parse(readFileSync(THRESHOLDS, 'utf8')).dune.monthlyCreditCapCredits;
-    expect(reproductionCapCredits()).toBe(configured);
+    // And the file is exactly as it was found, whatever the swaps above did.
+    expect(reproductionCapCredits()).toBe(
+      JSON.parse(readFileSync(THRESHOLDS, 'utf8')).dune.monthlyCreditCapCredits,
+    );
   });
 });
 

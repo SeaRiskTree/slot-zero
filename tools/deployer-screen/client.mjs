@@ -1257,8 +1257,10 @@ export function decideAllowance(input) {
       reasons: [
         `REFUSED before spending anything: ${broken}, not a finite positive number of credits, so ` +
           `${input.plan.lane} cannot say what this run could cost or what it may spend, and no ` +
-          `comparison against the balance would mean anything. A pinned bound is missing or ` +
-          `non-numeric — the cap itself lives in configuration, at ${MONTHLY_CAP_PIN}.`,
+          `comparison against the balance would mean anything.` +
+          (capIsUsable
+            ? ` A pinned bound is missing or non-numeric: the one named above.`
+            : ` The cap itself lives in configuration, at ${MONTHLY_CAP_PIN}.`),
       ],
       caveats,
     };

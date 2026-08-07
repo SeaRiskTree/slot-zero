@@ -265,7 +265,7 @@ the next real run refuses the whole Dune leg terminally** — before spending an
 agree. The failure is loud and costs no credits, which is the design; it is still a run with no Dune
 answer for anybody.
 
-| what changed | saved query to update, in place |
+| what changed | saved query to update, in place, **in the workspace that holds it** |
 |---|---|
 | `CREATION_SQL` (`dune.mjs`) | **`8204672`** — the enumeration |
 | `COVERAGE_SQL` (`dune.mjs`) | **`8204603`** — the coverage probe |
@@ -276,6 +276,25 @@ The first two ids are pinned in `thresholds.json` → `dune`; `ENTRY_SQL`'s is p
 it belongs to, as `dune-fills.mjs` → `ENTRY_QUERY_ID`. Paste the committed text verbatim — comments
 included, since `normaliseSql` compares everything but line endings and trailing whitespace, and the
 comments are where the traps are written down.
+
+**A SAVED-QUERY ID IS SCOPED TO A WORKSPACE, NOT TO A LOGIN — and a key that cannot see these
+queries does not fail cheaply.** The ids above are not account-independent and not portable: a
+SECOND key belonging to the same person, on the same login, may list **none** of them, because it is
+a different account with its own private-query slots. What that costs is availability rather than
+money, and it is the same failure shape the rest of this section is about — the coverage probe 404s,
+the enumeration leg then answers for **nobody**, and the run exits 2 at
+[the walk-fallback spend cliff](#a-whole-leg-dune-failure-is-a-spend-cliff-and-it-is-refused-before-it-is-paid)
+*after* the MadeOnSol seed allowance has already been spent. So the key a run uses and the workspace holding these queries
+are one choice, not two. **Do not treat any specific id above as authoritative** — the set is being
+reissued under captain decision 326a, and the standing discipline applies: re-list with
+`GET /api/v1/queries?limit=100` under the key you are actually going to run with, rather than
+quoting a number from prose.
+
+*Evidence, and no test in this repo asserts it:* enumerated 2026-08-07 under both keys — the older
+key lists all four production queries, the newer (paid) key lists **zero**, and that key's own
+`POST /usage` reports `privateQueries 0`. An incidental HTTP 404 (`Query not found`) on
+`/query/8204603` under the newer key corroborates it. The enumeration is held in firstmate's
+records, outside this repo; nothing here reproduces it offline.
 
 **The fourth row is the one that is not deployed at all, and deploying it is a captain decision.**
 `TRADE_COVERAGE_SQL` is the coverage probe for the TRADE tables `ENTRY_SQL` reads — the observed
@@ -1273,6 +1292,107 @@ committed** (captain decisions 317a and 318a, 2026-08-06):
    fallback. The error still runs toward refusal: every window is charged the busiest window this
    repo has ever measured.
 
+   **AND THE MANDATORY LEG RESERVES FIRST, BY RULE RATHER THAN BY CONTROL FLOW** (the pre-Gate-3
+   hazard round of 2026-08-06, closing a finding of PR 65's review). 320a made both legs draw on one
+   reservation; it did not change which of them reserved FIRST, and the control flow had the wrong
+   one there — this leg was built whole inside `runEntrySourcePlan`, which runs before Stage 1
+   enumerates.
+   So the EXPENSIVE OPTIONAL leg billed its coverage probe, the CHEAP MANDATORY enumeration was then
+   priced against what was left, fell back to the RPC walk, and `priceWalkFallbackCliff` refused the
+   whole run at exit 2 **before its first walk request** — billed, and with nothing produced. Under
+   the captain's Dune account controls (extra credits capped at $0, so the vendor refuses at the
+   ceiling rather than billing past it) that is an **availability** loss rather than a money one, and
+   a consumed period is candidates that cannot be checked at all. `dune.mjs` → `DUNE_LEG_ORDER`
+   states the order — `enumeration`, then `entry` — and `openDuneCreditLedger` refuses a leg whose
+   predecessors have not SETTLED, **before the free balance read**, let alone a billed one. A leg
+   that will not spend (`--no-dune`, `--ownership-only`, no credential, or a dry run, which
+   enumerates nothing) must say so with `declineToSpend`: being quietly skipped leaves the legs
+   behind it blocked, which fails towards refusing. A leg handed no ledger is the SOLE leg by
+   definition and queues behind nothing, so every single-leg path is byte-identical.
+
+   **AND `--no-dune` / `--ownership-only` NOW BIND THE FILL SOURCE TOO, WHICH IS THE SAME DEFECT ONE
+   FLAG OVER.** Those two declare something about the WHOLE RUN, but they were only ever checked
+   against `--entry-source-agreement` — the one thing the Gate 3 cutover does not touch. Move
+   `ENTRY_FILL_SOURCE_KIND` to `dune` and a `--no-dune` run with a usable credential proceeds, builds
+   its own Dune client inside the registry, bills the trade-coverage result read and then one
+   execution per window, having declared it would reach no Dune surface — and files a record saying
+   `dune.used: false`. `screen.mjs` → `duneFillSourceContradiction` asks the SAME
+   `entrySourceKindsRead` derivation and **refuses rather than suppressing**: dropping the fill
+   source would silently discard the source Stage 2 was configured with, while honouring it would
+   spend credits the operator believes they have forbidden, so the message names both asks and says
+   which to drop. It is checked in TWO places for the reason the agreement flag already is —
+   `parseArgs` holds the CLI contract and can answer the cutover's single-source case from a module
+   constant without reading `thresholds.json`, and `main` holds the half that can see the pinned
+   `primarySource`/`crossCheckSource`. **`--no-dune`, `--ownership-only` and `--no-stage2 --no-dune`
+   are unchanged and still valid**: at today's `swap-api` kind the derivation never names Dune, and
+   with Stage 2 off it returns no source at all, so the guard is inert on every configuration
+   reachable today and arms itself at the cutover.
+
+   **`--stage0` IS FOLDED INTO THE DERIVATION, AND THAT FOLD IS A CORRECTION TO THIS GUARD'S FIRST
+   CUT RATHER THAN A REFINEMENT OF IT.** `--stage0` sets only `stage0Only` and leaves `stage2` true,
+   so as first written the guard would have refused `--stage0 --no-dune` and `--stage0
+   --ownership-only` at the cutover — a mode whose own usage text promises "No network, no key, no
+   quota. Always safe." — while `main`'s copy of the same guard, which sits below the `stage0Only`
+   return, let the combination through. Two places, one rule, two answers. The fix is in
+   `entryFillSourceIsRead`, so a Stage 0 run reads no source and the guard is inert for it with no
+   special case at either call site; putting the exemption at the call site instead would have
+   reintroduced exactly the beside-a-flag duplication this whole section exists to remove.
+   **`--dry-run` is deliberately NOT folded, and the difference is structural**: a `--stage0` run
+   returns before the plan is built, while a dry run reads no source but PLANS one — `planEligibility`
+   gates on the same predicate, so folding `--dry-run` in would stop the plan describing its own
+   source and regress captain decision 286c. A test pins that the dry-run plan still names it.
+
+   **AND ORDERING THE RESERVATIONS DOES NOT ORDER THE SPEND, SO THE CONSTRUCTION IS SPLIT IN TWO —
+   TWO PROPERTIES, AND NEITHER MAY LOSE.** A ledger can hold a leg until its predecessors have
+   *settled*; it cannot hold one until they have *answered*. With the whole construction still above
+   Stage 1, a run could clear both legs against one balance, bill this leg's coverage probe, watch
+   the enumeration come back empty for any of the four reasons the cliff treats alike — a refused
+   coverage probe, an unreadable row, a failed execution, a refused allowance — and be refused whole
+   at exit 2 anyway. So `screen.mjs` builds the entry source in two phases:
+
+   - **PROPERTY 1, and it is what the early phase buys**: a run whose Stage 2 fill source cannot be
+     RESOLVED refuses BEFORE the MadeOnSol seed enumeration is spent, and so does a plan that does
+     not fit the window ceiling. `runEntrySourcePlan(..., { constructionPhase: 'free-only' })`
+     resolves every kind the run will read — so an unknown kind, or a registration disagreeing with
+     its own key, still refuses there, and resolution touches no vendor — checks the ceiling, and
+     builds only the constructions the registry DECLARES free. On a default run that is the swap-api
+     and therefore all of them, which is why a default run is byte-identical and still proves its
+     eligibility gate before Stage 1.
+
+     **The Dune CREDENTIAL is checked in this phase too, precisely because the answer costs
+     nothing.** That construction is declared billed, so the free phase would otherwise defer it
+     wholesale and a run with no usable `DUNE_API_KEY` would spend the entire seed enumeration
+     before refusing — on a configuration where the seeds buy nothing at all, since `usingDune` is
+     false there too and the enumeration is skipped with no leg attempted and no cliff priced.
+     `screen.mjs` → `duneFillSourceCredentialRefusal` is that rule, written once and asked twice:
+     the free phase asks it, and the constructor keeps asking it as the backstop for a caller that
+     never went through the free phase. The free phase does not re-derive *which* sources a run
+     reads either — it reads the same `entrySourceKindsRead` answer the window ceiling and the
+     `--no-dune` refusal use, so `--stage0`'s fold reaches it for free.
+
+     **READ THE SCOPE, NOT THE HEADLINE: what remains is NARROWER than what the unsplit construction
+     gave, and the narrowing is the trade.** The three failures that can only be learnt by REACHING
+     the vendor — an undeployed coverage probe, a refused allowance, an unreadable watermark — now
+     refuse at `completeEntrySourcePlan` with the seed requests already sunk, where before the split
+     they refused ahead of them. That construction also BILLED the coverage probe ahead of them,
+     which is exactly the hazard PROPERTY 2 removes, so the two cannot both be had. What was traded
+     away is a few seed requests on an already-doomed run; what was bought is that the billing period
+     is not consumed by a run that then produces nothing.
+   - **PROPERTY 2, and it is what the late phase buys**: the OPTIONAL BILLED leg only bills once the
+     MANDATORY leg has ANSWERED. `completeEntrySourcePlan` builds whatever the early phase deferred —
+     the billed constructions, and the UNDECLARED ones, which are treated as billed for captain
+     decision 286c's fail-safe reason — after the enumeration and after `priceWalkFallbackCliff`, and
+     still ahead of the gate loop and Stage 2. Its refusal reads *"Refusing to score"* and does NOT
+     claim that nothing was spent, because by then the seeds are sunk and the enumeration has been
+     billed for its probe read; the record is written for the same reason the cliff's is.
+
+   **`DUNE_LEG_ORDER` IS KEPT BESIDE THIS DELIBERATELY.** It is now belt-and-braces with the control
+   flow rather than the only thing holding the order, and it is the half that survives a future
+   reordering of these blocks. Both directions of both properties are driven through `main` over a
+   stubbed transport in `test/dune-credit-ceiling.test.ts`; `main`'s `seam.entryFillSourceKind` is
+   what makes a Dune-selected run reachable from a test at all, since the constant is Gate 3's own
+   edit.
+
    The balance itself is pinned nowhere, and the three limits that travel with it — the counter lags,
    the key is shared, the period is a subscription anniversary — are the `dune` block's and
    unchanged. A ledger makes one RUN self-consistent; it reserves nothing against a sibling lane.
@@ -1285,6 +1405,28 @@ committed** (captain decisions 317a and 318a, 2026-08-06):
    deliberately unequal** — `82 = 80 windows + 1 probe + 1 headroom`, and that inequality is the
    derivation; the block's `justification` owns it. At today's caps (7 × 10 = 70) it is inert, which
    is what a backstop is: it bites the moment a sampling cap is raised without re-pricing this leg.
+
+   **AND IT GATES ON READING THE DUNE SOURCE, NOT ON THE AGREEMENT FLAG** (the same 2026-08-06 hazard
+   round; no value moved). Both the ceiling check and the window count the leg is PRICED on were
+   gated on `--entry-source-agreement`, which is the one thing the Gate 3 cutover does not touch: it
+   moves `ENTRY_FILL_SOURCE_KIND` to `dune` and arms this leg with no flag in sight. The count would
+   have stayed **0**, so `agreementExecutionsFor` would have bounded the client and priced the
+   allowance at *the probe plus headroom* for a leg intending `maxScored × maxLaunchesPerCandidate`
+   windows — the allowance clears the small plan, the probe is billed, and the run then dies on
+   `CeilingReached` mid-flight. That is captain decision 144a's defect in the place it costs most: a
+   guard denominated in the variable that does not move at the moment the thing it guards starts
+   happening. `screen.mjs` → `entrySourceKindsRead` is now the ONE derivation of which sources a run
+   reads — built on `entryFillSourceIsRead`, so "no source at all" and "no Dune source" cannot
+   disagree — and the ceiling check, the priced count and the run's own construction all read it.
+
+### What is still open here, and is Gate 3's
+
+Neither of the two guards above can fire on a default run today, and that is the resting state: all
+three gates named at the top of this section stay shut and this round opened none of them. What has
+**never been exercised against the real vendor** is the Dune fill source itself — the probe, the
+per-window executions, the ordering under a live balance. The tests prove the guards through stubbed
+transports and committed fixtures; the first run that ever reaches Dune inside Stage 2 is Gate 3's,
+and it is the run these guards were closed ahead of.
 
 ### The reproduction — the statement run against every launch on the tape
 
@@ -1426,8 +1568,11 @@ one that would pay.**
 both paths ask — *will this run read an entry fill source at all* — written once because two
 expressions that merely agree is captain decision 144a's defect and is exactly how the run path came
 to sit outside a guard the plan path already had. The run path's half is `screen.mjs` →
-`runEntryFillSource`: it returns `null` when Stage 2 is off, having touched no constructor, and
-otherwise builds, asks and guards exactly as before. It is **not** `planEligibility` and must never
+`runEntrySourcePlan` (with `runEntryFillSource` the single-call form of both of its phases, kept as
+the seam a test substitutes a registry through): it returns `null` when Stage 2 is off, having
+touched no constructor, and otherwise builds, asks and guards exactly as before — since the
+2026-08-06 hazard round, across the two phases described under "AND ORDERING THE RESERVATIONS DOES
+NOT ORDER THE SPEND" above. It is **not** `planEligibility` and must never
 become it — a plan refuses to build a billed or undeclared construction, a run builds both, and the
 existing source-text pins say so. Stage 2's own block is then guarded by `entryFillSource !== null`
 rather than by a second reading of `opts.stage2`, so constructing and scoring are one decision.

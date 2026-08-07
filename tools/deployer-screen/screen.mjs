@@ -354,6 +354,14 @@ export async function planEntryEligibility(kind, sources, opts) {
  * time-of-use, and the estimate artefact's own rule — a balance reading is never a reservation — is
  * what it breaks. Passing no ledger opens a private one, which is the single-leg behaviour.
  *
+ * **AND IT RESERVES SECOND, BY RULE RATHER THAN BY CONTROL FLOW.** This leg is the OPTIONAL one and
+ * it is the EXPENSIVE one, so `dune.mjs` → `DUNE_LEG_ORDER` puts it behind Stage 1's enumeration:
+ * hand it a run's shared ledger before that leg has settled and it refuses here, having requested
+ * nothing at all. The failure it removes is the one that costs the most and shows the least — this
+ * leg billing its coverage probe, the enumeration then being priced out into the RPC walk, and
+ * `priceWalkFallbackCliff` refusing the whole run before its first walk request. Period consumed,
+ * nothing produced, and every candidate that period could have checked lost with it.
+ *
  * **AND IT PRICES THE WINDOWS THIS RUN PLANS, not the pinned ceiling** (captain decision 321a):
  * `opts.windowsPlanned` reaches both the plan and the client's own execution ceiling through
  * `dune-fills.mjs` → `agreementExecutionsFor`, so a `--score 2` run is judged on its own arithmetic
@@ -380,6 +388,11 @@ export async function buildDuneEntryFillSource(client, opts) {
     nowMs: opts.nowMs,
     plan: tradeFillSpendPlan(opts.agreementBounds, opts.windowsPlanned),
     ledger: opts.ledger,
+    // THE OPTIONAL LEG, and it says so. `DUNE_LEG_ORDER` puts it behind the enumeration, so on a run
+    // sharing a ledger this refuses — before the free balance read — until Stage 1's mandatory leg
+    // has reserved or declared it will not spend. Handed no ledger it is the sole leg and nothing
+    // queues at all.
+    leg: 'entry',
   });
   for (const line of describeAllowanceDecision(checked.decision)) opts.announce?.(line);
   if (!checked.decision.ok) {
@@ -468,7 +481,7 @@ export function assertAgreementWindowsFit(entryThresholds, agreementBounds) {
   }
   if (windowsPlanned > ceiling) {
     throw new Error(
-      `the dual-source Stage 2 plan admits ${windowsPlanned} Dune windows — stage2_entry ` +
+      `this run's Stage 2 plan admits ${windowsPlanned} Dune windows — stage2_entry ` +
         `maxCandidatesScored ${entryThresholds.maxCandidatesScored} x maxLaunchesPerCandidate ` +
         `${entryThresholds.maxLaunchesPerCandidate} — against entry_source_agreement ` +
         `maxWindowsPerRun of ${ceiling}. Every credit figure this leg was approved on is derived ` +
@@ -504,11 +517,162 @@ export function assertAgreementWindowsFit(entryThresholds, agreementBounds) {
  * variable that did not move. When a later flag makes Stage 2 conditional on something else, there
  * is one place that learns it.
  *
- * @param {{ stage2: boolean }} opts
+ * **`--stage0` IS ONE OF THOSE FLAGS, AND FOLDING IT IN HERE IS WHY THIS IS A DERIVATION.** A
+ * Stage 0 run is the local validation over the committed tape: it reaches no vendor, needs no key
+ * and its own usage text promises exactly that. It leaves `opts.stage2` true, though, so before the
+ * fold this answered "yes, a source is read" for it — and {@link duneFillSourceContradiction} then
+ * refused `--stage0 --no-dune` at the Gate 3 cutover for a mode that spends nothing. That refusal
+ * was introduced by the round that added the contradiction guard; this is its correction. It is
+ * folded HERE rather than exempted at the guard's call site because that would put the mode question
+ * beside a flag instead of deriving it from whether the source is read, which is the very defect
+ * this lane exists to remove — and it would leave the CLI's copy and `main`'s copy free to drift, as
+ * they already had: `main`'s half sits BELOW the `opts.stage0Only` return and so never saw the
+ * combination the CLI was refusing. One edit here makes both answer identically by construction.
+ *
+ * **`--dry-run` IS DELIBERATELY NOT FOLDED, and the difference is STRUCTURAL rather than a
+ * judgement.** A `--stage0` run RETURNS BEFORE THE PLAN IS BUILT, so nothing downstream can want a
+ * source from it. A dry run reads no source but DOES PLAN one, and `planEligibility` is gated on
+ * this predicate — folding `dryRun` in would stop the plan describing its own source and would
+ * regress captain decision 286c. A test pins that the dry-run plan still names it.
+ *
+ * @param {{ stage2: boolean, stage0Only?: boolean }} opts
  * @returns {boolean}
  */
 export function entryFillSourceIsRead(opts) {
-  return opts.stage2;
+  return opts.stage2 && opts.stage0Only !== true;
+}
+
+/**
+ * WHICH ENTRY FILL SOURCES THIS RUN WILL ASK, IN THE ORDER IT ASKS THEM. **The one derivation that
+ * answers "will the Dune source be READ", and every figure denominated in that question reads it.**
+ *
+ * It exists because the priced window count did not. What is now `duneEntryWindowsPlanned` was named
+ * `agreementWindowsPlanned` and assigned only inside `opts.entrySourceAgreement &&
+ * agreementBounds.active === true`, so it was denominated in the AGREEMENT FLAG rather than in
+ * whether this run reaches the Dune source at all — the rename is the finding, not decoration. Point
+ * {@link ENTRY_FILL_SOURCE_KIND} at Dune at the Gate 3 cutover WITHOUT that flag — which is exactly
+ * what the cutover is — and the count stays 0: `dune-fills.mjs` → `agreementExecutionsFor` then
+ * prices a ~2-execution plan, the allowance clears it, the client is built with that ceiling, and
+ * Stage 2 goes on to intend `maxCandidatesScored × maxLaunchesPerCandidate` windows. The run dies
+ * with `CeilingReached` after the coverage probe — **billed, mid-flight, having produced nothing**,
+ * which under a Dune account that refuses rather than bills past its ceiling is a lost period rather
+ * than a lost pound. This is captain decision 144a's defect in its purest form: a guard denominated
+ * in the variable that does not move at the moment the thing it guards starts happening.
+ *
+ * **It is the same shape as {@link entryFillSourceIsRead} one level down**, and deliberately so:
+ * that one answers whether ANY source is read, this one answers WHICH — so a Gate 3 cutover that
+ * moves one constant moves every figure derived from it, and nothing has to be remembered.
+ *
+ * @param {{ stage2: boolean, stage0Only?: boolean, entrySourceAgreement?: boolean }} opts
+ * @param {{ active?: boolean, primarySource?: string, crossCheckSource?: string }} [agreementBounds]
+ *   `thresholds.json` → `entry_source_agreement`. Absent or inactive means one source.
+ * @param {import('./fill-source.mjs').FillSourceKind} [selectedKind] The kind a single-source run
+ *   reads. It is a PARAMETER with `ENTRY_FILL_SOURCE_KIND` as its default rather than that constant
+ *   spelled inline, because the cutover's own case — a Dune-selected run with no agreement flag —
+ *   is otherwise unreachable from a test: the constant is Gate 3's edit and this lane may not make
+ *   it. Every caller in this file takes the default.
+ * @returns {import('./fill-source.mjs').FillSourceKind[]} Empty when this run reads no source.
+ */
+export function entrySourceKindsRead(opts, agreementBounds, selectedKind = ENTRY_FILL_SOURCE_KIND) {
+  if (!entryFillSourceIsRead(opts)) return [];
+  if (opts.entrySourceAgreement === true && agreementBounds?.active === true) {
+    return [
+      /** @type {import('./fill-source.mjs').FillSourceKind} */ (agreementBounds.primarySource),
+      /** @type {import('./fill-source.mjs').FillSourceKind} */ (agreementBounds.crossCheckSource),
+    ];
+  }
+  return [selectedKind];
+}
+
+/**
+ * "REACH NO DUNE SURFACE" AND "SCORE STAGE 2 THROUGH DUNE" ARE TWO INSTRUCTIONS THAT CONTRADICT, AND
+ * THIS IS WHERE THAT IS NAMED RATHER THAN QUIETLY RESOLVED.
+ *
+ * `--no-dune` and `--ownership-only` are a declaration about the WHOLE RUN — its own refusal of
+ * `--allow-walk-fallback` says so, and so does the flag's name. But they were only ever checked
+ * against `--entry-source-agreement`, which is the one thing the Gate 3 cutover does not touch: move
+ * {@link ENTRY_FILL_SOURCE_KIND} to `dune` and a `--no-dune` run with a usable credential proceeds,
+ * builds its own Dune client inside the registry, bills the trade-coverage result read and then one
+ * execution per window — having declared it would reach no Dune surface, and filing a record that
+ * says `dune.used: false`. That is this lane's own defect one flag over: a guard denominated in the
+ * variable that does not move.
+ *
+ * **IT REFUSES AND DOES NOT SUPPRESS**, which is the captain's call and the reason this is a
+ * function rather than an `if`. Honouring the flag by silently dropping the configured fill source
+ * discards the source Stage 2 was configured with; honouring the source reaches a vendor the flag
+ * forbade. Refusing costs a run that was already incoherent — suppressing costs credits the operator
+ * believed they had forbidden, and a period they cannot get back. So the message names BOTH asks and
+ * says which one to drop, rather than picking.
+ *
+ * **IT ASKS {@link entrySourceKindsRead} RATHER THAN RE-SPELLING THE CONDITION.** Two expressions
+ * that merely agree about which sources a run reads is the whole subject of this lane. `--no-stage2`
+ * therefore needs no special case: Stage 2 reads no source, the derivation returns nothing, and
+ * there is no contradiction to refuse.
+ *
+ * **INERT TODAY, BY CONSTRUCTION.** `ENTRY_FILL_SOURCE_KIND` is `swap-api`, so no configuration
+ * reachable from today's CLI produces a Dune kind here and this returns `null` on every one of them;
+ * it arms itself at the cutover. A test asserts that inertness — a refusal that fired today would be
+ * a regression rather than a fix.
+ *
+ * @param {{ stage2: boolean, stage0Only?: boolean, entrySourceAgreement?: boolean, noDune: boolean,
+ *   ownershipOnly: boolean }} opts
+ * @param {{ active?: boolean, primarySource?: string, crossCheckSource?: string }} [agreementBounds]
+ *   Absent where the caller cannot read `thresholds.json` — `parseArgs` is exactly that caller, and
+ *   the single-source case it CAN answer is the cutover's own, since the kind is a module constant.
+ * @param {import('./fill-source.mjs').FillSourceKind} [selectedKind]
+ * @returns {string | null} The refusal, or `null` where the two instructions do not conflict.
+ */
+export function duneFillSourceContradiction(opts, agreementBounds, selectedKind = ENTRY_FILL_SOURCE_KIND) {
+  const declared = [
+    ...(opts.noDune ? ['--no-dune'] : []),
+    ...(opts.ownershipOnly ? ['--ownership-only'] : []),
+  ];
+  if (declared.length === 0) return null;
+  if (!entrySourceKindsRead(opts, agreementBounds, selectedKind).includes('dune')) return null;
+  return (
+    `${declared.join(' and ')} declare${declared.length === 1 ? 's' : ''} that this run reaches no ` +
+    `Dune surface, and Stage 2's entry fill source is configured to READ Dune — which bills a ` +
+    `trade-coverage result read to build and one execution per window to score. Both were asked ` +
+    `for and they contradict. This run refuses rather than choosing between them: dropping the ` +
+    `fill source would silently discard the source Stage 2 was configured with, and honouring it ` +
+    `would reach a vendor the flag forbade, spending credits the operator believes they have ` +
+    `forbidden. Drop ${declared.join(' / ')}, or point Stage 2's entry fill source away from Dune ` +
+    `(screen.mjs -> ENTRY_FILL_SOURCE_KIND, or thresholds.json -> entry_source_agreement). Nothing ` +
+    `was requested and nothing was billed.`
+  );
+}
+
+/**
+ * THE DUNE FILL SOURCE NEEDS A CREDENTIAL, WRITTEN ONCE AND EVALUATED TWICE.
+ *
+ * **This is ONE RULE with two evaluation points, not two rules that agree.** The construction that
+ * needs the credential is declared BILLED, so the free phase defers it wholesale — which at the Gate
+ * 3 cutover meant a run with no usable `DUNE_API_KEY` spent the whole MadeOnSol seed enumeration and
+ * only then refused, for an answer that costs nothing to obtain and on a configuration where the
+ * seeds buy nothing at all (`usingDune` is false there too, so the enumeration is skipped, no leg is
+ * attempted and no cliff is priced). That is PROPERTY 1's worst instance, so the rule is evaluated
+ * EARLY as well: `main`'s free phase asks it, and the constructor keeps asking it as the backstop
+ * for a caller that never went through the free phase.
+ *
+ * **The predicate and the message live HERE so neither is written twice.** A second site that
+ * independently knew "the Dune source needs a credential" is the duplication class this whole lane
+ * exists to remove — and the free phase does not re-derive WHICH sources a run reads either: it
+ * reads `duneEntrySourceIsRead`, which is `entrySourceKindsRead`'s answer and the same one
+ * {@link duneFillSourceContradiction} and the priced window count use. So `--stage0`'s fold into
+ * {@link entryFillSourceIsRead} reaches this for free, and it is inert while
+ * {@link ENTRY_FILL_SOURCE_KIND} is `swap-api` because nothing then reads the Dune source at all.
+ *
+ * @param {import('./credential.mjs').DuneCredential} credential
+ * @returns {string | null} The refusal, or `null` where the credential is usable.
+ */
+export function duneFillSourceCredentialRefusal(credential) {
+  if (credential.available) return null;
+  return (
+    `the Dune fill source needs ${DUNE_KEY_ENV_VAR} and this run has no usable one. It ` +
+    `refuses to be built rather than falling back to the swap-api: a run asked for a ` +
+    `two-source comparison that silently became a one-source one would report itself ` +
+    `complete having compared nothing.`
+  );
 }
 
 /**
@@ -538,10 +702,14 @@ export function entryFillSourceIsRead(opts) {
  * @param {FillSourceRegistry} entryFillSources
  * @param {{ stage2: boolean }} opts
  * @param {import('./stage2.mjs').Stage2Thresholds} entryThresholds
+ * @param {{ active?: boolean, primarySource?: string, crossCheckSource?: string,
+ *   maxWindowsPerRun?: number }} [agreementBounds] Passed straight through. A single-source view
+ *   still needs them, because the window ceiling binds whenever the DUNE source is read — flag or
+ *   no flag — and a caller that withheld them would be asking for a plan nobody could price.
  * @returns {Promise<import('./fill-source.mjs').FillSource | null>}
  */
-export async function runEntryFillSource(entryFillSources, opts, entryThresholds) {
-  const plan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds);
+export async function runEntryFillSource(entryFillSources, opts, entryThresholds, agreementBounds) {
+  const plan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds);
   return plan === null ? null : (plan.sources.find((s) => s.kind === plan.primary)?.source ?? null);
 }
 
@@ -568,15 +736,50 @@ export async function runEntryFillSource(entryFillSources, opts, entryThresholds
  * Building the Dune source runs a BILLED coverage probe, which is precisely why nothing builds it
  * unless the run is going to read it.
  *
+ * **CONSTRUCTION IS SPLIT INTO TWO PHASES AND THE SPLIT CARRIES TWO PROPERTIES AT ONCE** (the
+ * hazard-2 residual round, 2026-08-06). `opts.constructionPhase` of `'free-only'` resolves EVERY
+ * kind this run will read — so a kind this run carries no constructor for still refuses HERE, before
+ * a seed request is spent — and builds only the ones whose registration DECLARES its construction
+ * free. The rest are left to {@link completeEntrySourcePlan}, which runs after the mandatory Dune
+ * enumeration has ANSWERED. The two properties, stated because neither may lose:
+ *
+ *   - **PROPERTY 1, and read its scope rather than its headline**: a run whose Stage 2 fill source
+ *     cannot be RESOLVED — a kind this run carries no constructor for, or a registration that
+ *     disagrees with its own key — refuses BEFORE the MadeOnSol seed enumeration is spent, as does a
+ *     plan that does not fit the window ceiling. That is what the early phase buys, and it is why
+ *     resolution and the ceiling stay here rather than moving down with the billed build. **THE
+ *     CREDENTIAL IS CHECKED HERE TOO, PRECISELY BECAUSE THE ANSWER COSTS NOTHING** — see
+ *     {@link duneFillSourceCredentialRefusal}; it is not part of the narrowing below. **What IS
+ *     narrower than the pre-split guarantee, and it is the trade the split makes**: a source that
+ *     resolves and then fails to BUILD — an undeployed coverage probe, a refused allowance, an
+ *     unreadable watermark, the three failures that can only be learnt by REACHING the vendor — now
+ *     refuses at {@link completeEntrySourcePlan} with the seeds already sunk. Before the split every
+ *     such failure refused early; it also billed the probe early, which is the hazard PROPERTY 2
+ *     exists to remove, and the two cannot both be had.
+ *   - **PROPERTY 2**: the OPTIONAL BILLED leg only bills once the MANDATORY leg has ANSWERED, not
+ *     merely reserved. `dune.mjs` → `DUNE_LEG_ORDER` orders the two RESERVATIONS; it cannot order
+ *     their SPEND, so a Dune enumeration coming back empty for any reason — refused coverage probe,
+ *     unreadable row, failed execution, refused allowance — would reach `priceWalkFallbackCliff` and
+ *     exit 2 with the entry probe already billed. The phase split is what removes that, and the
+ *     ledger guard is kept beside it as the rule that survives a future reordering.
+ *
+ * **AN UNDECLARED CONSTRUCTION IS DEFERRED WITH THE BILLED ONES**, matching captain decision 286c's
+ * fail-safe direction on the plan path: an absent declaration is not evidence of "free", and the run
+ * path builds it either way — later.
+ *
  * @param {FillSourceRegistry} entryFillSources
- * @param {{ stage2: boolean, entrySourceAgreement?: boolean }} opts
+ * @param {{ stage2: boolean, stage0Only?: boolean, entrySourceAgreement?: boolean }} opts
  * @param {import('./stage2.mjs').Stage2Thresholds} entryThresholds
  * @param {{ active?: boolean, primarySource?: string, crossCheckSource?: string,
  *   maxWindowsPerRun?: number }} [agreementBounds]
  *   `thresholds.json` → `entry_source_agreement`. Absent or inactive means one source.
+ * @param {{ constructionPhase?: 'free-only' | 'all',
+ *   selectedKind?: import('./fill-source.mjs').FillSourceKind }} [build] `selectedKind` is threaded
+ *   to {@link entrySourceKindsRead} and exists for the same reason that parameter does: the Gate 3
+ *   cutover's own configuration is otherwise unreachable from a test.
  * @returns {Promise<EntrySourcePlan | null>}
  */
-export async function runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds) {
+export async function runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds, build = {}) {
   if (!entryFillSourceIsRead(opts)) return null;
 
   const wantsAgreement = opts.entrySourceAgreement === true;
@@ -589,14 +792,15 @@ export async function runEntrySourcePlan(entryFillSources, opts, entryThresholds
         `so. Nothing was requested.`,
     );
   }
+  // THE ONE DERIVATION, shared with the site that PRICES this leg. Two expressions that merely agree
+  // about which sources a run reads is how the priced window count came to be denominated in the
+  // agreement flag while the construction was denominated in the kind — see {@link
+  // entrySourceKindsRead} for what that costs at the Gate 3 cutover.
+  const kinds = entrySourceKindsRead(opts, agreementBounds, build.selectedKind ?? ENTRY_FILL_SOURCE_KIND);
   /** @type {import('./fill-source.mjs').FillSourceKind} */
-  const primary = wantsAgreement
-    ? /** @type {import('./fill-source.mjs').FillSourceKind} */ (agreementBounds?.primarySource)
-    : ENTRY_FILL_SOURCE_KIND;
+  const primary = /** @type {import('./fill-source.mjs').FillSourceKind} */ (kinds[0]);
   /** @type {import('./fill-source.mjs').FillSourceKind | null} */
-  const crossCheck = wantsAgreement
-    ? /** @type {import('./fill-source.mjs').FillSourceKind} */ (agreementBounds?.crossCheckSource)
-    : null;
+  const crossCheck = kinds[1] ?? null;
   if (crossCheck === primary) {
     throw new Error(
       `entry_source_agreement names ${primary} as both the primary and the cross-check source. A ` +
@@ -609,17 +813,82 @@ export async function runEntrySourcePlan(entryFillSources, opts, entryThresholds
   // "these bounds name one source twice" before "these bounds do not fit", which is the order the
   // problems have to be fixed in. See {@link assertAgreementWindowsFit} for why this ceiling and the
   // client's execution ceiling are deliberately different numbers.
-  if (wantsAgreement) assertAgreementWindowsFit(entryThresholds, agreementBounds ?? {});
+  //
+  // **IT GATES ON READING THE DUNE SOURCE, NOT ON THE AGREEMENT FLAG.** Every credit this leg is
+  // approved for is derived from `entry_source_agreement`'s window ceiling, and the leg spends them
+  // whenever the Dune source is asked — which the Gate 3 cutover makes true with no flag in sight.
+  // Gating on the flag would leave the cutover's own configuration unpriced by the one check that
+  // asks whether the plan fits what it was priced against.
+  if (kinds.includes('dune')) assertAgreementWindowsFit(entryThresholds, agreementBounds ?? {});
 
   /** @type {{ kind: import('./fill-source.mjs').FillSourceKind, source: import('./fill-source.mjs').FillSource }[]} */
   const sources = [];
-  for (const kind of crossCheck === null ? [primary] : [primary, crossCheck]) {
-    const source = await selectEntryFillSource(kind, entryFillSources);
-    const minAgeMs = await source.minAgeMs(entryFillBounds(entryThresholds, Date.now()));
-    assertMinAgeUsable(source, minAgeMs);
-    sources.push({ kind, source });
+  for (const kind of kinds) {
+    // RESOLVED FOR EVERY KIND, IN BOTH PHASES — that is PROPERTY 1. A kind this run carries no
+    // constructor for, or a registration whose declared kind disagrees with its key, refuses here,
+    // and the early phase runs before the first seed request. Resolution touches no vendor.
+    const construction = resolveEntryFillSource(kind, entryFillSources).construction;
+    if (build.constructionPhase === 'free-only' && construction.cost !== 'free') continue;
+    sources.push({ kind, source: await buildEntrySource(kind, entryFillSources, entryThresholds) });
   }
   return { primary, crossCheck, sources };
+}
+
+/**
+ * BUILD THE SOURCES THE EARLY PHASE DEFERRED — the billed and the undeclared ones — now that the
+ * mandatory Dune enumeration has ANSWERED and the walk-fallback cliff has had its say.
+ *
+ * This is PROPERTY 2's other half. A plan that came back from {@link runEntrySourcePlan} under
+ * `'free-only'` names every source it will read and holds only the free ones; this completes it, in
+ * the same order, and applies the same `assertMinAgeUsable` proof to each. A plan that is already
+ * complete — every default run, whose one source is the free swap-api — passes through untouched and
+ * builds nothing, which is what keeps a default run byte-identical.
+ *
+ * **Its refusal may NOT claim that nothing was spent.** By the time it runs the seeds are sunk and
+ * the enumeration has been billed for its probe read, so the caller states the refusal without that
+ * clause. The early phase's refusal keeps it, because there it is true.
+ *
+ * @param {EntrySourcePlan | null} plan
+ * @param {FillSourceRegistry} entryFillSources
+ * @param {import('./stage2.mjs').Stage2Thresholds} entryThresholds
+ * @returns {Promise<EntrySourcePlan | null>}
+ */
+export async function completeEntrySourcePlan(plan, entryFillSources, entryThresholds) {
+  if (plan === null) return null;
+  const kinds = [plan.primary, ...(plan.crossCheck === null ? [] : [plan.crossCheck])];
+  /** @type {Map<import('./fill-source.mjs').FillSourceKind, import('./fill-source.mjs').FillSource>} */
+  const built = new Map(plan.sources.map((s) => [s.kind, s.source]));
+  for (const kind of kinds) {
+    if (built.has(kind)) continue;
+    built.set(kind, await buildEntrySource(kind, entryFillSources, entryThresholds));
+  }
+  return {
+    primary: plan.primary,
+    crossCheck: plan.crossCheck,
+    sources: kinds.map((kind) => ({
+      kind,
+      source: /** @type {import('./fill-source.mjs').FillSource} */ (built.get(kind)),
+    })),
+  };
+}
+
+/**
+ * Build one entry fill source and prove its eligibility gate is a usable duration.
+ *
+ * One function rather than the same four lines in each phase: a source that exists while answering
+ * `Infinity` travels into a record field the contract declares a number, and a phase that forgot the
+ * proof would be a second expression that merely agrees with the other one.
+ *
+ * @param {import('./fill-source.mjs').FillSourceKind} kind
+ * @param {FillSourceRegistry} entryFillSources
+ * @param {import('./stage2.mjs').Stage2Thresholds} entryThresholds
+ * @returns {Promise<import('./fill-source.mjs').FillSource>}
+ */
+async function buildEntrySource(kind, entryFillSources, entryThresholds) {
+  const source = await selectEntryFillSource(kind, entryFillSources);
+  const minAgeMs = await source.minAgeMs(entryFillBounds(entryThresholds, Date.now()));
+  assertMinAgeUsable(source, minAgeMs);
+  return source;
 }
 
 /**
@@ -955,6 +1224,16 @@ export function parseArgs(argv) {
         'tool refuses. Drop one of them.',
     };
   }
+  // **AND THE SAME DECLARATION AGAINST THE SELECTED FILL SOURCE, WHICH IS THE HALF THE FLAG ABOVE
+  // CANNOT SEE.** The guard above is denominated in `--entry-source-agreement`, and the Gate 3
+  // cutover does not touch that flag — it moves `ENTRY_FILL_SOURCE_KIND`. `parseArgs` cannot read
+  // `thresholds.json`, and for this it does not need to: with no agreement flag the derivation is
+  // over a module constant, so the cutover's own configuration is decidable right here. The half
+  // that CAN see the pinned bounds lives in `main`, the same two-place pattern the agreement flag
+  // already uses. See {@link duneFillSourceContradiction} for why this refuses rather than
+  // suppresses, and why it is inert on every configuration reachable today.
+  const contradiction = duneFillSourceContradiction(opts, undefined);
+  if (contradiction !== null) return { ok: false, message: contradiction };
 
   return { ok: true, opts };
 }
@@ -1037,9 +1316,15 @@ export function loadThresholds() {
  * @param {Record<string, string | undefined>} env
  * @param {(line: string) => void} out
  * @param {(line: string) => void} err
+ * @param {{ entryFillSourceKind?: import('./fill-source.mjs').FillSourceKind }} [seam] **TEST SEAM,
+ *   AND IT REACHES NO CLI.** `entryFillSourceKind` stands where the Gate 3 cutover will:
+ *   {@link ENTRY_FILL_SOURCE_KIND} is the captain's own edit and this lane may not make it, so a run
+ *   selecting the Dune source — the case both spend hazards are about — is otherwise unreachable
+ *   from a test driving `main`. It defaults to that constant, so every real invocation is unchanged.
  * @returns {Promise<number>} Process exit code.
  */
-export async function main(opts, env, out, err) {
+export async function main(opts, env, out, err, seam = {}) {
+  const entryFillSourceKind = seam.entryFillSourceKind ?? ENTRY_FILL_SOURCE_KIND;
   if (opts.help) {
     out(USAGE);
     return EXIT.ok;
@@ -1292,17 +1577,51 @@ export async function main(opts, env, out, err) {
   // reduced-scale run is charged for the windows it plans (captain decision 321a). The seam-level
   // backstop inside `runEntrySourcePlan` checks the PINNED cap, which is never smaller, so it cannot
   // pass a plan this refuses.
+  //
+  // **AND THE CONDITION IS WHETHER THE DUNE SOURCE WILL BE READ, NOT WHETHER THE AGREEMENT FLAG WAS
+  // PASSED.** It used to be the flag, and that is 144a's defect in the one place it costs most: at
+  // the Gate 3 cutover `ENTRY_FILL_SOURCE_KIND` moves to Dune with no flag involved, the count would
+  // stay 0, and `agreementExecutionsFor` would price and bound a ~2-execution plan for a leg
+  // intending `maxScored × maxLaunchesPerCandidate` windows. The allowance clears the small plan,
+  // the probe is billed, and the run then dies on `CeilingReached` mid-flight. See
+  // {@link entrySourceKindsRead}, which is the one place that question is answered.
+  const duneEntrySourceIsRead = entrySourceKindsRead(opts, agreementBounds, entryFillSourceKind).includes('dune');
+  // **"REACH NO DUNE SURFACE" AND "SCORE THROUGH DUNE" CANNOT BOTH BE HONOURED**, and this is the
+  // half of that refusal which can see the pinned bounds — the shape `parseArgs` cannot decide
+  // without reading `thresholds.json`, an `--entry-source-agreement` run whose `primarySource` or
+  // `crossCheckSource` names Dune. That particular pair is ALSO refused by the older agreement-flag
+  // guard upstream, so what this block actually covers today is a direct `main` caller: the seam, a
+  // test, and whatever the next lane wires. It is kept for the two-place house style this file
+  // already uses for the agreement flag. Both halves ask the ONE derivation rather than re-spelling
+  // the condition, which is what makes them answer identically — `--stage0` is folded into
+  // `entryFillSourceIsRead` for exactly that reason, so this block being BELOW the `stage0Only`
+  // return and the CLI's being above it can no longer make them disagree.
+  //
+  // It refuses BEFORE the dry-run block on purpose: an incoherent pair of instructions is not
+  // something a preview should describe as though it were a plan. Inert on every configuration
+  // reachable today.
+  const duneSourceContradiction = duneFillSourceContradiction(opts, agreementBounds, entryFillSourceKind);
+  if (duneSourceContradiction !== null) {
+    err('');
+    err('Refusing to run: this run was told both to reach no Dune surface and to score Stage 2 through Dune.');
+    err(`  ${duneSourceContradiction}`);
+    return EXIT.usage;
+  }
   /** @type {number} */
-  let agreementWindowsPlanned = 0;
-  if (opts.entrySourceAgreement && agreementBounds.active === true) {
+  let duneEntryWindowsPlanned = 0;
+  if (duneEntrySourceIsRead) {
     try {
-      agreementWindowsPlanned = assertAgreementWindowsFit(
+      duneEntryWindowsPlanned = assertAgreementWindowsFit(
         { maxCandidatesScored: maxScored, maxLaunchesPerCandidate: entryThresholds.maxLaunchesPerCandidate },
         agreementBounds,
       ).windowsPlanned;
     } catch (cause) {
+      // THE WORDING IS THE CONDITION'S. This block is reached whenever the DUNE source will be read,
+      // which since the priced count stopped following the agreement flag includes a SINGLE-source
+      // Dune run with no flag passed — so telling that operator their run is "dual-source" would
+      // describe a mode they did not ask for.
       err('');
-      err('Refusing to run: the dual-source Stage 2 plan does not fit its own window ceiling.');
+      err("Refusing to run: this run's Dune Stage 2 plan does not fit its own window ceiling.");
       err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
       return EXIT.ceiling;
     }
@@ -1319,7 +1638,7 @@ export async function main(opts, env, out, err) {
   // which states it beside the pinned ceiling rather than in place of it (captain decision 323a).
   // Deriving it three times would be three expressions that merely agree, which is 144a's defect —
   // and in a record, which is never retro-edited, a disagreement would be permanent.
-  const agreementExecutionBound = agreementExecutionsFor(agreementBounds, agreementWindowsPlanned);
+  const agreementExecutionBound = agreementExecutionsFor(agreementBounds, duneEntryWindowsPlanned);
   /** @type {import('./client.mjs').DuneClient | null} */
   let entryDuneClient = null;
 
@@ -1342,7 +1661,7 @@ export async function main(opts, env, out, err) {
         bound:
           `at most 1 Dune execution (or 0 on the cached read, which is the default) plus one result ` +
           `read, against the ${agreementExecutionBound} ` +
-          `execution(s) this run's own ${agreementWindowsPlanned} planned window(s) are priced for ` +
+          `execution(s) this run's own ${duneEntryWindowsPlanned} planned window(s) are priced for ` +
           `— itself capped by the pinned ceiling of ${agreementBounds.maxExecutionsPerRun}`,
         actual: () =>
           entryDuneClient === null
@@ -1351,14 +1670,11 @@ export async function main(opts, env, out, err) {
               `request(s), ${entryDuneClient.stats().resultBytes} result byte(s)`,
       }),
       build: async () => {
-        if (!duneCredential.available) {
-          throw new Error(
-            `the Dune fill source needs ${DUNE_KEY_ENV_VAR} and this run has no usable one. It ` +
-              `refuses to be built rather than falling back to the swap-api: a run asked for a ` +
-              `two-source comparison that silently became a one-source one would report itself ` +
-              `complete having compared nothing.`,
-          );
-        }
+        // THE SAME RULE THE FREE PHASE ALREADY ASKED, kept here as the backstop for a caller that
+        // never went through it. One text, one predicate, two evaluation points — see
+        // {@link duneFillSourceCredentialRefusal}.
+        const credentialRefusal = duneFillSourceCredentialRefusal(duneCredential);
+        if (credentialRefusal !== null) throw new Error(credentialRefusal);
         entryDuneClient = new DuneClient({
           key: duneCredential.key ?? '',
           // THE CEILING THE PLAN WAS PRICED AT, not the pinned one — one derivation, so what this
@@ -1373,7 +1689,7 @@ export async function main(opts, env, out, err) {
         return buildDuneEntryFillSource(entryDuneClient, {
           agreementBounds,
           duneBounds,
-          windowsPlanned: agreementWindowsPlanned,
+          windowsPlanned: duneEntryWindowsPlanned,
           ledger: duneCreditLedger,
           refreshProbe: opts.duneRefreshProbe,
           nowMs: Date.now(),
@@ -1386,6 +1702,14 @@ export async function main(opts, env, out, err) {
   };
 
   if (opts.dryRun) {
+    // A DRY RUN ENUMERATES NOTHING, so the mandatory leg settles by DECLARING it will not spend.
+    // `DUNE_LEG_ORDER` holds the entry fill source behind Stage 1's enumeration, and a plan under
+    // `--dry-run-spend` may BUILD that source — which reserves. Without this the opt-in would refuse
+    // with an ordering message for a leg that was never going to run on this path at all. It is
+    // stated rather than skipped for the reason the ledger's own doc gives: a leg that is quietly
+    // passed over leaves the ones behind it blocked, which fails towards refusing, and declaring it
+    // is what makes the free preview honest instead of merely unblocked.
+    duneCreditLedger.declineToSpend('enumeration');
     // THE PLAN MUST STATE THE GATE THE SOURCE ITSELF WILL APPLY — a plan that re-derived that
     // duration would be a second expression that merely agrees, which is captain decision 144a's
     // defect and the reason the gate was injected in the first place (281a/284a/285a). What 286c
@@ -1399,8 +1723,10 @@ export async function main(opts, env, out, err) {
     // page.
     //
     // THE RUN PATH NOW GATES ON THE SAME PREDICATE, and the KNOWN GAP recorded here is CLOSED.
-    // `entryFillSourceIsRead` is that one condition; `runEntryFillSource` below is the run path's
-    // half of it. Both are deliberately conditional — see `entryFillSourceIsRead` for the two
+    // `entryFillSourceIsRead` is that one condition; `runEntrySourcePlan` below — the free half of
+    // the run path's two-phase construction — is the run path's half of it, and
+    // `runEntryFillSource` is the single-call form of the same thing for a caller that wants both
+    // phases at once. Both are deliberately conditional — see `entryFillSourceIsRead` for the two
     // defects an unconditional construction becomes at the Gate 3 cutover, and do not restore one.
     if (entryFillSourceIsRead(opts)) {
       try {
@@ -1412,7 +1738,7 @@ export async function main(opts, env, out, err) {
         const plannedKind = /** @type {import('./fill-source.mjs').FillSourceKind} */ (
           opts.entrySourceAgreement && agreementBounds.active === true
             ? agreementBounds.primarySource
-            : ENTRY_FILL_SOURCE_KIND
+            : entryFillSourceKind
         );
         entryEligibility = await planEntryEligibility(plannedKind, entryFillSources, {
           bounds: entryFillBounds(entryThresholds, Date.now()),
@@ -1474,12 +1800,87 @@ export async function main(opts, env, out, err) {
   }
 
   // ---- the RUN path -----------------------------------------------------------------------
+  // The Dune client, built even when unused so the record's spend block always reports the same
+  // shape. Its TWO ceilings are separate on purpose: requests bound the wall clock and the polite
+  // use of a shared free-tier host, executions bound the money — an execution is billed whether or
+  // not it succeeds and is NEVER retried.
+  //
+  // IT IS CONSTRUCTED HERE, ABOVE STAGE 1, ONLY SO THE MANDATORY LEG CAN RESERVE FIRST. Constructing
+  // a client costs nothing and opens no socket; what had to move up is the RESERVATION below, and a
+  // reservation needs a client to read the balance through.
+  const duneClient = usingDune
+    ? new DuneClient({
+        key: duneCredential.key ?? '',
+        maxExecutions: duneBounds.maxExecutionsPerRun,
+        maxRequests: duneBounds.maxRequestsPerRun,
+        minIntervalMs: duneBounds.minIntervalMs,
+        onRequest: (path) => {
+          if (!opts.json) out(`  → dune ${path}`);
+        },
+      })
+    : null;
+
+  // ---- THE MANDATORY LEG RESERVES BEFORE THE OPTIONAL ONE SPENDS. --------------------------
+  // Stage 1's creation enumeration is what this run exists to do, it is ONE execution for the whole
+  // batch, and it is the cheap one. Stage 2's entry fill source is optional, is billed per window,
+  // and its CONSTRUCTION bills a trade-coverage result read. Captain decision 320a made both legs
+  // draw on one reservation; it did not change which reserved first, and the control flow had the
+  // expensive optional leg going first — so a run could bill the probe, find the enumeration priced
+  // out of what was left, fall back to the RPC walk and then be refused whole by
+  // `priceWalkFallbackCliff` before its first walk request. Period consumed, nothing produced, and
+  // under a Dune account whose extra credits are capped at $0 a consumed period is candidates that
+  // cannot be checked at all.
+  //
+  // THE VERDICT IS TAKEN HERE AND REPORTED AT THE ENUMERATION, unchanged. The reading is free —
+  // `POST /usage` is a metadata endpoint Dune documents as consuming no credits — so moving it above
+  // Stage 1 spends nothing and buys the order. What it cannot know yet is how many candidates will
+  // survive seeding; that does not enter this plan, which is priced from the leg's own pinned
+  // ceilings, and a run that ends up enumerating nobody has merely been conservative towards its own
+  // second leg.
+  //
+  // A RUN WITH NO DUNE CLIENT DECLARES THAT RATHER THAN BEING SKIPPED — `--no-dune`,
+  // `--ownership-only`, or no usable credential. The ledger holds the legs behind an unsettled one,
+  // which fails towards refusing, so silence here would refuse a leg that is entitled to go.
+  /** @type {Awaited<ReturnType<typeof checkDuneAllowance>> | null} */
+  let enumerationReservation = null;
+  /** @type {string | null} */
+  let duneUnusableNote = null;
+  /** @type {string | null} */
+  let enumerationReservationFailure = null;
+  if (duneClient !== null) {
+    try {
+      enumerationReservation = await checkDuneAllowance(duneClient, {
+        bounds: duneBounds,
+        nowMs: Date.now(),
+        ledger: duneCreditLedger,
+        leg: 'enumeration',
+      });
+    } catch (cause) {
+      // A refused allowance is NOT this path — `checkDuneAllowance` returns that as a decision. What
+      // lands here is the balance read failing in a way the client itself could not absorb, and it
+      // degrades this leg to the walk exactly as any other Dune failure does. The entry leg behind
+      // it is still unblocked: the leg asked and got its answer, which is what settles it.
+      //
+      // IT IS HELD RATHER THAN REPORTED HERE, and re-raised where the enumeration reports. Letting
+      // it travel down as an absent decision would have `enumerateCreations` refuse with "the Dune
+      // monthly credit allowance was never checked for this run" — false for a check that ran and
+      // failed — and file a refused enumeration where the record carried `dune.coverage: null`
+      // before the reservation was hoisted. The operator gets the real failure in the wording that
+      // already exists for every other Dune failure.
+      enumerationReservationFailure = redactVendorIdentifiers(
+        cause instanceof Error ? cause.message : String(cause),
+      );
+    }
+  } else {
+    duneCreditLedger.declineToSpend('enumeration');
+  }
+
   // A real run that is going to READ the source builds it and pays whatever that costs: it was
   // always going to reach that vendor, and the eligibility answer is an input to a measurement
   // rather than a line on a preview. That half is exactly what captain decision 286c left alone.
   //
   // **A RUN WITH STAGE 2 OFF READS NO SOURCE, SO IT BUILDS NONE.** The construction is DELIBERATELY
-  // CONDITIONAL — `runEntryFillSource` returns `null` here rather than paying a billed coverage
+  // CONDITIONAL — `runEntrySourcePlan` returns `null` here rather than paying a billed coverage
   // probe for a leg the operator switched off, or refusing the whole run over a source that leg was
   // never going to use. Restoring the unconditional call would re-open both, invisibly, on the first
   // run that ever exercises a billed source.
@@ -1499,15 +1900,41 @@ export async function main(opts, env, out, err) {
   // whose constructor cannot vouch for itself, or one answering an eligibility that is not a
   // duration, stops the run here — the site whose whole job is to say "we cannot run Stage 2 on the
   // source we were asked for". With Stage 2 off there is nothing to say it about.
+  //
+  // **AND THIS IS THE FREE HALF OF A TWO-PHASE CONSTRUCTION. PROPERTY 1 LIVES HERE.** Every kind the
+  // run will read is RESOLVED — so an unknown kind, or a registration that disagrees with its own
+  // key, refuses before one MadeOnSol seed request is spent — and only a construction the registry
+  // DECLARES free is built, which on a default run is the swap-api and therefore all of them. What
+  // is deferred is the billed or undeclared construction, and PROPERTY 2 is why: see
+  // `completeEntrySourcePlan` below the Dune enumeration, and `runEntrySourcePlan` for both
+  // properties stated together. Moving the billed build back up here re-opens the hazard.
   /** @type {EntrySourcePlan | null} */
   let entrySourcePlan;
   try {
-    entrySourcePlan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds);
+    // THE CREDENTIAL IS ASKED HERE PRECISELY BECAUSE THE ANSWER COSTS NOTHING. The Dune
+    // construction is declared BILLED, so the free phase would otherwise defer it wholesale and a
+    // run with no usable key would spend the whole seed enumeration before refusing — for a
+    // configuration where the seeds buy nothing, since `usingDune` is false there too. It reads
+    // `duneEntrySourceIsRead`, the derivation already taken above, rather than asking again whether
+    // this is a Dune run; and the rule itself is `duneFillSourceCredentialRefusal`, which the
+    // constructor also asks. One derivation, one rule, two evaluation points.
+    const credentialRefusal = duneEntrySourceIsRead ? duneFillSourceCredentialRefusal(duneCredential) : null;
+    if (credentialRefusal !== null) throw new Error(credentialRefusal);
+    entrySourcePlan = await runEntrySourcePlan(entryFillSources, opts, entryThresholds, agreementBounds, {
+      constructionPhase: 'free-only',
+      selectedKind: entryFillSourceKind,
+    });
   } catch (cause) {
     err('');
     err('Refusing to start: Stage 2 has no usable fill source.');
     err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
-    err('  Nothing was requested, so no quota was spent.');
+    // NARROWED TO WHAT ACTUALLY HAPPENED. The enumeration's reservation sits ABOVE this, so a run
+    // with a Dune client has already issued the free `POST /usage` balance read by the time this
+    // prints — "nothing was requested" would be false. What is still true, and is the claim an
+    // operator needs, is that no metered quota went anywhere: the keyed seed enumeration has not
+    // started and the balance read consumes no credits.
+    err('  No quota was spent: the keyed seed enumeration has not started, and the only request this');
+    err('  run may have made is the free Dune balance read, which consumes no credits.');
     return EXIT.upstream;
   }
 
@@ -1543,27 +1970,10 @@ export async function main(opts, env, out, err) {
     },
   });
 
-  // The Dune client, built even when unused so the record's spend block always reports the same
-  // shape. Its TWO ceilings are separate on purpose: requests bound the wall clock and the polite
-  // use of a shared free-tier host, executions bound the money — an execution is billed whether or
-  // not it succeeds and is NEVER retried.
-  const duneClient = usingDune
-    ? new DuneClient({
-        key: duneCredential.key ?? '',
-        maxExecutions: duneBounds.maxExecutionsPerRun,
-        maxRequests: duneBounds.maxRequestsPerRun,
-        minIntervalMs: duneBounds.minIntervalMs,
-        onRequest: (path) => {
-          if (!opts.json) out(`  → dune ${path}`);
-        },
-      })
-    : null;
   /** @type {import('./dune.mjs').DuneEnumeration | null} */
   let duneEnumeration = null;
   /** @type {import('./client.mjs').AllowanceDecision | null} */
   let duneAllowance = null;
-  /** @type {string | null} */
-  let duneUnusableNote = null;
   // Whether the Dune leg was ASKED for this batch. It is the difference between a candidate that
   // fell back and one that was never a Dune candidate — see the assignment site.
   let duneLegAttempted = false;
@@ -1664,17 +2074,26 @@ export async function main(opts, env, out, err) {
         // walk exactly as any other Dune failure does — slower rather than wrong.
         //
         // IT DRAWS ON THE RUN'S LEDGER RATHER THAN RE-READING THE BALANCE (captain decision 320a):
-        // Stage 2's entry fill source may already have been cleared to spend against this same
-        // period, and a second independent verdict computed from the same unreduced reading is how
-        // two legs both fit and together overrun. On a default run nothing has been held and this is
-        // the only leg that asks, so the verdict is exactly what it was.
-        const checked = await checkDuneAllowance(duneClient, {
-          bounds: duneBounds,
-          nowMs: Date.now(),
-          ledger: duneCreditLedger,
-        });
-        duneAllowance = checked.decision;
-        if (!opts.json) for (const line of describeAllowanceDecision(checked.decision)) out(`  ${line}`);
+        // Stage 2's entry fill source may also be cleared to spend against this same period, and a
+        // second independent verdict computed from the same unreduced reading is how two legs both
+        // fit and together overrun.
+        //
+        // **AND THE RESERVATION ITSELF ALREADY HAPPENED, ABOVE STAGE 1** — this leg is the MANDATORY
+        // one and `DUNE_LEG_ORDER` puts it first, so what is left here is REPORTING the verdict
+        // where an operator reads it. Asking again would be a second answer to one question and
+        // would put this leg back behind the optional one it must precede; `enumerationReservation`
+        // is `null` only where there is no Dune client or the free balance read failed outright, and
+        // `enumerateCreations` treats an absent decision exactly as it treats a refusal.
+        //
+        // AND A FREE BALANCE READ THAT FAILED OUTRIGHT UP THERE IS RE-RAISED HERE rather than
+        // travelling down as an absent decision — see the catch that held it for why the difference
+        // is the operator's message and the record's `dune.coverage`.
+        if (enumerationReservationFailure !== null) throw new Error(enumerationReservationFailure);
+        const checked = enumerationReservation;
+        duneAllowance = checked?.decision ?? null;
+        if (!opts.json && checked !== null) {
+          for (const line of describeAllowanceDecision(checked.decision)) out(`  ${line}`);
+        }
         duneEnumeration = await enumerateCreations(duneClient, {
           wallets: gating.map((s) => s.wallet),
           creationQueryId: duneBounds.creationQueryId,
@@ -1682,7 +2101,10 @@ export async function main(opts, env, out, err) {
           refreshProbe: opts.duneRefreshProbe,
           nowMs: Date.now(),
           bounds: duneBounds,
-          allowance: checked.decision,
+          // `null` where the reservation could not be taken at all, which `enumerateCreations`
+          // treats exactly as it treats a refusal: a caller that cannot show it checked has not
+          // established that it can afford this, and the probe is a billed read.
+          allowance: duneAllowance,
           // A probe REFRESH that failed and was answered from the cache instead. The execution is
           // billed and is never retried, so the operator hears about the spend even though the leg
           // survived it — silence would make a billed failure look like an ordinary cached read.
@@ -1808,6 +2230,36 @@ export async function main(opts, env, out, err) {
           }
         }
       }
+    }
+
+    // ---- THE BILLED HALF OF THE FILL-SOURCE CONSTRUCTION. PROPERTY 2 LIVES HERE. --------------
+    // The optional leg only BILLS once the mandatory one has ANSWERED. `dune.mjs` → `DUNE_LEG_ORDER`
+    // orders the two RESERVATIONS and cannot order their spend, so with the construction above Stage
+    // 1 a run could clear both legs against one balance, bill the entry leg's trade-coverage result
+    // read, watch the enumeration come back empty — a refused coverage probe, an unreadable row, a
+    // failed execution, a refused allowance — and then be refused whole by the cliff directly above.
+    // Period consumed, nothing produced, which under a Dune account whose extra credits are capped
+    // at $0 is candidates that cannot be checked at all.
+    //
+    // THIS IS THE LAST INSTANT THAT SATISFIES BOTH: after the enumeration and its cliff, and still
+    // ahead of the gate loop and Stage 2, so a source that cannot vouch for itself still stops the
+    // run before a single window is scored. The ledger guard is KEPT beside it deliberately — it is
+    // belt-and-braces with this control flow rather than the only thing holding the order, and it is
+    // the half that survives a future reordering of these blocks.
+    //
+    // ITS REFUSAL DOES NOT CLAIM THAT NOTHING WAS SPENT, because by here the seeds are sunk and the
+    // Dune leg has been billed for its probe read. The record is written for the same reason the
+    // cliff's is: a terminal path after vendor spend must not discard paid-for measurements.
+    try {
+      entrySourcePlan = await completeEntrySourcePlan(entrySourcePlan, entryFillSources, entryThresholds);
+    } catch (cause) {
+      err('');
+      err('Refusing to score: Stage 2 has no usable fill source.');
+      err(`  ${cause instanceof Error ? cause.message : String(cause)}`);
+      completed = false;
+      abortReason = cause instanceof Error ? cause.message : String(cause);
+      emit(EXIT.upstream);
+      return EXIT.upstream;
     }
 
     if (!opts.json && !opts.ownershipOnly) {
@@ -2505,7 +2957,7 @@ export async function main(opts, env, out, err) {
                 bounds: agreementBounds,
                 applied: {
                   executionBound: agreementExecutionBound,
-                  windowsPlanned: agreementWindowsPlanned,
+                  windowsPlanned: duneEntryWindowsPlanned,
                 },
                 stats: entryDuneClient?.stats() ?? null,
               }),

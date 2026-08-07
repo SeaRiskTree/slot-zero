@@ -60,14 +60,25 @@ import {
   estimatePlanCredits as censusEstimatePlanCredits,
 } from '../tools/creation-census/client.mjs';
 import {
+  DUNE_LEG_ORDER,
   checkDuneAllowance,
   duneSpendPlan,
   enumerateCreations,
   openDuneCreditLedger,
 } from '../tools/deployer-screen/dune.mjs';
 import type { DuneCreditLedger } from '../tools/deployer-screen/dune.mjs';
-import { agreementExecutionsFor, tradeFillSpendPlan } from '../tools/deployer-screen/dune-fills.mjs';
-import { buildDuneEntryFillSource } from '../tools/deployer-screen/screen.mjs';
+import { ENTRY_QUERY_ID, agreementExecutionsFor, tradeFillSpendPlan } from '../tools/deployer-screen/dune-fills.mjs';
+import {
+  ENTRY_FILL_SOURCE_KIND,
+  buildDuneEntryFillSource,
+  duneFillSourceContradiction,
+  duneFillSourceCredentialRefusal,
+  entrySourceKindsRead,
+  loadThresholds as screenLoadThresholds,
+  main as screenMain,
+  parseArgs as screenParseArgs,
+} from '../tools/deployer-screen/screen.mjs';
+import { BASE_URL as MADEONSOL_BASE_URL } from '../tools/deployer-screen/client.mjs';
 import {
   EXIT,
   checkDuneAllowance as censusCheckDuneAllowance,
@@ -84,6 +95,7 @@ import {
 const SCREEN_CLIENT = fileURLToPath(new URL('../tools/deployer-screen/client.mjs', import.meta.url));
 const CENSUS_CLIENT = fileURLToPath(new URL('../tools/creation-census/client.mjs', import.meta.url));
 const THRESHOLDS = fileURLToPath(new URL('../tools/deployer-screen/thresholds.json', import.meta.url));
+const SCREEN_MAIN = fileURLToPath(new URL('../tools/deployer-screen/screen.mjs', import.meta.url));
 
 /** Never a real key. Every failure path below is driven through it and it may reach no output. */
 const SENTINEL_KEY = 'SENTINELsentinelSENTINELsentinel';
@@ -795,12 +807,12 @@ describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
       sleepImpl: async () => undefined,
     });
     const ledger = openDuneCreditLedger();
-    const first = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, ledger });
+    const first = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, ledger, leg: 'enumeration' });
     expect(first.decision.ok).toBe(true);
     expect(first.decision.bindingCeiling).toBe('operator-cap');
     expect(ledger.reservedCredits()).toBe(legWorstCase);
 
-    const second = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, ledger });
+    const second = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, ledger, leg: 'enumeration' });
     expect(second.decision.ok).toBe(false);
     expect(second.decision.bindingCeiling).toBe('operator-cap');
     expect(second.decision.reasons.join(' ')).toMatch(/already held by an earlier leg/);
@@ -984,6 +996,7 @@ describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
           bounds: { ...POLICY, monthlyCreditCapCredits: cap } as never,
           plan: PLAN,
           nowMs: NOW_MS,
+          leg: 'enumeration',
         });
         return { ok: decision.ok, cap: decision.monthlyCapCredits, reasons: decision.reasons.join(' ') };
       }),
@@ -1221,7 +1234,7 @@ describe('THE SCREEN REFUSES BEFORE ITS FIRST BILLED READ', () => {
           : new Response(JSON.stringify({}), { status: 200 }),
       ),
     );
-    const checked = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS });
+    const checked = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, leg: 'enumeration' });
     expect(checked.decision.verdict).toBe('insufficient');
 
     const e = await enumerateCreations(c, {
@@ -1268,7 +1281,7 @@ describe('THE SCREEN REFUSES BEFORE ITS FIRST BILLED READ', () => {
     const { c } = client(() => {
       throw new Error('socket hang up');
     });
-    const checked = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS });
+    const checked = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, leg: 'enumeration' });
     expect(checked.decision.verdict).toBe('unreadable');
     expect(checked.decision.ok).toBe(false);
     expect(checked.decision.reasons.join(' ')).not.toContain(SENTINEL_KEY);
@@ -1281,7 +1294,7 @@ describe('THE SCREEN REFUSES BEFORE ITS FIRST BILLED READ', () => {
         ? new Response(JSON.stringify(usageBody([period(0)])), { status: 200 })
         : new Response(JSON.stringify({}), { status: 200 }),
     );
-    const checked = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS });
+    const checked = await checkDuneAllowance(c, { bounds: BOUNDS, nowMs: NOW_MS, leg: 'enumeration' });
     expect(checked.decision.ok).toBe(true);
     await enumerateCreations(c, {
       wallets: [WALLET],
@@ -1447,30 +1460,52 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
         : new Response(JSON.stringify({}), { status: 200 }),
     );
 
+    // THE ORDER IS NOW THE RULE'S, NOT THE CONTROL FLOW'S, and this test reserves in it: the
+    // MANDATORY enumeration first, the OPTIONAL entry leg behind it. It used to be written the other
+    // way round because `screen.mjs` did it that way — the entry fill source was built before Stage
+    // 1 enumerated — and that ordering is the second hazard this round closes. 320a's property is
+    // untouched and is what is asserted below: a cleared leg is HELD against the next one.
     const first = await checkDuneAllowance(c, {
+      bounds: ENUMERATION_BOUNDS,
+      nowMs: NOW_MS,
+      ledger,
+      leg: 'enumeration',
+    });
+    expect(first.decision.ok).toBe(true);
+    expect(ledger.reservedCredits()).toBe(enumerationWorstCase);
+
+    const second = await checkDuneAllowance(c, {
       bounds: DUNE_BOUNDS,
       nowMs: NOW_MS,
       plan: entryPlan,
       ledger,
+      leg: 'entry',
     });
-    expect(first.decision.ok).toBe(true);
-    expect(ledger.reservedCredits()).toBe(entryWorstCase);
-
-    const second = await checkDuneAllowance(c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS, ledger });
     expect(second.decision.ok).toBe(false);
     expect(second.decision.reasons.join(' ')).toMatch(/already held by an earlier leg/);
     // The reading is taken ONCE and cached: a second read would be a second answer to one question,
     // and the run would hold two beliefs about a balance that moves under it.
     expect(paths).toEqual([USAGE_PATH]);
 
-    // And WITHOUT the shared ledger both legs pass — which is the defect, reproduced.
+    // And WITHOUT the shared ledger both legs pass — which is the defect, reproduced. Each opens a
+    // PRIVATE ledger, which is by definition a sole leg with nothing to queue behind, so the order
+    // rule is inert here and the only thing under test is the missing reservation.
     const solo = client((path) =>
       path === USAGE_PATH
         ? new Response(JSON.stringify(usageBody([period(2_500 - remaining)])), { status: 200 })
         : new Response(JSON.stringify({}), { status: 200 }),
     );
-    const a = await checkDuneAllowance(solo.c, { bounds: DUNE_BOUNDS, nowMs: NOW_MS, plan: entryPlan });
-    const b = await checkDuneAllowance(solo.c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS });
+    const a = await checkDuneAllowance(solo.c, {
+      bounds: DUNE_BOUNDS,
+      nowMs: NOW_MS,
+      plan: entryPlan,
+      leg: 'entry',
+    });
+    const b = await checkDuneAllowance(solo.c, {
+      bounds: ENUMERATION_BOUNDS,
+      nowMs: NOW_MS,
+      leg: 'enumeration',
+    });
     expect(a.decision.ok && b.decision.ok).toBe(true);
     // Both cleared, and together they exceed what either was compared against — the spendable
     // balance, i.e. the reading less the reserve held back for the counter's lag.
@@ -1490,8 +1525,13 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
       bounds: ENUMERATION_BOUNDS,
       nowMs: NOW_MS,
       ledger: openDuneCreditLedger(),
+      leg: 'enumeration',
     });
-    const without = await checkDuneAllowance(client(usage).c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS });
+    const without = await checkDuneAllowance(client(usage).c, {
+      bounds: ENUMERATION_BOUNDS,
+      nowMs: NOW_MS,
+      leg: 'enumeration',
+    });
     expect(withLedger.decision).toEqual(without.decision);
   });
 
@@ -1502,8 +1542,18 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
     const { c } = client(() => {
       throw new Error('socket hang up');
     });
-    const first = await checkDuneAllowance(c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS, ledger });
-    const second = await checkDuneAllowance(c, { bounds: ENUMERATION_BOUNDS, nowMs: NOW_MS, ledger });
+    const first = await checkDuneAllowance(c, {
+      bounds: ENUMERATION_BOUNDS,
+      nowMs: NOW_MS,
+      ledger,
+      leg: 'enumeration',
+    });
+    const second = await checkDuneAllowance(c, {
+      bounds: ENUMERATION_BOUNDS,
+      nowMs: NOW_MS,
+      ledger,
+      leg: 'enumeration',
+    });
     expect(first.decision.verdict).toBe('unreadable');
     expect(second.decision.verdict).toBe('unreadable');
     expect(ledger.reservedCredits()).toBe(0);
@@ -1537,6 +1587,151 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
     expect(new Set(paths)).toEqual(new Set([USAGE_PATH]));
   });
 
+  describe('AND IT RESERVES SECOND — the mandatory leg goes first, by rule', () => {
+    // THE HAZARD, found by the review of PR 65 and open on `main` when this round started. Captain
+    // decision 320a made both legs draw on ONE reservation; it did not change which of them reserved
+    // FIRST, and the control flow had the wrong one there. `buildDuneEntryFillSource` is called from
+    // `runEntrySourcePlan`, which runs before Stage 1 enumerates — so the EXPENSIVE OPTIONAL leg
+    // billed its trade-coverage result read, the CHEAP MANDATORY enumeration was then priced against
+    // what was left, fell back to the RPC walk, and `priceWalkFallbackCliff` refused the whole run
+    // at exit 2 before its first walk request.
+    //
+    // THE COST IS AVAILABILITY, NOT MONEY. The captain has capped Dune's extra credits at $0, so
+    // the vendor refuses at the ceiling rather than billing past it — which makes a period consumed
+    // by a leg whose run then refused strictly worse than an overspend: it is candidates that
+    // cannot be checked at all, against a goal of checking as many as possible. And with the
+    // vendor's per-query and per-read throttles turned off, this repo's own guard is the only thing
+    // bounding a run.
+    //
+    // Everything here drives a stubbed transport. No billed Dune call is made by this lane, and the
+    // only endpoint any of it reaches is the free `POST /usage`.
+
+    it('THE NEGATIVE CONTROL: the entry leg reserving first is REFUSED, and asks for nothing at all', async () => {
+      // This is the ordering, reproduced. Regress `screen.mjs` back to building the entry fill
+      // source before the enumeration reserves and this is the path a real run takes — so this
+      // assertion is what would go red, rather than a comment going stale.
+      const { c, paths } = client((path) =>
+        path === USAGE_PATH
+          ? new Response(JSON.stringify(usageBody([period(0)])), { status: 200 })
+          : new Response(JSON.stringify({}), { status: 200 }),
+      );
+      await expect(build(c, { ledger: openDuneCreditLedger() })).rejects.toThrow(
+        /"entry" leg tried to reserve Dune credits before "enumeration" had settled/,
+      );
+      // REFUSED BEFORE THE FREE BALANCE READ, let alone a billed one: not one request of any kind.
+      // The balance here is deliberately ROOMY — `period(0)` spends nothing — so the refusal cannot
+      // be the allowance's, which is what makes the order the thing under test.
+      expect(paths).toEqual([]);
+      expect(c.executions()).toBe(0);
+    });
+
+    it('and it PROCEEDS once the mandatory leg has reserved — same balance, same client', async () => {
+      // The control that makes the refusal above mean something: without it a guard that refused
+      // everything would pass. Reaching the undeployed probe is how far this configuration can get,
+      // and it is the next gate rather than this one.
+      const ledger = openDuneCreditLedger();
+      const { c, paths } = client((path) =>
+        path === USAGE_PATH
+          ? new Response(JSON.stringify(usageBody([period(0)])), { status: 200 })
+          : new Response(JSON.stringify({}), { status: 200 }),
+      );
+      const enumeration = await checkDuneAllowance(c, {
+        bounds: ENUMERATION_BOUNDS,
+        nowMs: NOW_MS,
+        ledger,
+        leg: 'enumeration',
+      });
+      expect(enumeration.decision.ok).toBe(true);
+      await expect(build(c, { ledger })).rejects.toThrow(/no deployed saved query/);
+      // Still nothing billed, and the balance still read exactly once for the whole run.
+      expect(paths).toEqual([USAGE_PATH]);
+      expect(c.executions()).toBe(0);
+    });
+
+    it('a mandatory leg that will NOT spend must SAY so, and saying so is what unblocks the rest', async () => {
+      // A run with no Dune client — `--no-dune`, `--ownership-only`, no usable credential — and the
+      // dry run, which enumerates nothing. Being quietly skipped leaves the legs behind it blocked,
+      // which fails towards refusing; declaring it is what makes the free preview honest rather than
+      // merely unblocked.
+      const declared = openDuneCreditLedger();
+      declared.declineToSpend('enumeration');
+      expect(declared.settledLegs()).toEqual(['enumeration']);
+      expect(declared.reservedCredits()).toBe(0);
+      const { c } = client((path) =>
+        path === USAGE_PATH
+          ? new Response(JSON.stringify(usageBody([period(0)])), { status: 200 })
+          : new Response(JSON.stringify({}), { status: 200 }),
+      );
+      await expect(build(c, { ledger: declared })).rejects.toThrow(/no deployed saved query/);
+    });
+
+    it('a REFUSED mandatory leg still settles — it asked, and the answer will not change', async () => {
+      // The enumeration being priced out is a verdict, not a pending question. Holding the leg
+      // behind it would turn one leg's refusal into the whole run's, which is the failure this
+      // ordering exists to prevent rather than to relocate.
+      const ledger = openDuneCreditLedger();
+      const { c } = client((path) =>
+        path === USAGE_PATH
+          ? new Response(JSON.stringify(usageBody([period(2_499)])), { status: 200 })
+          : new Response(JSON.stringify({}), { status: 200 }),
+      );
+      const enumeration = await checkDuneAllowance(c, {
+        bounds: ENUMERATION_BOUNDS,
+        nowMs: NOW_MS,
+        ledger,
+        leg: 'enumeration',
+      });
+      expect(enumeration.decision.ok).toBe(false);
+      expect(ledger.settledLegs()).toEqual(['enumeration']);
+      // Nothing was held by a refused leg, so the entry leg is priced against the whole balance —
+      // and refused by that balance rather than by the order.
+      expect(ledger.reservedCredits()).toBe(0);
+      await expect(build(c, { ledger })).rejects.toThrow(/refuses to spend/);
+    });
+
+    it('a SOLE leg queues behind nothing, so a single-leg run is byte-identical', async () => {
+      // `checkDuneAllowance` opens a private ledger when it is handed none, and that means "this is
+      // the only leg of this run that spends". The order can only bind a run that has two legs, so
+      // every existing single-leg path — every test above, and every default run — is untouched.
+      const { c } = client((path) =>
+        path === USAGE_PATH
+          ? new Response(JSON.stringify(usageBody([period(0)])), { status: 200 })
+          : new Response(JSON.stringify({}), { status: 200 }),
+      );
+      await expect(build(c)).rejects.toThrow(/no deployed saved query/);
+    });
+
+    it('the order is DATA, and the entry leg is behind the enumeration in it', () => {
+      // An array rather than two booleans: a third spending leg gets a position in it and everything
+      // downstream keeps working. What must not change silently is which end the billed optional leg
+      // sits at.
+      expect([...DUNE_LEG_ORDER]).toEqual(['enumeration', 'entry']);
+      expect(DUNE_LEG_ORDER.indexOf('entry')).toBeGreaterThan(DUNE_LEG_ORDER.indexOf('enumeration'));
+      // A leg the order does not know is refused rather than placed by guesswork.
+      expect(() => openDuneCreditLedger().declineToSpend('stage3' as never)).toThrow(/not one of this run's known legs/);
+    });
+
+    it("`main` reserves the mandatory leg ABOVE the construction that bills, on both paths", () => {
+      // The seam proves the rule; this proves `screen.mjs` satisfies it. It is a POSITIONAL pin
+      // because the defect was positional: both call sites already existed and were already correct
+      // in isolation, and only their order in the file was wrong.
+      const screen = readFileSync(SCREEN_MAIN, 'utf8');
+      const reserved = screen.indexOf("leg: 'enumeration',");
+      const built = screen.indexOf('entrySourcePlan = await runEntrySourcePlan(');
+      expect(reserved).toBeGreaterThan(-1);
+      expect(built).toBeGreaterThan(-1);
+      expect(reserved).toBeLessThan(built);
+      // The enumeration site downstream REPORTS that verdict rather than taking a second one, which
+      // would put this leg back behind the optional one it must precede.
+      expect(screen).toContain('const checked = enumerationReservation;');
+      expect(screen.match(/checkDuneAllowance\(duneClient, \{/g)).toHaveLength(1);
+      // And the dry run, which enumerates nothing, declares that rather than being skipped —
+      // otherwise `--dry-run-spend` would refuse with an ordering message post-cutover.
+      expect(screen).toContain("duneCreditLedger.declineToSpend('enumeration');");
+      expect(screen.match(/declineToSpend\('enumeration'\)/g)).toHaveLength(2);
+    });
+  });
+
   it('a CLEARED balance goes on to the probe, which is the next gate and not this one', async () => {
     // The control: the refusal above must be the BALANCE and not something else failing first. With
     // credits available the guard passes and the undeployed trade-coverage probe refuses instead —
@@ -1553,4 +1748,372 @@ describe("STAGE 2's ENTRY FILL SOURCE REFUSES BEFORE ITS FIRST BILLED READ", () 
     expect(paths).toEqual([USAGE_PATH]);
     expect(c.executions()).toBe(0);
   });
+});
+
+/**
+ * **THE TWO PROPERTIES THE FILL SOURCE'S TWO-PHASE CONSTRUCTION CARRIES, DRIVEN THROUGH `main`.**
+ *
+ * The ordering pins above are POSITIONAL and stand where `main` offered no seam. These stand beside
+ * them and observe the run instead: a stubbed transport records every URL, and the exit code plus
+ * the refusal wording say which phase refused. Both directions of both properties are here, and each
+ * negative control was confirmed to go RED against the construction sitting in the other phase.
+ *
+ * `main`'s `seam.entryFillSourceKind` is what makes any of this reachable. `ENTRY_FILL_SOURCE_KIND`
+ * is the Gate 3 cutover's own edit and this lane may not make it, so a run that SELECTS the Dune
+ * source — the case both spend hazards are about — cannot otherwise be produced from a test.
+ * Nothing here opens a gate: the constant, `TRADE_COVERAGE_QUERY_ID` and
+ * `entry_source_agreement.active` are all untouched, and the Dune source still refuses to be built
+ * because its coverage probe is undeployed, which is exactly the refusal these tests observe.
+ */
+describe('the entry fill source is constructed in two phases, and each phase carries one property', () => {
+  /** Screen exit codes. `EXIT` in `screen.mjs` is module-private, so they are named here. */
+  const SCREEN_EXIT = { usage: 2, upstream: 7 };
+
+  /** Distinct, base58-shaped, and never a wallet this project has measured. */
+  const seedWallet = (i: number) => `${WALLET.slice(0, -2)}${'abcdefghijkmnpqrstuv'[i]}L`;
+
+  function seedBody(count: number): unknown {
+    return {
+      deployers: Array.from({ length: count }, (_, i) => ({
+        wallet_address: seedWallet(i),
+        total_tokens_deployed: 60,
+        total_bonded: 20,
+      })),
+    };
+  }
+
+  /**
+   * Every URL the run reaches, in order, with nothing leaving the process.
+   *
+   * The clients read `globalThis.fetch` at construction and `main` constructs its own, so stubbing
+   * the global is the whole injection. A URL this handler does not recognise answers 404 — the
+   * status the live Dune account actually returned for these saved queries — which is terminal and
+   * unretried, so a failing leg fails fast rather than backing off.
+   */
+  function stubTransport(handler: (url: string) => Response): string[] {
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', async (input: unknown) => {
+      const url = String(input);
+      seen.push(url);
+      return handler(url);
+    });
+    return seen;
+  }
+
+  const KEYED_ENV = { MADEONSOL_API_KEY: SENTINEL_KEY, DUNE_API_KEY: SENTINEL_KEY };
+
+  /**
+   * THE ORDER PROPERTY, AND IT IS THE ONE THAT SURVIVES THE CUTOVER.
+   *
+   * Asserting an exit code or a refusal sentence discriminates only while `TRADE_COVERAGE_QUERY_ID`
+   * is null, because that is what makes an early build THROW. Deploy the probe id — which is exactly
+   * what Gate 3 does — and a regressed early build would SUCCEED, bill its coverage probe and let
+   * the run reach the same cliff with the same stderr, so the guard would go green against the
+   * regression at the moment the hazard becomes real.
+   *
+   * What does not expire is WHICH Dune request came first. `POST /usage` is free — Dune documents it
+   * as a metadata endpoint consuming no credits — so the first BILLED Dune request of a run must
+   * belong to the enumeration's own saved queries. The entry fill source reads different ids
+   * (`ENTRY_QUERY_ID` and the trade coverage probe), so a build that ran ahead of the enumeration
+   * puts one of those first and fails this whatever the exit code turns out to be.
+   */
+  function assertNoBilledDuneRequestBeforeEnumeration(seen: string[]): void {
+    const bounds = screenLoadThresholds()['dune'] as { creationQueryId: number; coverageQueryId: number };
+    const enumerationIds = [bounds.creationQueryId, bounds.coverageQueryId].map(String);
+    const billed = seen.filter((u) => u.startsWith(DUNE_API_BASE) && !u.endsWith(USAGE_PATH));
+    for (const url of billed) {
+      // The entry leg's own surfaces, named so a future reader sees what is being excluded.
+      expect(url).not.toContain(String(ENTRY_QUERY_ID));
+      if (enumerationIds.some((id) => url.includes(id))) return;
+      throw new Error(`a Dune request that is neither free nor the enumeration's came first: ${url}`);
+    }
+  }
+
+  function run(argv: string[], env: Record<string, string>, kind: string) {
+    const parsed = screenParseArgs(argv);
+    if (!parsed.ok) throw new Error('unreachable');
+    const errs: string[] = [];
+    return screenMain(parsed.opts, env, () => {}, (l: string) => errs.push(l), {
+      entryFillSourceKind: kind as never,
+    }).then((code: number) => ({ code, err: errs.join('\n') }));
+  }
+
+  it('PROPERTY 1: an unusable Stage 2 source refuses before ONE seed request is spent', async () => {
+    // The keyed-allowance protection the early construction buys, and the reason the billed build
+    // could not simply be moved down. A kind this run carries no constructor for is refused by
+    // RESOLUTION, which touches no vendor.
+    try {
+      const seen = stubTransport(() => new Response('{}', { status: 200 }));
+      const { code, err } = await run([], KEYED_ENV, 'no-such-source');
+      expect(code).toBe(SCREEN_EXIT.upstream);
+      expect(err).toContain('Refusing to start: Stage 2 has no usable fill source.');
+      // THE CLAIM IS THE CREDIT ONE AND IT IS THE ONLY ONE THAT SURVIVES INSPECTION. The
+      // enumeration's reservation was hoisted ABOVE this refusal, so a run with a Dune client HAS
+      // issued the free `POST /usage` by now — "nothing was requested" would be false, and the
+      // transport below is what proves it. What is true is that no metered quota went anywhere.
+      expect(err).toContain('No quota was spent');
+      expect(err).not.toContain('Nothing was requested, so no quota was spent.');
+      // NO SEED REQUEST, and nothing billed: the only URL a refusing run reaches is that free
+      // balance read, which Dune documents as a metadata endpoint consuming no credits.
+      expect(seen.filter((u) => u.startsWith(MADEONSOL_BASE_URL))).toEqual([]);
+      expect(seen.filter((u) => !u.endsWith(USAGE_PATH))).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
+
+  it('PROPERTY 1 covers the CREDENTIAL too: a Dune-reading run with no usable key spends no seed request', async () => {
+    // THE WORST INSTANCE OF THE NARROWING, AND IT IS CLOSED RATHER THAN DOCUMENTED. The Dune
+    // construction is declared BILLED, so the free phase defers it wholesale — which at the cutover
+    // meant a run with no usable `DUNE_API_KEY` spent the entire MadeOnSol seed enumeration and only
+    // then refused, for an answer that is free to obtain. Worse, that configuration buys nothing
+    // with those seeds: `usingDune` is false, so the enumeration leg is skipped, no leg is attempted
+    // and no cliff is priced.
+    try {
+      const seen = stubTransport(() => new Response('{}', { status: 200 }));
+      const { code, err } = await run([], { MADEONSOL_API_KEY: SENTINEL_KEY }, 'dune');
+      expect(code).toBe(SCREEN_EXIT.upstream);
+      expect(err).toContain('Refusing to start: Stage 2 has no usable fill source.');
+      expect(err).toContain('DUNE_API_KEY');
+      // The property, and the transport is what asserts it: not one request of any kind, keyed or
+      // free — with no Dune credential there is no client to read a balance through either.
+      expect(seen).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
+
+  it('the credential rule is ONE rule, and it is inert wherever the Dune source is not read', () => {
+    // Written once and evaluated twice — the free phase asks it, and the constructor keeps asking it
+    // as the backstop for a caller that never went through the free phase. Both call the function
+    // asserted here, so there is no second predicate and no second message to drift.
+    expect(duneFillSourceCredentialRefusal({ available: true } as never)).toBeNull();
+    expect(duneFillSourceCredentialRefusal({ available: false } as never)).toContain('DUNE_API_KEY');
+
+    // AND IT IS GATED ON THE SHARED DERIVATION, not on a second reading of the kind — so every
+    // configuration that reads NO Dune source is untouched by it. `--stage0` (folded into
+    // `entryFillSourceIsRead` last round) and `--no-stage2` both read nothing at all, at the
+    // cutover's kind; and at today's `swap-api` a default run does not read Dune either.
+    for (const argv of [['--stage0'], ['--stage0', '--no-dune'], ['--no-stage2']]) {
+      const parsed = screenParseArgs(argv);
+      if (!parsed.ok) throw new Error('unreachable');
+      expect(entrySourceKindsRead(parsed.opts, undefined, 'dune'), argv.join(' ')).toEqual([]);
+    }
+    const plain = screenParseArgs([]);
+    if (!plain.ok) throw new Error('unreachable');
+    expect(entrySourceKindsRead(plain.opts, undefined)).toEqual([ENTRY_FILL_SOURCE_KIND]);
+    expect(entrySourceKindsRead(plain.opts, undefined).includes('dune')).toBe(false);
+  });
+
+  it('a run with NO Dune credential is unaffected at TODAY’s kind, which is what keeps this inert', async () => {
+    // The inertness control for the check above: the same empty-Dune environment at the shipped
+    // `swap-api` kind reaches the credential refusal it has always reached instead — the MadeOnSol
+    // one — rather than being stopped by a Stage 2 source it never reads.
+    try {
+      const seen = stubTransport(() => new Response('{}', { status: 200 }));
+      const { code, err } = await run([], {}, ENTRY_FILL_SOURCE_KIND);
+      expect(code).toBe(3);
+      expect(err).toContain('CREDENTIAL PROBLEM');
+      expect(err).not.toContain('usable fill source');
+      expect(seen).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
+
+  it('PROPERTY 2: a Dune enumeration that answers for NOBODY reaches the cliff with the entry source unbuilt', async () => {
+    // THE HAZARD ITSELF. The ledger orders the two RESERVATIONS and cannot order their SPEND, so
+    // with the billed construction above Stage 1 this run would bill the entry leg's trade-coverage
+    // read, watch the enumeration come back empty, and be refused whole — period consumed, nothing
+    // produced. Here the enumeration's saved query 404s (the live failure shape), the leg answers
+    // for nobody, and the walk-fallback cliff is what the operator gets.
+    try {
+      const seen = stubTransport((url) => {
+        if (url.startsWith(MADEONSOL_BASE_URL)) return new Response(JSON.stringify(seedBody(12)), { status: 200 });
+        if (url.endsWith(USAGE_PATH)) {
+          return new Response(JSON.stringify(usageBody([period(0, 4_000)])), { status: 200 });
+        }
+        return new Response('Query not found', { status: 404 });
+      });
+      const { code, err } = await run([], KEYED_ENV, 'dune');
+      expect(code).toBe(SCREEN_EXIT.usage);
+      expect(err).toContain('the Dune enumeration leg answered for NO candidate');
+      // THE NEGATIVE CONTROL, and it is the finding: with the construction in the early phase this
+      // run exits 7 with the fill-source refusal instead, having never enumerated at all.
+      expect(err).not.toContain('has no usable fill source');
+      // And the seeds WERE spent before the cliff, so this is the degraded path rather than an
+      // early refusal wearing a different exit code.
+      expect(seen.filter((u) => u.startsWith(MADEONSOL_BASE_URL)).length).toBeGreaterThan(0);
+      // THE ASSERTION THAT DOES NOT EXPIRE AT THE CUTOVER — see the helper for why the two above do.
+      assertNoBilledDuneRequestBeforeEnumeration(seen);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
+
+  it('PROPERTY 2, the other direction: a run that gets past the enumeration DOES build the billed source', async () => {
+    // Without this the property above would be satisfied by never building the source at all. The
+    // seeds return NO wallet, so there is no batch for the enumeration leg to be attempted on and no
+    // cliff to price; the run reaches the late phase, the Dune source refuses to be built — its
+    // coverage probe is undeployed, which is the resting state Gate 3 changes — and the refusal
+    // lands with the seed requests already sunk. Its wording says "score" rather than "start" and,
+    // deliberately, makes no claim that nothing was spent.
+    //
+    // IT DOES NOT USE `--no-dune` TO GET HERE, and that is not incidental: that combination is now
+    // refused outright, because "reach no Dune surface" and "score Stage 2 through Dune" contradict.
+    try {
+      const seen = stubTransport((url) => {
+        if (url.startsWith(MADEONSOL_BASE_URL)) return new Response(JSON.stringify(seedBody(0)), { status: 200 });
+        if (url.endsWith(USAGE_PATH)) {
+          return new Response(JSON.stringify(usageBody([period(0, 4_000)])), { status: 200 });
+        }
+        return new Response('Query not found', { status: 404 });
+      });
+      const { code, err } = await run([], KEYED_ENV, 'dune');
+      expect(code).toBe(SCREEN_EXIT.upstream);
+      expect(err).toContain('Refusing to score: Stage 2 has no usable fill source.');
+      expect(err).not.toContain('Nothing was requested, so no quota was spent.');
+      // THE ORDER, not just the wording: whatever the entry source's construction goes on to cost
+      // once Gate 3 deploys the probe, it happens AFTER the seed enumeration is spent. That is what
+      // "the billed leg builds late" means observably, and it keeps discriminating past the cutover.
+      // The free `POST /usage` is excluded deliberately — the mandatory leg reserves above Stage 1,
+      // so it legitimately precedes the seeds and costs no credit.
+      const lastSeed = seen.map((u) => u.startsWith(MADEONSOL_BASE_URL)).lastIndexOf(true);
+      expect(lastSeed).toBeGreaterThan(-1);
+      const firstBilledDune = seen.findIndex((u) => u.startsWith(DUNE_API_BASE) && !u.endsWith(USAGE_PATH));
+      expect(firstBilledDune === -1 || firstBilledDune > lastSeed).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
+
+  it('REFUSES a run told both to reach no Dune surface and to score Stage 2 through Dune', async () => {
+    // The two instructions contradict, and the tool names that rather than picking one. Honouring
+    // the flag would silently discard the configured fill source; honouring the source would bill a
+    // vendor the flag forbade — the run would reach Dune having declared it would not, and file a
+    // record saying `dune.used: false`. Driven through the `entryFillSourceKind` seam because
+    // `ENTRY_FILL_SOURCE_KIND` is Gate 3's own edit and this lane may not make it.
+    for (const flag of ['--no-dune', '--ownership-only']) {
+      try {
+        const seen = stubTransport(() => new Response('{}', { status: 200 }));
+        const { code, err } = await run([flag], KEYED_ENV, 'dune');
+        expect(code).toBe(SCREEN_EXIT.usage);
+        expect(err).toContain('reach no Dune surface');
+        // It names BOTH asks and says which to drop, rather than reporting a bare rejection.
+        expect(err).toContain(flag);
+        expect(err).toContain('ENTRY_FILL_SOURCE_KIND');
+        // And it refuses before ANYTHING is reached — not one seed request, not the free balance
+        // read the mandatory leg would otherwise take.
+        expect(seen).toEqual([]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
+  }, 60_000);
+
+  it('is INERT on every configuration reachable today, which is what makes it a fix and not a regression', () => {
+    // `ENTRY_FILL_SOURCE_KIND` is `swap-api`, so no CLI a captain can type today produces the
+    // contradiction — the guard arms itself at the cutover and changes nothing before it. Asserted
+    // through `parseArgs`, which is the surface an operator meets, and at the default kind rather
+    // than the seam's.
+    expect(ENTRY_FILL_SOURCE_KIND).toBe('swap-api');
+    for (const argv of [['--no-dune'], ['--ownership-only'], ['--no-stage2', '--no-dune'], ['--no-stage2']]) {
+      expect(screenParseArgs(argv).ok, argv.join(' ')).toBe(true);
+    }
+    // And `--no-stage2` is not merely tolerated by luck: Stage 2 reads NO source, so the shared
+    // derivation returns nothing and there is no contradiction to refuse — it falls out of asking
+    // the one derivation rather than out of a special case. It holds at the cutover's kind too.
+    const off = { stage2: false, noDune: true, ownershipOnly: false };
+    expect(duneFillSourceContradiction(off, undefined, 'dune')).toBeNull();
+    // The pre-existing refusal of the agreement flag beside these two is untouched.
+    expect(screenParseArgs(['--entry-source-agreement', '--no-dune']).ok).toBe(false);
+    // And a run that asked for neither flag is never refused, whatever source it reads.
+    const on = { stage2: true, noDune: false, ownershipOnly: false };
+    expect(duneFillSourceContradiction(on, undefined, 'dune')).toBeNull();
+    // THE ARMED CASE, which is the derivation `parseArgs` consumes with no bounds to read: at the
+    // cutover's kind the same inputs that pass today are refused, and the message names both asks.
+    const armed = duneFillSourceContradiction({ stage2: true, noDune: true, ownershipOnly: false }, undefined, 'dune');
+    expect(armed).toContain('--no-dune');
+    expect(armed).toContain('reaches no Dune surface');
+    expect(armed).toContain('ENTRY_FILL_SOURCE_KIND');
+  });
+
+  it('leaves `--stage0` FREE at the cutover, in both places, because the mode is folded into the derivation', async () => {
+    // A REGRESSION THE CONTRADICTION GUARD ITSELF INTRODUCED, and this is the guard against it
+    // coming back. `--stage0` sets only `stage0Only` and leaves `stage2` true, so as first written
+    // the guard refused `--stage0 --no-dune` at the cutover — a mode whose usage text promises "No
+    // network, no key, no quota. Always safe." — while `main`'s copy, which sits BELOW the
+    // `stage0Only` return, let the same combination through. Two places, one rule, two answers.
+    //
+    // The fix is in `entryFillSourceIsRead`, so a Stage 0 run reads no source and both copies are
+    // inert for it by construction rather than by two call sites agreeing to be.
+    for (const argv of [['--stage0'], ['--stage0', '--no-dune'], ['--stage0', '--ownership-only']]) {
+      // The CLI half, at the CUTOVER's kind — the case that was broken, reachable only through the
+      // seam because `ENTRY_FILL_SOURCE_KIND` is Gate 3's own edit.
+      const parsed = screenParseArgs(argv);
+      expect(parsed.ok, argv.join(' ')).toBe(true);
+      if (!parsed.ok) throw new Error('unreachable');
+      expect(duneFillSourceContradiction(parsed.opts, undefined, 'dune'), argv.join(' ')).toBeNull();
+      expect(entrySourceKindsRead(parsed.opts, undefined, 'dune')).toEqual([]);
+
+      // And `main` AGREES, observably and at the same kind: Stage 0 runs offline over the committed
+      // tape, exits ok and reaches no vendor at all. An empty environment is deliberate — this mode
+      // needs no key, which is half of what makes it the safe smoke test.
+      try {
+        const seen = stubTransport(() => new Response('{}', { status: 200 }));
+        const errs: string[] = [];
+        const code = await screenMain(parsed.opts, {}, () => {}, (l: string) => errs.push(l), {
+          entryFillSourceKind: 'dune' as never,
+        });
+        expect(code, `${argv.join(' ')}: ${errs.join('\n')}`).toBe(0);
+        expect(errs.join('\n')).not.toContain('reach no Dune surface');
+        expect(seen).toEqual([]);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
+  }, 120_000);
+
+  it('does NOT fold `--dry-run` the same way: the plan still describes the source it would read', async () => {
+    // THE LOAD-BEARING HALF OF THE ASYMMETRY. A dry run reads no source but PLANS one, and
+    // `planEligibility` gates on the same predicate `--stage0` was folded into — so folding
+    // `dryRun` in beside it would silently stop the plan describing its own source and regress
+    // captain decision 286c. The difference is structural rather than a judgement: a `--stage0` run
+    // RETURNS before the plan is built, a dry run does not.
+    const parsed = screenParseArgs(['--dry-run']);
+    if (!parsed.ok) throw new Error('unreachable');
+    expect(entrySourceKindsRead(parsed.opts, undefined)).toEqual([ENTRY_FILL_SOURCE_KIND]);
+    try {
+      const seen = stubTransport(() => new Response('{}', { status: 200 }));
+      const lines: string[] = [];
+      const code = await screenMain(parsed.opts, {}, (l: string) => lines.push(l), () => {});
+      expect(code).toBe(0);
+      // The eligibility floor is the figure only a BUILT source can answer, and the free swap-api
+      // construction answers it — so its presence is the plan describing its source. A fold of
+      // `dryRun` into the predicate would remove this line entirely.
+      expect(lines.join('\n')).toMatch(/A launch is not walked until it is/);
+      expect(seen).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
+
+  it('the DEFAULT run is unchanged: the one source it reads is free, so both phases still build it once', async () => {
+    // The regression guard on "a default run is byte-identical". The swap-api construction is
+    // DECLARED free, so the early phase builds it and the late phase finds nothing left to do — and
+    // the run goes on to fail on the credential it has always failed on, rather than on a source.
+    try {
+      const seen = stubTransport(() => new Response('{}', { status: 200 }));
+      const parsed = screenParseArgs([]);
+      if (!parsed.ok) throw new Error('unreachable');
+      const errs: string[] = [];
+      const code = await screenMain(parsed.opts, {}, () => {}, (l: string) => errs.push(l));
+      expect(code).toBe(3);
+      expect(errs.join('\n')).toContain('CREDENTIAL PROBLEM');
+      expect(errs.join('\n')).not.toContain('usable fill source');
+      expect(seen).toEqual([]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
 });

@@ -58,6 +58,52 @@ function readConfig(pattern = /\.(ts|mjs|js)$/): Map<string, string> {
   return out;
 }
 
+/**
+ * Comments are removed and everything else kept, in ONE tokenising pass, so a `//` inside a string
+ * (`'https://…'`) cannot eat the rest of its line and hide a hit — and so a doc comment that
+ * MENTIONS `process.env` is not read as one.
+ */
+function withoutComments(source: string): string {
+  return source.replace(
+    /\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
+    (token) => (token.startsWith('/*') || token.startsWith('//') ? '' : token),
+  );
+}
+
+/**
+ * Every environment variable NAME a source file reads, in the four spellings this area uses:
+ * `process.env.NAME`, `env['NAME']`, `env[CONSTANT]` — the idiom `config/data-root.mjs` actually
+ * writes, resolved through the constant's own declaration — and a bare `process.env` handed on
+ * whole, which is only a read at all when it is bound as a default and then subscripted by one of
+ * the first three.
+ *
+ * A subscript this cannot resolve to a literal, and a bare `process.env` that is NOT such a
+ * binding, are both reported as unnameable reads rather than skipped: a guard that silently sees
+ * nothing is the vacuous pass it exists to prevent.
+ */
+export function environmentNamesRead(source: string): string[] {
+  const code = withoutComments(source);
+  const names: string[] = [];
+  for (const match of code.matchAll(/process\.env\.([A-Za-z0-9_$]+)/g)) names.push(match[1] as string);
+  for (const match of code.matchAll(/\benv\[([^\]]*)\]/g)) {
+    const subscript = (match[1] as string).trim();
+    const quoted = /^(['"])([^'"]*)\1$/.exec(subscript);
+    if (quoted !== null) {
+      names.push(quoted[2] as string);
+      continue;
+    }
+    const declared = /^[A-Za-z_$][\w$]*$/.test(subscript)
+      ? new RegExp(`\\b${subscript}\\s*=\\s*['"]([^'"]*)['"]`).exec(code)
+      : null;
+    names.push(declared?.[1] ?? `<${subscript}, which is not a literal in this file>`);
+  }
+  for (const match of code.matchAll(/process\.env\b(?![.[])/g)) {
+    const before = code.slice(Math.max(0, (match.index ?? 0) - 40), match.index);
+    if (!/[=(,]\s*$/.test(before)) names.push('<the whole environment>');
+  }
+  return names;
+}
+
 describe('the data root resolves', () => {
   it('defaults to the copy in this repository, so a clone works with no setup', () => {
     // The DELIBERATE half of the choice: the other default — the off-repo store — would have made
@@ -380,17 +426,43 @@ describe('config/ is governed like the other areas', () => {
     // `analysis/` are banned from reading any variable at all; here the ban is on reading any
     // OTHER one. Adding a second means coming back here on purpose.
     const KEY_VARIABLES = ['MADEONSOL_API_KEY', 'HELIUS_API_KEY', 'DUNE_API_KEY'];
+    let readsSeen = 0;
     for (const [file, text] of readConfig(/./)) {
       for (const variable of KEY_VARIABLES) {
         expect(text.includes(variable), `${file} must not name ${variable}`).toBe(false);
       }
       // Every environment read is `env[...]` off a parameter or `process.env` as its default; the
       // only NAME any of them may reach for is the data root's.
-      const named = [...text.matchAll(/process\.env\.([A-Z0-9_]+)|env\[['"]([A-Z0-9_]+)['"]\]/g)].map(
-        (m) => m[1] ?? m[2],
-      );
+      const named = environmentNamesRead(text);
+      readsSeen += named.length;
       for (const name of named) expect(name, `${file} reads ${name}`).toBe(DATA_ROOT_ENV_VAR);
     }
+    // Non-vacuous: the scan must SEE the reads the resolver actually makes, or it is asserting
+    // nothing at all — which is exactly what it was doing while it could only match a quoted
+    // subscript and this module subscripts with a constant.
+    const resolverReads = environmentNamesRead(readConfig().get('config/data-root.mjs') ?? '');
+    expect(resolverReads.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(resolverReads)).toEqual(new Set([DATA_ROOT_ENV_VAR]));
+    expect(readsSeen).toBe(resolverReads.length);
+  });
+
+  it('SEES a second variable in every spelling this area could write one in', () => {
+    // The regression: each of these passed the old scan untouched. A name other than the data
+    // root's — or a subscript that cannot be resolved to one — must come back and fail the guard
+    // above, rather than leaving it iterating an empty list.
+    expect(environmentNamesRead("const OTHER = 'SLOT_ZERO_CACHE_DIR';\nconst v = env[OTHER];")).toEqual([
+      'SLOT_ZERO_CACHE_DIR',
+    ]);
+    expect(environmentNamesRead("process.env['SLOT_ZERO_CACHE_DIR']")).toEqual(['SLOT_ZERO_CACHE_DIR']);
+    expect(environmentNamesRead('process.env.SLOT_ZERO_CACHE_DIR')).toEqual(['SLOT_ZERO_CACHE_DIR']);
+    expect(environmentNamesRead('const v = env[pickAVariable()];')[0]).toMatch(/not a literal in this file/);
+    // A bare `process.env` is a read of the WHOLE environment unless it is bound and then
+    // subscripted — the resolver's own `env = process.env` default is the bound form.
+    expect(environmentNamesRead('doThings(); process.env;')).toEqual(['<the whole environment>']);
+    expect(environmentNamesRead(`function f(env = process.env) { return env[${'DATA_ROOT_ENV_VAR'}]; }
+const DATA_ROOT_ENV_VAR = '${DATA_ROOT_ENV_VAR}';`)).toEqual([DATA_ROOT_ENV_VAR]);
+    // And a mention inside a doc comment is not a read.
+    expect(environmentNamesRead('/** bans the literal `process.env` outright */')).toEqual([]);
   });
 
   it('OWNS the answer: no other code file composes a path to a dataset', () => {
@@ -400,14 +472,6 @@ describe('config/ is governed like the other areas', () => {
     // other reader read the new one — the two disagreeing silently, which is this repo's recurring
     // failure shape. So the names live HERE, and a consumer that grows its own copy fails.
     //
-    // Comments are removed and everything else kept, in ONE tokenising pass, so a `//` inside a
-    // string (`'https://…'`) cannot eat the rest of its line and hide a hit.
-    const withoutComments = (source: string): string =>
-      source.replace(
-        /\/\*[\s\S]*?\*\/|\/\/[^\n]*|'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g,
-        (token) => (token.startsWith('/*') || token.startsWith('//') ? '' : token),
-      );
-
     /**
      * EXHAUSTIVE, and each entry states why the name is legitimately in executable text there.
      * Adding one means coming back here on purpose — a path composed anywhere else is the defect.

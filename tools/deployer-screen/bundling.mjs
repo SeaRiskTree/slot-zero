@@ -986,7 +986,7 @@ export function renderSubjectEraTrend(t) {
   const L = [];
   L.push('SUBJECT ERA TREND — OFFLINE, n = 1 DEPLOYER, and it is a WITHIN-DEPLOYER trend');
   L.push('');
-  L.push('  Source: data/population-tape-2026-07-29, every taped launch whose create slot is proved.');
+  L.push('  Source: population-tape-2026-07-29, every taped launch whose create slot is proved.');
   L.push('  No request of any kind was issued to produce this table.');
   L.push('');
   L.push(`  ${t.proven} of ${t.launches} taped launches are PROVEN by the union (${t.provenRate}),`);

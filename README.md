@@ -175,7 +175,7 @@ call the wallet beatable. It is not. Details in `tools/deployer-screen/README.md
 | `config/data-root.mjs` | The one owner of **where the data lives** — see "Where the data lives" above. Its own area because it reads an environment variable, which `src/` and `analysis/` may not, and because a resolver under `tools/` could not be imported by either. |
 | `test/reproduction.test.ts` | The published headline numbers, asserted against the loaded data. |
 | `test/type-guards.test-d.ts` | Compile-time proof that the **four** guards below bite. Type-checked, never executed. |
-| `tools/deployer-screen/` | One of the two keyed, network-capable areas. The competence **gate** (stages 0–1, keyed) plus the keyless **entry score** (stage 2) — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |
+| `tools/deployer-screen/` | One of the three keyed, network-capable areas. The competence **gate** (stages 0–1, keyed) plus the keyless **entry score** (stage 2) — it gates and scores entry, it does not recommend and it does not score exit. Usage, credential handling, quota bounds and scope in its `README.md`. |
 | `data/graduated-life-tape-2026-08-02/` | The same tape, **extended past the bond**: every fill of the 103 graduated launches from mint to graduation + 1 hour. 503,037 fills, 63% of them on PumpSwap. Closure over the wallets each launch's own committed window already shows rises from **47.2% to 94.4%**. 6,539 keyless requests, EUR 0. Method, coverage proofs and limits in its `README.md`. |
 | `tools/graduated-life-tape/` | The collector behind it. Network-capable and **keyless throughout** — one file opens a socket, one host, and the list of files that may name a credential is empty. |
 | `tools/window-decay-tripwire/` | The decay tripwire. Watches one wallet's create slots — the operation's share of the bottom of its own curve — and latches **STOP AND ROTATE** on two consecutive readings at or above 0.55. **+24.1 h** on the one close on record against a **24.7 h** close, **0** false stops in 104 open-window launches; keyless, two hosts, an empty credential allow-list. The ceiling is on the false-alarm rate rather than the latency, and its `README.md` §4 states it. |
@@ -386,8 +386,10 @@ operation, and so is `5brv79eF…`. What the shared venue adds is the exact read
 "unaffiliated" here means *no on-chain relationship, tested on complete sets* — not *provably
 unrelated*. Those are different claims and no on-chain measurement closes the gap.
 
-**It will not be tested.** Naming the venue and asking it would take off-chain enquiry. That
-option was put and **declined** (captain decision 114a, 2026-07-29). So this is a settled
+**It will not be tested.** Testing the relationship means *asking* the venue, which is off-chain
+enquiry; that option was put and **declined** (captain decision 114a, 2026-07-29). *Naming* a
+venue is now reachable — `tools/venue-label/` reads a vendor's claim for an address — and it
+moves nothing here: a name is not an answer about who is behind the wall. So this is a settled
 boundary of the method, not an open question and not a TODO: the ceiling is permanent, and
 every unaffiliated verdict this lab produces is to be read as carrying it.
 

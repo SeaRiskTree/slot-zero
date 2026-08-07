@@ -946,7 +946,9 @@ export const LOCAL_ESTIMATE_CAVEAT =
 /**
  * @typedef {object} DuneAllowance
  * @property {number} creditsUsed      As the vendor reported it, for the selected billing period.
- * @property {number} creditsIncluded  The period's allowance. 2,500 on the Free tier.
+ * @property {number} creditsIncluded  The period's allowance AS THE VENDOR REPORTED IT — 2,500 on
+ *   the Free tier. `AllowanceDecision.creditsIncluded` is a DIFFERENT quantity under the same name:
+ *   the EFFECTIVE ceiling, the smaller of this and the operator's cap (captain decision 322a).
  * @property {number} creditsRemaining `creditsIncluded - creditsUsed`, floored at 0.
  * @property {string} periodStart      `YYYY-MM-DD`, the vendor's own string.
  * @property {string} periodEnd        `YYYY-MM-DD`. **NOT a calendar month** — one of this fleet's

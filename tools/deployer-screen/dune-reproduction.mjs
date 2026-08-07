@@ -1078,7 +1078,8 @@ export const REPRODUCTION_CAVEATS = [
  * fingerprint can only be brought back into agreement by one of two things, and NEITHER is editing
  * the JSON by hand:
  *
- * 1. **Re-run the reproduction** — `--live`, ~495 credits of a 2,500-credit shared month; or
+ * 1. **Re-run the reproduction** — `--live`, ~495 credits against whichever monthly ceiling binds
+ *    (the smaller of the vendor's plan and {@link monthlyCreditCapCredits}, read live); or
  * 2. **Revert the comment**, which costs nothing.
  *
  * A third route exists and is not free either: redeploying the saved query to the edited text, which

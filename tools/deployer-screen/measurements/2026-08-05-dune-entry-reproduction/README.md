@@ -127,7 +127,8 @@ All are stated here rather than left to look like run output:
   2. **The costs are not symmetric.** A false red costs a doc edit. A false green costs a record
      that describes text which no longer exists.
   3. **The only ways back into agreement are priced.** Re-running the reproduction is **~495
-     credits** of a 2,500-credit shared month; reverting the comment is free; redeploying the saved
+     credits** against a month whose ceiling read 2,500 then and is now the smaller of the vendor's
+     plan and the operator's cap; reverting the comment is free; redeploying the saved
      query is the documented deploy step and is required before any run anyway, since the custody
      comparison runs first. **Hand-editing this field is not one of them** — the warning is written
      into `entrySqlFingerprint`'s own doc rather than left in a review thread, because typing a new

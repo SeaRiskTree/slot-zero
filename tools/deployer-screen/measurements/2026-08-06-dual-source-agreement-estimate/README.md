@@ -23,8 +23,10 @@ that makes it. A separate worker executes the run once the captain approves a sh
 **THE BALANCE MOVES AND THIS FIGURE IS A READING, NEVER A RESERVATION.** Three limits travel with
 it, all of them the `dune` block's own and none of them new here: the counter **LAGS** (measured
 rising +6.0 credits while the evaluator was idle, in whole-credit jumps, so a reading over-states
-what remains — hence the pinned `allowanceReserveCredits` of 25); the key is **SHARED** across every
-lane in this repo, so a sufficient reading is evidence and not an allocation; and the period is a
+what remains — hence the pinned `allowanceReserveCredits` of 25); the reading is **ONE ACCOUNT's**,
+drawn on by every lane of this fleet (the key itself is unshared, captain 2026-08-06, and a second
+key is a second account entirely), so a sufficient reading is evidence and not an allocation; and the
+period is a
 **subscription anniversary**, not a calendar month. Anyone acting on this document must re-read
 `POST /usage` at the moment of the run — `client.mjs` → `checkDuneAllowance` does exactly that
 before the first billed request, and refuses rather than half-running.
@@ -183,7 +185,8 @@ result — so whoever runs this pays one refresh execution and should record wha
 > the control flow already put it.
 >
 > **What a ledger still cannot do**, unchanged and worth restating because it bounds every figure
-> here: the vendor's counter LAGS, the key is SHARED with every other lane, and the period is a
+> here: the vendor's counter LAGS, the balance is one ACCOUNT's that every lane of this fleet draws
+> on (and a separate key is a separate account), and the period is a
 > subscription anniversary. It makes ONE RUN self-consistent; it reserves nothing against a sibling
 > lane.
 

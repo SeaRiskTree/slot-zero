@@ -999,7 +999,8 @@ dev currently?"*, and the shape of the answer is the point:
 - **THOSE THREE SAMPLING CAPS ARE SOURCE-SCOPED SINCE `thresholds.json` 6.1.0, so 7 / 8 / 10 are the
   SWAP-API source's request arithmetic and nothing else's.** The Dune fill source carries its own
   three in `stage2_entry_dune` — **14 / 20 / 22** since captain decision 289b, derived in CREDITS for
-  windows scanned (308 windows, ~128 credits a run, ~19 runs against the shared 2,500-credit month).
+  windows scanned (308 windows, ~128 credits a run, ~19 runs a month against the vendor figure that
+  applied when 289b was written — read the binding ceiling live, it is now a `min()`; see 322a above).
   The two `maxCandidatesScored` were the same integer until 289b and the coincidence had to be
   disclaimed in prose; now the values themselves show the scoping. **14 is INTERIM, not terminal** —
   27 would serve the whole pooled survivor set but is sized to today's population, so the final size

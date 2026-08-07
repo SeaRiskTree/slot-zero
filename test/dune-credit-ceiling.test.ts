@@ -45,6 +45,7 @@ import {
   parseUsageResponse,
   ALLOWANCE_ACCOUNT_WIDE_CAVEAT,
   ALLOWANCE_LAG_CAVEAT,
+  describeMonthlyCapCredits,
   LOCAL_ESTIMATE_CAVEAT,
   MONTHLY_CAP_PIN,
   bindingCreditCeiling,
@@ -807,6 +808,102 @@ describe('TWO CEILINGS, AND THE SMALLER ONE BINDS', () => {
     expect(second.decision.creditsIncludedVendor).toBe(CAP * 3);
     // And the balance is still read exactly once for the whole run.
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('a PLAN that cannot read the cap says so in the live path\'s words, and never crashes', () => {
+    // The two plan printers reach the SAME operator state decideAllowance answers with a named
+    // refusal - a cap just edited and typoed - and used to answer it with a bare TypeError
+    // (`undefined.toLocaleString`) and with the literal text `operator cap undefined`. That is the
+    // failure 322a's naming requirement exists to prevent, on the one config surface 322a adds.
+    for (const bad of [undefined, null, 0, -1, Number.NaN, '4000', {}]) {
+      const said = describeMonthlyCapCredits(bad);
+      expect(said, JSON.stringify(bad)).toContain(MONTHLY_CAP_PIN);
+      expect(said, JSON.stringify(bad)).toMatch(/UNREADABLE/);
+      // It must not imply the vendor's figure takes over - that is exactly what decideAllowance
+      // refuses to do, and a plan saying otherwise would describe a run that cannot happen.
+      expect(said).toMatch(/REFUSES before spending anything/);
+    }
+    // And the usable case is the figure, unchanged in meaning and formatted for a human.
+    expect(describeMonthlyCapCredits(4000)).toBe('4,000 credits/month');
+    // It RENDERS and never decides: the same value still reaches a verdict through decideAllowance,
+    // which is the only thing that refuses.
+    expect(screenDecideAllowance({
+      plan: PLAN,
+      estimate: estimatePlanCredits(PLAN),
+      allowance: parseUsageResponse(usageBody([period(0)]), NOW_MS).allowance,
+      reserveCredits: 25,
+      monthlyCapCredits: undefined,
+      tightMultiple: 2,
+      allowanceRequired: true,
+    } as never).verdict).toBe('unreadable');
+  });
+
+  it('the SCREEN dry run renders the named refusal instead of throwing, on a real plan', async () => {
+    // End to end through the production renderer rather than the helper alone, because the defect
+    // was at the interpolation site. No file is touched: renderDryRun takes the plan object, so the
+    // absent pin is supplied rather than written to the committed thresholds.json - the isolation
+    // rule the previous round established.
+    const { renderDryRun } = await import('../tools/deployer-screen/render.mjs');
+    const { windowReachMs } = await import('../tools/deployer-screen/pumpfun.mjs');
+    const { resolveDuneCredential, resolveSolanaRpcEndpoint } = await import(
+      '../tools/deployer-screen/credential.mjs'
+    );
+    const T = JSON.parse(readFileSync(THRESHOLDS, 'utf8'));
+    const plan = (over: Record<string, unknown>) => ({
+      seedPlan: [],
+      maxCandidates: 12,
+      maxKeyedRequests: 45,
+      consistency: false,
+      maxKeylessRequests: T['budget'].maxKeylessRequests,
+      historySource: 'creation-derived' as const,
+      creationWalk: T['creation_walk'],
+      costBounds: T['stage2_cost'],
+      stage2: true,
+      maxScored: T['stage2_entry'].maxCandidatesScored,
+      entryThresholds: T['stage2_entry'],
+      entryEligibility: {
+        known: true,
+        kind: 'swap-api',
+        minAgeMs: windowReachMs(T['stage2_entry']),
+        billed: false,
+      } as const,
+      spendAuthorised: false,
+      keyDescription: null,
+      rpcEndpoint: resolveSolanaRpcEndpoint({}),
+      indexedWalk: T['creation_walk_helius'],
+      worstCaseCredits: 0,
+      dune: { ...T['dune'], ...over },
+      duneCredential: resolveDuneCredential({ DUNE_API_KEY: SENTINEL_KEY }),
+      usingDune: true,
+      duneRefreshProbe: false,
+      allowWalkFallback: false,
+    });
+    for (const over of [{ monthlyCreditCapCredits: undefined }, { monthlyCreditCapCredits: 'lots' }]) {
+      let text = '';
+      expect(() => {
+        text = renderDryRun(plan(over) as never);
+      }, JSON.stringify(over)).not.toThrow();
+      expect(text).toContain(MONTHLY_CAP_PIN);
+      expect(text).toMatch(/operator cap\s+UNREADABLE/);
+      // `undefined` must not survive into anything an operator reads as a number.
+      expect(text).not.toMatch(/operator cap\s+undefined/);
+    }
+    // The control: with the real pin the line is the figure, so the guard is not swallowing it.
+    expect(renderDryRun(plan({}) as never)).toContain(
+      `operator cap                  ${describeMonthlyCapCredits(T['dune'].monthlyCreditCapCredits)}`,
+    );
+  });
+
+  it('the CENSUS plan line renders through the same helper, not by raw interpolation', async () => {
+    // The census reads its bounds from a fixed path, so its absent-pin path is covered by the helper
+    // above rather than by rewriting the committed bounds.json. What is pinned here is that the site
+    // USES the helper: reverting it to raw interpolation prints `4000 credit(s)/month` where the
+    // shared renderer prints `4,000 credits/month`, and this fails.
+    const lines: string[] = [];
+    const code = await censusMain([], {}, (l) => lines.push(l));
+    expect(code).toBe(EXIT.ok);
+    const cap = readBounds().dune.monthlyCreditCapCredits;
+    expect(lines.join('\n')).toContain(`operator cap   ${describeMonthlyCapCredits(cap)}`);
   });
 
   it('is ONE fleet-wide number: both keyed lanes pin the same cap, in configuration', () => {

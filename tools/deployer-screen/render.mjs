@@ -29,7 +29,7 @@ import {
   launchCapPerWallet,
   priceWalkFallbackCliff,
 } from './dune.mjs';
-import { estimatePlanCredits } from './client.mjs';
+import { describeMonthlyCapCredits, estimatePlanCredits } from './client.mjs';
 import { LANDING_TIP_CAVEAT } from './entry.mjs';
 // The reach the plan quotes is DERIVED, never a second copy of the formula: an operator reads this
 // block before authorising a run, so it has to describe the walk `readLaunchWindow` will actually do.
@@ -1609,8 +1609,11 @@ export function renderDryRun(plan) {
         `                                Free-tier REFERENCE POINT only, never this run's denominator: ` +
           `${DUNE_MONTHLY_CREDITS.toLocaleString('en-US')} credits/month.`,
       );
+      // A MISSING OR NON-NUMERIC PIN RENDERS THE NAMED REFUSAL, NEVER A CRASH. This line used to
+      // interpolate the pin directly, so the one operator state 322a's whole config surface is built
+      // to answer legibly — a cap just edited and typoed — produced a bare TypeError here instead.
       L.push(
-        `  operator cap                  ${d.monthlyCreditCapCredits.toLocaleString('en-US')} credits/month ` +
+        `  operator cap                  ${describeMonthlyCapCredits(d.monthlyCreditCapCredits)} ` +
           `(thresholds.json -> dune.monthlyCreditCapCredits)`,
       );
       L.push('                                A live run is refused against the SMALLER of this cap and whatever the');

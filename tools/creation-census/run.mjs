@@ -41,6 +41,7 @@ import {
   CeilingReached,
   decideAllowance,
   describeAllowanceDecision,
+  describeMonthlyCapCredits,
   estimatePlanCredits,
   localCreditEstimate,
   parseUsageResponse,
@@ -552,7 +553,7 @@ export async function main(argv, env, say) {
   // cannot be read (captain decision 322a). A --live run compares the worst case above against
   // whichever of the two is SMALLER and names the one that bound.
   say(
-    `  operator cap   ${bounds.dune.monthlyCreditCapCredits} credit(s)/month ` +
+    `  operator cap   ${describeMonthlyCapCredits(bounds.dune.monthlyCreditCapCredits)} ` +
       `(bounds.json -> dune.monthlyCreditCapCredits), applied to the billing period of whichever ` +
       `key this run uses; the vendor's own figure for that period is the other ceiling, is read ` +
       `LIVE on --live, and the SMALLER of the two binds`,

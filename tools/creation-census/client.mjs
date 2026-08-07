@@ -512,6 +512,38 @@ export const ALLOWANCE_ACCOUNT_WIDE_CAVEAT =
 export const MONTHLY_CAP_PIN = 'dune.monthlyCreditCapCredits';
 
 /**
+ * Render the operator's configured cap for a PLAN, or say — in the live path's own words — why it
+ * cannot be rendered.
+ *
+ * **A PLAN THAT CANNOT READ THE CAP MUST SAY SO IN THE SAME TERMS A RUN WOULD REFUSE IN.** Every
+ * other surface of captain decision 322a answers a missing or non-numeric pin with a NAMED refusal
+ * pointing at {@link MONTHLY_CAP_PIN}; the two plan printers reached that same operator state and
+ * answered with a bare `TypeError` (`undefined.toLocaleString`) and with the literal text
+ * `operator cap undefined`. Both are the failure the naming requirement exists to prevent, on the
+ * one config surface 322a introduces — an operator who has just edited the cap and typoed it is
+ * exactly who is reading a dry run.
+ *
+ * It is deliberately in the shared region rather than written once per lane: the two plan printers
+ * live on opposite sides of the directory boundary and neither may import the other, so one wording
+ * across both is a duplicated text pinned by a test — the same remedy the rest of this block uses.
+ *
+ * **It renders, it never decides.** No verdict, bound or value depends on it, and a plan printer has
+ * no credential and no balance; {@link decideAllowance} remains the only thing that refuses, and it
+ * refuses on the identical condition this reports.
+ *
+ * @param {unknown} monthlyCapCredits The pin as the lane's own bounds file holds it, uncoerced.
+ * @returns {string} The cap phrase, units included, or the named-refusal phrase.
+ */
+export function describeMonthlyCapCredits(monthlyCapCredits) {
+  const usable =
+    typeof monthlyCapCredits === 'number' && Number.isFinite(monthlyCapCredits) && monthlyCapCredits > 0;
+  return usable
+    ? `${monthlyCapCredits.toLocaleString('en-US')} credits/month`
+    : `UNREADABLE — the cap is missing or non-numeric at ${MONTHLY_CAP_PIN}, so a live run REFUSES ` +
+      `before spending anything rather than falling back to the vendor's figure`;
+}
+
+/**
  * What a run's own arithmetic is worth once it has started spending.
  *
  * Between the pre-flight reading and the end of a run the vendor counter is useless — it lags by

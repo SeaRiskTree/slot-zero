@@ -183,7 +183,10 @@ unread *balance* and here it is the run's own cost, or its own ceiling, that is 
 **This lane has no fallback** — unlike the screen, which walks the Solana RPC when Dune refuses, a
 census with no Dune answer is no census. So refusing costs one deferred run, while proceeding blind
 costs a billed execution that returns nothing and cannot be retried this period. `--dry-run`, the
-default, prints the worst case with **no key at all**.
+default, prints the worst case with **no key at all** — and where the cap pin itself is missing or
+non-numeric it prints that named refusal in place of a figure, in the same wording a live run refuses
+in (`client.mjs` → `describeMonthlyCapCredits`, the one renderer for both keyed lanes), so a typoed
+cap reads as the named state rather than as `undefined`.
 
 **What the guard cannot see** — and both caveats travel on every verdict, passing ones included:
 

@@ -2218,7 +2218,12 @@ uncapped. The last two refuse even under `allowanceRequired: false`, because tha
 unread *balance* and here it is the run's own cost, or its own ceiling, that is unknown.
 
 A refusal here is the ordinary Dune fallback: slower, never wrong. `--dry-run` prints the worst case
-and the balance below which the leg refuses, and needs no credential to do it.
+and the balance below which the leg refuses, and needs no credential to do it. **A plan whose cap pin
+is itself missing or non-numeric prints that named refusal rather than a figure** — the same wording
+a live run refuses in, naming `dune.monthlyCreditCapCredits` and saying the run refuses rather than
+falling back to the vendor's figure; `client.mjs` → `describeMonthlyCapCredits` is the one renderer,
+so a typoed cap is legible on the surface an operator reads before authorising a run instead of a
+crash there.
 
 **What the guard cannot see, and both caveats travel on every verdict including the passing ones:**
 

@@ -22,6 +22,12 @@
  * - **The key is interpolated in exactly one place, as a HEADER.** No URL this client builds can
  *   carry a credential, so nothing that logs a URL can leak one.
  *
+ * **A FOURTH PROPERTY ARRIVED WITH CAPTAIN DECISION 381**, and it is the one that bounds a spend
+ * rather than counting one: {@link DuneClient.cancelExecution}. Dune bills compute by engine time, so
+ * walking away from a running execution stops the watching and not the meter — measured at 180.002
+ * credits for a statement left running to the vendor's 30-minute limit. It is the ONE request the
+ * request ceiling may not refuse, for the reason stated on it.
+ *
  * One property is new here, and it is about the account rather than the bill: {@link
  * DuneClient.postJson} — the call that CREATES a saved query — is never retried either. The Free
  * tier allows ten private queries and a retried create would spend a second irreplaceable slot on
@@ -312,6 +318,39 @@ export class DuneClient {
     return run;
   }
 
+  /**
+   * **STOP AN EXECUTION WE ARE NO LONGER WILLING TO PAY FOR.**
+   *
+   * Dune bills execution compute by engine time consumed, so walking away from a running execution
+   * does not stop the meter — it only stops us watching it. That is the shape that was measured on
+   * 2026-08-08: a statement that compiled, ran to the engine's 30-minute limit and billed 180.002
+   * credits for zero rows. Every abandonment path in this repository issues this call first.
+   *
+   * **NEVER RETRIED, and its failure never masks the abandonment.** A cancel that does not land
+   * leaves the execution running; there is nothing better to do about that than say so, and a retry
+   * loop on the way out of a run that is already going wrong buys nothing. The caller reports
+   * `cancelAcknowledged: false` and the vendor's own words with it.
+   *
+   * **IT IS THE ONE REQUEST THE REQUEST CEILING MAY NOT REFUSE.** The ceiling exists to bound spend;
+   * a ceiling that blocked the cancel would convert a bounded bill into an unbounded one at exactly
+   * the moment the bound is needed — the abandonment usually happens because the poll budget ran out,
+   * i.e. with the ceiling at or near its limit. It still COUNTS as issued, so `stats().requests` may
+   * exceed `maxRequests` by the number of cancels a run had to send, and each lane's
+   * `maxRequestsPerRun` justification says so rather than the counter quietly lying.
+   *
+   * @param {string} executionId
+   * @returns {Promise<unknown>}
+   */
+  async cancelExecution(executionId) {
+    const path = `/execution/${executionId}/cancel`;
+    const run = this.#queue.then(
+      () => this.#request(path, { method: 'POST', body: {}, exemptFromCeiling: true }),
+      () => this.#request(path, { method: 'POST', body: {}, exemptFromCeiling: true }),
+    );
+    this.#queue = run.catch(() => undefined);
+    return run;
+  }
+
   /** Sleep between polls, on this client's own injected clock so tests stay free. @param {number} ms */
   async wait(ms) {
     await this.#sleep(ms);
@@ -319,7 +358,10 @@ export class DuneClient {
 
   /**
    * @param {string} path
-   * @param {{ method: 'GET' | 'POST', body?: unknown, retries?: number }} opts
+   * @param {{ method: 'GET' | 'POST', body?: unknown, retries?: number,
+   *   exemptFromCeiling?: boolean }} opts `exemptFromCeiling` is the cancel, and only the cancel:
+   *   see {@link DuneClient.cancelExecution} for why a spend ceiling must not be able to stop the
+   *   one request that stops a spend.
    * @returns {Promise<unknown>}
    */
   async #request(path, opts) {
@@ -327,7 +369,7 @@ export class DuneClient {
     let lastTransportError = null;
 
     for (let attempt = 0; attempt <= retries; attempt++) {
-      if (this.#issued >= this.#ceiling) {
+      if (opts.exemptFromCeiling !== true && this.#issued >= this.#ceiling) {
         throw new CeilingReached(
           this.#ceiling,
           path,
@@ -443,6 +485,19 @@ export class DuneClient {
 // billed whether or not they succeed and are what {@link DuneClient} already ceilings. Result BYTES
 // are billed separately at {@link EXPORT_CREDITS_PER_MB}. This block converts a run's plan, stated
 // in executions and bytes, into the one unit the allowance is denominated in.
+//
+// **AND A PRE-FLIGHT CHECK CANNOT BOUND WHAT AN EXECUTION ACTUALLY COSTS — captain decision 381,
+// 2026-08-08.** This guard refuses a plan whose PINNED worst case does not fit; the spend happens
+// after it passes, and Dune caps a single execution's cost nowhere. So the protection was only ever
+// as good as the pin, and the pin was a guess: a lane running behind this exact code path, with the
+// live counter re-read before every execution, printed `verdict: sufficient` against a pinned worst
+// case of 6 credits and was billed 180.002 for an execution that returned nothing. The two halves of
+// the answer both live here. {@link MEASURED_TIMEOUT_FLOOR_CREDITS} is what the vendor's own
+// 30-minute engine limit costs, and it is the floor every per-execution pin must now sit at or above
+// so the ARITHMETIC is honest. {@link executionDeadlineCredits} prices the client-side deadline that
+// bounds a single execution, and {@link DuneExecutionAbandoned} is the distinct outcome that says we
+// stopped it rather than that it broke — because a guard that cannot cap a spend can only ever
+// refuse a plan, and refusing plans is not the same as bounding money.
 
 /**
  * Dune's account-usage endpoint, relative to the API base.
@@ -460,6 +515,214 @@ export const USAGE_PATH = '/usage';
  * which is why an export figure alone is never presented as a bill.
  */
 export const EXPORT_CREDITS_PER_MB = 20;
+
+/**
+ * Dune's own wall-clock limit on ONE execution, in milliseconds.
+ *
+ * It is the vendor's number, not a bound of ours: an execution the engine has not finished by then is
+ * killed and reported `QUERY_STATE_FAILED`. Nothing here can raise it and nothing here needs to —
+ * what matters is that it is the LONGEST an execution can run, and therefore the MOST one can cost.
+ */
+export const ENGINE_TIMEOUT_MS = 1_800_000;
+
+/**
+ * What reaching {@link ENGINE_TIMEOUT_MS} COSTS, and it is the number this repository was most wrong
+ * about.
+ *
+ * **MEASURED 2026-08-08.** A scout lane ran an `information_schema.columns` probe that compiled, ran,
+ * and was killed by the engine at the 30-minute limit. It returned no rows, produced no result and
+ * ended `QUERY_STATE_FAILED` — and it billed **180.002 credits**, read off the free `POST /usage`
+ * counter either side with no other execution in flight (219.825 -> 399.827) and re-read after
+ * settling. `slot-zero-venue-gradeability-inventory` -> `report.md` section 0 (held in firstmate's
+ * records, not in this repo) owns the reading and the ledger it came out of.
+ *
+ * **"A FAILED EXECUTION IS FREE" IS TRUE ONLY OF A STATEMENT THAT FAILS TO COMPILE, and this
+ * repository said otherwise for months.** Dune bills execution compute by engine time consumed. A
+ * statement the planner rejects consumes none and costs nothing, which is what made the free-probe
+ * premise look right for as long as every probe anyone wrote was malformed. A statement the planner
+ * ACCEPTS and cannot finish consumes the whole limit and is billed for the whole limit. Both come
+ * back as "failed", and only the first is free — so iterate on COMPILE errors, which return in
+ * seconds, and treat a failure that takes minutes to arrive as the most expensive thing on the
+ * account: maximum compute for zero rows.
+ *
+ * It is `n = 1`, on whatever engine that query ran on, and Dune publishes no price table — which is
+ * why the pins derived from it carry a margin rather than sitting on it.
+ */
+export const MEASURED_TIMEOUT_FLOOR_CREDITS = 180.002;
+
+/**
+ * Execution compute per engine-MINUTE. **DERIVED from the one reading above, and it is an inference.**
+ *
+ * 180.002 credits over 30 minutes is 6.0001 credits a minute. Dune publishes no rate, so this says
+ * only that ONE runaway execution priced out at that figure; it is not established that compute is
+ * linear in engine time, nor that a larger engine bills the same. It exists because a client-side
+ * deadline is worth nothing to an operator who cannot price it, and pro-rating the one measurement is
+ * the only pricing available.
+ */
+export const CREDITS_PER_ENGINE_MINUTE = MEASURED_TIMEOUT_FLOOR_CREDITS / (ENGINE_TIMEOUT_MS / 60_000);
+
+/**
+ * What an execution left to run to `deadlineMs` can cost, in whole credits, rounded UP.
+ *
+ * Whole credits because the vendor's counter advances in whole-credit jumps, so sub-credit precision
+ * on a worst case is precision the account cannot resolve. Capped at {@link ENGINE_TIMEOUT_MS},
+ * because a deadline past the vendor's own limit buys nothing — the engine stops first.
+ *
+ * **AT THE ENGINE LIMIT IT RETURNS 181, WHICH IS THE FLOOR EVERY PER-EXECUTION PIN IN THIS
+ * REPOSITORY MUST SIT AT OR ABOVE.** A pin below it is the defect this function was written for: a
+ * guard that clears a plan at 25 credits and is then billed 180 does not bound the month it exists to
+ * bound.
+ *
+ * @param {number} deadlineMs How long an execution may run before this client cancels it.
+ * @returns {number} Worst-case execution-compute credits for one such execution.
+ */
+export function executionDeadlineCredits(deadlineMs) {
+  const bounded = Math.min(Math.max(0, deadlineMs), ENGINE_TIMEOUT_MS);
+  return Math.ceil((bounded / 60_000) * CREDITS_PER_ENGINE_MINUTE);
+}
+
+/**
+ * What a deadline does and does NOT buy, stated because the difference is a spend decision.
+ *
+ * A pre-flight allowance check cannot bound an execution's cost: the spend happens AFTER the check
+ * passes, and the only thing that bounds it is how long the engine is left running. So the deadline
+ * is the mechanism, and the allowance check is the budget.
+ *
+ * **WHAT IT REMOVES FOR CERTAIN** is the shape that was measured: an execution abandoned by our own
+ * poll budget and left running to the engine's own limit, billed in full for a result nobody read.
+ * Every abandonment path in this repository now issues the cancel.
+ *
+ * **WHAT IT DOES NOT ESTABLISH** is that cancelling stops the BILL. Dune documents
+ * `POST /execution/{id}/cancel` as cancelling an execution and publishes nothing about how a
+ * cancelled one is billed, and settling it costs a deliberately-runaway execution — which is not a
+ * purchase this lane made. So the deadline is claimed as a bound on the WAIT, and as a bound on the
+ * bill only conditionally; the pinned per-execution worst case stays at the engine floor, where it
+ * is honest under either answer.
+ */
+export const EXECUTION_DEADLINE_CAVEAT =
+  'A client-side deadline bounds the WAIT for certain and the BILL only if Dune stops the engine on ' +
+  'cancel, which the vendor does not document and this repository has not bought the runaway ' +
+  'execution it would take to settle. What it removes for certain is walking away from a live ' +
+  'execution and being billed the full 30-minute engine limit for a result nobody read.';
+
+/**
+ * One wording for the deadline and its price, so a plan, a run record and a refusal all say it the
+ * same way.
+ *
+ * @param {number} deadlineMs
+ * @returns {string}
+ */
+export function describeExecutionDeadline(deadlineMs) {
+  const seconds = Math.round(deadlineMs / 1000);
+  return (
+    `${seconds}s execution deadline (worth at most ${executionDeadlineCredits(deadlineMs)} credit(s) of ` +
+    `compute at the measured ${MEASURED_TIMEOUT_FLOOR_CREDITS} credits per ${ENGINE_TIMEOUT_MS / 60_000}-minute ` +
+    `engine timeout), after which this client cancels rather than waits`
+  );
+}
+
+/**
+ * **WE STOPPED THIS EXECUTION — as distinct from it breaking.** A separate outcome on purpose.
+ *
+ * An operator reading a run has to be able to tell a statement that failed from a statement we
+ * refused to keep paying for, because the two call for opposite responses: the first is a bug in the
+ * SQL or the vendor, the second is a statement that has outgrown its deadline and either needs a
+ * wider one or needs rewriting. Folding them together is how the 180-credit incident stayed
+ * invisible — the poll budget gave up, the run reported a generic Dune failure, and nothing said the
+ * engine was still running on our money.
+ *
+ * It extends the file's own `DuneRefused` deliberately, and is `terminal`: every existing catch site
+ * keeps working and keeps falling back, while a site that wants to tell the two apart tests for this
+ * type or reads `name`. The cancel's own outcome travels on it rather than being swallowed —
+ * `cancelAcknowledged: false` means the cancel was issued and the vendor did not confirm it, which
+ * is the case where the engine may still be running and the bill may still be growing.
+ */
+export class DuneExecutionAbandoned extends DuneRefused {
+  /**
+   * @param {{ executionId: string, reason: 'deadline' | 'poll-budget', elapsedMs: number,
+   *   deadlineMs: number, cancelAcknowledged: boolean, cancelNote: string | null, detail: string }} what
+   */
+  constructor(what) {
+    const why =
+      what.reason === 'deadline'
+        ? `the ${Math.round(what.deadlineMs / 1000)}s execution deadline expired`
+        : 'the poll budget ran out first, which is the same event in the other unit';
+    // A cancel that did not land means the execution may STILL be running and the bill may still be
+    // growing. That is worse news than the abandonment, so the vendor's own words travel with it.
+    const cancelled = what.cancelAcknowledged
+      ? 'was acknowledged'
+      : `was NOT acknowledged${what.cancelNote === null ? '' : `: ${what.cancelNote}`}`;
+    super(
+      `ABANDONED BY US, not failed by Dune: execution ${what.executionId} was still running after ` +
+        `${Math.round(what.elapsedMs / 1000)}s and this client cancelled it rather than wait — ${why}. ` +
+        `${what.detail} Cancel ${cancelled}. ${EXECUTION_DEADLINE_CAVEAT}`,
+      { status: null, terminal: true },
+    );
+    this.name = 'DuneExecutionAbandoned';
+    /** @type {string} */ this.executionId = what.executionId;
+    /** @type {'deadline' | 'poll-budget'} */ this.reason = what.reason;
+    /** @type {number} */ this.elapsedMs = what.elapsedMs;
+    /** @type {number} */ this.deadlineMs = what.deadlineMs;
+    /** @type {boolean} */ this.cancelAcknowledged = what.cancelAcknowledged;
+    /** @type {string | null} */ this.cancelNote = what.cancelNote;
+    /** @type {number} */ this.worstCaseCredits = executionDeadlineCredits(what.deadlineMs);
+  }
+}
+
+/**
+ * Cancel a running execution, then refuse with {@link DuneExecutionAbandoned}.
+ *
+ * **This is the one place an abandonment happens, and it is in the shared region on purpose.** Both
+ * keyed tools carry their own `executeAndRead` — the directory boundary forbids importing across it
+ * — and two copies of "give up on a running execution" is exactly the thing that must not drift,
+ * because the difference between the two would be silent and would be money. The loops decide WHEN;
+ * this decides what giving up MEANS, identically.
+ *
+ * **The cancel's own failure is caught and reported, never thrown.** A cancel that does not land
+ * leaves the execution running and possibly still billing, which is worse news than the abandonment
+ * itself — so it travels on the refusal rather than replacing it. Throwing the cancel's error would
+ * lose the deadline, the elapsed time and the execution id in one go.
+ *
+ * @param {{ cancelExecution: (executionId: string) => Promise<unknown> }} client
+ * @param {{ executionId: string, reason: 'deadline' | 'poll-budget', elapsedMs: number,
+ *   deadlineMs: number, detail: string }} what
+ * @returns {Promise<never>}
+ */
+export async function abandonExecution(client, what) {
+  const cancelled = await cancelExecutionQuietly(client, what.executionId);
+  throw new DuneExecutionAbandoned({
+    ...what,
+    cancelAcknowledged: cancelled.acknowledged,
+    cancelNote: cancelled.note,
+  });
+}
+
+/**
+ * Cancel a running execution and say how it went, without ever throwing.
+ *
+ * **THE CANCEL IS FOR EVERY WAY OF LEAVING A LIVE EXECUTION, not just the deadline.** A request
+ * ceiling reached mid-poll, a transport failure, a result read this repository refuses — each of
+ * them walks away from an execution the engine is still running, and each of them used to leave it
+ * running to Dune's own 30-minute limit. So the poll loops call this on their way out and rethrow
+ * whatever they were already carrying: a `CeilingReached` still reads as a ceiling and keeps its
+ * remedy, and the cancel happens anyway. It is separate from {@link abandonExecution} for exactly
+ * that reason — one path REPLACES the error because stopping IS the outcome, the other must not.
+ *
+ * It cannot throw, because a failing cancel must never become the reported failure of a run that had
+ * a real one already.
+ *
+ * @param {{ cancelExecution: (executionId: string) => Promise<unknown> }} client
+ * @param {string} executionId
+ * @returns {Promise<{ acknowledged: boolean, note: string | null }>}
+ */
+export async function cancelExecutionQuietly(client, executionId) {
+  try {
+    await client.cancelExecution(executionId);
+    return { acknowledged: true, note: null };
+  } catch (cause) {
+    return { acknowledged: false, note: cause instanceof Error ? cause.message : String(cause) };
+  }
+}
 
 /**
  * Why a reading of the allowance is a FLOOR on spend rather than a measurement of it.

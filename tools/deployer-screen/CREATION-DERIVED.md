@@ -686,17 +686,25 @@ reaches it falls back whole exactly as it did before the cap existed.
 
 Two spend rules that are not negotiable, both from the vendor's own billing model:
 
-- **A failed execution is still billed and it is terminal.** `DuneClient.execute` is the one call in
-  this repository that is never retried, on any failure, for any reason. Polling and result reads
-  are retried; they return no bytes when they fail, so they cost nothing.
+- **A failed execution is still billed and it is terminal — and "free if it fails" holds only for a
+  statement that fails to COMPILE.** `DuneClient.execute` is the one call in this repository that is
+  never retried, on any failure, for any reason. Polling and result reads are retried; they return no
+  bytes when they fail, so they cost nothing. A statement the planner ACCEPTS and cannot finish
+  consumes Dune's whole 30-minute engine limit and is billed for it, which is why an execution is now
+  CANCELLED at `dune.executionDeadlineMs` rather than abandoned; `README.md` → *"The monthly credit
+  ceiling — what it is, and what it cannot see"* and the two pins' own `justification` entries own
+  captain decision 381 and every figure in it.
 - **Budget from *billed* credits, not `execution_cost_credits`**, which understates by ~3.5×:
   retrieving results is ~71% of the bill at ~20 credits/MB. Measured on this account 2026-08-03: the
   probe cost 0.751 billed against 0.751 of compute (2.5 kB of result), and the five-wallet
   enumeration cost 1.75 billed against 0.92 of compute (48 kB of result).
 
 The Free tier is **2,500 credits/month**, the key is the captain's alone and **not shared** with any
-other holder, only 10 private queries exist, and the allowance is now **read and priced against
-before a run spends** — against the SMALLER of the vendor's figure and the operator's own monthly cap
+other holder, the tier allows 10 private queries — though the key this fleet uses today answers
+`402 Max number of private queries reached` to any private create, so a scratch probe has to be
+public (`AGENTS.md` → the Dune section owns that measurement) — and the allowance is now **read and
+priced against before a run spends** — against the SMALLER of the vendor's figure and the operator's
+own monthly cap
 (`thresholds.json` → `dune.monthlyCreditCapCredits`, captain decision 322a). `README.md` → *"The
 monthly credit ceiling — what it is, and what it cannot see"* owns that guard, its four verdicts, the
 two ceilings and the things it cannot see. What is still the operator's is the arithmetic

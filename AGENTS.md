@@ -620,9 +620,54 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   the column, so the union's `pump_call_create` half reads `null` (101 of the subject's 252
   launches). And **all three fields are `null` on a walk-sourced candidate, meaning UNMEASURED, not
   0%** — `creatorMovementUnmeasured`'s trap running the other way.
-- **A FAILED EXECUTION IS STILL BILLED AND IS TERMINAL.** `DuneClient.execute` is the one call in
-  this repository that is never retried, on any failure, for any reason; polling and result reads are
-  retried because they return no bytes when they fail. **Budget from *billed* credits, not
+- **A FAILED EXECUTION IS STILL BILLED AND IS TERMINAL — AND "FREE IF IT FAILS" IS TRUE ONLY OF A
+  STATEMENT THAT FAILS TO *COMPILE*.** Dune bills compute by engine time consumed: a statement the
+  planner rejects consumes none and costs nothing, and a statement the planner ACCEPTS and cannot
+  finish consumes the vendor's whole **30-minute** limit and is billed for it. Both come back as
+  "failed". **Measured 2026-08-08: 180.002 credits for an execution that returned no rows**, read off
+  the free `POST /usage` counter either side with no other execution in flight (219.825 → 399.827)
+  and re-read after settling — so ~**6.0 credits an engine-minute**, an inference from one reading
+  and the only pricing there is. **Iterate on COMPILE errors, which return in seconds; a failure that
+  takes minutes to arrive is the most expensive thing on this account.** Two more measured facts from
+  the same lane, both cheap to fall into twice: `information_schema.columns` filtered with
+  `table_schema IN (...)` is the shape that did not finish in 30 minutes while the identical read
+  with `table_schema = '<literal>'` returned in seconds (stated as an inference about predicate
+  pushdown, not as confirmed engine behaviour); and **the account behind `DUNE_API_KEY` has ZERO
+  private query slots** — `POST /api/v1/query` with `is_private: true` returns `402 Max number of
+  private queries reached` while `GET /queries` reports `total: 0` — so **a scratch probe must be
+  created as a PUBLIC query or a lane cannot run at all**, and `run.mjs` → `deploySavedQuery` still
+  sends `is_private: true`, which is recorded in `bounds.json` → `justification.dune.privateQuerySlots`
+  and not acted on. Evidence: `slot-zero-venue-gradeability-inventory` → `report.md` §0, held in
+  firstmate's records, not in this repo.
+- **A PRE-FLIGHT ALLOWANCE CHECK CANNOT BOUND AN EXECUTION, AND CAPTAIN DECISION 381 (2026-08-08) IS
+  BOTH HALVES OF THE ANSWER.** The guard refuses a plan whose *pinned* worst case does not fit; the
+  spend happens after it passes, and Dune caps a single execution's cost nowhere — so the protection
+  was only ever as good as the pin, and the pin was a guess. The lane that proved it was not careless:
+  it ran behind this repo's own guarded path with the live counter re-read before every execution and
+  printed `verdict: sufficient (ok=true)` against a pinned worst case of 6. **(1) The pin is now
+  derived from the vendor's ceiling, not from our statement**: `dune.worstCaseCreditsPerExecution` is
+  **200** in *both* keyed bounds files (was 25), from `client.mjs` →
+  `executionDeadlineCredits(ENGINE_TIMEOUT_MS)` = 181 plus ~10% for n = 1 on one engine size, and
+  `test/dune-credit-ceiling.test.ts` pins both at or above that floor and pins them equal. It changes
+  what the lanes can PLAN — a default census reserves 224.51 credits rather than 49.51 and a period
+  affords ~17 reserved runs rather than ~80; the screen's leg reserves 690.4 rather than 340.4 — while
+  a real run of either still costs single-digit credits. **(2) The deadline is what actually caps one
+  execution**: `dune.executionDeadlineMs` is 120,000 ms in both, exactly the give-up point both poll
+  loops already had, and what changed is that giving up now issues `POST /execution/{id}/cancel`
+  instead of walking away from a live engine. **Cancelling bounds the WAIT for certain and the BILL
+  only if Dune stops the engine on cancel — undocumented, and settling it costs a runaway execution,
+  so it is not claimed**; that is exactly why the pin stays at the engine floor. Worth **13 credits**
+  per execution at the default if cancelling does stop the clock, which is the figure to size a lane
+  from. Abandonment is its OWN outcome (`DuneExecutionAbandoned`, census exit **5**, distinct from the
+  vendor's exit 4) so an operator can tell *we stopped this* from *this broke*, and **no path leaves a
+  live execution running** — a request ceiling or transport failure mid-poll cancels too and rethrows
+  its own error unchanged. Cite each lane's `justification.dune.worstCaseCreditsPerExecution` and
+  `…executionDeadlineMs` rather than restating the arithmetic. **The two per-execution pins this did
+  NOT move are recorded where they live**: `entry_source_agreement.worstCaseComputeCreditsPerExecution`
+  (1) cannot take the engine floor and stay plannable at 82 executions, and repricing an unactivated
+  Gate 3 leg is that decision's; `dune-reproduction.mjs` → `WORST_CASE_CREDITS_PER_EXECUTION` moved
+  10 → **61**, the floor its own 600 s deadline buys.
+- **Budget from *billed* credits, not
   `execution_cost_credits`, which understates by ~3.5×** — retrieving results is ~71% of the bill at
   ~20 credits/MB. Hence: aggregate server-side, select only the columns the tool reads (dropping the
   create tx and graduation timestamp halved the payload to **~97 bytes/row** at FOUR columns; the SQL
@@ -705,7 +750,13 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   the rest; do not restate the figures, and re-read the live balance rather than quoting one.
 - **Free tier: 2,500 credits/month on that plan, UNSHARED, and only 10 PRIVATE QUERIES — but
   the account is NOT at that cap, and "the slots are full" is a stale claim that once blocked a lane
-  on nothing.**
+  on nothing. AND ON THE KEY THIS FLEET IS USING TODAY THE PRIVATE ALLOWANCE IS *ZERO*, measured
+  2026-08-08** — `GET /queries` reports `total: 0` and `POST /usage` reports `private_queries: 0`,
+  yet `POST /api/v1/query` with `is_private: true` returns `402 Max number of private queries
+  reached`, while the same create as a PUBLIC query succeeds. So the whole ladder below describes a
+  DIFFERENT account's slots, which is the same "re-list rather than quote" discipline it already
+  preaches, one level up: **a lane needing a scratch slot on this key must create a public query, and
+  a `--deploy` that sends `is_private: true` cannot succeed at all.**
   **Never take a saved-query count on trust; re-checking it is free of credits, not of the key:**
   `GET /api/v1/queries?limit=100` with the `X-Dune-API-Key` header lists them, and creating a
   throwaway with `POST /api/v1/query` then archiving it proves a slot is free without spending an

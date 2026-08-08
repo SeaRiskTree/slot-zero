@@ -372,7 +372,8 @@ export async function planEntryEligibility(kind, sources, opts) {
  * @param {object} opts
  * @param {{ maxExecutionsPerRun: number, maxRequestsPerRun: number, maxResultRowsPerWindow: number,
  *   resultBytesPerRowCeiling: number, worstCaseComputeCreditsPerExecution: number }} opts.agreementBounds
- * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number,
+ * @param {{ pollIntervalMs: number, maxPollAttempts: number, executionDeadlineMs?: number | undefined,
+ *   maxResultRows: number,
  *   maxCoverageLagMs: number, allowanceReserveCredits: number, monthlyCreditCapCredits: number,
  *   allowanceTightMultiple: number,
  *   allowanceRequired: boolean }} opts.duneBounds
@@ -416,6 +417,10 @@ export async function buildDuneEntryFillSource(client, opts) {
     bounds: {
       pollIntervalMs: opts.duneBounds.pollIntervalMs,
       maxPollAttempts: opts.duneBounds.maxPollAttempts,
+      // The execution deadline travels with every bounds object this run builds. A leg that dropped
+      // it would silently fall back to the poll-budget product — the same number today, and free to
+      // drift the moment either pin moves. Captain decision 381.
+      executionDeadlineMs: opts.duneBounds.executionDeadlineMs,
       maxResultRows: opts.duneBounds.maxResultRows,
     },
     onRefreshFailure: (note) =>
@@ -429,6 +434,7 @@ export async function buildDuneEntryFillSource(client, opts) {
     bounds: {
       pollIntervalMs: opts.duneBounds.pollIntervalMs,
       maxPollAttempts: opts.duneBounds.maxPollAttempts,
+      executionDeadlineMs: opts.duneBounds.executionDeadlineMs,
       maxResultRows: opts.agreementBounds.maxResultRowsPerWindow,
     },
     coverage: assessTradeCoverage({

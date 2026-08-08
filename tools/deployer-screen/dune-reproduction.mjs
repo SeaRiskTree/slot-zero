@@ -162,9 +162,29 @@ export const ESTIMATED_BYTES_PER_ROW = 250;
  * Compute tracks the SCAN HULL and is small: four orders of magnitude of hull bought 7.7x the
  * compute, because the statement's mint equi-join and its `block_time` predicate let the engine skip
  * almost everything. The widest hull this plan issues is 29.8 days, which extrapolates linearly to
- * ~3.5 credits. **10 is pinned**: ~5x the largest measurement and ~3x that extrapolation, so a
- * hull-to-compute relationship steeper than linear still fits, while the number stays small enough
- * that the guard bites if this statement is ever edited into an expensive one.
+ * ~3.5 credits. **10 WAS PINNED on that basis** — ~5x the largest measurement and ~3x that
+ * extrapolation.
+ *
+ * **AND 10 WAS STILL THE WRONG QUANTITY, WHICH IS CAPTAIN DECISION 381 (2026-08-08).** Every figure
+ * above prices this statement when it WORKS. A statement that degrades does not cost a little more;
+ * it runs until Dune's engine kills it, and that was measured: a statement that compiled, ran to the
+ * 30-minute engine limit and returned no rows billed **180.002 credits**
+ * (`slot-zero-venue-gradeability-inventory` → `report.md` §0, held in firstmate's records, not in
+ * this repo). So the ceiling on ONE execution is not what the statement scans, it is how long the
+ * engine is left running — and since that decision this lane's `executeAndRead` CANCELS at its own
+ * deadline rather than walking away from a live execution. **61 is pinned**: `client.mjs` →
+ * `executionDeadlineCredits` of this lane's deadline, which is its own poll budget of 200 × 3,000 ms
+ * = 600 s, at the measured ~6.0 credits an engine-minute. The plan's worst case therefore goes from
+ * `batches × 10` to `batches × 61` of compute, against a retrieval half that is unchanged and still
+ * dominant (~495 credits of bytes over the full tape); the guard refuses more and refuses earlier,
+ * which is the safe direction for a lane whose executions cannot be taken back.
+ *
+ * **WHY THIS LANE'S PIN IS NOT THE 200 THE TWO KEYED `dune` BLOCKS TOOK.** Those price at most two
+ * executions and can afford the vendor's own 30-minute floor outright; this one prices one execution
+ * per batch, so it is pinned at the floor its DEADLINE buys instead. That is honest only because the
+ * deadline exists and is enforced — and only conditionally, since cancelling bounds the wait for
+ * certain and the bill only if Dune stops the engine on cancel, which the vendor does not document.
+ * A batch that ever needs longer than 600 s must move this number with the deadline.
  *
  * **THE COST OF THIS LANE IS RETRIEVAL, NOT COMPUTE** — ~495 credits of bytes against ~24 of
  * compute over the full tape — which inverts the assumption `thresholds.json` → `stage2_entry_dune`
@@ -173,7 +193,7 @@ export const ESTIMATED_BYTES_PER_ROW = 250;
  * fill. It is stated here because a reader arriving from that block will otherwise size this one
  * wrongly.
  */
-export const WORST_CASE_CREDITS_PER_EXECUTION = 10;
+export const WORST_CASE_CREDITS_PER_EXECUTION = 61;
 
 /**
  * Credits held back for the usage counter's lag. Same reserve the screen's Dune leg pins, and for
@@ -430,6 +450,7 @@ export function recordCustody(client) {
     stats: () => client.stats(),
     noteResultBytes: (/** @type {number} */ b) => client.noteResultBytes(b),
     wait: (/** @type {number} */ ms) => client.wait(ms),
+    cancelExecution: (/** @type {string} */ executionId) => client.cancelExecution(executionId),
     readUsage: () => client.readUsage(),
     getJson: (/** @type {string} */ path) => {
       const match = /^\/query\/(\d+)$/.exec(path);
@@ -964,7 +985,10 @@ export async function checkReproductionAllowance(client, batches, nowMs, thresho
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} opts
  * @param {readonly ReproductionBatch[]} opts.batches
- * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number }} opts.bounds
+ * @param {{ pollIntervalMs: number, maxPollAttempts: number, executionDeadlineMs?: number | undefined,
+ *   maxResultRows: number }} opts.bounds `executionDeadlineMs` is the give-up point an execution is
+ *   cancelled at; absent, it defaults to the poll budget's own product. See `dune.mjs` ->
+ *   `executeAndRead` and captain decision 381.
  * @param {number} [opts.queryId]
  * @param {string} [opts.sql]
  * @param {(line: string) => void} [opts.say]
@@ -1354,8 +1378,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   // Polls cost a request and no credits, so the attempt count is sized to outlast the widest scan
   // rather than trimmed: an execution abandoned by our own poll ceiling is billed exactly as much as
-  // one we waited for, and is worth nothing.
-  const bounds = { pollIntervalMs: 3_000, maxPollAttempts: 200, maxResultRows: 40_000 };
+  // one we waited for, and is worth nothing. **AND ABANDONING IT NOW CANCELS IT** (captain decision
+  // 381): walking away used to leave the engine running to Dune's own 30-minute limit, measured at
+  // 180.002 credits for zero rows. The deadline is stated in the unit it is a bound in and is the
+  // same 600 s the poll budget already came to, so nothing about when this lane gives up moved.
+  const bounds = {
+    pollIntervalMs: 3_000,
+    maxPollAttempts: 200,
+    executionDeadlineMs: 600_000,
+    maxResultRows: 40_000,
+  };
   const client = new DuneClient({
     key: credential.key,
     maxExecutions: batches.length,

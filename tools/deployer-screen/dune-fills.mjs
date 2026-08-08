@@ -819,7 +819,10 @@ export function assessTradeCoverage(input) {
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} opts
  * @param {boolean} opts.refresh
- * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number }} opts.bounds
+ * @param {{ pollIntervalMs: number, maxPollAttempts: number, executionDeadlineMs?: number | undefined,
+ *   maxResultRows: number }} opts.bounds `executionDeadlineMs` is the give-up point an execution is
+ *   cancelled at; absent, it defaults to the poll budget's own product. See `dune.mjs` ->
+ *   `executeAndRead` and captain decision 381.
  * @param {(note: string) => void} [opts.onRefreshFailure]
  * @returns {Promise<import('./dune.mjs').CoverageProbe>}
  */
@@ -888,7 +891,10 @@ export function committedEntryQuery() {
  *
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} opts
- * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number }} opts.bounds
+ * @param {{ pollIntervalMs: number, maxPollAttempts: number, executionDeadlineMs?: number | undefined,
+ *   maxResultRows: number }} opts.bounds `executionDeadlineMs` is the give-up point an execution is
+ *   cancelled at; absent, it defaults to the poll budget's own product. See `dune.mjs` ->
+ *   `executeAndRead` and captain decision 381.
  * @param {import('./dune.mjs').CoverageAssessment | null} opts.coverage The trade tables' own
  *   coverage assessment — **the observed watermark**, and the only thing that answers eligibility on
  *   this route. `null`, an assessment that refused, or one carrying no `toMs` means this source

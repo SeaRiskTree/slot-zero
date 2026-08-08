@@ -110,9 +110,13 @@
  */
 
 import {
+  DuneExecutionAbandoned,
   DuneRefused,
+  abandonExecution,
+  cancelExecutionQuietly,
   decideAllowance,
   estimatePlanCredits,
+  executionDeadlineCredits,
   parseUsageResponse,
 } from './client.mjs';
 
@@ -1430,35 +1434,105 @@ export function describeExecutionError(status) {
  * integer" and a state name. It is read defensively and its absence is said rather than papered
  * over, because a failure whose reason is missing is still a failure that must be reportable.
  *
+ * **AND GIVING UP NOW CANCELS, WHICH IS THE WHOLE OF CAPTAIN DECISION 381's SECOND HALF.** This loop
+ * used to walk away when the poll budget ran out and say so — and that sentence was a lie about the
+ * money: the engine kept running on Dune's side, to its own 30-minute limit, and billed the full
+ * limit for a result nobody read. Measured at 180.002 credits on 2026-08-08, against a guard that had
+ * cleared the plan at a pinned 6. Both give-up paths now go through `client.mjs` →
+ * {@link abandonExecution}, which issues `POST /execution/{id}/cancel` before it refuses and hands
+ * back `DuneExecutionAbandoned` — a DISTINCT outcome, so a reader can tell "we stopped this" from
+ * "this broke". It is still a `DuneRefused` and still `terminal`, so every caller's fallback to the
+ * RPC walk is unchanged. What the cancel bounds for certain is the wait; whether it stops the BILL is
+ * the vendor's to say and they do not — `EXECUTION_DEADLINE_CAVEAT` carries that and rides on the
+ * refusal.
+ *
+ * **THE DEADLINE AND THE POLL BUDGET ARE ONE BOUND IN TWO UNITS, and the duration is the authority.**
+ * Captain decision 144a's rule applied here: a bound the vendor controls must not be written as two
+ * numbers that can drift. `executionDeadlineMs` is the give-up point; `maxPollAttempts` is the
+ * request budget that has to COVER it, and `test/dune-credit-ceiling.test.ts` pins
+ * `maxPollAttempts × pollIntervalMs >= executionDeadlineMs`. It defaults to exactly that product, so
+ * a caller that pins nothing keeps the give-up point it already had and gains only the cancel.
+ *
  * @param {import('./client.mjs').DuneClient} client
  * @param {number} queryId
  * @param {Record<string, string>} parameters
- * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number }} bounds
+ * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number,
+ *   executionDeadlineMs?: number | undefined, clock?: () => number }} bounds `clock` is injected
+ *   only so a test can reach the deadline without waiting for it; a run reads the wall clock.
  * @returns {Promise<DuneResultSet>}
  */
 export async function executeAndRead(client, queryId, parameters, bounds) {
+  const clock = bounds.clock ?? Date.now;
+  const deadlineMs = bounds.executionDeadlineMs ?? bounds.maxPollAttempts * bounds.pollIntervalMs;
   const executionId = await client.execute(queryId, parameters);
-  for (let attempt = 0; attempt < bounds.maxPollAttempts; attempt++) {
-    await client.wait(bounds.pollIntervalMs);
-    const status = await client.getJson(`/execution/${executionId}/status`);
-    const state = field(status, 'state');
-    if (state === 'QUERY_STATE_COMPLETED') {
-      return readResult(client, `/execution/${executionId}/results?limit=${bounds.maxResultRows}`, bounds);
+  const startedAtMs = clock();
+  // A LIVE EXECUTION IS NEVER LEFT RUNNING, WHATEVER TOOK US OUT OF THIS LOOP. The deadline and
+  // the poll budget cancel themselves through `abandonExecution`; this catches every OTHER way
+  // out with the engine still going — a request ceiling reached mid-poll, a transport failure,
+  // a result read this repo refuses — and cancels before rethrowing the error unchanged. Two
+  // things it deliberately does not do: it does not replace the caller's error (a
+  // `CeilingReached` must keep its own remedy), and it does not cancel a SETTLED execution,
+  // because there is nothing to stop and the result has already been paid for.
+  let settled = false;
+  try {
+    for (let attempt = 0; attempt < bounds.maxPollAttempts; attempt++) {
+      await client.wait(bounds.pollIntervalMs);
+      const status = await client.getJson(`/execution/${executionId}/status`);
+      const state = field(status, 'state');
+      if (state === 'QUERY_STATE_COMPLETED') {
+        // SETTLED: the engine has stopped on its own. A read this repository then refuses is a
+        // refusal about the ANSWER, and cancelling a finished execution would neither save money
+        // nor be true.
+        settled = true;
+        return readResult(client, `/execution/${executionId}/results?limit=${bounds.maxResultRows}`, bounds);
+      }
+      if (state === 'QUERY_STATE_FAILED' || state === 'QUERY_STATE_CANCELLED' || state === 'QUERY_STATE_EXPIRED') {
+        // SETTLED the other way: the vendor stopped it. Nothing to cancel, and a cancel here would
+        // spend a request to tell Dune something it just told us.
+        settled = true;
+        throw new DuneRefused(
+          `Dune execution of query ${queryId} ended ${String(state)}: ${describeExecutionError(status)} It is ` +
+            `billed either way and it is NOT retried — the creation enumeration falls back to the Solana ` +
+            `RPC walk for this run. A statement that fails to COMPILE costs nothing; one that ran and then ` +
+            `failed is billed for the engine time it consumed.`,
+          { status: null, terminal: true },
+        );
+      }
+      // The deadline is checked AFTER the poll, so a state the vendor has already settled is read
+      // rather than cancelled: there is nothing to stop, and cancelling a finished execution would
+      // discard a result this run has already paid for.
+      if (clock() - startedAtMs >= deadlineMs) {
+        await abandonExecution(client, {
+          executionId,
+          reason: 'deadline',
+          elapsedMs: clock() - startedAtMs,
+          deadlineMs,
+          detail:
+            `The creation enumeration falls back to the Solana RPC walk for this run, which is slower ` +
+            `and costs Helius credits rather than Dune ones. Raising thresholds.json ` +
+            `dune.executionDeadlineMs buys this statement more engine time and costs up to ` +
+            `${executionDeadlineCredits(deadlineMs)} more credits per execution at the measured rate; ` +
+            `it is a spend decision and dune.worstCaseCreditsPerExecution has to move with it.`,
+        });
+      }
     }
-    if (state === 'QUERY_STATE_FAILED' || state === 'QUERY_STATE_CANCELLED' || state === 'QUERY_STATE_EXPIRED') {
-      throw new DuneRefused(
-        `Dune execution of query ${queryId} ended ${String(state)}: ${describeExecutionError(status)} It is ` +
-          `billed either way and it is NOT retried — the creation enumeration falls back to the Solana ` +
-          `RPC walk for this run.`,
-        { status: null, terminal: true },
-      );
-    }
+    await abandonExecution(client, {
+      executionId,
+      reason: 'poll-budget',
+      elapsedMs: clock() - startedAtMs,
+      deadlineMs,
+      detail:
+        `The poll budget of ${bounds.maxPollAttempts} × ${bounds.pollIntervalMs} ms expired before the ` +
+        `deadline did, which means thresholds.json dune.maxPollAttempts no longer covers ` +
+        `dune.executionDeadlineMs — the two are meant to be one bound in two units. The creation ` +
+        `enumeration falls back to the Solana RPC walk for this run.`,
+    });
+  } catch (cause) {
+    if (!settled && !(cause instanceof DuneExecutionAbandoned)) await cancelExecutionQuietly(client, executionId);
+    throw cause;
   }
-  throw new DuneRefused(
-    `Dune execution of query ${queryId} did not finish within ${bounds.maxPollAttempts} polls. The ` +
-      `execution is billed and is not retried; the creation enumeration falls back to the Solana RPC walk.`,
-    { status: null, terminal: true },
-  );
+  /* c8 ignore next -- `abandonExecution` always throws; this satisfies the return type. */
+  throw new Error('unreachable');
 }
 
 /**
@@ -1503,7 +1577,10 @@ export async function executeAndRead(client, queryId, parameters, bounds) {
  *   around them — the custody check, the refresh-then-cache order, the billed-execution fallback of
  *   captain decision 298a — because two copies of that is two answers to "may this surface be read".
  * @param {boolean} opts.refresh Execute instead of reading the cache.
- * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number }} opts.bounds
+ * @param {{ pollIntervalMs: number, maxPollAttempts: number, executionDeadlineMs?: number | undefined,
+ *   maxResultRows: number }} opts.bounds `executionDeadlineMs` is the give-up point an execution is
+ *   cancelled at; absent, it defaults to the poll budget's own product. See `dune.mjs` ->
+ *   `executeAndRead` and captain decision 381.
  * @param {CoverageProbe | null} [opts.fallbackProbe] A cached probe the caller ALREADY holds. Supplied
  *   on the staleness path, where re-reading the cache would spend a billed read to be handed back the
  *   very probe that was judged stale a moment ago. One rule, one code path: a refresh that fails
@@ -1999,7 +2076,8 @@ export async function checkDuneAllowance(client, input) {
  *   this function records the failure from the callback rather than reading `probe.fromCache`, which
  *   cannot distinguish a failed refresh from an ordinary cached read. That run ends at one billed
  *   execution, coverage refused, and every candidate carrying its own fallback reason.
- * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number,
+ * @param {{ pollIntervalMs: number, maxPollAttempts: number, executionDeadlineMs?: number | undefined,
+ *   maxResultRows: number,
  *   maxCoverageLagMs: number, maxOversizedExecutions?: number, maxOversizedRowsPerExecution?: number }} opts.bounds
  * @param {boolean} [opts.splitOversized] **Opt-IN, and deliberately so.** Captain decision 196a
  *   authorises the split; wiring it into `screen.mjs` also moves `thresholds.json` →

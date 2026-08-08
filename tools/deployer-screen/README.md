@@ -99,10 +99,12 @@ node tools/deployer-screen/grade.mjs --help
 
 # THE DUNE ENTRY STATEMENT, RUN AGAINST THE COMMITTED TAPE. Also a DRY RUN by default: it prints
 # the batch plan and its credit estimate and opens no socket. --live SPENDS, and it is the most
-# expensive thing in this directory — a 657.195-credit planned worst case against a 2,500-credit
-# shared month, ~495 spent in fact, almost all of it result bytes. The measurement record owns those
-# figures; read "The reproduction" below before running it, because the committed answer is already
-# in measurements/2026-08-05-dune-entry-reproduction/ and a test asserts it.
+# expensive thing in this directory — a 1269.195-credit planned worst case against a 2,500-credit
+# shared month (657.195 when the record below was written, before captain decision 381 moved this
+# lane's per-execution pin 10 -> 61), ~495 spent in fact, almost all of it result bytes. The
+# measurement record owns the SPENT figures; read "The reproduction" below before running it,
+# because the committed answer is already in measurements/2026-08-05-dune-entry-reproduction/ and a
+# test asserts it.
 node tools/deployer-screen/dune-reproduction.mjs
 node tools/deployer-screen/dune-reproduction.mjs --mints <mint>          # price a change cheaply first
 node tools/deployer-screen/dune-reproduction.mjs --live --out <path> --rows <cache>
@@ -2394,9 +2396,35 @@ crash there.
   a reservation.* **This is not the lag caveat above and neither stands in for the other**: unshared
   says no stranger is spending the balance; the counter is still behind the truth, and the reserve
   still comes off before any comparison.
+- **IT CANNOT BOUND WHAT AN EXECUTION ACTUALLY COSTS — only what this run is allowed to PLAN.** The
+  spend happens after the check passes, and Dune caps a single execution's cost nowhere, so the
+  protection is only ever as good as the pin. That is measured, not hypothetical: a lane running
+  behind this exact code path, with the counter re-read before every execution, printed
+  `verdict: sufficient (ok=true)` against a pinned worst case of 6 credits and was billed **180.002**
+  for an execution that returned nothing. **"A failed execution is free" is true only of a statement
+  that fails to COMPILE** — Dune bills compute by engine time, so one that compiles and then runs to
+  the vendor's 30-minute limit consumes the whole limit and is billed for it, and both come back as
+  "failed". Captain decision 381 is both halves of the answer.
+  `dune.worstCaseCreditsPerExecution` is re-derived against that engine floor, **25 → 200**, so this
+  leg's worst case goes 340.4 → **690.4** and a run is refused once the period's `credits_used`
+  passes ~3,285 rather than ~3,635 — headroom reserved, not credits spent, since a real leg costs
+  single-digit credits. And `dune.executionDeadlineMs` (120,000 ms) makes `executeAndRead`
+  **cancel** an execution still running at the deadline instead of walking away from a live engine;
+  no path leaves one running, a request ceiling or transport failure mid-poll included. **Cancelling
+  bounds the WAIT for certain and the BILL only if Dune stops the engine on cancel** — undocumented,
+  and settling it would cost a runaway execution — which is exactly why the pin sits at the engine
+  floor rather than at the deadline's own 13 credits. An abandoned execution is a distinct outcome
+  (`DuneExecutionAbandoned`) that is still a terminal `DuneRefused`, so every fallback is unchanged
+  while a reader can tell *we stopped this* from *this broke*. Both pins' `justification` entries own
+  the arithmetic; cite them rather than restating it. **Two per-execution pins were deliberately NOT
+  moved and say so in place**: `entry_source_agreement.worstCaseComputeCreditsPerExecution` cannot
+  take the engine floor and stay plannable at 82 executions, so repricing it belongs with Gate 3;
+  `dune-reproduction.mjs` → `WORST_CASE_CREDITS_PER_EXECUTION` moved 10 → 61, the floor its own 600 s
+  deadline buys.
 - **Execution compute is not predictable from the vendor.** Dune publishes no price table for it, so
-  `worstCaseCreditsPerExecution` is pinned per lane against measured executions of *these* queries.
-  A statement that grew a `dex_solana.trades` join would be ~9× the pin with nothing else failing.
+  `worstCaseCreditsPerExecution` is pinned per lane. A statement that grew a `dex_solana.trades`
+  join would need it re-measured — and the ~9× figure on record is a SUCCESSFUL execution, which
+  says nothing about where a joined statement's own timeout floor sits.
 - **Nothing tracks the period across runs.** The tool is stateless; what a run carries is the
   reading it took plus `dune.localEstimate`, an estimate of its own spend from its own counters,
   labelled as one. Re-reading `/usage` after a run would report the balance from *before* it.

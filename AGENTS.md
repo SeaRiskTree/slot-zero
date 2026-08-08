@@ -606,7 +606,12 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   of that month's graduations (`slot-zero-graduation-regime-remeasure` §§1.4 and 3, held in
   firstmate's records, not in this repo). The screen records it per launch and prints each
   candidate's share wherever a candidate is summarised; **no bar, gate, rate or verdict reads it and
-  no launch is dropped or weighted for it** — 227b and 227c were declined. `dune.mjs` →
+  no launch is dropped or weighted for it** — 227b and 227c were declined, and **227b has since been
+  REVERSED by captain decision 351, which is NOT implemented in this tree**, so this bullet describes
+  the code as it stands; **227c — dropping a mayhem-heavy deployer outright — is NOT reversed and
+  remains declined**, a deployer being judged on its non-mayhem record rather than removed for having
+  a mayhem one (see "How big the addressable population is" below, which owns 351's evidence).
+  `dune.mjs` →
   `MAYHEM_OBSERVATION_ONLY` is the one sentence, and a test pins that verdicts are identical with the
   column populated, absent and malformed. **Three traps.** A malformed value folds to `null` rather
   than refusing the row, deliberately and unlike `bonded`/`launches_total`, because a refused row
@@ -1713,6 +1718,121 @@ supersedes the re-open monitor (captain, 2026-08-02: *a competent dev will not r
   consecutive live, completed runs with no new wallet.
 - **The queue is not yet wired into the screen**: `screen.mjs` enumerates its own candidates and has
   no wallet-list flag, so handing the queue over is an operator step today.
+
+## How big the addressable population is, and why discovery stopped hunting identities
+
+Four measurement lanes ran 2026-08-07 and settled the questions below. **None of them moved a
+threshold, a bar, a verdict or a line of code here, and neither does this section** — every figure
+below is evidence from elsewhere, asserted by no test in this repo, recorded because a contributor
+cannot see it otherwise and it was expensive to get. Sources are held in firstmate's records, not in
+this repo (see "Citing a report this repo does not hold"):
+`slot-zero-census-gate-true-denominator` → `report.md`,
+`slot-zero-seed-sources-for-1000-verdicts` → `report.md`,
+`slot-zero-offlaunchpad-graduation-criterion` → `report.md`,
+`slot-zero-operation-fingerprint-discriminates` → `report.md`, and
+`kol-cohort-vs-outsider-funding` → `report.md` §§2 and 2.1, consolidated in
+`wider-net-ruled-in-ruled-out.md`.
+
+- **THE ADDRESSABLE POPULATION IS ORDER 10², AND THAT IS A CEILING RATHER THAN A CURRENT SHORTFALL.**
+  **176,200** pump.fun deployers created a token in 2026-07 and **58** pass the committed Stage 1
+  gate (`minTokens` 25, `minCompletionRate` 0.25, `minSpanDays` 14) read over each deployer's
+  lifetime pump.fun history; 2026-06 reads 169,323 and **52**. **112 wallets pass that gate in the
+  entire recorded history of pump.fun, and 240 at a 15-launch bar** (103 in 2026-07 at that bar).
+  **The gate is not the binding constraint and loosening it buys weak operators rather than hidden
+  good ones**: `minSpanDays` is inert (12 July exclusions on its own), `minTokens` costs 889, and
+  `minCompletionRate` alone removes **6,477 of the 6,535** July deployers clearing the other two —
+  of which **90% sit below a 0.05 completion rate**. Every count here is pump.fun-only, so a
+  deployer's launches on other venues are invisible to it.
+  `slot-zero-census-gate-true-denominator` → `report.md`; the 90% reading is stated in
+  `wider-net-ruled-in-ruled-out.md` §1.1.
+- **CHAIN-WIDE CREATOR SUPPLY DOES NOT FIX IT, AND THE TWO MULTIPLIERS HAVE DIFFERENT
+  DENOMINATORS — do not reconcile them.** Solana produces a mean of **11,938** distinct
+  fungible-token creators a day over 2026-05-01 → 2026-08-06 (median 11,584, range 10,011–15,426),
+  of which **9,828/day are genuinely new** — first appearances, which is the binding figure for a
+  lane like `ledger.mjs` that grades a wallet once and never offers it again — and **61.1% are
+  already pump.fun** (7,294/day). So going chain-wide multiplies the DAILY creator supply by
+  **1.64×**, and the MONTHLY distinct-creator population by **1.8×** (319,204 chain-wide against
+  pump.fun's 176,200), not by an order of magnitude.
+  `slot-zero-seed-sources-for-1000-verdicts` → `report.md`.
+- **PUMP.FUN GRADUATES TWO DIFFERENT WAYS AND THE CAPITAL SPLIT BETWEEN THEM IS 292×.** Over all
+  157,259 pump.fun launches created 2026-07-01→05, split on the venue's own `is_mayhem_mode` flag: a
+  classic curve graduation is preceded by a median net quote inflow of **85.005 SOL** into the
+  token's own primary market, a **mayhem** graduation by **0.291 SOL** — 292× cheaper, and not
+  separable in trade data from a token that churned ~$1,700 and died. This is **not** the second,
+  small (4.292-SOL reserve / 12.161-SOL) curve a sibling lane published; at 0.5-SOL resolution that
+  bucket holds 1 token. It is not a fringe case either: in 2026-07 mayhem was **27.15% of pump.fun
+  launches and 46.41% of its graduations**, and its daily graduation count went **26 → 261 inside
+  three days**. **The consequence for this repo is that `minCompletionRate` counts two different
+  achievements through one number** — of the 58 all-time gate-passers active in July, **13 are
+  mayhem-heavy and read exactly 0.0000 under an economic reading against a real rate up to 0.6897**.
+  **Nothing here reads the flag and nothing in this section changes that**: `is_mayhem_mode` remains
+  recorded-and-unread per captain decision 227a (see the Dune section). Whether it should is captain
+  decision 351, taken 2026-08-07 and **not implemented in this tree**; implementing it is its own
+  lane. Two things follow for a reader today. **The 58 / 112 / 240 counts above rest on the
+  pre-351 reading of graduation and 351 requires them re-derived rather than adjusted in prose.**
+  And **`tools/deployer-screen/README.md`'s schema-15 row, which records 227b as declined, is stale
+  in that clause** — left as found here, because correcting it belongs with the implementation.
+  `slot-zero-offlaunchpad-graduation-criterion` → `report.md` §4 and §8.2, and its
+  `decision-351-mayhem-not-competence.md`.
+- **RAISE-85 IS THE VENUE-AGNOSTIC SUBSTITUTE FOR GRADUATION, AND IT IS UNADOPTED — AN OPEN
+  QUESTION, NOT A RULE.** *Net quote inflow into a token's own primary market over its first 24
+  hours, reaching 85 SOL-equivalent.* It is computable from one cross-venue trade table with no
+  venue-specific code, and against the classic curve it reproduces pump.fun's own graduation almost
+  exactly on that 157,259-launch sample: **precision 1.0000 — zero false positives against 108,310
+  non-graduating tokens — recall 0.9918, F1 0.9959**, with the 85 SOL constant read off the data
+  rather than fitted (graduating non-mayhem tokens read 85.005 SOL, p50 = p99, to three decimals).
+  **No bar, gate, verdict or line of code in this repository reads it, and adopting it is filed as a
+  captain decision (352, `venue-agnostic-criterion-adoption`) that has not been taken.** The two
+  halves of that decision cannot be separated: adopting it off-launchpad while pump.fun keeps its
+  native reading leaves pump.fun deployers a ~46% graduation credit no off-launchpad deployer can
+  earn. Its measured direction on the existing population is **entirely towards refusal — zero
+  deployers gain admission at any floor** — which under this repo's stated asymmetry (a false
+  rejection is permanent and invisible) is the dangerous direction, not the safe one. Its limits are
+  stated in the source and travel with it: equivalent strictness across venues is **not**
+  established, and the rate-level result is one month of one venue.
+  `slot-zero-offlaunchpad-graduation-criterion` → `report.md` §§2.2, 3, 8.2 and 9.
+- **DISCOVERY PIVOTED TWICE, AND THE SECOND STEP CLOSED IDENTIFICATION. RANK BY MEASURED BEHAVIOUR;
+  DO NOT TRY TO IDENTIFY WHO ANYONE IS.** First (captain decision 359d) the question moved from
+  scoring individual deployers on past competence to hunting the OPERATIONS that create tokens, on
+  the three measurements above: the competent-deployer population is permanently order 10², the
+  completion-rate bar's cost is 90% concentrated below a 0.05 rate, and chain-wide creator supply is
+  only 1.8× pump.fun's. **Then identification itself was closed** (captain decision 370a), because
+  every wallet-side identifier tried collapsed against the chain-wide population: the
+  funding-and-launch template matches **53.8%** of chain-wide fungible-token creators (7,122 of
+  13,238 on 2026-07-15) and the chain median funding-to-launch gap is **27 seconds**, making the
+  studied operation's own 4m31s *slower* than typical; the full four-rung stack retains
+  **1.51%**, which is still **200 wallets in one day across 58 distinct launcher-tool fee accounts**;
+  the fee account common to all three of that operation's template launches is pump.fun's own
+  protocol fee recipient, the genuinely third-party addresses were never the same twice, and that one
+  operation's own tool address changed **six times in eight months**. The surviving discriminator —
+  an exactly round SOL funding amount, **2.06% of chain-wide creators, 273 wallets/day** — narrows
+  and does not identify, and is **not being pursued**. **Measurement is what keeps working**: it is
+  keyless, free, and already the core asset. **Do not open another wallet-side identifier hunt, and
+  read any text that sounds like one as stale.** Captain decisions 359d and 370a
+  (`2026-08-07-slot-zero-359d-wider-net-operation-pivot.md`,
+  `2026-08-07-slot-zero-370a-rank-not-identify.md`); evidence in `wider-net-ruled-in-ruled-out.md`.
+  **This does not weaken `src/cohort.ts` → `CREATE_SLOT_COHORT`**, whose byte-identical genesis is a
+  far narrower observation on six named wallets and already says common ownership is not formally
+  established — what is ruled out is the template as a way of FINDING operations at chain scale.
+- **FUNDER-ADDRESS CLUSTERING DOES NOT WORK, and it is a measured negative worth not repeating.**
+  In the studied operation **no funder is shared by any two of the nine wallets whose genesis was
+  read exactly**: the deployer and three cohort launchers were each funded from a *different*
+  custodial exchange hot wallet holding 41,939–51,439 SOL. The operator funds each launcher from a
+  fresh exchange withdrawal, so the signal was the funding **template**, not the funding **address**
+  — and per the bullet above neither is being pursued as an identifier now.
+  `kol-cohort-vs-outsider-funding` → `report.md` §2.
+- **DUNE CANNOT LABEL SOLANA ADDRESSES, AND THIS IS PERMANENT.** `labels.addresses` holds **1.96
+  billion rows of which 7,261 are Solana, every one a validator**. It is an EVM product. This is the
+  single most re-derived dead end in this project's history — **do not buy it again**. For an address
+  label, `tools/venue-label/` is the route this repo actually has, and pump.fun's own `Global` config
+  settles a protocol fee recipient for free. `wider-net-ruled-in-ruled-out.md` §1.7.
+- **Two facts a reader of this section will need, both already owned elsewhere in this tree — cite
+  them, do not restate them.** The custodial wall is a permanent limit of the method, it is wider
+  than "an exchange", and a true on-chain DEX swap is never one: `README.md` → "The ceiling of the
+  method: shared custodial venues" owns all of it. And **this project's tests are population
+  assertions rather than fixture tests**, so a failure means the population moved and not that a
+  fixture drifted: "Where the data lives" above owns that, including why sampling the tapes for
+  testing is refused.
 
 ## Maintaining this file
 

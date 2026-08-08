@@ -406,6 +406,19 @@ than restating it.
 venue, on-chain evidence cannot see the relationship.* Named first by
 `kol-cohort-vs-outsider-funding/report.md` §8.2 — "**Custodial walls are walls.**"
 
+**A wall is wider than "an exchange", and the converse is what makes the rule usable.** A
+custodial wall is **any hop where a third party takes custody and re-emits**, and this
+project's own data already contains three kinds that are not a centralized exchange: a
+**withdrawal-processor relay** (the service that funds `5brv79eF…`), a **durable-nonce batch
+payout to unrelated recipients** (the 2026-05-12 transaction below, seven strangers in it), and
+a **cross-chain bridge** (`5brv79eF…`'s own first action is a Circle CCTP v2 receive) —
+`kol-cohort-vs-outsider-funding/report.md` §2 and §2.1. Mixers are the same class. **Where a
+trail crosses one of these it stops there, permanently.** And the converse holds and is worth
+stating, because it is what keeps the rule from swallowing ordinary trading: **a true on-chain
+DEX swap is never a custodial wall.** The user's own key signs it and both sides settle
+atomically in one transaction, so a DEX changes the asset, not the identity — there is no
+off-chain ledger hop for anyone to deny. Routers and aggregators do not change that.
+
 **Here it is not hypothetical; it is measured.** The `9BhkaAyb…` book and the operation
 demonstrably hold accounts at the same venue:
 

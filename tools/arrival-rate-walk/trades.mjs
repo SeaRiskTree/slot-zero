@@ -9,7 +9,7 @@
  * runs for days, so coupling it to a file another lane is editing is the expensive side of the trade.
  *
  * Three properties of the endpoint everything here is built on, all from
- * `data/population-tape-2026-07-29/report.md` §9.2 and re-confirmed by the graduated-life collection:
+ * `population-tape-2026-07-29/report.md` §9.2 and re-confirmed by the graduated-life collection:
  *
  * 1. **Rows come back NEWEST FIRST**, so a walk that pages through them runs *backwards* in time and
  *    reaches the create slot LAST. A truncated backwards walk is silently wrong rather than visibly

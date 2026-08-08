@@ -182,7 +182,7 @@ export interface BookMemberOutsider {
    * seconds of it. **This corrects `report.md` §4.3's "ran March–May and stopped"**, which
    * is what its window into *this deployer's* launches shows; on-chain the wallet ran to
    * this timestamp (funding report §6.1). See
-   * `data/population-tape-2026-07-29/IMPORT.md`, "Corrections".
+   * `population-tape-2026-07-29/IMPORT.md`, "Corrections".
    */
   readonly retiredUtc: string;
   /** Where the measurement that closes this lives; its figures are not imported here. */

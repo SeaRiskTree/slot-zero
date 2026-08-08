@@ -2,7 +2,7 @@ import type { GrossSol, NetSol } from './units.js';
 
 /**
  * The three views the dataset supports, typed so that the three mistakes documented in
- * `data/population-tape-2026-07-29/IMPORT.md` are compile errors rather than silently
+ * `population-tape-2026-07-29/IMPORT.md` are compile errors rather than silently
  * wrong numbers.
  *
  * Naming rule, applied without exception: **any field carrying a tape-derived SOL amount

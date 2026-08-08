@@ -2,9 +2,9 @@
 /**
  * **Verify that a fetched data root is the data root it claims to be.**
  *
- * Captain decision 354a: CI fetches the measurement tapes from a private store rather than getting
- * them from the clone, so between the store and the suites there is now a transfer that can go
- * wrong — and the way it goes wrong is the dangerous shape. A download that dies half way leaves a
+ * Captain decision 354a: CI fetches the measurement tapes from a published store rather than
+ * getting them from the clone, so between the store and the suites there is now a transfer that can
+ * go wrong — and the way it goes wrong is the dangerous shape. A download that dies half way leaves a
  * root that EXISTS, holds most of its files, and reads as data. Several suites enumerate
  * `window/` and `life/` with `readdirSync`, so a short fetch does not raise `ENOENT`; it silently
  * changes the population every published number is computed over. That is the same failure this
@@ -32,9 +32,12 @@
  * **A missing manifest — or one that lists nothing — is itself a failure, and deliberately so.** It
  * cannot be waved through as
  * "nothing to check": a root with no manifest is a root whose provenance is unknown, and the whole
- * point of the check is that CI stopped getting its data from a place git could vouch for. The
- * in-repo copy needs no manifest because git is its manifest — every byte is content-addressed in
- * the commit the runner checked out — which is why CI only runs this in the fetching mode.
+ * point of the check is that CI stopped getting its data from a place git could vouch for. When
+ * this was written there was one exemption — the copy tracked inside the repository, where git was
+ * the manifest and every byte was content-addressed in the commit the runner checked out. **Dry
+ * dock phase C untracked that copy, so the exemption is gone with it**: a leftover `data/` in a
+ * working tree is now an unverified copy like any other, which is exactly the root somebody would
+ * point this at expecting a pass.
  */
 
 import { createHash } from 'node:crypto';
@@ -118,10 +121,12 @@ export function verifyDataRoot(root) {
   if (!existsSync(manifestPath)) {
     throw new Error(
       `${root} carries no ${MANIFEST_FILE}, so nothing here can vouch for what it holds.\n` +
-        `  A FETCHED store must ship its manifest — dry dock phase A wrote one beside the tapes.\n` +
-        `  The copy inside this repository deliberately has none: git is its manifest, every byte\n` +
-        `  content-addressed in the commit that was checked out, so it is not verified this way.\n` +
-        `  If you meant to check the in-repo copy, there is nothing to check.`,
+        `  A store ships its manifest beside the tapes — dry dock phase A wrote one, and it is in\n` +
+        `  the release asset. Re-fetch the store rather than generating a manifest from whatever\n` +
+        `  this directory happens to contain, which would vouch for the very thing in doubt.\n` +
+        `  There is no longer an exempt copy: the tapes tracked in this repository were untracked\n` +
+        `  by phase C, so a leftover data/ directory in a working tree is unverified like any other\n` +
+        `  and git is no longer its manifest.`,
     );
   }
 

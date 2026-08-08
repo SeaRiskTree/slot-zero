@@ -5,9 +5,15 @@
  * whole of captain decision 112a as it reaches this lane.
  *
  * ```
- * node tools/graduated-life-tape/collect.mjs --phase graduation --out data/graduated-life-2026-08-02
- * node tools/graduated-life-tape/collect.mjs --phase life       --out data/graduated-life-2026-08-02
+ * node tools/graduated-life-tape/collect.mjs --phase graduation --out ~/slot-zero-data/graduated-life-2026-08-02
+ * node tools/graduated-life-tape/collect.mjs --phase life       --out ~/slot-zero-data/graduated-life-2026-08-02
  * ```
+ *
+ * **`--out` belongs in the data store, not in this repository.** Dry dock phase C untracked the
+ * tapes for repository hygiene, so a collection written under `data/` in the tree either grows back
+ * what that phase removed or — for the published tape's own directory name — lands somewhere
+ * `.gitignore` hides and nothing else can find. `config/data-root.mjs` owns where a reader then
+ * looks: `~/slot-zero-data` by default, `$SLOT_ZERO_DATA_ROOT` when set.
  *
  * ## It checkpoints, because it runs for hours
  *

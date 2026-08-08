@@ -15,6 +15,7 @@
  * arrive here by the door the data root opened.
  */
 
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -29,7 +30,7 @@ import {
   DEFAULT_DATA_ROOT,
   GRADUATED_LIFE_TAPE,
   GRADUATED_LIFE_TAPE_DIR,
-  IN_REPO_DATA_ROOT,
+  OFF_REPO_DATA_ROOT_HINT,
   POPULATION_TAPE,
   POPULATION_TAPE_DIR,
   datasetDir,
@@ -135,13 +136,37 @@ export function environmentNamesRead(source: string): string[] {
 }
 
 describe('the data root resolves', () => {
-  it('defaults to the copy in this repository, so a clone works with no setup', () => {
-    // The DELIBERATE half of the choice: the other default — the off-repo store — would have made
-    // the untracking phase a pure deletion, and would have taken CI red on the day it landed,
-    // because CI is `actions/checkout` and the only data a runner has is the data in the tree.
-    expect(resolveDataRoot({})).toBe(IN_REPO_DATA_ROOT);
-    expect(DEFAULT_DATA_ROOT).toBe(IN_REPO_DATA_ROOT);
-    expect(IN_REPO_DATA_ROOT).toBe(join(REPO_ROOT, 'data'));
+  it('defaults to the STORE, and never to a `data/` directory a clone does not have', () => {
+    // Phase B kept the default in-repo because CI was `actions/checkout` and nothing else, so the
+    // only data a runner had was the data in the tree. Phase C untracked all 705 files — for
+    // repository hygiene, a lighter tree and faster clones — and pointed CI at the release asset,
+    // which settles both halves of that argument: `<repo>/data` now names a directory a clone does
+    // not have, and CI sets the variable itself rather than relying on this default at all.
+    expect(resolveDataRoot({})).toBe(DEFAULT_DATA_ROOT);
+    expect(DEFAULT_DATA_ROOT).toBe(join(homedir(), 'slot-zero-data'));
+    // DERIVED from the hint every message prints, not written out twice, so the path this resolves
+    // to and the path a reader is told to use cannot drift apart.
+    expect(DEFAULT_DATA_ROOT).toBe(resolveDataRoot({ [DATA_ROOT_ENV_VAR]: OFF_REPO_DATA_ROOT_HINT }));
+    expect(DEFAULT_DATA_ROOT).not.toBe(join(REPO_ROOT, 'data'));
+  });
+
+  it('the tapes are OUT of the tree, and ignored so they cannot walk back in', () => {
+    // The acceptance property of phase C, asserted rather than described: `git ls-files` is what a
+    // fresh clone gets, and a working copy that still holds the untracked directories — every
+    // machine that had them before the untracking — must not be able to re-add them with a stray
+    // `git add data/`.
+    const tracked = execFileSync('git', ['ls-files', '-z', 'data'], { cwd: REPO_ROOT, encoding: 'utf8' })
+      .split('\0')
+      .filter(Boolean);
+    expect(tracked).toEqual([]);
+    for (const dataset of DATASETS) {
+      // `check-ignore` exits 1 when the path is NOT ignored, which would throw here.
+      const ignored = execFileSync('git', ['check-ignore', '-q', `data/${dataset}/`], {
+        cwd: REPO_ROOT,
+        encoding: 'utf8',
+      });
+      expect(ignored, `data/${dataset}/ must be ignored`).toBe('');
+    }
   });
 
   it('the OTHER configuration is reachable by the variable alone — no code change', () => {
@@ -309,8 +334,13 @@ describe('a fetched data root is verified, never trusted', () => {
     // whole condition CI left behind when it stopped getting the data from a commit.
     const root = write({ [`${POPULATION_TAPE}/launches.csv`]: 'mint\nx\n' });
     expect(() => verifyDataRoot(root)).toThrow(/carries no MANIFEST\.sha256/);
-    // And it says why the in-repo copy is exempt, so nobody "fixes" this by generating one.
-    expect(() => verifyDataRoot(root)).toThrow(/git is its manifest/);
+    // And it names the remedy — re-fetch — so nobody "fixes" this by generating a manifest from
+    // whatever the directory happens to hold, which would vouch for the very thing in doubt.
+    expect(() => verifyDataRoot(root)).toThrow(/Re-fetch the store/);
+    // The one exemption this message used to carve out is GONE with the tracked copy phase C
+    // removed: a leftover `data/` is unverified like any other root, and the message says so
+    // rather than leaving a reader to discover that git stopped vouching for it.
+    expect(() => verifyDataRoot(root)).toThrow(/git is no longer its manifest/);
   });
 
   it('catches the truncated fetch, the truncated FILE, and the stale extra file', () => {
@@ -417,9 +447,9 @@ describe('CI cannot go green without the tapes', () => {
   });
 
   it('validates the data source before anything depends on it, and fetch implies verify', () => {
-    // An unrecognised variable value must FAIL rather than fall through to the in-repo copy: a
-    // typo would otherwise read as a normal green build over something nobody chose. So the check
-    // is unconditional and sits ahead of every step that reads the mode.
+    // An unrecognised variable value must FAIL rather than fall through to anything: a typo would
+    // otherwise read as a normal green build over something nobody chose. So the check is
+    // unconditional and sits ahead of every step that reads the mode.
     const check = byRun('$SLOT_ZERO_DATA_SOURCE');
     const fetch = byRun('gh release download');
     const verify = byRun('config/verify-data-root.mjs');
@@ -429,27 +459,88 @@ describe('CI cannot go green without the tapes', () => {
     expect(check.index).toBeLessThan(verify.index);
     expect(fetch.index).toBeLessThan(verify.index);
     expect(verify.index).toBeLessThan(test.index);
-    expect(check.run).toMatch(/repo\|release\)/);
+    expect(check.run).toMatch(/\brelease\)/);
     expect(check.run).toMatch(/exit 1/);
 
-    // The fetch and the verification are gated on the SAME condition, so a fetched root is never
-    // reached by the suites without having been checked against its manifest — and nothing ELSE in
-    // the job is conditional, which is what keeps the suite itself unconditional above.
-    const gated = steps.filter((s) => s.if !== undefined);
-    expect(gated.map((s) => s.index)).toEqual([fetch.index, verify.index]);
-    expect(new Set(gated.map((s) => s.if)).size, 'fetch and verify must share one condition').toBe(1);
-    expect(fetch.if).toBe("env.SLOT_ZERO_DATA_SOURCE == 'release'");
+    // NOTHING in the job is conditional, which is a stronger property than the one this used to
+    // assert and is what phase C bought by retiring `repo`. While there were two modes, the fetch
+    // and the verification shared one `if:` so that a fetched root could never reach the suites
+    // unverified; with one mode the mode check has already exited non-zero on anything else, so an
+    // `if:` here could only ever be true — and a condition that cannot be false is a place for a
+    // future edit to hide a skip. It also keeps `npm test` unconditional above by construction.
+    expect(steps.filter((s) => s.if !== undefined)).toEqual([]);
 
     // `set -e` is what turns a failed download into a failed build rather than an empty directory,
     // and the first line is where it has to be for the download itself to be covered.
     for (const step of [check, fetch]) {
       expect((step.run ?? '').split('\n')[0]?.trim(), `step ${step.index}`).toBe('set -euo pipefail');
     }
-    // The default mode is the in-repo copy: phase C flips the repository variable, not this file.
+    // The default mode is the release asset: phase C untracked the tapes, so a checkout carries no
+    // data and there is nothing else this job could default to.
     const env = mapAt(parseWorkflowYaml(ci), 'ci.yml')['env'];
     expect(textAt(mapAt(env, 'env')['SLOT_ZERO_DATA_SOURCE'], 'env')).toBe(
-      "${{ vars.SLOT_ZERO_DATA_SOURCE || 'repo' }}",
+      "${{ vars.SLOT_ZERO_DATA_SOURCE || 'release' }}",
     );
+  });
+
+  it('RETIRES `repo` by name and loudly, rather than letting it fall through or half-work', () => {
+    // Phase C's own acceptance condition. `repo` meant "read the copy in the tree" and there is no
+    // copy in the tree; a repository variable still set to it from before the untracking is a
+    // configuration somebody chose, so it gets a sentence saying what happened to it rather than
+    // being swept into the unrecognised-value branch. Both branches exit non-zero — what differs is
+    // whether the log explains itself.
+    const check = byRun('$SLOT_ZERO_DATA_SOURCE');
+    const run = check.run ?? '';
+    expect(run).not.toMatch(/repo\|release\)/); // the old accept-both case
+
+    // The script is RUN rather than read: what matters is the exit status a runner sees and the
+    // sentence a reader of a failed build gets, and neither is provable from the case statement's
+    // text. Non-vacuous first — a selector that stopped finding this step would otherwise execute
+    // an empty script, which exits 0 and would pass the `release` case while failing nothing.
+    expect(run.length).toBeGreaterThan(0);
+    expect(run, 'byRun must have selected the mode check itself').toContain('case "$SLOT_ZERO_DATA_SOURCE"');
+    const modeCheck = (value: string) =>
+      spawnSync('bash', ['-c', run], {
+        encoding: 'utf8',
+        env: { ...process.env, SLOT_ZERO_DATA_SOURCE: value },
+      });
+
+    // The one mode this job has.
+    expect(modeCheck('release').status, 'release must be accepted').toBe(0);
+
+    // The retired one: non-zero, and the log says what happened to it rather than only that the
+    // value was rejected.
+    const retired = modeCheck('repo');
+    expect(retired.status, '`repo` must fail the job').not.toBe(0);
+    expect(retired.stderr).toContain('phase C retired');
+    expect(retired.stderr).toContain('no longer tracked');
+    expect(retired.stderr).toContain("set it to 'release'");
+
+    // And everything else fails too, so a typo or an unset-to-empty variable can never read as a
+    // normal green build over a source nobody chose.
+    for (const value of ['releases', 'REPO', '']) {
+      expect(modeCheck(value).status, `${JSON.stringify(value)} must fail the job`).not.toBe(0);
+    }
+
+    // And nothing anywhere in the job treats `repo` as a source it could still read.
+    for (const step of steps) {
+      if (step.index === check.index) continue;
+      expect(step.run ?? '', `step ${step.index}`).not.toMatch(/SLOT_ZERO_DATA_SOURCE/);
+      expect(step.if ?? '', `step ${step.index}`).not.toMatch(/SLOT_ZERO_DATA_SOURCE/);
+    }
+  });
+
+  it('fetches the tapes from a PUBLIC release, on the read scope that needs no credential', () => {
+    // Captain decision 378a. The repository is public (377a), so the release asset is public and
+    // the workflow must not say otherwise: a comment claiming the store is private asserts
+    // something untrue about where this project's data lives. `contents: read` is the least scope
+    // that reads a release at all, and `secrets.GITHUB_TOKEN` is the run's own automatic one — no
+    // credential is provisioned for this and none is needed.
+    const permissions = mapAt(mapAt(parseWorkflowYaml(ci), 'ci.yml')['permissions'], 'permissions');
+    expect(Object.keys(permissions)).toEqual(['contents']);
+    expect(textAt(permissions['contents'], 'permissions.contents')).toBe('read');
+    // The whole word, any casing: there is no true sentence this file can write with it.
+    expect(ci).not.toMatch(/private/i);
   });
 
   it('SEES a conditional or continued-on-error test step — the shape a text match misses', () => {

@@ -4,7 +4,7 @@
  * with fixtures.
  *
  * Two properties of the endpoint everything here is built on, both from
- * `data/population-tape-2026-07-29/report.md` §9.2 and re-confirmed live on 2026-08-02:
+ * `population-tape-2026-07-29/report.md` §9.2 and re-confirmed live on 2026-08-02:
  *
  * 1. **Rows come back NEWEST FIRST**, so a walk that pages through them runs *backwards* in time
  *    and reaches the create slot LAST. A truncated backwards walk is silently wrong rather than

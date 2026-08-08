@@ -19,8 +19,9 @@ import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../../conf
 /**
  * @type {string} Absolute path of the population tape directory.
  *
- * **Where it lives is `config/data-root.mjs`'s answer, not this tool's**: it defaults to the copy in
- * this repository and moves with `SLOT_ZERO_DATA_ROOT`. **No trailing separator** — it used to have
+ * **Where it lives is `config/data-root.mjs`'s answer, not this tool's**: the tapes are not in
+ * this tree, and it defaults to the store at `~/slot-zero-data` and moves with
+ * `SLOT_ZERO_DATA_ROOT`. **No trailing separator** — it used to have
  * one and paths were built by concatenation; they are built with `join()` now.
  */
 export const DATA_DIR = POPULATION_TAPE_DIR;

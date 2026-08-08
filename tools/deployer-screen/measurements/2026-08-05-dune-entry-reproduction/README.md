@@ -1,11 +1,18 @@
 # The Dune entry statement, run against every launch on the committed tape
 
 **2026-08-05. Gate 3 precondition 1.** `dune-fills.mjs` → `ENTRY_SQL`, executed against all **235**
-launches of `data/population-tape-2026-07-29/` that proved coverage, and compared — through this
+launches of `population-tape-2026-07-29/` that proved coverage, and compared — through this
 repo's own production functions — against the dataset's committed `wallet_launch_pnl.csv`.
 
 `reproduction.json` is the record. `node tools/deployer-screen/dune-reproduction.mjs` reproduces the
 plan and its estimate for free; `test/dune-entry-reproduction.test.ts` asserts the result.
+
+Its `dataDir` field reads `data/population-tape-2026-07-29` and is **left exactly as the run wrote
+it**: it is that run's own parameter on 2026-08-05, when the tape was still tracked in the tree, and
+not a citation a reader is meant to follow. Dry dock phase C untracked the tapes afterwards, so the
+same reproduction today is pointed at the dataset wherever `config/data-root.mjs` resolves it. A
+recorded parameter is a measurement of what happened; re-labelling one to match a later layout is
+the thing this project's records exist to prevent.
 
 ## The headline
 
@@ -57,7 +64,7 @@ statement too — on the affected rows `sol / base` contradicts the row's own `p
 cause and is not established here.
 
 Those 22 fills are the 12 excluded pairs. The finding is filed as correction 11 in
-`data/population-tape-2026-07-29/IMPORT.md`, **ratified as filed by captain decision 294a**; no
+`population-tape-2026-07-29/IMPORT.md`, **ratified as filed by captain decision 294a**; no
 dataset row was edited.
 
 **384 rows where the statement returns `sol_raw = 0`, and neither source is wrong.** All 384 are the

@@ -1,13 +1,22 @@
 # `graduated-life-tape` — extending the launch tape past the bond, at EUR 0
 
-The collector behind `data/graduated-life-tape-2026-08-02/`. It answers captain decision **112a**
-— *decline MadeOnSol Pro at EUR 43/mo, extend our own keyless tape instead* — and the EUR 0 is not
-an aspiration in this directory, it is a property the test suite enforces.
+The collector behind the `graduated-life-tape-2026-08-02` dataset. It answers captain decision
+**112a** — *decline MadeOnSol Pro at EUR 43/mo, extend our own keyless tape instead* — and the EUR 0
+is not an aspiration in this directory, it is a property the test suite enforces.
+
+**`--out` is a directory in the data store, not a path in this repository.** Dry dock phase C
+untracked the tapes for repository hygiene, so `data/…` inside the tree is both gitignored and
+absent from a clone: a run written there produces a dataset nothing else can find. Write to the root
+`config/data-root.mjs` resolves — `~/slot-zero-data` by default, `$SLOT_ZERO_DATA_ROOT` when set.
 
 ```bash
-node tools/graduated-life-tape/collect.mjs --phase graduation --out data/graduated-life-tape-2026-08-02
-node tools/graduated-life-tape/collect.mjs --phase life       --out data/graduated-life-tape-2026-08-02
+node tools/graduated-life-tape/collect.mjs --phase graduation --out ~/slot-zero-data/graduated-life-tape-2026-08-02
+node tools/graduated-life-tape/collect.mjs --phase life       --out ~/slot-zero-data/graduated-life-tape-2026-08-02
 ```
+
+**Re-collecting into the committed store rewrites a published dataset**, and its `MANIFEST.sha256`
+then no longer describes it. Collect into a fresh directory unless the intent is precisely to
+replace it.
 
 Both phases are **resumable**: every launch is written the moment its own work finishes, and each
 phase skips launches already on disk. Interrupting a run costs the launch in flight and nothing
@@ -36,8 +45,8 @@ re-do a launch that is already on disk. To re-walk one — the procedure used to
 launches the default page ceiling truncated — **delete that launch's sidecar first**:
 
 ```bash
-rm data/graduated-life-tape-2026-08-02/life/<mint>.meta.json
-node tools/graduated-life-tape/collect.mjs --phase life --out data/graduated-life-tape-2026-08-02 \
+rm ~/slot-zero-data/graduated-life-tape-2026-08-02/life/<mint>.meta.json
+node tools/graduated-life-tape/collect.mjs --phase life --out ~/slot-zero-data/graduated-life-tape-2026-08-02 \
   --only <mint> --max-pages 300
 ```
 

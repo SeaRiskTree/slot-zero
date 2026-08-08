@@ -12,7 +12,7 @@
  *
  * `solana-rpc.publicnode.com` is absent, as is every RPC host — this tripwire needs none. The
  * dead-host trap that stalled an earlier job for 40 minutes behind retry backoff
- * (`data/population-tape-2026-07-29/report.md` §9.3) cannot arise in a client that can only reach
+ * (`population-tape-2026-07-29/report.md` §9.3) cannot arise in a client that can only reach
  * hosts on a literal list.
  *
  * ## Why this duplicates `tools/graduated-life-tape/client.mjs`
@@ -25,7 +25,7 @@
  * ## Pacing and the ceiling
  *
  * The floor is 4 s between request starts with adaptive backoff, which
- * `data/population-tape-2026-07-29/report.md` §9.2 and the graduated-life collection measured as
+ * `population-tape-2026-07-29/report.md` §9.2 and the graduated-life collection measured as
  * the rung that sustains indefinitely: 6,539 requests, zero HTTP 429. This tool's whole run is
  * two orders of magnitude smaller than that, so pacing is not the binding constraint — the ceiling
  * is, and it is a hard one. Every constructor takes `maxRequests`, it is checked before every

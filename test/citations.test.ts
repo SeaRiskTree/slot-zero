@@ -8,13 +8,20 @@ import { describe, expect, it } from 'vitest';
 /**
  * A CITATION TO A MISSING FILE READS AS EVIDENCE AND IS NOT.
  *
- * `data/` in this repo holds tapes — two of them. Every companion report and decision record this
+ * `data/` in this repo holds NOTHING tracked. Every companion report and decision record this
  * project cites lives in firstmate's records, OUTSIDE this tree; `README.md` → "the six companion
  * reports" states that position, and it is deliberate rather than an oversight. So a citation
  * written as `data/<report-name>/report.md` renders as a path a reader can open and there is no
  * such file, which is this repo's characteristic defect — a claim outrunning what backs it — in its
  * purest form. One instance sat inside a committed evidence record (`runs/2026-08-02-good.json`),
  * so the lab's own audit trail cited a source nobody could open.
+ *
+ * **Dry dock phase C widened what this catches without changing a line of it.** The two measurement
+ * tapes used to live under `data/`, so a citation into one — `data/population-tape-2026-07-29/
+ * IMPORT.md` — resolved and passed. They were untracked for repository hygiene and now they do not,
+ * which is correct: the tape is real and its `IMPORT.md` is real, but neither is a path in this
+ * tree. `AGENTS.md` → "Citing a report this repo does not hold" carries both forms; for a tape file
+ * the dataset's own name is the location, and the `data/` prefix is what has to go.
  *
  * It was fixed once before and came back, because the citation is genuinely WANTED: the external
  * report really is the evidence for those claims, and nothing in the tree distinguished a real
@@ -24,9 +31,10 @@ import { describe, expect, it } from 'vitest';
  * can check that.
  *
  * Scope: `data/**\/*.md`, i.e. citation-shaped references to a document. Deliberately NOT every
- * `data/...` string — `--out data/arrival-rate-2026-08` in a usage example is a destination the run
- * creates, not a claim about existing evidence, and flagging it would teach the next lane that this
- * check cries wolf.
+ * `data/...` string — an `--out <dir>` in a usage example is a destination the run creates, not a
+ * claim about existing evidence, and flagging it would teach the next lane that this check cries
+ * wolf. (Phase C moved those examples into the data store anyway, so a collection cannot grow back
+ * the megabytes it removed; that is a hygiene point and not one this check makes.)
  */
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');

@@ -52,7 +52,7 @@ rule tested: **a fee payer paying for two or more create-slot transactions that 
 two or more distinct wallets marks all of them.** Independent traders do not have a third party pay
 their fees.
 
-Measured offline over `data/population-tape-2026-07-29/onchain_create_slot_pnl.csv` — 4,878 rows,
+Measured offline over `population-tape-2026-07-29/onchain_create_slot_pnl.csv` — 4,878 rows,
 4,394 create-slot transactions, 123 launches, every one of which carries exactly one identified fee
 payer among its own trading wallets:
 

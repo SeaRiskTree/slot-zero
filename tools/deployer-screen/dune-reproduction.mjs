@@ -224,7 +224,7 @@ export function monthlyCreditCapCredits(thresholdsPath = new URL('./thresholds.j
  * `window/*.jsonl.gz` is opened here: `tapeFills`, which the planner needs to size a batch, is the
  * sidecar's own `n`, so the plan step costs one small JSON read per launch and no decompression.
  *
- * @param {string} dataDir Path to `data/population-tape-2026-07-29`.
+ * @param {string} dataDir The `population-tape-2026-07-29` dataset directory, wherever the data root puts it.
  * @returns {TapeLaunchRef[]} Oldest first.
  */
 export function readTapeLaunches(dataDir) {

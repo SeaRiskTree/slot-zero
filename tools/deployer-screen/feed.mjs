@@ -96,7 +96,8 @@ import { exitForRefusal, loadThresholds, partialOutPath } from './screen.mjs';
 const HERE = dirname(fileURLToPath(import.meta.url));
 /**
  * The population tape's directory. **Where the data lives is `config/data-root.mjs`'s answer, not
- * this tool's**: it defaults to the copy in this repository and moves with `SLOT_ZERO_DATA_ROOT`.
+ * this tool's**: the tapes are not in this tree, and it defaults to the store at
+ * `~/slot-zero-data` and moves with `SLOT_ZERO_DATA_ROOT`.
  * `--data-dir` still overrides it per run.
  */
 const DEFAULT_DATA_DIR = POPULATION_TAPE_DIR;
@@ -192,7 +193,7 @@ OPTIONS
                       <path>.partial.json instead, leaving <path> untouched.
   --json              Print the feed record as JSON instead of text.
   --data-dir <path>   Population tape location, for Stage 0. Defaults to the population tape under
-                      $SLOT_ZERO_DATA_ROOT, which is this repository's own data/ when unset.
+                      $SLOT_ZERO_DATA_ROOT, which is ~/slot-zero-data when unset.
   --help              This text.
 
 WHAT ONE RUN COSTS

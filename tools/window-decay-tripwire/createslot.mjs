@@ -7,7 +7,7 @@
  * Solana slot, readable seconds after the mint, no waiting for anybody's position to close.
  *
  * Three properties of the trade endpoint everything below is built on, all from
- * `data/population-tape-2026-07-29/report.md` §9.2:
+ * `population-tape-2026-07-29/report.md` §9.2:
  *
  * 1. **Rows come back NEWEST FIRST**, so any walk over them runs backwards and reaches the create
  *    slot LAST. A truncated backwards walk is silently wrong rather than visibly wrong — it returns

@@ -67,7 +67,7 @@ what it would cost — all of it keyless.
 
 | source | used |
 |---|---|
-| `data/population-tape-2026-07-29/launches.csv`, `wallet_launch_pnl.csv`, `onchain_create_slot_pnl.csv`, `control_create_slot.csv`, `launch_universe.jsonl` | everything below |
+| `population-tape-2026-07-29/launches.csv`, `wallet_launch_pnl.csv`, `onchain_create_slot_pnl.csv`, `control_create_slot.csv`, `launch_universe.jsonl` | everything below |
 | MadeOnSol, Helius, SolanaTracker, any keyed provider | not contacted |
 | `swap-api.pump.fun`, `api.mainnet-beta.solana.com`, any keyless endpoint | not contacted |
 

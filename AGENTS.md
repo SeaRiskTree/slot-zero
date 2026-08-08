@@ -2,9 +2,11 @@
 
 This file is the project's committed home for project-intrinsic agent knowledge: build, test, release, architecture, and sharp-edge notes that should travel with the code.
 
-`slot-zero` is a **private research repo** studying pump.fun launch microstructure. There is
-no production here. It holds one primary dataset and a loader over it — see `README.md` for
-what is established and what is open.
+`slot-zero` is a **public research repo** studying pump.fun launch microstructure (captain decision
+377a: the method, the thresholds and the tapes are all world-readable, and none of them is to be
+treated as confidential). There is no production here. It works over one primary dataset and holds a
+loader for it — **the dataset itself is NOT in this tree**, see "Where the data lives" below. See
+`README.md` for what is established and what is open.
 
 ## Build and test
 
@@ -73,20 +75,28 @@ what is established and what is open.
 
 ## Citing a report this repo does not hold
 
-**`data/` holds TAPES, NOT REPORTS. Every companion report and decision record lives in
-firstmate's records, outside this tree, and a `data/<report-name>/report.md` citation is a dead
-path** — it renders as a file the reader can open, and there is no such file. `README.md` →
-"None of the eight companion reports" states the standing position: none of them is committed here, so any
-figure attributed to one is evidence from elsewhere and is asserted by no test in this repo. That
-is a deliberate boundary, not an oversight; **do not import one to make a citation resolve** —
-bringing an external document in has a licensing and provenance dimension and is a captain
-decision.
+**NOTHING IS UNDER `data/` ANY MORE, so EVERY `data/…` citation is a dead path** — it renders as a
+file the reader can open, and there is no such file. Two different things end up spelled that way
+and both are wrong now:
 
-**The form, and it is enforced:** name the report *without* a `data/` prefix and say where it
-lives — `` `slot-zero-june-regime-change` §6.1 (held in firstmate's records, not in this repo) ``.
-`tools/window-decay-tripwire/detector.mjs` is the model. **Prefer an in-repo route when one
-exists**, because a reader can check it: `analysis/window-population/` re-derives the June report's
-2026-06-04 close and its closed-regime prize from the committed tape, and
+- **A companion report or decision record.** These have always lived in firstmate's records, outside
+  this tree, so `data/<report-name>/report.md` never resolved. `README.md` → "None of the eight
+  companion reports" states the standing position: none of them is committed here, so any figure
+  attributed to one is evidence from elsewhere and is asserted by no test in this repo. That is a
+  deliberate boundary, not an oversight; **do not import one to make a citation resolve** — bringing
+  an external document in has a licensing and provenance dimension and is a captain decision.
+- **A file inside a TAPE** — `report.md`, `IMPORT.md`, `launches.csv`, a `window/*.meta.json`. These
+  did resolve until dry dock phase C untracked the tapes for repository hygiene. They are real files
+  and they still exist; what they are not is a path in this tree.
+
+**The form, and it is enforced:** name the thing *without* a `data/` prefix and say where it lives.
+For a report — `` `slot-zero-june-regime-change` §6.1 (held in firstmate's records, not in this
+repo) ``; `tools/window-decay-tripwire/detector.mjs` is the model. For a tape file, the dataset's own
+name IS the location, because that is how a data root is addressed:
+`` `population-tape-2026-07-29` → `IMPORT.md` `` (captain decision 356a settled that shape for a
+printed census label, and it is the same shape here). **Prefer an in-repo route when one exists**,
+because a reader can check it: `analysis/window-population/` re-derives the June report's
+2026-06-04 close and its closed-regime prize from the tape, and
 `test/window-population.test.ts` asserts both — so claims resting on that break cite §4.1/§4.3
 there rather than the external report.
 
@@ -118,15 +128,33 @@ doc owns that bound; cite it rather than restating it.
   directories down. A test scans `src/`, `analysis/`, `tools/` and `test/` for a dataset name in
   executable text and fails on a new one; its allow-list holds exactly one entry, and it is a
   printed report label rather than a path.
-- **The default is the copy in this repository, deliberately.** Pointing it at the off-repo store
-  instead would make untracking a pure deletion but would take CI red on the day it landed, because
-  CI is `actions/checkout` and nothing else, and it would make the default configuration
-  machine-specific. So the untracking phase changes `DEFAULT_DATA_ROOT` and nothing else in the
-  tree. The module's own doc owns that argument; cite it rather than restating it.
-- **Both configurations are proven, not assumed.** `SLOT_ZERO_DATA_ROOT=~/slot-zero-data npm test`
-  and the default run are both green, and a root pointed at nothing fails **12 of the 18 suites**
-  — which is also the measure of how much of this suite is data-bound, and the reason CI cannot
-  simply lose the tapes.
+- **THE TAPES ARE NOT IN THE TREE, AND THE REASON IS REPOSITORY HYGIENE — nothing else.** Dry dock
+  phase C untracked all 705 files (118 MB of an 833-file tree) and `.gitignore` names the two
+  dataset paths so they cannot be re-added by accident; every clone stopped paying for them. They
+  are in this repository's public commit history and untracking cannot un-publish them, so **no
+  confidentiality is claimed by the move and none is bought by it** — do not let any document say
+  otherwise. They are published as the **public** `slot-zero-data.tar.gz` asset on the
+  `data-2026-08-02` release, beside phase A's `MANIFEST.sha256`.
+  **"THE COMMITTED TAPE" STILL MEANS WHAT IT ALWAYS MEANT and phase C did NOT rewrite the ~290
+  places that say it.** Read it as *the pinned, dated snapshot every published number here is
+  computed over* — as against a live vendor read — not as a claim about git. Renaming it would churn
+  test names, run records and measurement records, several of which may not be retro-edited, and
+  would move no path; what phase C corrected instead is every reference that named a `data/…`
+  LOCATION, since those are the ones a reader can follow and find nothing.
+- **`DEFAULT_DATA_ROOT` is therefore `~/slot-zero-data`, not `<repo>/data`.** Phase B kept the
+  default in-repo because CI was `actions/checkout` and nothing else; phase C settled that by
+  pointing CI at the release and untracking the copy the old default named. It is derived from
+  `OFF_REPO_DATA_ROOT_HINT` rather than written out twice, so the resolved path and the path every
+  error message prints cannot drift. **Neither default resolves in a bare clone** — the data is
+  genuinely not there — which is what `missingDatasetMessage` is for; it now offers the FETCH first
+  and the variable second. The module's own doc owns the argument; cite it rather than restating it.
+- **Both configurations are proven, not assumed.** The default root with nothing set — rehearsed by
+  phase C from a fresh clone carrying no `data/` at all, with only the release asset unpacked — and
+  an explicit `SLOT_ZERO_DATA_ROOT` pointed at a copy kept elsewhere are both green, and a root
+  pointed at nothing fails **12 of the 18 suites as measured 2026-08-05 at 354a; the repo now has
+  19**, and which of them fail against an empty root has not been re-measured since — outstanding
+  work for a follow-up lane. That count is also the measure of how much of this suite is data-bound,
+  and the reason CI cannot simply lose the tapes.
 - **Two readers used to build paths by concatenation** (`analysis/window-population/measure.mjs`,
   `tools/window-decay-tripwire/tape.mjs`) and depended on a trailing separator. The resolver returns
   none; those sites use `join()` now and a test pins the absence.
@@ -134,17 +162,22 @@ doc owns that bound; cite it rather than restating it.
   tapes for testing, and do not re-measure it** (captain decision 354a, which records the
   measurement in full). A properly stratified subset was built and run: 13 strata over regime ×
   graduated × committed window width × coverage, densest and sparsest create slot in each,
-  **23 launches / 94 files / 16 MB**. Result: **138 tests failed across 11 of the 18 suites**, it
-  converted **exactly one** suite over having no data at all (`data-root`, which only needs the
+  **23 launches / 94 files / 16 MB**. Result: **138 tests failed across 11 of the 18 suites as
+  measured 2026-08-05 at 354a; the repo now has 19** — and 354a's own instruction not to re-measure
+  stands, so read every figure in this bullet as that dated reading. It converted
+  **exactly one** suite over having no data at all (`data-root`, which only needs the
   directories to exist), and — the decisive part — **it changed a published finding**: the blind
   changepoint scan returned `2026-03-26T16:10:24Z` against the published `2026-03-14T17:28:20Z`.
   The failures are `toHaveLength(239)`, 46,553 pair rows, 107,439 fills, 1,999 create-slot pairs,
   123 priced launches, 103 graduated — no subset satisfies them, and `counterparties.csv` (2.8 MB,
   20,388 wallets) has **no `mint` column**, so it cannot be subsetted by launch at all.
-- **CI therefore FETCHES the tapes, and the fetch is verified.** `.github/workflows/ci.yml` has two
-  modes on the repository variable `SLOT_ZERO_DATA_SOURCE`: `repo` (default, the copy in the tree —
-  git is its manifest) and `release` (a private release asset, which phase C switches to). An
-  unrecognised value fails the job rather than falling through. **`config/verify-data-root.mjs`
+- **CI therefore FETCHES the tapes, and the fetch is verified.** `.github/workflows/ci.yml` reads
+  the repository variable `SLOT_ZERO_DATA_SOURCE` and since phase C has ONE mode: `release`
+  (default) — the **public** `slot-zero-data.tar.gz` asset on the `data-2026-08-02` release, public
+  because this repository is. `repo`, the copy in the tree, is **RETIRED and rejected by name** with
+  that reason, because there is no copy in the tree; an unrecognised value fails the job as before,
+  rather than falling through to anything. No credential is involved — the run's own
+  `secrets.GITHUB_TOKEN` at `permissions: contents: read` is the whole of it. **`config/verify-data-root.mjs`
   walks the store's own `MANIFEST.sha256` and fails on a missing file, a wrong digest, OR AN EXTRA
   FILE the manifest never listed** — that third one is why it is a script and not `sha256sum -c`:
   several suites choose their population with `readdirSync` over `window/` and `life/`, so a
@@ -154,7 +187,7 @@ doc owns that bound; cite it rather than restating it.
 
 ## The dataset
 
-`data/population-tape-2026-07-29/` is a **primary record — never reformat, re-sort or
+`population-tape-2026-07-29` is a **primary record — never reformat, re-sort or
 "clean" a row.** Column semantics are in its `README.md`, findings in its `report.md`,
 import, exclusion and **correction** decisions in its `IMPORT.md`. `sigindex/` (97 MB of raw
 RPC signature cache) and a superseded `tape/` probe were excluded; everything else is
@@ -165,9 +198,9 @@ verbatim. When later evidence contradicts the imported prose, add to `IMPORT.md`
 `slot-zero-bundling-predicate-question` → `decision-182a-gradtape-figure.md`, held outside this
 repo — see "Citing a report this repo does not hold" below). The protection
 attaches to an **imported primary record**, marked by an `IMPORT.md` plus explicit
-primary-record / never-reformat-a-row language — `data/population-tape-2026-07-29/` is the
+primary-record / never-reformat-a-row language — `population-tape-2026-07-29` is the
 example. A dataset **produced by this repo** carries no `IMPORT.md`, and its prose is ordinary
-documentation and editable; `data/graduated-life-tape-2026-08-02/` is one, and 186a authorised
+documentation and editable; `graduated-life-tape-2026-08-02` is one, and 186a authorised
 editing its cross-reference sentence. Either way the scope limit is the same: **a data row and
 its formatting are never touched.** And the rule's last clause is first-class, not a footnote —
 **if you are unsure which kind you are facing, stop and ask.** The cost of asking is one round;
@@ -246,7 +279,7 @@ permanent limits of the evidence:
 
 ## The tape past the bond, and what it cost
 
-`data/graduated-life-tape-2026-08-02/` extends the population tape from its own per-launch window to
+`graduated-life-tape-2026-08-02` extends the population tape from its own per-launch window to
 **mint → graduation + 1 hour on all 103 graduated launches**. Collector, method and bounds in
 `tools/graduated-life-tape/README.md`; coverage proofs and limits in the dataset's own `README.md`.
 Five facts that bind any lane touching it:
@@ -259,7 +292,7 @@ Five facts that bind any lane touching it:
   `closureOfEarlyPairs` is the like-for-like measure and the only one to quote.
 - **The committed window is NOT a constant, and a flat 60 s baseline is a published-number bug.**
   On the graduated 103 it is 60 s on 83, 120 s on 3 and 300 s on 17 (whole tape: 210 / 4 / 25 of
-  239) — `window_ms` in `data/population-tape-2026-07-29/window/{mint}.meta.json`, exposed by
+  239) — `window_ms` in `population-tape-2026-07-29/window/{mint}.meta.json`, exposed by
   `launches.mjs` → `readWindowMeta`. Hardcoding 60 s overstated this uplift by ~6 points before it
   was caught, and `coverage.csv` now carries `committed_window_s` per launch so a reader can see the
   cut applied.
@@ -363,7 +396,7 @@ Five things bind anything that touches it or copies from it:
 ## pump.fun / Solana provider facts
 
 Learned at real cost; the citations are to
-`data/population-tape-2026-07-29/report.md` unless stated.
+`population-tape-2026-07-29/report.md` unless stated.
 
 - **The trade endpoint is the affordable route to a per-token tape.** §9.2:
   `swap-api.pump.fun/v2/coins/{mint}/trades?limit=100`, keyless, 100 fills a page, the

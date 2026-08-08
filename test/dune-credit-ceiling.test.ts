@@ -101,7 +101,9 @@ import {
   checkReproductionAllowance,
   estimateReproductionCredits,
   monthlyCreditCapCredits as reproductionCapCredits,
+  recordCustody,
 } from '../tools/deployer-screen/dune-reproduction.mjs';
+import { CENSUS_SQL } from '../tools/creation-census/census.mjs';
 
 const SCREEN_CLIENT = fileURLToPath(new URL('../tools/deployer-screen/client.mjs', import.meta.url));
 const CENSUS_CLIENT = fileURLToPath(new URL('../tools/creation-census/client.mjs', import.meta.url));
@@ -2323,6 +2325,46 @@ describe('AN EXECUTION WE ARE NO LONGER WILLING TO PAY FOR IS CANCELLED, AND IT 
 
   const RUNNING = () => ({ state: 'QUERY_STATE_PENDING' });
 
+  /**
+   * Drive the real census CLI to its execution, with the vendor pinned in one state throughout.
+   *
+   * The poll loop sleeps on real timers, so the clock is faked and advanced by hand — the run's own
+   * two-minute deadline is then reached in milliseconds without any seam being added to the tool.
+   */
+  async function runCensusAgainstVendorState(state: string) {
+    const paths: string[] = [];
+    const fetchImpl = vi.fn(async (url: unknown) => {
+      const path = String(url).slice(DUNE_API_BASE.length);
+      paths.push(path);
+      if (path === USAGE_PATH) return new Response(JSON.stringify(usageBody([period(0, 100_000)])), { status: 200 });
+      if (path.endsWith('/execute')) return new Response(JSON.stringify({ execution_id: 'exec-1' }), { status: 200 });
+      if (path.endsWith('/cancel')) return new Response('{}', { status: 200 });
+      if (path.endsWith('/status')) return new Response(JSON.stringify({ state }), { status: 200 });
+      if (path.startsWith('/query/')) return new Response(JSON.stringify({ query_sql: CENSUS_SQL }), { status: 200 });
+      return new Response('{}', { status: 200 });
+    });
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(fetchImpl as unknown as typeof fetch);
+    const lines: string[] = [];
+    vi.useFakeTimers();
+    try {
+      const out = mkdtempSync(join(tmpdir(), 'slot-zero-deadline-'));
+      let settled = false;
+      const run = censusMain(
+        ['--live', '--month', '2026-07', '--out', out],
+        { DUNE_API_KEY: SENTINEL_KEY },
+        (l) => lines.push(l),
+      ).finally(() => {
+        settled = true;
+      });
+      for (let i = 0; i < 400 && !settled; i++) await vi.advanceTimersByTimeAsync(1_000);
+      const code = await run;
+      return { code, paths, lines: lines.join('\n') };
+    } finally {
+      vi.useRealTimers();
+      spy.mockRestore();
+    }
+  }
+
   for (const which of ['screen', 'census'] as const) {
     it(`${which}: an execution still running at the deadline is CANCELLED, not merely abandoned`, async () => {
       // The measured failure, and the fix. Before this, the loop walked away and said the execution
@@ -2420,18 +2462,77 @@ describe('AN EXECUTION WE ARE NO LONGER WILLING TO PAY FOR IS CANCELLED, AND IT 
     });
   }
 
-  it('the CENSUS gives it its own exit code, ahead of the generic vendor branch', () => {
+  it('the CENSUS gives it its own exit code, ahead of the generic vendor branch', async () => {
     // `DuneExecutionAbandoned` IS a `DuneRefused`, so ORDER is the guard: checked second it would be
     // swallowed and reported as exit 4, and an operator could not tell "we stopped this" from "this
-    // broke" — which is how the 180-credit incident stayed invisible in the first place.
+    // broke" — which is how the 180-credit incident stayed invisible in the first place. Driven
+    // through the REAL CLI over a scripted transport, so a refactor that keeps the behaviour keeps
+    // the test and one that loses the distinction fails it.
     expect(new Set(Object.values(EXIT)).size).toBe(Object.values(EXIT).length);
     expect(EXIT.deadline).not.toBe(EXIT.vendor);
-    const source = readFileSync(fileURLToPath(new URL('../tools/creation-census/run.mjs', import.meta.url)), 'utf8');
-    const abandoned = source.indexOf('cause instanceof DuneExecutionAbandoned');
-    const refused = source.indexOf('cause instanceof DuneRefused');
-    expect(abandoned).toBeGreaterThan(-1);
-    expect(refused).toBeGreaterThan(abandoned);
-    expect(source.slice(abandoned, refused)).toContain('return EXIT.deadline;');
+
+    // WE stopped it: the vendor never settles, so the run reaches its own deadline.
+    const stopped = await runCensusAgainstVendorState('QUERY_STATE_PENDING');
+    expect(stopped.code).toBe(EXIT.deadline);
+    expect(stopped.paths).toContain('/execution/exec-1/cancel');
+    expect(stopped.lines).toMatch(/^stopped: /m);
+
+    // DUNE stopped it: the same catch, one branch further down, and the outcome must not collapse
+    // into the one above.
+    const broke = await runCensusAgainstVendorState('QUERY_STATE_FAILED');
+    expect(broke.code).toBe(EXIT.vendor);
+    expect(broke.paths.some((p) => p.endsWith('/cancel'))).toBe(false);
+    expect(broke.lines).toMatch(/^refused: /m);
+  });
+
+  it('the REPRODUCTION lane cancels too — a custody wrapper may not drop the one request that stops a spend', async () => {
+    // `recordCustody` decorates the client the whole reproduction run is driven with. A decorator
+    // that forwards everything EXCEPT `cancelExecution` turns "no path leaves a live execution
+    // running" into a TypeError swallowed as `cancelAcknowledged: false`, and the engine bills to
+    // Dune's 30-minute limit — which is exactly the failure this lane's own 600 s deadline is
+    // priced against.
+    const paths: string[] = [];
+    const fetchImpl = vi.fn(async (url: unknown) => {
+      const path = String(url).slice(DUNE_API_BASE.length);
+      paths.push(path);
+      if (path.endsWith('/execute')) return new Response(JSON.stringify({ execution_id: 'exec-1' }), { status: 200 });
+      if (path.endsWith('/cancel')) return new Response('{}', { status: 200 });
+      return new Response(JSON.stringify({ state: 'QUERY_STATE_PENDING' }), { status: 200 });
+    });
+    const inner = new ScreenDuneClient({
+      key: SENTINEL_KEY,
+      maxExecutions: 1,
+      maxRequests: 50,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const { client: wrapped, log } = recordCustody(inner as never);
+    let elapsed = 0;
+    const err = await screenExecuteAndRead(
+      wrapped as never,
+      7,
+      {},
+      {
+        pollIntervalMs: 0,
+        maxPollAttempts: 5,
+        executionDeadlineMs: 120_000,
+        maxResultRows: 100,
+        clock: () => {
+          const now = elapsed;
+          elapsed += 100_000;
+          return now;
+        },
+      },
+    ).then(
+      () => null,
+      (e: Error) => e,
+    );
+    expect(err?.name).toBe('DuneExecutionAbandoned');
+    expect((err as unknown as { cancelAcknowledged: boolean }).cancelAcknowledged).toBe(true);
+    expect(paths).toContain('/execution/exec-1/cancel');
+    // And the custody log still says what it is a statement about: the cancel is not an execution.
+    expect(log.filter((c) => c.kind === 'execute')).toHaveLength(1);
   });
 
   it('the CENSUS dry run states the deadline beside the ceilings, free and with no key', () => {

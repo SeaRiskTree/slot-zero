@@ -450,6 +450,7 @@ export function recordCustody(client) {
     stats: () => client.stats(),
     noteResultBytes: (/** @type {number} */ b) => client.noteResultBytes(b),
     wait: (/** @type {number} */ ms) => client.wait(ms),
+    cancelExecution: (/** @type {string} */ executionId) => client.cancelExecution(executionId),
     readUsage: () => client.readUsage(),
     getJson: (/** @type {string} */ path) => {
       const match = /^\/query\/(\d+)$/.exec(path);

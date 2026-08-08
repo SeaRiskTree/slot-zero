@@ -15,7 +15,7 @@
  * arrive here by the door the data root opened.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -492,11 +492,36 @@ describe('CI cannot go green without the tapes', () => {
     const check = byRun('$SLOT_ZERO_DATA_SOURCE');
     const run = check.run ?? '';
     expect(run).not.toMatch(/repo\|release\)/); // the old accept-both case
-    expect(run).toMatch(/^\s*repo\)/m); // its own case arm...
-    expect(run).toMatch(/phase C retired/); // ...saying why...
-    expect(run).toMatch(/no longer tracked/);
-    // ...and still failing. Two `exit 1`s: the retired value and the unrecognised one.
-    expect(run.match(/exit 1/g) ?? []).toHaveLength(2);
+
+    // The script is RUN rather than read: what matters is the exit status a runner sees and the
+    // sentence a reader of a failed build gets, and neither is provable from the case statement's
+    // text. Non-vacuous first — a selector that stopped finding this step would otherwise execute
+    // an empty script, which exits 0 and would pass the `release` case while failing nothing.
+    expect(run.length).toBeGreaterThan(0);
+    expect(run, 'byRun must have selected the mode check itself').toContain('case "$SLOT_ZERO_DATA_SOURCE"');
+    const modeCheck = (value: string) =>
+      spawnSync('bash', ['-c', run], {
+        encoding: 'utf8',
+        env: { ...process.env, SLOT_ZERO_DATA_SOURCE: value },
+      });
+
+    // The one mode this job has.
+    expect(modeCheck('release').status, 'release must be accepted').toBe(0);
+
+    // The retired one: non-zero, and the log says what happened to it rather than only that the
+    // value was rejected.
+    const retired = modeCheck('repo');
+    expect(retired.status, '`repo` must fail the job').not.toBe(0);
+    expect(retired.stderr).toContain('phase C retired');
+    expect(retired.stderr).toContain('no longer tracked');
+    expect(retired.stderr).toContain("set it to 'release'");
+
+    // And everything else fails too, so a typo or an unset-to-empty variable can never read as a
+    // normal green build over a source nobody chose.
+    for (const value of ['releases', 'REPO', '']) {
+      expect(modeCheck(value).status, `${JSON.stringify(value)} must fail the job`).not.toBe(0);
+    }
+
     // And nothing anywhere in the job treats `repo` as a source it could still read.
     for (const step of steps) {
       if (step.index === check.index) continue;

@@ -127,8 +127,13 @@ asset is written once. This is what was run, and what a re-publication would run
 ```bash
 tar -czf slot-zero-data.tar.gz -C ~ slot-zero-data     # ~105 MB
 gh release create data-2026-08-02 --repo SeaRiskTree/slot-zero \
-  --title 'Measurement tapes' --notes-file notes.md slot-zero-data.tar.gz
+  --title 'Measurement tapes' \
+  --notes 'population-tape-2026-07-29 and graduated-life-tape-2026-08-02, with MANIFEST.sha256.' \
+  slot-zero-data.tar.gz
 ```
+
+The published release carries a fuller body than that one line; the command above is what a
+re-publication needs to run, not a reproduction of the notes.
 
 No repository variable is set, and that is deliberate: `release` is the default, so CI reads the
 asset with no configuration and `SLOT_ZERO_DATA_SOURCE` exists only to be *checked* — the contract

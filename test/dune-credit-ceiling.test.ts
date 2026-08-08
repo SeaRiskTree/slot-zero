@@ -49,8 +49,14 @@ import {
   LOCAL_ESTIMATE_CAVEAT,
   MONTHLY_CAP_PIN,
   bindingCreditCeiling,
+  CREDITS_PER_ENGINE_MINUTE,
+  ENGINE_TIMEOUT_MS,
+  EXECUTION_DEADLINE_CAVEAT,
   EXPORT_CREDITS_PER_MB,
+  MEASURED_TIMEOUT_FLOOR_CREDITS,
   USAGE_PATH,
+  describeExecutionDeadline,
+  executionDeadlineCredits,
 } from '../tools/deployer-screen/client.mjs';
 import {
   DuneClient as CensusDuneClient,
@@ -58,12 +64,15 @@ import {
   decideAllowance as censusDecideAllowance,
   parseUsageResponse as censusParseUsageResponse,
   estimatePlanCredits as censusEstimatePlanCredits,
+  executionDeadlineCredits as censusExecutionDeadlineCredits,
+  EXECUTION_DEADLINE_CAVEAT as CENSUS_DEADLINE_CAVEAT,
 } from '../tools/creation-census/client.mjs';
 import {
   DUNE_LEG_ORDER,
   checkDuneAllowance,
   duneSpendPlan,
   enumerateCreations,
+  executeAndRead as screenExecuteAndRead,
   openDuneCreditLedger,
 } from '../tools/deployer-screen/dune.mjs';
 import type { DuneCreditLedger } from '../tools/deployer-screen/dune.mjs';
@@ -82,11 +91,13 @@ import { BASE_URL as MADEONSOL_BASE_URL } from '../tools/deployer-screen/client.
 import {
   EXIT,
   checkDuneAllowance as censusCheckDuneAllowance,
+  executeAndRead as censusExecuteAndRead,
   main as censusMain,
   readBounds,
 } from '../tools/creation-census/run.mjs';
 import {
   ALLOWANCE_RESERVE_CREDITS as REPRODUCTION_RESERVE,
+  WORST_CASE_CREDITS_PER_EXECUTION as REPRODUCTION_CREDITS_PER_EXECUTION,
   checkReproductionAllowance,
   estimateReproductionCredits,
   monthlyCreditCapCredits as reproductionCapCredits,
@@ -2116,4 +2127,324 @@ describe('the entry fill source is constructed in two phases, and each phase car
       vi.unstubAllGlobals();
     }
   }, 60_000);
+});
+
+// ---------------------------------------------------------------------------------------------
+// CAPTAIN DECISION 381 — bounding what ONE execution can cost, for real.
+//
+// The guard above refuses a plan whose PINNED worst case does not fit. It cannot bound what an
+// execution actually costs, because the spend happens after the check passes and Dune caps a single
+// execution's cost nowhere. Measured 2026-08-08: a lane running behind this exact code path, with
+// the live counter re-read before every execution, printed `verdict: sufficient (ok=true)` against a
+// pinned worst case of 6 credits and was billed 180.002 for an execution that returned nothing
+// (`slot-zero-venue-gradeability-inventory` → `report.md` §0, held in firstmate's records).
+//
+// Two halves, and neither works alone. The PIN makes the guard's arithmetic honest; the DEADLINE is
+// the only thing that actually caps a single execution. Both are pinned below.
+
+describe('THE TIMEOUT FLOOR, and the two keyed pins that must sit above it', () => {
+  const screen = JSON.parse(readFileSync(THRESHOLDS, 'utf8')).dune;
+  const census = readBounds().dune;
+
+  it('prices the engine timeout from the one reading there is, and says it is one reading', () => {
+    // 180.002 credits over Dune's own 30-minute limit. The per-minute rate is DERIVED from that and
+    // is an inference — the vendor publishes no rate — which is why every pin taken from it carries
+    // a stated margin rather than sitting on it.
+    expect(ENGINE_TIMEOUT_MS).toBe(30 * 60_000);
+    expect(MEASURED_TIMEOUT_FLOOR_CREDITS).toBe(180.002);
+    expect(CREDITS_PER_ENGINE_MINUTE).toBeCloseTo(6.0, 3);
+    // Whole credits, rounded UP, because the vendor's counter advances in whole-credit jumps and
+    // sub-credit precision on a worst case is precision the account cannot resolve.
+    expect(executionDeadlineCredits(ENGINE_TIMEOUT_MS)).toBe(181);
+    expect(executionDeadlineCredits(120_000)).toBe(13);
+    expect(executionDeadlineCredits(60_000)).toBe(7);
+    expect(executionDeadlineCredits(0)).toBe(0);
+    // A deadline past the vendor's own limit buys nothing: the engine stops first, so the price
+    // stops there too rather than running off linearly.
+    expect(executionDeadlineCredits(ENGINE_TIMEOUT_MS * 10)).toBe(executionDeadlineCredits(ENGINE_TIMEOUT_MS));
+    expect(executionDeadlineCredits(-1)).toBe(0);
+  });
+
+  it('BOTH KEYED PINS SIT AT OR ABOVE THAT FLOOR — this is the assertion the incident bought', () => {
+    // The defect in one line: a guard that clears a plan at 25 credits and is then billed 180 does
+    // not bound the month it exists to bound. `executionDeadlineCredits(ENGINE_TIMEOUT_MS)` is the
+    // floor and it is derived rather than typed, so a later lane cannot drift back under it by
+    // editing a literal.
+    const floor = executionDeadlineCredits(ENGINE_TIMEOUT_MS);
+    expect(screen.worstCaseCreditsPerExecution).toBeGreaterThanOrEqual(floor);
+    expect(census.worstCaseCreditsPerExecution).toBeGreaterThanOrEqual(floor);
+    // AND THEY ARE EQUAL, for the same reason the monthly cap is: both keyed lanes read the same
+    // account and the same vendor ceiling, so a floor that binds one of them is not a floor.
+    expect(screen.worstCaseCreditsPerExecution).toBe(census.worstCaseCreditsPerExecution);
+    // The reproduction lane prices per BATCH and cannot afford the engine floor outright, so it is
+    // pinned at the floor its own deadline buys. That is honest only because the deadline exists —
+    // and the relation is pinned so the two cannot come apart.
+    expect(REPRODUCTION_CREDITS_PER_EXECUTION).toBeGreaterThanOrEqual(executionDeadlineCredits(600_000));
+  });
+
+  it('says in the justification what the raise DOES, not merely that it happened', () => {
+    // Every pinned value in this repository carries a stated reason; this one has to state the
+    // consequence too, because the census's ceiling arithmetic changes character rather than degree.
+    for (const reason of [
+      screen.justification.worstCaseCreditsPerExecution as string,
+      census.justification === undefined
+        ? (readBounds().justification['dune.worstCaseCreditsPerExecution'] as string)
+        : '',
+    ].filter(Boolean)) {
+      expect(reason).toMatch(/180\.002/);
+      expect(reason).toMatch(/30-minute engine limit/);
+      expect(reason).toMatch(/executionDeadlineMs/);
+    }
+    const censusReason = readBounds().justification['dune.worstCaseCreditsPerExecution'] as string;
+    // The worked arithmetic an operator plans against, stated in place rather than left to be
+    // recomputed: what a default census now reserves, and where the refusal moved to.
+    expect(censusReason).toMatch(/49\.51 -> 224\.51/);
+    expect(censusReason).toMatch(/~17 reserved default runs/);
+  });
+
+  it('re-prices both lanes and still clears a fresh period, which is what keeps the guard usable', () => {
+    // A worst case at or above the allowance would make the guard unsatisfiable on a fresh period:
+    // it would refuse every run and the ceiling would be a wall rather than a bound. The pin more
+    // than quadrupled, so this is checked rather than assumed.
+    const screenWorst = estimatePlanCredits(duneSpendPlan(screen)).worstCaseCredits;
+    expect(screenWorst).toBeCloseTo(2 * 200 + (3 * 40_000 * 121 * EXPORT_CREDITS_PER_MB) / 1_000_000, 3);
+    const b = readBounds();
+    const censusWorst = censusEstimatePlanCredits({
+      lane: 'census',
+      executions: b.dune.maxExecutionsPerRun,
+      creditsPerExecution: b.dune.worstCaseCreditsPerExecution,
+      resultReads: b.dune.maxExecutionsPerRun + 1,
+      rowsPerRead: b.census.maxRows + b.census.resultLimitHeadroom,
+      bytesPerRow: b.dune.resultBytesPerRowCeiling,
+    }).worstCaseCredits;
+    expect(censusWorst).toBeCloseTo(224.51, 2);
+    // Both must fit the operator's own cap with the tight multiple and the reserve on top, or the
+    // raise would have made every run refuse itself.
+    for (const [worst, bounds] of [
+      [screenWorst, screen],
+      [censusWorst, b.dune],
+    ] as [number, { allowanceTightMultiple: number; allowanceReserveCredits: number; monthlyCreditCapCredits: number }][]) {
+      expect(worst * bounds.allowanceTightMultiple + bounds.allowanceReserveCredits).toBeLessThan(
+        bounds.monthlyCreditCapCredits,
+      );
+    }
+  });
+
+  it('THE DEADLINE IS COVERED BY THE POLL BUDGET IN BOTH LANES — one bound, two units', () => {
+    // Captain decision 144a's rule: never write two numbers for a duration someone else controls.
+    // The deadline is the authority and the poll budget must cover it, or the request budget would
+    // silently be the thing that ends the wait and the deadline would decide nothing.
+    for (const d of [screen, census]) {
+      expect(d.executionDeadlineMs).toBeGreaterThan(0);
+      expect(d.maxPollAttempts * d.pollIntervalMs).toBeGreaterThanOrEqual(d.executionDeadlineMs);
+      // Conservative by construction: far inside the vendor's own limit.
+      expect(d.executionDeadlineMs).toBeLessThan(ENGINE_TIMEOUT_MS / 10);
+    }
+    // Pinned EQUAL across the two keyed lanes, so an operator sizing a month reasons about one
+    // deadline rather than two.
+    expect(screen.executionDeadlineMs).toBe(census.executionDeadlineMs);
+    // And the default's price is stated where a budget is sized from it.
+    expect(describeExecutionDeadline(census.executionDeadlineMs)).toMatch(/120s execution deadline/);
+    expect(describeExecutionDeadline(census.executionDeadlineMs)).toMatch(/at most 13 credit\(s\) of compute/);
+    expect(describeExecutionDeadline(census.executionDeadlineMs)).toMatch(/cancels rather than waits/);
+  });
+
+  it('carries the deadline machinery in BOTH client copies, byte for byte', () => {
+    // The shared region is pinned whole by the first describe in this file; this is the narrower
+    // statement that the new half is IN it rather than beside it, and that the two copies compute
+    // the same numbers when driven independently.
+    for (const file of [SCREEN_CLIENT, CENSUS_CLIENT]) {
+      const region = sharedRegion(file);
+      expect(region).toContain('export const MEASURED_TIMEOUT_FLOOR_CREDITS = 180.002;');
+      expect(region).toContain('export function executionDeadlineCredits(');
+      expect(region).toContain('export class DuneExecutionAbandoned extends DuneRefused {');
+      expect(region).toContain('export async function cancelExecutionQuietly(');
+    }
+    expect(censusExecutionDeadlineCredits(ENGINE_TIMEOUT_MS)).toBe(executionDeadlineCredits(ENGINE_TIMEOUT_MS));
+    expect(censusExecutionDeadlineCredits(120_000)).toBe(executionDeadlineCredits(120_000));
+    expect(CENSUS_DEADLINE_CAVEAT).toBe(EXECUTION_DEADLINE_CAVEAT);
+    // What the caveat may not do is claim more than was bought. Cancelling bounds the WAIT; whether
+    // it stops the BILL is unverified and settling it would cost a deliberately-runaway execution.
+    expect(EXECUTION_DEADLINE_CAVEAT).toMatch(/bounds the WAIT for certain and the BILL only if/);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+
+describe('AN EXECUTION WE ARE NO LONGER WILLING TO PAY FOR IS CANCELLED, AND IT IS ITS OWN OUTCOME', () => {
+  /**
+   * Drive a real `executeAndRead` over a scripted transport and a scripted clock.
+   *
+   * `elapsedPerPoll` is what the injected clock advances by each time it is read, so a test reaches
+   * a two-minute deadline in microseconds. Sleeping is a no-op for the same reason.
+   */
+  function harness(
+    which: 'screen' | 'census',
+    opts: {
+      status: (poll: number) => unknown;
+      elapsedPerPoll?: number;
+      maxRequests?: number;
+      cancelResponds?: () => Response;
+      bounds?: Partial<{ pollIntervalMs: number; maxPollAttempts: number; executionDeadlineMs: number }>;
+    },
+  ) {
+    const paths: string[] = [];
+    let polls = 0;
+    let elapsed = 0;
+    const fetchImpl = vi.fn(async (url: unknown) => {
+      const path = String(url).slice(DUNE_API_BASE.length);
+      paths.push(path);
+      if (path.endsWith('/execute')) return new Response(JSON.stringify({ execution_id: 'exec-1' }), { status: 200 });
+      if (path.endsWith('/cancel')) return (opts.cancelResponds ?? (() => new Response('{}', { status: 200 })))();
+      if (path.endsWith('/status')) return new Response(JSON.stringify(opts.status(polls++)), { status: 200 });
+      return new Response(JSON.stringify({ result: { rows: [], metadata: { total_row_count: 0 } } }), { status: 200 });
+    });
+    const Ctor = which === 'screen' ? ScreenDuneClient : CensusDuneClient;
+    const client = new Ctor({
+      key: SENTINEL_KEY,
+      maxExecutions: 1,
+      maxRequests: opts.maxRequests ?? 50,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => {},
+    });
+    const clock = () => {
+      const now = elapsed;
+      elapsed += opts.elapsedPerPoll ?? 0;
+      return now;
+    };
+    const bounds = { pollIntervalMs: 0, maxPollAttempts: 5, executionDeadlineMs: 120_000, ...(opts.bounds ?? {}) };
+    const go =
+      which === 'screen'
+        ? screenExecuteAndRead(client as never, 7, {}, { ...bounds, maxResultRows: 100, clock })
+        : censusExecuteAndRead(client as never, 7, {}, { ...bounds, resultLimit: 100, clock });
+    return { go, paths, client };
+  }
+
+  const RUNNING = () => ({ state: 'QUERY_STATE_PENDING' });
+
+  for (const which of ['screen', 'census'] as const) {
+    it(`${which}: an execution still running at the deadline is CANCELLED, not merely abandoned`, async () => {
+      // The measured failure, and the fix. Before this, the loop walked away and said the execution
+      // "is billed and is not retried" — true, and silent about the engine still running to Dune's
+      // own 30-minute limit on our money.
+      const { go, paths } = harness(which, { status: RUNNING, elapsedPerPoll: 100_000 });
+      const err = await go.then(
+        () => null,
+        (e: Error) => e,
+      );
+      expect(err?.name).toBe('DuneExecutionAbandoned');
+      expect(paths).toContain('/execution/exec-1/cancel');
+      const abandoned = err as unknown as { reason: string; terminal: boolean; worstCaseCredits: number; cancelAcknowledged: boolean };
+      expect(abandoned.reason).toBe('deadline');
+      // Still terminal, so every existing catch site keeps falling back exactly as it did.
+      expect(abandoned.terminal).toBe(true);
+      expect(abandoned.cancelAcknowledged).toBe(true);
+      expect(abandoned.worstCaseCredits).toBe(13);
+      // "WE STOPPED THIS" has to be readable off the message, not inferred from a state name.
+      expect(err?.message).toMatch(/ABANDONED BY US, not failed by Dune/);
+      expect(err?.message).toMatch(/execution deadline expired/);
+      expect(err?.message).toMatch(/bounds the WAIT for certain/);
+      expect(err?.message).not.toContain(SENTINEL_KEY);
+    });
+
+    it(`${which}: a VENDOR failure stays a vendor failure — no cancel, and not this outcome`, async () => {
+      // The distinction the whole outcome exists for. Dune stopped this one, so there is nothing to
+      // cancel and a run must not report it as something we did.
+      const { go, paths } = harness(which, { status: () => ({ state: 'QUERY_STATE_FAILED' }) });
+      const err = await go.then(
+        () => null,
+        (e: Error) => e,
+      );
+      expect(err?.name).toBe('DuneRefused');
+      expect(paths.some((p) => p.endsWith('/cancel'))).toBe(false);
+      // And the corrected costing premise travels on it, because this is where a reader meets it.
+      expect(err?.message).toMatch(/fails to COMPILE costs nothing/);
+    });
+
+    it(`${which}: a COMPLETED execution is never cancelled`, async () => {
+      const { go, paths } = harness(which, { status: () => ({ state: 'QUERY_STATE_COMPLETED' }) });
+      await go.catch(() => undefined);
+      expect(paths.some((p) => p.endsWith('/cancel'))).toBe(false);
+      expect(paths.some((p) => p.includes('/results'))).toBe(true);
+    });
+
+    it(`${which}: running out of POLLS cancels too, and says which bound ran out`, async () => {
+      // The poll budget and the deadline are one bound in two units, so both give-up paths are the
+      // same event and both must stop the engine. Reaching this one means the two pins have come
+      // apart, which the message says rather than leaving it to be inferred.
+      const { go, paths } = harness(which, { status: RUNNING, elapsedPerPoll: 0 });
+      const err = await go.then(
+        () => null,
+        (e: Error) => e,
+      );
+      expect(err?.name).toBe('DuneExecutionAbandoned');
+      expect((err as unknown as { reason: string }).reason).toBe('poll-budget');
+      expect(paths).toContain('/execution/exec-1/cancel');
+      expect(err?.message).toMatch(/no longer covers/);
+    });
+
+    it(`${which}: the REQUEST CEILING cannot stop the cancel — that is the whole point of the exemption`, async () => {
+      // An abandonment happens with the request budget at or near its limit by construction. A
+      // ceiling that refused the cancel would turn a bounded bill into an unbounded one at exactly
+      // the moment the bound is needed. The original error survives unchanged: a `CeilingReached`
+      // must keep its own remedy rather than be replaced by ours.
+      const { go, paths, client } = harness(which, { status: RUNNING, elapsedPerPoll: 0, maxRequests: 3 });
+      const err = await go.then(
+        () => null,
+        (e: Error) => e,
+      );
+      expect(err?.name).toBe('CeilingReached');
+      expect(paths).toContain('/execution/exec-1/cancel');
+      // It still COUNTS as issued, so the run's own tally does not quietly under-report.
+      expect(client.issued()).toBeGreaterThan(3);
+    });
+
+    it(`${which}: a cancel that does NOT land is reported, never swallowed and never thrown`, async () => {
+      // A failing cancel means the execution may still be running and the bill may still be
+      // growing. That is worse news than the abandonment, so it travels ON the refusal — replacing
+      // the refusal with it would lose the deadline, the elapsed time and the execution id at once.
+      const { go } = harness(which, {
+        status: RUNNING,
+        elapsedPerPoll: 100_000,
+        cancelResponds: () => new Response('nope', { status: 500 }),
+      });
+      const err = await go.then(
+        () => null,
+        (e: Error) => e,
+      );
+      expect(err?.name).toBe('DuneExecutionAbandoned');
+      expect((err as unknown as { cancelAcknowledged: boolean }).cancelAcknowledged).toBe(false);
+      expect(err?.message).toMatch(/Cancel was NOT acknowledged/);
+      expect(err?.message).not.toContain(SENTINEL_KEY);
+    });
+  }
+
+  it('the CENSUS gives it its own exit code, ahead of the generic vendor branch', () => {
+    // `DuneExecutionAbandoned` IS a `DuneRefused`, so ORDER is the guard: checked second it would be
+    // swallowed and reported as exit 4, and an operator could not tell "we stopped this" from "this
+    // broke" — which is how the 180-credit incident stayed invisible in the first place.
+    expect(new Set(Object.values(EXIT)).size).toBe(Object.values(EXIT).length);
+    expect(EXIT.deadline).not.toBe(EXIT.vendor);
+    const source = readFileSync(fileURLToPath(new URL('../tools/creation-census/run.mjs', import.meta.url)), 'utf8');
+    const abandoned = source.indexOf('cause instanceof DuneExecutionAbandoned');
+    const refused = source.indexOf('cause instanceof DuneRefused');
+    expect(abandoned).toBeGreaterThan(-1);
+    expect(refused).toBeGreaterThan(abandoned);
+    expect(source.slice(abandoned, refused)).toContain('return EXIT.deadline;');
+  });
+
+  it('the CENSUS dry run states the deadline beside the ceilings, free and with no key', () => {
+    // A worst case is what a plan is REFUSED on; the deadline is what the run will actually do about
+    // an execution that will not finish. An operator sizing a month needs both, and needs them
+    // without spending anything to see them.
+    const lines: string[] = [];
+    return censusMain([], {}, (l) => lines.push(l)).then((code) => {
+      expect(code).toBe(EXIT.ok);
+      const out = lines.join('\n');
+      expect(out).toMatch(/deadline\s+120s execution deadline/);
+      expect(out).toMatch(/at most 13 credit\(s\) of compute/);
+      expect(out).toMatch(/worst case\s+224\.51 credit\(s\)/);
+    });
+  });
 });

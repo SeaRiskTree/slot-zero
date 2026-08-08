@@ -221,18 +221,28 @@ describe('264a — the row ceiling is raised, still reachable, and needs no save
     // The guard converts the plan to credits before the first request; doubling the rows doubles
     // the export half. Stated so a reader can see it still clears a fresh period at tightMultiple 2.
     const EXPORT_CREDITS_PER_MB = 20;
-    const worstCase =
-      (T['dune'].maxExecutionsPerRun as number) * (T['dune'].worstCaseCreditsPerExecution as number) +
+    const exportHalf =
       (((T['dune'].maxExecutionsPerRun as number) + 1) *
         dune.maxResultRows *
         (T['dune'].resultBytesPerRowCeiling as number) *
         EXPORT_CREDITS_PER_MB) /
-        1_000_000;
-    expect(Math.round(worstCase)).toBe(340);
+      1_000_000;
+    const worstCase =
+      (T['dune'].maxExecutionsPerRun as number) * (T['dune'].worstCaseCreditsPerExecution as number) + exportHalf;
+    // THE EXPORT HALF IS WHAT 264a MOVED and it is what this test is about: 3 reads x 40,000 rows x
+    // 121 B at 20 credits/MB. It was pinned here as the whole worst case (340.4 = 2 x 25 + 290.4)
+    // until captain decision 381 re-derived the COMPUTE half against Dune's engine timeout and took
+    // worstCaseCreditsPerExecution 25 -> 200. Asserting the two halves apart is what keeps this
+    // test measuring the raise it was written for rather than tracking a pin it has no opinion on.
+    expect(Math.round(exportHalf * 10) / 10).toBe(290.4);
+    expect(Math.round(worstCase)).toBe(690);
     const FREE_TIER_CREDITS = 2_500;
     const needed = worstCase * (T['dune'].allowanceTightMultiple as number) + (T['dune'].allowanceReserveCredits as number);
     expect(needed).toBeLessThan(FREE_TIER_CREDITS);
-    expect(dune.justification['maxResultRows']).toMatch(/340\.4/);
+    expect(dune.justification['maxResultRows']).toMatch(/290\.4/);
+    // And the justification says, in place, that its own worked figures predate 381 — so a reader
+    // arriving at "340.4" does not take it for the live number.
+    expect(dune.justification['maxResultRows']).toMatch(/690\.4/);
   });
 });
 

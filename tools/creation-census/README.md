@@ -80,7 +80,11 @@ A run writes two files to `runs/`:
   bump, never retro-edit, because committed records are evidence that a census ran and what it saw.
 
 Exit codes: `0` ran, `2` refused (a real answer about our own evidence, not a fault), `3` credential,
-`4` vendor refused — and on `4` the execution may already have been billed.
+`4` vendor refused — and on `4` the execution may already have been billed — and **`5` WE STOPPED
+IT**: the execution was still running at `bounds.json` → `dune.executionDeadlineMs` and this run
+cancelled it rather than keep paying (captain decision 381). `5` is deliberately not folded into `4`.
+A `4` sends an operator to look at Dune or at the SQL; a `5` is a statement that has outgrown its
+deadline, and the fix is a decision about how much engine time `COHORT_SQL` is worth.
 
 ### Deploying, and the claim that was false for a month
 
@@ -104,6 +108,17 @@ curl -sS -H "X-Dune-API-Key: $DUNE_API_KEY" 'https://api.dune.com/api/v1/queries
 if the slots are full. It never deletes or archives an existing query to make room — which of them
 is retired is not this tool's call.
 
+**AND ON THE KEY THIS FLEET IS USING TODAY THE PRIVATE ALLOWANCE IS ZERO, WHICH `--deploy` CANNOT
+SATISFY AT ALL.** Measured 2026-08-08: `GET /queries` reports `total: 0` and `POST /usage` reports
+`private_queries: 0`, yet `POST /api/v1/query` with `is_private: true` returns
+`402 Max number of private queries reached` — while the same create as a **public** query succeeds
+(`slot-zero-venue-gradeability-inventory` → `report.md` §0, held in firstmate's records, not in this
+repo). So a local count of zero-in-use passes this check and the vendor refuses anyway.
+`deploySavedQuery` still sends `is_private: true` and is **left that way**: publishing the statement
+is a custody decision for the captain, not a passing fix, and nothing is blocked meanwhile because
+`8214953` is already deployed and every run VERIFIES rather than creates. A lane that needs a
+scratch slot on this key must create a public query or it cannot run at all.
+
 **Deploying the committed SQL is half a change.** If `COHORT_SQL` is edited, the saved query must be
 updated in place in the same commit: `run.mjs` compares the two before every execution and refuses
 the whole leg, terminally, when they differ. A saved query is editable from a browser and this one
@@ -120,10 +135,12 @@ not).
 | | |
 |---|---|
 | executions | **1 per run**, which is one census month. The coverage probe rides in the same result. |
-| requests | **48**, covering the credit-guard `POST /usage`, the verification, the execution, up to 40 polls and the one read, plus one retry of headroom. It is `maxPollAttempts + 5` and must stay there: below it the request ceiling binds first, and a run that exhausts its budget between the execution and the read has burned a billed, unrecoverable execution and thrown its answer away. |
+| requests | **48**, covering the credit-guard `POST /usage`, the verification, the execution, up to 40 polls and the one read, plus one retry of headroom. It is `maxPollAttempts + 5` and must stay there: below it the request ceiling binds first, and a run that exhausts its budget between the execution and the read has burned a billed, unrecoverable execution and thrown its answer away. **The cancel is exempt from it** — a ceiling that could refuse the one request that stops a spend would be the wrong way round — so a run that had to cancel reports one request above this figure. |
+| execution deadline | **120,000 ms**, the give-up point at which a still-running execution is CANCELLED rather than abandoned. Exactly `maxPollAttempts × pollIntervalMs`, so nothing about *when* this lane gives up moved; what moved is that it now stops the engine. Worth at most **13 credits** of compute if cancelling stops Dune's clock, against the **200** the guard reserves in case it does not. |
 | result rows | **5,000** deployer rows, ceiling 20,000; read at `?limit=` rows + 64 |
 | pacing | **250 ms** between request starts |
 | measured cost | **1 execution, 5 requests, 188,232 result bytes, ~3.8 export credits** (estimate) |
+| worst case reserved | **224.51 credits** at the default `--max-rows` — 1 execution at 200 plus 2 reads of 5,064 rows at 121 B. It is what a plan is REFUSED on, not what a run costs; the gap between it and the measured ~5 above is the point of captain decision 381 and is explained under "The monthly credit ceiling". |
 
 ### The monthly credit ceiling — checked, not discovered by hitting
 
@@ -199,9 +216,26 @@ cap reads as the named state rather than as `undefined`.
   tracks it between runs, so a sibling run can spend the remainder between our reading and our
   execution, and a **different key** is a different account this reading cannot see. *A sufficient reading is evidence, never a reservation.* **Unshared is not the same
   claim as "the counter is exact"**: only the first changed, and the reserve above still comes off.
+- **IT CANNOT BOUND WHAT AN EXECUTION ACTUALLY COSTS — only what this run is allowed to PLAN.** The
+  spend happens after the check passes, and Dune caps a single execution's cost nowhere. That is not
+  hypothetical: a lane running behind this exact code path, with the counter re-read before every
+  execution, printed `verdict: sufficient (ok=true)` against a pinned worst case of 6 credits and was
+  billed **180.002**. Dune bills compute by engine time, so **"a failed execution is free" is true
+  only of a statement that fails to COMPILE** — one that compiles and then runs to the vendor's
+  30-minute limit consumes the whole limit and is billed for it, and both come back as "failed".
+  Captain decision 381 is both halves of the answer: `worstCaseCreditsPerExecution` is re-derived
+  against that engine floor (25 → **200**, so a default census now reserves 224.51 credits rather
+  than 49.51 and a 4,000-credit period affords ~17 reserved runs rather than ~80), and
+  `executionDeadlineMs` **cancels** an execution still running at 120 s rather than walking away from
+  a live engine. **Cancelling bounds the WAIT for certain and the BILL only if Dune stops the engine
+  on cancel** — undocumented, and settling it would cost a runaway execution — which is exactly why
+  the pin sits at the engine floor rather than at the deadline's own 13 credits. A cancelled run is
+  its own outcome, **exit 5**, never folded into the vendor's exit 4. Both pins' `justification`
+  entries own the arithmetic; cite them rather than restating it.
 - **Execution compute is not predictable from the vendor** — Dune publishes no price table — so
-  `worstCaseCreditsPerExecution` is a per-lane pin against measured executions of comparable
-  statements. `COHORT_SQL` growing a trade-tape join would break it silently.
+  `worstCaseCreditsPerExecution` is a per-lane pin. `COHORT_SQL` growing a trade-tape join would
+  need it re-measured, and the trade-join figures on record are SUCCESSFUL executions that say
+  nothing about where a joined statement's own timeout floor sits.
 - **Nothing tracks the period across runs.** The record carries the reading it took plus
   `dune.localEstimate`, this run's own estimate of its own spend, labelled as one — re-reading
   `/usage` afterwards would report the balance from *before* the run.

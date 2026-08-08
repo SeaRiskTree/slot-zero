@@ -606,7 +606,12 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   of that month's graduations (`slot-zero-graduation-regime-remeasure` §§1.4 and 3, held in
   firstmate's records, not in this repo). The screen records it per launch and prints each
   candidate's share wherever a candidate is summarised; **no bar, gate, rate or verdict reads it and
-  no launch is dropped or weighted for it** — 227b and 227c were declined. `dune.mjs` →
+  no launch is dropped or weighted for it** — 227b and 227c were declined, and **227b has since been
+  REVERSED by captain decision 351, which is NOT implemented in this tree**, so this bullet describes
+  the code as it stands; **227c — dropping a mayhem-heavy deployer outright — is NOT reversed and
+  remains declined**, a deployer being judged on its non-mayhem record rather than removed for having
+  a mayhem one (see "How big the addressable population is" below, which owns 351's evidence).
+  `dune.mjs` →
   `MAYHEM_OBSERVATION_ONLY` is the one sentence, and a test pins that verdicts are identical with the
   column populated, absent and malformed. **Three traps.** A malformed value folds to `null` rather
   than refusing the row, deliberately and unlike `bonded`/`launches_total`, because a refused row

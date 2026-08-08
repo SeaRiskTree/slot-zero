@@ -151,9 +151,10 @@ doc owns that bound; cite it rather than restating it.
 - **Both configurations are proven, not assumed.** The default root with nothing set — rehearsed by
   phase C from a fresh clone carrying no `data/` at all, with only the release asset unpacked — and
   an explicit `SLOT_ZERO_DATA_ROOT` pointed at a copy kept elsewhere are both green, and a root
-  pointed at nothing fails **12 of the 18 suites**
-  — which is also the measure of how much of this suite is data-bound, and the reason CI cannot
-  simply lose the tapes.
+  pointed at nothing fails **12 of the 18 suites as measured 2026-08-05 at 354a; the repo now has
+  19**, and which of them fail against an empty root has not been re-measured since — outstanding
+  work for a follow-up lane. That count is also the measure of how much of this suite is data-bound,
+  and the reason CI cannot simply lose the tapes.
 - **Two readers used to build paths by concatenation** (`analysis/window-population/measure.mjs`,
   `tools/window-decay-tripwire/tape.mjs`) and depended on a trailing separator. The resolver returns
   none; those sites use `join()` now and a test pins the absence.
@@ -161,8 +162,10 @@ doc owns that bound; cite it rather than restating it.
   tapes for testing, and do not re-measure it** (captain decision 354a, which records the
   measurement in full). A properly stratified subset was built and run: 13 strata over regime ×
   graduated × committed window width × coverage, densest and sparsest create slot in each,
-  **23 launches / 94 files / 16 MB**. Result: **138 tests failed across 11 of the 18 suites**, it
-  converted **exactly one** suite over having no data at all (`data-root`, which only needs the
+  **23 launches / 94 files / 16 MB**. Result: **138 tests failed across 11 of the 18 suites as
+  measured 2026-08-05 at 354a; the repo now has 19** — and 354a's own instruction not to re-measure
+  stands, so read every figure in this bullet as that dated reading. It converted
+  **exactly one** suite over having no data at all (`data-root`, which only needs the
   directories to exist), and — the decisive part — **it changed a published finding**: the blind
   changepoint scan returned `2026-03-26T16:10:24Z` against the published `2026-03-14T17:28:20Z`.
   The failures are `toHaveLength(239)`, 46,553 pair rows, 107,439 fills, 1,999 create-slot pairs,

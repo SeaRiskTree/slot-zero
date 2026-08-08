@@ -148,8 +148,10 @@ doc owns that bound; cite it rather than restating it.
   error message prints cannot drift. **Neither default resolves in a bare clone** — the data is
   genuinely not there — which is what `missingDatasetMessage` is for; it now offers the FETCH first
   and the variable second. The module's own doc owns the argument; cite it rather than restating it.
-- **Both configurations are proven, not assumed.** `SLOT_ZERO_DATA_ROOT=~/slot-zero-data npm test`
-  and the default run are both green, and a root pointed at nothing fails **12 of the 18 suites**
+- **Both configurations are proven, not assumed.** The default root with nothing set — rehearsed by
+  phase C from a fresh clone carrying no `data/` at all, with only the release asset unpacked — and
+  an explicit `SLOT_ZERO_DATA_ROOT` pointed at a copy kept elsewhere are both green, and a root
+  pointed at nothing fails **12 of the 18 suites**
   — which is also the measure of how much of this suite is data-bound, and the reason CI cannot
   simply lose the tapes.
 - **Two readers used to build paths by concatenation** (`analysis/window-population/measure.mjs`,

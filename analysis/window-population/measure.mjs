@@ -25,8 +25,9 @@ import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../../conf
 /**
  * @type {string} Absolute path of the dataset directory.
  *
- * **Where the data lives is `config/data-root.mjs`'s to answer**, not this module's: it defaults to
- * the copy in this repository and moves with `SLOT_ZERO_DATA_ROOT`. `analysis/` may not read an
+ * **Where the data lives is `config/data-root.mjs`'s to answer**, not this module's: the tapes are
+ * not in this tree, and the root defaults to the store at `~/slot-zero-data` and moves with
+ * `SLOT_ZERO_DATA_ROOT`. `analysis/` may not read an
  * environment variable itself (`test/window-population.test.ts`, the same guard `src/` is held to),
  * so the one owner lives in its own area and this is the import of it. **No trailing separator** —
  * it used to have one and paths were built by concatenation; they are built with `join()` now.

@@ -26,8 +26,9 @@ import { slotOf } from './trades.mjs';
 /**
  * The committed primary record. Never reformatted, re-sorted or "cleaned" — read only.
  *
- * **Where it lives is `config/data-root.mjs`'s answer, not this tool's**: it defaults to the copy in
- * this repository and moves with `SLOT_ZERO_DATA_ROOT`.
+ * **Where it lives is `config/data-root.mjs`'s answer, not this tool's**: the tapes are not in
+ * this tree, and it defaults to the store at `~/slot-zero-data` and moves with
+ * `SLOT_ZERO_DATA_ROOT`.
  */
 export const TAPE_DIR = POPULATION_TAPE_DIR;
 

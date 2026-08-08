@@ -105,6 +105,15 @@ carried**: at the borrowed 225 the plan priced at 3,237 credits and the guard re
 and uninformatively. Measured from the balance itself — 0.25 credits of compute at a 65-second scan
 hull, 1.91 at 16.1 days — it is pinned at 10.
 
+> **CORRECTION, 2026-08-08 — THAT PIN IS NOW 61 (captain decision 381), and the estimate above moves
+> with it.** Every figure in this section prices the statement when it WORKS; a statement that
+> compiles and then runs to Dune's 30-minute engine limit is billed for the whole limit, measured at
+> 180.002 credits. So the pin is now the floor this lane's own 600 s execution deadline buys, and the
+> whole-tape ESTIMATE is **1269.195 credits** (12 × 61 compute + the same 537.195 of export) rather
+> than 657.195. The ACTUAL figures in the table above are what the 2026-08-05 run spent and are left
+> exactly as recorded. `dune-reproduction.mjs` → `WORST_CASE_CREDITS_PER_EXECUTION` owns the
+> derivation and why this lane does not take the keyed blocks' 200; cite it rather than this note.
+
 **The first whole-tape run's 530 credits bought rows that were then thrown away**, so correcting the
 statement's AMM half meant buying all 107,439 again. `--rows` and `--from-rows` exist because of
 that: a change to the *comparison* must never cost a re-fetch. The row cache is a working file and is

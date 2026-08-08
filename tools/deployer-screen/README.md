@@ -99,10 +99,12 @@ node tools/deployer-screen/grade.mjs --help
 
 # THE DUNE ENTRY STATEMENT, RUN AGAINST THE COMMITTED TAPE. Also a DRY RUN by default: it prints
 # the batch plan and its credit estimate and opens no socket. --live SPENDS, and it is the most
-# expensive thing in this directory — a 657.195-credit planned worst case against a 2,500-credit
-# shared month, ~495 spent in fact, almost all of it result bytes. The measurement record owns those
-# figures; read "The reproduction" below before running it, because the committed answer is already
-# in measurements/2026-08-05-dune-entry-reproduction/ and a test asserts it.
+# expensive thing in this directory — a 1269.195-credit planned worst case against a 2,500-credit
+# shared month (657.195 when the record below was written, before captain decision 381 moved this
+# lane's per-execution pin 10 -> 61), ~495 spent in fact, almost all of it result bytes. The
+# measurement record owns the SPENT figures; read "The reproduction" below before running it,
+# because the committed answer is already in measurements/2026-08-05-dune-entry-reproduction/ and a
+# test asserts it.
 node tools/deployer-screen/dune-reproduction.mjs
 node tools/deployer-screen/dune-reproduction.mjs --mints <mint>          # price a change cheaply first
 node tools/deployer-screen/dune-reproduction.mjs --live --out <path> --rows <cache>

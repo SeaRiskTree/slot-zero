@@ -1,0 +1,50 @@
+{
+  "tool": "deployer-screen-stage2-rotation",
+  "schemaVersion": 1,
+  "updatedAtIso": "2026-08-04T10:49:14.147Z",
+  "reproducibility": "ROTATION STATE IS COMMITTED EVIDENCE: this run scored the least-recently-scored survivors, so its output depends on every run before it. The run record names the state it read (path, schema version, SHA-256 before and after) and carries the whole ranked order, so the selection is re-derivable from committed artefacts alone — rotation.mjs -> verifySelection.",
+  "wallets": {
+    "2N7qg9a3N6DXgDBXvgZ5JGnXvxUnX1YhBEC5Y7waqxmi": {
+      "wallet": "2N7qg9a3N6DXgDBXvgZ5JGnXvxUnX1YhBEC5Y7waqxmi",
+      "firstScoredAtIso": "2026-08-04T10:49:14.147Z",
+      "lastScoredAtIso": "2026-08-04T10:49:14.147Z",
+      "timesScored": 1,
+      "origin": "run-record"
+    },
+    "7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL": {
+      "wallet": "7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL",
+      "firstScoredAtIso": "2026-08-02T08:35:14.567Z",
+      "lastScoredAtIso": "2026-08-02T08:35:14.567Z",
+      "timesScored": 1,
+      "origin": "run-record"
+    },
+    "ALJ4P5QNyHeLEjpKGmA1eUfJHSEGQMjY8HLnDkSgjczb": {
+      "wallet": "ALJ4P5QNyHeLEjpKGmA1eUfJHSEGQMjY8HLnDkSgjczb",
+      "firstScoredAtIso": "2026-08-02T08:35:14.567Z",
+      "lastScoredAtIso": "2026-08-02T08:35:14.567Z",
+      "timesScored": 1,
+      "origin": "run-record"
+    },
+    "B6QvkTWSqJZv5tK4AxFnJRy54Skrk4S1VH4QG2qqs66N": {
+      "wallet": "B6QvkTWSqJZv5tK4AxFnJRy54Skrk4S1VH4QG2qqs66N",
+      "firstScoredAtIso": "2026-08-02T08:35:14.567Z",
+      "lastScoredAtIso": "2026-08-02T08:35:14.567Z",
+      "timesScored": 1,
+      "origin": "run-record"
+    },
+    "BXAWg4JbaeyvAHpiyYQ3Xr3bUh6FsyDHwwSkB5dmyGF": {
+      "wallet": "BXAWg4JbaeyvAHpiyYQ3Xr3bUh6FsyDHwwSkB5dmyGF",
+      "firstScoredAtIso": "2026-08-04T10:49:14.147Z",
+      "lastScoredAtIso": "2026-08-04T10:49:14.147Z",
+      "timesScored": 1,
+      "origin": "run-record"
+    },
+    "yHCxHBEaJW5tbndqC8JciSThr7U1cqLpdcsvHcx6PRe": {
+      "wallet": "yHCxHBEaJW5tbndqC8JciSThr7U1cqLpdcsvHcx6PRe",
+      "firstScoredAtIso": "2026-08-04T10:49:14.147Z",
+      "lastScoredAtIso": "2026-08-04T10:49:14.147Z",
+      "timesScored": 1,
+      "origin": "run-record"
+    }
+  }
+}

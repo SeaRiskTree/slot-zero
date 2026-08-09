@@ -30,7 +30,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../../config/data-root.mjs';
@@ -103,9 +103,22 @@ import {
 } from './entry-agreement.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import {
+  REPRODUCIBILITY_RULE,
+  ROTATION_SCHEMA_VERSION,
+  digestOf,
+  importScoredFromRunRecords,
+  ledgerRunRecords,
+  loadRotation,
+  markScored,
+  saveRotationText,
+  selectForScoring,
+  serialiseRotation,
+} from './rotation.mjs';
+import {
   renderCompetenceMayhem,
   renderDryRun,
   renderMayhemShare,
+  renderRotation,
   renderStage0,
   renderStage1,
   LIMITATIONS,
@@ -942,6 +955,24 @@ const HERE = dirname(fileURLToPath(import.meta.url));
  */
 const DEFAULT_DATA_DIR = POPULATION_TAPE_DIR;
 
+/**
+ * Stage 2's rotation memory (captain decision 336a) and the run records it can be rebuilt from.
+ *
+ * Committed, for the reason `rotation.mjs`'s module comment gives: rotation trades statelessness
+ * for coverage, and the trade was accepted only on condition that a run stays reproducible given
+ * its state. A state nobody can read is not evidence.
+ */
+const DEFAULT_ROTATION_STATE = join(HERE, 'rotation', 'stage2-scored.json');
+const DEFAULT_RUNS_DIR = join(HERE, 'runs');
+/**
+ * What a persisted path is stated RELATIVE TO.
+ *
+ * A run record is committed here and read elsewhere, so an absolute path out of somebody's home
+ * directory in it is both useless to the reader and more about the operator than the run. Two levels
+ * up from this file is the repository root.
+ */
+const REPO_ROOT = resolve(HERE, '..', '..');
+
 const EXIT = {
   ok: 0,
   usage: 2,
@@ -1028,6 +1059,19 @@ OPTIONS
                       by this tool: it records what was predicted and measures what happened, and
                       scoring one against the other belongs to the lane that grades. See
                       record.mjs -> readPredictions for the shape and what each field must say.
+  --rotation <path>   Stage 2's rotation memory — which survivors this screen has already spent its
+                      scoring cap on. Default tools/deployer-screen/rotation/stage2-scored.json.
+                      Captain decision 336a: the cap scores the LEAST-RECENTLY-SCORED survivors, so
+                      successive runs cycle through the population instead of re-measuring the same
+                      head of the list every day. Written after the run, and only for the wallets it
+                      actually scored. It costs nothing in any currency.
+  --runs-dir <path>   Committed run records the rotation is rebuilt from, offline and free, on every
+                      run. Default tools/deployer-screen/runs. A wallet a committed record shows an
+                      entry score for has already had the cap spent on it, so a lost or hand-deleted
+                      state file degrades to a slower rotation rather than to a wrong one.
+  --no-rotation       Take the head of the survivor list, exactly as every run before 336a did, and
+                      read and write no state. The record still carries a scoringRotation block
+                      saying rotation was off, so a stateless run is never mistaken for a rotated one.
   --out <path>        Write the run record as JSON. Default: nothing is written. An INCOMPLETE run
                       writes <path>.partial.json instead, leaving <path> untouched.
   --json              Print the run record as JSON instead of text.
@@ -1110,6 +1154,12 @@ export function parseArgs(argv) {
     out: null,
     json: false,
     dataDir: DEFAULT_DATA_DIR,
+    // Rotation is ON by default, because 336a is about the DAILY run and a rotation nobody switches
+    // on is the repeat it replaced. The committed default path is the tool's own memory, exactly as
+    // `feed/ledger.json` is the discovery feed's.
+    rotation: DEFAULT_ROTATION_STATE,
+    runsDir: DEFAULT_RUNS_DIR,
+    rotate: true,
     help: false,
   };
 
@@ -1210,6 +1260,21 @@ export function parseArgs(argv) {
         opts.dataDir = v;
         break;
       }
+      case '--rotation': {
+        const v = next();
+        if (v === null) return { ok: false, message: '--rotation needs a path' };
+        opts.rotation = v;
+        break;
+      }
+      case '--runs-dir': {
+        const v = next();
+        if (v === null) return { ok: false, message: '--runs-dir needs a path' };
+        opts.runsDir = v;
+        break;
+      }
+      case '--no-rotation':
+        opts.rotate = false;
+        break;
       default:
         return { ok: false, message: `unknown option '${String(arg)}'` };
     }
@@ -1316,6 +1381,13 @@ export function parseArgs(argv) {
  * @property {string | null} out
  * @property {boolean} json
  * @property {string} dataDir
+ * @property {string} rotation Where Stage 2's rotation memory lives (captain decision 336a).
+ * @property {string} runsDir Committed run records the rotation can be rebuilt from, offline and
+ *   free, on every run — so a lost state file degrades to a slower rotation rather than a wrong one.
+ * @property {boolean} rotate When false (`--no-rotation`) the scoring cap takes the head of the
+ *   survivor list exactly as it did before 336a, and no state is read or written. It exists so the
+ *   stateless behaviour a published pre-336a result was produced under stays reachable, and so a
+ *   test can prove the two selections coincide on an empty rotation.
  * @property {boolean} help
  */
 
@@ -1410,6 +1482,39 @@ export async function main(opts, env, out, err, seam = {}) {
       return EXIT.usage;
     }
     declaredPredictions = parsed.predictions;
+  }
+
+  // ---- Stage 2's rotation memory (captain decision 336a) ----------------------------------
+  // Read HERE, beside `--predict` and for the identical reason: an unreadable state file REFUSES
+  // the run, and a refusal that arrives after the MadeOnSol seed enumeration is spent is a refusal
+  // that cost money. Nothing about this leg reaches a vendor — it is a local file plus the committed
+  // run records, and it costs zero in every currency.
+  //
+  // The committed records are folded in on EVERY run rather than once at bootstrap, the same
+  // discipline `ledger.mjs` → `importRunRecords` applies one lane over: a wallet a committed record
+  // shows an entry score for has already had the cap spent on it, so a lost state file degrades to a
+  // slower rotation instead of to a wrong one.
+  //
+  // **Read only where Stage 2 will actually select**, through the SAME predicate the fill source's
+  // own construction is gated on rather than a second reading of `opts.stage2` — 144a's rule, and
+  // the reason `entryFillSourceIsRead` exists at all. `--stage0`, `--dry-run` and `--no-stage2`
+  // spend the cap on nobody, so there is nothing to rotate, and an unreadable state has no business
+  // refusing a run that would never have written one.
+  const rotationPath = opts.rotate ? resolve(opts.rotation) : null;
+  /** @type {{ rotation: import('./rotation.mjs').Rotation, digest: string | null, present: boolean } | null} */
+  let rotationRead = null;
+  let rotationImported = 0;
+  if (rotationPath !== null && entryFillSourceIsRead(opts) && !opts.dryRun) {
+    try {
+      rotationRead = loadRotation(rotationPath);
+      rotationImported = importScoredFromRunRecords(
+        rotationRead.rotation,
+        ledgerRunRecords(resolve(opts.runsDir)),
+      ).imported;
+    } catch (cause) {
+      err(`--rotation: ${cause instanceof Error ? cause.message : String(cause)}`);
+      return EXIT.usage;
+    }
   }
 
   // ---- Stage 0. Always runs. Nothing keyed happens until it has passed. -------------------
@@ -2038,6 +2143,9 @@ export async function main(opts, env, out, err, seam = {}) {
   /** @type {Map<string, unknown>} */
   const profiles = new Map();
   let scoringTruncatedBy = 0;
+  /** @type {{ order: import('./rotation.mjs').RotationRow[], selected: string[], deferred: string[], neverScored: number } | null} */
+  let rotationSelection = null;
+  let rotationWalletsScored = 0;
 
   try {
     if (!opts.json) {
@@ -2641,7 +2749,32 @@ export async function main(opts, env, out, err, seam = {}) {
     // 144a's defect, and it is what let the construction sit outside this guard in the first place.
     if (entrySourcePlan !== null) {
       const survivors = candidates.filter((c) => c.verdict === 'gate-passed');
-      const toScore = survivors.slice(0, maxScored);
+      // **WHICH survivors the cap is spent on — captain decision 336a.** It used to be
+      // `survivors.slice(0, maxScored)`: the first seven in `mergeSeeds` order, which is
+      // deterministic, so a daily run re-measured the same seven every day while the median
+      // survivor needs ~21.5 days for its windows to refresh. Now the cap goes to the
+      // least-recently-scored, and the population cycles.
+      //
+      // `maxScored` itself does not move — captain decision 339a keeps the capacity at 7 per run.
+      // This changes WHICH seven and nothing else, so `scoringTruncatedBy` still counts survivors
+      // the cap left unscored and still means what it always did.
+      //
+      // With no state the ranking IS `survivors`' own order, so the first run after this change is
+      // byte-identical to the slice it replaced — and `--no-rotation` keeps that reachable forever.
+      if (rotationRead !== null) {
+        rotationSelection = selectForScoring(
+          rotationRead.rotation,
+          survivors.map((c) => c.wallet),
+          maxScored,
+        );
+      }
+      const order =
+        rotationSelection === null
+          ? survivors
+          : rotationSelection.selected
+              .map((w) => survivors.find((c) => c.wallet === w))
+              .filter((c) => c !== undefined);
+      const toScore = rotationSelection === null ? order.slice(0, maxScored) : order;
       scoringTruncatedBy = survivors.length - toScore.length;
 
       if (!opts.json) {
@@ -2651,6 +2784,10 @@ export async function main(opts, env, out, err, seam = {}) {
             `Scoring ${toScore.length} of ${survivors.length} gate survivor(s), ` +
             `ceiling ${entryThresholds.maxKeylessRequests} keyless request(s).`,
         );
+        // Captain decision 336a, on the line under the header and on EVERY run, including one with
+        // rotation OFF: an operator reading a run that repeated yesterday's seven wallets has to be
+        // able to see from the run itself whether that was a rotation or a repeat.
+        for (const line of renderRotation(rotationRecordBlock(null), '  ')) out(line);
         if (entrySourcePlan.crossCheck !== null) {
           out(
             `  DUAL SOURCE: every candidate is scored through ${entrySourcePlan.sources
@@ -2735,6 +2872,18 @@ export async function main(opts, env, out, err, seam = {}) {
           entrySourcePlan.crossCheck === null
             ? null
             : classifyEntryAgreement({ primary: entrySourcePlan.primary, recorded: picked.kind, readings });
+
+        // **THE ROTATION ADVANCES HERE, per candidate, and not for the batch.** A run that dies half
+        // way through has paid for the wallets it scored and for no others, so those advance and the
+        // rest come up again — the same argument `screen.mjs` makes for writing an incomplete record
+        // rather than discarding it. An UNMEASURED verdict advances too: it consumed the cap and the
+        // keyless walk, and leaving it in place would re-spend both on the same unanswerable wallet
+        // every run. That is not captain decision 174b's forbidden filter — nobody is dropped, the
+        // wallet keeps its place in the cycle and the record still surfaces and counts its verdict.
+        if (rotationRead !== null) {
+          markScored(rotationRead.rotation, c.wallet, startedAtIso);
+          rotationWalletsScored += 1;
+        }
 
         if (!opts.json) {
           out(`    → ${recorded.score.verdict.toUpperCase()} (via ${recorded.kind}): ${recorded.score.rationale}`);
@@ -2826,6 +2975,84 @@ export async function main(opts, env, out, err, seam = {}) {
   return EXIT.ok;
 
   /**
+   * Serialise the rotation state this run is about to leave behind, WITHOUT writing it.
+   *
+   * Split from the write because the run record names this file's digest: the bytes have to exist
+   * before the record is assembled, and they have to be the same bytes that reach disk. Serialising
+   * twice would put a digest in the record naming bytes nobody wrote — a reproducibility claim that
+   * is false in exactly the case a reader would use it.
+   *
+   * **Nothing is written when nothing was scored.** A run that never reached Stage 2, or reached it
+   * and scored no wallet, learnt nothing about the rotation, and rewriting the file to change only
+   * its `updatedAtIso` would churn a committed artefact and break the digest chain — run N's `after`
+   * is run N+1's `before` — for a run that moved the cycle by nothing.
+   *
+   * @returns {RotationWrite | null}
+   */
+  function finaliseRotation() {
+    if (rotationRead === null || rotationPath === null || rotationWalletsScored === 0) return null;
+    const text = serialiseRotation(rotationRead.rotation, startedAtIso);
+    return { path: rotationPath, text, digest: digestOf(text) };
+  }
+
+  /**
+   * The run record's `scoringRotation` block, and the same object the Stage 2 header renders from.
+   *
+   * ONE construction feeding both surfaces, because a rendered line and a recorded block that merely
+   * agree are captain decision 144a's defect: an operator watching a run and a reader of its record
+   * have to be told the same thing about which wallets were chosen and why.
+   *
+   * @param {RotationWrite | null} rotationWrite `null` at the Stage 2 header, where the bytes this
+   *   run will write do not exist yet — the block then carries `stateDigestAfter: null`, which is
+   *   also what a run that scored nothing records.
+   */
+  function rotationRecordBlock(rotationWrite) {
+    // THREE ways rotation can be off, kept apart because they are three different facts about the
+    // run: the operator asked for the pre-336a screen; the run scores nothing so there was nothing
+    // to rotate; or it scores but stopped before Stage 2 chose. A single `false` would make the
+    // first indistinguishable from the third, and the first is the only one that means a repeat.
+    const disabled = !opts.rotate
+      ? '--no-rotation'
+      : rotationRead === null
+        ? 'this run scores nothing'
+        : rotationSelection === null
+          ? 'Stage 2 did not reach the selection'
+          : null;
+    return {
+      enabled: disabled === null,
+      reason: disabled,
+      // Repo-relative, so a record committed here names a path a reader of this tree can open, and
+      // an absolute path out of somebody's home directory never lands in a committed artefact.
+      // `null` when no state was READ, so the field names a file this run opened rather than one it
+      // would have opened had it done something else.
+      statePath: rotationRead === null || rotationPath === null ? null : relative(REPO_ROOT, rotationPath),
+      stateSchemaVersion: rotationRead === null ? null : ROTATION_SCHEMA_VERSION,
+      // The bytes this run READ. `null` means there was no prior state — a first run — which is not
+      // the same as a state that was read and happened to be empty, and the two rank differently:
+      // with no state every survivor is never-scored and the ranking is the survivor list's own.
+      stateDigestBefore: rotationRead?.digest ?? null,
+      // The bytes this run WROTE, which is the next run's `stateDigestBefore`. `null` when this run
+      // wrote nothing, either because rotation was off or because it scored nobody.
+      stateDigestAfter: rotationWrite?.digest ?? null,
+      // The instant stamped on every wallet this run scored, so a reader can pick this run's own
+      // rows out of the state file without diffing it.
+      scoredAtIso: rotationWalletsScored > 0 ? startedAtIso : null,
+      walletsScored: rotationWalletsScored,
+      importedFromRunRecords: rotationImported,
+      survivors: rotationSelection === null ? 0 : rotationSelection.order.length,
+      neverScoredBefore: rotationSelection?.neverScored ?? 0,
+      selected: rotationSelection?.selected ?? [],
+      deferred: rotationSelection?.deferred ?? [],
+      // **THE WHOLE RANKED ORDER, not just the slice taken from it.** This is what makes the
+      // selection re-derivable from the record ALONE: `rotation.mjs` → `verifySelection` replays the
+      // ranking rule over these rows and checks that `selected` is its first `maxScored`. A block
+      // carrying only the chosen wallets would name a state file and prove nothing.
+      order: rotationSelection?.order ?? [],
+      reproducibility: REPRODUCIBILITY_RULE,
+    };
+  }
+
+  /**
    * Assemble the persistable run record and, separately, the ranked candidates.
    *
    * They are two return values rather than one object with a field the caller must remember to
@@ -2834,8 +3061,12 @@ export async function main(opts, env, out, err, seam = {}) {
    * record carried `ranked` and the writer removed it by destructuring, that containment rested on
    * one line in one caller; anything else that stringified the record would have persisted more than
    * the asserted field set. Now the record's own shape is the guarantee.
+   *
+   * @param {RotationWrite | null} rotationWrite The rotation bytes this run is about to persist,
+   *   already digested. Passed in rather than computed here because the record NAMES that digest,
+   *   so the text has to exist before the record does and be the same text that lands on disk.
    */
-  function buildRecord() {
+  function buildRecord(rotationWrite) {
     const stats = client.stats();
     const ranked = rankCandidates(candidates);
     const coverage = summariseCoverage({
@@ -2982,6 +3213,14 @@ export async function main(opts, env, out, err, seam = {}) {
         unmeasured,
         coverage,
         scoringCap: { max: maxScored, survivorsUnscored: scoringTruncatedBy, enabled: opts.stage2 },
+        // **Schema 20. WHICH survivors the cap went to, and the state that decided it** — captain
+        // decision 336a. `scoringCap` above says how many were left unscored; this says who was
+        // chosen, by what rule, and against which bytes, because rotation makes a run's output
+        // depend on every run before it and the captain accepted that only on condition that
+        // reproducibility be preserved another way. The block is never `null`: a run made with
+        // `--no-rotation`, or one where Stage 2 never selected anything, carries `enabled: false`
+        // and a `reason`, so a stateless run can never be read as a rotated one.
+        scoringRotation: rotationRecordBlock(rotationWrite),
         // **Schema 18. THE DUAL-SOURCE RUN, AND IT CARRIES COUNTS AND NEVER A RATE.** `null` on
         // every run that read one source, which is every default run — Stage 2 still reads the
         // swap-api until the captain passes Gate 3, and this block existing is evidence FOR that
@@ -3066,7 +3305,11 @@ export async function main(opts, env, out, err, seam = {}) {
    * @param {number} code
    */
   function emit(code) {
-    const { ranked, record } = buildRecord();
+    // Serialised BEFORE the record so the record can name its digest, and written AFTER it for the
+    // same reason `--out` writes last: a run's artefacts are produced together or the pair is a
+    // chain with a broken link. `saveRotationText` takes the very bytes that were digested.
+    const rotationWrite = finaliseRotation();
+    const { ranked, record } = buildRecord(rotationWrite);
 
     if (opts.json) out(JSON.stringify(record, null, 2));
     else {
@@ -3110,8 +3353,33 @@ export async function main(opts, env, out, err, seam = {}) {
         );
       }
     }
+
+    // **The rotation state is written even by an INCOMPLETE run, and it goes to its ONE path.** The
+    // wallets it advanced are the wallets it paid for; refusing to record them because the run later
+    // died just spends the next run's cap re-measuring them, which is `ledger.mjs`'s own argument
+    // about discarding fifteen paid-for profiles. There is no `.partial` variant because there is
+    // nothing to protect from: this file accumulates, it is never overwritten with a smaller truth,
+    // and the record that names its digest says how many wallets the run actually scored.
+    if (rotationWrite !== null) {
+      saveRotationText(rotationWrite.path, rotationWrite.text);
+      if (!opts.json) {
+        out(
+          `\nrotation state written to ${relative(REPO_ROOT, rotationWrite.path)} ` +
+            `(${rotationWalletsScored} wallet(s) advanced) — ${rotationWrite.digest}`,
+        );
+      }
+    }
   }
 }
+
+/**
+ * The rotation bytes a run is about to persist, and the digest its record names them by.
+ *
+ * @typedef {object} RotationWrite
+ * @property {string} path
+ * @property {string} text
+ * @property {string} digest
+ */
 
 /**
  * Where an incomplete run's record goes.

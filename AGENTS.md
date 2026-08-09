@@ -1579,6 +1579,45 @@ dev currently?"*, and the shape of the answer is the point:
   postdictions is that the document is committed in its own commit ahead of the run, exactly as
   `thresholds.json` is — the record cannot prove that and does not claim to.
 
+## Stage 2 scoring has a MEMORY now, and what that traded
+
+`tools/deployer-screen/rotation.mjs`, state at `tools/deployer-screen/rotation/stage2-scored.json`,
+record block `scoringRotation` at **schema 20**. Method, rule and consequences in
+`tools/deployer-screen/README.md` → "WHICH survivors the cap is spent on"; the module's own doc owns
+the argument. Captain decision **336a**, and four things bind any lane that touches Stage 2:
+
+- **The cap goes to the LEAST-RECENTLY-SCORED survivors, and it used to go to the head of the
+  list.** `survivors.slice(0, maxScored)` over a deterministic `mergeSeeds` order meant a daily run
+  re-measured the same seven wallets every day, while the median survivor needs ~21.5 days for its
+  ten windows to refresh and **0 of 27** refresh within a day — ~168 distinct windows a month
+  against ~2,571 of supply, against a floor of 1,000. **It is not a capacity change**:
+  `maxCandidatesScored` stays 7 (captain decision **339a**; raising it moves the scoring cap and the
+  request budget together and is a separate decision), and no Stage 1 bar moved (loosening the
+  minimum-launches bar is **337a**, its own lane). It costs **zero in every currency** — one local
+  file plus the committed run records, no vendor.
+- **THE SCREEN IS NO LONGER STATELESS AND REPRODUCIBILITY IS PRESERVED ANOTHER WAY — that condition
+  is an acceptance criterion, not a nicety.** A rotation that cannot be reproduced from committed
+  evidence is not acceptable here. Three things pay for it and all three must survive any edit: the
+  state is **committed**, byte-stable and refuses rather than starting over on an unreadable or
+  unknown-version file (starting over silently restores the repeat while the record still reports a
+  rotation); the run record **names** it — `statePath`, `stateSchemaVersion` and the SHA-256
+  `stateDigestBefore`/`stateDigestAfter`, so **run N's `after` is run N+1's `before`**; and the block
+  carries the WHOLE ranked `order` rather than the slice, so `rotation.mjs` → `verifySelection`
+  re-derives the selection from the record ALONE. Selector and verifier share one comparator
+  (`compareRotationRows`) — do not give the verifier its own.
+- **With no state the ranking IS the survivor list's own order**, so the first run after this landed
+  is byte-identical to the slice it replaced, and `--no-rotation` keeps that reachable. Rotation off
+  is a recorded STATE (`enabled: false` plus a `reason`), never the block's absence, so a stateless
+  run can never be read as a rotated one that happened to repeat. **On a schema-≤19 record the
+  block's absence means the head of the list was taken** — two such records scoring the same wallets
+  say nothing about those wallets.
+- **An UNMEASURED verdict advances the rotation** (it consumed the cap and the keyless walk), and a
+  survivor set that SHRANK keeps its rows unread so a wallet that drops out and returns resumes its
+  place instead of jumping the queue as a stranger. Neither breaches 174b: nobody is dropped and the
+  record still surfaces and counts every unmeasured verdict. The committed state is not hand-written
+  — `importScoredFromRunRecords` recovers it from `runs/*.json` on **every** run, so a lost state
+  file degrades to a slower rotation rather than a wrong one, and it only ADDS.
+
 ## The feedback loop — the screen grading its own predictions
 
 `node tools/deployer-screen/grade.mjs`, with `prediction.mjs` (what a run claimed), `outcome.mjs`

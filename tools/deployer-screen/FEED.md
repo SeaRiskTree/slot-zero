@@ -184,7 +184,12 @@ market reaching 85 SOL-equivalent in its first 24 hours — on every venue inclu
 negative is exact and whose positive is an upper bound, so a rate here errs towards acceptance
 exactly as it did before. One thing did move: a `complete` field that is **missing or malformed**
 used to read `false`, and is UNREADABLE now — so a vendor schema change makes this lane's wallets
-`unmeasured` rather than driving every rate to 0.0000 with nothing saying so.
+`unmeasured` rather than driving every rate to 0.0000 with nothing saying so. **That holds however
+FEW rows are unreadable, not only when all of them are**: an unreadable launch leaves `tokens` and
+`spanDays` as well as the rate, so a partly-unreadable page would otherwise be `held` on a
+sample-size or span bar over launches that left for OUR coverage — and a `held` wallet is filed in
+the ledger and never offered again. `rank.mjs` → `competenceCriterionIncomplete` is the rule and it
+lives in `verdictFor`, so this lane gets it by construction rather than by remembering to ask.
 `README.md` → *"The completion measure is RAISE-85"* owns the rule and the seam with 351.
 
 The design follows from that, and it is the single most important thing to understand about this
@@ -194,7 +199,7 @@ lane's output:
 |---|---|
 | `queued` | Cleared the gate on the ownership reading. **The feed's product**: worth putting through the beatability screen. **Not a pass** — the rate that cleared it may read up to +0.6929 above the gate's on the same wallet. |
 | `held` | Did **not** clear it. **This is NOT a rejection.** It is a triage outcome on a reading whose count bars fail 46 more of 82 wallets than the gate reading does. |
-| `unmeasured` | The vendor's profile carried no readable launch record. An empty deployer and a moved response shape are indistinguishable from here, so neither is recorded as a finding. |
+| `unmeasured` | The vendor's profile carried no readable launch record — **or the completion criterion could not be read on some of the records it did carry** (captain decision 352b), since those launches leave the count and span bars as well as the rate. An empty deployer and a moved response shape are indistinguishable from here, so neither is recorded as a finding. |
 | `prefiltered` | Never gated: the vendor's trailing deploy count was below the floor. The cadence filter. |
 | `deferred` | Surfaced and recorded, waiting for a gate batch. |
 

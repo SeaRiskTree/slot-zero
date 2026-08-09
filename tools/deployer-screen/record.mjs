@@ -596,12 +596,26 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   BOTH sides because RAISE-85 could not be read on them at all — never scored as failures,
  *   because defaulting our own coverage gap into a rejection is permanent and invisible here. A
  *   candidate whose whole history reads that way is `gate-unmeasured`, never 0.0000 (`rank.mjs` →
- *   `competenceEmptiedByCriterion`). `competenceCriterionEstimated` is how many of the `tokens` that
+ *   `competenceEmptiedByCriterion`) — and **so is a candidate with ANY unreadable launch, whatever
+ *   the rest of the history says** (`rank.mjs` → `competenceCriterionIncomplete`), because those
+ *   launches leave `tokens` and `spanDays` as well as the rate, so `minTokens` and `minSpanDays`
+ *   would otherwise reject a wallet over OUR coverage. **A schema-20 row with
+ *   `competenceCriterionUnreadable > 0` therefore carries `verdict: "gate-unmeasured"` and a
+ *   `completionRate` nothing was decided on.** `competenceCriterionEstimated` is how many of the `tokens` that
  *   REMAIN had RAISE-85 read through pump.fun's own graduation flag rather than measured from trade
  *   data: **`competenceCriterionEstimated === tokens` means the whole rate is an UPPER BOUND on the
  *   RAISE-85 rate**, which is what every route this repo has today produces, and without it a reader
  *   would take an estimate for the measure. `measure.mjs` → `PUMPFUN_GRADUATION_ESTIMATOR` owns what
  *   that estimator is worth in each direction — its negative is exact, its positive is the bound.
+ *
+ *   **AND THE VENDOR PAIR MOVED TOO, WHICH SCHEMA 19'S NOTE ABOVE SPECIFICALLY SAID 351 COULD NOT
+ *   DO.** `vendorCompleted` / `vendorCompletionRate` are a THIRD quantity at this version: 351 could
+ *   not touch them because the MadeOnSol page carries no mayhem column, but 352b reads the criterion
+ *   off that page's own `complete` field, and `measure.mjs` → `toTokenRecords` folds a missing or
+ *   malformed one to UNREADABLE — so a schema-20 vendor reading drops those rows from both sides
+ *   where a schema-≤19 one counted them as failures. That pair is a GATE INPUT on `--ownership-only`
+ *   runs and in `feed.mjs`, not a bystander field, so **a schema-≤19 `vendorCompletionRate` must not
+ *   be pooled with a schema-20 one either.**
  *
  *   **What this version does NOT claim.** Nothing here establishes that the bar is equally strict
  *   across venues: the same 85 SOL is reached by 0.80% of new pump.fun tokens, 0.25% on Meteora DBC

@@ -587,6 +587,28 @@ describe('a failure on the cheap reading is HELD, never rejected', () => {
     expect(triage({ unexpected: 'shape' }, GATE).state).toBe('unmeasured');
   });
 
+  it('a partly-unreadable profile is UNMEASURED, never HELD on the count bars', () => {
+    // 352b option B, on the leg where a wrong answer is permanent: `held` files the wallet in
+    // feed/ledger.json and it is never offered as new again. 30 vendor rows, 6 of them carrying no
+    // readable `complete` field, leaves 24 against a minTokens of 25 — a rejection produced by our
+    // own coverage rather than by anything in the deployer's record.
+    const readable = profile(24, 10, 160).pump_tokens;
+    const unreadable = Array.from({ length: 6 }, (_, i) => ({
+      created_timestamp: T0 - DAY + (i + 1) * DAY,
+    }));
+    const t = triage({ pump_tokens: [...readable, ...unreadable] }, GATE);
+    expect(t.completion.tokens).toBe(24);
+    expect(t.completion.criterionUnreadable).toBe(6);
+    expect(t.state).toBe('unmeasured');
+    expect(t.gateVerdict).toBe('gate-unmeasured');
+    expect(t.rationale).toMatch(/could not be read on 6 of the launch\(es\)/);
+
+    // The same page with every `complete` readable is still triaged the ordinary way.
+    const allReadable = triage(profile(30, 12, 160), GATE);
+    expect(allReadable.completion.criterionUnreadable).toBe(0);
+    expect(allReadable.state).toBe('queued');
+  });
+
   it('names the exclusion that actually emptied the reading, not the deploy time', () => {
     // Captain decision 352b: a missing or malformed `complete` field folds to UNREADABLE, so a
     // profile whose rows all carry a perfectly usable `created_timestamp` can still reach zero

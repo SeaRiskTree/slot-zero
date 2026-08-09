@@ -1057,6 +1057,14 @@ export function completionFlagOf(record) {
  * zero is an absent measurement and not a failing rate, whichever exclusion produced it, and
  * conflating the two is 227c arriving through the back door.
  *
+ * **AND A PARTLY-UNREADABLE READING IS UNMEASURED TOO** (`rank.mjs` →
+ * `competenceCriterionIncomplete`). The criterion exclusion does not only shrink the rate's two
+ * sides: `tokens`, `spanDays` and the two deploy instants below are all taken over `usable`, so
+ * `minTokens` and `minSpanDays` are compared against a count the unreadable launches have already
+ * left. Judging on that would reject a wallet over OUR coverage — the same defect one bar over —
+ * so the verdict is withheld rather than the count repaired, because `tokens`, `rate` and
+ * `spanDays` are three statements about ONE sample.
+ *
  * @param {readonly TokenRecord[]} records
  * @returns {CompletionMeasurement}
  */

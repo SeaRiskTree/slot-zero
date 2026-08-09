@@ -1322,7 +1322,12 @@ dev currently?"*, and the shape of the answer is the point:
   must not compose with 351 into 227c".
   **Three more things bind.** (1) **A launch the criterion cannot be READ on leaves BOTH sides and is
   never scored as a failure**; a candidate with none readable is `gate-unmeasured`, never 0.0000
-  (`rank.mjs` → `competenceEmptiedByCriterion`). The one behaviour that genuinely moved is the launch
+  (`rank.mjs` → `competenceEmptiedByCriterion`), **and so is a candidate with ANY unreadable launch,
+  on EVERY leg** (`rank.mjs` → `competenceCriterionIncomplete`, checked in `verdictFor` so the vendor
+  reading, `--ownership-only`, `feed.mjs` and the bundling census get it by construction): those
+  launches leave `tokens` and `spanDays` as well as the rate, so `minTokens`/`minSpanDays` would
+  otherwise gate-FAIL a wallet over OUR coverage — permanent and invisible, since a graded wallet is
+  filed in `feed/ledger.json` and never offered again. The one behaviour that genuinely moved is the launch
   neither the curve nor the ownership listing could answer for — it was `completed: false`, and is
   unreadable now. (2) **Every route this repo has READS the criterion through pump.fun's graduation
   flag, which is an ESTIMATOR**: its negative is exact (every token reaching 85 SOL graduated,

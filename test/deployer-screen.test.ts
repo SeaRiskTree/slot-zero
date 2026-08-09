@@ -188,6 +188,7 @@ import {
 import {
   applyGate,
   competenceEmptiedByCriterion,
+  competenceCriterionIncomplete,
   competenceEmptiedByMayhem,
   measureConsistency,
   rankCandidates,
@@ -5012,6 +5013,116 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
       // pre-351 rate was.
       expect(mayhemLine).not.toBe(criterionLine);
       expect(mayhemLine).not.toMatch(/RAISE-85/);
+    });
+
+    it('PARTIAL criterion-unreadability is UNMEASURED, never a rejection through the count bars', () => {
+      // 352b option B. The exclusion takes the launches out of `tokens` and `spanDays` as well as
+      // out of the rate, so a history of 30 with 6 unreadable is judged at 24 and would fail
+      // `minTokens` 25 — a rejection earned by OUR coverage, and permanent, because a graded wallet
+      // is filed in feed/ledger.json and never offered again.
+      const day = 86_400_000;
+      const start = Date.UTC(2026, 0, 1);
+      const records: TokenRecord[] = [
+        ...Array.from({ length: 24 }, (_, i) => ({
+          deployedAtMs: start + i * 8 * day,
+          completed: i < 10,
+          criterion: 'pumpfun-graduation-estimator' as const,
+          mayhem: false,
+        })),
+        ...Array.from({ length: 6 }, (_, i) => ({
+          deployedAtMs: start + (24 + i) * 8 * day,
+          completed: null,
+          mayhem: false,
+        })),
+      ];
+      const completion = measureCompletion(records);
+      expect(completion.tokens).toBe(24);
+      expect(completion.criterionUnreadable).toBe(6);
+      expect(competenceEmptiedByCriterion(completion)).toBe(false);
+      expect(competenceCriterionIncomplete(completion)).toBe(true);
+
+      const gate = applyGate(
+        { completion, historySource: 'ownership-only' },
+        { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 },
+      );
+      // The bars themselves still read what they read — the reading is withheld, not repaired.
+      expect(gate.passed).toBe(false);
+      const { verdict, rationale } = verdictFor({ gate, completion, capped: false });
+      expect(verdict).toBe('gate-unmeasured');
+      expect(rationale).toMatch(/NOT a rejection and NOT a pass/);
+      expect(rationale).toMatch(/could not be read on 6 of the launch\(es\)/);
+      expect(rationale).toMatch(/24/);
+      expect(rationale).toMatch(/OUR coverage/);
+      // It must NOT claim the whole history was unreadable — that is the emptied case's sentence.
+      expect(rationale).not.toMatch(/could not be read on any of/);
+      // No mayhem here, so the sentence may not invent a mayhem population.
+      expect(rationale).not.toMatch(/mayhem/);
+
+      // A readable history of the same shape is still decided normally: the guard is narrow.
+      const readable = measureCompletion(
+        Array.from({ length: 30 }, (_, i) => ({
+          deployedAtMs: start + i * 8 * day,
+          completed: i < 10,
+          criterion: 'pumpfun-graduation-estimator' as const,
+          mayhem: false,
+        })),
+      );
+      expect(competenceCriterionIncomplete(readable)).toBe(false);
+      const readableGate = applyGate(
+        { completion: readable, historySource: 'ownership-only' },
+        { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 },
+      );
+      expect(verdictFor({ gate: readableGate, completion: readable, capped: false }).verdict).toBe(
+        'gate-passed',
+      );
+      // And an ordinary shortfall on a fully readable reading still REJECTS — this did not turn the
+      // gate into a machine that never says no.
+      const short = measureCompletion(
+        Array.from({ length: 5 }, (_, i) => ({
+          deployedAtMs: start + i * 8 * day,
+          completed: false,
+          criterion: 'pumpfun-graduation-estimator' as const,
+          mayhem: false,
+        })),
+      );
+      const shortGate = applyGate(
+        { completion: short, historySource: 'ownership-only' },
+        { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 },
+      );
+      expect(verdictFor({ gate: shortGate, completion: short, capped: false }).verdict).toBe(
+        'gate-failed',
+      );
+    });
+
+    it('the EMPTIED sentence still outranks the partial one, and the mayhem one outranks both', () => {
+      // The three-way order is load-bearing: each sentence above says something strictly stronger
+      // than the one below, and a partial sentence printed over an emptied reading would understate
+      // what went missing.
+      const emptiedByCriterion = measureCompletion([
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: null, mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: null, mayhem: false },
+      ]);
+      expect(competenceCriterionIncomplete(emptiedByCriterion)).toBe(true);
+      expect(
+        verdictFor({
+          gate: applyGate({ completion: emptiedByCriterion }, GATE),
+          completion: emptiedByCriterion,
+          capped: false,
+        }).rationale,
+      ).toMatch(/could not be read on any of the 2 launch\(es\) that reached it/);
+
+      const emptiedByMayhem = measureCompletion([
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: true, criterion: 'raise-85-quote-sol', mayhem: true },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: null, mayhem: false },
+      ]);
+      expect(competenceCriterionIncomplete(emptiedByMayhem)).toBe(true);
+      expect(
+        verdictFor({
+          gate: applyGate({ completion: emptiedByMayhem }, GATE),
+          completion: emptiedByMayhem,
+          capped: false,
+        }).rationale,
+      ).toMatch(/no non-mayhem launch to read/);
     });
 
     it('a criterion-emptied gate reason states the criterion count ONCE, as the mayhem one does', () => {

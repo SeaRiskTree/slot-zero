@@ -5364,6 +5364,13 @@ describe('the flag reaches the gate through the RUN, not only through a helper',
     // this rate is an upper bound on the RAISE-85 rate and the row is what says so.
     expect(row['competenceCriterionUnreadable']).toBe(0);
     expect(row['competenceCriterionEstimated']).toBe(row['tokens']);
+    // AND THE VENDOR TWINS DESCRIBE THE VENDOR PAGE, not the gate reading. 352b moves
+    // `vendorCompletionRate` too — the criterion is read off that page's own `complete` field — so
+    // these two are what let a reader of it see the same thing the gate pair shows. Sourcing them
+    // from `completion` instead would make them 30 here and go unnoticed.
+    expect(row['vendorTokens']).toBe(1);
+    expect(row['vendorCompetenceCriterionUnreadable']).toBe(0);
+    expect(row['vendorCompetenceCriterionEstimated']).toBe(row['vendorTokens']);
     // The four counts partition the history the gate read, on a real record rather than a fixture.
     expect(
       (row['tokens'] as number) +
@@ -6848,6 +6855,12 @@ describe('the keyless boundary holds in both directions', () => {
     ...PERSISTED_BY_SCHEMA[20]!,
     'competenceCriterionEstimated',
     'competenceCriterionUnreadable',
+    // The vendor twins, which schema 19 deliberately did NOT have for the mayhem pair: that page
+    // carries no mayhem column, so the vendor rate was unmovable by 351 by construction. 352b moves
+    // it — the criterion is read off the page's own `complete` field — so the vendor rate needs the
+    // same auditability the gate rate has.
+    'vendorCompetenceCriterionEstimated',
+    'vendorCompetenceCriterionUnreadable',
   ].sort();
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`

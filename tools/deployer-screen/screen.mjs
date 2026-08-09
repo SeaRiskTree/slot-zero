@@ -3478,6 +3478,16 @@ function toRecordRow(c, run) {
       ? Number(c.vendorCompletion.rate.toFixed(6))
       : null,
     vendorSpanDays: Number(c.vendorCompletion.spanDays.toFixed(2)),
+    // Schema 20, and the criterion pair DOES get vendor twins where the mayhem pair deliberately
+    // does not. Schema 19's reasoning was that the MadeOnSol page carries no mayhem column, so that
+    // rate was unmovable BY CONSTRUCTION; it does not survive 352b, because the page carries
+    // `complete` and `measure.mjs` -> `toTokenRecords` folds a missing or malformed one to
+    // UNREADABLE — so vendor rows leave both sides here where a schema-<=19 reading scored them as
+    // failures. Without these two a reader of `vendorCompletionRate` cannot see how many rows were
+    // dropped or how much of it rests on the estimator, which is the exact auditability the gate
+    // pair above exists to give.
+    vendorCompetenceCriterionUnreadable: c.vendorCompletion.criterionUnreadable,
+    vendorCompetenceCriterionEstimated: c.vendorCompletion.criterionEstimated,
     vendorVerdict: c.vendorVerdict,
     // Only a MEASURED gate verdict can differ from the vendor's. `gate-unmeasured` is not a
     // different answer to the same question, it is the absence of one, and recording it as a

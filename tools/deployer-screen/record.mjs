@@ -599,7 +599,7 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `competenceEmptiedByCriterion`) — and **so is a candidate with ANY unreadable launch, whatever
  *   the rest of the history says** (`rank.mjs` → `competenceCriterionIncomplete`), because those
  *   launches leave `tokens` and `spanDays` as well as the rate, so `minTokens` and `minSpanDays`
- *   would otherwise reject a wallet over OUR coverage. **A schema-20 row with
+ *   would otherwise reject a wallet over OUR coverage. **A schema-21 row with
  *   `competenceCriterionUnreadable > 0` therefore carries `verdict: "gate-unmeasured"` and a
  *   `completionRate` nothing was decided on.** `competenceCriterionEstimated` is how many of the `tokens` that
  *   REMAIN had RAISE-85 read through pump.fun's own graduation flag rather than measured from trade
@@ -612,10 +612,16 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   DO.** `vendorCompleted` / `vendorCompletionRate` are a THIRD quantity at this version: 351 could
  *   not touch them because the MadeOnSol page carries no mayhem column, but 352b reads the criterion
  *   off that page's own `complete` field, and `measure.mjs` → `toTokenRecords` folds a missing or
- *   malformed one to UNREADABLE — so a schema-20 vendor reading drops those rows from both sides
- *   where a schema-≤19 one counted them as failures. That pair is a GATE INPUT on `--ownership-only`
- *   runs and in `feed.mjs`, not a bystander field, so **a schema-≤19 `vendorCompletionRate` must not
- *   be pooled with a schema-20 one either.**
+ *   malformed one to UNREADABLE — so a schema-21 vendor reading drops those rows from both sides
+ *   where a schema-≤20 one counted them as failures. That pair is a GATE INPUT on `--ownership-only`
+ *   runs and in `feed.mjs`, not a bystander field, so **a schema-≤20 `vendorCompletionRate` must not
+ *   be pooled with a schema-21 one either** — and it therefore GETS the two companion counts the
+ *   gate rate has, `vendorCompetenceCriterionUnreadable` and `vendorCompetenceCriterionEstimated`,
+ *   so a reader can see how many vendor rows left both sides and how much of that rate rests on the
+ *   estimator. **There is still no vendor twin of the MAYHEM pair, and that is not an
+ *   inconsistency**: schema 19's reasoning — the page carries no mayhem column, so 351 cannot move
+ *   that rate by construction — holds unchanged; what does not survive 352b is applying it to the
+ *   criterion, which IS read off that page's own `complete` field.
  *
  *   **What this version does NOT claim.** Nothing here establishes that the bar is equally strict
  *   across venues: the same 85 SOL is reached by 0.80% of new pump.fun tokens, 0.25% on Meteora DBC

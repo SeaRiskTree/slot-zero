@@ -115,8 +115,8 @@ export function competenceEmptiedByCriterion(completion) {
  * `tokens` and `spanDays`, and those are what `minTokens` and `minSpanDays` are compared against:
  * so a history of 30 launches with 6 unreadable is judged at 24, and can fail a sample-size or span
  * bar on launches that left for OUR coverage reason rather than for anything about the deployer.
- * That failure is `gate-failed`, and a graded wallet is filed in `feed/ledger.json` and never
- * offered again — the permanent, invisible direction.
+ * That failure is `gate-failed`, and on the feed lane a graded wallet is filed in `feed/ledger.json`
+ * and never offered again — the permanent, invisible direction.
  *
  * So any unreadable launch makes the whole reading UNMEASURED, on every leg. It is deliberately not
  * a bar-by-bar correction: `tokens`, `rate` and `spanDays` are three statements about one sample,
@@ -128,11 +128,19 @@ export function competenceEmptiedByCriterion(completion) {
  * verdict, on every leg — `measure.mjs` → `toTokenRecords` folds a missing field to unreadable, and
  * any unreadable launch lands here. So if MadeOnSol or pump.fun ever stopped serving `complete` on
  * ungraduated rows, NO wallet would be queued and the feed would report itself DRY rather than
- * rejecting anybody. That is the direction to fail in: a withheld verdict is re-offerable, while a
- * `held` or `gate-failed` one is filed in `feed/ledger.json` and never offered again, so the failure
- * mode is a visibly empty feed instead of a silent, permanent false rejection. **The operational
- * tell is exit 9 firing on wallets that plainly have launch records**, and `ledger.mjs` →
- * `feedAlarm` says which fault it is rather than leaving an operator to guess.
+ * rejecting anybody.
+ *
+ * **WHAT THAT BUYS, AND WHAT IT DOES NOT — the second half is easy to get wrong and was, once.** It
+ * buys (i) no rejection computed on OUR OWN COVERAGE through the count and span bars, and (ii)
+ * VISIBILITY: the run stops dead rather than quietly filing a population of ordinary rejections, and
+ * `ledger.mjs` → `feedAlarm` names the criterion as the fault rather than leaving an operator to
+ * guess. **The operational tell is exit 9 firing on wallets that plainly have launch records.** On
+ * `screen.mjs` it also buys (iii) a wallet a later run can still judge, because that tool is
+ * stateless between runs — and that is a statement about `screen.mjs` and about nothing else.
+ * **IT DOES NOT BUY RE-OFFERABILITY IN THE FEED.** There an unmeasured wallet is GRADED, written
+ * into `feed/ledger.json` and never offered again, exactly like a `held` one; `ledger.mjs` →
+ * `markWorthARequest` owns that rule and only the pre-filter's own state is ever restored. What the
+ * widening changes on that lane is the label and the alarm, not the permanence.
  *
  * @param {import('./measure.mjs').CompletionMeasurement} completion
  * @returns {boolean}
@@ -498,7 +506,10 @@ export function verdictFor(input) {
         `SOL-equivalent over its first ${RAISE_85_WINDOW_HOURS} hours (captain decision 352b) — ` +
         `and a launch no surface could apply it to is excluded from both sides rather than scored ` +
         `as a failure, because that would default OUR coverage gap into a rejection. This wallet ` +
-        `is not rejected: it is UNJUDGED, and a later run over a readable history would judge it.` +
+        `is not rejected: it is UNJUDGED. A later SCREEN run over a readable history would judge ` +
+        `it — the screen is stateless between runs — and that is a statement about screen.mjs and ` +
+        `about nothing else: what the discovery feed does with a gate-unmeasured verdict is ` +
+        `ledger.mjs's, and ledger.mjs -> markWorthARequest owns that rule.` +
         (input.completion.mayhemExcluded > 0
           ? ` A further ${input.completion.mayhemExcluded} launch(es) had already left this reading ` +
             `carrying pump.fun's mayhem-mode flag (captain decision 351), and they are NOT part of ` +
@@ -524,8 +535,11 @@ export function verdictFor(input) {
         `could apply it to is OUR coverage, not this deployer's record, so it may not decide a ` +
         `verdict in either direction. On what remained the thresholds would have ` +
         `${input.gate.passed ? 'passed' : 'failed'} this wallet, which is not a result and must not ` +
-        `be quoted as one. It is not rejected: it is UNJUDGED, and a later run over a readable ` +
-        `history would judge it.` +
+        `be quoted as one. It is not rejected: it is UNJUDGED. A later SCREEN run over a readable ` +
+        `history would judge it — the screen is stateless between runs — and that is a statement ` +
+        `about screen.mjs and about nothing else: what the discovery feed does with a ` +
+        `gate-unmeasured verdict is ledger.mjs's, and ledger.mjs -> markWorthARequest owns that ` +
+        `rule.` +
         (input.completion.mayhemExcluded > 0
           ? ` A further ${input.completion.mayhemExcluded} launch(es) had already left this reading ` +
             `carrying pump.fun's mayhem-mode flag (captain decision 351), and they are NOT part of ` +

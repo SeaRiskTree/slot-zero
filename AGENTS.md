@@ -1330,9 +1330,11 @@ dev currently?"*, and the shape of the answer is the point:
   filed in `feed/ledger.json` and never offered again. **That is blunt on purpose: ONE missing or
   malformed `complete` field anywhere in a history withholds that candidate's whole verdict, so if a
   vendor stopped serving the field nothing would be queued and the feed would report itself DRY
-  rather than rejecting anybody — a withheld verdict is re-offerable and a filed one is not. The tell
-  is exit 9 on wallets that plainly have launch records**; that predicate's doc and `ledger.mjs` →
-  `feedAlarm` own it. The one behaviour that genuinely moved is the launch
+  rather than rejecting anybody. What that buys is no rejection computed on OUR coverage, and
+  VISIBILITY — the tell is exit 9 on wallets that plainly have launch records — plus, on
+  `screen.mjs` alone, a wallet a later run can still judge. It does NOT buy re-offerability in the
+  FEED, where an unmeasured wallet is graded and never offered again exactly like a `held` one**;
+  that predicate's doc, `ledger.mjs` → `markWorthARequest` and `ledger.mjs` → `feedAlarm` own it. The one behaviour that genuinely moved is the launch
   neither the curve nor the ownership listing could answer for — it was `completed: false`, and is
   unreadable now. (2) **Every route this repo has READS the criterion through pump.fun's graduation
   flag, which is an ESTIMATOR**: its negative is exact (every token reaching 85 SOL graduated,

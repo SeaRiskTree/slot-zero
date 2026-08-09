@@ -244,9 +244,12 @@ So every run reports, in this order — alarm first, then the new count, then th
    `complete` field anywhere in a candidate's history withholds that candidate's whole verdict
    (`rank.mjs` → `competenceCriterionIncomplete` owns the rule), so were the vendor to stop serving
    `complete` on ungraduated rows, nothing would ever be queued and this lane would report itself DRY
-   rather than rejecting anybody. That is the intended direction — a withheld verdict is re-offerable,
-   a `held` one is filed here forever — and **the tell is exactly this alarm firing on wallets that
-   plainly have launch records.** Requires **at least 2 gated wallets**
+   rather than rejecting anybody. **What that buys on THIS lane is not re-offerability** — an
+   `unmeasured` wallet is graded, written into the ledger and never offered again, exactly like a
+   `held` one, and `markWorthARequest` restores only the pre-filter's own state — but (i) no
+   rejection computed on OUR OWN COVERAGE through the count and span bars, and (ii) VISIBILITY: the
+   run stops at exit 9 instead of quietly filing a population of ordinary rejections, and **the tell
+   is exactly this alarm firing on wallets that plainly have launch records.** Requires **at least 2 gated wallets**
    (`ALL_UNMEASURED_MIN_GATED`): this condition *asserts* a move at the vendor, and its own message
    says one empty deployer is not evidence of that, so it must not be assertable from a sample of
    one. **What that floor actually costs, exactly:**

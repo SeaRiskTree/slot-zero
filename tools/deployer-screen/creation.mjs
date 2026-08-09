@@ -1,6 +1,11 @@
 /**
  * Creation-derived launch history. Pure: parsers and a merge, no I/O and no clock.
  *
+ * It takes exactly one thing from elsewhere and that is the pure measurement core's RAISE-85
+ * reader (captain decision 352b). The alternative was a second copy of a three-state fold, which is
+ * the defect `measure.mjs` → `completionFlagOf` exists to prevent: two spellings of *unreadable*
+ * that agree today and drift the first time one of them acquires a `!completed`.
+ *
  * ## The defect this exists to fix
  *
  * Every launch-history surface pump.fun and its resellers publish answers *"which tokens does this
@@ -39,6 +44,24 @@
  * declared in `thresholds.json` → `creation_walk`; {@link mergeHistories} makes what the walk did
  * *not* cover an explicit, recorded fallback rather than a silent one.
  */
+
+import { raise85FromPumpfunGraduation } from './measure.mjs';
+
+/**
+ * The two {@link import('./measure.mjs').TokenRecord} fields a RAISE-85 reading fills, spread into
+ * a record literal so the pair can never be written apart.
+ *
+ * `completed` without `criterion` is a rate that cannot say what it was read from, and `criterion`
+ * without `completed` is meaningless; keeping them one expression is what stops the third merge site
+ * from being the one that forgets. Captain decision 352b.
+ *
+ * @param {boolean | null | undefined} graduated
+ * @returns {{ completed: boolean | null, criterion: import('./measure.mjs').CompletionCriterion | null }}
+ */
+function raise85Fields(graduated) {
+  const reading = raise85FromPumpfunGraduation(graduated);
+  return { completed: reading.reached, criterion: reading.criterion };
+}
 
 /** pump.fun's bonding-curve program. */
 export const PUMP_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
@@ -282,10 +305,17 @@ export function coveredBoundMs(ms) {
  * @property {number} bondedFromListing  Launches whose bonded status was decided by the ownership
  *   listing's own `complete` flag, because the curve account could not be read. A weaker source but
  *   a well-founded one: it is the same field a vendor mirror of agreed with our own tape 67/67.
- * @property {number} bondedUndecidable  Launches NEITHER source can answer for. Counted as
- *   not-bonded so the rate can only be understated, but the reading is then UNMEASURED and no
- *   verdict may be read off it. Not hypothetical: a launch hidden from the ownership listing — the
- *   very thing this route exists to find — has no listing row by definition.
+ * @property {number} bondedUndecidable  Launches NEITHER source can answer for, so the completion
+ *   criterion cannot be READ on them at all. Not hypothetical: a launch hidden from the ownership
+ *   listing — the very thing this route exists to find — has no listing row by definition.
+ *
+ *   **Since captain decision 352b these launches carry `completed: null` and leave BOTH sides of
+ *   the rate** (`measure.mjs` → `measureCompletion`, where they arrive as `criterionUnreadable`).
+ *   They used to be written `completed: false` — understating the rate rather than declining to
+ *   state it — which is a coverage gap wearing a measurement's clothes, and the direction it
+ *   understates in is the permanent, invisible one. The reading is STILL unmeasured whenever this
+ *   is non-zero and no verdict may be read off it: `screen.mjs` pushes a `notMeasured` entry for it,
+ *   which is unchanged and is what keeps a partial history from being judged at all.
  *
  * `bondedFromCurve + bondedFromListing + bondedUndecidable === records.length`, always.
  */
@@ -330,7 +360,7 @@ export function coveredBoundMs(ms) {
  * @param {readonly CreateRecord[]} input.creates Creations found by the walk, any creator.
  * @param {string} input.wallet
  * @param {ReadonlyMap<string, CurveState>} input.curves Curve state by mint, where known.
- * @param {readonly { mint: string, deployedAtMs: number, completed: boolean }[]} input.listed
+ * @param {readonly { mint: string, deployedAtMs: number, completed: boolean | null }[]} input.listed
  *   The ownership listing, with mints so the two sets can be reconciled by identity.
  * @param {CoveredWindow} input.covered
  * @param {number} [input.unresolvedTransactions] Transactions the walk asked for and never got.
@@ -377,7 +407,7 @@ export function mergeHistories(input) {
   // offsets while the deployer launched again mid-walk — would make `overlap` exceed
   // `createdInWindow` and drive `hiddenByOwnership` negative. This measurement sizes a bias, so it
   // is the one measurement that cannot carry one. Rows with no mint cannot collide and are kept.
-  /** @type {{ mint: string, deployedAtMs: number, completed: boolean }[]} */
+  /** @type {{ mint: string, deployedAtMs: number, completed: boolean | null }[]} */
   const listedRows = [];
   /** @type {Set<string>} */
   const seenListedMints = new Set();
@@ -391,7 +421,15 @@ export function mergeHistories(input) {
   /** The listing's own `complete` flag, the fallback source for a launch whose curve went unread. */
   /** @type {Map<string, boolean>} */
   const listedCompletion = new Map();
-  for (const row of listedRows) if (row.mint !== '') listedCompletion.set(row.mint, row.completed);
+  // Only a READABLE flag is an answer. Since captain decision 352b the listing's own reading is
+  // three-state, and a row that came back with nothing to read has not DECIDED anything — so it
+  // must not be entered here, or the launch would be counted `bondedFromListing` (a decision) while
+  // carrying no decision, and the provenance identity below would describe a source that stayed
+  // silent. It falls through to `bondedUndecidable`, which is where "neither source could answer"
+  // already lives.
+  for (const row of listedRows) {
+    if (row.mint !== '' && typeof row.completed === 'boolean') listedCompletion.set(row.mint, row.completed);
+  }
 
   /** @type {Map<string, import('./measure.mjs').TokenRecord>} */
   const byMint = new Map();
@@ -407,17 +445,29 @@ export function mergeHistories(input) {
     if (c.creator !== wallet) continue;
     if (byMint.has(c.mint)) continue;
     const curve = curves.get(c.mint);
-    let completed = false;
+    // Captain decision 352b: the completion measure is RAISE-85, and pump.fun's graduation flag —
+    // whether it arrives as the curve's own `complete` byte or as the listing's mirror of it — is
+    // an ESTIMATOR of it. `measure.mjs` → `raise85FromPumpfunGraduation` owns what that is worth in
+    // each direction; what matters HERE is the third state. An undecidable launch used to be
+    // written `completed: false`, which is a coverage gap wearing a measurement's clothes; it is
+    // `null` now, so it leaves both sides of the rate instead of being scored as a failed launch.
+    /** @type {boolean | null} */
+    let graduated;
     if (curve !== undefined) {
-      completed = curve.complete;
+      graduated = curve.complete;
       bondedFromCurve += 1;
     } else if (listedCompletion.has(c.mint)) {
-      completed = listedCompletion.get(c.mint) === true;
+      graduated = listedCompletion.get(c.mint) === true;
       bondedFromListing += 1;
     } else {
+      graduated = null;
       bondedUndecidable += 1;
     }
-    byMint.set(c.mint, { deployedAtMs: c.createdAtMs, completed, mayhem: mayhemOf(c.mint) });
+    byMint.set(c.mint, {
+      deployedAtMs: c.createdAtMs,
+      ...raise85Fields(graduated),
+      mayhem: mayhemOf(c.mint),
+    });
     // `null` is "nobody looked", not "it did not move". See CurveState.creator.
     if (curve !== undefined && curve.creator === null) creatorMovementUnmeasured += 1;
     else if (curve !== undefined && curve.creator !== wallet) movedCreator += 1;
@@ -457,10 +507,15 @@ export function mergeHistories(input) {
         // site cannot become the one place a flag goes missing if the map's contents ever widen.
         byMint.set(row.mint, {
           deployedAtMs: row.deployedAtMs,
-          completed: row.completed,
+          ...raise85Fields(row.completed),
           mayhem: mayhemOf(row.mint),
         });
-        bondedFromListing += 1;
+        // Provenance follows the ANSWER, not the source: a listing row with nothing readable in it
+        // decided nothing, so it is undecidable rather than "decided by the listing". That keeps
+        // the identity below true and keeps `screen.mjs`'s `notMeasured` push firing on exactly the
+        // launches no source could answer for.
+        if (typeof row.completed === 'boolean') bondedFromListing += 1;
+        else bondedUndecidable += 1;
         listedInWindowCarried += 1;
       }
       continue;
@@ -469,10 +524,11 @@ export function mergeHistories(input) {
     if (!byMint.has(row.mint)) {
       byMint.set(row.mint, {
         deployedAtMs: row.deployedAtMs,
-        completed: row.completed,
+        ...raise85Fields(row.completed),
         mayhem: mayhemOf(row.mint),
       });
-      bondedFromListing += 1;
+      if (typeof row.completed === 'boolean') bondedFromListing += 1;
+      else bondedUndecidable += 1;
     }
   }
 

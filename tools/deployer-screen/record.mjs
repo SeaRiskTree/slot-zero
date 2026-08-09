@@ -563,8 +563,60 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `scoringCap.survivorsUnscored` means the same thing across the boundary while the wallets behind
  *   it do not: before 20 the unscored are the list's tail, after it they are whichever were measured
  *   most recently.
+ *
+ * - **21** — **THE COMPLETION MEASURE IS RAISE-85 ON EVERY VENUE, pump.fun INCLUDED** (captain
+ *   decision 352b). `completed` / `completionRate` no longer mean *pump.fun said these graduated*;
+ *   they mean *this many of these tokens' own primary markets took in 85 SOL-equivalent in their
+ *   first 24 hours*. **So a schema-≤20 rate and a schema-21 one are not the same quantity either**,
+ *   and that is now true at two of the last three versions — 19 moved the same quantity and 20 left
+ *   it alone — so read `schemaVersion` before
+ *   pooling any two `completionRate` values from this tool, ever. Two candidate row keys —
+ *   `competenceCriterionUnreadable` and `competenceCriterionEstimated`;
+ *   `ENTRY_KEYS_BY_SCHEMA[21]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[21]`, `SPEND_KEYS_BY_SCHEMA[21]`,
+ *   `DUNE_KEYS_BY_SCHEMA[21]` and `CREATION_KEYS_BY_SCHEMA[21]` all equal `[20]`.
+ *
+ *   **The measure.** Net quote inflow into a token's own primary market, over its first 24 hours,
+ *   reaching **85 SOL-equivalent**. The constant was read off the data rather than fitted —
+ *   graduating non-mayhem tokens read 85.005 SOL at p50 AND p99 over 157,259 launches — and it has
+ *   **zero token-level false positives**, which is what makes a rate computed from it a LOWER BOUND
+ *   and adoption therefore safe in one direction: measured over 176,200 July-active deployers it
+ *   **promoted zero** deployers over the 0.25 bar and demoted 1,417. `measure.mjs` →
+ *   `RAISE_85_SOL_BAR` owns why the bar is not lowered to buy recall.
+ *
+ *   **THE SEAM WITH 351, which is what these two keys exist to make auditable.** RAISE-85 as a
+ *   definition only ever touches the NUMERATOR — it simply never registers a mayhem graduation,
+ *   which raises a median 0.291 SOL. Had mayhem LAUNCHES stayed in the denominator, a mayhem-heavy
+ *   deployer would run to 0.0000 and be dropped, **which is captain decision 227c and 227c REMAINS
+ *   DECLINED**. So the mayhem exclusion runs FIRST, over the whole history, and the criterion is
+ *   applied only to what it leaves. A row therefore reports the two exclusions apart and they are
+ *   never additive in meaning: `competenceMayhemExcluded` is *not competence evidence*,
+ *   `competenceCriterionUnreadable` is *nothing could measure this*.
+ *
+ *   **What the two new keys are for.** `competenceCriterionUnreadable` is how many launches left
+ *   BOTH sides because RAISE-85 could not be read on them at all — never scored as failures,
+ *   because defaulting our own coverage gap into a rejection is permanent and invisible here. A
+ *   candidate whose whole history reads that way is `gate-unmeasured`, never 0.0000 (`rank.mjs` →
+ *   `competenceEmptiedByCriterion`). `competenceCriterionEstimated` is how many of the `tokens` that
+ *   REMAIN had RAISE-85 read through pump.fun's own graduation flag rather than measured from trade
+ *   data: **`competenceCriterionEstimated === tokens` means the whole rate is an UPPER BOUND on the
+ *   RAISE-85 rate**, which is what every route this repo has today produces, and without it a reader
+ *   would take an estimate for the measure. `measure.mjs` → `PUMPFUN_GRADUATION_ESTIMATOR` owns what
+ *   that estimator is worth in each direction — its negative is exact, its positive is the bound.
+ *
+ *   **What this version does NOT claim.** Nothing here establishes that the bar is equally strict
+ *   across venues: the same 85 SOL is reached by 0.80% of new pump.fun tokens, 0.25% on Meteora DBC
+ *   and 46.71% on Meteora CPAMM. `measure.mjs` → `CROSS_VENUE_STRICTNESS_UNESTABLISHED` carries
+ *   that, and no record, doc or rendered line here may read as cross-venue comparability.
+ *
+ *   **And it moved no bar and no committed verdict.** `minCompletionRate` stays 0.25; every route
+ *   this repo has reads the criterion through the estimator, whose disagreement with pump.fun's own
+ *   flag is nil by construction, so Stage 0's committed-tape regressions are byte-identical. The
+ *   one behaviour that DID move is the launch neither source could answer for: it was written
+ *   `completed: false` and is `null` now, so it leaves both sides instead of understating the rate.
+ *   Re-deriving the 112, the 58 and the monthly gate populations under the adopted measure is
+ *   `slot-zero-rederive-gate-population-post-351` and is deliberately not done here.
  */
-export const RECORD_SCHEMA_VERSION = 20;
+export const RECORD_SCHEMA_VERSION = 21;
 
 /**
  * The predictions-document contract version, carried inside the document itself.

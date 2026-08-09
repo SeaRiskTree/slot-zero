@@ -42,6 +42,12 @@ import {
   eligibilityUnavailableNote,
   sourceFigureUnavailableNote,
 } from './plan-source.mjs';
+// The two sentences captain decision 352b requires beside every rate this file prints: what the
+// completion measure IS, and what adopting one bar everywhere does NOT establish. Taken from the
+// pure core rather than restated, because a caveat written twice is a caveat that can be softened
+// once — and this one exists precisely because a cheap one-bar reading makes a cross-venue
+// comparability claim easier to reach for.
+import { CROSS_VENUE_STRICTNESS_UNESTABLISHED, RAISE_85_IS_THE_COMPLETION_MEASURE } from './measure.mjs';
 import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
 
@@ -57,8 +63,13 @@ export const LIMITATIONS = [
   'nothing here establishes a tradeable edge.',
   '',
   'WHAT IT MEASURES:',
-  '  · STAGE 1, competence — whether a deployer completes bonding curves. One number, computed by',
-  '    us from per-token records, over a window of about 35 days.',
+  '  · STAGE 1, competence — whether a deployer\'s tokens RAISE. The measure is RAISE-85 (captain',
+  '    decision 352b): net quote inflow into a token\'s own primary market, over its first 24 hours,',
+  '    reaching 85 SOL-equivalent — the same bar on every venue, pump.fun included, replacing',
+  '    pump.fun\'s own graduation flag as the definition. One number, computed by us from per-token',
+  '    records. Every route this tool has today READS that criterion through pump.fun\'s graduation',
+  '    flag, which is an estimator of it whose positive is an upper bound, so a rate here errs',
+  '    towards acceptance and the candidate row says how much of it was estimated.',
   '  · STAGE 2, ENTRY — how much of its own opening window the deployer and its own wallets take',
   '    before anyone else is filled, and what the OTHER sniping wallets on those same launches',
   '    achieved: fill, queue position, and realised P&L. Distributions and a hit rate, never a mean.',
@@ -75,6 +86,12 @@ export const LIMITATIONS = [
   'is carried over unchanged and the row says how much of the history that is.',
   '',
   'WHAT IT DOES NOT MEASURE, and none of these are minor:',
+  // Captain decision 352b. It goes in LIMITATIONS rather than only in a doc because this array is
+  // what reaches the run record (`screen.mjs` → `limitations`) and every rendered surface, and the
+  // caveat has to travel with the number. Built from the constant, not restated: a caveat written
+  // twice is a caveat that can be softened once.
+  ...wrap('WHETHER ONE BAR MEANS THE SAME THING ON TWO VENUES. ' + CROSS_VENUE_STRICTNESS_UNESTABLISHED, 94)
+    .map((line, i) => (i === 0 ? `  · ${line}` : `    ${line}`)),
   '  · EXIT. Room to enter is not room to leave. When the dev sells, whether its trigger is a SIZE',
   '    that our own buy would count towards and would therefore cap our position, and whether an',
   '    outsider could have got out first, are ALL UNMEASURED here. No exit signal reaches any entry',
@@ -587,6 +604,45 @@ export function renderCompetenceMayhem(completion, indent) {
 }
 
 /**
+ * What the RAISE-85 criterion could not read, and how much of the rate is an ESTIMATE — captain
+ * decision 352b, as one sentence in one place.
+ *
+ * Printed beside {@link renderCompetenceMayhem} and never folded into it, because the two exclusions
+ * answer different questions and are never additive in meaning: *not competence evidence* and
+ * *nothing could measure this*. A reader who saw one merged "unknown" could not tell a deployer
+ * judged on a narrower record from a deployer nobody could measure.
+ *
+ * **The estimated count is printed even when nothing was unreadable**, for the same reason the
+ * mayhem line prints its unreadable count: `criterionEstimated === tokens` says the WHOLE rate is
+ * an upper bound on the RAISE-85 rate, read through pump.fun's own graduation flag rather than
+ * measured, and that is the state every route this repo has today produces. A reader who cannot see
+ * it takes an estimate for the measure.
+ *
+ * A formatter and nothing more: no caller may branch on what it returns.
+ *
+ * @param {{ tokens: number, criterionUnreadable: number, criterionEstimated: number } | null} completion
+ * @param {string} indent
+ * @returns {string[]} One line, or none when there is no reading to describe.
+ */
+export function renderCompetenceCriterion(completion, indent) {
+  if (completion === null) return [];
+  const { tokens, criterionUnreadable, criterionEstimated } = completion;
+  if (tokens === 0 && criterionUnreadable === 0) return [];
+  const read =
+    criterionEstimated === tokens
+      ? `all ${tokens} ESTIMATED through pump.fun's graduation flag, so this rate is an UPPER BOUND ` +
+        `on the RAISE-85 rate`
+      : criterionEstimated === 0
+        ? `all ${tokens} MEASURED from trade data`
+        : `${criterionEstimated} of ${tokens} ESTIMATED through pump.fun's graduation flag, so this ` +
+          `rate is an upper bound to that extent`;
+  return [
+    `${indent}completion criterion (RAISE-85, 352b): ${criterionUnreadable} launch(es) UNREADABLE ` +
+      `and excluded from BOTH sides — never scored as failures; ${read}`,
+  ];
+}
+
+/**
  * Wrap prose to a width so a long rationale stays readable in a terminal.
  *
  * @param {string} text
@@ -1027,6 +1083,7 @@ export function renderStage1(run) {
       // gate's own reading, which exists on an --ownership-only run too, where the honest answer is
       // "nothing here could be read for mayhem mode" rather than silence.
       for (const line of renderCompetenceMayhem(c.completion, '      ')) L.push(line);
+      for (const line of renderCompetenceCriterion(c.completion, '      ')) L.push(line);
       if (c.creation !== null) {
         L.push(
           `      created ${c.creation.createdInWindow} in a ${num(c.creation.coveredDays, 1)}d window ` +
@@ -1169,6 +1226,7 @@ export function renderStage1(run) {
       // is a fact about the launches rather than about the gate that could not decide over them.
       for (const line of renderMayhemShare(c.creation, '      · ')) L.push(line);
       for (const line of renderCompetenceMayhem(c.completion, '      · ')) L.push(line);
+      for (const line of renderCompetenceCriterion(c.completion, '      · ')) L.push(line);
     }
   }
 
@@ -1206,12 +1264,22 @@ export function renderStage1(run) {
       // this repo) — and that question is answered from the REJECTIONS as much as the survivors.
       for (const line of renderMayhemShare(c.creation, '      · ')) L.push(line);
       for (const line of renderCompetenceMayhem(c.completion, '      · ')) L.push(line);
+      for (const line of renderCompetenceCriterion(c.completion, '      · ')) L.push(line);
       if (c.historySource === 'ownership-only') {
         L.push('      · OWNERSHIP-ONLY run: this rejection was computed on the biased reading');
       }
     }
   }
 
+  // Captain decision 352b prints FIRST, because it says what the rates above ARE; 351 prints
+  // second, because it says which launches they were computed over. A reader meeting the second
+  // without the first would take "completion" to mean pump.fun's graduation, which is exactly what
+  // stopped being true. The cross-venue caveat rides with the measure rather than living in a
+  // document, because a cheap one-bar reading makes a comparability claim easier to reach for.
+  L.push('');
+  for (const line of wrap(RAISE_85_IS_THE_COMPLETION_MEASURE, 78)) L.push(`  ! ${line}`);
+  L.push('');
+  for (const line of wrap(CROSS_VENUE_STRICTNESS_UNESTABLISHED, 78)) L.push(`  ! ${line}`);
   L.push('');
   for (const line of wrap(MAYHEM_NOT_COMPETENCE, 78)) L.push(`  ! ${line}`);
 

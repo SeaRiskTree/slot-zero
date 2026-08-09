@@ -115,6 +115,7 @@ import {
   serialiseRotation,
 } from './rotation.mjs';
 import {
+  renderCompetenceCriterion,
   renderCompetenceMayhem,
   renderDryRun,
   renderMayhemShare,
@@ -2707,6 +2708,7 @@ export async function main(opts, env, out, err, seam = {}) {
           // gate reading, not only 227a's enumeration-wide share — an operator watching a run is
           // the reader most likely to take the share for the gate's own denominator.
           for (const line of renderCompetenceMayhem(completion, '      ')) out(line);
+          for (const line of renderCompetenceCriterion(completion, '      ')) out(line);
           for (const r of duneFallbackReasons) out(`      ^ DUNE READING REFUSED, walked instead: ${r}`);
           if (notMeasured.length > 0) {
             out(`      ^ READING NOT MEASURED — verdict ${verdict}, not a rejection: ${notMeasured.join('; ')}`);
@@ -3446,6 +3448,23 @@ function toRecordRow(c, run) {
     // so `vendorCompletionRate` is unmovable by 351 by construction rather than by measurement.
     competenceMayhemExcluded: c.completion.mayhemExcluded,
     competenceMayhemUnreadable: c.completion.mayhemUnreadable,
+    // Schema 20, captain decision 352b. `completed`/`completionRate` above are RAISE-85 now — net
+    // quote inflow reaching 85 SOL-equivalent in 24 hours — on every venue including pump.fun, and
+    // these two are what let a reader tell how much of that rate was actually MEASURED.
+    //
+    // They sit BESIDE the mayhem pair and are never additive with it, because the two exclusions
+    // answer different questions: a mayhem launch is *not competence evidence* (351) and left
+    // before the criterion was consulted; a criterion-unreadable launch is *nothing could measure
+    // this* (352b) and left because scoring it as a failure would default our own coverage gap into
+    // a rejection. Merging them into one "unknown" would make this rate unauditable in exactly the
+    // way a pre-351 one was.
+    //
+    // `competenceCriterionEstimated === tokens` says the WHOLE rate is an upper bound on the
+    // RAISE-85 rate, read through pump.fun's graduation flag rather than measured from trade data.
+    // That is every route this repo has today, which is precisely why it has to be on the row: a
+    // reader who cannot see it takes an estimate for the measure.
+    competenceCriterionUnreadable: c.completion.criterionUnreadable,
+    competenceCriterionEstimated: c.completion.criterionEstimated,
     vendorPageCapped: c.vendorPageCapped,
     gateReadingPageCapped: c.completionCapped,
     historySource: c.historySource,

@@ -177,6 +177,16 @@ excludes a mayhem-mode launch from both sides of its rate, and this lane's canno
 profile page carries no such column, so every launch here is unreadable for it and this rate is the
 pre-351 pooled quantity by construction. `README.md` → *"The mayhem-mode flag"* owns the rule.
 
+Captain decision 352b then changed what **both** rates COUNT, and it changes this lane's number by
+nothing. The completion measure is now **RAISE-85** — net quote inflow into a token's own primary
+market reaching 85 SOL-equivalent in its first 24 hours — on every venue including pump.fun, and
+`profile.pump_tokens[].complete` is no longer the definition: it is an **estimator** of it, whose
+negative is exact and whose positive is an upper bound, so a rate here errs towards acceptance
+exactly as it did before. One thing did move: a `complete` field that is **missing or malformed**
+used to read `false`, and is UNREADABLE now — so a vendor schema change makes this lane's wallets
+`unmeasured` rather than driving every rate to 0.0000 with nothing saying so.
+`README.md` → *"The completion measure is RAISE-85"* owns the rule and the seam with 351.
+
 The design follows from that, and it is the single most important thing to understand about this
 lane's output:
 

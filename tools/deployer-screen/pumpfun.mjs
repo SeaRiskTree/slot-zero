@@ -31,7 +31,7 @@ import { parseCreateTransaction, readCurveState } from './creation.mjs';
 // The unit constant lives in the pure core now (captain decision 260a): it is a property of
 // Solana's unit rather than of this reader, and it was `stage0.mjs`'s only reason to import a fill
 // source at all.
-import { LAMPORTS_PER_SOL } from './measure.mjs';
+import { LAMPORTS_PER_SOL, raise85FromPumpfunGraduation } from './measure.mjs';
 
 /** Creator listing host. */
 export const FRONTEND_API = 'https://frontend-api-v3.pump.fun';
@@ -916,7 +916,13 @@ export async function readLaunchWindow(client, opts) {
  * The mint is held in memory for the length of a run and is **never persisted** — no run record
  * carries a per-token row, and `test/deployer-screen.test.ts` asserts that.
  * @property {number} deployedAtMs
- * @property {boolean} completed
+ * @property {boolean | null} completed Whether this launch met the completion criterion — RAISE-85
+ *   since captain decision 352b, read here through pump.fun's own graduation flag, which is an
+ *   ESTIMATOR of it (`measure.mjs` -> `PUMPFUN_GRADUATION_ESTIMATOR`). **`null` is UNREADABLE**: a
+ *   row whose `complete` field is missing or is not a boolean. It used to read `false`, so a vendor
+ *   schema change would have driven every rate computed from this listing to 0.0000 with nothing
+ *   saying so; it now leaves both sides of the rate and is counted.
+ * @property {import('./measure.mjs').CompletionCriterion | null} criterion Which reading answered.
  * @property {string} mint
  */
 
@@ -956,9 +962,15 @@ export async function readCreatorHistory(client, creator, maxPages) {
     if (rows.length === 0) break;
 
     for (const row of rows) {
+      // Captain decision 352b: pump.fun's `complete` is an ESTIMATOR of RAISE-85 rather than the
+      // measure, so it goes through the reader. `=== true` used to fold a MISSING or malformed
+      // field into "this launch failed", which is a coverage gap wearing a measurement's clothes.
+      const graduated = row['complete'];
+      const reading = raise85FromPumpfunGraduation(typeof graduated === 'boolean' ? graduated : null);
       records.push({
         deployedAtMs: Number(row['created_timestamp']),
-        completed: row['complete'] === true,
+        completed: reading.reached,
+        criterion: reading.criterion,
         mint: typeof row['mint'] === 'string' ? row['mint'] : '',
       });
     }

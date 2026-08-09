@@ -1004,7 +1004,7 @@ export function renderStage1(run) {
       L.push('THIS IS NOT A NEGATIVE RESULT. The run did not complete, so "nothing cleared the gate"');
       L.push('here means "the run stopped", not "these deployers are not competent". Candidates that');
       L.push('were never requested cannot have failed. Resolve the failure above and rerun; the');
-      L.push('screen is stateless.');
+      L.push('gate reads no memory of this run, so a rerun costs no more than this one did.');
     }
   } else {
     L.push('CLEARED THE COMPETENCE GATE — and, where Stage 2 reached them, scored for ENTRY');
@@ -1868,4 +1868,57 @@ export function renderDryRun(plan) {
   for (const line of LIMITATIONS) L.push(line);
   L.push('='.repeat(78));
   return L.join('\n');
+}
+
+/**
+ * Which survivors this run's scoring cap went to, and by what rule — captain decision 336a.
+ *
+ * Printed under the Stage 2 header on EVERY run, including one made with `--no-rotation`. That
+ * "including" is the point: before 336a a run that scored the same seven wallets as yesterday's was
+ * a repeat, and after it a run that scores the same seven is either a rotation with nothing else to
+ * reach or a stateless run, and an operator cannot tell those apart from the wallet list alone.
+ *
+ * The state is named by PATH AND DIGEST rather than by path alone, because rotation trades the
+ * screen's statelessness for coverage and what buys it back is that a published selection can be
+ * checked against the exact bytes it was taken from. `rotation.mjs` → `REPRODUCIBILITY_RULE` is that
+ * condition and it rides on this block for the same reason `LANDING_TIP_CAVEAT` rides on a cost: a
+ * caveat that lives only in a document is one a reader of the number never sees.
+ *
+ * @param {{ enabled: boolean, reason: string | null, statePath: string | null,
+ *   stateDigestBefore: string | null, survivors: number, selected: readonly string[],
+ *   deferred: readonly string[], neverScoredBefore: number, importedFromRunRecords: number,
+ *   reproducibility: string }} block
+ * @param {string} indent
+ * @returns {string[]}
+ */
+export function renderRotation(block, indent) {
+  if (!block.enabled) {
+    // The three off states are not one state. `--no-rotation` is the only one that means a REPEAT,
+    // and saying so of a run that scored nobody would describe a selection nobody made.
+    return block.reason === '--no-rotation'
+      ? [
+          `${indent}ROTATION OFF (--no-rotation) — the scoring cap took the HEAD of the survivor ` +
+            `list, so this run may repeat the last one's wallets. Stateless and reproducible from ` +
+            `its inputs alone.`,
+        ]
+      : [
+          `${indent}ROTATION MADE NO SELECTION (${block.reason ?? 'unknown'}) — no wallet advanced ` +
+            `and no state was written.`,
+        ];
+  }
+  /** @type {string[]} */
+  const lines = [
+    `${indent}ROTATION: least-recently-scored first — ${block.selected.length} scored, ` +
+      `${block.deferred.length} deferred to a later run, of ${block.survivors} survivor(s); ` +
+      `${block.neverScoredBefore} had never been scored.`,
+    `${indent}  state ${block.statePath ?? '(none)'} @ ${block.stateDigestBefore ?? 'NO PRIOR STATE — first run'}`,
+  ];
+  if (block.importedFromRunRecords > 0) {
+    lines.push(
+      `${indent}  ${block.importedFromRunRecords} wallet(s) recovered from committed run records — ` +
+        `already scored there, so the cap is not spent on them again.`,
+    );
+  }
+  lines.push(`${indent}  ${block.reproducibility}`);
+  return lines;
 }

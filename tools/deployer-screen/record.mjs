@@ -531,8 +531,40 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   **There are deliberately no `vendor*` twins.** The MadeOnSol profile page has no such column, so
  *   `vendorCompletionRate` is unmovable by 351 by construction, and a pair of zeroes beside it would
  *   imply a measurement nobody took.
+ *
+ * - **20** — **STAGE 2 SCORING HAS A MEMORY, so the cap goes to the LEAST-RECENTLY-SCORED
+ *   survivors** (captain decision 336a). No new candidate ROW field, no new `entry`, `entry.coverage`,
+ *   `spend`, `dune` or `creation` field; one new run-level block, `scoringRotation`.
+ *
+ *   Until this version `screen.mjs` took `survivors.slice(0, maxScored)` — the first seven in
+ *   `mergeSeeds` order, which is deterministic — so a daily run re-measured the same seven wallets
+ *   every day while the median survivor needs about 21.5 days for its ten windows to refresh and 0
+ *   of 27 refresh within a day. `maxScored` does NOT move (captain decision 339a keeps capacity at 7
+ *   a run); what moves is which seven.
+ *
+ *   **The version exists because the trade has to be visible in the record.** A pre-20 run was
+ *   stateless — same inputs, same output, anyone could re-run it and reproduce a published result —
+ *   and rotation makes a run's output depend on every run before it. `scoringRotation` is what buys
+ *   that back: `statePath`, `stateSchemaVersion` and `stateDigestBefore`/`stateDigestAfter` NAME the
+ *   bytes the run read and wrote, so run N's `after` is run N+1's `before` and the chain is
+ *   checkable from committed artefacts; and `order` carries the WHOLE ranked survivor list rather
+ *   than the slice taken from it, so `rotation.mjs` → `verifySelection` re-derives the selection
+ *   from the record alone, with no state file and no clock. `selected`/`deferred`/`walletsScored`/
+ *   `scoredAtIso`/`neverScoredBefore`/`importedFromRunRecords` are the counts a reader judges it by,
+ *   and `reproducibility` carries the condition in one sentence.
+ *
+ *   **`enabled: false` is a real state and is not the block's absence.** A run made with
+ *   `--no-rotation`, or one where Stage 2 selected nobody, records the block with a `reason`, so a
+ *   stateless run is never read as a rotated one that happened to repeat.
+ *
+ *   **The one that will bite:** on a schema-≤19 record the absence of this block means the run took
+ *   the HEAD of the survivor list, so **two such records scoring the same wallets are not evidence
+ *   of anything about those wallets** — they are evidence that the seed order did not move. And
+ *   `scoringCap.survivorsUnscored` means the same thing across the boundary while the wallets behind
+ *   it do not: before 20 the unscored are the list's tail, after it they are whichever were measured
+ *   most recently.
  */
-export const RECORD_SCHEMA_VERSION = 19;
+export const RECORD_SCHEMA_VERSION = 20;
 
 /**
  * The predictions-document contract version, carried inside the document itself.

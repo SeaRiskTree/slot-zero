@@ -926,7 +926,11 @@ made; `runs/` stays exactly the set of records the per-version key assertions be
 
 - Per-token records are held **in memory only**, for the duration of one run, and dropped when the
   process exits. There is no cache, no database, and no backfill.
-- Nothing is written to disk unless `--out` is passed. Persistence is opt-in.
+- No **vendor-derived** record is written to disk unless `--out` is passed; persisting the run
+  record is opt-in. The one file a run writes without it is the Stage 2 rotation state,
+  `rotation/stage2-scored.json`, and only when the run actually scored a wallet — see "WHICH
+  survivors the cap is spent on". It holds no vendor data: a wallet address, which is public
+  on-chain data, the instants this tool scored it, and how many times.
 - What a run record contains, per wallet — **twenty-three fields at schema 4 and at schema 5, all
   of them ours** (schema 5 adds no candidate field; its three new fields live inside `entry`):
   the thirteen of schema 1 (`wallet`, `seededBy`, `tokens`, `completed`, `completionRate`,
@@ -1009,6 +1013,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 17 | no new candidate ROW field, no new `entry` field, no new `entry.coverage` field, no new `spend` field, no new `dune` field and no new `creation` field: `PERSISTED_BY_SCHEMA[17]`, `ENTRY_KEYS_BY_SCHEMA[17]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[17]`, `SPEND_KEYS_BY_SCHEMA[17]`, `DUNE_KEYS_BY_SCHEMA[17]` and `CREATION_KEYS_BY_SCHEMA[17]` all equal `[16]`. **A run can now carry the PREDICTIONS it was made to test, in a new run-level `declaredPredictions` block** (captain decision 232c). Until this version there was nowhere in a record to say what a run expected before it looked, so every prediction lived in a companion document that could be written, revised or lost independently of the measurement it was about — and a sidecar is a second copy of a claim, which drifts until whichever one a reader opens becomes the truth. This section's own opening line has always declared these files the grading lane's input; schema 17 is what makes that true of predictions as well as outcomes. `--predict <path>` reads a document, `record.mjs` → `readPredictions` validates its SHAPE, and it is embedded **verbatim**: `documentVersion`, `lane`, `leg`, `madeAtIso`, `basis`, `source` (the path it came from) and `predictions`, each row being `{id, statement, reading, metric, comparator, value, rationale}`. `metric` is **either** a dotted path into this record **or** a `derived:` name from `record.mjs` → `DERIVED_PREDICTION_METRICS`, and `resolvePredictionMetric` is the single resolver for both, so a grader reads the field the prediction named rather than one it re-derived; a path that does not resolve is UNGRADEABLE, never a miss. The derived half exists because the questions worth predicting are mostly **counts over `candidates[]`** rather than scalars the record holds — *how many did this leg admit* is not a field — and every rate metric in that vocabulary names its READING in its own name (`medianGateCompletionRate` against `medianVendorPageCompletionRate`), because a metric called `medianCompletionRate` would be exactly the ambiguity 231a removed. **`reading` is required and refusing to default it is the point**: a completion rate is two different quantities here — the creation-derived merged history the gate reads and the vendor 70-record page — differing by an order of magnitude on the same wallets, and captain decision 231a exists because a bar was once stated without naming which, so a prediction that does not say which rate it is about is refused rather than guessed. `metric: null` is legitimate and means the claim is not resolvable from a record alone; it then carries no comparator and no value. **Nothing here is evaluated by the screen, deliberately** — it records the claim and measures the run, and scoring one against the other belongs to the lane that grades; a tool marking its own paper is not a hit rate. **It is NOT schema 16's `predictions`, and the two names are kept apart on purpose:** schema 16's `predictions` is what the SCREEN predicted about its candidates, emitted from its own verdicts, while `declaredPredictions` is what the LANE predicted about the run before it looked — operator-supplied, carried verbatim and graded elsewhere. **The one that will bite:** `declaredPredictions: null` is the normal state of a run made without `--predict` and means *nothing was predicted*, never *the predictions failed*; and the block is shape-checked but **not content-checked** — a document written after the run would look identical to one written before it, so what makes these predictions rather than postdictions is that the document is committed in its own commit ahead of the run, exactly as `thresholds.json` is. The record cannot prove that and does not claim to. |
 | 18 | **A run can carry BOTH Stage 2 entry fill sources and say, PER CANDIDATE, which one answered it** — Gate 3 precondition 4, and it is EVIDENCE FOR that gate rather than the cutover: `ENTRY_FILL_SOURCE_KIND` is unmoved, a default run still reads the swap-api, and every field below is `null`/empty on one. Three new candidate ROW fields — `PERSISTED_BY_SCHEMA[18]` — and one new run-level block; `ENTRY_KEYS_BY_SCHEMA[18]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[18]`, `SPEND_KEYS_BY_SCHEMA[18]`, `DUNE_KEYS_BY_SCHEMA[18]` and `CREATION_KEYS_BY_SCHEMA[18]` all equal `[17]`, because both sources score at ONE recipe and a finding's shape does not depend on which transport produced it. `entrySource` names which fill source produced this candidate's `entry` (`swap-api` | `dune`), and it is **`enumerationSource`'s shape one stage over** (captain decisions 156a and 191a) — per candidate for the same reason, since a primary source can fail to answer for one wallet while answering for the rest. `null` there means Stage 2 produced NO score at all (no gate pass, `--no-stage2`, or the scoring cap), never "a source that was not named"; on a record at schema ≤17 its ABSENCE is unambiguous, because every such run read the swap-api and nothing else. `entrySourceFallbackReasons` says why a candidate's recorded reading came from the cross-check source instead of the primary. `entryAgreement` carries that candidate's comparison class. **The run-level `entrySourceAgreement` block carries COUNTS BY CLASS AND NEVER A RATE, and that is the contract rather than a preference:** captain decision 143a, because a 98.4% whole-window agreement figure on this project hid a total failure confined to the create slot — an aggregate is dominated by the easy majority, and the unit that can be wrong is the candidate. So `byClass` counts `agreed`, `disagreed`, `only-<kind>-answered` and `neither-answered` apart, `noAggregateRate` travels with them, and the class lives on the row. **`only-<kind>-answered` is a COVERAGE difference and not a disagreement** — captain decision 174b one level up: an unmeasured verdict is no answer, not a wrong one, and every producer of one is our own coverage. The block also carries `recipeBlock` (both sources scored at `stage2_entry`, so a verdict difference is attributable to the TRANSPORT rather than to the caps) and `duneSpend`, the entry leg's own Dune meter — kept out of the run-level `dune` block because that one bounds an enumeration answering a whole batch in ONE execution and this one bounds a leg executing per window. **`duneSpend` states the PERMISSION and the APPLICATION side by side and the two must not be pooled:** `executionCeiling`/`windowCeiling` are the pins, what this tool allows any run of this leg, while `executionBoundApplied` (the `maxExecutions` this run's `DuneClient` was constructed with) and `windowsPlanned` (the window count its credit plan was priced and approved at) are what THIS RUN could have cost — a plan is derived from the windows it plans, so a block carrying only the pins would describe a bound no run applied, and one carrying only the application would lose the limit a reader judges it against. A record is never retro-edited, so either half-truth would be permanent. Finally, `prediction.entryReading` became **source-aware** at this version: it named the swap-api gate specifically, which was true only while one source was ever selected, and a Dune-sourced claim filed under that sentence would describe a gate it did not use — permanently, since a record is never retro-edited. `prediction.mjs` → `entryReadingFor` refuses an unknown source rather than defaulting to another's. |
 | 19 | **A MAYHEM-MODE GRADUATION IS NOT COMPETENCE EVIDENCE, so a mayhem launch leaves BOTH sides of `minCompletionRate`** — captain decision 351 (2026-08-07), which **REVERSES 227b**. Two new candidate ROW fields, `competenceMayhemExcluded` and `competenceMayhemUnreadable` (`PERSISTED_BY_SCHEMA[19]`); `ENTRY_KEYS_BY_SCHEMA[19]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[19]`, `SPEND_KEYS_BY_SCHEMA[19]`, `DUNE_KEYS_BY_SCHEMA[19]` and `CREATION_KEYS_BY_SCHEMA[19]` all equal `[18]`. **The evidence:** a mayhem graduation is preceded by a median net quote inflow of **0.291 SOL** against **85.005 SOL** for a classic curve graduation — 292x cheaper, and not separable in trade data from a token that churned about $1,700 and died — while in 2026-07 mayhem was **27.15% of pump.fun launches and 46.41% of its graduations** (`slot-zero-offlaunchpad-graduation-criterion` → `report.md` §4 and §8.2, held in firstmate's records, not in this repo). So the bar that IS the gate had been measuring two very different achievements through one number. **Why the DENOMINATOR moves too, and it is not optional:** a numerator-only exclusion drives a mayhem-heavy deployer's rate towards 0.0000 and removes them from the gate, which is captain decision **227c** — *excluding mayhem-heavy deployers outright* — and **227c is NOT reversed and remains declined**. A deployer is judged on their non-mayhem record, not removed for having a mayhem one. **`competenceMayhemExcluded`** is what the exclusion removed from both sides; **`competenceMayhemUnreadable`** is how many of the launches that REMAIN carry no readable flag — they are counted in `tokens` and `completed`, which is a stated decision rather than a default, and this field is what makes it auditable (equal to `tokens` AND `competenceMayhemExcluded` 0 means no mayhem evidence touched the rate at all, i.e. the pre-351 reading — both conjuncts, since a row with launches excluded can still have nothing readable left among those that remain). Dropping them instead would empty the denominator of every walk-sourced candidate on evidence about the SURFACE rather than about the deployer, and a false rejection here is permanent and invisible. **An all-mayhem deployer reads UNMEASURED, never 0.0000** — `rank.mjs` → `competenceEmptiedByMayhem` routes zero-of-zero to `gate-unmeasured`, which is neither a rejection nor a pass. **The one that will bite:** `tokens`, `completed`, `completionRate` and `spanDays` now describe the NON-MAYHEM record, so **a schema-≤18 rate and a schema-19 rate are not the same quantity and must not be pooled**; a schema-≤18 record carries neither new field and one cannot be reconstructed from it, because `creation.mayhemLaunches` is a share of what the ENUMERATION returned — a different denominator from the merged history the gate read — and is `null` on every walk-sourced candidate. There are deliberately no `vendor*` twins: the MadeOnSol profile page has no such column, so `vendorCompletionRate` is unmovable by 351 by construction. |
+| 20 | **Stage 2 scoring has a MEMORY, so the cap goes to the LEAST-RECENTLY-SCORED survivors** — captain decision 336a. No new candidate ROW field, no new `entry` field, no new `entry.coverage` field, no new `spend` field, no new `dune` field and no new `creation` field: `PERSISTED_BY_SCHEMA[20]`, `ENTRY_KEYS_BY_SCHEMA[20]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[20]`, `SPEND_KEYS_BY_SCHEMA[20]`, `DUNE_KEYS_BY_SCHEMA[20]` and `CREATION_KEYS_BY_SCHEMA[20]` all equal `[19]`. One new run-level block, `scoringRotation`. **What changed:** until this version `screen.mjs` took `survivors.slice(0, maxScored)` — the first seven gate survivors in `mergeSeeds` order, which is deterministic — so a daily run re-measured the same seven wallets every day, while the median survivor needs about **21.5 days** for its ten windows to refresh and **0 of 27** refresh within a day. Distinct yield was about **168 windows a month** against roughly **2,571** of available supply, against the captain's floor of **1,000 window measurements a month**. `maxScored` itself does **not** move — captain decision **339a** keeps capacity at 7 per run, and raising it means moving the scoring cap and the request budget together, which is a separate decision. This version changes WHICH seven. **Why it needs a version at all: a pre-20 run was STATELESS** — same inputs, same output, and anyone could re-run it and reproduce a published result — and rotation makes a run's output depend on every run before it. The captain accepted that trade only on condition that reproducibility be preserved another way, and `scoringRotation` is that condition implemented rather than promised. It NAMES the state it read: `statePath` (repo-relative), `stateSchemaVersion`, and `stateDigestBefore`/`stateDigestAfter`, the SHA-256 of the bytes read and of the bytes written — so run N's `after` is run N+1's `before` and the whole chain of runs is checkable from committed artefacts. It carries `order`, **the WHOLE ranked survivor list rather than the slice taken from it**, which is what lets `rotation.mjs` → `verifySelection` re-derive the selection from the record ALONE, with no state file, no survivor list and no clock; `selected`, `deferred`, `walletsScored`, `scoredAtIso` (one instant per run, stamped on every wallet it scored), `neverScoredBefore` and `importedFromRunRecords` are the counts a reader judges it by, and `reproducibility` carries the condition in one sentence. **`enabled: false` is a real state and is not the block's absence:** a run made with `--no-rotation`, or one where Stage 2 selected nobody, records the block with a `reason`, so a stateless run is never read as a rotated one that happened to repeat. **An UNMEASURED verdict advances the rotation**, because it consumed the cap and the keyless walk that goes with it — that is not captain decision 174b's forbidden filter, since nobody is dropped, the wallet keeps its place in the cycle and the record still surfaces and counts its verdict. **The one that will bite:** on a schema-≤19 record the absence of this block means the run took the HEAD of the survivor list, so **two such records scoring the same wallets are not evidence about those wallets** — they are evidence that the seed order did not move; and `scoringCap.survivorsUnscored` means the same thing across the boundary while the wallets behind it do not, being the list's tail before 20 and whichever were measured most recently after it. |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -1145,6 +1150,82 @@ For version 2 onwards the pairing to read is:
 Three measurements per candidate, over that candidate's own most recent launches. The first two are
 free — arithmetic over fills already in hand — and the third is not, so the first two run first and
 a deployer that fails either is refused before one Solana RPC request is spent on it.
+
+### WHICH survivors the cap is spent on — the rotation, and what it traded
+
+**Captain decision 336a.** Stage 2 scores at most `stage2_entry.maxCandidatesScored` gate survivors
+a run. It used to take `survivors.slice(0, maxScored)` — the first seven in `mergeSeeds` order, which
+is deterministic — so **a daily run re-measured the same seven wallets every day.** That is not a
+cheap repeat, it is a wasted run: the median survivor needs about **21.5 days** for its ten windows
+to refresh and **0 of 27** refresh within a day, so a same-day re-measure re-answers a question
+already answered. Distinct yield was about **168 windows a month** against roughly **2,571** of
+available supply, against the captain's floor of **1,000 window measurements a month**.
+
+The cap now goes to the **least-recently-scored** survivors, so the population cycles.
+
+**Capacity did not move and this is not a capacity change.** `maxScored` is still 7 a run — captain
+decision **339a** — because raising it means moving the scoring cap and the request budget together,
+and that is a separate decision. Nor did any Stage 1 bar move; loosening the minimum-launches bar is
+captain decision **337a** and is its own lane. This changes *which* seven and nothing else, and it
+costs **zero in every currency**: `rotation.mjs` reads one local file and the committed run records,
+and reaches no vendor.
+
+**The rule, and all three clauses matter** (`rotation.mjs` → `rotationOrder`):
+
+1. A survivor never scored comes first — there is no measurement to refresh, so nothing to wait for.
+2. Among the rest, ascending `lastScoredAtIso`. That is `ledger.mjs` → `nextGateBatch`'s shape one
+   lane over, chosen for the same reason: draining freshest-first starves the tail permanently while
+   every run reports a healthy count.
+3. Ties break on the survivor list's own order. So with **no state at all the ranking IS that
+   order**, which makes the first run after this change byte-identical to the slice it replaced.
+
+A survivor set that **shrank** costs nothing: rows for wallets this run's gate did not return are
+kept and unread, so a wallet that drops out for a day and comes back **resumes its place** rather
+than arriving as a stranger and jumping the queue. And an **unmeasured verdict advances the
+rotation**, because it consumed the cap and the keyless walk that goes with it — that is not captain
+decision 174b's forbidden filter, since nobody is dropped, the wallet keeps its place in the cycle,
+and the record still surfaces and counts its verdict.
+
+#### The property this traded, and what buys it back
+
+Before 336a the screen was **stateless**: same inputs, same output, and anyone could re-run it and
+reproduce a published result. Rotation makes a run's output depend on every run before it. **The
+captain accepted that only on condition that reproducibility be preserved another way**, and that
+condition is an acceptance criterion rather than a nicety — a rotation that cannot be reproduced from
+committed evidence is not acceptable in this lab. Three things pay for it:
+
+- **The state is committed evidence** — `tools/deployer-screen/rotation/stage2-scored.json`, written
+  in sorted key order so two runs over the same state produce byte-identical bytes and a diff shows
+  the rows that changed. A file we cannot parse, or one at an unknown `schemaVersion`, **refuses the
+  run** rather than starting over: starting over silently returns the cap to the head of the list —
+  the repeat this decision removed — while the record still reports a rotation.
+- **The run record NAMES the state it read.** Schema 20's `scoringRotation` block carries `statePath`
+  (repo-relative), `stateSchemaVersion`, and `stateDigestBefore` / `stateDigestAfter` — the SHA-256 of
+  the bytes read and of the bytes written. **Run N's `after` is run N+1's `before`**, so a sequence of
+  committed records is checkable end to end.
+- **The selection is re-derivable from the record alone.** The block carries `order`, the WHOLE ranked
+  survivor list rather than the slice taken from it, and `rotation.mjs` → `verifySelection` replays the
+  ranking rule over it — no state file, no survivor list, no clock. Selector and verifier share ONE
+  comparator (`compareRotationRows`) so they cannot drift into two rules that merely agree. **The cap
+  to hand it is the record's own `scoringCap.max`, the cap that run APPLIED, never
+  `thresholds.stage2_entry.maxCandidatesScored`**: a run made with `--score` applies the `min()` of
+  the two, so the pinned ceiling would report a perfectly correct run as having selected the wrong
+  wallets.
+
+`rotation.mjs` → `REPRODUCIBILITY_RULE` is that condition in one sentence, and it rides on the state
+file, the run record and the rendered Stage 2 block for the reason `LANDING_TIP_CAVEAT` rides on a
+cost: a caveat that lives only in a document is one a reader of the number never sees.
+
+**The committed state is not hand-written.** `importScoredFromRunRecords` recovers it from
+`runs/*.json` — a candidate carrying an `entry` block is one Stage 2 spent its cap on, and the run's
+own `startedAtIso` is when — and it runs on **every** invocation rather than once at bootstrap, so a
+lost or hand-deleted state file degrades to a slower rotation instead of to a wrong one. It only
+ADDS: the state and a run record are two accounts of the same event, and merging them would
+double-count on every run.
+
+**`--no-rotation`** keeps the pre-336a behaviour reachable, and the record says so — `enabled: false`
+with a `reason`, never the block's absence, so a stateless run can never be read as a rotated one
+that happened to repeat.
 
 ### Where the fills come from is INJECTED, and Stage 2 names no vendor
 
@@ -2464,7 +2545,8 @@ crash there.
   `worstCaseCreditsPerExecution` is pinned per lane. A statement that grew a `dex_solana.trades`
   join would need it re-measured — and the ~9× figure on record is a SUCCESSFUL execution, which
   says nothing about where a joined statement's own timeout floor sits.
-- **Nothing tracks the period across runs.** The tool is stateless; what a run carries is the
+- **Nothing tracks the period across runs.** The tool carries no spend state between runs — the only
+  state it does keep is the Stage 2 rotation, which reaches no vendor; what a run carries is the
   reading it took plus `dune.localEstimate`, an estimate of its own spend from its own counters,
   labelled as one. Re-reading `/usage` after a run would report the balance from *before* it.
 - **ONE FIELD NAME IS AN ASSUMPTION.** Dune's docs contradict themselves — the response schema names

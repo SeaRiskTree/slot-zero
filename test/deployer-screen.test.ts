@@ -13,9 +13,9 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 
@@ -194,6 +194,22 @@ import {
   summariseCoverage,
 } from '../tools/deployer-screen/seed.mjs';
 import {
+  REPRODUCIBILITY_RULE,
+  ROTATION_SCHEMA_VERSION,
+  compareRotationRows,
+  digestOf,
+  emptyRotation,
+  importScoredFromRunRecords,
+  ledgerRunRecords,
+  loadRotation,
+  markScored,
+  rotationOrder,
+  saveRotationText,
+  selectForScoring,
+  serialiseRotation,
+  verifySelection,
+} from '../tools/deployer-screen/rotation.mjs';
+import {
   FRONTEND_API,
   KeylessClient,
   KeylessHttpError,
@@ -236,6 +252,7 @@ import {
   renderDryRun,
   renderEntry,
   renderMayhemShare,
+  renderRotation,
   renderStage1,
 } from '../tools/deployer-screen/render.mjs';
 import {
@@ -6098,6 +6115,36 @@ function readAll(dir: string, prefix: string, pattern = /\.(ts|mjs|js)$/): Map<s
   return out;
 }
 
+// The run-level `scoringRotation` block's OWN key set — schema 20, captain decision 336a. Pinned
+// for the same reason `ENTRY_SOURCE_AGREEMENT_KEYS_18` is: `RUN_LEVEL_KEYS_ADDED_BY_SCHEMA[20]`
+// pins only that the KEY appears, and without this the block could lose a field at an unchanged
+// version with every other assertion still green. This is the block a published selection is
+// AUDITED from, so a vanished field here is a reproducibility claim quietly becoming uncheckable.
+//
+// `stateDigestBefore`/`stateDigestAfter` are the chain — run N's `after` is run N+1's `before` —
+// and `order` is the whole ranked survivor list rather than the slice taken from it, which is what
+// makes `verifySelection` able to re-derive the selection with no state file and no clock.
+const ROTATION_BLOCK_KEYS_20 = [
+  'enabled',
+  'reason',
+  'statePath',
+  'stateSchemaVersion',
+  'stateDigestBefore',
+  'stateDigestAfter',
+  'scoredAtIso',
+  'walletsScored',
+  'importedFromRunRecords',
+  'survivors',
+  'neverScoredBefore',
+  'selected',
+  'deferred',
+  'order',
+  'reproducibility',
+];
+const ROTATION_BLOCK_KEYS_BY_SCHEMA: Record<number, string[]> = {
+  20: ROTATION_BLOCK_KEYS_20,
+};
+
 describe('the keyless boundary holds in both directions', () => {
   const PERSISTED_BY_SCHEMA: Record<number, string[]> = {
     1: [
@@ -6209,6 +6256,12 @@ describe('the keyless boundary holds in both directions', () => {
     'competenceMayhemExcluded',
     'competenceMayhemUnreadable',
   ].sort();
+
+  // Schema 20 adds NO candidate row field. Captain decision 336a changes WHICH gate survivors the
+  // scoring cap is spent on — the least-recently-scored rather than the head of the list — and what
+  // it adds is a run-level block naming the state that decided it. A candidate's own row says the
+  // same things it said at 19.
+  PERSISTED_BY_SCHEMA[20] = [...PERSISTED_BY_SCHEMA[19]!];
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -6325,6 +6378,8 @@ describe('the keyless boundary holds in both directions', () => {
     18: ENTRY_KEYS_14,
     // Schema 19's two new keys are candidate ROW fields — PERSISTED_BY_SCHEMA above.
     19: ENTRY_KEYS_14,
+    // Schema 20 changes WHICH survivors the scoring cap is spent on, not what a score carries.
+    20: ENTRY_KEYS_14,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -6415,6 +6470,7 @@ describe('the keyless boundary holds in both directions', () => {
     // the gate read, a different denominator, so they are candidate ROW fields and not a fourth and
     // fifth key here.
     19: CREATION_KEYS_15,
+    20: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -6472,6 +6528,7 @@ describe('the keyless boundary holds in both directions', () => {
     // .recipeBlock), so a finding's shape does not depend on which transport produced it.
     18: ENTRY_COVERAGE_KEYS_6,
     19: ENTRY_COVERAGE_KEYS_6,
+    20: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -6547,6 +6604,7 @@ describe('the keyless boundary holds in both directions', () => {
     // .recipeBlock), so a finding's shape does not depend on which transport produced it.
     18: SPEND_KEYS_8,
     19: SPEND_KEYS_8,
+    20: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -6603,6 +6661,7 @@ describe('the keyless boundary holds in both directions', () => {
     // .recipeBlock), so a finding's shape does not depend on which transport produced it.
     18: DUNE_KEYS_13,
     19: DUNE_KEYS_13,
+    20: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -6642,6 +6701,7 @@ describe('the keyless boundary holds in both directions', () => {
     // .recipeBlock), so a finding's shape does not depend on which transport produced it.
     18: DUNE_COVERAGE_KEYS_9,
     19: DUNE_COVERAGE_KEYS_9,
+    20: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -6668,6 +6728,7 @@ describe('the keyless boundary holds in both directions', () => {
     // .recipeBlock), so a finding's shape does not depend on which transport produced it.
     18: DUNE_COVERAGE_TABLE_KEYS_9,
     19: DUNE_COVERAGE_TABLE_KEYS_9,
+    20: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -6699,6 +6760,14 @@ describe('the keyless boundary holds in both directions', () => {
     // 143a, because a 98.4% whole-window agreement figure on this project once hid a total failure
     // confined to the create slot — and the class that can be wrong lives on the candidate row.
     18: ['entrySourceAgreement'],
+    // Schema 20: WHICH survivors the scoring cap went to, and the state that decided it (captain
+    // decision 336a). The version exists because a pre-20 run was STATELESS and this one is not:
+    // rotation makes a run's output depend on every run before it, and the block is what preserves
+    // reproducibility instead — it names the state file, its schema version and the SHA-256 of the
+    // bytes read and written, and it carries the WHOLE ranked order so the selection is re-derivable
+    // from the record alone. `ROTATION_BLOCK_KEYS_BY_SCHEMA` below pins its own key set, the same
+    // gap the `spend` and `entrySourceAgreement` pins were added to close one block over.
+    20: ['scoringRotation'],
   };
 
   // The run-level `entrySourceAgreement` block's OWN key set, and `duneSpend` one level below it —
@@ -6722,6 +6791,7 @@ describe('the keyless boundary holds in both directions', () => {
   const ENTRY_SOURCE_AGREEMENT_KEYS_BY_SCHEMA: Record<number, string[]> = {
     18: ENTRY_SOURCE_AGREEMENT_KEYS_18,
     19: ENTRY_SOURCE_AGREEMENT_KEYS_18,
+    20: ENTRY_SOURCE_AGREEMENT_KEYS_18,
   };
   // This leg's own Dune meter. It is deliberately NOT folded into the run-level `dune` block: that
   // one bounds an enumeration answering a whole batch in ONE execution, this one bounds a leg
@@ -6745,6 +6815,7 @@ describe('the keyless boundary holds in both directions', () => {
   const AGREEMENT_DUNE_SPEND_KEYS_BY_SCHEMA: Record<number, string[]> = {
     18: AGREEMENT_DUNE_SPEND_KEYS_18,
     19: AGREEMENT_DUNE_SPEND_KEYS_18,
+    20: AGREEMENT_DUNE_SPEND_KEYS_18,
   };
   // And the per-candidate row, which is where the class that can be WRONG lives. The run level only
   // counts these, so a field vanishing here would be invisible to every pin above it.
@@ -6752,6 +6823,7 @@ describe('the keyless boundary holds in both directions', () => {
   const ENTRY_AGREEMENT_KEYS_BY_SCHEMA: Record<number, string[]> = {
     18: ENTRY_AGREEMENT_KEYS_18,
     19: ENTRY_AGREEMENT_KEYS_18,
+    20: ENTRY_AGREEMENT_KEYS_18,
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -7369,6 +7441,22 @@ describe('the keyless boundary holds in both directions', () => {
             `${file} entrySourceAgreement must carry counts and no rate`,
           ).not.toContain('agreementRate');
         }
+      }
+      // The run-level `scoringRotation` block — schema 20, captain decision 336a. **It is NEVER
+      // `null`**, unlike every block above it: rotation off and Stage 2 selecting nobody are states
+      // the block itself carries (`enabled: false` plus a `reason`), precisely so a stateless run
+      // cannot be read as a rotated one that happened to repeat. So this asserts the key set with no
+      // null escape, and a `null` here is a failure rather than a legitimate value.
+      const rotationExpected = ROTATION_BLOCK_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+      if (rotationExpected !== undefined) {
+        const rotation = (parsed as Record<string, unknown>)['scoringRotation'];
+        expect(rotation, `${file} declares a schema whose record carries scoringRotation, and has none`)
+          .not.toBeUndefined();
+        expect(rotation, `${file} scoringRotation is null — rotation OFF is a state, not an absence`)
+          .not.toBeNull();
+        expect(Object.keys(rotation as object).sort(), `${file} scoringRotation`).toEqual(
+          [...rotationExpected].sort(),
+        );
       }
       for (const row of parsed.candidates) {
         expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(expected);
@@ -14194,13 +14282,17 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         // COUNT of construction sites, which is the property the original spelling stood for.
         expect(screen.match(/await selectEntryFillSource\(/g)).toHaveLength(1);
         expect(screen).toContain('if (!entryFillSourceIsRead(opts)) return null;');
-        // FOUR occurrences and no more: the definition, the run path's early return, the plan
-        // path's guard, and `entrySourceKindsRead`, which ASKS this predicate rather than answering
-        // the question again. The pin's property is unchanged — no site decides on its own — and
-        // the fourth is the reason it holds one level down: the derivation that says WHICH sources a
-        // run reads is built on the one that says WHETHER it reads any, so a call site cannot get
-        // "no source at all" and "no Dune source" to disagree. A FIFTH would be a new site.
-        expect(screen.match(/entryFillSourceIsRead\(opts\)/g)).toHaveLength(4);
+        // FIVE occurrences and no more: the definition, the run path's early return, the plan
+        // path's guard, `entrySourceKindsRead`, which ASKS this predicate rather than answering the
+        // question again, and — since captain decision 336a — the Stage 2 rotation's own read gate.
+        // The pin's property is unchanged: no site decides on its own. The fourth is the reason it
+        // holds one level down (the derivation that says WHICH sources a run reads is built on the
+        // one that says WHETHER it reads any, so a call site cannot get "no source at all" and "no
+        // Dune source" to disagree), and the fifth is the same discipline one lane over — a run that
+        // scores nobody rotates nobody, and asking `opts.stage2` again there would let the rotation
+        // and the scoring loop disagree about whether this run selects at all. A SIXTH is a new site
+        // and means coming back here on purpose.
+        expect(screen.match(/entryFillSourceIsRead\(opts\)/g)).toHaveLength(5);
         expect(screen).toContain('  if (!entryFillSourceIsRead(opts)) return [];');
         expect(screen).toContain('if (entryFillSourceIsRead(opts)) {');
         // And Stage 2 scores exactly where a source was built, rather than re-reading the flag.
@@ -15215,4 +15307,609 @@ describe('ONE run, TWO entry fill sources, and it agrees with itself PER CANDIDA
     // And the recipe named is one this file's own thresholds actually hold.
     expect(loadThresholds()[AGREE['recipeBlock'] as string]).toBeTruthy();
   });
+});
+
+describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain decision 336a', () => {
+  // BEFORE THIS LANE the screen took `survivors.slice(0, maxScored)`: the first seven gate
+  // survivors in `mergeSeeds` order, which is deterministic, so a daily run re-measured the SAME
+  // seven wallets every day. The median survivor needs ~21.5 days for its ten windows to refresh
+  // and 0 of 27 refresh within a day, so a same-day re-measure re-answers a question already
+  // answered — about 168 distinct windows a month against roughly 2,571 of supply, against a floor
+  // of 1,000.
+  //
+  // Every test in this block is offline and costs nothing in any currency: the rotation reads one
+  // local file and the committed run records, and the end-to-end run answers every request from a
+  // stub. Nothing here reaches Dune, Helius, MadeOnSol or a keyless host.
+  const ROTATION_STATE = join(TOOL_DIR, 'rotation', 'stage2-scored.json');
+  const MAX = 7;
+
+  /** A rotation in which `wallets` were scored at `at`, built through the production mark. */
+  const scoredAt = (wallets: readonly string[], at: string, base = emptyRotation()) => {
+    for (const w of wallets) markScored(base, w, at);
+    return base;
+  };
+
+  it('with NO prior state it is byte-identical to the slice it replaced', () => {
+    // THE FIRST RUN AFTER THIS CHANGE MUST BE INERT, and that is a design choice rather than a
+    // coincidence: never-scored survivors rank first and tie on the caller's own order, so with an
+    // empty rotation the ranking IS the survivor list. A lane reading a run made the day this
+    // landed needs to know the wallet list moved for one reason only — the state — and on a first
+    // run there is none.
+    const survivors = Array.from({ length: 20 }, (_, i) => `W${String(i).padStart(2, '0')}`);
+    const fresh = selectForScoring(emptyRotation(), survivors, MAX);
+    expect(fresh.selected).toEqual(survivors.slice(0, MAX));
+    expect(fresh.deferred).toEqual(survivors.slice(MAX));
+    expect(fresh.neverScored).toBe(20);
+    // And a missing file IS a first run — an empty rotation, no digest, and no throw.
+    const missing = loadRotation(join(mkdtempSync(join(tmpdir(), 'rot-')), 'nothing-here.json'));
+    expect(missing.present).toBe(false);
+    expect(missing.digest).toBeNull();
+    expect(selectForScoring(missing.rotation, survivors, MAX).selected).toEqual(survivors.slice(0, MAX));
+  });
+
+  it('successive runs over an UNCHANGED population score DIFFERENT wallets and cycle', () => {
+    // ACCEPTANCE CRITERION 1, and the whole point of the lane. Twenty survivors, seven a run: the
+    // cap must walk the population and come back round, never sit on its head.
+    const survivors = Array.from({ length: 20 }, (_, i) => `W${String(i).padStart(2, '0')}`);
+    const rotation = emptyRotation();
+    /** @type {string[][]} */
+    const rounds: string[][] = [];
+    for (let run = 0; run < 4; run += 1) {
+      const at = new Date(Date.UTC(2026, 7, 10 + run)).toISOString();
+      const chosen = selectForScoring(rotation, survivors, MAX).selected;
+      rounds.push(chosen);
+      for (const w of chosen) markScored(rotation, w, at);
+    }
+    // THE ASSERTION THAT FAILS AGAINST `slice(0, maxScored)`, under which all four rounds are the
+    // same seven wallets. Here the first two are disjoint and the population is covered inside
+    // three runs, which is `ceil(20 / 7)`.
+    expect(rounds[0]).toEqual(survivors.slice(0, 7));
+    expect(rounds[1]).toEqual(survivors.slice(7, 14));
+    expect(rounds[0]!.filter((w) => rounds[1]!.includes(w))).toEqual([]);
+    expect(new Set([...rounds[0]!, ...rounds[1]!, ...rounds[2]!])).toEqual(new Set(survivors));
+    // Run 2 exhausts the never-scored six and then takes the OLDEST measured wallet — the cycle
+    // closing rather than the run going short. Run 3 carries straight on from there.
+    expect(rounds[2]).toEqual([...survivors.slice(14), 'W00']);
+    expect(rounds[3]).toEqual(survivors.slice(1, 8));
+  });
+
+  it('when EVERY survivor has been measured it is a strict oldest-first round robin', () => {
+    // The steady state, and the case a naive "never-scored first" rule answers by accident. Here
+    // there are no never-scored rows at all, so the ONLY thing ordering the run is the recorded
+    // instant — and it must run oldest first, which is `nextGateBatch`'s shape one lane over.
+    const survivors = ['A', 'B', 'C', 'D'];
+    const rotation = emptyRotation();
+    // Deliberately scored in an order that CONTRADICTS the survivor list: D oldest, A newest. A
+    // rule reading the list rather than the state would return [A, B] here.
+    markScored(rotation, 'D', '2026-08-01T00:00:00.000Z');
+    markScored(rotation, 'C', '2026-08-02T00:00:00.000Z');
+    markScored(rotation, 'B', '2026-08-03T00:00:00.000Z');
+    markScored(rotation, 'A', '2026-08-04T00:00:00.000Z');
+    const first = selectForScoring(rotation, survivors, 2);
+    expect(first.selected).toEqual(['D', 'C']);
+    expect(first.deferred).toEqual(['B', 'A']);
+    expect(first.neverScored).toBe(0);
+
+    for (const w of first.selected) markScored(rotation, w, '2026-08-05T00:00:00.000Z');
+    expect(selectForScoring(rotation, survivors, 2).selected).toEqual(['B', 'A']);
+    // A wallet coming round a second time does not earn priority for having been seen more often:
+    // `timesScored` is operator context and the selection never reads it.
+    expect(rotation.wallets['D']!.timesScored).toBe(2);
+    expect(rotation.wallets['D']!.firstScoredAtIso).toBe('2026-08-01T00:00:00.000Z');
+  });
+
+  it('a survivor set that SHRANK costs nothing, and a returning wallet keeps its place', () => {
+    // The population is the vendor's and it moves: tier membership is a trailing window, and a
+    // wallet can miss the gate on a quiet day and clear it the next. Two failures to refuse here.
+    // (1) A rotation row for a wallet this run's gate did not return must not disturb the ranking.
+    // (2) A wallet that drops out and comes back must resume its place rather than arrive as a
+    //     stranger — reading it as never-scored would send it to the FRONT of the queue, so a
+    //     flapping survivor would monopolise the cap.
+    const rotation = emptyRotation();
+    markScored(rotation, 'A', '2026-08-01T00:00:00.000Z');
+    markScored(rotation, 'B', '2026-08-02T00:00:00.000Z');
+    markScored(rotation, 'C', '2026-08-03T00:00:00.000Z');
+
+    // Today B is gone and a newcomer N has arrived.
+    const shrunk = selectForScoring(rotation, ['A', 'C', 'N'], 2);
+    expect(shrunk.selected).toEqual(['N', 'A']);
+    expect(shrunk.deferred).toEqual(['C']);
+    expect(shrunk.neverScored).toBe(1);
+    // B's row survived unread, so when it comes back it is still the oldest thing in the set.
+    expect(rotation.wallets['B']).toBeDefined();
+    for (const w of shrunk.selected) markScored(rotation, w, '2026-08-04T00:00:00.000Z');
+    expect(selectForScoring(rotation, ['A', 'B', 'C', 'N'], 2).selected).toEqual(['B', 'C']);
+
+    // And an EMPTY survivor set is a selection of nothing rather than a throw or a slice of the
+    // rotation's own keys — the cap has nowhere to go, which is a run outcome and not a fault.
+    const none = selectForScoring(rotation, [], MAX);
+    expect(none).toEqual({ order: [], selected: [], deferred: [], neverScored: 0 });
+  });
+
+  it('the selection is RE-DERIVABLE from the record alone — acceptance criterion 3', () => {
+    // THE PROPERTY THE CAPTAIN TRADED STATELESSNESS FOR. A reader who has the run record and
+    // nothing else — no state file, no survivor list, no clock — must be able to check that the run
+    // scored the wallets its own rule says it should have. `verifySelection` applies the SAME
+    // comparator the live selection does (`compareRotationRows`), which is what stops the verifier
+    // and the selector drifting into two rules that merely agree.
+    const survivors = ['A', 'B', 'C', 'D', 'E'];
+    const rotation = scoredAt(['C', 'E'], '2026-08-01T00:00:00.000Z');
+    markScored(rotation, 'A', '2026-08-03T00:00:00.000Z');
+    const sel = selectForScoring(rotation, survivors, 2);
+    expect(sel.selected).toEqual(['B', 'D']);
+    expect(verifySelection(sel, 2)).toEqual({ ok: true, problems: [] });
+
+    // A record claiming a selection its own order does not support is CAUGHT, and the message says
+    // which clause failed rather than returning a bare false.
+    const tampered = { ...sel, selected: ['A', 'B'], deferred: ['C', 'D', 'E'] };
+    const bad = verifySelection(tampered, 2);
+    expect(bad.ok).toBe(false);
+    expect(bad.problems.join(' ')).toContain('selected is not the first 2 of order');
+    // So is an order that is not least-recently-scored first.
+    const misordered = verifySelection({ ...sel, order: [...sel.order].reverse() }, 2);
+    expect(misordered.ok).toBe(false);
+    expect(misordered.problems.join(' ')).toContain('not least-recently-scored first');
+    // The comparator is TOTAL on what a record carries and leaves ties to the caller's positional
+    // tiebreak, which a record cannot hold — so a verifier must not demand one.
+    expect(
+      compareRotationRows(
+        { wallet: 'x', lastScoredAtIso: null, timesScored: 0 },
+        { wallet: 'y', lastScoredAtIso: null, timesScored: 0 },
+      ),
+    ).toBe(0);
+  });
+
+  it('the state is COMMITTED EVIDENCE: byte-stable, version-refusing, and chained by digest', () => {
+    // ACCEPTANCE CRITERION 2. A rotation nobody can read is not evidence, and one that rewrites
+    // itself on every run hides the seven lines that changed behind ninety that did not.
+    const dir = mkdtempSync(join(tmpdir(), 'rot-state-'));
+    const path = join(dir, 'state.json');
+    const rotation = scoredAt(['Wz', 'Wa', 'Wm'], '2026-08-05T00:00:00.000Z');
+    const text = serialiseRotation(rotation, '2026-08-05T00:00:00.000Z');
+    saveRotationText(path, text);
+    // Sorted keys, so two runs over the same state produce the same bytes.
+    expect(Object.keys(JSON.parse(text).wallets)).toEqual(['Wa', 'Wm', 'Wz']);
+    expect(serialiseRotation(rotation, '2026-08-05T00:00:00.000Z')).toBe(text);
+    // The digest names an algorithm, because an unlabelled hex string in a record is a value nobody
+    // can re-derive without guessing which function produced it.
+    expect(digestOf(text)).toMatch(/^sha256:[0-9a-f]{64}$/);
+
+    const back = loadRotation(path);
+    expect(back.present).toBe(true);
+    expect(back.digest).toBe(digestOf(text));
+    expect(selectForScoring(back.rotation, ['Wa', 'Wm', 'Wz'], 3).selected).toEqual(['Wa', 'Wm', 'Wz']);
+    // The round trip is exact, which is what makes the chain checkable: this run's `after` digest is
+    // the next run's `before`.
+    expect(serialiseRotation(back.rotation, '2026-08-05T00:00:00.000Z')).toBe(text);
+
+    // A STATE WE CANNOT READ REFUSES rather than starting over. Starting over is not the safe
+    // default: it silently returns the cap to the head of the survivor list — the repeat 336a
+    // removed — while the record still reports a rotation.
+    const broken = join(dir, 'broken.json');
+    writeFileSync(broken, '{ not json', 'utf8');
+    expect(() => loadRotation(broken)).toThrow(/not readable JSON/);
+    const future = join(dir, 'future.json');
+    writeFileSync(future, JSON.stringify({ schemaVersion: ROTATION_SCHEMA_VERSION + 1, wallets: {} }), 'utf8');
+    expect(() => loadRotation(future)).toThrow(/never retro-fitted/);
+    // A single unreadable ROW is dropped rather than refusing the file, and it reverts that wallet
+    // to never-scored — the direction that costs a keyless walk instead of starving a wallet.
+    const partial = join(dir, 'partial.json');
+    writeFileSync(
+      partial,
+      JSON.stringify({
+        schemaVersion: ROTATION_SCHEMA_VERSION,
+        wallets: { Ok: { lastScoredAtIso: '2026-08-05T00:00:00.000Z' }, Bad: { lastScoredAtIso: 'not a date' } },
+      }),
+      'utf8',
+    );
+    const read = loadRotation(partial);
+    expect(Object.keys(read.rotation.wallets)).toEqual(['Ok']);
+    expect(selectForScoring(read.rotation, ['Ok', 'Bad'], 1).selected).toEqual(['Bad']);
+  });
+
+  it('the COMMITTED state is what the committed run records say, and the import only adds', () => {
+    // The state in this tree is not hand-written: it is what `importScoredFromRunRecords` recovers
+    // from `runs/*.json`, which is why it is checkable rather than asserted. A candidate carrying an
+    // `entry` block is one Stage 2 spent its cap on; the run's own `startedAtIso` is when.
+    const rebuilt = emptyRotation();
+    const { imported } = importScoredFromRunRecords(rebuilt, ledgerRunRecords(join(TOOL_DIR, 'runs')));
+    expect(imported).toBeGreaterThan(0);
+    const committed = loadRotation(ROTATION_STATE);
+    expect(committed.present, 'the rotation state must be committed — it is the evidence').toBe(true);
+    expect(Object.keys(committed.rotation.wallets).sort()).toEqual(Object.keys(rebuilt.wallets).sort());
+    for (const [wallet, entry] of Object.entries(rebuilt.wallets)) {
+      expect(committed.rotation.wallets[wallet]!.lastScoredAtIso, wallet).toBe(entry.lastScoredAtIso);
+    }
+    // Every imported wallet is one a committed record shows an entry score for, and no wallet
+    // without one leaked in — `entry: null` is a candidate Stage 2 produced no score for, which
+    // spent no cap on it.
+    const scored = new Set<string>();
+    for (const { body } of ledgerRunRecords(join(TOOL_DIR, 'runs'))) {
+      const rec = body as { candidates?: { wallet: string; entry: unknown }[] };
+      for (const c of rec.candidates ?? []) if (c.entry !== null && c.entry !== undefined) scored.add(c.wallet);
+    }
+    expect(new Set(Object.keys(rebuilt.wallets))).toEqual(scored);
+
+    // IT ONLY ADDS. The state file and a run record are two accounts of the SAME event, so a merge
+    // would double-count `timesScored` on every invocation — this runs on every run, not once at
+    // bootstrap, so that error would compound daily.
+    const twice = importScoredFromRunRecords(rebuilt, ledgerRunRecords(join(TOOL_DIR, 'runs')));
+    expect(twice.imported).toBe(0);
+    for (const entry of Object.values(rebuilt.wallets)) expect(entry.timesScored).toBe(1);
+    // And a live mark WINS over a recovered one: a wallet the screen scored today keeps today's
+    // instant, not the committed record's.
+    const someone = Object.keys(rebuilt.wallets)[0]!;
+    markScored(rebuilt, someone, '2026-09-01T00:00:00.000Z');
+    importScoredFromRunRecords(rebuilt, ledgerRunRecords(join(TOOL_DIR, 'runs')));
+    expect(rebuilt.wallets[someone]!.lastScoredAtIso).toBe('2026-09-01T00:00:00.000Z');
+    expect(rebuilt.wallets[someone]!.origin).toBe('screen');
+  });
+
+  it('the reproducibility condition reaches the state file and the rendered block, not a doc', () => {
+    // `LANDING_TIP_CAVEAT`'s discipline applied to this lane: a caveat that lives only in a document
+    // is one a reader of the number never sees, and cheap rotation makes "this run repeated
+    // yesterday" easier to misread, not harder.
+    expect(REPRODUCIBILITY_RULE).toMatch(/COMMITTED EVIDENCE/);
+    expect(REPRODUCIBILITY_RULE).toMatch(/verifySelection/);
+    expect(readFileSync(ROTATION_STATE, 'utf8')).toContain(REPRODUCIBILITY_RULE);
+
+    const block = {
+      enabled: true,
+      reason: null,
+      statePath: 'tools/deployer-screen/rotation/stage2-scored.json',
+      stateDigestBefore: 'sha256:abc',
+      survivors: 20,
+      selected: ['A', 'B'],
+      deferred: ['C'],
+      neverScoredBefore: 1,
+      importedFromRunRecords: 6,
+      reproducibility: REPRODUCIBILITY_RULE,
+    };
+    const on = renderRotation(block, '  ').join('\n');
+    expect(on).toContain('least-recently-scored first');
+    expect(on).toContain('tools/deployer-screen/rotation/stage2-scored.json @ sha256:abc');
+    expect(on).toContain('6 wallet(s) recovered from committed run records');
+    expect(on).toContain(REPRODUCIBILITY_RULE);
+    // A FIRST RUN says so rather than printing a blank or a zero where a digest goes.
+    expect(renderRotation({ ...block, stateDigestBefore: null }, '  ').join('\n')).toContain('NO PRIOR STATE');
+    // AND ROTATION OFF IS RENDERED, not omitted: an operator reading a run that repeated yesterday's
+    // seven wallets cannot otherwise tell a rotation from a repeat.
+    const off = renderRotation({ ...block, enabled: false, reason: '--no-rotation' }, '  ').join('\n');
+    expect(off).toContain('ROTATION OFF (--no-rotation)');
+    expect(off).toContain('may repeat the last one');
+    // A run that SCORED nobody is a third state and must not be described as a repeat — there was no
+    // selection to repeat, and `--no-rotation` is the only off state that means one.
+    const none = renderRotation({ ...block, enabled: false, reason: 'this run scores nothing' }, '  ').join('\n');
+    expect(none).toContain('ROTATION MADE NO SELECTION (this run scores nothing)');
+    expect(none).not.toContain('may repeat the last one');
+  });
+
+  it('the CLI carries the flags and the defaults point at the committed state', () => {
+    const plain = parseArgs([]);
+    if (!plain.ok) throw new Error(plain.message);
+    expect(plain.opts.rotate, 'rotation is ON by default — a rotation nobody switches on is a repeat')
+      .toBe(true);
+    expect(resolve(plain.opts.rotation)).toBe(ROTATION_STATE);
+    expect(resolve(plain.opts.runsDir)).toBe(join(TOOL_DIR, 'runs'));
+
+    const off = parseArgs(['--no-rotation']);
+    if (!off.ok) throw new Error(off.message);
+    expect(off.opts.rotate).toBe(false);
+
+    const moved = parseArgs(['--rotation', '/tmp/x.json', '--runs-dir', '/tmp/runs']);
+    if (!moved.ok) throw new Error(moved.message);
+    expect(moved.opts.rotation).toBe('/tmp/x.json');
+    expect(moved.opts.runsDir).toBe('/tmp/runs');
+
+    expect(parseArgs(['--rotation'])).toEqual({ ok: false, message: '--rotation needs a path' });
+    expect(parseArgs(['--runs-dir'])).toEqual({ ok: false, message: '--runs-dir needs a path' });
+    // And the usage text names them, because the operator running this daily is the one the
+    // decision is for.
+    const help = parseArgs(['--help']);
+    if (!help.ok) throw new Error(help.message);
+    const lines: string[] = [];
+    void main(help.opts, {}, (l) => lines.push(l), () => {});
+    expect(lines.join('\n')).toContain('--rotation <path>');
+    expect(lines.join('\n')).toContain('LEAST-RECENTLY-SCORED');
+  });
+});
+
+describe('the rotation reaches the RUN, and a run stays reproducible given its state — 336a', () => {
+  // THE END-TO-END HALF. The block above pins the rule; this drives the whole screen through `main`
+  // over stubbed transports and reads the WRITTEN RECORD and the WRITTEN STATE back, so the single
+  // production selection site is pinned by the outcome it produces rather than by a helper. Pointing
+  // `toScore` back at `survivors.slice(0, maxScored)` turns this red.
+  //
+  // No transport is real and nothing is billed: every request this run can make is answered from the
+  // stub, and the rotation itself reads a temporary file and the committed run records.
+  const DUNE_IDS = loadThresholds()['dune'] as { coverageQueryId: number; creationQueryId: number };
+  const MADEONSOL_FAKE_KEY = 'm'.repeat(32);
+  // Four gate survivors against a scoring cap of ONE, so a run always leaves three unscored and the
+  // rotation has somewhere to go. Kept to four because every extra candidate is a paced keyless
+  // listing request, and this block drives the whole screen seven times.
+  //
+  // Base58-shaped, because `dune.mjs` -> WALLET_SHAPE refuses one that is not, and the whole leg
+  // would then fall back to the RPC walk — a different code path from the one under test.
+  const WALLETS = Array.from({ length: 4 }, (_, i) => `Wa11et${'x'.repeat(30)}${'ABCD'[i]}`);
+  const CAP = 1;
+
+  const duneTs = (ms: number) => `${new Date(ms).toISOString().replace('T', ' ').replace('Z', '')} UTC`;
+
+  const freshProbe = (nowMs: number) => {
+    const lastMonth = new Date(nowMs).toISOString().slice(0, 7);
+    return probeRows([
+      {
+        table: 'evt_createevent',
+        first: '2024-04-26 09:55:52.000 UTC',
+        last: duneTs(nowMs - 3_600_000),
+        total: 20_571_130,
+        months: monthsBetween('2024-04', lastMonth),
+      },
+      {
+        table: 'call_create',
+        first: '2024-01-14 12:57:12.000 UTC',
+        last: duneTs(nowMs - 3_600_000),
+        total: 14_145_301,
+        months: monthsBetween('2024-01', lastMonth),
+      },
+    ]);
+  };
+
+  const usageBody = (nowMs: number) => ({
+    billing_periods: [
+      {
+        start_date: new Date(nowMs - 5 * DAY).toISOString().slice(0, 10),
+        end_date: new Date(nowMs + 25 * DAY).toISOString().slice(0, 10),
+        credits_used: 0,
+        credits_included: 4000,
+      },
+    ],
+  });
+
+  /** Thirty launches a wallet, half of them bonded, spread over sixty days — a clear gate pass. */
+  const creationRows = (nowMs: number) =>
+    WALLETS.flatMap((deployer, w) =>
+      Array.from({ length: 30 }, (_, i) => ({
+        deployer,
+        mint: `MINT${w}_${i}`,
+        created_at: duneTs(nowMs - (60 - i) * DAY),
+        bonded: i % 2 === 0,
+        launches_total: 30,
+        is_mayhem_mode: false,
+      })),
+    );
+
+  /**
+   * One run of the real screen, against one rotation state file.
+   *
+   * Stage 2 is ON — this is the stage 336a moves — and every launch the profile offers is minted
+   * SECONDS ago, so `fillSource.minAgeMs()` refuses all of them and Stage 2 reaches a verdict
+   * without issuing a single keyless request. That is a real pass through the scoring loop: the
+   * rotation advances on a wallet the cap was spent on, which is exactly what an `entry-unmeasured`
+   * candidate is.
+   */
+  const runScreen = async (rotationPath: string, extraArgs: string[] = []) => {
+    const nowMs = Date.now();
+    const out = join(mkdtempSync(join(tmpdir(), 'rot-run-')), 'run.json');
+    const rows = creationRows(nowMs);
+
+    const fetchImpl = async (url: unknown) => {
+      const target = String(url);
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+
+      if (target.startsWith(DUNE_API_BASE)) {
+        const path = target.replace(DUNE_API_BASE, '');
+        if (path.startsWith('/usage')) return json(usageBody(nowMs));
+        if (path.startsWith(`/query/${DUNE_IDS.coverageQueryId}/results`)) {
+          return json({
+            result: {
+              rows: freshProbe(nowMs),
+              metadata: { total_row_count: freshProbe(nowMs).length, total_result_set_bytes: 1000 },
+            },
+          });
+        }
+        if (path.startsWith(`/query/${DUNE_IDS.coverageQueryId}`)) return json({ query_sql: COVERAGE_SQL });
+        if (path.startsWith(`/query/${DUNE_IDS.creationQueryId}/execute`)) return json({ execution_id: 'e1' });
+        if (path.startsWith(`/query/${DUNE_IDS.creationQueryId}`)) return json({ query_sql: CREATION_SQL });
+        if (path.startsWith('/execution/e1/status')) return json({ state: 'QUERY_STATE_COMPLETED' });
+        if (path.startsWith('/execution/e1/results')) {
+          return json({
+            result: { rows, metadata: { total_row_count: rows.length, total_result_set_bytes: 50_000 } },
+          });
+        }
+        throw new Error(`unstubbed Dune request ${path}`);
+      }
+
+      if (target.startsWith(BASE_URL)) {
+        const wallet = WALLETS.find((w) => target.includes(w));
+        // Minted seconds ago, so every launch is refused by the eligibility gate and Stage 2 walks
+        // nothing. The COMPLETION flags the gate reads come from the creation-derived history above.
+        if (wallet !== undefined) return json({ pump_tokens: [{ mint: `${wallet}-live`, created_timestamp: nowMs, complete: true }] });
+        return json(WALLETS);
+      }
+
+      if (target.startsWith(FRONTEND_API)) return json([]);
+      // Answered rather than thrown: the RPC client RETRIES a transport failure with backoff, so an
+      // unstubbed host here would hang the test instead of failing it. An empty signature page ends
+      // the walk immediately, and nothing in this block asserts on it — if the Dune leg ever stopped
+      // answering, the rotation assertions would still hold, and that is the point.
+      if (target.startsWith(PUBLIC_SOLANA_RPC)) return json({ jsonrpc: '2.0', id: 1, result: [] });
+      throw new Error(`unstubbed request ${target}`);
+    };
+
+    vi.stubGlobal('fetch', fetchImpl as unknown as typeof fetch);
+    try {
+      const parsed = parseArgs([
+        '--score', String(CAP), '--json', '--out', out, '--rotation', rotationPath, ...extraArgs,
+      ]);
+      if (!parsed.ok) throw new Error(parsed.message);
+      const errs: string[] = [];
+      const code = await main(parsed.opts, { [KEY_ENV_VAR]: MADEONSOL_FAKE_KEY, [DUNE_KEY_ENV_VAR]: DUNE_FAKE_KEY }, () => {}, (l) => errs.push(l));
+      expect(errs.join('\n')).toBe('');
+      expect(code).toBe(0);
+      return JSON.parse(readFileSync(out, 'utf8')) as Record<string, any>;
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  };
+
+  it('successive runs score DIFFERENT wallets, and the record names the state it read', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rot-e2e-'));
+    const state = join(dir, 'stage2-scored.json');
+
+    const first = await runScreen(state);
+    expect(first['schemaVersion']).toBe(RECORD_SCHEMA_VERSION);
+    const r1 = first['scoringRotation'] as Record<string, any>;
+    // The block's key set, against a record this build actually WROTE. The pin over `runs/` cannot
+    // see it — no committed record is schema 20 yet — so without this the block could grow or lose a
+    // field at an unchanged version with every other assertion green. ONE list, shared with that
+    // pin, because two lists that merely agree is the drift this repo keeps paying for.
+    expect(Object.keys(r1).sort()).toEqual([...ROTATION_BLOCK_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
+    expect(r1['enabled']).toBe(true);
+    expect(r1['reason']).toBeNull();
+    expect(r1['survivors']).toBe(WALLETS.length);
+    expect(r1['selected']).toHaveLength(CAP);
+    expect(r1['walletsScored']).toBe(CAP);
+    expect(r1['scoredAtIso']).toBe(first['startedAtIso']);
+    // FIRST RUN: no prior state, every survivor never scored, and the ranking is the survivor list's
+    // own — the property that makes this change inert on the day it lands.
+    expect(r1['stateDigestBefore']).toBeNull();
+    expect(r1['neverScoredBefore']).toBe(WALLETS.length);
+    expect(r1['stateDigestAfter']).toMatch(/^sha256:[0-9a-f]{64}$/);
+    // The record NAMES the state, repo-relatively, and the digest it names is the file that landed.
+    expect(r1['statePath']).toBe(relative(resolve(TOOL_DIR, '..', '..'), state));
+    expect(r1['stateSchemaVersion']).toBe(ROTATION_SCHEMA_VERSION);
+    expect(digestOf(readFileSync(state, 'utf8'))).toBe(r1['stateDigestAfter']);
+    // Only the wallets it scored carry an entry block, and only they advanced.
+    const scoredRows = (first['candidates'] as Record<string, unknown>[]).filter((c) => c['entry'] !== null);
+    expect(scoredRows.map((c) => c['wallet']).sort()).toEqual([...r1['selected']].sort());
+
+    const second = await runScreen(state);
+    const r2 = second['scoringRotation'] as Record<string, any>;
+    // ACCEPTANCE CRITERION 1, through the real screen: a second run over the SAME population scores
+    // a wallet the first did not. Under `survivors.slice(0, maxScored)` these two lists are equal.
+    expect(r2['selected']).not.toEqual(r1['selected']);
+    expect(r2['selected'].filter((w: string) => r1['selected'].includes(w))).toEqual([]);
+    expect(r2['neverScoredBefore']).toBe(WALLETS.length - CAP);
+    // THE CHAIN: run N's `after` is run N+1's `before`, which is what makes a sequence of committed
+    // records checkable end to end.
+    expect(r2['stateDigestBefore']).toBe(r1['stateDigestAfter']);
+
+    // And a third, so the cycle is a cycle rather than one step.
+    const third = await runScreen(state);
+    const r3 = third['scoringRotation'] as Record<string, any>;
+    expect(r3['stateDigestBefore']).toBe(r2['stateDigestAfter']);
+    expect(new Set([...r1['selected'], ...r2['selected'], ...r3['selected']]).size).toBe(3 * CAP);
+
+    // ACCEPTANCE CRITERION 3, demonstrated: every one of those records re-derives its own selection
+    // from what it carries — no state file, no survivor list, no clock.
+    for (const rec of [first, second, third]) {
+      const block = rec['scoringRotation'] as Record<string, any>;
+      // The cap a reader hands the verifier is the one the run APPLIED, which the record states as
+      // `scoringCap.max` — `thresholds.stage2_entry.maxCandidatesScored` is the pinned ceiling and
+      // is a different number on any run made with `--score`.
+      const applied = (rec['scoringCap'] as { max: number }).max;
+      expect(applied).toBe(CAP);
+      expect(verifySelection(block as never, applied)).toEqual({
+        ok: true,
+        problems: [],
+      });
+      expect(block['order']).toHaveLength(WALLETS.length);
+    }
+  }, 120_000);
+
+  it('a run is REPRODUCIBLE given its state — the same state twice gives the same selection', async () => {
+    // The other half of criterion 3, and the one a reader would actually perform: take the state a
+    // published run READ, put it in front of the screen, and get that run's wallets back. The prior
+    // state is built through the production mark and serialiser rather than by running the screen a
+    // fourth time — the block above already pins that a real run writes exactly these bytes.
+    const dir = mkdtempSync(join(tmpdir(), 'rot-repro-'));
+    const at = '2026-08-05T00:00:00.000Z';
+    const prior = emptyRotation();
+    markScored(prior, WALLETS[0]!, at);
+    const priorText = serialiseRotation(prior, at);
+
+    const replayA = join(dir, 'a.json');
+    const replayB = join(dir, 'b.json');
+    writeFileSync(replayA, priorText, 'utf8');
+    writeFileSync(replayB, priorText, 'utf8');
+    const runA = await runScreen(replayA);
+    const runB = await runScreen(replayB);
+
+    const a = runA['scoringRotation'] as Record<string, any>;
+    const b = runB['scoringRotation'] as Record<string, any>;
+    expect(a['stateDigestBefore']).toBe(digestOf(priorText));
+    expect(b['stateDigestBefore']).toBe(a['stateDigestBefore']);
+    expect(a['selected']).toEqual(b['selected']);
+    expect(a['order']).toEqual(b['order']);
+    // The state said WALLETS[0] was measured, so neither run may pick it again while three
+    // never-scored survivors remain.
+    expect(a['selected']).toEqual([WALLETS[1]]);
+    expect(a['neverScoredBefore']).toBe(WALLETS.length - 1);
+    // AND THE RECORD'S CLAIM IS CHECKED AGAINST WHAT WAS ACTUALLY SCORED. `selected` is built from
+    // the rotation and the scoring loop reads the same list, but a record that NAMED a selection the
+    // run did not perform would make every reproducibility guarantee above vacuous — so the two are
+    // pinned together here and in the block above rather than trusted to stay one derivation.
+    for (const rec of [runA, runB]) {
+      const scored = (rec['candidates'] as Record<string, unknown>[])
+        .filter((c) => c['entry'] !== null)
+        .map((c) => c['wallet']);
+      expect(scored.sort()).toEqual([...(rec['scoringRotation'] as Record<string, any>)['selected']].sort());
+    }
+    // The bytes each wrote differ only in the run instant they stamp, so the state a run leaves is a
+    // function of the state before it and the wallets it scored — not of anything else it saw.
+    const strip = (t: string) => t.replace(/"(?:updatedAtIso|firstScoredAtIso|lastScoredAtIso)": "[^"]+"/g, '"ts"');
+    expect(strip(readFileSync(replayA, 'utf8'))).toBe(strip(readFileSync(replayB, 'utf8')));
+  }, 120_000);
+
+  it('--no-rotation is the pre-336a screen, and it says so in the record', async () => {
+    // The stateless behaviour a published pre-336a result was produced under stays reachable, and a
+    // run made that way can never be read as a rotated one that happened to repeat.
+    const dir = mkdtempSync(join(tmpdir(), 'rot-off-'));
+    const state = join(dir, 'unused.json');
+    const one = await runScreen(state, ['--no-rotation']);
+    const two = await runScreen(state, ['--no-rotation']);
+    for (const rec of [one, two]) {
+      const block = rec['scoringRotation'] as Record<string, any>;
+      expect(block['enabled']).toBe(false);
+      expect(block['reason']).toBe('--no-rotation');
+      expect(block['stateDigestBefore']).toBeNull();
+      expect(block['stateDigestAfter']).toBeNull();
+      expect(block['order']).toEqual([]);
+      expect(block['reproducibility']).toBe(REPRODUCIBILITY_RULE);
+    }
+    // It wrote no state at all, and both runs scored the same wallets — the repeat 336a removed,
+    // kept reachable on purpose.
+    expect(existsSync(state)).toBe(false);
+    const scoredOf = (rec: Record<string, any>) =>
+      (rec['candidates'] as Record<string, unknown>[]).filter((c) => c['entry'] !== null).map((c) => c['wallet']);
+    expect(scoredOf(one)).toEqual(scoredOf(two));
+  }, 120_000);
+
+  it('an unreadable rotation state REFUSES before the keyed enumeration is spent', async () => {
+    // The `--predict` ordering argument one flag over: a refusal that arrives after the MadeOnSol
+    // seed enumeration is spent is a refusal that cost money. Starting over would be worse than
+    // refusing — it silently returns the cap to the head of the survivor list while the record still
+    // reports a rotation.
+    const dir = mkdtempSync(join(tmpdir(), 'rot-bad-'));
+    const state = join(dir, 'broken.json');
+    writeFileSync(state, '{ not json', 'utf8');
+    const parsed = parseArgs(['--rotation', state]);
+    if (!parsed.ok) throw new Error(parsed.message);
+    let requests = 0;
+    vi.stubGlobal('fetch', (async () => {
+      requests += 1;
+      return new Response('{}', { status: 200 });
+    }) as unknown as typeof fetch);
+    try {
+      const errs: string[] = [];
+      const code = await main(parsed.opts, { [KEY_ENV_VAR]: MADEONSOL_FAKE_KEY }, () => {}, (l) => errs.push(l));
+      expect(code).toBe(2);
+      expect(errs.join('\n')).toContain('--rotation');
+      expect(errs.join('\n')).toContain('not readable JSON');
+      expect(requests, 'nothing may be fetched before the state is read').toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  }, 60_000);
 });

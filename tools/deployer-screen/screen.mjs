@@ -2562,8 +2562,13 @@ export async function main(opts, env, out, err, seam = {}) {
           duneLaunches,
           duneFallbackReasons,
           creatorMovementUnmeasured: merged.creatorMovementUnmeasured,
-          // CAPTAIN DECISION 227a — pump.fun's mayhem-mode flag, RECORDED and REPORTED, reaching
-          // no bar and no verdict. All three are `null` on a candidate the Dune enumeration did not
+          // CAPTAIN DECISION 227a — this SHARE of pump.fun's mayhem-mode flag is RECORDED and
+          // REPORTED, reaching no bar and no verdict. The per-launch FLAG is a different matter
+          // since captain decision 351, which excludes a launch it marks from both sides of the
+          // gate's completion rate (`measure.mjs` → `measureCompletion`); the two have different
+          // denominators — this one is over what the ENUMERATION returned, the gate's counts are
+          // over the merged history it read.
+          // All three are `null` on a candidate the Dune enumeration did not
           // answer for, and that is the same distinction `creatorMovementUnmeasured` already draws
           // one line up: the creation walk reads a transaction, not a decoded create event, so it
           // measures NOTHING here. A `0` would say "this wallet launches no mayhem tokens", which

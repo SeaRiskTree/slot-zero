@@ -338,7 +338,7 @@ the walk instead; `--dune-refresh-probe` re-executes the probe rather than readi
 the size of it. A schema-≤8 record's `movedCreator: 0` means the walk read every curve and none had
 moved; do not read the two as one series.
 
-### The mayhem-mode flag — recorded, reported, and an input to nothing
+### The mayhem-mode flag — a reported share that reads nothing, and a per-launch exclusion that decides the gate
 
 **Captain decision 227a.** `pump_evt_createevent` carries an `is_mayhem_mode` boolean and this repo
 did not read it until now. `slot-zero-graduation-regime-remeasure` §§1.4 and 3 (held in firstmate's
@@ -1178,7 +1178,9 @@ in a scoring module any more at all.
 
 **Provenance is recorded and read by nothing.** Every window carries `kind`; no bar, gate, rate or
 verdict reads it, and the added boundary assertion pins that no scoring module branches on it. This
-is captain decision 227a's `is_mayhem_mode` posture one layer down. Persisting `kind` to the run
+is captain decision 227a's posture one layer down — the posture `creation.mayhemShare` still holds,
+and NOT the per-launch flag itself, which captain decision 351 made an input to the gate's
+completion rate (see *"The mayhem-mode flag"* above). Persisting `kind` to the run
 record is the schema-bump lane's, not this one's: nothing in a committed record moved.
 
 **What this does NOT claim.** After the cutover a Dune value WILL reach `entry.roomLeft` — that is

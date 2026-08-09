@@ -30,7 +30,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../../config/data-root.mjs';
@@ -1575,10 +1575,9 @@ export async function main(opts, env, out, err, seam = {}) {
       wallets: parsed.wallets,
       entriesRead: parsed.entriesRead,
       label: parsed.label,
-      // Repo-relative where the list lives inside the tree, the resolved absolute path where it
-      // does not. `relative()` alone answers a file kept elsewhere with a chain of `../` that is
-      // both unreadable and only meaningful from this checkout's own location — and a list is
-      // exactly the kind of artefact another lane hands over from outside the repo.
+      // Repo-relative where the list lives inside the tree, the base name plus an explicit
+      // out-of-tree marker where it does not — never an absolute path, which this record is
+      // committed to a public repository and would disclose the operator's own filesystem.
       path: walletListPath(opts.wallets),
       digest: digestOf(text),
     };
@@ -3573,10 +3572,19 @@ export async function main(opts, env, out, err, seam = {}) {
  * How a wallet list names itself in a record and on the page.
  *
  * Repo-relative when the file is inside the tree — the form `scoringRotation.statePath` already
- * uses, and the one a reader can follow — and the resolved absolute path when it is not. A list is
- * exactly the artefact another lane hands over from outside this repository, and `relative()` alone
- * answers such a file with a `../` chain that is unreadable and means nothing away from this
- * checkout.
+ * uses, and the one a reader can follow, disclosing nothing beyond this repository.
+ *
+ * **Outside the tree it is the BASE NAME plus {@link WALLET_LIST_OUTSIDE_MARKER}, never the
+ * resolved absolute path.** A list is exactly the artefact another lane hands over from outside
+ * this repository, so the out-of-tree case is the COMMON one — and this string is persisted into
+ * the run record's `walletList.path`, which is committed to a world-readable research repo
+ * (captain decision 377a). An absolute path there discloses the operator's username and local
+ * layout, which nothing else this tool persists does. Nothing is lost: `walletList.digest` is the
+ * list's real identity (the SHA-256 of its bytes, which is what makes a listed run reproducible)
+ * and `walletList.label` already carries the base name as every listed candidate's `seededBy`
+ * provenance. The marker is what keeps the two cases apart — a bare base name would otherwise read
+ * as a repo-relative path in the root, and `relative()` alone answers such a file with a `../`
+ * chain that is unreadable and means nothing away from this checkout.
  *
  * @param {string} path
  * @returns {string}
@@ -3584,8 +3592,17 @@ export async function main(opts, env, out, err, seam = {}) {
 export function walletListPath(path) {
   const absolute = resolve(path);
   const rel = relative(REPO_ROOT, absolute);
-  return rel.startsWith('..') ? absolute : rel;
+  return rel.startsWith('..') ? `${basename(absolute)} ${WALLET_LIST_OUTSIDE_MARKER}` : rel;
 }
+
+/**
+ * What a wallet-list path says when the file is not inside this repository.
+ *
+ * Read it as *the run used a file kept elsewhere and the record names it by its base name alone*,
+ * never as part of the file name. A repo-relative path can never carry this text, so a reader —
+ * and a test — can tell the two cases apart from the recorded string on its own.
+ */
+export const WALLET_LIST_OUTSIDE_MARKER = '(outside the repo)';
 
 /**
  * Where an incomplete run's record goes.

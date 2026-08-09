@@ -256,12 +256,14 @@ import {
   readCurveState,
 } from '../tools/deployer-screen/creation.mjs';
 import {
+  WALLET_LIST_OUTSIDE_MARKER,
   exitForRefusal,
   main,
   gateMayhemFlags,
   parseArgs,
   loadThresholds,
   partialOutPath,
+  walletListPath,
 } from '../tools/deployer-screen/screen.mjs';
 import {
   LIMITATIONS,
@@ -16707,6 +16709,23 @@ describe('a supplied wallet list is read whole or refused whole — 398a', () =>
     expect(read.ok).toBe(false);
     if (read.ok) return;
     expect(read.message).toContain('no address at all');
+  });
+
+  it('names an out-of-tree list by its BASE NAME, never by an absolute path — 377a', () => {
+    // The recorded `walletList.path` lands in a run record committed to a world-readable repo, and
+    // the documented use of a supplied list is a file another lane hands over from OUTSIDE this
+    // tree — so the common case must not disclose the operator's username or local layout.
+    const outside = walletListPath('/home/somebody/private/lists/census.txt');
+    expect(outside).not.toContain('somebody');
+    expect(outside).not.toContain('/');
+    expect(outside).toBe(`census.txt ${WALLET_LIST_OUTSIDE_MARKER}`);
+
+    // Inside the tree the repo-relative form is kept exactly as it was: it discloses nothing, and a
+    // reader can follow it. The marker is what keeps the two cases apart, so it may never appear
+    // here — a bare base name would read as a path in the repository root.
+    const inside = walletListPath(join(TOOL_DIR, 'runs/list.txt'));
+    expect(inside).toBe('tools/deployer-screen/runs/list.txt');
+    expect(inside).not.toContain(WALLET_LIST_OUTSIDE_MARKER);
   });
 
   it('the rendered CANDIDATE LIST block states what was GATED, not the list length again', () => {

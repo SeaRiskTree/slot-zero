@@ -143,7 +143,8 @@ export function applyGate(input, t) {
   if (completion.spanDays < t.minSpanDays) {
     reasons.push(
       `history spans ${completion.spanDays.toFixed(1)} days < ${t.minSpanDays} required ` +
-        `(a rate earned inside a burst is not a record)`,
+        `(a rate earned inside a burst is not a record)` +
+        mayhemNote,
     );
   }
 

@@ -223,6 +223,7 @@ import {
 import {
   exitForRefusal,
   main,
+  gateMayhemFlags,
   parseArgs,
   loadThresholds,
   partialOutPath,
@@ -4093,6 +4094,30 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
     expect(out.gate.reasons.join(' ')).toMatch(/8 launch\(es\) carry pump\.fun's mayhem-mode flag/);
   });
 
+  it('EVERY rejection sentence names the exclusion, the span bar included', () => {
+    // All three bars read the non-mayhem sample, so all three can be failed BY the exclusion. A
+    // span rejection that reports "history spans 3.0 days" over a wallet whose full history covers
+    // a year sends an operator hunting a truncated walk that is not there — the same misdirection
+    // the tokens and rate sentences already refuse, on the bar most likely to produce it.
+    const completion = measureCompletion([
+      { deployedAtMs: T0, completed: true, mayhem: false },
+      { deployedAtMs: T0 + 3 * DAY, completed: false, mayhem: false },
+      ...Array.from({ length: 30 }, (_, i) => ({
+        deployedAtMs: T0 + (30 + i * 10) * DAY,
+        completed: true,
+        mayhem: true,
+      })),
+    ]);
+    expect(completion.mayhemExcluded).toBe(30);
+    expect(completion.spanDays).toBeCloseTo(3, 6);
+    const reasons = applyGate({ completion, historySource: 'creation-derived' }, GATE).reasons;
+    expect(reasons.some((r) => /history spans/.test(r))).toBe(true);
+    for (const reason of reasons) {
+      expect(reason, reason).toMatch(/NON-MAYHEM record/);
+      expect(reason, reason).toMatch(/30 launch\(es\) carry pump\.fun's mayhem-mode flag/);
+    }
+  });
+
   it('an ALL-MAYHEM deployer is UNMEASURED, never a rate of 0.0000', () => {
     // Zero of zero is an absent measurement and not a failing rate. Conflating them is the dangerous
     // direction on this project: a false rejection is permanent and invisible, because the wallet is
@@ -4337,10 +4362,36 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
     ]);
     expect(e.mayhemByMint.has('M1')).toBe(false);
 
-    // And `screen.mjs` passes it — the channel exists in production and not only here. A test that
-    // rebuilt the wiring itself would stay green with the production call site deleted.
-    const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
-    expect(screen).toMatch(/mayhemByMint:\s*useDune && fromDune !== null \? fromDune\.mayhemByMint : null/);
+    // And `screen.mjs`'s own decision about which readings may reach the merge is exercised here,
+    // rather than the merge being handed flags the test picked itself. `gateMayhemFlags` is the
+    // production reader; what it returns is what the gate loop passes to `mergeHistories`.
+    const mergeWith = (flags: ReadonlyMap<string, boolean> | null) =>
+      measureCompletion(
+        mergeHistories({
+          creates: e.creates,
+          wallet: 'W',
+          curves: e.curves,
+          listed: [],
+          covered: e.covered,
+          unresolvedTransactions: 0,
+          mayhemByMint: flags,
+        }).records,
+      );
+
+    const gated = mergeWith(gateMayhemFlags(true, e));
+    expect(gated.mayhemExcluded).toBe(1);
+    expect(gated.mayhemUnreadable).toBe(1);
+    expect(gated.tokens).toBe(2);
+
+    // A run that never enumerated on Dune, and a candidate Dune answered nothing usable for, both
+    // reach the merge with NOTHING — the pre-351 reading, every launch unreadable and none excluded.
+    for (const withheld of [gateMayhemFlags(false, e), gateMayhemFlags(true, null), gateMayhemFlags(false, null)]) {
+      expect(withheld).toBeNull();
+      const pre351 = mergeWith(withheld);
+      expect(pre351.mayhemExcluded).toBe(0);
+      expect(pre351.mayhemUnreadable).toBe(3);
+      expect(pre351.tokens).toBe(3);
+    }
   });
 
   it('renders UNMEASURED rather than 0% on every route that cannot see the flag', () => {
@@ -4402,8 +4453,36 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
     expect(MAYHEM_NOT_COMPETENCE).toMatch(/numerator and the\s+denominator/);
     expect(MAYHEM_NOT_COMPETENCE).toMatch(/never that/);
     // The one sentence is PRINTED once per run, so it cannot become documentation nobody meets.
-    const render = readFileSync(join(TOOL_DIR, 'render.mjs'), 'utf8');
-    expect(render).toMatch(/wrap\(MAYHEM_NOT_COMPETENCE, 78\)/);
+    // Read off the rendered page — wrapped and prefixed there, so the comparison is on the prose.
+    const flatten = (s: string) => s.replace(/^\s*!\s?/gm, '').replace(/\s+/g, ' ').trim();
+    const page = renderStage1({
+      keyedRequests: 1,
+      keylessRequests: 0,
+      rpcRequests: 0,
+      rpcLoadShedEvents: 0,
+      historySource: 'creation-derived' as const,
+      elapsedMs: 1,
+      startedAtIso: '2026-08-07T00:00:00.000Z',
+      completed: true,
+      truncationReason: null,
+      prefiltered: 0,
+      candidates: [],
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 0,
+        prefilteredOut: 0,
+        worthARequest: 0,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 0,
+        coverageTruncated: false,
+      },
+      thresholds: {},
+    } as never);
+    const sentence = flatten(MAYHEM_NOT_COMPETENCE);
+    expect(flatten(page)).toContain(sentence);
+    expect(flatten(page).split(sentence)).toHaveLength(2);
 
     // And the gate side still may not compute a mayhem FIGURE of its own. `summariseMayhem` is
     // 227a's share and belongs to `dune.mjs`; what the gate reads is a per-launch flag off a record,

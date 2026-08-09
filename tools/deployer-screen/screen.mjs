@@ -690,6 +690,25 @@ export function duneFillSourceCredentialRefusal(credential) {
 }
 
 /**
+ * CAPTAIN DECISION 351's ONE CHANNEL: the per-launch mayhem flags this run may hand to the merge,
+ * or `null` where it holds none it is entitled to gate on.
+ *
+ * Gated on `useDune` for the same reason 227a's share is: a REFUSED Dune reading is a prefix or an
+ * out-of-coverage slice, and excluding launches from a gate on the strength of a reading this run
+ * declined to gate on would be the observation deciding more than the measurement. `null` on every
+ * other route means UNREADABLE, not "no mayhem launch" — so those candidates' rates are
+ * byte-identical to their pre-351 selves. See `measure.mjs` → `measureCompletion`.
+ *
+ * @param {boolean} useDune Whether this run enumerated on Dune at all.
+ * @param {import('./dune.mjs').WalletEnumeration | null} fromDune The reading it gated on, or
+ *   `null` where Dune answered nothing usable for this candidate.
+ * @returns {ReadonlyMap<string, boolean> | null}
+ */
+export function gateMayhemFlags(useDune, fromDune) {
+  return useDune && fromDune !== null ? fromDune.mayhemByMint : null;
+}
+
+/**
  * THE RUN PATH'S CONSTRUCTION: build the fill source and prove its gate is usable — or build
  * NOTHING, because Stage 2 is off and nothing downstream will ever ask it anything.
  *
@@ -2457,12 +2476,8 @@ export async function main(opts, env, out, err, seam = {}) {
           covered: walk.covered,
           unresolvedTransactions: walk.unresolvedTransactions,
           // CAPTAIN DECISION 351 — the per-launch mayhem flag, on its way to the ONE bar that reads
-          // it. Gated on `useDune` for the same reason `mayhem` above is: a REFUSED Dune reading is
-          // a prefix or an out-of-coverage slice, and excluding launches from a gate on the strength
-          // of a reading this run declined to gate on would be the observation deciding more than
-          // the measurement. `null` on every other route means UNREADABLE, so those candidates' rates
-          // are byte-identical to their pre-351 selves — see `measure.mjs` → `measureCompletion`.
-          mayhemByMint: useDune && fromDune !== null ? fromDune.mayhemByMint : null,
+          // it. {@link gateMayhemFlags} owns which readings this run is entitled to hand over.
+          mayhemByMint: gateMayhemFlags(useDune, fromDune),
         });
 
         completion = measureCompletion(merged.records);

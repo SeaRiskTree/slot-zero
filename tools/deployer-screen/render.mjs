@@ -1022,7 +1022,7 @@ export function renderStage1(run) {
     L.push('CANDIDATE LIST — supplied, not enumerated (captain decision 398a)');
     L.push(`  file           ${wl.path}`);
     L.push(`  digest         ${wl.digest}`);
-    L.push(`  addresses      ${wl.entriesRead} read, ${wl.wallets} gated`);
+    L.push(`  addresses      ${wl.entriesRead} read from the file`);
     L.push(`  seed queries   ${wl.seedsIssued} — no keyed enumeration request was issued`);
     L.push('');
     // The constraint itself, on the page the operator reads, wrapped rather than truncated.

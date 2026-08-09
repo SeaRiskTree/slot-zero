@@ -687,10 +687,23 @@ export function measureConsistency(records, t, historyTruncated = false) {
   // NOTE what is deliberately NOT done here: 351's mayhem exclusion does not reach this function
   // and this lane does not extend it. That is a reported note rather than a bar, and widening an
   // exclusion is a captain decision, not a passing fix.
-  const usable = records
-    .filter((r) => Number.isFinite(r.deployedAtMs) && r.deployedAtMs > 0)
+  const timestamped = records.filter((r) => Number.isFinite(r.deployedAtMs) && r.deployedAtMs > 0);
+  const usable = timestamped
     .filter((r) => typeof r.completed === 'boolean')
     .sort((a, b) => a.deployedAtMs - b.deployedAtMs);
+
+  // The exclusion is NAMED rather than merely applied, for the reason `competenceCriterionUnreadable`
+  // exists one measurement over: this note is persisted on the candidate row, and a dispersion figure
+  // computed over a narrowed sample has to say it was narrowed. It rides on the note rather than on a
+  // new field so no consumer's key set moves for it. **This reading walks its OWN history**, so its
+  // count is not the gate's and a gate reading with nothing unreadable does not imply one here.
+  const criterionUnreadable = timestamped.length - usable.length;
+  const criterionNote =
+    criterionUnreadable > 0
+      ? `; ${criterionUnreadable} launch(es) left this reading because the completion criterion ` +
+        `(RAISE-85, captain decision 352b) could not be read on them — excluded from both sides ` +
+        `rather than counted as failures, so this spread is over a NARROWED sample`
+      : '';
 
   /** @param {string} note @returns {ConsistencyResult} */
   const unmeasured = (note) => ({
@@ -701,7 +714,7 @@ export function measureConsistency(records, t, historyTruncated = false) {
     dispersion: Number.NaN,
     streaky: false,
     historyTruncated,
-    note,
+    note: note + criterionNote,
   });
 
   const newest = usable[usable.length - 1];
@@ -748,6 +761,7 @@ export function measureConsistency(records, t, historyTruncated = false) {
       (dispersion > t.maxDispersion
         ? `; STREAKY — spread ${dispersion.toFixed(3)} exceeds ${t.maxDispersion}, so the pooled rate is carried by some epochs and not others`
         : `; spread ${dispersion.toFixed(3)} within ${t.maxDispersion}`) +
+      criterionNote +
       lowerBound,
   };
 }

@@ -1277,6 +1277,49 @@ describe('consistency over time', () => {
     // The default must be the safe one, never an implied "complete".
     expect(measureConsistency(records, C).historyTruncated).toBe(false);
   });
+
+  it('says how many launches the criterion exclusion removed, on both outcomes', () => {
+    // Captain decision 352b: an unreadable launch leaves this reading rather than sitting in an
+    // epoch's denominator as a failure. That narrows the sample, and a dispersion figure computed
+    // over a narrowed sample has to SAY it was narrowed — the same rule
+    // `competenceCriterionUnreadable` keeps one measurement over. The note is persisted on the
+    // candidate row and this repo never retro-edits a record.
+    const readable = Array.from({ length: 60 }, (_, i) => ({
+      deployedAtMs: T0 + i * 1.5 * DAY,
+      completed: i % 2 === 0,
+    }));
+    const withUnreadable: TokenRecord[] = [
+      ...readable,
+      ...Array.from({ length: 4 }, (_, i) => ({
+        deployedAtMs: T0 + (60 + i) * 1.5 * DAY,
+        completed: null,
+      })),
+    ];
+
+    const measured = measureConsistency(withUnreadable, C);
+    expect(measured.state).toBe('measured');
+    expect(measured.note).toMatch(/4 launch\(es\) left this reading/);
+    expect(measured.note).toMatch(/NARROWED sample/);
+    // Stated once, and never as a second population on top of the epochs it reports.
+    expect(measured.note.match(/left this reading/g) ?? []).toHaveLength(1);
+    // The unreadable four are excluded from BOTH sides: they are not counted as failures, so the
+    // spread is the readable history's own.
+    expect(measured.dispersion).toBeCloseTo(measureConsistency(readable, C).dispersion, 10);
+    // A fully readable history says nothing about an exclusion that did not happen.
+    expect(measureConsistency(readable, C).note).not.toMatch(/left this reading/);
+
+    // And the unmeasured outcome carries it too — that is where the exclusion is most likely to be
+    // what emptied the epochs, and the note is the only thing a reader gets there.
+    const tooFew = measureConsistency(
+      [
+        { deployedAtMs: T0, completed: true },
+        { deployedAtMs: T0 + DAY, completed: null },
+      ],
+      C,
+    );
+    expect(tooFew.state).toBe('unmeasured');
+    expect(tooFew.note).toMatch(/1 launch\(es\) left this reading/);
+  });
 });
 
 describe('enumeration', () => {

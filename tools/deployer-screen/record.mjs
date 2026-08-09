@@ -570,8 +570,9 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   first 24 hours*. **So a schema-≤20 rate and a schema-21 one are not the same quantity either**,
  *   and that is now true at two of the last three versions — 19 moved the same quantity and 20 left
  *   it alone — so read `schemaVersion` before
- *   pooling any two `completionRate` values from this tool, ever. Two candidate row keys —
- *   `competenceCriterionUnreadable` and `competenceCriterionEstimated`;
+ *   pooling any two `completionRate` values from this tool, ever. FOUR candidate row keys —
+ *   `competenceCriterionUnreadable`, `competenceCriterionEstimated`,
+ *   `vendorCompetenceCriterionUnreadable` and `vendorCompetenceCriterionEstimated`;
  *   `ENTRY_KEYS_BY_SCHEMA[21]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[21]`, `SPEND_KEYS_BY_SCHEMA[21]`,
  *   `DUNE_KEYS_BY_SCHEMA[21]` and `CREATION_KEYS_BY_SCHEMA[21]` all equal `[20]`.
  *
@@ -622,6 +623,18 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   inconsistency**: schema 19's reasoning — the page carries no mayhem column, so 351 cannot move
  *   that rate by construction — holds unchanged; what does not survive 352b is applying it to the
  *   criterion, which IS read off that page's own `complete` field.
+ *
+ *   **AND THE `consistency` BLOCK MOVED TOO, INDEPENDENTLY OF THE GATE READING.**
+ *   `rank.mjs` → `measureConsistency` drops a criterion-unreadable launch rather than letting `if
+ *   (r.completed)` read it as a FAILED one, which would manufacture dispersion out of a coverage gap
+ *   and could mark a deployer STREAKY for a walk that came back short. So `epochs`, `minEpochRate`,
+ *   `maxEpochRate`, `dispersion` and `streaky` are a different quantity at this version, and **a
+ *   schema-≤20 `dispersion` must not be pooled with a schema-21 one** — the same rule this note
+ *   applies to `completionRate`. **The independence is the trap**: consistency is computed over its
+ *   OWN fresh creator walk, not over the gate's reading, so a gate reading with no unreadable launch
+ *   does NOT imply a consistency reading with none, and this block can move on a wallet that passed.
+ *   No key was added for it: the count that left travels on the block's own `note`, so a consumer's
+ *   key set does not move for a disclosure.
  *
  *   **What this version does NOT claim.** Nothing here establishes that the bar is equally strict
  *   across venues: the same 85 SOL is reached by 0.80% of new pump.fun tokens, 0.25% on Meteora DBC

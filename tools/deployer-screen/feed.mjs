@@ -446,12 +446,18 @@ export function triage(profile, gateThresholds) {
   // adding nothing may be dropped without changing the outcome. Where it adds nothing AND no such
   // branch fires, it is what makes an empty profile unmeasured rather than failed — so it is pushed.
   const verdictNamesTheCause = emptiedByMayhem || competenceCriterionIncomplete(completion);
+  // AND THE PREFIX MAY NOT CLAIM A COMPLETE CAUSE IT DOES NOT HAVE. Where `verdictFor` has already
+  // named the criterion count, the deploy-time count is an ADDITIONAL cause and not the emptying
+  // one — "the gate was left no launch record to read: 2 carried no usable deploy time" is false
+  // when 30 more left through the criterion, and it is persisted.
   const notMeasured =
     completion.tokens === 0 && (emptiedBy.length > 0 || !verdictNamesTheCause)
       ? [
           (emptiedBy.length === 0
             ? "the vendor's profile carried no launch record at all"
-            : `the gate was left no launch record to read: ${emptiedBy.join('; ')}`) +
+            : verdictNamesTheCause
+              ? `a further ${emptiedBy.join('; ')}, on top of the exclusion named above`
+              : `the gate was left no launch record to read: ${emptiedBy.join('; ')}`) +
             ', so the gate had nothing to decide over — an empty deployer and a moved response ' +
             'shape are indistinguishable from here',
         ]

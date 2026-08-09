@@ -698,6 +698,14 @@ describe('a failure on the cheap reading is HELD, never rejected', () => {
     expect(mixed.state).toBe('unmeasured');
     expect(mixed.rationale).toMatch(/2 carried no usable deploy time/);
     expect(mixed.rationale.match(/completion criterion/g) ?? []).toHaveLength(1);
+    // ...and it travels as an ADDITIONAL cause, never as the emptying one. 30 more launches left
+    // through the criterion, so "the gate was left no launch record to read: 2 carried no usable
+    // deploy time" would assert a complete cause the counts do not support.
+    expect(mixed.rationale).toMatch(/a further 2 carried no usable deploy time/);
+    expect(mixed.rationale).not.toMatch(/left no launch record to read: 2 carried/);
+    // The deploy-time-only case still states it as the cause, because there it is one.
+    const noTimesOnly = triage({ pump_tokens: [{ complete: true }, { complete: false }] }, GATE);
+    expect(noTimesOnly.rationale).toMatch(/left no launch record to read: 2 carried/);
 
     // And an empty profile is STILL unmeasured — the entry that produces that state is not
     // suppressed, because no other branch would fire.

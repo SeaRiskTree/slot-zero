@@ -356,8 +356,11 @@ export function verdictFor(input) {
         `raises a median 0.291 SOL against 85.005 for a classic curve graduation (captain decision ` +
         `351). Excluding them leaves NO non-mayhem record to measure, which is an absent reading ` +
         `and not a rate of 0. Captain decision 227c — dropping a mayhem-heavy deployer outright — ` +
-        `remains DECLINED, so this wallet is not rejected: it is unjudged, and a run that can read ` +
-        `a non-mayhem launch of theirs would judge it.` +
+        `remains DECLINED, so this wallet is not rejected: it is UNJUDGED. A later SCREEN run over a ` +
+        `reading that holds a non-mayhem launch would judge it — the screen is stateless between ` +
+        `runs. That is a statement about screen.mjs and about nothing else: what the discovery feed ` +
+        `does with a gate-unmeasured verdict is ledger.mjs's, and ledger.mjs -> markWorthARequest ` +
+        `owns that rule.` +
         (notMeasured.length > 0 ? ` The reading was also incomplete: ${notMeasured.join('; ')}.` : ''),
     };
   }

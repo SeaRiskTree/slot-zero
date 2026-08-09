@@ -4829,6 +4829,33 @@ describe('the flag reaches the gate through the RUN, not only through a helper',
       profileTokens: [{ mint: 'V1', created_timestamp: base, complete: true }],
     });
 
+    // FIRST, THAT THE PER-CANDIDATE REFUSAL IS THE PATH THIS RUN TOOK. Without this the case can
+    // stop biting silently: if the leg ever came back null instead — a WHOLE-LEG failure — then
+    // `fromDune` is null, `gateMayhemFlags` withholds the flags through its null clause alone, and
+    // the mutation this case exists to catch (dropping the `useDune` conjunct) would change
+    // nothing while every count below still read the same.
+    const creation = row['creation'] as unknown as {
+      enumerationSource: string;
+      duneLaunches: number | null;
+      duneFallbackReasons: string[];
+    };
+    // The walk answered, and Dune ANSWERED FOR THIS WALLET and was refused per candidate.
+    // `duneLaunches` is `null` exactly when the leg produced no reading at all, which is the
+    // whole-leg shape — there `fromDune` is null and `gateMayhemFlags` withholds the flags through
+    // its null clause alone, so the mutation this case exists to catch would change nothing while
+    // every count below still read the same.
+    expect(creation.enumerationSource).toBe('keyless-rpc');
+    expect(creation.duneLaunches, 'null here would be a WHOLE-LEG failure, not a per-candidate refusal').toBe(30);
+    const fallbackReasons = creation.duneFallbackReasons;
+    // This wallet's OWN refusal sentence is present, and no vendor-side leg failure is embedded —
+    // the two together are what say the per-candidate path is the one that ran.
+    expect(fallbackReasons.join(' ')).toMatch(/probed coverage/);
+    expect(fallbackReasons.join(' '), 'a thrown leg would embed the vendor failure here').not.toMatch(/The failure:/);
+    for (const reason of fallbackReasons) {
+      if (!reason.startsWith(`${DUNE_LEG_FAILED}:`)) continue;
+      expect(reason).toMatch(/see this candidate's own reason below/);
+    }
+
     expect(row['tokens']).toBe(30);
     expect(row['completed']).toBe(12);
     expect(row['competenceMayhemExcluded']).toBe(0);

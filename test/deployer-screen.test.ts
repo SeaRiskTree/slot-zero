@@ -17011,18 +17011,18 @@ describe('a LISTED wallet still has to pass the gate — 398a', () => {
     const t = loadThresholds()['stage2_entry'] as Record<string, number>;
     const worstCase = t['maxCandidatesScored']! * t['maxLaunchesPerCandidate']! * t['maxRequestsPerLaunch']!;
     expect(worstCase).toBeLessThanOrEqual((loadThresholds()['budget'] as Record<string, number>)['maxKeylessRequests']!);
-    const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
     // The Stage 2 selection reads the scoring cap and the survivor list, and nothing about the
     // candidate source reaches it. `candidateSource` is provenance: if it ever appears in a
     // scoring, ranking or rotation decision, this is the assertion that has to be argued with.
-    // Over the EXECUTABLE half, so `rank.mjs`'s own typedef for the field — which documents it and
-    // reads nothing — is not mistaken for a use of it.
+    // That the field is CARRIED is asserted behaviourally above, off a real run's record; this one
+    // asserts an ABSENCE, which no behavioural test can express. Over the EXECUTABLE half, so
+    // `rank.mjs`'s own typedef for the field — which documents it and reads nothing — is not
+    // mistaken for a use of it.
     for (const file of ['stage2.mjs', 'entry.mjs', 'rank.mjs', 'rotation.mjs', 'measure.mjs']) {
       expect(
         executableHalf(readFileSync(join(TOOL_DIR, file), 'utf8')),
         `${file} must not read candidateSource — it is provenance, never an input`,
       ).not.toContain('candidateSource');
     }
-    expect(screen).toContain('candidateSource: seed.candidateSource');
   });
 });

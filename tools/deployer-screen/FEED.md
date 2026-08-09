@@ -301,14 +301,18 @@ Committed state, 2026-08-02 (`--bootstrap` over the two committed screen runs): 
 queued (11 of them not yet screened), 61 held, 7 pre-filtered.** All 61 held on the ownership reading;
 **48 of them missed on exactly one gate leg.**
 
-## Known gap: the queue is not yet wired into the screen
+## Known gap: the two lanes are joined by a file, not by code
 
-The feed produces a queue of gate-clearing wallets. `screen.mjs` enumerates its own candidates from
-the seeds and has no flag that accepts a wallet list, so handing the queue over is currently an
-operator step: read `queue[].wallet` from the feed record (or the rendered block) and screen those
-wallets. **A `--wallets` flag on the screen is the obvious follow-up** and was deliberately left out
-of this lane — it changes the screen's plan arithmetic and coverage semantics, and that belongs in a
-change that owns those.
+**The screen now takes a wallet list** — `--wallets <file>`, captain decision 398a — which gates the
+addresses in a file instead of enumerating, and that change owned the plan arithmetic and coverage
+semantics this section used to say such a change would have to own;
+`tools/deployer-screen/README.md` → "The vendor gatekeeps ENUMERATION, not measurement" is the owner
+of both. What has NOT changed is the join: **`feed.mjs` does not write such a file and `screen.mjs`
+does not read `feed/ledger.json`**, so handing the queue over is still an operator step — read
+`queue[].wallet` from the feed record (or the rendered block), write the addresses one per line, and
+pass that file. And the two gate readings above still differ: this lane grades on the **ownership**
+reading while `screen.mjs` defaults to **creation-derived**, and `--wallets` changes neither — a
+listed wallet is gated on whichever reading the screen was invoked with.
 
 ## Scope boundaries
 

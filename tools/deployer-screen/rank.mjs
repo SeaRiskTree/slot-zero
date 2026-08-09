@@ -123,6 +123,17 @@ export function competenceEmptiedByCriterion(completion) {
  * and repairing one of them while the others describe a narrower set is the "two quantities through
  * one number" defect 351 exists to remove.
  *
+ * **THE OPERATIONAL CONSEQUENCE, WHICH IS BLUNT AND IS THE INTENDED DIRECTION.** ONE missing or
+ * malformed `complete` field anywhere in a candidate's history withholds that candidate's whole
+ * verdict, on every leg — `measure.mjs` → `toTokenRecords` folds a missing field to unreadable, and
+ * any unreadable launch lands here. So if MadeOnSol or pump.fun ever stopped serving `complete` on
+ * ungraduated rows, NO wallet would be queued and the feed would report itself DRY rather than
+ * rejecting anybody. That is the direction to fail in: a withheld verdict is re-offerable, while a
+ * `held` or `gate-failed` one is filed in `feed/ledger.json` and never offered again, so the failure
+ * mode is a visibly empty feed instead of a silent, permanent false rejection. **The operational
+ * tell is exit 9 firing on wallets that plainly have launch records**, and `ledger.mjs` →
+ * `feedAlarm` says which fault it is rather than leaving an operator to guess.
+ *
  * @param {import('./measure.mjs').CompletionMeasurement} completion
  * @returns {boolean}
  */
@@ -555,7 +566,9 @@ export function verdictFor(input) {
         ? `, on their NON-MAYHEM record — a further ${c.mayhemExcluded} mayhem-mode launch(es) are ` +
           `excluded from both sides of that rate (captain decision 351)`
         : '') +
-      criterionNoteFor(c, false) +
+      // NO criterion-unreadable clause here, and it is not an omission: `competenceCriterionIncomplete`
+      // above returns `gate-unmeasured` on any unreadable launch, so GATE-PASSED IMPLIES A FULLY
+      // READABLE CRITERION and a clause for it could never fire.
       // Captain decision 352b, and on the PASSING sentence for the same reason 351's clause is: a
       // rate read through pump.fun's graduation flag is an UPPER BOUND on the RAISE-85 rate, and a
       // reader who quotes this line out of context would otherwise take an estimate for the measure.

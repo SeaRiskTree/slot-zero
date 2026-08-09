@@ -463,6 +463,14 @@ one merged "unknown" would make a post-352b rate unauditable in exactly the way 
   caller, so the vendor reading, `--ownership-only`, `feed.mjs` and the bundling census all get it by
   construction. It is deliberately not a bar-by-bar repair: `tokens`, `rate` and `spanDays` are three
   statements about one sample.
+- **THE CONSEQUENCE IS BLUNT, AND IT IS THE INTENDED DIRECTION.** One missing or malformed `complete`
+  field anywhere in a candidate's history withholds that candidate's whole verdict. If MadeOnSol or
+  pump.fun ever stopped serving `complete` on ungraduated rows, no wallet would be queued at all and
+  the feed would report itself DRY rather than rejecting anybody — which is the right way round,
+  because a withheld verdict is re-offerable while a `held` or `gate-failed` one is filed in
+  `feed/ledger.json` and never offered again. The operational tell is **exit 9 firing on wallets that
+  plainly have launch records**; `ledger.mjs` → `feedAlarm` names which fault it is, and
+  `rank.mjs` → `competenceCriterionIncomplete` owns the rule.
 - **`competenceCriterionEstimated` says how much of the rate is an upper bound.** Every route this
   repo has today reads RAISE-85 through pump.fun's own graduation flag, which is an **estimator**:
   every token that reached 85 SOL graduated (precision 1.0000), so a *not*-graduated launch is proof

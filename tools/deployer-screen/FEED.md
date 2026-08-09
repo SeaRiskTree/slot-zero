@@ -233,7 +233,17 @@ So every run reports, in this order — alarm first, then the new count, then th
 1. **A seed returned rows we read no wallet from.** Our bug — the 2026-07-29 defect recurring. Loud on
    the *first* occurrence, never after a streak.
 2. **Every seed inert.** No input at all: check the tier filter, the credential's scope, the vendor.
-3. **Every gated wallet unreadable.** The profile shape moved. Requires **at least 2 gated wallets**
+3. **Every gated wallet unmeasured.** The profile shape moved — **or the completion criterion could
+   not be read on part of every history** (captain decision 352b), which is a wallet that HAS launch
+   records and still cannot be judged, and points at the vendor's `complete` field rather than at our
+   parser or at a wider source. The message distinguishes the two from the counts; the trigger is the
+   same either way. **The consequence to know before reading this alarm:** one missing or malformed
+   `complete` field anywhere in a candidate's history withholds that candidate's whole verdict
+   (`rank.mjs` → `competenceCriterionIncomplete` owns the rule), so were the vendor to stop serving
+   `complete` on ungraduated rows, nothing would ever be queued and this lane would report itself DRY
+   rather than rejecting anybody. That is the intended direction — a withheld verdict is re-offerable,
+   a `held` one is filed here forever — and **the tell is exactly this alarm firing on wallets that
+   plainly have launch records.** Requires **at least 2 gated wallets**
    (`ALL_UNMEASURED_MIN_GATED`): this condition *asserts* a move at the vendor, and its own message
    says one empty deployer is not evidence of that, so it must not be assertable from a sample of
    one. **What that floor actually costs, exactly:**

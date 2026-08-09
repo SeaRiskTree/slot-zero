@@ -1327,7 +1327,12 @@ dev currently?"*, and the shape of the answer is the point:
   reading, `--ownership-only`, `feed.mjs` and the bundling census get it by construction): those
   launches leave `tokens` and `spanDays` as well as the rate, so `minTokens`/`minSpanDays` would
   otherwise gate-FAIL a wallet over OUR coverage — permanent and invisible, since a graded wallet is
-  filed in `feed/ledger.json` and never offered again. The one behaviour that genuinely moved is the launch
+  filed in `feed/ledger.json` and never offered again. **That is blunt on purpose: ONE missing or
+  malformed `complete` field anywhere in a history withholds that candidate's whole verdict, so if a
+  vendor stopped serving the field nothing would be queued and the feed would report itself DRY
+  rather than rejecting anybody — a withheld verdict is re-offerable and a filed one is not. The tell
+  is exit 9 on wallets that plainly have launch records**; that predicate's doc and `ledger.mjs` →
+  `feedAlarm` own it. The one behaviour that genuinely moved is the launch
   neither the curve nor the ownership listing could answer for — it was `completed: false`, and is
   unreadable now. (2) **Every route this repo has READS the criterion through pump.fun's graduation
   flag, which is an ESTIMATOR**: its negative is exact (every token reaching 85 SOL graduated,

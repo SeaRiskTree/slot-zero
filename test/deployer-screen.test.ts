@@ -211,15 +211,18 @@ import {
   walletListLabel,
 } from '../tools/deployer-screen/wallet-list.mjs';
 import {
+  NEW_GROUND_RULE,
   REPRODUCIBILITY_RULE,
   ROTATION_SCHEMA_VERSION,
   compareRotationRows,
   digestOf,
   emptyRotation,
   importScoredFromRunRecords,
+  launchesPerDayOf,
   ledgerRunRecords,
   loadRotation,
   markScored,
+  newGroundWindows,
   rotationOrder,
   saveRotationText,
   selectForScoring,
@@ -6784,6 +6787,26 @@ const ROTATION_BLOCK_KEYS_BY_SCHEMA: Record<number, string[]> = {
   // so this block's shape — and `rotation.mjs`'s comparator — are untouched, deliberately: the
   // flow-weighted allocation that WOULD touch it is captain decision 399a and its own lane.
   22: ROTATION_BLOCK_KEYS_20,
+  // Schema 23 IS that lane (captain decision 399a): the cap is allocated by launch flow rather than
+  // recency alone, so the block gains the saturation ceiling the flow term was computed at and the
+  // one-sentence statement of the rule. The `order` ROWS gain two keys of their own — pinned
+  // separately by ROTATION_ORDER_ROW_KEYS_BY_SCHEMA, because a block whose shape is right and whose
+  // rows lost the comparator's input would leave `verifySelection` grading a rule it cannot see.
+  23: [...ROTATION_BLOCK_KEYS_20, 'windowCap', 'newGroundRule'],
+};
+
+// One row of `scoringRotation.order`. Schema 20 carried the three fields 336a's recency rule reads;
+// 399a's comparator reads a fourth, and schema 20's guarantee — the selection is re-derivable from
+// the record ALONE — is only as good as the record carrying every input the ranking used. So the
+// tempo is persisted beside the saturating ground it produced: the first lets a reader re-derive the
+// KEY, the second lets them re-derive the ORDER, and dropping either quietly narrows what can be
+// checked while every other assertion stays green.
+const ROTATION_ORDER_ROW_KEYS_20 = ['wallet', 'lastScoredAtIso', 'timesScored'];
+const ROTATION_ORDER_ROW_KEYS_BY_SCHEMA: Record<number, string[]> = {
+  20: ROTATION_ORDER_ROW_KEYS_20,
+  21: ROTATION_ORDER_ROW_KEYS_20,
+  22: ROTATION_ORDER_ROW_KEYS_20,
+  23: [...ROTATION_ORDER_ROW_KEYS_20, 'launchesPerDay', 'newGroundWindows'],
 };
 
 describe('the keyless boundary holds in both directions', () => {
@@ -6939,6 +6962,12 @@ describe('the keyless boundary holds in both directions', () => {
   // `completionRate` and every other measured field are the SAME quantity at 21 and 22 and may be
   // pooled, unlike the 19 and 21 boundaries. `candidateSource` is provenance and is read by nothing.
   PERSISTED_BY_SCHEMA[22] = [...PERSISTED_BY_SCHEMA[21]!, 'candidateSource'].sort();
+  // Schema 23 (captain decision 399a) allocates the Stage 2 scoring cap by launch flow rather than
+  // by recency alone. It moves nothing on the candidate ROW at all — the flow term is a property of
+  // the SELECTION and lives on `scoringRotation`, and the tempo it reads is derived from `tokens`
+  // and `spanDays`, which the row already carried. Every measured field is the same quantity at 22
+  // and 23 and may be pooled.
+  PERSISTED_BY_SCHEMA[23] = PERSISTED_BY_SCHEMA[22]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -7062,6 +7091,7 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: ENTRY_KEYS_14,
+    23: ENTRY_KEYS_14,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -7161,6 +7191,7 @@ describe('the keyless boundary holds in both directions', () => {
     // nothing about the creation history enumerated for it, and the enumeration is byte-identical
     // either way — same Dune statement, same walk, same coverage probe.
     22: CREATION_KEYS_15,
+    23: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -7223,6 +7254,7 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: ENTRY_COVERAGE_KEYS_6,
+    23: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -7307,6 +7339,7 @@ describe('the keyless boundary holds in both directions', () => {
     // ceiling the run was allowed to fall short of. No new unit and no new vendor: a listed run
     // spends no Dune execution and no Helius credit a seeded one would not.
     22: SPEND_KEYS_8,
+    23: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -7368,6 +7401,7 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: DUNE_KEYS_13,
+    23: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -7412,6 +7446,7 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: DUNE_COVERAGE_KEYS_9,
+    23: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -7443,6 +7478,7 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: DUNE_COVERAGE_TABLE_KEYS_9,
+    23: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -7488,6 +7524,10 @@ describe('the keyless boundary holds in both directions', () => {
     // long as nobody edits it. `seedsIssued: 0` is STATED rather than inferred from an empty
     // `coverage.seeds`, because an empty seed table also describes a run whose enumeration failed.
     22: ['walletList'],
+    // Schema 23 adds NO run-level block. 399a's two new keys sit INSIDE `scoringRotation`, which
+    // schema 20 already added, so what moves is that block's own key set and the shape of its
+    // `order` rows — pinned by ROTATION_BLOCK_KEYS_BY_SCHEMA and ROTATION_ORDER_ROW_KEYS_BY_SCHEMA.
+    23: [],
   };
 
   // The run-level `entrySourceAgreement` block's OWN key set, and `duneSpend` one level below it —
@@ -7516,6 +7556,7 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: ENTRY_SOURCE_AGREEMENT_KEYS_18,
+    23: ENTRY_SOURCE_AGREEMENT_KEYS_18,
   };
   // This leg's own Dune meter. It is deliberately NOT folded into the run-level `dune` block: that
   // one bounds an enumeration answering a whole batch in ONE execution, this one bounds a leg
@@ -7544,6 +7585,7 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: AGREEMENT_DUNE_SPEND_KEYS_18,
+    23: AGREEMENT_DUNE_SPEND_KEYS_18,
   };
   // And the per-candidate row, which is where the class that can be WRONG lives. The run level only
   // counts these, so a field vanishing here would be invisible to every pin above it.
@@ -7556,6 +7598,7 @@ describe('the keyless boundary holds in both directions', () => {
     // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: ENTRY_AGREEMENT_KEYS_18,
+    23: ENTRY_AGREEMENT_KEYS_18,
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -8194,6 +8237,16 @@ describe('the keyless boundary holds in both directions', () => {
         expect(Object.keys(rotation as object).sort(), `${file} scoringRotation`).toEqual(
           [...rotationExpected].sort(),
         );
+        // And every row of the ranked `order` one level down. The block's own shape says nothing
+        // about the rows the comparator reads, and those rows ARE the re-derivation input.
+        const orderRowExpected = ROTATION_ORDER_ROW_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+        const order = (rotation as Record<string, unknown>)['order'];
+        if (orderRowExpected !== undefined && Array.isArray(order)) {
+          for (const orderRow of order) {
+            expect(Object.keys(orderRow as object).sort(), `${file} scoringRotation.order row`)
+              .toEqual([...orderRowExpected].sort());
+          }
+        }
       }
       for (const row of parsed.candidates) {
         expect(Object.keys(row).sort(), `${file} candidate row`).toEqual(expected);
@@ -16077,6 +16130,18 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     return base;
   };
 
+  // EVERY TEST IN THIS BLOCK IS ABOUT THE RECENCY CLAUSES, so it hands the rule no tempo at all —
+  // and that is the degenerate case captain decision 399a documents rather than a convenience.
+  // With nothing readable every row saturates at the window cap, the flow clause separates no pair,
+  // and what remains IS 336a's rule. So the superseded allocation stays reachable and testable
+  // THROUGH PRODUCTION CODE, with no second comparator to drift from the live one — which is also
+  // why the 399a block below can use it as its round-robin baseline.
+  const NO_FLOW = (nowIso = '2026-09-01T00:00:00.000Z') => ({
+    nowIso,
+    windowCap: 10,
+    launchesPerDay: {} as Record<string, number | null>,
+  });
+
   it('with NO prior state it is byte-identical to the slice it replaced', () => {
     // THE FIRST RUN AFTER THIS CHANGE MUST BE INERT, and that is a design choice rather than a
     // coincidence: never-scored survivors rank first and tie on the caller's own order, so with an
@@ -16084,7 +16149,7 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     // landed needs to know the wallet list moved for one reason only — the state — and on a first
     // run there is none.
     const survivors = Array.from({ length: 20 }, (_, i) => `W${String(i).padStart(2, '0')}`);
-    const fresh = selectForScoring(emptyRotation(), survivors, MAX);
+    const fresh = selectForScoring(emptyRotation(), survivors, MAX, NO_FLOW());
     expect(fresh.selected).toEqual(survivors.slice(0, MAX));
     expect(fresh.deferred).toEqual(survivors.slice(MAX));
     expect(fresh.neverScored).toBe(20);
@@ -16092,7 +16157,7 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     const missing = loadRotation(join(mkdtempSync(join(tmpdir(), 'rot-')), 'nothing-here.json'));
     expect(missing.present).toBe(false);
     expect(missing.digest).toBeNull();
-    expect(selectForScoring(missing.rotation, survivors, MAX).selected).toEqual(survivors.slice(0, MAX));
+    expect(selectForScoring(missing.rotation, survivors, MAX, NO_FLOW()).selected).toEqual(survivors.slice(0, MAX));
   });
 
   it('successive runs over an UNCHANGED population score DIFFERENT wallets and cycle', () => {
@@ -16104,7 +16169,7 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     const rounds: string[][] = [];
     for (let run = 0; run < 4; run += 1) {
       const at = new Date(Date.UTC(2026, 7, 10 + run)).toISOString();
-      const chosen = selectForScoring(rotation, survivors, MAX).selected;
+      const chosen = selectForScoring(rotation, survivors, MAX, NO_FLOW(at)).selected;
       rounds.push(chosen);
       for (const w of chosen) markScored(rotation, w, at);
     }
@@ -16133,13 +16198,13 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     markScored(rotation, 'C', '2026-08-02T00:00:00.000Z');
     markScored(rotation, 'B', '2026-08-03T00:00:00.000Z');
     markScored(rotation, 'A', '2026-08-04T00:00:00.000Z');
-    const first = selectForScoring(rotation, survivors, 2);
+    const first = selectForScoring(rotation, survivors, 2, NO_FLOW());
     expect(first.selected).toEqual(['D', 'C']);
     expect(first.deferred).toEqual(['B', 'A']);
     expect(first.neverScored).toBe(0);
 
     for (const w of first.selected) markScored(rotation, w, '2026-08-05T00:00:00.000Z');
-    expect(selectForScoring(rotation, survivors, 2).selected).toEqual(['B', 'A']);
+    expect(selectForScoring(rotation, survivors, 2, NO_FLOW()).selected).toEqual(['B', 'A']);
     // A wallet coming round a second time does not earn priority for having been seen more often:
     // `timesScored` is operator context and the selection never reads it.
     expect(rotation.wallets['D']!.timesScored).toBe(2);
@@ -16159,18 +16224,18 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     markScored(rotation, 'C', '2026-08-03T00:00:00.000Z');
 
     // Today B is gone and a newcomer N has arrived.
-    const shrunk = selectForScoring(rotation, ['A', 'C', 'N'], 2);
+    const shrunk = selectForScoring(rotation, ['A', 'C', 'N'], 2, NO_FLOW());
     expect(shrunk.selected).toEqual(['N', 'A']);
     expect(shrunk.deferred).toEqual(['C']);
     expect(shrunk.neverScored).toBe(1);
     // B's row survived unread, so when it comes back it is still the oldest thing in the set.
     expect(rotation.wallets['B']).toBeDefined();
     for (const w of shrunk.selected) markScored(rotation, w, '2026-08-04T00:00:00.000Z');
-    expect(selectForScoring(rotation, ['A', 'B', 'C', 'N'], 2).selected).toEqual(['B', 'C']);
+    expect(selectForScoring(rotation, ['A', 'B', 'C', 'N'], 2, NO_FLOW()).selected).toEqual(['B', 'C']);
 
     // And an EMPTY survivor set is a selection of nothing rather than a throw or a slice of the
     // rotation's own keys — the cap has nowhere to go, which is a run outcome and not a fault.
-    const none = selectForScoring(rotation, [], MAX);
+    const none = selectForScoring(rotation, [], MAX, NO_FLOW());
     expect(none).toEqual({ order: [], selected: [], deferred: [], neverScored: 0 });
   });
 
@@ -16183,7 +16248,7 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     const survivors = ['A', 'B', 'C', 'D', 'E'];
     const rotation = scoredAt(['C', 'E'], '2026-08-01T00:00:00.000Z');
     markScored(rotation, 'A', '2026-08-03T00:00:00.000Z');
-    const sel = selectForScoring(rotation, survivors, 2);
+    const sel = selectForScoring(rotation, survivors, 2, NO_FLOW());
     expect(sel.selected).toEqual(['B', 'D']);
     expect(verifySelection(sel, 2)).toEqual({ ok: true, problems: [] });
 
@@ -16193,16 +16258,16 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     const bad = verifySelection(tampered, 2);
     expect(bad.ok).toBe(false);
     expect(bad.problems.join(' ')).toContain('selected is not the first 2 of order');
-    // So is an order that is not least-recently-scored first.
+    // So is an order the ranking rule does not support.
     const misordered = verifySelection({ ...sel, order: [...sel.order].reverse() }, 2);
     expect(misordered.ok).toBe(false);
-    expect(misordered.problems.join(' ')).toContain('not least-recently-scored first');
+    expect(misordered.problems.join(' ')).toContain('least-recently-scored breaking ties');
     // The comparator is TOTAL on what a record carries and leaves ties to the caller's positional
     // tiebreak, which a record cannot hold — so a verifier must not demand one.
     expect(
       compareRotationRows(
-        { wallet: 'x', lastScoredAtIso: null, timesScored: 0 },
-        { wallet: 'y', lastScoredAtIso: null, timesScored: 0 },
+        { wallet: 'x', lastScoredAtIso: null, timesScored: 0, launchesPerDay: null, newGroundWindows: 10 },
+        { wallet: 'y', lastScoredAtIso: null, timesScored: 0, launchesPerDay: null, newGroundWindows: 10 },
       ),
     ).toBe(0);
   });
@@ -16225,7 +16290,7 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     const back = loadRotation(path);
     expect(back.present).toBe(true);
     expect(back.digest).toBe(digestOf(text));
-    expect(selectForScoring(back.rotation, ['Wa', 'Wm', 'Wz'], 3).selected).toEqual(['Wa', 'Wm', 'Wz']);
+    expect(selectForScoring(back.rotation, ['Wa', 'Wm', 'Wz'], 3, NO_FLOW()).selected).toEqual(['Wa', 'Wm', 'Wz']);
     // The round trip is exact, which is what makes the chain checkable: this run's `after` digest is
     // the next run's `before`.
     expect(serialiseRotation(back.rotation, '2026-08-05T00:00:00.000Z')).toBe(text);
@@ -16252,7 +16317,7 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     );
     const read = loadRotation(partial);
     expect(Object.keys(read.rotation.wallets)).toEqual(['Ok']);
-    expect(selectForScoring(read.rotation, ['Ok', 'Bad'], 1).selected).toEqual(['Bad']);
+    expect(selectForScoring(read.rotation, ['Ok', 'Bad'], 1, NO_FLOW()).selected).toEqual(['Bad']);
   });
 
   it('the COMMITTED state is what the committed run records say, and the import only adds', () => {
@@ -16311,13 +16376,33 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
       deferred: ['C'],
       neverScoredBefore: 1,
       importedFromRunRecords: 6,
+      windowCap: 10,
+      order: [
+        { wallet: 'A', lastScoredAtIso: null, timesScored: 0, launchesPerDay: null, newGroundWindows: 10 },
+        { wallet: 'B', lastScoredAtIso: '2026-08-01T00:00:00.000Z', timesScored: 1, launchesPerDay: 4, newGroundWindows: 10 },
+        { wallet: 'C', lastScoredAtIso: '2026-08-08T00:00:00.000Z', timesScored: 1, launchesPerDay: 0.5, newGroundWindows: 0.5 },
+      ],
+      newGroundRule: NEW_GROUND_RULE,
       reproducibility: REPRODUCIBILITY_RULE,
     };
     const on = renderRotation(block, '  ').join('\n');
-    expect(on).toContain('least-recently-scored first');
+    expect(on).toContain('most new ground first, least-recently-scored breaking ties');
     expect(on).toContain('tools/deployer-screen/rotation/stage2-scored.json @ sha256:abc');
     expect(on).toContain('6 wallet(s) recovered from committed run records');
     expect(on).toContain(REPRODUCIBILITY_RULE);
+    // Captain decision 399a on the same terms: the RULE the cap was allocated by, and what the
+    // allocation bought. A reader who can see only the wallet list cannot tell a flow-weighted
+    // selection from a round-robin one — the two are the same list on a first run by design.
+    expect(on).toContain(NEW_GROUND_RULE);
+    expect(on).toContain('new ground: 20.0 window(s) reachable across the 2 scored');
+    expect(on).toContain('against 0.5 left on the 1 deferred');
+    expect(on).toContain('each visit saturates at 10 window(s), and 2 of 3 survivor(s) are already there');
+    // A block carrying no flow term prints no ground line rather than a row of zeroes: a pre-399a
+    // record reached no measured ground, and a zero there would read as one.
+    const { order: _o, windowCap: _c, newGroundRule: _r, ...preFlow } = block;
+    const legacy = renderRotation(preFlow, '  ').join('\n');
+    expect(legacy).not.toContain('new ground:');
+    expect(legacy).toContain(REPRODUCIBILITY_RULE);
     // A FIRST RUN says so rather than printing a blank or a zero where a digest goes.
     expect(renderRotation({ ...block, stateDigestBefore: null }, '  ').join('\n')).toContain('NO PRIOR STATE');
     // AND ROTATION OFF IS RENDERED, not omitted: an operator reading a run that repeated yesterday's
@@ -16359,6 +16444,271 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     void main(help.opts, {}, (l) => lines.push(l), () => {});
     expect(lines.join('\n')).toContain('--rotation <path>');
     expect(lines.join('\n')).toContain('LEAST-RECENTLY-SCORED');
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// CAPTAIN DECISION 399a — the scoring cap is allocated by LAUNCH FLOW, not by recency alone.
+// ---------------------------------------------------------------------------------------------
+
+describe('the scoring cap goes where a visit covers the most new ground — 399a', () => {
+  // Offline and free like the 336a block above: arithmetic over one in-memory rotation, no socket,
+  // no vendor, no fixture on disk.
+  const DAY_MS = 86_400_000;
+  const CAP = 7; // stage2_entry.maxCandidatesScored — unmoved by this decision (339a).
+  const WINDOW_CAP = 10; // stage2_entry.maxLaunchesPerCandidate — likewise unmoved.
+
+  // A HEAVY-TAILED POPULATION, and it is synthetic on purpose. The census figures that motivated
+  // 399a — 58 July gate-passers, 210 monthly scorings, 1,067 windows round-robin against 1,963
+  // allocated by remaining unharvested flow, 17 wallets launching more than the 36.2-window
+  // round-robin allowance and stranding 935 between them — are evidence from
+  // `slot-zero-discovery-beyond-madeonsol` section 5.2, held in firstmate's records and not in this
+  // repo. Their per-wallet launch counts are not committed here, so this block does NOT reproduce
+  // those numbers and must not be read as doing so: it builds a population of the same SHAPE, 58
+  // wallets with a long tail, and measures the harvest through the production selector.
+  const MONTHLY = [
+    128, 112, 99, 90, 84, 77, 71, 66, 61, 57, 53, 49, 46, 43, 41, 39, 37,
+    ...Array.from({ length: 41 }, (_, i) => Math.max(2, Math.round(30 - i * 0.7))),
+  ];
+  const POPULATION = MONTHLY.map((_, i) => `W${String(i).padStart(2, '0')}`);
+  const TEMPO: Record<string, number> = Object.fromEntries(
+    POPULATION.map((w, i) => [w, MONTHLY[i]! / 30]),
+  );
+  const EPOCH = Date.UTC(2026, 6, 1);
+
+  // Each wallet's actual launch instants, evenly spaced at its own tempo and running back well
+  // before the simulated month. THE HARVEST IS COUNTED FROM THESE, not from the rank key — a
+  // simulation scored by the same formula the policy optimises would only prove the policy
+  // optimises its own formula. A visit takes the `windowCap` most recent launches that exist by
+  // then, exactly as Stage 2 does, and only launches created inside the month are counted.
+  const LAUNCHES: Record<string, number[]> = Object.fromEntries(
+    POPULATION.map((w) => {
+      const t = TEMPO[w]!;
+      const n = Math.round(t * 120);
+      return [
+        w,
+        Array.from({ length: n }, (_, k) => EPOCH + 30 * DAY_MS - Math.round(k * (DAY_MS / t))).reverse(),
+      ];
+    }),
+  );
+
+  /**
+   * Run `runs` daily screens over the population and report what was harvested.
+   *
+   * `flowAware: false` hands the production selector no tempo at all, which is the degenerate case
+   * `rotation.mjs` documents: every row saturates, the flow clause separates nothing, and what is
+   * left IS 336a's recency rule. So the baseline is the SUPERSEDED ALLOCATION RUN THROUGH THE LIVE
+   * CODE rather than a second comparator written here to agree with it.
+   */
+  const simulate = (flowAware: boolean, runs: number) => {
+    const rotation = emptyRotation();
+    const covered = new Map(POPULATION.map((w) => [w, new Set<number>()]));
+    const visits = new Map(POPULATION.map((w) => [w, 0]));
+    for (let run = 0; run < runs; run += 1) {
+      const nowMs = EPOCH + run * DAY_MS;
+      const nowIso = new Date(nowMs).toISOString();
+      const { selected } = selectForScoring(rotation, POPULATION, CAP, {
+        nowIso,
+        windowCap: WINDOW_CAP,
+        launchesPerDay: flowAware ? TEMPO : {},
+      });
+      for (const w of selected) {
+        for (const t of LAUNCHES[w]!.filter((x) => x <= nowMs).slice(-WINDOW_CAP)) {
+          if (t >= EPOCH) covered.get(w)!.add(t);
+        }
+        visits.set(w, visits.get(w)! + 1);
+        markScored(rotation, w, nowIso);
+      }
+    }
+    let windows = 0;
+    for (const s of covered.values()) windows += s.size;
+    return { windows, visits: [...visits.values()] };
+  };
+
+  it('CHANGES THE HARVEST on a heavy tail, not merely the sort order', () => {
+    // THE ASSERTION THIS LANE EXISTS FOR. A comparator test would pass on a rule that reorders the
+    // same wallets and measures the same windows; what 399a claims is that the same 210 scorings
+    // cover MORE DISTINCT WINDOWS, so that is what is measured.
+    const RUNS = 30; // 30 daily runs at a cap of 7 is 210 scorings — the census's own budget.
+    const roundRobin = simulate(false, RUNS);
+    const flowWeighted = simulate(true, RUNS);
+
+    expect(roundRobin.windows).toBe(1143);
+    expect(flowWeighted.windows).toBe(1426);
+    expect(flowWeighted.windows / roundRobin.windows).toBeGreaterThan(1.2);
+
+    // AND THE MECHANISM IS THE ONE CLAIMED — visits reallocated towards the tail, not more visits.
+    // Both policies spend exactly the same budget; a difference in the total would mean the
+    // simulation, not the allocation, moved.
+    const spent = (r: { visits: number[] }) => r.visits.reduce((a, b) => a + b, 0);
+    expect(spent(roundRobin)).toBe(RUNS * CAP);
+    expect(spent(flowWeighted)).toBe(RUNS * CAP);
+    // Round robin gives every survivor 3 or 4 visits whatever its tempo — 58 wallets against 210
+    // scorings — which is exactly the allowance that strands the tail.
+    expect(Math.max(...roundRobin.visits) - Math.min(...roundRobin.visits)).toBeLessThanOrEqual(1);
+    // Flow-weighted spends up to 12 on the busiest, which is `128 / windowCap` rounded up: the
+    // number of visits that wallet's own launch flow actually needs.
+    expect(Math.max(...flowWeighted.visits)).toBe(12);
+    expect(Math.max(...flowWeighted.visits)).toBeGreaterThan(Math.max(...roundRobin.visits));
+  });
+
+  it('PARKS NOBODY: the lowest-flow survivor still comes round, repeatedly', () => {
+    // The captain's explicit condition — pure greed by flow can park a low-flow wallet forever —
+    // and the guarantee is structural rather than a fudge factor. `newGroundWindows` SATURATES, so
+    // a wallet's key rises every day it waits and reaches the ceiling after
+    // `windowCap / launchesPerDay` days; once there it ties with every other saturated row and the
+    // tiebreak is 336a's strict FIFO, under which anything scored later sorts behind it forever.
+    //
+    // The lightest wallet here launches 2 a month (0.0667/day), so it needs 150 days to saturate —
+    // a long wait, and the correct one: that is exactly how long it takes to produce a full visit's
+    // worth of new windows. Over 400 daily runs it must nonetheless come round several times.
+    const long = simulate(true, 400);
+    expect(Math.min(...long.visits), 'every survivor is visited').toBeGreaterThanOrEqual(1);
+    expect(Math.min(...long.visits), 'and comes round again — not visited once and parked')
+      .toBeGreaterThanOrEqual(4);
+    // Every survivor over the same horizon, so "nobody is parked" is over the whole population and
+    // not a claim about the one wallet that happens to be slowest.
+    expect(long.visits.filter((v) => v === 0)).toEqual([]);
+  });
+
+  it('a NEVER-SCORED survivor is never outbid, whatever anyone else’s flow', () => {
+    // Clause 1, and it is a clause rather than a consequence of the flow arithmetic agreeing: a
+    // newcomer has no measurement to refresh, so there is nothing to wait for. Here the measured
+    // wallet has been waiting long enough to saturate several times over and still does not
+    // displace the two that have never been seen.
+    const rotation = emptyRotation();
+    markScored(rotation, 'BUSY', '2026-06-01T00:00:00.000Z');
+    const sel = selectForScoring(rotation, ['BUSY', 'NEW1', 'NEW2'], 2, {
+      nowIso: '2026-08-09T00:00:00.000Z',
+      windowCap: WINDOW_CAP,
+      launchesPerDay: { BUSY: 40, NEW1: 0.05, NEW2: 0.05 },
+    });
+    expect(sel.selected).toEqual(['NEW1', 'NEW2']);
+    // A never-scored row states the window cap as its ground: a visit to it covers as much as a
+    // visit can, exactly rather than approximately, because a gate survivor carries at least
+    // `minTokens` launches and that floor is above the cap (pinned below).
+    expect(sel.order[0]!.newGroundWindows).toBe(WINDOW_CAP);
+    expect(sel.order[0]!.lastScoredAtIso).toBeNull();
+  });
+
+  it('an UNREADABLE tempo is SATURATED, never no flow — and no tempo anywhere IS 336a’s rule', () => {
+    // The direction this repo takes on every missing measurement, applied to the rank key. Reading
+    // an absent tempo as zero flow would park that wallet permanently and invisibly, on a failure
+    // of OUR coverage — the class of false rejection this whole tool exists to remove.
+    expect(launchesPerDayOf({ tokens: 30, spanDays: 60 })).toBe(0.5);
+    expect(launchesPerDayOf({ tokens: 0, spanDays: 60 }), 'no launches is not a tempo').toBeNull();
+    expect(launchesPerDayOf({ tokens: 30, spanDays: 0 }), 'a zero span is not a tempo').toBeNull();
+    expect(launchesPerDayOf({ tokens: 30, spanDays: Number.NaN })).toBeNull();
+
+    const flow = { nowIso: '2026-08-09T00:00:00.000Z', windowCap: WINDOW_CAP };
+    // Unreadable: credited with a full visit's worth, which is the most a visit can ever be worth
+    // and no more — so it competes rather than either monopolising or being parked.
+    expect(newGroundWindows({ lastScoredAtIso: '2026-08-08T00:00:00.000Z', launchesPerDay: null }, flow))
+      .toBe(WINDOW_CAP);
+    // Readable: one day at half a launch a day is half a window of new ground.
+    expect(newGroundWindows({ lastScoredAtIso: '2026-08-08T00:00:00.000Z', launchesPerDay: 0.5 }, flow))
+      .toBe(0.5);
+    // And it saturates: forty days at half a launch a day is twenty windows of flow, of which a
+    // visit reaches ten.
+    expect(newGroundWindows({ lastScoredAtIso: '2026-06-30T00:00:00.000Z', launchesPerDay: 0.5 }, flow))
+      .toBe(WINDOW_CAP);
+
+    // WITH NO TEMPO READABLE ANYWHERE the rule degenerates to exactly 336a's — every row saturated,
+    // every flow comparison a tie, recency deciding. That is what lets the block above use the live
+    // selector as its round-robin baseline instead of a second comparator that merely agrees with
+    // the superseded one, which is the drift this repo keeps paying for.
+    const rotation = emptyRotation();
+    markScored(rotation, 'OLD', '2026-08-01T00:00:00.000Z');
+    markScored(rotation, 'NEWER', '2026-08-07T00:00:00.000Z');
+    const blind = selectForScoring(rotation, ['NEWER', 'OLD'], 1, { ...flow, launchesPerDay: {} });
+    expect(blind.selected).toEqual(['OLD']);
+    // And the same population WITH tempo reverses it, because NEWER has the ground and OLD does not.
+    const seeing = selectForScoring(rotation, ['NEWER', 'OLD'], 1, {
+      ...flow,
+      launchesPerDay: { NEWER: 4, OLD: 0.01 },
+    });
+    expect(seeing.selected).toEqual(['NEWER']);
+  });
+
+  it('the KEY is re-derivable from the row, and verifySelection names the row that lied', () => {
+    // Schema 20's guarantee is that the selection is re-derivable from the record ALONE, and it is
+    // only as good as the record carrying every input the ranking used. Replaying the comparator
+    // checks that a run obeyed the numbers it wrote down; re-deriving the key from the tempo checks
+    // that those numbers were the right ones, which is the difference between an audit and a
+    // self-report.
+    const nowIso = '2026-08-09T00:00:00.000Z';
+    const expectedInputs = { nowIso, windowCap: WINDOW_CAP };
+    const rotation = emptyRotation();
+    markScored(rotation, 'A', '2026-08-07T00:00:00.000Z');
+    markScored(rotation, 'B', '2026-08-05T00:00:00.000Z');
+    const sel = selectForScoring(rotation, ['A', 'B', 'C'], 2, {
+      ...expectedInputs,
+      launchesPerDay: { A: 3, B: 0.25 },
+    });
+    // C has never been scored and leads; then A (2 days at 3/day = 6 windows) ahead of B (4 days at
+    // 0.25/day = 1), which recency alone would have put first.
+    expect(sel.order.map((r) => r.wallet)).toEqual(['C', 'A', 'B']);
+    expect(sel.order.map((r) => r.newGroundWindows)).toEqual([WINDOW_CAP, 6, 1]);
+    expect(verifySelection(sel, 2, expectedInputs)).toEqual({ ok: true, problems: [] });
+
+    // A ROW WHOSE KEY DOES NOT FOLLOW FROM ITS OWN TEMPO IS CAUGHT, and the message names it and
+    // both halves of the disagreement rather than returning a bare false.
+    const tamperedRow = { ...sel, order: [sel.order[0]!, { ...sel.order[1]!, newGroundWindows: 9 }, sel.order[2]!] };
+    const caught = verifySelection(tamperedRow, 2, expectedInputs);
+    expect(caught.ok).toBe(false);
+    expect(caught.problems.join(' ')).toContain('A states newGroundWindows 9');
+    expect(caught.problems.join(' ')).toContain('give 6');
+    // Without the two extra inputs the same tampered block still passes the ORDER check, which is
+    // exactly why the deeper check exists and is worth handing the inputs to.
+    expect(verifySelection(tamperedRow, 2).ok).toBe(true);
+  });
+
+  it('a PRE-399a order still verifies, because a missing key is not zero flow', () => {
+    // Records at schema 22 and below carry `order` rows with no flow term at all, and they were
+    // ranked by a rule that had none. Scoring the absence as zero would report every one of them as
+    // having ranked its own survivors wrongly — the same reading error one measurement over that
+    // makes an unreadable mayhem flag a non-mayhem launch.
+    const legacy = {
+      order: [
+        { wallet: 'A', lastScoredAtIso: null, timesScored: 0 },
+        { wallet: 'B', lastScoredAtIso: '2026-08-01T00:00:00.000Z', timesScored: 1 },
+        { wallet: 'C', lastScoredAtIso: '2026-08-04T00:00:00.000Z', timesScored: 2 },
+      ],
+      selected: ['A', 'B'],
+      deferred: ['C'],
+    } as unknown as Parameters<typeof verifySelection>[0];
+    expect(verifySelection(legacy, 2)).toEqual({ ok: true, problems: [] });
+    // And a legacy order that breaks 336a's OWN rule is still caught, so the tolerance is confined
+    // to the clause those records never had.
+    const broken = {
+      ...legacy,
+      order: [legacy.order[0]!, legacy.order[2]!, legacy.order[1]!],
+      selected: ['A', 'C'],
+      deferred: ['B'],
+    };
+    expect(verifySelection(broken, 2).ok).toBe(false);
+  });
+
+  it('399a moved NONE of the three factors of Stage 2’s keyless ceiling', () => {
+    // THE COST CONDITION, and it is checkable rather than asserted. The ceiling is
+    // `maxCandidatesScored x maxLaunchesPerCandidate x maxRequestsPerLaunch`; this lane changes
+    // WHICH survivors the first of those is spent on and touches none of the three, so the keyless
+    // traffic a run can issue is byte-identical. A flow-weighted allocation that bought its harvest
+    // by widening any of them would be a spend increase wearing an allocation change.
+    const s2 = loadThresholds()['stage2_entry'];
+    expect(s2.maxCandidatesScored).toBe(7);
+    expect(s2.maxLaunchesPerCandidate).toBe(10);
+    expect(s2.maxRequestsPerLaunch).toBe(18);
+    expect(s2.maxKeylessRequests).toBe(
+      s2.maxCandidatesScored * s2.maxLaunchesPerCandidate * s2.maxRequestsPerLaunch,
+    );
+
+    // AND THE NEVER-SCORED GROUND IS EXACT RATHER THAN APPROXIMATE, which is what this inequality
+    // buys. A survivor that has never been scored is credited with a full visit's worth because it
+    // has at least `minTokens` launches to offer and that floor sits above the per-visit cap. A
+    // lane lowering the floor below the cap — captain decision 337a proposes 25 -> 15, which still
+    // clears it — is told here rather than left with a key that quietly overstates a small wallet.
+    expect(loadThresholds()['stage1_gate'].minTokens).toBeGreaterThanOrEqual(s2.maxLaunchesPerCandidate);
   });
 });
 
@@ -16589,7 +16939,18 @@ describe('the rotation reaches the RUN, and a run stays reproducible given its s
     expect(a['stateDigestBefore']).toBe(digestOf(priorText));
     expect(b['stateDigestBefore']).toBe(a['stateDigestBefore']);
     expect(a['selected']).toEqual(b['selected']);
-    expect(a['order']).toEqual(b['order']);
+    // THE RANKING IS A FUNCTION OF THE STATE **AND THE RUN'S OWN INSTANT** SINCE CAPTAIN DECISION
+    // 399a, and that is a real change to what "reproducible given its state" means rather than a
+    // wrinkle in this test. `newGroundWindows` is a tempo times the time waited, so two runs
+    // milliseconds apart legitimately compute different keys for the same measured wallet — the
+    // ground genuinely grew between them. What is invariant is everything the state decides: the
+    // rows, their order, and the tempo each was ranked on. And the instant is not lost — the record
+    // carries it as `startedAtIso`, which is exactly what makes the key re-derivable below.
+    const stateDecided = (rows: Record<string, any>[]) =>
+      rows.map(({ wallet, lastScoredAtIso, timesScored, launchesPerDay }) => ({
+        wallet, lastScoredAtIso, timesScored, launchesPerDay,
+      }));
+    expect(stateDecided(a['order'])).toEqual(stateDecided(b['order']));
     // The state said WALLETS[0] was measured, so neither run may pick it again while three
     // never-scored survivors remain.
     expect(a['selected']).toEqual([WALLETS[1]]);
@@ -16603,6 +16964,17 @@ describe('the rotation reaches the RUN, and a run stays reproducible given its s
         .filter((c) => c['entry'] !== null)
         .map((c) => c['wallet']);
       expect(scored.sort()).toEqual([...(rec['scoringRotation'] as Record<string, any>)['selected']].sort());
+      // AND EACH RECORD RE-DERIVES ITS OWN FLOW TERM, from its own instant and its own recorded
+      // window cap — the half of criterion 3 that captain decision 399a added. Without it a reader
+      // can check that a run obeyed the numbers it wrote down and not that those numbers were the
+      // right ones, which is the whole difference between an audit and a self-report.
+      const rot = rec['scoringRotation'] as Record<string, any>;
+      expect(
+        verifySelection(rot as never, (rec['scoringCap'] as { max: number }).max, {
+          nowIso: rec['startedAtIso'] as string,
+          windowCap: rot['windowCap'] as number,
+        }),
+      ).toEqual({ ok: true, problems: [] });
     }
     // The bytes each wrote differ only in the run instant they stamp, so the state a run leaves is a
     // function of the state before it and the wallets it scored — not of anything else it saw.

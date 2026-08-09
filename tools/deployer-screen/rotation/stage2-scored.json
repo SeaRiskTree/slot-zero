@@ -2,7 +2,7 @@
   "tool": "deployer-screen-stage2-rotation",
   "schemaVersion": 1,
   "updatedAtIso": "2026-08-04T10:49:14.147Z",
-  "reproducibility": "ROTATION STATE IS COMMITTED EVIDENCE: this run scored the least-recently-scored survivors, so its output depends on every run before it. The run record names the state it read (path, schema version, SHA-256 before and after) and carries the whole ranked order, so the selection is re-derivable from committed artefacts alone — rotation.mjs -> verifySelection.",
+  "reproducibility": "ROTATION STATE IS COMMITTED EVIDENCE: this run spent its scoring cap where a visit covers the most NEW GROUND — remaining unharvested launch flow, saturating at the per-visit window cap, with least-recently-scored breaking ties — so its output depends on every run before it. The run record names the state it read (path, schema version, SHA-256 before and after) and carries the whole ranked order with the flow term on every row, so the selection is re-derivable from committed artefacts alone — rotation.mjs -> verifySelection.",
   "wallets": {
     "2N7qg9a3N6DXgDBXvgZ5JGnXvxUnX1YhBEC5Y7waqxmi": {
       "wallet": "2N7qg9a3N6DXgDBXvgZ5JGnXvxUnX1YhBEC5Y7waqxmi",

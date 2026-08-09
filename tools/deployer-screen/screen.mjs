@@ -103,10 +103,12 @@ import {
 } from './entry-agreement.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import {
+  NEW_GROUND_RULE,
   REPRODUCIBILITY_RULE,
   ROTATION_SCHEMA_VERSION,
   digestOf,
   importScoredFromRunRecords,
+  launchesPerDayOf,
   ledgerRunRecords,
   loadRotation,
   markScored,
@@ -1084,10 +1086,14 @@ OPTIONS
                       record.mjs -> readPredictions for the shape and what each field must say.
   --rotation <path>   Stage 2's rotation memory — which survivors this screen has already spent its
                       scoring cap on. Default tools/deployer-screen/rotation/stage2-scored.json.
-                      Captain decision 336a: the cap scores the LEAST-RECENTLY-SCORED survivors, so
-                      successive runs cycle through the population instead of re-measuring the same
-                      head of the list every day. Written after the run, and only for the wallets it
-                      actually scored. It costs nothing in any currency.
+                      Captain decision 336a: the cap cycles through the population instead of
+                      re-measuring the same head of the list every day. Captain decision 399a: it
+                      goes where a visit covers the most NEW GROUND — launch flow times time waited,
+                      capped at maxLaunchesPerCandidate — with never-scored first and
+                      LEAST-RECENTLY-SCORED breaking ties, because a round robin gives every
+                      survivor the same visits whatever its tempo and strands the tail. Written
+                      after the run, and only for the wallets it actually scored. It costs nothing
+                      in any currency.
   --runs-dir <path>   Committed run records the rotation is rebuilt from, offline and free, on every
                       run. Default tools/deployer-screen/runs. A wallet a committed record shows an
                       entry score for has already had the cap spent on it, so a lost or hand-deleted
@@ -2909,23 +2915,43 @@ export async function main(opts, env, out, err, seam = {}) {
     // 144a's defect, and it is what let the construction sit outside this guard in the first place.
     if (entrySourcePlan !== null) {
       const survivors = candidates.filter((c) => c.verdict === 'gate-passed');
-      // **WHICH survivors the cap is spent on — captain decision 336a.** It used to be
+      // **WHICH survivors the cap is spent on — captain decisions 336a and 399a.** It used to be
       // `survivors.slice(0, maxScored)`: the first seven in `mergeSeeds` order, which is
       // deterministic, so a daily run re-measured the same seven every day while the median
-      // survivor needs ~21.5 days for its windows to refresh. Now the cap goes to the
-      // least-recently-scored, and the population cycles.
+      // survivor needs ~21.5 days for its windows to refresh. 336a made the cap cycle by recency;
+      // 399a spends it where a visit covers the most NEW GROUND, because a round robin gives every
+      // survivor the same number of visits whatever its launch tempo and that strands the tail.
       //
-      // `maxScored` itself does not move — captain decision 339a keeps the capacity at 7 per run.
-      // This changes WHICH seven and nothing else, so `scoringTruncatedBy` still counts survivors
-      // the cap left unscored and still means what it always did.
+      // `maxScored` itself does not move — captain decision 339a keeps the capacity at 7 per run,
+      // and neither does `maxLaunchesPerCandidate` or `maxRequestsPerLaunch`, so Stage 2's keyless
+      // ceiling is untouched by both decisions. They change WHICH seven and nothing else, so
+      // `scoringTruncatedBy` still counts survivors the cap left unscored and still means what it
+      // always did.
       //
-      // With no state the ranking IS `survivors`' own order, so the first run after this change is
-      // byte-identical to the slice it replaced — and `--no-rotation` keeps that reachable forever.
+      // With no state every row is never-scored and saturated, so the ranking IS `survivors`' own
+      // order and the first run after either change is byte-identical to the slice it replaced —
+      // and `--no-rotation` keeps that reachable forever.
       if (rotationRead !== null) {
         rotationSelection = selectForScoring(
           rotationRead.rotation,
           survivors.map((c) => c.wallet),
           maxScored,
+          {
+            // The run's own instant, so the ground a row is ranked on and the instant `markScored`
+            // stamps on it afterwards are one clock rather than two readings of `Date.now()`.
+            nowIso: startedAtIso,
+            // The recipe THIS run applies, which is also the block it files — so the cap a reader
+            // hands `verifySelection` off the record is the cap the ranking used. Reaching for the
+            // pinned `stage2_entry` here instead would be a second derivation of a value the run
+            // already resolved, and would disagree the moment a source-scoped recipe is selected.
+            windowCap: entryThresholds.maxLaunchesPerCandidate,
+            // THE TEMPO IS THE GATE'S OWN READING, not a second measurement — `completion` is the
+            // history this candidate was judged on, so `historySource` names its provenance and its
+            // limits travel with it. A survivor the gate could not measure is not here at all.
+            launchesPerDay: Object.fromEntries(
+              survivors.map((c) => [c.wallet, launchesPerDayOf(c.completion)]),
+            ),
+          },
         );
       }
       const order =
@@ -3207,7 +3233,16 @@ export async function main(opts, env, out, err, seam = {}) {
       // selection re-derivable from the record ALONE: `rotation.mjs` → `verifySelection` replays the
       // ranking rule over these rows and checks that `selected` is its first `maxScored`. A block
       // carrying only the chosen wallets would name a state file and prove nothing.
+      //
+      // Since captain decision 399a each row also carries the flow term the ranking read and the
+      // tempo it was derived from, so the rule's INPUTS are in the record and not only its output.
       order: rotationSelection?.order ?? [],
+      // The saturation ceiling the flow term was computed at — `stage2_entry.maxLaunchesPerCandidate`
+      // as THIS run resolved it. Recorded on the block rather than left to be looked up from the
+      // filed recipe, so `verifySelection` can re-derive every row's key from the block plus the
+      // run's own `startedAtIso` and nothing else. `null` when no selection was made.
+      windowCap: rotationSelection === null ? null : entryThresholds.maxLaunchesPerCandidate,
+      newGroundRule: NEW_GROUND_RULE,
       reproducibility: REPRODUCIBILITY_RULE,
     };
   }

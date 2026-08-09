@@ -1128,8 +1128,11 @@ dev currently?"*, and the shape of the answer is the point:
   which is a function of the candidate count or source. A malformed entry, a two-token line, a
   duplicate or an empty list refuses the run naming every bad line, before Stage 0, and uses none of
   the file. `tools/deployer-screen/README.md` → "The vendor gatekeeps ENUMERATION, not measurement"
-  owns the long form; **the flow-weighted allocation (399a) and the chain-wide enumeration that
-  would PRODUCE lists (350a) are separate lanes and `rotation.mjs`'s comparator is untouched.**
+  owns the long form. **The flow-weighted allocation (399a) has since LANDED and is its own section
+  below** — 398a left `rotation.mjs`'s comparator untouched and 399a is what moved it; the two are
+  the pair that clears the 1,000 floor, and neither does alone. **The chain-wide enumeration that
+  would PRODUCE lists (350a) is still a separate lane**, and `feed.mjs` still neither writes a list
+  nor is read by `screen.mjs`.
 - **Stage 1 ENUMERATES on Dune** (keyed, free tier — which mints the wallet created, with the RPC
   walk as fallback) and **GATES on competence** (keyed, MadeOnSol). **Stage 2 SCORES ENTRY** (keyless): room in
   the opening window, what every *other* sniping wallet there achieved, and — since the captain's
@@ -1683,22 +1686,55 @@ dev currently?"*, and the shape of the answer is the point:
   postdictions is that the document is committed in its own commit ahead of the run, exactly as
   `thresholds.json` is — the record cannot prove that and does not claim to.
 
-## Stage 2 scoring has a MEMORY now, and what that traded
+## Stage 2 scoring has a MEMORY now, and it is allocated by FLOW
 
 `tools/deployer-screen/rotation.mjs`, state at `tools/deployer-screen/rotation/stage2-scored.json`,
-record block `scoringRotation` at **schema 20**. Method, rule and consequences in
-`tools/deployer-screen/README.md` → "WHICH survivors the cap is spent on"; the module's own doc owns
-the argument. Captain decision **336a**, and four things bind any lane that touches Stage 2:
+record block `scoringRotation` at **schema 20**, its flow term at **schema 23**. Method, rule and
+consequences in `tools/deployer-screen/README.md` → "WHICH survivors the cap is spent on"; the
+module's own doc owns the argument. Captain decisions **336a** and **399a**, and six things bind any
+lane that touches Stage 2:
 
-- **The cap goes to the LEAST-RECENTLY-SCORED survivors, and it used to go to the head of the
+- **The cap goes where a visit covers the most NEW GROUND, and it used to go to the head of the
   list.** `survivors.slice(0, maxScored)` over a deterministic `mergeSeeds` order meant a daily run
   re-measured the same seven wallets every day, while the median survivor needs ~21.5 days for its
   ten windows to refresh and **0 of 27** refresh within a day — ~168 distinct windows a month
-  against ~2,571 of supply, against a floor of 1,000. **It is not a capacity change**:
-  `maxCandidatesScored` stays 7 (captain decision **339a**; raising it moves the scoring cap and the
-  request budget together and is a separate decision), and no Stage 1 bar moved (loosening the
-  minimum-launches bar is **337a**, its own lane). It costs **zero in every currency** — one local
-  file plus the committed run records, no vendor.
+  against ~2,571 of supply, against a floor of 1,000. 336a made it cycle by recency; **399a
+  re-allocated it by launch flow, because a round robin gives every survivor the same number of
+  visits whatever its tempo and that strands the tail** — over the 58 census July gate-passers the
+  same 210 monthly scorings harvest **1,067** windows round-robin against **1,963** by flow, 17 of
+  the 58 launching more than the 36.2-window round-robin allowance and stranding 935 between them,
+  and full harvest needing 231 visits against 210 available (only 10% oversubscribed, so the loss is
+  ALLOCATION and not capacity). Worth **590 → 1,085** usable windows a month on top of `--wallets`
+  (398a); **neither clears the captain's 1,000 floor alone.** **Neither decision is a capacity
+  change**: `maxCandidatesScored` stays 7 (captain decision **339a**; raising it moves the scoring
+  cap and the request budget together and is a separate decision), `maxLaunchesPerCandidate` and
+  `maxRequestsPerLaunch` stay 10 and 18 so **Stage 2's keyless ceiling — their product — never
+  moved**, and no Stage 1 bar moved (loosening the minimum-launches bar is **337a** and letting the
+  room bound emit `entry-room-absent` is **343a**; both are required headroom under **400a** and both
+  are their own lanes, not this one). It costs **zero in every currency** — one local file plus the
+  committed run records, no vendor, and the tempo is a field the gate already measured.
+- **THE RANK KEY SATURATES, AND THAT IS WHAT STOPS GREED PARKING A LOW-FLOW WALLET.** `rotation.mjs`
+  → `newGroundWindows` is `launchesPerDay × days waited`, capped at `maxLaunchesPerCandidate` —
+  ground beyond what one visit reaches is not ground this visit covers. So a low-flow wallet's key
+  RISES every day and saturates after `windowCap / launchesPerDay` days, which is exactly how long
+  that wallet takes to produce a full visit's worth of new launches; once saturated it ties on flow
+  and 336a's least-recently-scored tiebreak is a strict FIFO, so the set ahead of it only shrinks.
+  Every gate survivor has a strictly positive tempo by construction (`minTokens` launches over a
+  finite span, and a test pins `minTokens >= maxLaunchesPerCandidate` so the never-scored key stays
+  exact), so **every survivor saturates in bounded time**. A never-scored survivor ranks first
+  whatever anyone's flow, and an **UNREADABLE tempo is SATURATED, never zero** — reading absence as
+  no flow would park a wallet permanently and invisibly on OUR coverage. **With no tempo readable
+  anywhere the rule degenerates to exactly 336a's**, which is how the superseded allocation stays
+  testable through production code with no second comparator to drift from the live one.
+- **TWO COSTS THE CAPTAIN ACCEPTED KNOWINGLY, and neither may be presented as free.** (1) It is a
+  **selection-quality trade**: visiting the highest-tempo wallets most often concentrates the cap on
+  the busiest launches, which `stage2_entry.justification.maxLaunchesPerCandidate` already records
+  the request cap dropping most often, and the one stranger leg on record read a **0.1333** usable
+  fraction. (2) The tempo is **LIFETIME**, so a wallet that has gone quiet is still visited on it —
+  clamping by last deploy would park a dormant wallet, which is the starvation the saturation ceiling
+  exists to prevent. **AND THE USABLE FRACTION MUST BE RE-MEASURED ON THE WIDENED POPULATION BEFORE
+  ANYTHING ELSE ON THIS LADDER IS SIZED**: it swung from **0.1333 to 0.90** across our own runs, and
+  at the low end nothing here clears the 1,000 floor. Do not size from the pooled figure.
 - **THE SCREEN IS NO LONGER STATELESS AND REPRODUCIBILITY IS PRESERVED ANOTHER WAY — that condition
   is an acceptance criterion, not a nicety.** A rotation that cannot be reproduced from committed
   evidence is not acceptable here. Three things pay for it and all three must survive any edit: the
@@ -1708,13 +1744,22 @@ the argument. Captain decision **336a**, and four things bind any lane that touc
   `stateDigestBefore`/`stateDigestAfter`, so **run N's `after` is run N+1's `before`**; and the block
   carries the WHOLE ranked `order` rather than the slice, so `rotation.mjs` → `verifySelection`
   re-derives the selection from the record ALONE. Selector and verifier share one comparator
-  (`compareRotationRows`) — do not give the verifier its own.
-- **With no state the ranking IS the survivor list's own order**, so the first run after this landed
-  is byte-identical to the slice it replaced, and `--no-rotation` keeps that reachable. Rotation off
-  is a recorded STATE (`enabled: false` plus a `reason`), never the block's absence, so a stateless
-  run can never be read as a rotated one that happened to repeat. **On a schema-≤19 record the
-  block's absence means the head of the list was taken** — two such records scoring the same wallets
-  say nothing about those wallets.
+  (`compareRotationRows`) — do not give the verifier its own. **399a's flow term is subject to that
+  condition rather than exempt from it**: a comparator reading anything the record does not carry
+  breaks the contract, so schema 23 puts `launchesPerDay` AND the `newGroundWindows` it produced on
+  every `order` row and `windowCap` on the block, and `verifySelection` re-derives the key from the
+  tempo when handed the run's own `startedAtIso` and that cap. **A schema-≤22 row carries neither key
+  and its absence is read as *this row states no flow term*, never as zero flow**, so a pre-399a
+  record still verifies by 336a's own rule.
+- **With no state every row is never-scored and saturated, so the ranking IS the survivor list's own
+  order**, and the first run after either decision landed is byte-identical to the slice it replaced;
+  `--no-rotation` keeps that reachable. Rotation off is a recorded STATE (`enabled: false` plus a
+  `reason`), never the block's absence, so a stateless run can never be read as a rotated one that
+  happened to repeat. **On a schema-≤19 record the block's absence means the head of the list was
+  taken** — two such records scoring the same wallets say nothing about those wallets — and **two
+  schema-≤22 records scoring the same wallets do not mean what two schema-23 ones do**, since from 23
+  the wallet list also says which have the most unharvested flow, so a rate over "wallets this tool
+  scored" is drawn from a differently-weighted sample either side.
 - **An UNMEASURED verdict advances the rotation** (it consumed the cap and the keyless walk), and a
   survivor set that SHRANK keeps its rows unread so a wallet that drops out and returns resumes its
   place instead of jumping the queue as a stranger. Neither breaches 174b: nobody is dropped and the

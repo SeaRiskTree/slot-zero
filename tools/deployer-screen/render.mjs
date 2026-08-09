@@ -2033,10 +2033,16 @@ export function renderDryRun(plan) {
  * condition and it rides on this block for the same reason `LANDING_TIP_CAVEAT` rides on a cost: a
  * caveat that lives only in a document is one a reader of the number never sees.
  *
+ * Since captain decision 399a it also names the RULE the cap was allocated by and what that
+ * allocation bought — the ground the chosen wallets cover against the ground the deferred ones do.
+ * An operator who can see only the wallet list cannot tell a flow-weighted selection from a
+ * round-robin one, and the two are the same list on a first run by design.
+ *
  * @param {{ enabled: boolean, reason: string | null, statePath: string | null,
  *   stateDigestBefore: string | null, survivors: number, selected: readonly string[],
  *   deferred: readonly string[], neverScoredBefore: number, importedFromRunRecords: number,
- *   reproducibility: string }} block
+ *   order?: readonly import('./rotation.mjs').RotationRow[], windowCap?: number | null,
+ *   newGroundRule?: string, reproducibility: string }} block
  * @param {string} indent
  * @returns {string[]}
  */
@@ -2057,17 +2063,56 @@ export function renderRotation(block, indent) {
   }
   /** @type {string[]} */
   const lines = [
-    `${indent}ROTATION: least-recently-scored first — ${block.selected.length} scored, ` +
-      `${block.deferred.length} deferred to a later run, of ${block.survivors} survivor(s); ` +
-      `${block.neverScoredBefore} had never been scored.`,
+    `${indent}ROTATION: most new ground first, least-recently-scored breaking ties — ` +
+      `${block.selected.length} scored, ${block.deferred.length} deferred to a later run, of ` +
+      `${block.survivors} survivor(s); ${block.neverScoredBefore} had never been scored.`,
     `${indent}  state ${block.statePath ?? '(none)'} @ ${block.stateDigestBefore ?? 'NO PRIOR STATE — first run'}`,
   ];
+  const ground = rotationGround(block);
+  if (ground !== null) {
+    lines.push(
+      `${indent}  new ground: ${ground.selected.toFixed(1)} window(s) reachable across the ` +
+        `${block.selected.length} scored, against ${ground.deferred.toFixed(1)} left on the ` +
+        `${block.deferred.length} deferred; each visit saturates at ${ground.cap} window(s), and ` +
+        `${ground.saturated} of ${ground.rows} survivor(s) are already there.`,
+    );
+  }
   if (block.importedFromRunRecords > 0) {
     lines.push(
       `${indent}  ${block.importedFromRunRecords} wallet(s) recovered from committed run records — ` +
         `already scored there, so the cap is not spent on them again.`,
     );
   }
+  if (block.newGroundRule !== undefined) lines.push(`${indent}  ${block.newGroundRule}`);
   lines.push(`${indent}  ${block.reproducibility}`);
   return lines;
+}
+
+/**
+ * What the allocation bought, from the ranked order the block carries.
+ *
+ * `null` for a block with no order or no window cap — a pre-399a record, or a caller that renders
+ * the header before a selection exists. A blank rather than a zero, for the reason
+ * `eligibilityUnavailableNote` exists: a zero here would read as "this run reached no new ground",
+ * which is a measurement, and there is none.
+ *
+ * @param {{ selected: readonly string[],
+ *   order?: readonly import('./rotation.mjs').RotationRow[], windowCap?: number | null }} block
+ * @returns {{ selected: number, deferred: number, cap: number, saturated: number, rows: number } | null}
+ */
+function rotationGround(block) {
+  const order = block.order;
+  const cap = block.windowCap;
+  if (order === undefined || order.length === 0 || typeof cap !== 'number') return null;
+  const chosen = new Set(block.selected);
+  let selected = 0;
+  let deferred = 0;
+  let saturated = 0;
+  for (const row of order) {
+    const g = typeof row.newGroundWindows === 'number' ? row.newGroundWindows : 0;
+    if (chosen.has(row.wallet)) selected += g;
+    else deferred += g;
+    if (g >= cap) saturated += 1;
+  }
+  return { selected, deferred, cap, saturated, rows: order.length };
 }

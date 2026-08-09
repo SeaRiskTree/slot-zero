@@ -693,8 +693,43 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   are per candidate and unchanged, Stage 2's keyless ceiling is `maxCandidatesScored ×
  *   maxLaunchesPerCandidate × maxRequestsPerLaunch` and none of those three moved, and no Dune
  *   execution or Helius credit is spent that a seeded run would not spend.
+ *
+ * - **23** — **THE SCORING CAP IS ALLOCATED BY LAUNCH FLOW, not by recency alone** (captain decision
+ *   399a, 2026-08-09). NO new candidate row key and no new block. TWO new keys on the
+ *   `scoringRotation` block — `windowCap` and `newGroundRule` — and TWO new keys on every row of its
+ *   `order`: `launchesPerDay` and `newGroundWindows`. `ENTRY_KEYS_BY_SCHEMA[23]`,
+ *   `ENTRY_COVERAGE_KEYS_BY_SCHEMA[23]`, `SPEND_KEYS_BY_SCHEMA[23]`, `DUNE_KEYS_BY_SCHEMA[23]` and
+ *   `CREATION_KEYS_BY_SCHEMA[23]` all equal `[22]`, and **no measured quantity moves**: a schema-22
+ *   `completionRate`, `entry` block or `spend` figure and a schema-23 one are the same quantities
+ *   and may be pooled.
+ *
+ *   **Why it needs a version.** Schema 20 made the selection re-derivable from the record alone, and
+ *   that guarantee is only as good as the record carrying everything the comparator reads. 399a's
+ *   comparator reads a flow term, so the record has to carry it — `launchesPerDay` (the survivor's
+ *   launch tempo on the reading THE GATE read, `completion.tokens / completion.spanDays`) and
+ *   `newGroundWindows` (that tempo times the days waited, saturating at `windowCap`). A schema-22
+ *   record's `order` rows carry neither, and `rotation.mjs` → `compareRotationRows` reads their
+ *   absence as *this row states no flow term* rather than as zero flow, so `verifySelection` still
+ *   passes on a pre-399a record by 336a's own recency rule. **`windowCap` is on the block rather
+ *   than looked up from the filed recipe** so a reader can re-derive every row's key from the block
+ *   plus the run's `startedAtIso` and nothing else.
+ *
+ *   **The one that will bite a reader: two schema-≤22 records scoring the same wallets, and two
+ *   schema-23 ones, do not mean the same thing.** Before this version the cap was a round robin, so
+ *   which wallets a run scored says only how long ago each was last seen; from 23 it also says which
+ *   have the most unharvested launch flow. A rate computed over "wallets this tool scored" is
+ *   therefore drawn from a differently-weighted sample either side of the boundary — deliberately
+ *   weighted towards the busiest deployers, which is the selection-quality cost captain decision
+ *   399a accepted knowingly and which `rotation.mjs`'s module comment states in full.
+ *
+ *   **What it does NOT change.** `maxCandidatesScored` stays 7 (captain decision 339a),
+ *   `maxLaunchesPerCandidate` stays 10 and `maxRequestsPerLaunch` stays 18, so Stage 2's keyless
+ *   ceiling — their product — is untouched and no threshold moved at all. It costs zero in every
+ *   currency: no vendor is reached, the tempo is a field the gate already measured, and the ranking
+ *   is arithmetic over one local file. Every clause of schema 20's reproducibility contract holds
+ *   unchanged, including that `enabled: false` is a state rather than the block's absence.
  */
-export const RECORD_SCHEMA_VERSION = 22;
+export const RECORD_SCHEMA_VERSION = 23;
 
 /**
  * The predictions-document contract version, carried inside the document itself.

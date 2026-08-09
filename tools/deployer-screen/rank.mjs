@@ -107,6 +107,19 @@ export function applyGate(input, t) {
         `(captain decision 351)`
       : '';
 
+  // The emptied-denominator sentence, in the one wording both bars below use. It claims only what
+  // the measurement supports: `measureCompletion` drops a launch with no usable deploy time BEFORE
+  // the mayhem filter, so a non-mayhem launch can have left this reading for an unrelated reason
+  // and "every launch is mayhem" would be false about it. Both sentences are persisted on the
+  // candidate row and this repo never retro-edits a record, so an overstatement there is permanent.
+  const emptiedByMayhem =
+    `the competence measure was left with no non-mayhem launch to read: ` +
+    `${completion.mayhemExcluded} launch(es) carry pump.fun's mayhem-mode flag` +
+    (completion.droppedNoTimestamp > 0
+      ? `, and a further ${completion.droppedNoTimestamp} had no usable deploy time and are NOT ` +
+        `part of that count`
+      : '');
+
   if (completion.tokens < t.minTokens) {
     // A zero has to name the party it actually came from. Under the creation-derived reading the
     // vendor can have listed plenty — the merge is what produced the zero — and blaming the vendor
@@ -115,8 +128,7 @@ export function applyGate(input, t) {
     // tokens". The mayhem exclusion is a THIRD party that can produce the same zero, and it takes
     // precedence when it applies, for the same reason: it is where the launches actually went.
     const zeroBlame = competenceEmptiedByMayhem(completion)
-      ? ' (every launch in this history carries the mayhem-mode flag, so there is no non-mayhem ' +
-        'record to read — an ABSENT measurement, not a rate of 0)'
+      ? ` (${emptiedByMayhem} — an ABSENT measurement, not a rate of 0)`
       : input.historySource === 'creation-derived'
         ? ' (the creation-derived history came out empty — see this candidate\'s `creation` block ' +
           'for what the walk covered and what the merge did with the ownership listing)'
@@ -130,9 +142,8 @@ export function applyGate(input, t) {
   if (!Number.isFinite(completion.rate)) {
     reasons.push(
       competenceEmptiedByMayhem(completion)
-        ? 'completion rate is undefined (every launch is mayhem-mode, so the competence measure ' +
-          'has no record to read — captain decision 351; this is NOT a rate of 0 and NOT a ' +
-          'rejection, see the verdict)'
+        ? `completion rate is undefined (${emptiedByMayhem} — captain decision 351; this is NOT a ` +
+          `rate of 0 and NOT a rejection, see the verdict)`
         : 'completion rate is undefined (no usable token records)',
     );
   } else if (completion.rate < t.minCompletionRate) {

@@ -4162,8 +4162,9 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
       { deployedAtMs: T0 + DAY, completed: true, mayhem: true },
     ]);
     expect(mayhemOnly.droppedNoTimestamp).toBe(0);
+    const mayhemOnlyGate = applyGate({ completion: mayhemOnly }, GATE);
     const mayhemOnlySentence = verdictFor({
-      gate: applyGate({ completion: mayhemOnly }, GATE),
+      gate: mayhemOnlyGate,
       completion: mayhemOnly,
       capped: false,
     });
@@ -4185,14 +4186,32 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
     expect(alsoDropped.droppedNoTimestamp).toBe(2);
     // The verdict does not move — unmeasured is right in both — and the predicate is untouched.
     expect(competenceEmptiedByMayhem(alsoDropped)).toBe(true);
+    const droppedGate = applyGate({ completion: alsoDropped }, GATE);
     const droppedSentence = verdictFor({
-      gate: applyGate({ completion: alsoDropped }, GATE),
+      gate: droppedGate,
       completion: alsoDropped,
       capped: false,
     });
     expect(droppedSentence.verdict).toBe('gate-unmeasured');
     expect(droppedSentence.rationale).toMatch(/2 launch\(es\) in the history this gate read carry/);
     expect(droppedSentence.rationale).toMatch(/a further 2 had no usable deploy time and are NOT part of that count/);
+    // THE GATE'S OWN SENTENCES CARRY THE SAME NARROWED CLAIM. `gate.reasons` is persisted on the
+    // candidate row beside the rationale, so an overstatement there is just as permanent — and it
+    // is a different producer, so asserting only the rationale leaves it uncovered.
+    const mayhemOnlyReasons = mayhemOnlyGate.reasons.join(' ');
+    const droppedReasons = droppedGate.reasons.join(' ');
+    expect(mayhemOnlyReasons).toMatch(/no non-mayhem launch to read: 2 launch\(es\) carry/);
+    expect(mayhemOnlyReasons).not.toMatch(/no usable deploy time/);
+    expect(droppedReasons).toMatch(/no non-mayhem launch to read: 2 launch\(es\) carry/);
+    expect(droppedReasons).toMatch(/a further 2 had no usable deploy time and are NOT part of that count/);
+    for (const r of [mayhemOnlyReasons, droppedReasons]) {
+      // Both bars empty here — the sample-size one and the undefined-rate one — and neither may
+      // claim the flag accounts for everything that left the reading.
+      expect(r).toMatch(/ABSENT measurement, not a rate of 0/);
+      expect(r).toMatch(/NOT a rate of 0 and NOT a rejection/);
+      expect(r).not.toMatch(/every launch/i);
+    }
+
     // And every clause the decision record rests on survives in both.
     for (const r of [mayhemOnlySentence.rationale, droppedSentence.rationale]) {
       expect(r).toMatch(/NOT a rejection and NOT a pass/);

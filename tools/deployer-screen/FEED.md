@@ -234,10 +234,13 @@ So every run reports, in this order — alarm first, then the new count, then th
    the *first* occurrence, never after a streak.
 2. **Every seed inert.** No input at all: check the tier filter, the credential's scope, the vendor.
 3. **Every gated wallet unmeasured.** The profile shape moved — **or the completion criterion could
-   not be read on part of every history** (captain decision 352b), which is a wallet that HAS launch
-   records and still cannot be judged, and points at the vendor's `complete` field rather than at our
-   parser or at a wider source. The message distinguishes the two from the counts; the trigger is the
-   same either way. **The consequence to know before reading this alarm:** one missing or malformed
+   not be read on the records the profile did yield** (captain decision 352b), which is a wallet that
+   HAS launch records and still cannot be judged, and points at the vendor's `complete` field rather
+   than at our parser or at a wider source. **Whether that covered a whole history or part of one is
+   not a third fault** — same field, same remedy — and the count that separates the two is
+   `criterionUnreadable > 0`, never a surviving token count: a wallet whose every record was
+   criterion-unreadable reads `tokens === 0` and is still this fault, not an empty profile. The
+   message distinguishes them from the counts; the trigger is the same either way. **The consequence to know before reading this alarm:** one missing or malformed
    `complete` field anywhere in a candidate's history withholds that candidate's whole verdict
    (`rank.mjs` → `competenceCriterionIncomplete` owns the rule), so were the vendor to stop serving
    `complete` on ungraduated rows, nothing would ever be queued and this lane would report itself DRY

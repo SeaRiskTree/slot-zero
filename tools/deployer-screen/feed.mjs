@@ -751,7 +751,8 @@ export async function main(opts, env, out, err, deps = {}) {
         spanDays: t.completion.spanDays,
         // Carried so the run-level alarm can tell an unparseable profile from a history that HELD
         // launch records and still could not be judged — two different faults with two different
-        // remedies. `ledger.mjs` -> `feedAlarm` owns the distinction.
+        // remedies, and the extent of the second is not a third. `ledger.mjs` -> `feedAlarm` owns
+        // the distinction.
         criterionUnreadable: t.completion.criterionUnreadable,
         // The stored figure, which is measured from FIRST SIGHT of the wallet. Recomputing it
         // against this run's clock would inflate every backlog wallet's lag by its queue latency.
@@ -843,7 +844,7 @@ export async function main(opts, env, out, err, deps = {}) {
       gated: row.gated,
       unmeasured: row.unmeasured,
       unmeasuredWithRecords: gradedThisRun.filter(
-        (g) => g.state === 'unmeasured' && g.criterionUnreadable > 0 && g.tokens > 0,
+        (g) => g.state === 'unmeasured' && g.criterionUnreadable > 0,
       ).length,
     });
 

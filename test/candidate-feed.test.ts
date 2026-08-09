@@ -511,7 +511,7 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
     });
     expect(all.alarmed).toBe(true);
     const allText = all.reasons.join(' ');
-    expect(allText).toMatch(/DID carry readable launch records/);
+    expect(allText).toMatch(/DID carry launch records that parsed/);
     expect(allText).toMatch(/completion criterion \(RAISE-85/);
     expect(allText).toMatch(/'complete'/);
     expect(allText).not.toMatch(/came back with no readable launch record/);
@@ -527,7 +527,7 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
       unmeasuredWithRecords: 2,
     });
     const mixedText = mixed.reasons.join(' ');
-    expect(mixedText).toMatch(/2 DID carry readable launch records/);
+    expect(mixedText).toMatch(/2 DID carry launch records that parsed/);
     expect(mixedText).toMatch(/other 3 carried no readable launch record at all/);
   });
 
@@ -963,6 +963,41 @@ describe('the feed end to end', () => {
     // A reader with no version cannot tell a disarmed run from a record written before the field.
     expect(read(disarmedPath).schemaVersion).toBe(FEED_RECORD_SCHEMA_VERSION);
     expect(FEED_RECORD_SCHEMA_VERSION).toBeGreaterThanOrEqual(2);
+  });
+
+  it('blames the vendor field, not our parser, when every profile parsed and no `complete` did', async () => {
+    // The scenario FEED.md, README.md and `competenceCriterionIncomplete` all name as the tell: the
+    // vendor stops serving `complete`, so every deployer's whole readable history is
+    // criterion-unreadable and lands at `tokens === 0`. The rows PARSED and the deploy times were
+    // fine, so blaming `toTokenRecords` or a wider source sends an operator to the wrong place —
+    // and the alarm reason is persisted in the feed run record, which is never retro-edited.
+    const noFlag = (n: number) => ({
+      pump_tokens: Array.from({ length: n }, (_, i) => ({
+        created_timestamp: T0 - DAY - (n - 1 - i) * 5 * DAY,
+      })),
+    });
+    const outPath = join(dir, 'criterion.json');
+    const { fetchImpl } = vendor(
+      { 'recent-bonds': ['Wa', 'Wb'] },
+      { Wa: noFlag(30), Wb: noFlag(30) },
+    );
+    const code = await main(opts({ gate: 2, out: outPath, json: true }), env, () => {}, () => {}, {
+      fetchImpl,
+      sleepImpl,
+    });
+
+    // The TRIGGER is unchanged: every gated wallet unmeasured still exits 9.
+    expect(code).toBe(9);
+    const record = JSON.parse(readFileSync(outPath, 'utf8')) as {
+      alarm: { alarmed: boolean; reasons: string[] };
+    };
+    expect(record.alarm.alarmed).toBe(true);
+    const text = record.alarm.reasons.join(' ');
+    expect(text).toMatch(/DID carry launch records that parsed/);
+    expect(text).toMatch(/'complete'/);
+    expect(text).not.toMatch(/came back with no readable launch record/);
+    expect(text).not.toMatch(/profile shape having moved/);
+    expect(text).not.toMatch(/toTokenRecords/);
   });
 
   it("the cadence filter's reported cost counts only wallets the gate could still have spent on", async () => {

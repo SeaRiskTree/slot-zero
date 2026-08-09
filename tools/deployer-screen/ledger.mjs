@@ -660,10 +660,14 @@ export const ALL_UNMEASURED_MIN_GATED = 2;
  * @param {number} input.dryStreakAlarm
  * @param {number} [input.gated] Wallets a profile request was spent on this run.
  * @param {number} [input.unmeasured] Of those, the ones the gate could not decide over.
- * @param {number} [input.unmeasuredWithRecords] Of THOSE, the ones whose reading still held launch
- *   records — the criterion-incomplete case captain decision 352b creates, which is a different
- *   fault from an unparseable profile and sends an operator somewhere else. Defaults to 0, i.e. the
- *   pre-352b reading, so a caller that cannot tell the two apart claims only what it knows.
+ * @param {number} [input.unmeasuredWithRecords] Of THOSE, the ones whose profile DID yield launch
+ *   records the completion criterion could not be read on — the case captain decision 352b creates,
+ *   which is a different fault from an unparseable profile and sends an operator somewhere else.
+ *   **Counted on `criterionUnreadable > 0` alone, never on how much of the history it covered**: a
+ *   wallet whose every record was criterion-unreadable reads `tokens === 0` and is exactly this
+ *   fault, so gating on a surviving token count would file it under "no readable launch record" and
+ *   blame the parser for a missing vendor field. Defaults to 0, i.e. the pre-352b reading, so a
+ *   caller that cannot tell the two apart claims only what it knows.
  * @returns {FeedAlarm}
  */
 export function feedAlarm(input) {
@@ -690,10 +694,13 @@ export function feedAlarm(input) {
   const gated = input.gated ?? 0;
   if (gated >= ALL_UNMEASURED_MIN_GATED && (input.unmeasured ?? 0) === gated) {
     // WHICH fault this is comes from the counts, not from the trigger. Since captain decision 352b
-    // a wallet is also unmeasured when the completion criterion could not be read on PART of a
-    // history that plainly holds launch records (`rank.mjs` -> `competenceCriterionIncomplete`), and
-    // that wallet is not an empty profile and is not evidence of a shape move to `toTokenRecords`.
-    // The trigger is unchanged; only the claim and the place it sends an operator are.
+    // a wallet is also unmeasured when the completion criterion could not be read on the records it
+    // DID carry (`rank.mjs` -> `competenceCriterionIncomplete`), and that wallet is not an empty
+    // profile and is not evidence of a shape move to `toTokenRecords`. **Whether the criterion was
+    // unreadable on ALL of a history or on part of it is not a second fault** — same field, same
+    // remedy, different extent — so the sentence names the fault and does not claim an extent it
+    // has not been told. The trigger is unchanged; only the claim and the place it sends an
+    // operator are.
     const withRecords = input.unmeasuredWithRecords ?? 0;
     reasons.push(
       withRecords === 0
@@ -703,15 +710,15 @@ export function feedAlarm(input) {
             `reading a single verdict from this run.`
         : withRecords === gated
           ? `ALL ${gated} wallet(s) gated this run were left UNMEASURED, and every one of them DID ` +
-              `carry readable launch records: the completion criterion (RAISE-85, captain decision ` +
-              `352b) could not be read on part of each history, so no verdict was reached. This is ` +
-              `NOT an empty feed and NOT a case for a wider source — check whether the vendor has ` +
-              `stopped serving 'complete' on some rows, against a live /deployer-hunter/{wallet} ` +
-              `response, before reading a single verdict from this run.`
+              `carry launch records that parsed: the completion criterion (RAISE-85, captain ` +
+              `decision 352b) could not be read on those records, so no verdict was reached. This ` +
+              `is NOT an empty feed, NOT a profile-shape move and NOT a case for a wider source — ` +
+              `check whether the vendor has stopped serving 'complete', against a live ` +
+              `/deployer-hunter/{wallet} response, before reading a single verdict from this run.`
           : `ALL ${gated} wallet(s) gated this run were left UNMEASURED, and they are not one fault: ` +
-              `${withRecords} DID carry readable launch records and were withheld because the ` +
-              `completion criterion (RAISE-85, captain decision 352b) could not be read on part of ` +
-              `the history, while the other ${gated - withRecords} carried no readable launch record ` +
+              `${withRecords} DID carry launch records that parsed and were withheld because the ` +
+              `completion criterion (RAISE-85, captain decision 352b) could not be read on those ` +
+              `records, while the other ${gated - withRecords} carried no readable launch record ` +
               `at all. Check both — the vendor's 'complete' field and measure.mjs -> toTokenRecords ` +
               `— against a live /deployer-hunter/{wallet} response before reading a single verdict ` +
               `from this run.`,

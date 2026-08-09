@@ -16709,6 +16709,65 @@ describe('a supplied wallet list is read whole or refused whole — 398a', () =>
     expect(read.message).toContain('no address at all');
   });
 
+  it('the rendered CANDIDATE LIST block states what was GATED, not the list length again', () => {
+    // THE EARLY-STOP CASE, which is the only one where the two figures differ and the only one
+    // where anybody is misled. A listed run whose gate loop dies — `CeilingReached`, a transport
+    // failure — leaves candidates ungated, and every number on `walletList` still describes the
+    // FILE: `readWalletList` sets `entriesRead = wallets.length`, so both are 58 whatever happened.
+    // The block used to print `58 read, 58 gated` directly above its own RUN STOPPED EARLY banner.
+    const page = (gated: number, completed: boolean) =>
+      renderStage1({
+        candidates: [],
+        keyedRequests: gated,
+        keylessRequests: 0,
+        rpcRequests: 0,
+        rpcLoadShedEvents: 0,
+        historySource: 'creation-derived' as const,
+        elapsedMs: 1000,
+        startedAtIso: '2026-08-09T00:00:00.000Z',
+        completed,
+        truncationReason: completed ? null : 'the keyed request ceiling stopped the gate loop',
+        prefiltered: 0,
+        coverage: {
+          seeds: [],
+          inertSeeds: [],
+          distinctWalletsSeeded: 58,
+          prefilteredOut: 0,
+          worthARequest: 58,
+          candidateCap: 58,
+          droppedByCandidateCap: 0,
+          gated,
+          coverageTruncated: gated < 58,
+        },
+        walletList: {
+          path: 'lists/from-the-census.txt',
+          digest: 'sha256:' + 'a'.repeat(64),
+          label: 'wallet-list:from-the-census.txt',
+          entriesRead: 58,
+          wallets: 58,
+          seedsIssued: 0,
+          isASeed: WALLET_LIST_IS_A_SEED,
+        },
+        thresholds: {},
+      });
+
+    const stopped = page(41, false);
+    // The real figure, and the contrast that makes the shortfall visible from this block alone.
+    expect(stopped).toContain('58 read from the file, 41 gated');
+    expect(stopped).toMatch(/17 SUPPLIED ADDRESS\(ES\) WERE NEVER GATED/);
+    // The lie this replaced must not be reachable at all — not as a fallback, not as a rounding.
+    expect(stopped).not.toContain('58 gated');
+
+    // A complete run reads clean and raises no alarm about a shortfall it does not have.
+    const whole = page(58, true);
+    expect(whole).toContain('58 read from the file, 58 gated');
+    expect(whole).not.toMatch(/WERE NEVER GATED/);
+
+    // And the second figure genuinely tracks `coverage.gated` rather than anything on the list: the
+    // walletList block is byte-identical between the two pages, so only that field can move it.
+    expect(stopped).not.toBe(whole);
+  });
+
   it('a listed candidate carries its source and NO vendor aggregate', () => {
     const listed = toListedCandidates([A, B], walletListLabel('/x/mine.txt'));
     expect(listed.map((c) => c.candidateSource)).toEqual(['wallet-list', 'wallet-list']);

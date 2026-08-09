@@ -208,12 +208,39 @@ export function loadRotation(path) {
 }
 
 /**
+ * One spelling of an instant, or `null` for anything that is not one.
+ *
+ * The rotation's whole selection turns on `lastScoredAtIso`, and the values reaching it come from
+ * two places this module does not own: a state file on disk and a committed run record's
+ * `startedAtIso`. Every producer emits `toISOString()` today, so a lexical order and a chronological
+ * one coincide — but they coincide only by that coincidence, and a single row spelled
+ * `2026-08-04T10:49:14+00:00` or `2026-08-04T10:49:14Z` would sort against the millisecond form as
+ * text and land in the wrong place in the cycle, starving or re-measuring that wallet with nothing
+ * in the output saying so. Normalising at the boundary removes the class rather than the instance,
+ * and it is byte-neutral on state a `toISOString()` producer wrote.
+ *
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function canonicalInstant(value) {
+  if (typeof value !== 'string') return null;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
+}
+
+/**
  * Read one persisted row, or refuse it.
  *
  * A row without a usable `lastScoredAtIso` is DROPPED rather than repaired, and that direction is
  * the safe one: the wallet reverts to never-scored and is scored sooner than it needs to be, which
  * costs a keyless walk. Guessing a timestamp for it would push it to a place in the cycle nothing
  * measured, and could starve it.
+ *
+ * A row that IS usable is normalised to {@link canonicalInstant}'s single spelling, so the state
+ * this module persists carries one representation of an instant rather than whichever the producer
+ * happened to emit — a second-resolution or offset-bearing timestamp is the same moment and has to
+ * take the same place in the cycle.
  *
  * @param {string} wallet
  * @param {unknown} raw
@@ -222,13 +249,13 @@ export function loadRotation(path) {
 function readEntry(wallet, raw) {
   if (wallet.length === 0 || typeof raw !== 'object' || raw === null) return null;
   const row = /** @type {Record<string, unknown>} */ (raw);
-  const last = row['lastScoredAtIso'];
-  if (typeof last !== 'string' || !Number.isFinite(Date.parse(last))) return null;
-  const first = row['firstScoredAtIso'];
+  const last = canonicalInstant(row['lastScoredAtIso']);
+  if (last === null) return null;
+  const first = canonicalInstant(row['firstScoredAtIso']);
   const times = row['timesScored'];
   return {
     wallet,
-    firstScoredAtIso: typeof first === 'string' && Number.isFinite(Date.parse(first)) ? first : last,
+    firstScoredAtIso: first ?? last,
     lastScoredAtIso: last,
     timesScored: typeof times === 'number' && Number.isFinite(times) && times > 0 ? Math.floor(times) : 1,
     origin: row['origin'] === 'run-record' ? 'run-record' : 'screen',
@@ -330,8 +357,11 @@ export function compareRotationRows(a, b) {
   const bn = b.lastScoredAtIso === null;
   if (an !== bn) return an ? -1 : 1;
   if (an || bn) return 0;
-  const x = /** @type {string} */ (a.lastScoredAtIso);
-  const y = /** @type {string} */ (b.lastScoredAtIso);
+  const sx = /** @type {string} */ (a.lastScoredAtIso);
+  const sy = /** @type {string} */ (b.lastScoredAtIso);
+  const x = Date.parse(sx);
+  const y = Date.parse(sy);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return sx < sy ? -1 : sx > sy ? 1 : 0;
   return x < y ? -1 : x > y ? 1 : 0;
 }
 
@@ -363,7 +393,10 @@ export function selectForScoring(rotation, wallets, max) {
  * than a boolean so a reader is told WHICH clause failed; an empty list is the pass.
  *
  * @param {{ order: readonly RotationRow[], selected: readonly string[], deferred: readonly string[] }} block
- * @param {number} max The scoring cap the run applied, from its own recorded `stage2_entry`.
+ * @param {number} max The scoring cap the run APPLIED, which is its own recorded `scoringCap.max`
+ *   and never `thresholds.stage2_entry.maxCandidatesScored`. The two differ whenever `--score` was
+ *   passed — the applied cap is the `min()` of the two — and a reader who reaches for the pinned
+ *   recipe instead would be told a correct `--score 3` run selected the wrong wallets.
  * @returns {{ ok: boolean, problems: string[] }}
  */
 export function verifySelection(block, max) {
@@ -438,8 +471,8 @@ export function importScoredFromRunRecords(rotation, records) {
   for (const { body } of records) {
     if (typeof body !== 'object' || body === null) continue;
     const rec = /** @type {Record<string, unknown>} */ (body);
-    const startedAtIso = rec['startedAtIso'];
-    if (typeof startedAtIso !== 'string' || !Number.isFinite(Date.parse(startedAtIso))) continue;
+    const startedAtIso = canonicalInstant(rec['startedAtIso']);
+    if (startedAtIso === null) continue;
     const candidates = rec['candidates'];
     if (!Array.isArray(candidates)) continue;
 

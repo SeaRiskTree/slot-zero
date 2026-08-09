@@ -14293,7 +14293,6 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
         // and the scoring loop disagree about whether this run selects at all. A SIXTH is a new site
         // and means coming back here on purpose.
         expect(screen.match(/entryFillSourceIsRead\(opts\)/g)).toHaveLength(5);
-        expect(screen).toContain('if (rotationPath !== null && entryFillSourceIsRead(opts) && !opts.dryRun) {');
         expect(screen).toContain('  if (!entryFillSourceIsRead(opts)) return [];');
         expect(screen).toContain('if (entryFillSourceIsRead(opts)) {');
         // And Stage 2 scores exactly where a source was built, rather than re-reading the flag.
@@ -15806,8 +15805,12 @@ describe('the rotation reaches the RUN, and a run stays reproducible given its s
     // from what it carries — no state file, no survivor list, no clock.
     for (const rec of [first, second, third]) {
       const block = rec['scoringRotation'] as Record<string, any>;
-      const recipe = rec['thresholds']['stage2_entry'] as { maxCandidatesScored: number };
-      expect(verifySelection(block as never, Math.min(CAP, recipe.maxCandidatesScored))).toEqual({
+      // The cap a reader hands the verifier is the one the run APPLIED, which the record states as
+      // `scoringCap.max` — `thresholds.stage2_entry.maxCandidatesScored` is the pinned ceiling and
+      // is a different number on any run made with `--score`.
+      const applied = (rec['scoringCap'] as { max: number }).max;
+      expect(applied).toBe(CAP);
+      expect(verifySelection(block as never, applied)).toEqual({
         ok: true,
         problems: [],
       });

@@ -67,6 +67,13 @@ node tools/deployer-screen/screen.mjs --tier elite \
 # It truncates coverage, and the record says so.
 node tools/deployer-screen/screen.mjs --tier elite --candidates 12
 
+# Gate the addresses in a FILE instead of enumerating candidates from MadeOnSol — one per line,
+# '#' comments, and a malformed entry, a duplicate or an empty list refuses the run (exit 2) using
+# none of the file. A supplied list is a SEED, never a substitute for the gate: every listed wallet
+# is measured by the same Stage 1 bars. Refused beside --tier and --candidates. See "The vendor
+# gatekeeps ENUMERATION, not measurement" below for the rule, the arithmetic and what does not move.
+node tools/deployer-screen/screen.mjs --wallets path/to/wallets.txt
+
 # The competence gate alone, which answers nothing about whether a window is enterable.
 node tools/deployer-screen/screen.mjs --no-stage2
 
@@ -856,8 +863,11 @@ Two further sharp edges, both measured 2026-07-29:
 
 ## The seed is theirs; the measurement is ours
 
-A deployer MadeOnSol does not rank cannot be surfaced by this tool at all. That is a real
-limitation, and the enumeration is shaped around what their endpoints actually return:
+A deployer MadeOnSol does not rank cannot be **enumerated** by this tool at all. That is a real
+limitation of the enumeration, and since captain decision 398a it is a limitation of the enumeration
+alone: such a deployer can still be MEASURED by handing the screen its address with `--wallets` —
+see "The vendor gatekeeps ENUMERATION, not measurement" below. The enumeration is shaped around what
+their endpoints actually return:
 
 - `sort=bonding_rate` DESC is a wall of wallets with **1 deploy, 1 bond, rate 1.0** — their `rising`
   tier by definition — and the ones we sampled last deployed in **May 2024**. This sort is never
@@ -2468,7 +2478,7 @@ move were forced by arithmetic rather than chosen.
 |---|---|---|
 | keyed request ceiling | 402 | **No longer an allowance figure.** 2 × (6 enumeration + 195 candidates) — the plan's **one-retry worst case**, since a keyed request is retried at most once and every attempt counts. It was 200, the whole Free-tier day; at 100,000 exclusive an allowance-derived ceiling would refuse nothing, and a bound that cannot refuse is not a bound. It **had** to move: a default plan now costs 6 + 195 = 201 and would have been refused at 200. The old 2-request headroom could not absorb three transport failures at the end of a full run; this cannot be breached by a plan the tool admitted. |
 | candidate cap | 195 | **Unchanged in value, completely re-derived — the coincidence is worth saying out loud.** It was `200 − 3 − 2`, what the keyed day left over; that derivation is void. It is now the largest cap fitting the ceilings already pinned without moving a second threshold: the keyless `frontend-api-v3` ceiling binds at `floor(1,365 / 7 pages a candidate) = 195` exactly, the Helius run ceiling allows 211, and enumeration can reach at most 300 rows. The highest distinct yield ever observed is **128** (2026-08-05, good 69 + elite 59, disjoint pools), so a **default run still grades everything it surfaces**. |
-| over-budget plan | refused before the first request | `6 + candidates > ceiling` exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. **The keyless plan is refused the same way**, and it matters more: the keyless work happens *after* the keyed requests are spent, so a ceiling discovered half-way through wastes what was already paid. |
+| over-budget plan | refused before the first request | `6 + candidates > ceiling` — `0 + <addresses>` on a `--wallets` run, which issues no enumeration request — exits 2 having spent nothing, rather than running until the ceiling bites and reporting an incomplete screen. **The keyless plan is refused the same way**, and it matters more: the keyless work happens *after* the keyed requests are spent, so a ceiling discovered half-way through wastes what was already paid. |
 | keyed pacing | 250ms between request starts | **Re-measured on Ultra rather than carried across, and the measurement retired the old constraint.** 6.5s existed for a ~10/min Free-tier burst limit. A ladder at 6,500 / 2,000 / 500 / **0** ms shed **nothing at any rung**, and 60 back-to-back requests (≈183/min sustained) shed nothing either — which a 10/min limiter refuses at request 11. The gate's own endpoint behaved the same (30 back-to-back, 0 shed). What binds is **response latency**: p50 312ms leaderboard, 182ms profile. So 250ms is a courtesy floor, not a shed-avoidance figure, and the keyed leg of a full run goes from ~21 minutes to **~50 seconds**. Limits: one day, ~150 requests, serial only — nothing here probed concurrency. |
 | feed per-run keyed ceiling | 18 | 6 enumeration + `maxGateBatch` 12. Forced by the tiered default; it was 15 at 3 enumeration requests. The daily arithmetic is 18 × 6 runs = **108 of 100,000 (0.108%)**, where it used to be 90 of ~200. **The bound is kept anyway**: a cron is the one caller no human reviews before each spend, and an unbounded lane against a 100,000-request day is still unbounded. |
 | keyless request ceiling, `frontend-api-v3` only | 1,400 | One client serves **two** passes on this host and the ceiling has to cover both. The gate reads the ownership listing it merges the creation window with, up to 4 pages **per candidate** — 195 × 4 = 780 — and `--consistency` then costs up to 3 pages per gate survivor, of which every candidate can be one: 195 × 3 = 585. So 1,365 worst case, and the remaining 35 are retry headroom. The earlier 600 was justified on the consistency pass alone and was already exceeded by gating at the default candidate cap. It does not lean harder on pump.fun — the pacing below is unchanged, so what it buys is wall clock. |

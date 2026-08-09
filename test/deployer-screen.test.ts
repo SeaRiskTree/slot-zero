@@ -35,6 +35,7 @@ import {
   resolveSolanaRpcEndpoint,
 } from '../tools/deployer-screen/credential.mjs';
 import {
+  BASE_URL,
   BoundedClient,
   CeilingReached,
   DuneClient,
@@ -193,6 +194,7 @@ import {
   summariseCoverage,
 } from '../tools/deployer-screen/seed.mjs';
 import {
+  FRONTEND_API,
   KeylessClient,
   KeylessHttpError,
   MAX_MS_PER_SLOT,
@@ -4497,6 +4499,210 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
       expect(text, `${module} must not read the mayhem flag`).not.toMatch(/mayhem/i);
     }
   });
+});
+
+describe('the flag reaches the gate through the RUN, not only through a helper', () => {
+  // CAPTAIN DECISION 383a. `gateMayhemFlags` has its own unit test above; this drives the whole
+  // screen through `main` over stubbed transports and reads the WRITTEN RECORD back, so the single
+  // production call site is pinned by the outcome it produces. Setting that site to `null` turns
+  // this red, which is the property the block exists for. No transport is real: every request this
+  // run can make is answered from the stub below, so no vendor is reached and nothing is billed.
+  const DUNE_IDS = loadThresholds()['dune'] as { coverageQueryId: number; creationQueryId: number };
+  const SCREEN_WALLET = '7ufmve7ZSFCzuNcKRunYrGtyb2Ka1MXzkWwf7jZhVsmL';
+  const MADEONSOL_FAKE_KEY = 'm'.repeat(32);
+
+  /** The vendor's timestamp spelling: whole milliseconds, a space, and a zone WORD. */
+  const duneTs = (ms: number) => `${new Date(ms).toISOString().replace('T', ' ').replace('Z', '')} UTC`;
+
+  /**
+   * A probe whose last row is an hour old, so `assessCoverage` reads it against the REAL clock
+   * `main` passes it rather than against a pinned instant.
+   */
+  const freshProbe = (nowMs: number) => {
+    const lastMonth = new Date(nowMs).toISOString().slice(0, 7);
+    return probeRows([
+      {
+        table: 'evt_createevent',
+        first: '2024-04-26 09:55:52.000 UTC',
+        last: duneTs(nowMs - 3_600_000),
+        total: 20_571_130,
+        months: monthsBetween('2024-04', lastMonth),
+      },
+      {
+        table: 'call_create',
+        first: '2024-01-14 12:57:12.000 UTC',
+        last: duneTs(nowMs - 3_600_000),
+        total: 14_145_301,
+        months: monthsBetween('2024-01', lastMonth),
+      },
+    ]);
+  };
+
+  const usageBody = (nowMs: number) => ({
+    billing_periods: [
+      {
+        start_date: new Date(nowMs - 5 * DAY).toISOString().slice(0, 10),
+        end_date: new Date(nowMs + 25 * DAY).toISOString().slice(0, 10),
+        credits_used: 0,
+        credits_included: 4000,
+      },
+    ],
+  });
+
+  /** One enumerated launch, as `CREATION_SQL`'s six columns spell it. */
+  const creationRow = (i: number, opts: { bonded: boolean; mayhem: boolean; total: number; atMs: number }) => ({
+    deployer: SCREEN_WALLET,
+    mint: `MINT${i}`,
+    created_at: duneTs(opts.atMs),
+    bonded: opts.bonded,
+    launches_total: opts.total,
+    is_mayhem_mode: opts.mayhem,
+  });
+
+  /** One row of the keyless ownership listing. */
+  const listedRow = (i: number, atMs: number, complete: boolean) => ({
+    mint: `LISTED${i}`,
+    created_timestamp: atMs,
+    complete,
+  });
+
+  /**
+   * Drive the real screen with every transport stubbed, and hand back the record it wrote.
+   *
+   * `--no-stage2` keeps this to Stage 1, which is the stage 351 moved; `--candidates 1` keeps the
+   * batch at the one wallet whose numbers are being asserted.
+   */
+  const runScreen = async (transport: {
+    creationRows: unknown[];
+    listing: unknown[];
+    profileTokens: unknown[];
+  }) => {
+    const nowMs = Date.now();
+    const dir = mkdtempSync(join(tmpdir(), 'mayhem-run-'));
+    const out = join(dir, 'run.json');
+    const seen: string[] = [];
+
+    const fetchImpl = async (url: unknown, init?: { method?: string }) => {
+      const target = String(url);
+      seen.push(target);
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+
+      if (target.startsWith(DUNE_API_BASE)) {
+        const path = target.replace(DUNE_API_BASE, '');
+        if (path.startsWith('/usage')) return json(usageBody(nowMs));
+        if (path.startsWith(`/query/${DUNE_IDS.coverageQueryId}/results`)) {
+          return json({
+            result: { rows: freshProbe(nowMs), metadata: { total_row_count: freshProbe(nowMs).length, total_result_set_bytes: 1000 } },
+          });
+        }
+        if (path.startsWith(`/query/${DUNE_IDS.coverageQueryId}`)) return json({ query_sql: COVERAGE_SQL });
+        if (path.startsWith(`/query/${DUNE_IDS.creationQueryId}/execute`)) return json({ execution_id: 'e1' });
+        if (path.startsWith(`/query/${DUNE_IDS.creationQueryId}`)) return json({ query_sql: CREATION_SQL });
+        if (path.startsWith('/execution/e1/status')) return json({ state: 'QUERY_STATE_COMPLETED' });
+        if (path.startsWith('/execution/e1/results')) {
+          return json({
+            result: {
+              rows: transport.creationRows,
+              metadata: { total_row_count: transport.creationRows.length, total_result_set_bytes: 5000 },
+            },
+          });
+        }
+        throw new Error(`unstubbed Dune request ${path}`);
+      }
+
+      if (target.startsWith(BASE_URL)) {
+        // The profile is the only MadeOnSol path carrying a wallet; every other one is a seed.
+        if (target.includes(SCREEN_WALLET)) return json({ pump_tokens: transport.profileTokens });
+        return json([SCREEN_WALLET]);
+      }
+
+      if (target.startsWith(FRONTEND_API)) return json(transport.listing);
+
+      // The keyless creation walk, reached only when the Dune reading is refused. An empty
+      // signature page ends the walk having covered nothing, which is what `covered.fromMs: null`
+      // means and what sends the merge to the ownership listing.
+      if (target.startsWith(PUBLIC_SOLANA_RPC) && init?.method === 'POST') {
+        return json({ jsonrpc: '2.0', id: 1, result: [] });
+      }
+
+      throw new Error(`unstubbed request ${target}`);
+    };
+
+    vi.stubGlobal('fetch', fetchImpl as unknown as typeof fetch);
+    try {
+      const parsed = parseArgs(['--no-stage2', '--candidates', '1', '--json', '--out', out]);
+      if (!parsed.ok) throw new Error(parsed.message);
+      const errs: string[] = [];
+      const code = await main(
+        parsed.opts,
+        { [KEY_ENV_VAR]: MADEONSOL_FAKE_KEY, [DUNE_KEY_ENV_VAR]: DUNE_FAKE_KEY },
+        () => {},
+        (l) => errs.push(l),
+      );
+      expect(errs.join('\n')).toBe('');
+      expect(code).toBe(0);
+      const record = JSON.parse(readFileSync(out, 'utf8')) as {
+        candidates: Record<string, unknown>[];
+      };
+      return { record, row: record.candidates[0] as Record<string, number | string | null>, seen };
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  };
+
+  it('records the NON-MAYHEM reading and both counts, end to end', async () => {
+    // Forty enumerated launches: thirty classic-curve, twelve of them bonded, and ten mayhem ones
+    // that all "graduated". Pre-351 that reads 22/40 = 0.55; the gate reads the non-mayhem record.
+    const base = Date.parse('2026-02-01T00:00:00Z');
+    const creationRows = [
+      ...Array.from({ length: 30 }, (_, i) =>
+        creationRow(i, { bonded: i < 12, mayhem: false, total: 40, atMs: base + i * 4 * DAY }),
+      ),
+      ...Array.from({ length: 10 }, (_, i) =>
+        creationRow(100 + i, { bonded: true, mayhem: true, total: 40, atMs: base + i * DAY }),
+      ),
+    ];
+    const { row } = await runScreen({
+      creationRows,
+      listing: [],
+      profileTokens: [{ mint: 'V1', created_timestamp: base, complete: true }],
+    });
+
+    expect(row['historySource']).toBe('creation-derived');
+    // THE OUTCOME OF THE WIRING, not merely the presence of the fields.
+    expect(row['tokens']).toBe(30);
+    expect(row['completed']).toBe(12);
+    expect(row['completionRate']).toBe(0.4);
+    expect(row['competenceMayhemExcluded']).toBe(10);
+    expect(row['competenceMayhemUnreadable']).toBe(0);
+    // And the pooled reading the exclusion replaced is genuinely a different number, so a call site
+    // that stopped handing the flags over could not coincide with this.
+    expect(22 / 40).not.toBe(row['completionRate']);
+  }, 120_000);
+
+  it('a REFUSED Dune reading reaches the gate with nothing — the pre-351 reading', async () => {
+    // `gateMayhemFlags` is gated on `useDune`, and a reading whose history reaches outside the
+    // probed coverage is refused. The mayhem evidence in it may not exclude anything: this
+    // candidate falls back to the walk and its rate is what it was before 351.
+    const base = Date.parse('2026-02-01T00:00:00Z');
+    const creationRows = [
+      // Before the probed surfaces' own first row, which is what refuses this wallet's reading.
+      creationRow(0, { bonded: true, mayhem: true, total: 3, atMs: Date.parse('2023-01-01T00:00:00Z') }),
+      creationRow(1, { bonded: true, mayhem: true, total: 3, atMs: base }),
+      creationRow(2, { bonded: false, mayhem: false, total: 3, atMs: base + DAY }),
+    ];
+    const listing = Array.from({ length: 30 }, (_, i) => listedRow(i, base + i * 4 * DAY, i < 12));
+    const { row } = await runScreen({
+      creationRows,
+      listing,
+      profileTokens: [{ mint: 'V1', created_timestamp: base, complete: true }],
+    });
+
+    expect(row['tokens']).toBe(30);
+    expect(row['completed']).toBe(12);
+    expect(row['competenceMayhemExcluded']).toBe(0);
+    expect(row['competenceMayhemUnreadable']).toBe(row['tokens']);
+  }, 120_000);
 });
 
 describe('the enumeration spends nothing it does not have to', () => {

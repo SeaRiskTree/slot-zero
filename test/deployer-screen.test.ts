@@ -3484,6 +3484,21 @@ describe('the SQL is the surface, and the two traps are pinned in it', () => {
     expect(executable, 'a default would manufacture a measured `false`').not.toMatch(
       /coalesce\([^)]*mayhem/i,
     );
+    // AND THE HEADER COMMENT IS FROZEN AT ITS PRE-351 BYTES, ON PURPOSE. This literal is a byte
+    // contract with deployed saved query 8204672 — `assertSavedQueryMatches` compares it, comments
+    // included, BEFORE spending an execution, so editing a sentence here refuses the whole Dune leg
+    // terminally until the saved query is redeployed. Captain decision 389a: the 351 note lives in
+    // the JSDoc above the literal, which nothing compares, and this assertion is the trap a future
+    // lane meets if it tries to correct the wording in place instead.
+    expect(
+      CREATION_SQL,
+      'editing this comment needs a saved-query deploy — see the JSDoc above CREATION_SQL',
+    ).toContain(
+      '-- is_mayhem_mode, is captain decision 227a: pump.fun\'s mayhem-mode flag, RECORDED per launch and\n' +
+        '-- REPORTED as a per-candidate share. It reaches no bar, no rate and no verdict, and dropping the\n' +
+        '-- launches it marks or weighting them were the options the captain declined (227b, 227c).\n',
+    );
+
     // SIX columns, and the header says so. The count is load-bearing on a read billed by BYTES —
     // `thresholds.json` -> `dune.resultBytesPerRowCeiling` is derived from it, and a seventh column
     // added without moving that number would silently understate the export half of every plan.
@@ -4141,6 +4156,12 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
     // record — but the VERDICT is what a consumer filters on, and it is the unmeasured one.
     expect(all.gate.passed).toBe(false);
     expect(all.gate.reasons.join(' ')).toMatch(/ABSENT measurement, not a rate of 0/);
+    // AND NO SENTENCE STATES THE MAYHEM COUNT TWICE. A reason reading "0 tokens ... a further 6"
+    // lets a reader total twelve launches for a wallet that has six, and it is persisted.
+    for (const reason of all.gate.reasons) {
+      expect(reason.match(/6 launch\(es\) carry pump\.fun's mayhem-mode flag/g) ?? [], reason).toHaveLength(1);
+      expect(reason, reason).not.toMatch(/a further 6/);
+    }
 
     // And the predicate is narrow: an ordinarily empty history keeps the gate-failed it always had,
     // so this lane does not quietly widen what counts as unmeasured.
@@ -4204,6 +4225,18 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
     expect(mayhemOnlyReasons).not.toMatch(/no usable deploy time/);
     expect(droppedReasons).toMatch(/no non-mayhem launch to read: 2 launch\(es\) carry/);
     expect(droppedReasons).toMatch(/a further 2 had no usable deploy time and are NOT part of that count/);
+    // EACH BAR STATES THE COUNT ONCE — the sample-size one and the span one both fire on an emptied
+    // reading, and neither may append a second "a further N" beside the sentence that already
+    // named it.
+    for (const reasons of [mayhemOnlyGate.reasons, droppedGate.reasons]) {
+      expect(reasons.some((r) => /sample too small/.test(r))).toBe(true);
+      expect(reasons.some((r) => /history spans/.test(r))).toBe(true);
+      for (const reason of reasons) {
+        expect(reason.match(/2 launch\(es\) carry pump\.fun's mayhem-mode flag/g) ?? [], reason)
+          .toHaveLength(1);
+        expect(reason, reason).not.toMatch(/a further 2 launch\(es\)/);
+      }
+    }
     for (const r of [mayhemOnlyReasons, droppedReasons]) {
       // Both bars empty here — the sample-size one and the undefined-rate one — and neither may
       // claim the flag accounts for everything that left the reading.

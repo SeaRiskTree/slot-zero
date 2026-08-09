@@ -403,6 +403,21 @@ export function planOversizedSplit(input) {
  * directions inside a single day, and `ENTRY_SQL` was deployed as a fourth saved query rather than
  * by displacing one. `README.md` → "Deploying a change to the committed SQL" owns the step and is
  * the one place that names ids and counts.
+ *
+ * **THE SIXTH COLUMN'S OWN COMMENT INSIDE THIS TEXT IS STALE, AND DELIBERATELY SO.** It states
+ * captain decision 227a — the flag is recorded and reported and "reaches no bar, no rate and no
+ * verdict" — which stopped being true at **captain decision 351 (2026-08-07)**: `is_mayhem_mode` is
+ * READ now, and a launch it marks is excluded from BOTH the numerator and the denominator of
+ * `stage1_gate.minCompletionRate`. **227c — dropping a mayhem-heavy DEPLOYER outright — is NOT
+ * reversed and remains DECLINED**, which is why the denominator moves with the numerator. The rule
+ * and every figure behind it are {@link MAYHEM_NOT_COMPETENCE}'s and `measure.mjs` →
+ * `measureCompletion`'s.
+ *
+ * The comment inside the literal is left at its pre-351 bytes because this text and saved query
+ * `8204672` must stay byte-identical and 351's lane made no deploy — editing it would refuse the
+ * whole Dune leg terminally on the next real run, for a sentence. So a reader meeting that query in
+ * Dune's own browser meets the 227a wording, and THIS paragraph is where they find out it is stale.
+ * Correcting it in place is a deploy step and a captain decision, not a passing fix.
  */
 export const CREATION_SQL = `-- slot-zero: ORIGINAL-CREATOR launch enumeration. One execution per candidate batch.
 --
@@ -425,12 +440,8 @@ export const CREATION_SQL = `-- slot-zero: ORIGINAL-CREATOR launch enumeration. 
 -- not to read them; that halves the bytes of every production run. The fifth, launches_total, is
 -- a bigint and it is what makes the cap below DETECTABLE rather than silent. The sixth,
 -- is_mayhem_mode, is captain decision 227a: pump.fun's mayhem-mode flag, RECORDED per launch and
--- REPORTED as a per-candidate share. Captain decision 351 then made it an INPUT to exactly one
--- bar, REVERSING 227b: a launch this column marks is excluded from both the numerator and the
--- denominator of the completion gate, because a mayhem graduation raises a median 0.291 SOL
--- against 85.005 for a classic curve one. 227c — dropping a mayhem-heavy DEPLOYER outright — is
--- NOT reversed and remains declined, which is why the denominator moves with the numerator. No
--- Stage 2 bar, rate or verdict reads it. See MAYHEM_NOT_COMPETENCE.
+-- REPORTED as a per-candidate share. It reaches no bar, no rate and no verdict, and dropping the
+-- launches it marks or weighting them were the options the captain declined (227b, 227c).
 --
 -- is_mayhem_mode IS NULLABLE AND THE NULL MEANS "NOT MEASURED", NEVER "not a mayhem launch".
 -- Only pump_evt_createevent carries the column; pump_call_create has no such field, so a mint

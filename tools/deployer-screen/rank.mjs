@@ -100,18 +100,12 @@ export function applyGate(input, t) {
   // has to say so. "Sample too small" or "rate 0.0000" over a history that plainly holds launches
   // sends an operator looking for a truncated walk that is not there, and hides the one fact that
   // decides how to read the number — that what remains is this deployer's NON-MAYHEM record.
-  const mayhemNote =
-    completion.mayhemExcluded > 0
-      ? ` — measured on the NON-MAYHEM record: a further ${completion.mayhemExcluded} launch(es) ` +
-        `carry pump.fun's mayhem-mode flag and are excluded from both sides of this rate ` +
-        `(captain decision 351)`
-      : '';
-
-  // The emptied-denominator sentence, in the one wording both bars below use. It claims only what
+  // The emptied-denominator sentence, in the one wording every bar below uses. It claims only what
   // the measurement supports: `measureCompletion` drops a launch with no usable deploy time BEFORE
   // the mayhem filter, so a non-mayhem launch can have left this reading for an unrelated reason
-  // and "every launch is mayhem" would be false about it. Both sentences are persisted on the
+  // and "every launch is mayhem" would be false about it. Every sentence here is persisted on the
   // candidate row and this repo never retro-edits a record, so an overstatement there is permanent.
+  const emptied = competenceEmptiedByMayhem(completion);
   const emptiedByMayhem =
     `the competence measure was left with no non-mayhem launch to read: ` +
     `${completion.mayhemExcluded} launch(es) carry pump.fun's mayhem-mode flag` +
@@ -120,6 +114,19 @@ export function applyGate(input, t) {
         `part of that count`
       : '');
 
+  // NO REASON STATES THE MAYHEM COUNT TWICE, and none of them may read as a SECOND set of launches.
+  // "a further N" is what the exclusion removed from a sample that still holds something; where the
+  // exclusion emptied the sample there is nothing for it to be further to, and a reader of
+  // "0 tokens ... a further 2" totals more launches than the wallet has.
+  const mayhemNote =
+    completion.mayhemExcluded === 0
+      ? ''
+      : emptied
+        ? ` — ${emptiedByMayhem} (captain decision 351)`
+        : ` — measured on the NON-MAYHEM record: a further ${completion.mayhemExcluded} launch(es) ` +
+          `carry pump.fun's mayhem-mode flag and are excluded from both sides of this rate ` +
+          `(captain decision 351)`;
+
   if (completion.tokens < t.minTokens) {
     // A zero has to name the party it actually came from. Under the creation-derived reading the
     // vendor can have listed plenty — the merge is what produced the zero — and blaming the vendor
@@ -127,7 +134,7 @@ export function applyGate(input, t) {
     // carried 11 tokens and whose listing served 11 rows was rejected for "the vendor listed no
     // tokens". The mayhem exclusion is a THIRD party that can produce the same zero, and it takes
     // precedence when it applies, for the same reason: it is where the launches actually went.
-    const zeroBlame = competenceEmptiedByMayhem(completion)
+    const zeroBlame = emptied
       ? ` (${emptiedByMayhem} — an ABSENT measurement, not a rate of 0)`
       : input.historySource === 'creation-derived'
         ? ' (the creation-derived history came out empty — see this candidate\'s `creation` block ' +
@@ -136,12 +143,12 @@ export function applyGate(input, t) {
     reasons.push(
       `sample too small: ${completion.tokens} tokens < ${t.minTokens} required` +
         (completion.tokens > 0 ? '' : zeroBlame) +
-        mayhemNote,
+        (emptied ? '' : mayhemNote),
     );
   }
   if (!Number.isFinite(completion.rate)) {
     reasons.push(
-      competenceEmptiedByMayhem(completion)
+      emptied
         ? `completion rate is undefined (${emptiedByMayhem} — captain decision 351; this is NOT a ` +
           `rate of 0 and NOT a rejection, see the verdict)`
         : 'completion rate is undefined (no usable token records)',

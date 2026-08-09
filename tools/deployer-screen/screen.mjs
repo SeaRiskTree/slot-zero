@@ -30,7 +30,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../../config/data-root.mjs';
@@ -139,6 +139,7 @@ import {
   readSeedResponse,
   summariseCoverage,
 } from './seed.mjs';
+import { WALLET_LIST_IS_A_SEED, readWalletList, toListedCandidates } from './wallet-list.mjs';
 import { SUBJECT_DEPLOYER, VENDOR_READINGS, runStage0 } from './stage0.mjs';
 
 /**
@@ -1004,6 +1005,27 @@ MODES
                       the field, keyless). Stage 0 must pass first.
 
 OPTIONS
+  --wallets <path>    Gate the deployer addresses in this FILE instead of enumerating candidates
+                      from MadeOnSol. One address per line, '#' starts a comment, blank lines are
+                      skipped; a malformed entry, two tokens on a line, a duplicate or an empty
+                      list REFUSES the run (exit 2) naming the line, rather than being dropped.
+                      Captain decision 398a: the vendor gatekeeps ENUMERATION, not measurement —
+                      /deployer-hunter/{wallet} answers for wallets its own hunter feeds have never
+                      surfaced — and 64% of the deployers that passed this gate in 2026-07 are
+                      invisible to every discovery source here.
+                      A SUPPLIED LIST IS A SEED, NEVER A SUBSTITUTE FOR THE GATE. Every listed
+                      wallet is measured by the committed Stage 1 competence bars exactly as a
+                      vendor-seeded one is, and one that fails them is rejected and never scored.
+                      The run prints that sentence and the record carries it verbatim; the
+                      constant is wallet-list.mjs -> WALLET_LIST_IS_A_SEED.
+                      COST: this REPLACES the six enumeration requests with nothing, so the plan
+                      is one keyed profile request per listed address and no more. It spends no
+                      Dune execution and no Helius credit that a seeded run would not, and Stage
+                      2's keyless swap-api ceiling is untouched — that ceiling is the scoring cap
+                      times the per-candidate launch and request caps, and none of the three moved.
+                      Refused beside --tier (there is no vendor enumeration left to narrow) and
+                      beside --candidates (the list fixes the count, and a cap that silently drops
+                      listed addresses is the drop this input exists to refuse).
   --candidates <n>    Max deployers to gate. DEFAULT: as many as the request ceiling allows, so a
                       default run grades everything enumeration surfaces. Ceiling from
                       thresholds.json; this flag can only lower it.
@@ -1140,6 +1162,7 @@ export function parseArgs(argv) {
     candidates: null,
     maxRequests: null,
     tier: undefined,
+    wallets: null,
     // Stage 2 is ON by default. The tool exists to answer whether a window can be entered, and a
     // build that shipped the entry score off by default would make the answerable question the
     // opt-in and the unanswerable one the headline.
@@ -1243,6 +1266,12 @@ export function parseArgs(argv) {
         opts.tier = v;
         break;
       }
+      case '--wallets': {
+        const v = next();
+        if (v === null) return { ok: false, message: '--wallets needs a path' };
+        opts.wallets = v;
+        break;
+      }
       case '--predict': {
         const v = next();
         if (v === null) return { ok: false, message: '--predict needs a path' };
@@ -1286,6 +1315,33 @@ export function parseArgs(argv) {
   // how an operator comes to believe they authorised something they did not. Captain decision 286c.
   if (opts.dryRunSpend && !opts.dryRun) {
     return { ok: false, message: '--dry-run-spend only means anything with --dry-run' };
+  }
+
+  // **A WALLET LIST REPLACES THE VENDOR ENUMERATION, so the two flags that shape one are refused
+  // beside it** (captain decision 398a). Neither is a preference this could resolve: `--tier`
+  // narrows an enumeration that does not happen, so honouring it would change nothing and
+  // suppressing it would leave an operator believing their run was tier-scoped; and `--candidates`
+  // is a CAP, so beside a list it would silently drop listed addresses off the tail — the exact
+  // drop this input exists to refuse, one flag over from the malformed-entry rule. The remedy for a
+  // list too long for the ceilings is a shorter file, which is visible in a way a truncated run is
+  // not. Same shape as `--dry-run-spend` above: a flag that would be inert, or that would quietly
+  // mean something other than what it says, is an error rather than a no-op.
+  if (opts.wallets !== null && opts.tier !== undefined) {
+    return {
+      ok: false,
+      message:
+        '--tier narrows the VENDOR enumeration, and --wallets replaces that enumeration entirely, ' +
+        'so there is nothing left for it to narrow. Drop one of them.',
+    };
+  }
+  if (opts.wallets !== null && opts.candidates !== null) {
+    return {
+      ok: false,
+      message:
+        '--candidates caps how many enumerated wallets are gated, and --wallets states exactly ' +
+        'which wallets to gate — so together they would silently drop addresses off the end of ' +
+        'your list, which is the one thing this input refuses to do. Shorten the file instead.',
+    };
   }
 
   // **The same rule for the other opt-in.** `--allow-walk-fallback` authorises a WHOLE-BATCH walk
@@ -1354,6 +1410,13 @@ export function parseArgs(argv) {
  * @property {number | null} candidates
  * @property {number | null} maxRequests
  * @property {string | undefined} tier
+ * @property {string | null} wallets Path to a file of deployer addresses to gate INSTEAD of
+ *   enumerating candidates from MadeOnSol — captain decision 398a. It is a SEED and not a bypass:
+ *   `wallet-list.mjs` → `WALLET_LIST_IS_A_SEED` states the constraint the captain's choice of the
+ *   unrestricted input carries, and the control flow is what enforces it — a listed address becomes
+ *   a `SeedCandidate` and enters the one gate loop, so there is no second path for it to take.
+ *   Read and validated BEFORE Stage 0, so a bad file costs nothing. `parseArgs` refuses it beside
+ *   `--tier` and `--candidates`.
  * @property {boolean} stage2
  * @property {number | null} scoreCandidates
  * @property {boolean} consistency
@@ -1485,6 +1548,41 @@ export async function main(opts, env, out, err, seam = {}) {
     declaredPredictions = parsed.predictions;
   }
 
+  // ---- The wallet list this run was pointed at, if any (captain decision 398a) -------------
+  // Read HERE for the same reason `--predict` is, one block up: an unreadable or malformed list
+  // must refuse before Stage 0's CSV work and long before the keyed allowance, and reading a local
+  // file costs nothing in any currency. The DIGEST is taken so the record can name exactly which
+  // bytes produced its candidate list — the same argument `scoringRotation` makes about the
+  // rotation state, and it matters more here: this list is the run's whole population, so a record
+  // that named only a path would be reproducible only for as long as nobody edited the file.
+  /** @type {{ wallets: string[], entriesRead: number, label: string, path: string, digest: string } | null} */
+  let walletList = null;
+  if (opts.wallets !== null) {
+    /** @type {string} */
+    let text;
+    try {
+      text = readFileSync(opts.wallets, 'utf8');
+    } catch (cause) {
+      err(`--wallets: could not read ${opts.wallets}: ${cause instanceof Error ? cause.message : String(cause)}`);
+      return EXIT.usage;
+    }
+    const parsed = readWalletList(text, opts.wallets);
+    if (!parsed.ok) {
+      err(`--wallets: ${parsed.message}`);
+      return EXIT.usage;
+    }
+    walletList = {
+      wallets: parsed.wallets,
+      entriesRead: parsed.entriesRead,
+      label: parsed.label,
+      // Repo-relative where the list lives inside the tree, the base name plus an explicit
+      // out-of-tree marker where it does not — never an absolute path, which this record is
+      // committed to a public repository and would disclose the operator's own filesystem.
+      path: walletListPath(opts.wallets),
+      digest: digestOf(text),
+    };
+  }
+
   // ---- Stage 2's rotation memory (captain decision 336a) ----------------------------------
   // Read HERE, beside `--predict` and for the identical reason: an unreadable state file REFUSES
   // the run, and a refusal that arrives after the MadeOnSol seed enumeration is spent is a refusal
@@ -1556,20 +1654,51 @@ export async function main(opts, env, out, err, seam = {}) {
   // deriving a candidate cap the refusal check three lines down then rejects. The page `limit` is
   // bounded by what could possibly be gated — the explicit `--candidates` if there is one, and
   // otherwise the request ceiling — so it never depends on the cap this plan is about to size.
-  const seedPlan = buildSeedPlan({
-    limit: Math.min(50, Math.max(opts.candidates ?? maxKeyed, 10)),
-    ...(opts.tier === undefined ? {} : { tier: opts.tier }),
-  });
+  //
+  // **A WALLET LIST REPLACES THIS PLAN WITH THE EMPTY ONE** (captain decision 398a). The list IS
+  // the enumeration, so a listed run issues no enumeration request at all — which is what makes its
+  // cost exactly one keyed profile per address, and what keeps the two populations from being mixed
+  // inside one run and its record. `buildSeedPlan` is not called rather than called and discarded,
+  // so the plan's own LENGTH stays the single source of the enumeration cost everything downstream
+  // prices from and no second expression has to agree with it.
+  const seedPlan =
+    walletList !== null
+      ? []
+      : buildSeedPlan({
+          limit: Math.min(50, Math.max(opts.candidates ?? maxKeyed, 10)),
+          ...(opts.tier === undefined ? {} : { tier: opts.tier }),
+        });
   const enumerationCost = seedPlan.length;
   // **The default grades what enumeration surfaces, up to the budget.** The committed elite run
   // seeded 22 wallets and graded 12 because it was invoked with a number smaller than the ceiling
   // already allowed; ten wallets were dropped by a flag rather than by any judgement. So an
   // unstated candidate cap now follows the request ceiling instead of being a separate small
   // number a conservative invocation can silently pin.
-  const maxCandidates = Math.min(
-    opts.candidates ?? Math.max(1, maxKeyed - enumerationCost),
-    budget.maxCandidates,
-  );
+  //
+  // **ON A LISTED RUN THE CAP IS THE LIST'S OWN LENGTH, and that is a refusal rather than a
+  // truncation.** `--candidates` is refused beside `--wallets` in `parseArgs`, so nothing can lower
+  // this; a list that does not fit the pinned ceilings stops the run below with the arithmetic
+  // stated, and the remedy is a shorter file. Truncating instead would drop deployers off the tail
+  // of an operator's own list with only a coverage counter to show for it — the invisible
+  // non-measurement this whole tool is built to refuse, arriving one stage before the gate.
+  const maxCandidates =
+    walletList !== null
+      ? walletList.wallets.length
+      : Math.min(opts.candidates ?? Math.max(1, maxKeyed - enumerationCost), budget.maxCandidates);
+
+  if (walletList !== null && maxCandidates > budget.maxCandidates) {
+    err(
+      `Refusing to start: ${walletList.path} holds ${maxCandidates} address(es), above the pinned ` +
+        `candidate cap of ${budget.maxCandidates}.`,
+    );
+    err(
+      `  That cap is thresholds.json budget.maxCandidates and it is the largest the pinned KEYLESS ` +
+        `ceiling admits, so it binds a listed run exactly as it binds a seeded one.`,
+    );
+    err(`  Split the file, or raise the pinned cap — which is a captain decision, not a flag.`);
+    err('  Nothing was requested, so no quota was spent.');
+    return EXIT.usage;
+  }
 
   // **Over budget fails BEFORE spending.** A plan whose worst case cannot fit under the ceiling
   // would otherwise run until the ceiling bit and then report an incomplete screen — paying for
@@ -1581,8 +1710,13 @@ export async function main(opts, env, out, err, seam = {}) {
         `candidate = ${worstCaseKeyed} keyed requests, above the ceiling of ${maxKeyed}.`,
     );
     err(
-      `  Lower --candidates to ${Math.max(0, maxKeyed - seedPlan.length)} or fewer, or raise ` +
-        `--max-requests (up to the pinned ${budget.maxKeyedRequests}).`,
+      walletList === null
+        ? `  Lower --candidates to ${Math.max(0, maxKeyed - seedPlan.length)} or fewer, or raise ` +
+            `--max-requests (up to the pinned ${budget.maxKeyedRequests}).`
+        : `  Cut ${walletList.path} to ${Math.max(0, maxKeyed - seedPlan.length)} address(es) or ` +
+            `fewer, or raise --max-requests (up to the pinned ${budget.maxKeyedRequests}). ` +
+            `--candidates cannot help: it is refused beside --wallets, because capping a list is ` +
+            `dropping addresses out of it.`,
     );
     err('  Nothing was requested, so no quota was spent.');
     return EXIT.usage;
@@ -1603,7 +1737,8 @@ export async function main(opts, env, out, err, seam = {}) {
         `requests, above the pinned keyless ceiling of ${budget.maxKeylessRequests}.`,
     );
     err(
-      `  Lower --candidates to ${Math.floor(budget.maxKeylessRequests / Math.max(1, listingPagesPerCandidate + (opts.consistency ? 3 : 0)))} ` +
+      `  ${walletList === null ? 'Lower --candidates to' : `Cut ${walletList.path} to`} ` +
+        `${Math.floor(budget.maxKeylessRequests / Math.max(1, listingPagesPerCandidate + (opts.consistency ? 3 : 0)))} ` +
         `or fewer, drop --consistency, or raise thresholds.json budget.maxKeylessRequests.`,
     );
     err('  Nothing was requested, so no quota was spent.');
@@ -1912,6 +2047,7 @@ export async function main(opts, env, out, err, seam = {}) {
     out(
       renderDryRun({
         seedPlan,
+        walletList,
         maxCandidates,
         maxKeyedRequests: maxKeyed,
         consistency: opts.consistency,
@@ -2151,7 +2287,15 @@ export async function main(opts, env, out, err, seam = {}) {
   try {
     if (!opts.json) {
       out('');
-      out('STAGE 1 — enumerating candidates from the free leaderboard endpoints');
+      if (walletList === null) {
+        out('STAGE 1 — enumerating candidates from the free leaderboard endpoints');
+      } else {
+        out(`STAGE 1 — candidates SUPPLIED, from ${walletList.path} (${walletList.digest})`);
+        out(`  ${walletList.wallets.length} address(es), no enumeration request issued`);
+        // 398a's safety constraint reaches the operator watching the run, not only the record. It
+        // is the constant itself rather than a paraphrase of it, so the two cannot drift.
+        out(`  ${WALLET_LIST_IS_A_SEED}`);
+      }
     }
 
     for (const entry of seedPlan) {
@@ -2172,7 +2316,15 @@ export async function main(opts, env, out, err, seam = {}) {
 
     // Pre-filter before spending a request. This reads the vendor's trailing-window counters and
     // can only ever SKIP a wallet; it never touches a rate, a verdict or an output number.
-    const merged = mergeSeeds(seedYields);
+    //
+    // **A LISTED RUN JOINS HERE, IN THE SAME SHAPE, AND GOES THROUGH THE SAME LOOP.** That is what
+    // makes "nothing bypasses a bar" a property of the control flow rather than a claim about it:
+    // below this line there is one path, and it cannot tell a listed candidate from a seeded one
+    // except by the `candidateSource` it carries into the record. The pre-filter is a no-op on a
+    // listed candidate — it has no vendor counters, and an unknown count admits — which is stated
+    // in `toListedCandidates` and is deliberate rather than incidental.
+    const merged =
+      walletList === null ? mergeSeeds(seedYields) : toListedCandidates(walletList.wallets, walletList.label);
     /** @type {{ wallet: string, reason: string }[]} */
     const skipped = [];
     /** @type {import('./seed.mjs').SeedCandidate[]} */
@@ -2721,6 +2873,11 @@ export async function main(opts, env, out, err, seam = {}) {
       candidates.push({
         wallet: seed.wallet,
         seededBy: seed.seededBy,
+        // Schema 22, captain decision 398a. Carried from the candidate rather than derived from
+        // the run's own flags, so it stays a fact about this address even on a run that ever
+        // carried both kinds. It is provenance and NEVER an input: every bar above and every stage
+        // below reads the same fields whatever it says.
+        candidateSource: seed.candidateSource,
         completion,
         completionCapped: gateReadingCapped,
         gate,
@@ -3215,6 +3372,32 @@ export async function main(opts, env, out, err, seam = {}) {
         // has to say so at the run level too, or the run reads as having measured everything.
         unmeasured,
         coverage,
+        // **Schema 22. WHERE THIS RUN'S CANDIDATES CAME FROM WHEN THEY DID NOT COME FROM THE
+        // VENDOR** — captain decision 398a. `null` means the vendor enumeration produced them,
+        // which is every run before this version and every default run after it.
+        //
+        // It names the file, its SHA-256 and how many addresses were read, for the same reason
+        // `scoringRotation` names the rotation state's digest: this list is the whole population of
+        // the run, so a record carrying only a path would stay reproducible exactly as long as
+        // nobody edited that file. `seedsIssued: 0` is stated rather than inferred from an empty
+        // `coverage.seeds` — an empty seed list also describes a run whose enumeration failed.
+        //
+        // `isASeed` is the constraint the captain's choice of the UNRESTRICTED input carries,
+        // carried verbatim so a reader of the record gets it without opening this repository. It is
+        // enforced by the control flow, not by this string: a listed address becomes an ordinary
+        // `SeedCandidate` and enters the one gate loop.
+        walletList:
+          walletList === null
+            ? null
+            : {
+                path: walletList.path,
+                digest: walletList.digest,
+                label: walletList.label,
+                entriesRead: walletList.entriesRead,
+                wallets: walletList.wallets.length,
+                seedsIssued: 0,
+                isASeed: WALLET_LIST_IS_A_SEED,
+              },
         scoringCap: { max: maxScored, survivorsUnscored: scoringTruncatedBy, enabled: opts.stage2 },
         // **Schema 20. WHICH survivors the cap went to, and the state that decided it** — captain
         // decision 336a. `scoringCap` above says how many were left unscored; this says who was
@@ -3332,6 +3515,7 @@ export async function main(opts, env, out, err, seam = {}) {
           truncationReason: record.truncationReason,
           prefiltered: prefiltered.length,
           coverage: record.coverage,
+          walletList: record.walletList,
           spend: record.spend,
           unmeasured: record.unmeasured,
           thresholds: T['stage1_gate'],
@@ -3385,6 +3569,42 @@ export async function main(opts, env, out, err, seam = {}) {
  */
 
 /**
+ * How a wallet list names itself in a record and on the page.
+ *
+ * Repo-relative when the file is inside the tree — the form `scoringRotation.statePath` already
+ * uses, and the one a reader can follow, disclosing nothing beyond this repository.
+ *
+ * **Outside the tree it is the BASE NAME plus {@link WALLET_LIST_OUTSIDE_MARKER}, never the
+ * resolved absolute path.** A list is exactly the artefact another lane hands over from outside
+ * this repository, so the out-of-tree case is the COMMON one — and this string is persisted into
+ * the run record's `walletList.path`, which is committed to a world-readable research repo
+ * (captain decision 377a). An absolute path there discloses the operator's username and local
+ * layout, which nothing else this tool persists does. Nothing is lost: `walletList.digest` is the
+ * list's real identity (the SHA-256 of its bytes, which is what makes a listed run reproducible)
+ * and `walletList.label` already carries the base name as every listed candidate's `seededBy`
+ * provenance. The marker is what keeps the two cases apart — a bare base name would otherwise read
+ * as a repo-relative path in the root, and `relative()` alone answers such a file with a `../`
+ * chain that is unreadable and means nothing away from this checkout.
+ *
+ * @param {string} path
+ * @returns {string}
+ */
+export function walletListPath(path) {
+  const absolute = resolve(path);
+  const rel = relative(REPO_ROOT, absolute);
+  return rel.startsWith('..') ? `${basename(absolute)} ${WALLET_LIST_OUTSIDE_MARKER}` : rel;
+}
+
+/**
+ * What a wallet-list path says when the file is not inside this repository.
+ *
+ * Read it as *the run used a file kept elsewhere and the record names it by its base name alone*,
+ * never as part of the file name. A repo-relative path can never carry this text, so a reader —
+ * and a test — can tell the two cases apart from the recorded string on its own.
+ */
+export const WALLET_LIST_OUTSIDE_MARKER = '(outside the repo)';
+
+/**
  * Where an incomplete run's record goes.
  *
  * A truncated record must never land on the path a complete one would use. The README's own
@@ -3425,6 +3645,15 @@ function toRecordRow(c, run) {
   return {
     wallet: c.wallet,
     seededBy: c.seededBy,
+    // Schema 22. WHERE THIS ADDRESS CAME FROM — the vendor's own enumeration, or a list an operator
+    // handed in (captain decision 398a). It is here because the two are not the same population:
+    // the listed one is by design the part the vendor never surfaced, so pooling them without
+    // reading this field would describe a discovery surface that measured neither. **It says
+    // nothing about how the candidate was judged.** One gate, one loop, one set of bars; a listed
+    // wallet that fails them carries `verdict: "gate-failed"` exactly as a seeded one does.
+    // A schema-≤21 record has no such field and needs none: nothing before this version could
+    // supply a list, so every candidate in one is `vendor-seed`.
+    candidateSource: c.candidateSource,
     // What the gate actually read. Under the default `historySource` this is the creation-derived
     // history; under --ownership-only it is the vendor reading and identical to `vendorTokens`.
     tokens: c.completion.tokens,

@@ -1100,6 +1100,36 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
 captain's question *"can I beat the dev and all other wallets sniping the same tokens created by the
 dev currently?"*, and the shape of the answer is the point:
 
+- **THE CANDIDATE LIST CAN NOW BE HANDED IN, AND A SUPPLIED LIST IS A SEED AND NEVER A SUBSTITUTE
+  FOR THE GATE** (captain decision 398a, 2026-08-09; record **schema 22**). `--wallets <file>` gates
+  the addresses in a file instead of enumerating from MadeOnSol. It exists because **supply, not
+  measuring capacity, binds the captain's 1,000-window floor**: the reachable population yields ~309
+  distinct usable windows a month against a capacity of ~1,160, and **37 of the 58 deployers that
+  passed this gate in 2026-07 — 64% — are invisible to every discovery source here**, worth 1,442
+  windows a month. It is cheap because **the vendor gatekeeps ENUMERATION, not measurement**:
+  `/deployer-hunter/{wallet}` answered in full for two wallets its own hunter feeds have never
+  surfaced (n=2 plus a control — an observation, not a rate), so `measure.mjs` → `toLaunchRefs`
+  already has what Stage 2 needs the moment Stage 1 has paid for the profile.
+  **398a chose the UNRESTRICTED input over one accepting only our own enumeration's addresses, which
+  makes the seed-not-bypass rule a hard requirement rather than a principle** — and it is the
+  CONTROL FLOW that enforces it, not a string: a listed address becomes an ordinary `SeedCandidate`
+  and enters the ONE gate loop, so there is no second path and no bar it can skip.
+  `wallet-list.mjs` → `WALLET_LIST_IS_A_SEED` is the sentence the run prints and the record carries;
+  `test/deployer-screen.test.ts` → "a LISTED wallet still has to pass the gate — 398a" drives a
+  failing wallet end to end and asserts `gate-failed` **and** `entry: null`. **`candidateSource`
+  (`vendor-seed` / `wallet-list`) is provenance and is read by NOTHING** — a test scans the scoring
+  modules' executable half for it — and its absence on a schema-≤21 record is unambiguous, since
+  nothing before 22 could supply a list. **The plan arithmetic moves and nothing else does**: a
+  listed run issues NO enumeration request, so the keyed worst case is `0 + <addresses>` rather than
+  `6 + <cap>` and the candidate cap is the list's own length (`--candidates` and `--tier` are
+  REFUSED beside `--wallets` — capping a supplied list is dropping addresses out of it). Zero Dune,
+  zero Helius beyond what a seeded run spends, and **Stage 2's keyless swap-api ceiling cannot move
+  at all**, being `maxCandidatesScored × maxLaunchesPerCandidate × maxRequestsPerLaunch`, none of
+  which is a function of the candidate count or source. A malformed entry, a two-token line, a
+  duplicate or an empty list refuses the run naming every bad line, before Stage 0, and uses none of
+  the file. `tools/deployer-screen/README.md` → "The vendor gatekeeps ENUMERATION, not measurement"
+  owns the long form; **the flow-weighted allocation (399a) and the chain-wide enumeration that
+  would PRODUCE lists (350a) are separate lanes and `rotation.mjs`'s comparator is untouched.**
 - **Stage 1 ENUMERATES on Dune** (keyed, free tier — which mints the wallet created, with the RPC
   walk as fallback) and **GATES on competence** (keyed, MadeOnSol). **Stage 2 SCORES ENTRY** (keyless): room in
   the opening window, what every *other* sniping wallet there achieved, and — since the captain's
@@ -1889,8 +1919,12 @@ supersedes the re-open monitor (captain, 2026-08-02: *a competent dev will not r
 - **Exit 9 means the feed is dry or broken, not quiet** — a seed serving rows we read no wallet from,
   every seed inert, every gated profile unreadable (needs ≥2 gated, so `--gate 1` disarms it), or 3
   consecutive live, completed runs with no new wallet.
-- **The queue is not yet wired into the screen**: `screen.mjs` enumerates its own candidates and has
-  no wallet-list flag, so handing the queue over is an operator step today.
+- **`screen.mjs` NOW TAKES A WALLET LIST, so handing a queue over is a file rather than a rebuild —
+  but the FEED is still not wired into it.** `--wallets <file>` gates the addresses in a file
+  instead of enumerating (captain decision 398a; the screen's own section above owns the rule, the
+  arithmetic and what does not move). What has not changed: `feed.mjs` does not write that file and
+  `screen.mjs` does not read `feed/ledger.json`, so producing the list is still an operator step,
+  and the recurring chain-wide enumeration that would produce one is 350a's own lane.
 
 ## How big the addressable population is, and why discovery stopped hunting identities
 

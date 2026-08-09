@@ -933,6 +933,17 @@ export function renderStage0(r, vendorReadings) {
  * @param {string | null} run.truncationReason
  * @param {number} run.prefiltered
  * @param {import('./seed.mjs').SeedCoverage} run.coverage
+ * @param {{ path: string, digest: string, label: string, entriesRead: number, wallets: number,
+ *   seedsIssued: number, isASeed: string } | null} [run.walletList] The run's supplied candidate
+ *   list, `null` or absent when the vendor enumeration produced the candidates (captain decision
+ *   398a). It replaces the SEED YIELD block rather than sitting beside it: a listed run issues no
+ *   enumeration query, so an empty per-seed table there would read as three inert seeds, which is
+ *   the exact alarm that block exists to raise and would be raising it about nothing.
+ *
+ *   **Every number on it describes the FILE, and none of them is what the run gated.**
+ *   `entriesRead` and `wallets` both come from `wallet-list.mjs` — they are equal by construction —
+ *   so the block's second figure is `coverage.gated` and the two are printed as a contrast. See the
+ *   block itself for what reading them as one number cost.
  * @param {{ keyedCeiling: number, keyedRemaining: number, plannedWorstCaseKeyed: number,
  *   candidateCap: number, endpoints: readonly import('./client.mjs').EndpointSpend[] }} [run.spend]
  *   Where the keyed allowance actually went. Optional only so a caller rendering a schema-2 record
@@ -999,16 +1010,50 @@ export function renderStage1(run) {
   }
 
   const cov = run.coverage;
-  L.push('SEED YIELD — per query, because an inert seed is otherwise invisible');
-  L.push(`  ${pad('query', 34)}${padl('rows', 6)}  ${padl('wallets', 8)}`);
-  for (const s of cov.seeds) {
-    L.push(`  ${pad(s.label, 34)}${padl(String(s.rowsReturned), 6)}  ${padl(String(s.walletsReturned), 8)}`);
-  }
-  if (cov.inertSeeds.length > 0) {
+  const wl = run.walletList ?? null;
+  if (wl === null) {
+    L.push('SEED YIELD — per query, because an inert seed is otherwise invisible');
+    L.push(`  ${pad('query', 34)}${padl('rows', 6)}  ${padl('wallets', 8)}`);
+    for (const s of cov.seeds) {
+      L.push(`  ${pad(s.label, 34)}${padl(String(s.rowsReturned), 6)}  ${padl(String(s.walletsReturned), 8)}`);
+    }
+    if (cov.inertSeeds.length > 0) {
+      L.push('');
+      L.push(`  !! ${cov.inertSeeds.length} SEED(S) YIELDED NO WALLET: ${cov.inertSeeds.join(', ')}`);
+      L.push('     Each still cost a keyed request. If its row count is non-zero the vendor answered');
+      L.push('     and OUR READER is wrong — check the envelope and block keys in seed.mjs.');
+    }
+  } else {
+    L.push('CANDIDATE LIST — supplied, not enumerated (captain decision 398a)');
+    L.push(`  file           ${wl.path}`);
+    L.push(`  digest         ${wl.digest}`);
+    // **THE SECOND FIGURE IS `cov.gated`, THE REAL ONE, AND THAT IS THE WHOLE POINT OF THE LINE.**
+    // It read `${wl.entriesRead} read, ${wl.wallets} gated` once, and both halves came from the
+    // LIST — `readWalletList` sets `entriesRead = wallets.length` and the record's `wallets` is that
+    // same length — so the word "gated" was a claim neither number could support. On a listed run
+    // that stops early, which is the gate loop dying on a `CeilingReached` or a transport failure,
+    // the page said "58 read, 58 gated" immediately above its own `!! RUN STOPPED EARLY` banner.
+    // Printing only what the file held removed the lie and removed the READING with it: an operator
+    // scanning this block still could not see that seventeen of their addresses were never
+    // measured, and this block is where they look first.
+    //
+    // `cov.gated` appears in the COVERAGE block below as well, and that duplication is deliberate
+    // and safe because it is ONE derivation read twice rather than two expressions that agree —
+    // 144a's rule is about the second expression, not about the second mention. The contrast is
+    // what carries the information: `read` is the operator's own input and `gated` is what this run
+    // did with it, so the two being unequal is the fact, and it cannot be seen from either number
+    // alone.
+    L.push(`  addresses      ${wl.entriesRead} read from the file, ${cov.gated} gated`);
+    if (cov.gated < wl.entriesRead) {
+      L.push(
+        `                 !! ${wl.entriesRead - cov.gated} SUPPLIED ADDRESS(ES) WERE NEVER GATED — ` +
+          `see COVERAGE below and the run's own completion state`,
+      );
+    }
+    L.push(`  seed queries   ${wl.seedsIssued} — no keyed enumeration request was issued`);
     L.push('');
-    L.push(`  !! ${cov.inertSeeds.length} SEED(S) YIELDED NO WALLET: ${cov.inertSeeds.join(', ')}`);
-    L.push('     Each still cost a keyed request. If its row count is non-zero the vendor answered');
-    L.push('     and OUR READER is wrong — check the envelope and block keys in seed.mjs.');
+    // The constraint itself, on the page the operator reads, wrapped rather than truncated.
+    for (const line of wrap(wl.isASeed, 74)) L.push(`  ${line}`);
   }
   L.push('');
   L.push('COVERAGE — what enumeration surfaced versus what was actually gated');
@@ -1311,6 +1356,12 @@ export function renderStage1(run) {
  *
  * @param {object} plan
  * @param {readonly import('./seed.mjs').SeedPlanEntry[]} plan.seedPlan
+ * @param {{ path: string, digest: string, label: string, wallets: readonly string[] } | null}
+ *   [plan.walletList] The supplied candidate list, `null` or absent on a run that enumerates
+ *   (captain decision 398a). On a listed run `seedPlan` is EMPTY by construction, so the keyed
+ *   arithmetic below states `0 + <addresses>` with no special case: the plan is one profile request
+ *   per address and nothing else. It is passed anyway so the page can name the file and its digest,
+ *   because "0 enumeration requests" with no explanation reads as a broken plan.
  * @param {number} plan.maxCandidates
  * @param {number} plan.maxKeyedRequests
  * @param {boolean} plan.consistency
@@ -1431,6 +1482,14 @@ export function renderDryRun(plan) {
   }
   L.push('');
 
+  const planWalletList = plan.walletList ?? null;
+  if (planWalletList !== null) {
+    L.push('CANDIDATES — SUPPLIED, not enumerated (captain decision 398a):');
+    L.push(`  file    ${planWalletList.path}`);
+    L.push(`  digest  ${planWalletList.digest}`);
+    L.push(`  holds   ${planWalletList.wallets.length} address(es), gated in file order`);
+    L.push('');
+  }
   L.push(`KEYED — MadeOnSol, ${plan.seedPlan.length} enumeration requests, exactly these:`);
   for (const e of plan.seedPlan) {
     // The real run's own path builder, not a re-implementation of it. That is what makes
@@ -1438,8 +1497,19 @@ export function renderDryRun(plan) {
     // value happens to need no percent-encoding.
     L.push(`  GET ${buildPath(e.path, e.query)}`);
   }
+  if (plan.seedPlan.length === 0) {
+    L.push(
+      planWalletList === null
+        ? '  (none)'
+        : '  (none — the supplied list IS the enumeration, so no vendor query is issued)',
+    );
+  }
   L.push('');
-  L.push('KEYED — then one profile request per candidate, up to the candidate cap:');
+  L.push(
+    planWalletList === null
+      ? 'KEYED — then one profile request per candidate, up to the candidate cap:'
+      : 'KEYED — then one profile request per LISTED address, and no more:',
+  );
   L.push(`  GET /deployer-hunter/{wallet}              x  up to ${plan.maxCandidates}`);
   L.push('');
   L.push(

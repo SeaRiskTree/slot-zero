@@ -71,6 +71,7 @@ import {
   summariseMayhem,
   toWalletEnumeration,
   MAYHEM_NOT_COMPETENCE,
+  WALLET_SHAPE as DUNE_WALLET_SHAPE,
 } from '../tools/deployer-screen/dune.mjs';
 import {
   CROSS_VENUE_STRICTNESS_UNESTABLISHED,
@@ -203,6 +204,13 @@ import {
   summariseCoverage,
 } from '../tools/deployer-screen/seed.mjs';
 import {
+  WALLET_LIST_IS_A_SEED,
+  WALLET_SHAPE as WALLET_LIST_SHAPE,
+  readWalletList,
+  toListedCandidates,
+  walletListLabel,
+} from '../tools/deployer-screen/wallet-list.mjs';
+import {
   REPRODUCIBILITY_RULE,
   ROTATION_SCHEMA_VERSION,
   compareRotationRows,
@@ -248,12 +256,14 @@ import {
   readCurveState,
 } from '../tools/deployer-screen/creation.mjs';
 import {
+  WALLET_LIST_OUTSIDE_MARKER,
   exitForRefusal,
   main,
   gateMayhemFlags,
   parseArgs,
   loadThresholds,
   partialOutPath,
+  walletListPath,
 } from '../tools/deployer-screen/screen.mjs';
 import {
   LIMITATIONS,
@@ -1150,6 +1160,9 @@ describe('ordering is deterministic and not a league table', () => {
       entrySource: null,
       entrySourceFallbackReasons: [],
       entryAgreement: null,
+      // Schema 22. Present on every Candidate; these fixtures stand for the enumerated population,
+      // which is what every record before that version held.
+      candidateSource: 'vendor-seed' as const,
     };
   };
 
@@ -1429,7 +1442,7 @@ describe('enumeration', () => {
   });
 
   it('the prefilter can only skip a request, and admits anything it cannot judge', () => {
-    const base = { wallet: 'w', seededBy: [], bestRank: 0 };
+    const base = { wallet: 'w', seededBy: [], bestRank: 0, candidateSource: 'vendor-seed' as const };
     // Their `rising` tier: a perfect rate over one launch. This is what consumed a whole first run.
     expect(prefilterReason({ ...base, vendorDeployed: 1, vendorBonded: 1 })).toMatch(/below the 5/);
     expect(prefilterReason({ ...base, vendorDeployed: 4, vendorBonded: 4 })).not.toBeNull();
@@ -5426,7 +5439,10 @@ describe('the flag reaches the gate through the RUN, not only through a helper',
     // CPAMM — and a cheap one-bar reading makes that misreading EASIER to reach for, which is why
     // the caveat travels with the number instead of living in a document.
     const written = record as unknown as { schemaVersion: number; limitations: string[] };
-    expect(written.schemaVersion).toBe(21);
+    // The version this build writes, not a frozen literal: 352b landed at 21 and the caveat has to
+    // travel at every version after it, so pinning the number here would turn the next bump into a
+    // silent narrowing of what this asserts.
+    expect(written.schemaVersion).toBe(RECORD_SCHEMA_VERSION);
     // The block is wrapped for a terminal, so the assertion reads it as prose rather than as lines.
     const caveat = written.limitations.join(' ').replace(/\s+/g, ' ');
     expect(caveat).toMatch(/EQUIVALENT STRICTNESS ACROSS VENUES IS NOT ESTABLISHED/);
@@ -6763,6 +6779,11 @@ const ROTATION_BLOCK_KEYS_BY_SCHEMA: Record<number, string[]> = {
   // Schema 21 changes what a completion rate MEANS (captain decision 352b) and leaves the
   // rotation block's own shape alone.
   21: ROTATION_BLOCK_KEYS_20,
+  // Schema 22 gives the screen a wallet-list input (captain decision 398a). Rotation is about WHICH
+  // gate survivors the scoring cap goes to and does not care where a survivor's address came from,
+  // so this block's shape — and `rotation.mjs`'s comparator — are untouched, deliberately: the
+  // flow-weighted allocation that WOULD touch it is captain decision 399a and its own lane.
+  22: ROTATION_BLOCK_KEYS_20,
 };
 
 describe('the keyless boundary holds in both directions', () => {
@@ -6906,6 +6927,19 @@ describe('the keyless boundary holds in both directions', () => {
     'vendorCompetenceCriterionUnreadable',
   ].sort();
 
+  // Schema 22 adds ONE candidate row field and NO measured quantity — captain decision 398a. Until
+  // this version every candidate in every record came from a MadeOnSol enumeration endpoint, so
+  // "where did this wallet come from" was a property of the tool rather than of the row and nothing
+  // had to say it. `--wallets` ends that, and the two populations are not interchangeable: the
+  // listed one is by construction the part the vendor never surfaced (64% of the deployers passing
+  // this gate in 2026-07 are invisible to every discovery source here). **Its ABSENCE on a
+  // schema-≤21 record is unambiguous** — nothing before this version could supply a list — which is
+  // why the field is added rather than a run-level flag being read as one.
+  //
+  // `completionRate` and every other measured field are the SAME quantity at 21 and 22 and may be
+  // pooled, unlike the 19 and 21 boundaries. `candidateSource` is provenance and is read by nothing.
+  PERSISTED_BY_SCHEMA[22] = [...PERSISTED_BY_SCHEMA[21]!, 'candidateSource'].sort();
+
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
   // nothing that could say by how much — which is exactly why schema 5 exists. Committed records
@@ -7025,6 +7059,9 @@ describe('the keyless boundary holds in both directions', () => {
     20: ENTRY_KEYS_14,
     // Schema 21's two new keys are candidate ROW fields — PERSISTED_BY_SCHEMA above.
     21: ENTRY_KEYS_14,
+    // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
+    // one run-level block. Nothing Stage 2 measures depends on where an address came from.
+    22: ENTRY_KEYS_14,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -7120,6 +7157,10 @@ describe('the keyless boundary holds in both directions', () => {
     // MERGED history the gate read, not over what the enumeration returned, so they are candidate
     // ROW fields and not further keys here.
     21: CREATION_KEYS_15,
+    // Schema 22 adds a candidate ROW field and a run-level block. Where an address came FROM says
+    // nothing about the creation history enumerated for it, and the enumeration is byte-identical
+    // either way — same Dune statement, same walk, same coverage probe.
+    22: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -7179,6 +7220,9 @@ describe('the keyless boundary holds in both directions', () => {
     19: ENTRY_COVERAGE_KEYS_6,
     20: ENTRY_COVERAGE_KEYS_6,
     21: ENTRY_COVERAGE_KEYS_6,
+    // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
+    // one run-level block. Nothing Stage 2 measures depends on where an address came from.
+    22: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -7256,6 +7300,13 @@ describe('the keyless boundary holds in both directions', () => {
     19: SPEND_KEYS_8,
     20: SPEND_KEYS_8,
     21: SPEND_KEYS_8,
+    // Schema 22 leaves this block's SHAPE alone while moving two of its VALUES, which is the thing
+    // to read rather than the key set. On a listed run `plannedWorstCaseKeyed` is
+    // `0 + <addresses>` rather than `6 + <cap>` — the list replaces the enumeration, so no
+    // enumeration request is issued — and `candidateCap` is the list's own length rather than a
+    // ceiling the run was allowed to fall short of. No new unit and no new vendor: a listed run
+    // spends no Dune execution and no Helius credit a seeded one would not.
+    22: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -7314,6 +7365,9 @@ describe('the keyless boundary holds in both directions', () => {
     19: DUNE_KEYS_13,
     20: DUNE_KEYS_13,
     21: DUNE_KEYS_13,
+    // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
+    // one run-level block. Nothing Stage 2 measures depends on where an address came from.
+    22: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -7355,6 +7409,9 @@ describe('the keyless boundary holds in both directions', () => {
     19: DUNE_COVERAGE_KEYS_9,
     20: DUNE_COVERAGE_KEYS_9,
     21: DUNE_COVERAGE_KEYS_9,
+    // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
+    // one run-level block. Nothing Stage 2 measures depends on where an address came from.
+    22: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -7383,6 +7440,9 @@ describe('the keyless boundary holds in both directions', () => {
     19: DUNE_COVERAGE_TABLE_KEYS_9,
     20: DUNE_COVERAGE_TABLE_KEYS_9,
     21: DUNE_COVERAGE_TABLE_KEYS_9,
+    // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
+    // one run-level block. Nothing Stage 2 measures depends on where an address came from.
+    22: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -7422,6 +7482,12 @@ describe('the keyless boundary holds in both directions', () => {
     // from the record alone. `ROTATION_BLOCK_KEYS_BY_SCHEMA` below pins its own key set, the same
     // gap the `spend` and `entrySourceAgreement` pins were added to close one block over.
     20: ['scoringRotation'],
+    // Schema 22: the supplied candidate list, `null` on every enumerated run. It names the file,
+    // its SHA-256 and the counts, for the reason `scoringRotation` names its own digest — this file
+    // IS the run's whole population, so a record carrying only a path stays reproducible exactly as
+    // long as nobody edits it. `seedsIssued: 0` is STATED rather than inferred from an empty
+    // `coverage.seeds`, because an empty seed table also describes a run whose enumeration failed.
+    22: ['walletList'],
   };
 
   // The run-level `entrySourceAgreement` block's OWN key set, and `duneSpend` one level below it —
@@ -7447,6 +7513,9 @@ describe('the keyless boundary holds in both directions', () => {
     19: ENTRY_SOURCE_AGREEMENT_KEYS_18,
     20: ENTRY_SOURCE_AGREEMENT_KEYS_18,
     21: ENTRY_SOURCE_AGREEMENT_KEYS_18,
+    // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
+    // one run-level block. Nothing Stage 2 measures depends on where an address came from.
+    22: ENTRY_SOURCE_AGREEMENT_KEYS_18,
   };
   // This leg's own Dune meter. It is deliberately NOT folded into the run-level `dune` block: that
   // one bounds an enumeration answering a whole batch in ONE execution, this one bounds a leg
@@ -7472,6 +7541,9 @@ describe('the keyless boundary holds in both directions', () => {
     19: AGREEMENT_DUNE_SPEND_KEYS_18,
     20: AGREEMENT_DUNE_SPEND_KEYS_18,
     21: AGREEMENT_DUNE_SPEND_KEYS_18,
+    // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
+    // one run-level block. Nothing Stage 2 measures depends on where an address came from.
+    22: AGREEMENT_DUNE_SPEND_KEYS_18,
   };
   // And the per-candidate row, which is where the class that can be WRONG lives. The run level only
   // counts these, so a field vanishing here would be invisible to every pin above it.
@@ -7481,6 +7553,9 @@ describe('the keyless boundary holds in both directions', () => {
     19: ENTRY_AGREEMENT_KEYS_18,
     20: ENTRY_AGREEMENT_KEYS_18,
     21: ENTRY_AGREEMENT_KEYS_18,
+    // Schema 22 is a candidate-list INPUT (captain decision 398a): one candidate row key and
+    // one run-level block. Nothing Stage 2 measures depends on where an address came from.
+    22: ENTRY_AGREEMENT_KEYS_18,
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -16585,4 +16660,447 @@ describe('the rotation reaches the RUN, and a run stays reproducible given its s
       vi.unstubAllGlobals();
     }
   }, 60_000);
+});
+
+// ---------------------------------------------------------------------------------------------
+// CAPTAIN DECISION 398a — the screen can be handed a WALLET LIST, and a listed wallet is a SEED.
+// ---------------------------------------------------------------------------------------------
+
+describe('a supplied wallet list is read whole or refused whole — 398a', () => {
+  const A = `Wa11etAAA${'x'.repeat(29)}`;
+  const B = `Wa11etBBB${'x'.repeat(29)}`;
+
+  it('the shape guard is a DELIBERATE COPY of the one wallets reaching Dune are checked against', () => {
+    // Two constants answering two questions — a query-language guard and an operator's own file —
+    // that agree today because a Solana address has one shape. Pinned equal so a narrowing of
+    // either has to be argued about the other rather than inherited by it, which is the same
+    // discipline the two `client.mjs` credit guards are held to one directory over.
+    expect(WALLET_LIST_SHAPE.source).toBe(DUNE_WALLET_SHAPE.source);
+    expect(WALLET_LIST_SHAPE.flags).toBe(DUNE_WALLET_SHAPE.flags);
+  });
+
+  it('reads addresses, comments and blank lines', () => {
+    const read = readWalletList(`# a list\n\n${A}\n  ${B}   # the second one\n\n`, '/tmp/list.txt');
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.wallets).toEqual([A, B]);
+    expect(read.entriesRead).toBe(2);
+    expect(read.label).toBe('wallet-list:list.txt');
+  });
+
+  it('REFUSES a malformed entry, a two-token line and a duplicate — naming every line at once', () => {
+    // All of them in one message, not the first: an operator fixing a hand-assembled list one
+    // refusal per run is an operator who stops reading them. And nothing partial is returned —
+    // a partially read list is a set of deployers nobody knows went unmeasured.
+    const read = readWalletList(`${A}\nnot-an-address\n${B} ${A}\n${A}\n`, '/tmp/list.txt');
+    expect(read.ok).toBe(false);
+    if (read.ok) return;
+    expect(read.message).toContain('line 2');
+    expect(read.message).toContain('line 3');
+    expect(read.message).toContain('line 4');
+    expect(read.message).toContain('duplicate of line 1');
+    expect(read.message).toContain('NONE of the file was used');
+  });
+
+  it('REFUSES an empty list rather than screening nobody', () => {
+    // A screen of nobody completes, exits 0 and records zero candidates, which is indistinguishable
+    // from a population that was measured and found empty.
+    const read = readWalletList('# nothing here\n\n', '/tmp/list.txt');
+    expect(read.ok).toBe(false);
+    if (read.ok) return;
+    expect(read.message).toContain('no address at all');
+  });
+
+  it('names an out-of-tree list by its BASE NAME, never by an absolute path — 377a', () => {
+    // The recorded `walletList.path` lands in a run record committed to a world-readable repo, and
+    // the documented use of a supplied list is a file another lane hands over from OUTSIDE this
+    // tree — so the common case must not disclose the operator's username or local layout.
+    const outside = walletListPath('/home/somebody/private/lists/census.txt');
+    expect(outside).not.toContain('somebody');
+    expect(outside).not.toContain('/');
+    expect(outside).toBe(`census.txt ${WALLET_LIST_OUTSIDE_MARKER}`);
+
+    // Inside the tree the repo-relative form is kept exactly as it was: it discloses nothing, and a
+    // reader can follow it. The marker is what keeps the two cases apart, so it may never appear
+    // here — a bare base name would read as a path in the repository root.
+    const inside = walletListPath(join(TOOL_DIR, 'runs/list.txt'));
+    expect(inside).toBe('tools/deployer-screen/runs/list.txt');
+    expect(inside).not.toContain(WALLET_LIST_OUTSIDE_MARKER);
+  });
+
+  it('the rendered CANDIDATE LIST block states what was GATED, not the list length again', () => {
+    // THE EARLY-STOP CASE, which is the only one where the two figures differ and the only one
+    // where anybody is misled. A listed run whose gate loop dies — `CeilingReached`, a transport
+    // failure — leaves candidates ungated, and every number on `walletList` still describes the
+    // FILE: `readWalletList` sets `entriesRead = wallets.length`, so both are 58 whatever happened.
+    // The block used to print `58 read, 58 gated` directly above its own RUN STOPPED EARLY banner.
+    const page = (gated: number, completed: boolean) =>
+      renderStage1({
+        candidates: [],
+        keyedRequests: gated,
+        keylessRequests: 0,
+        rpcRequests: 0,
+        rpcLoadShedEvents: 0,
+        historySource: 'creation-derived' as const,
+        elapsedMs: 1000,
+        startedAtIso: '2026-08-09T00:00:00.000Z',
+        completed,
+        truncationReason: completed ? null : 'the keyed request ceiling stopped the gate loop',
+        prefiltered: 0,
+        coverage: {
+          seeds: [],
+          inertSeeds: [],
+          distinctWalletsSeeded: 58,
+          prefilteredOut: 0,
+          worthARequest: 58,
+          candidateCap: 58,
+          droppedByCandidateCap: 0,
+          gated,
+          coverageTruncated: gated < 58,
+        },
+        walletList: {
+          path: 'lists/from-the-census.txt',
+          digest: 'sha256:' + 'a'.repeat(64),
+          label: 'wallet-list:from-the-census.txt',
+          entriesRead: 58,
+          wallets: 58,
+          seedsIssued: 0,
+          isASeed: WALLET_LIST_IS_A_SEED,
+        },
+        thresholds: {},
+      });
+
+    const stopped = page(41, false);
+    // The real figure, and the contrast that makes the shortfall visible from this block alone.
+    expect(stopped).toContain('58 read from the file, 41 gated');
+    expect(stopped).toMatch(/17 SUPPLIED ADDRESS\(ES\) WERE NEVER GATED/);
+    // The lie this replaced must not be reachable at all — not as a fallback, not as a rounding.
+    expect(stopped).not.toContain('58 gated');
+
+    // A complete run reads clean and raises no alarm about a shortfall it does not have.
+    const whole = page(58, true);
+    expect(whole).toContain('58 read from the file, 58 gated');
+    expect(whole).not.toMatch(/WERE NEVER GATED/);
+
+    // And the second figure genuinely tracks `coverage.gated` rather than anything on the list: the
+    // walletList block is byte-identical between the two pages, so only that field can move it.
+    expect(stopped).not.toBe(whole);
+  });
+
+  it('a listed candidate carries its source and NO vendor aggregate', () => {
+    const listed = toListedCandidates([A, B], walletListLabel('/x/mine.txt'));
+    expect(listed.map((c) => c.candidateSource)).toEqual(['wallet-list', 'wallet-list']);
+    expect(listed.map((c) => c.seededBy)).toEqual([['wallet-list:mine.txt'], ['wallet-list:mine.txt']]);
+    // The pre-filter is the ONE place a vendor aggregate may be read, and it can only ever skip a
+    // request. A listed wallet has no vendor block — the vendor never surfaced it, which is the
+    // whole reason it is on a list — and an unknown count admits, so the pre-filter is inert here.
+    for (const c of listed) {
+      expect(c.vendorDeployed).toBeNull();
+      expect(c.vendorBonded).toBeNull();
+      expect(prefilterReason(c)).toBeNull();
+    }
+    // File order, so a run over a fixed list is deterministic the way a run over the seeds is.
+    expect(listed.map((c) => c.bestRank)).toEqual([0, 1]);
+  });
+
+  it('mergeSeeds stamps every VENDOR candidate as one, so the two are never ambiguous', () => {
+    const merged = mergeSeeds([
+      { label: 'alerts', wallets: [{ wallet: A, vendorDeployed: 9, vendorBonded: 3 }] },
+    ]);
+    expect(merged[0]?.candidateSource).toBe('vendor-seed');
+  });
+
+  it('--wallets is refused beside --tier and beside --candidates', () => {
+    // Neither is a preference this could resolve. `--tier` narrows an enumeration that does not
+    // happen; `--candidates` is a CAP, and capping a supplied list is dropping addresses out of it,
+    // which is the one thing this input exists to refuse.
+    const withTier = parseArgs(['--wallets', '/tmp/l.txt', '--tier', 'elite']);
+    expect(withTier.ok).toBe(false);
+    if (!withTier.ok) expect(withTier.message).toContain('nothing left for it to narrow');
+
+    const withCap = parseArgs(['--wallets', '/tmp/l.txt', '--candidates', '3']);
+    expect(withCap.ok).toBe(false);
+    if (!withCap.ok) expect(withCap.message).toContain('silently drop addresses');
+
+    // Order-independent: the refusal is checked after the whole argv is parsed, not at the flag.
+    expect(parseArgs(['--candidates', '3', '--wallets', '/tmp/l.txt']).ok).toBe(false);
+    expect(parseArgs(['--wallets', '/tmp/l.txt']).ok).toBe(true);
+  });
+
+  it('an unreadable or malformed list REFUSES before anything is fetched', async () => {
+    // The `--predict` and `--rotation` ordering argument, one flag over: a refusal that arrives
+    // after the keyed enumeration is spent is a refusal that cost money. This one is stricter still
+    // — the file is read before Stage 0, so a bad list costs not even the local CSV work.
+    const dir = mkdtempSync(join(tmpdir(), 'wl-bad-'));
+    const bad = join(dir, 'bad.txt');
+    writeFileSync(bad, `${A}\nnope\n`, 'utf8');
+
+    for (const path of [join(dir, 'missing.txt'), bad]) {
+      const parsed = parseArgs(['--wallets', path]);
+      if (!parsed.ok) throw new Error(parsed.message);
+      let requests = 0;
+      vi.stubGlobal('fetch', (async () => {
+        requests += 1;
+        return new Response('{}', { status: 200 });
+      }) as unknown as typeof fetch);
+      try {
+        const errs: string[] = [];
+        const code = await main(parsed.opts, { [KEY_ENV_VAR]: 'm'.repeat(32) }, () => {}, (l) => errs.push(l));
+        expect(code).toBe(2);
+        expect(errs.join('\n')).toContain('--wallets');
+        expect(requests, 'nothing may be fetched before the list is read').toBe(0);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    }
+  }, 60_000);
+});
+
+describe('a LISTED wallet still has to pass the gate — 398a', () => {
+  // THE SAFETY CONSTRAINT THE CAPTAIN'S CHOICE CARRIES, driven end to end through `main` over
+  // stubbed transports. 398a chose the UNRESTRICTED input over one that would have accepted only
+  // addresses this project's own enumeration produced, which makes this a hard requirement of the
+  // implementation rather than a principle: there must be no path by which a listed address reaches
+  // Stage 2 scoring without being gated.
+  //
+  // The list holds TWO wallets. One has a history that clears the committed bars; the other has a
+  // history that plainly does not. If a listed address could bypass the gate, the second one would
+  // be scored — so the assertion is on its verdict AND on its absence from Stage 2.
+  const DUNE_IDS = loadThresholds()['dune'] as { coverageQueryId: number; creationQueryId: number };
+  const GATE = loadThresholds()['stage1_gate'] as { minTokens: number; minCompletionRate: number; minSpanDays: number };
+  const MADEONSOL_FAKE_KEY = 'm'.repeat(32);
+  const COMPETENT = `Wa11etGood${'x'.repeat(28)}`;
+  const HOPELESS = `Wa11etBad${'x'.repeat(29)}`;
+
+  const duneTs = (ms: number) => `${new Date(ms).toISOString().replace('T', ' ').replace('Z', '')} UTC`;
+
+  const freshProbe = (nowMs: number) => {
+    const lastMonth = new Date(nowMs).toISOString().slice(0, 7);
+    return probeRows([
+      {
+        table: 'evt_createevent',
+        first: '2024-04-26 09:55:52.000 UTC',
+        last: duneTs(nowMs - 3_600_000),
+        total: 20_571_130,
+        months: monthsBetween('2024-04', lastMonth),
+      },
+      {
+        table: 'call_create',
+        first: '2024-01-14 12:57:12.000 UTC',
+        last: duneTs(nowMs - 3_600_000),
+        total: 14_145_301,
+        months: monthsBetween('2024-01', lastMonth),
+      },
+    ]);
+  };
+
+  const usageBody = (nowMs: number) => ({
+    billing_periods: [
+      {
+        start_date: new Date(nowMs - 5 * DAY).toISOString().slice(0, 10),
+        end_date: new Date(nowMs + 25 * DAY).toISOString().slice(0, 10),
+        credits_used: 0,
+        credits_included: 4000,
+      },
+    ],
+  });
+
+  /**
+   * `COMPETENT` clears every bar with room to spare; `HOPELESS` launches just as often over just as
+   * long and bonds almost nothing, so it fails on the RATE alone — the bar a wallet-list run is
+   * most likely to be handed a wallet that misses.
+   */
+  const creationRows = (nowMs: number) => {
+    const n = GATE.minTokens * 2;
+    const spread = Math.max(GATE.minSpanDays * 3, 60);
+    /** @param deployer - the wallet @param bonded - how many of its launches completed */
+    const forWallet = (deployer: string, bonded: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        deployer,
+        mint: `${deployer.slice(0, 8)}_${i}`,
+        created_at: duneTs(nowMs - (spread - (i * spread) / n) * DAY),
+        bonded: i < bonded,
+        launches_total: n,
+        is_mayhem_mode: false,
+      }));
+    return [...forWallet(COMPETENT, n), ...forWallet(HOPELESS, 0)];
+  };
+
+  const runListed = async () => {
+    const nowMs = Date.now();
+    const dir = mkdtempSync(join(tmpdir(), 'wl-run-'));
+    const listPath = join(dir, 'from-the-census.txt');
+    writeFileSync(listPath, `# two wallets\n${COMPETENT}\n${HOPELESS}\n`, 'utf8');
+    const out = join(dir, 'run.json');
+    // A TEMPORARY rotation path. Without it the run writes the COMMITTED
+    // `rotation/stage2-scored.json`, and 336a's own reproducibility assertion — that the committed
+    // state is exactly what the committed run records rebuild — turns red for a wallet that exists
+    // only in this file. A test may not move the tool's own memory.
+    const rotation = join(dir, 'rotation.json');
+    const rows = creationRows(nowMs);
+    const seen: string[] = [];
+
+    const fetchImpl = async (url: unknown) => {
+      const target = String(url);
+      seen.push(target);
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+
+      if (target.startsWith(DUNE_API_BASE)) {
+        const path = target.replace(DUNE_API_BASE, '');
+        if (path.startsWith('/usage')) return json(usageBody(nowMs));
+        if (path.startsWith(`/query/${DUNE_IDS.coverageQueryId}/results`)) {
+          return json({
+            result: {
+              rows: freshProbe(nowMs),
+              metadata: { total_row_count: freshProbe(nowMs).length, total_result_set_bytes: 1000 },
+            },
+          });
+        }
+        if (path.startsWith(`/query/${DUNE_IDS.coverageQueryId}`)) return json({ query_sql: COVERAGE_SQL });
+        if (path.startsWith(`/query/${DUNE_IDS.creationQueryId}/execute`)) return json({ execution_id: 'e1' });
+        if (path.startsWith(`/query/${DUNE_IDS.creationQueryId}`)) return json({ query_sql: CREATION_SQL });
+        if (path.startsWith('/execution/e1/status')) return json({ state: 'QUERY_STATE_COMPLETED' });
+        if (path.startsWith('/execution/e1/results')) {
+          return json({
+            result: { rows, metadata: { total_row_count: rows.length, total_result_set_bytes: 50_000 } },
+          });
+        }
+        throw new Error(`unstubbed Dune request ${path}`);
+      }
+
+      if (target.startsWith(BASE_URL)) {
+        const wallet = [COMPETENT, HOPELESS].find((w) => target.includes(w));
+        // Minted seconds ago, so Stage 2's eligibility gate refuses every launch and the scoring
+        // loop reaches a verdict without a single keyless swap-api request. That is still a real
+        // pass THROUGH the scoring loop, which is what the `entry` assertions below read.
+        if (wallet !== undefined) {
+          return json({ pump_tokens: [{ mint: `${wallet}-live`, created_timestamp: nowMs, complete: true }] });
+        }
+        throw new Error(`a listed run must issue NO enumeration request, but asked for ${target}`);
+      }
+
+      if (target.startsWith(FRONTEND_API)) return json([]);
+      if (target.startsWith(PUBLIC_SOLANA_RPC)) return json({ jsonrpc: '2.0', id: 1, result: [] });
+      throw new Error(`unstubbed request ${target}`);
+    };
+
+    vi.stubGlobal('fetch', fetchImpl as unknown as typeof fetch);
+    try {
+      const parsed = parseArgs(['--wallets', listPath, '--json', '--out', out, '--rotation', rotation]);
+      if (!parsed.ok) throw new Error(parsed.message);
+      const errs: string[] = [];
+      const lines: string[] = [];
+      const code = await main(
+        parsed.opts,
+        { [KEY_ENV_VAR]: MADEONSOL_FAKE_KEY, [DUNE_KEY_ENV_VAR]: DUNE_FAKE_KEY },
+        (l) => lines.push(l),
+        (l) => errs.push(l),
+      );
+      expect(errs.join('\n')).toBe('');
+      expect(code).toBe(0);
+      const record = JSON.parse(readFileSync(out, 'utf8')) as Record<string, any>;
+      return { record, seen, listPath, lines };
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  };
+
+  it('gates both listed wallets, rejects the one that fails the bars, and scores only the other', async () => {
+    const { record } = await runListed();
+    const rows = record['candidates'] as Record<string, any>[];
+    expect(rows.map((r) => r['wallet']).sort()).toEqual([COMPETENT, HOPELESS].sort());
+
+    const good = rows.find((r) => r['wallet'] === COMPETENT)!;
+    const bad = rows.find((r) => r['wallet'] === HOPELESS)!;
+
+    // THE ASSERTION 398a REQUIRES. A listed wallet that fails the committed competence bars is
+    // rejected, exactly as a vendor-seeded one is — the list is a SEED, not a bypass.
+    expect(bad['verdict']).toBe('gate-failed');
+    expect(bad['completionRate']).toBeLessThan(GATE.minCompletionRate);
+    // And it never reaches Stage 2. `entry: null` on a gate-failed candidate is what says the
+    // scoring path is downstream of the verdict and not beside it.
+    expect(bad['entry']).toBeNull();
+    expect(bad['entrySource']).toBeNull();
+
+    // The control: the same input shape, a history that clears the bars, and it IS scored — so the
+    // rejection above is the gate working rather than the list failing to reach Stage 2 at all.
+    expect(good['verdict']).toBe('gate-passed');
+    expect(good['entry']).not.toBeNull();
+  }, 60_000);
+
+  it('records WHERE each candidate came from, and the list it came from', async () => {
+    const { record, listPath } = await runListed();
+    const rows = record['candidates'] as Record<string, any>[];
+
+    // Schema 22's candidate row field, on every row, whatever the verdict was.
+    for (const r of rows) {
+      expect(r['candidateSource']).toBe('wallet-list');
+      expect(r['seededBy']).toEqual([`wallet-list:${listPath.split('/').pop()}`]);
+    }
+    expect(record['schemaVersion']).toBe(RECORD_SCHEMA_VERSION);
+
+    // The run-level block, and its OWN key set — pinned here for the reason `scoringRotation`'s is
+    // pinned: `RUN_LEVEL_KEYS_ADDED_BY_SCHEMA[22]` says only that the KEY appears, so without this
+    // the block could lose a field at an unchanged version with everything else still green.
+    const wl = record['walletList'] as Record<string, unknown>;
+    expect(Object.keys(wl).sort()).toEqual(
+      ['path', 'digest', 'label', 'entriesRead', 'wallets', 'seedsIssued', 'isASeed'].sort(),
+    );
+    expect(wl['entriesRead']).toBe(2);
+    expect(wl['wallets']).toBe(2);
+    // STATED rather than inferred from an empty `coverage.seeds`, because an empty seed table also
+    // describes a run whose enumeration failed — two opposite facts under one shape.
+    expect(wl['seedsIssued']).toBe(0);
+    expect(record['coverage']['seeds']).toEqual([]);
+    expect(String(wl['digest'])).toMatch(/^sha256:[0-9a-f]{64}$/);
+    // The constraint travels ON the record, verbatim, so a reader gets it without opening this repo.
+    expect(wl['isASeed']).toBe(WALLET_LIST_IS_A_SEED);
+  }, 60_000);
+
+  it('issues NO enumeration request, and prices the plan as one profile per listed address', async () => {
+    const { record, seen } = await runListed();
+
+    // The cost claim, measured off the requests that were actually issued rather than asserted in
+    // prose: every MadeOnSol request this run made names a wallet, so none of them was a seed query.
+    const keyed = seen.filter((u) => u.startsWith(BASE_URL));
+    expect(keyed).toHaveLength(2);
+    for (const u of keyed) expect(u).toContain('/deployer-hunter/');
+    for (const label of ['recent-bonds', '/alerts', 'leaderboard']) {
+      expect(keyed.some((u) => u.includes(label)), `a listed run must not enumerate (${label})`).toBe(false);
+    }
+    expect(record['keyedRequests']).toBe(2);
+
+    // THE NEW PLAN ARITHMETIC. Seeded: `<enumeration queries> + <candidate cap>`. Listed:
+    // `0 + <addresses>`, and the cap is the list's own length rather than a ceiling the run was
+    // allowed to fall short of — `--candidates` cannot lower it, being refused beside `--wallets`.
+    expect(record['spend']['plannedWorstCaseKeyed']).toBe(2);
+    expect(record['spend']['candidateCap']).toBe(2);
+    expect(record['coverage']['candidateCap']).toBe(2);
+    expect(record['coverage']['droppedByCandidateCap']).toBe(0);
+    expect(record['coverage']['coverageTruncated']).toBe(false);
+  }, 60_000);
+
+  it('moves NO Stage 2 keyless ceiling — the scoring cap and the two per-candidate caps fix it', () => {
+    // The task's own constraint, asserted rather than claimed. Stage 2's keyless worst case is
+    // `maxCandidatesScored x maxLaunchesPerCandidate x maxRequestsPerLaunch` and none of the three
+    // is a function of how many candidates a run gates or of where their addresses came from — so a
+    // listed run cannot move swap-api traffic, whose hosts have no purchased quota and whose
+    // tolerance is unmeasured. The two files this reads are the ones a change would have to touch.
+    const t = loadThresholds()['stage2_entry'] as Record<string, number>;
+    const worstCase = t['maxCandidatesScored']! * t['maxLaunchesPerCandidate']! * t['maxRequestsPerLaunch']!;
+    expect(worstCase).toBeLessThanOrEqual((loadThresholds()['budget'] as Record<string, number>)['maxKeylessRequests']!);
+    // The Stage 2 selection reads the scoring cap and the survivor list, and nothing about the
+    // candidate source reaches it. `candidateSource` is provenance: if it ever appears in a
+    // scoring, ranking or rotation decision, this is the assertion that has to be argued with.
+    // That the field is CARRIED is asserted behaviourally above, off a real run's record; this one
+    // asserts an ABSENCE, which no behavioural test can express. Over the EXECUTABLE half, so
+    // `rank.mjs`'s own typedef for the field — which documents it and reads nothing — is not
+    // mistaken for a use of it.
+    for (const file of ['stage2.mjs', 'entry.mjs', 'rank.mjs', 'rotation.mjs', 'measure.mjs']) {
+      expect(
+        executableHalf(readFileSync(join(TOOL_DIR, file), 'utf8')),
+        `${file} must not read candidateSource — it is provenance, never an input`,
+      ).not.toContain('candidateSource');
+    }
+  });
 });

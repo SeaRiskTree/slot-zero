@@ -395,7 +395,18 @@ export function applyGate(input, t) {
  * @typedef {object} Candidate
  * @property {string} wallet
  * @property {string[]} seededBy  Which enumeration queries surfaced it. Provenance, so a rerun
- *   can tell a leaderboard artefact from a genuinely recurring name.
+ *   can tell a leaderboard artefact from a genuinely recurring name. On a wallet-list run it holds
+ *   one `wallet-list:<file>` label instead.
+ * @property {'vendor-seed' | 'wallet-list'} candidateSource Whether the address came from the
+ *   vendor's own enumeration or from an operator-supplied list (captain decision 398a). **Spelled
+ *   out rather than imported from `seed.mjs` → `CandidateSource`**, which is the union's owner: a
+ *   scoring module may not NAME a vendor module even in a type position, and a JSDoc `import()` of
+ *   one is exactly how a contract typedef stays parked in the module that first wrote it. Same
+ *   treatment `historySource` beside it already gets. Recorded at
+ *   record schema 22 so a later reading can tell the two populations apart — they are not the same
+ *   population, and the listed one is by design the part the vendor never surfaced. It says nothing
+ *   about how the candidate was JUDGED: both go through one gate, and a listed wallet failing the
+ *   bars is rejected exactly as a seeded one is.
  * @property {import('./measure.mjs').CompletionMeasurement} completion The history the gate read.
  * @property {boolean} completionCapped Whether the surface the GATE'S reading came from was page
  *   capped — the ownership listing under `creation-derived`, the vendor profile under

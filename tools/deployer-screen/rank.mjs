@@ -37,6 +37,11 @@
  * @typedef {'gate-passed' | 'gate-unmeasured' | 'gate-failed'} Verdict
  */
 
+// The pure measurement core, and the ONLY runtime edge this module has. It takes the two RAISE-85
+// constants rather than restating them, because a bar written twice is a bar that can be moved once
+// (captain decision 352b; `measure.mjs` → `RAISE_85_SOL_BAR` owns why it does not move at all).
+import { RAISE_85_SOL_BAR, RAISE_85_WINDOW_HOURS } from './measure.mjs';
+
 /**
  * @typedef {object} GateInput
  * @property {import('./measure.mjs').CompletionMeasurement} completion
@@ -79,6 +84,97 @@ export function competenceEmptiedByMayhem(completion) {
 }
 
 /**
+ * Whether the criterion-unreadable exclusion is what left a competence reading with nothing to
+ * measure.
+ *
+ * The sibling of {@link competenceEmptiedByMayhem} and it exists for the same reason: captain
+ * decision 352b removes from BOTH sides a launch RAISE-85 could not be read on, so a deployer none
+ * of whose launches could be read ends with a denominator of zero — and **zero of zero is an absent
+ * measurement, not a failing rate.** Here the point is sharper still, because what emptied the
+ * reading is OUR OWN COVERAGE rather than anything about the deployer, and reading that as 0.0000
+ * is the invisible false rejection this tool exists to remove.
+ *
+ * Narrow in the same way: it fires only where the exclusion actually removed something, so an
+ * ordinarily empty history keeps the `gate-failed` it has always had.
+ *
+ * @param {import('./measure.mjs').CompletionMeasurement} completion
+ * @returns {boolean}
+ */
+export function competenceEmptiedByCriterion(completion) {
+  return completion.criterionUnreadable > 0 && completion.tokens === 0;
+}
+
+/**
+ * Whether the criterion could not be read on SOME of the history — a reading that still holds
+ * launches, and still may not be judged.
+ *
+ * **Deliberately separate from {@link competenceEmptiedByCriterion}, which says something strictly
+ * stronger and is checked first.** This one is the partial case, and it is where the rule that
+ * captain decision 352b states — *an unreadable criterion never rejects a deployer* — was only half
+ * true. A launch the criterion cannot be read on leaves the rate's two sides, but it also leaves
+ * `tokens` and `spanDays`, and those are what `minTokens` and `minSpanDays` are compared against:
+ * so a history of 30 launches with 6 unreadable is judged at 24, and can fail a sample-size or span
+ * bar on launches that left for OUR coverage reason rather than for anything about the deployer.
+ * That failure is `gate-failed`, and on the feed lane a graded wallet is filed in `feed/ledger.json`
+ * and never offered again — the permanent, invisible direction.
+ *
+ * So any unreadable launch makes the whole reading UNMEASURED, on every leg. It is deliberately not
+ * a bar-by-bar correction: `tokens`, `rate` and `spanDays` are three statements about one sample,
+ * and repairing one of them while the others describe a narrower set is the "two quantities through
+ * one number" defect 351 exists to remove.
+ *
+ * **THE OPERATIONAL CONSEQUENCE, WHICH IS BLUNT AND IS THE INTENDED DIRECTION.** ONE missing or
+ * malformed `complete` field anywhere in a candidate's history withholds that candidate's whole
+ * verdict, on every leg — `measure.mjs` → `toTokenRecords` folds a missing field to unreadable, and
+ * any unreadable launch lands here. So if MadeOnSol or pump.fun ever stopped serving `complete` on
+ * ungraduated rows, NO wallet would be queued and the feed would report itself DRY rather than
+ * rejecting anybody.
+ *
+ * **WHAT THAT BUYS, AND WHAT IT DOES NOT — the second half is easy to get wrong and was, once.** It
+ * buys (i) no rejection computed on OUR OWN COVERAGE through the count and span bars, and (ii)
+ * VISIBILITY: the run stops dead rather than quietly filing a population of ordinary rejections, and
+ * `ledger.mjs` → `feedAlarm` names the criterion as the fault rather than leaving an operator to
+ * guess. **The operational tell is exit 9 firing on wallets that plainly have launch records.** On
+ * `screen.mjs` it also buys (iii) a wallet a later run can still judge, because that tool is
+ * stateless between runs — and that is a statement about `screen.mjs` and about nothing else.
+ * **IT DOES NOT BUY RE-OFFERABILITY IN THE FEED.** There an unmeasured wallet is GRADED, written
+ * into `feed/ledger.json` and never offered again, exactly like a `held` one; `ledger.mjs` →
+ * `markWorthARequest` owns that rule and only the pre-filter's own state is ever restored. What the
+ * widening changes on that lane is the label and the alarm, not the permanence.
+ *
+ * @param {import('./measure.mjs').CompletionMeasurement} completion
+ * @returns {boolean}
+ */
+export function competenceCriterionIncomplete(completion) {
+  return completion.criterionUnreadable > 0;
+}
+
+/**
+ * The clause every gate sentence and every verdict rationale appends when RAISE-85 could not be
+ * read on part of the history — captain decision 352b.
+ *
+ * Written once because it is stated in four places and this repo never retro-edits a record: a
+ * candidate row carries these sentences forever, so an overstatement in one of them is permanent.
+ * It claims only what the measurement supports — a count of launches that left the rate, and the
+ * reason they left — and it never reads as a second population, which is the mistake
+ * {@link applyGate}'s mayhem note is written to avoid one exclusion over.
+ *
+ * @param {import('./measure.mjs').CompletionMeasurement} completion
+ * @param {boolean} emptied Whether the exclusion is what left the reading with nothing at all.
+ * @returns {string} Empty when nothing was excluded, so a caller can concatenate unconditionally.
+ */
+export function criterionNoteFor(completion, emptied) {
+  if (completion.criterionUnreadable === 0) return '';
+  return emptied
+    ? ` — the completion criterion (RAISE-85, captain decision 352b) could not be read on any of ` +
+        `the ${completion.criterionUnreadable} launch(es) that reached it, and a launch no surface ` +
+        `could measure is excluded from both sides rather than scored as a failure`
+    : ` — a further ${completion.criterionUnreadable} launch(es) are excluded from both sides ` +
+        `because the completion criterion (RAISE-85, captain decision 352b) could not be read on ` +
+        `them at all, which is OUR coverage and not this deployer's record`;
+}
+
+/**
  * Apply the Stage 1 completion gate.
  *
  * **The three bars read the NON-MAYHEM history** since captain decision 351 — `tokens`, `rate` and
@@ -114,7 +210,10 @@ export function applyGate(input, t) {
         `part of that count`
       : '');
 
-  // NO REASON STATES THE MAYHEM COUNT TWICE, and none of them may read as a SECOND set of launches.
+  // NO REASON STATES EITHER EXCLUSION'S COUNT TWICE, and none of them may read as a SECOND set of
+  // launches. The rule binds the criterion count exactly as it binds the mayhem one: where a
+  // `zeroBlame` clause below already states one of them, that exclusion's note is suppressed in the
+  // same sentence rather than appended after it.
   // "a further N" is what the exclusion removed from a sample that still holds something; where the
   // exclusion emptied the sample there is nothing for it to be further to, and a reader of
   // "0 tokens ... a further 2" totals more launches than the wallet has.
@@ -127,6 +226,15 @@ export function applyGate(input, t) {
           `carry pump.fun's mayhem-mode flag and are excluded from both sides of this rate ` +
           `(captain decision 351)`;
 
+  // Captain decision 352b, and it rides on the SAME sentences rather than on a field beside them,
+  // for the reason 351's note does: these lines are what a later reader quotes out of context, and
+  // a rate measured over part of a history has to say so where it is stated. The two notes are
+  // concatenated and never merged — *not competence evidence* and *nothing could measure this*
+  // answer different questions, and one "unknown" would make the rate unauditable.
+  const emptiedByCriterionToo = competenceEmptiedByCriterion(completion);
+  const criterionNote = criterionNoteFor(completion, emptiedByCriterionToo);
+  const notes = mayhemNote + criterionNote;
+
   if (completion.tokens < t.minTokens) {
     // A zero has to name the party it actually came from. Under the creation-derived reading the
     // vendor can have listed plenty — the merge is what produced the zero — and blaming the vendor
@@ -136,33 +244,41 @@ export function applyGate(input, t) {
     // precedence when it applies, for the same reason: it is where the launches actually went.
     const zeroBlame = emptied
       ? ` (${emptiedByMayhem} — an ABSENT measurement, not a rate of 0)`
-      : input.historySource === 'creation-derived'
-        ? ' (the creation-derived history came out empty — see this candidate\'s `creation` block ' +
-          'for what the walk covered and what the merge did with the ownership listing)'
-        : ' (the vendor listed no tokens with a usable deploy time)';
+      : emptiedByCriterionToo
+        ? ` (the completion criterion (RAISE-85, captain decision 352b) could not be read on any ` +
+          `of the ${completion.criterionUnreadable} launch(es) that reached it, and a launch no ` +
+          `surface could measure is excluded from both sides rather than scored as a failure — an ` +
+          `ABSENT measurement, not a rate of 0)`
+        : input.historySource === 'creation-derived'
+          ? ' (the creation-derived history came out empty — see this candidate\'s `creation` block ' +
+            'for what the walk covered and what the merge did with the ownership listing)'
+          : ' (the vendor listed no tokens with a usable deploy time)';
     reasons.push(
       `sample too small: ${completion.tokens} tokens < ${t.minTokens} required` +
         (completion.tokens > 0 ? '' : zeroBlame) +
-        (emptied ? '' : mayhemNote),
+        (emptied ? criterionNote : emptiedByCriterionToo ? mayhemNote : notes),
     );
   }
   if (!Number.isFinite(completion.rate)) {
     reasons.push(
       emptied
         ? `completion rate is undefined (${emptiedByMayhem} — captain decision 351; this is NOT a ` +
-          `rate of 0 and NOT a rejection, see the verdict)`
-        : 'completion rate is undefined (no usable token records)',
+          `rate of 0 and NOT a rejection, see the verdict)${criterionNote}`
+        : emptiedByCriterionToo
+          ? `completion rate is undefined${criterionNote} — this is NOT a rate of 0 and NOT a ` +
+            `rejection, see the verdict`
+          : 'completion rate is undefined (no usable token records)',
     );
   } else if (completion.rate < t.minCompletionRate) {
     reasons.push(
-      `completion rate ${completion.rate.toFixed(4)} < ${t.minCompletionRate} required${mayhemNote}`,
+      `completion rate ${completion.rate.toFixed(4)} < ${t.minCompletionRate} required${notes}`,
     );
   }
   if (completion.spanDays < t.minSpanDays) {
     reasons.push(
       `history spans ${completion.spanDays.toFixed(1)} days < ${t.minSpanDays} required ` +
         `(a rate earned inside a burst is not a record)` +
-        mayhemNote,
+        notes,
     );
   }
 
@@ -335,6 +451,13 @@ export function applyGate(input, t) {
  * property of the measurement rather than of one call site's plumbing, and a caller that forgot it
  * would emit `gate-failed` on an absent measurement — 227c by accident, permanently and invisibly.
  *
+ * {@link competenceEmptiedByCriterion} and {@link competenceCriterionIncomplete} are checked here
+ * for the same reason and in that order, the emptied one first because its sentence says something
+ * strictly stronger. The partial one is what makes captain decision 352b's rule — *an unreadable
+ * criterion never rejects a deployer* — true on EVERY leg rather than only where a caller happened
+ * to supply a `notMeasured` entry: the unreadable launches leave `tokens` and `spanDays` too, so
+ * `minTokens` and `minSpanDays` could otherwise fail a wallet over OUR coverage.
+ *
  * @param {{ gate: GateResult, completion: import('./measure.mjs').CompletionMeasurement,
  *           capped: boolean, notMeasured?: readonly string[] }} input
  * @returns {{ verdict: Verdict, rationale: string }}
@@ -363,6 +486,65 @@ export function verdictFor(input) {
         `screen.mjs and about nothing else: what the discovery feed ` +
         `does with a gate-unmeasured verdict is ledger.mjs's, and ledger.mjs -> markWorthARequest ` +
         `owns that rule.` +
+        criterionNoteFor(input.completion, false) +
+        (notMeasured.length > 0 ? ` The reading was also incomplete: ${notMeasured.join('; ')}.` : ''),
+    };
+  }
+  // Captain decision 352b's own producer of the same state, and it is checked here for exactly the
+  // reason 351's is: the launches left the gate's own denominator, so this is a property of the
+  // measurement rather than of one call site's plumbing, and a caller that forgot it would emit
+  // `gate-failed` on an absent measurement — permanently and invisibly, and on evidence about OUR
+  // coverage rather than about the deployer.
+  if (competenceEmptiedByCriterion(input.completion)) {
+    return {
+      verdict: 'gate-unmeasured',
+      rationale:
+        `GATE UNMEASURED — this is NOT a rejection and NOT a pass. The completion criterion ` +
+        `could not be read on any of the ${input.completion.criterionUnreadable} launch(es) that ` +
+        `reached it, so there is no rate to compare against the bar. The measure is RAISE-85 — net ` +
+        `quote inflow into a token's own primary market reaching ${RAISE_85_SOL_BAR} ` +
+        `SOL-equivalent over its first ${RAISE_85_WINDOW_HOURS} hours (captain decision 352b) — ` +
+        `and a launch no surface could apply it to is excluded from both sides rather than scored ` +
+        `as a failure, because that would default OUR coverage gap into a rejection. This wallet ` +
+        `is not rejected: it is UNJUDGED. A later SCREEN run over a readable history would judge ` +
+        `it — the screen is stateless between runs — and that is a statement about screen.mjs and ` +
+        `about nothing else: what the discovery feed does with a gate-unmeasured verdict is ` +
+        `ledger.mjs's, and ledger.mjs -> markWorthARequest owns that rule.` +
+        (input.completion.mayhemExcluded > 0
+          ? ` A further ${input.completion.mayhemExcluded} launch(es) had already left this reading ` +
+            `carrying pump.fun's mayhem-mode flag (captain decision 351), and they are NOT part of ` +
+            `the criterion count.`
+          : '') +
+        (notMeasured.length > 0 ? ` The reading was also incomplete: ${notMeasured.join('; ')}.` : ''),
+    };
+  }
+  // The PARTIAL case, and it is third because the two above say something stronger. An unreadable
+  // launch leaves `tokens` and `spanDays` as well as the rate's two sides, so `minTokens` and
+  // `minSpanDays` would otherwise reject a wallet over launches that left for OUR coverage reason.
+  if (competenceCriterionIncomplete(input.completion)) {
+    return {
+      verdict: 'gate-unmeasured',
+      rationale:
+        `GATE UNMEASURED — this is NOT a rejection and NOT a pass. The completion criterion could ` +
+        `not be read on ${input.completion.criterionUnreadable} of the launch(es) in the history ` +
+        `this gate read, and they are excluded from BOTH sides of the rate rather than scored as ` +
+        `failures — which also takes them out of the ${input.completion.tokens} this gate's ` +
+        `sample-size and span bars were compared against. The measure is RAISE-85 — net quote ` +
+        `inflow into a token's own primary market reaching ${RAISE_85_SOL_BAR} SOL-equivalent over ` +
+        `its first ${RAISE_85_WINDOW_HOURS} hours (captain decision 352b) — and a launch no surface ` +
+        `could apply it to is OUR coverage, not this deployer's record, so it may not decide a ` +
+        `verdict in either direction. On what remained the thresholds would have ` +
+        `${input.gate.passed ? 'passed' : 'failed'} this wallet, which is not a result and must not ` +
+        `be quoted as one. It is not rejected: it is UNJUDGED. A later SCREEN run over a readable ` +
+        `history would judge it — the screen is stateless between runs — and that is a statement ` +
+        `about screen.mjs and about nothing else: what the discovery feed does with a ` +
+        `gate-unmeasured verdict is ledger.mjs's, and ledger.mjs -> markWorthARequest owns that ` +
+        `rule.` +
+        (input.completion.mayhemExcluded > 0
+          ? ` A further ${input.completion.mayhemExcluded} launch(es) had already left this reading ` +
+            `carrying pump.fun's mayhem-mode flag (captain decision 351), and they are NOT part of ` +
+            `the criterion count.`
+          : '') +
         (notMeasured.length > 0 ? ` The reading was also incomplete: ${notMeasured.join('; ')}.` : ''),
     };
   }
@@ -397,6 +579,18 @@ export function verdictFor(input) {
       (c.mayhemExcluded > 0
         ? `, on their NON-MAYHEM record — a further ${c.mayhemExcluded} mayhem-mode launch(es) are ` +
           `excluded from both sides of that rate (captain decision 351)`
+        : '') +
+      // NO criterion-unreadable clause here, and it is not an omission: `competenceCriterionIncomplete`
+      // above returns `gate-unmeasured` on any unreadable launch, so GATE-PASSED IMPLIES A FULLY
+      // READABLE CRITERION and a clause for it could never fire.
+      // Captain decision 352b, and on the PASSING sentence for the same reason 351's clause is: a
+      // rate read through pump.fun's graduation flag is an UPPER BOUND on the RAISE-85 rate, and a
+      // reader who quotes this line out of context would otherwise take an estimate for the measure.
+      (c.criterionEstimated > 0
+        ? `. RAISE-85 was ESTIMATED rather than measured on ${c.criterionEstimated} of those ` +
+          `${c.tokens} launch(es), through pump.fun's own graduation flag — every token that ` +
+          `reached 85 SOL graduated, but 0.82% of graduations did not reach it, so this rate is an ` +
+          `UPPER BOUND on the RAISE-85 rate`
         : '') +
       (input.capped ? ', on a TRUNCATED page so older launches exist that this surface hides' : '') +
       `. Competent enough to be worth measuring. NOT a recommendation: whether this deployer ` +
@@ -484,9 +678,32 @@ export function measureConsistency(records, t, historyTruncated = false) {
     'and the token that goes missing is the best one' +
     (historyTruncated ? ', and this walk also stopped at its page cap' : '');
 
-  const usable = records
-    .filter((r) => Number.isFinite(r.deployedAtMs) && r.deployedAtMs > 0)
+  // Captain decision 352b: a launch RAISE-85 could not be READ on leaves this measurement the same
+  // way it leaves the gate's own rate — out of BOTH sides — rather than sitting in an epoch's
+  // denominator with nothing in its numerator. `r.completed` is three-state now, and `if
+  // (r.completed)` below would silently read `null` as a failed launch, which is the one coercion
+  // `measure.mjs` → `completionFlagOf` exists to prevent; here it would manufacture dispersion out
+  // of a coverage gap and could then mark a deployer STREAKY for a walk that came back short.
+  // NOTE what is deliberately NOT done here: 351's mayhem exclusion does not reach this function
+  // and this lane does not extend it. That is a reported note rather than a bar, and widening an
+  // exclusion is a captain decision, not a passing fix.
+  const timestamped = records.filter((r) => Number.isFinite(r.deployedAtMs) && r.deployedAtMs > 0);
+  const usable = timestamped
+    .filter((r) => typeof r.completed === 'boolean')
     .sort((a, b) => a.deployedAtMs - b.deployedAtMs);
+
+  // The exclusion is NAMED rather than merely applied, for the reason `competenceCriterionUnreadable`
+  // exists one measurement over: this note is persisted on the candidate row, and a dispersion figure
+  // computed over a narrowed sample has to say it was narrowed. It rides on the note rather than on a
+  // new field so no consumer's key set moves for it. **This reading walks its OWN history**, so its
+  // count is not the gate's and a gate reading with nothing unreadable does not imply one here.
+  const criterionUnreadable = timestamped.length - usable.length;
+  const criterionNote =
+    criterionUnreadable > 0
+      ? `; ${criterionUnreadable} launch(es) left this reading because the completion criterion ` +
+        `(RAISE-85, captain decision 352b) could not be read on them — excluded from both sides ` +
+        `rather than counted as failures, so this spread is over a NARROWED sample`
+      : '';
 
   /** @param {string} note @returns {ConsistencyResult} */
   const unmeasured = (note) => ({
@@ -497,7 +714,7 @@ export function measureConsistency(records, t, historyTruncated = false) {
     dispersion: Number.NaN,
     streaky: false,
     historyTruncated,
-    note,
+    note: note + criterionNote,
   });
 
   const newest = usable[usable.length - 1];
@@ -511,7 +728,10 @@ export function measureConsistency(records, t, historyTruncated = false) {
     const idx = Math.floor((newest.deployedAtMs - r.deployedAtMs) / epochMs);
     const b = buckets.get(idx) ?? { n: 0, completed: 0 };
     b.n += 1;
-    if (r.completed) b.completed += 1;
+    // `=== true` and not truthiness. `usable` has already dropped the unreadable ones, so this is
+    // belt and braces — and it is exactly the belt captain decision 352b asks for, because the
+    // filter above is one edit away from being moved and this line reads correctly either way.
+    if (r.completed === true) b.completed += 1;
     buckets.set(idx, b);
   }
 
@@ -541,6 +761,7 @@ export function measureConsistency(records, t, historyTruncated = false) {
       (dispersion > t.maxDispersion
         ? `; STREAKY — spread ${dispersion.toFixed(3)} exceeds ${t.maxDispersion}, so the pooled rate is carried by some epochs and not others`
         : `; spread ${dispersion.toFixed(3)} within ${t.maxDispersion}`) +
+      criterionNote +
       lowerBound,
   };
 }

@@ -563,8 +563,93 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `scoringCap.survivorsUnscored` means the same thing across the boundary while the wallets behind
  *   it do not: before 20 the unscored are the list's tail, after it they are whichever were measured
  *   most recently.
+ *
+ * - **21** — **THE COMPLETION MEASURE IS RAISE-85 ON EVERY VENUE, pump.fun INCLUDED** (captain
+ *   decision 352b). `completed` / `completionRate` no longer mean *pump.fun said these graduated*;
+ *   they mean *this many of these tokens' own primary markets took in 85 SOL-equivalent in their
+ *   first 24 hours*. **So a schema-≤20 rate and a schema-21 one are not the same quantity either**,
+ *   and that is now true at two of the last three versions — 19 moved the same quantity and 20 left
+ *   it alone — so read `schemaVersion` before
+ *   pooling any two `completionRate` values from this tool, ever. FOUR candidate row keys —
+ *   `competenceCriterionUnreadable`, `competenceCriterionEstimated`,
+ *   `vendorCompetenceCriterionUnreadable` and `vendorCompetenceCriterionEstimated`;
+ *   `ENTRY_KEYS_BY_SCHEMA[21]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[21]`, `SPEND_KEYS_BY_SCHEMA[21]`,
+ *   `DUNE_KEYS_BY_SCHEMA[21]` and `CREATION_KEYS_BY_SCHEMA[21]` all equal `[20]`.
+ *
+ *   **The measure.** Net quote inflow into a token's own primary market, over its first 24 hours,
+ *   reaching **85 SOL-equivalent**. The constant was read off the data rather than fitted —
+ *   graduating non-mayhem tokens read 85.005 SOL at p50 AND p99 over 157,259 launches — and it has
+ *   **zero token-level false positives**, which is what makes a rate computed from it a LOWER BOUND
+ *   and adoption therefore safe in one direction: measured over 176,200 July-active deployers it
+ *   **promoted zero** deployers over the 0.25 bar and demoted 1,417. `measure.mjs` →
+ *   `RAISE_85_SOL_BAR` owns why the bar is not lowered to buy recall.
+ *
+ *   **THE SEAM WITH 351, which is what these two keys exist to make auditable.** RAISE-85 as a
+ *   definition only ever touches the NUMERATOR — it simply never registers a mayhem graduation,
+ *   which raises a median 0.291 SOL. Had mayhem LAUNCHES stayed in the denominator, a mayhem-heavy
+ *   deployer would run to 0.0000 and be dropped, **which is captain decision 227c and 227c REMAINS
+ *   DECLINED**. So the mayhem exclusion runs FIRST, over the whole history, and the criterion is
+ *   applied only to what it leaves. A row therefore reports the two exclusions apart and they are
+ *   never additive in meaning: `competenceMayhemExcluded` is *not competence evidence*,
+ *   `competenceCriterionUnreadable` is *nothing could measure this*.
+ *
+ *   **What the two new keys are for.** `competenceCriterionUnreadable` is how many launches left
+ *   BOTH sides because RAISE-85 could not be read on them at all — never scored as failures,
+ *   because defaulting our own coverage gap into a rejection is permanent and invisible here. A
+ *   candidate whose whole history reads that way is `gate-unmeasured`, never 0.0000 (`rank.mjs` →
+ *   `competenceEmptiedByCriterion`) — and **so is a candidate with ANY unreadable launch, whatever
+ *   the rest of the history says** (`rank.mjs` → `competenceCriterionIncomplete`), because those
+ *   launches leave `tokens` and `spanDays` as well as the rate, so `minTokens` and `minSpanDays`
+ *   would otherwise reject a wallet over OUR coverage. **A schema-21 row with
+ *   `competenceCriterionUnreadable > 0` therefore carries `verdict: "gate-unmeasured"` and a
+ *   `completionRate` nothing was decided on.** `competenceCriterionEstimated` is how many of the `tokens` that
+ *   REMAIN had RAISE-85 read through pump.fun's own graduation flag rather than measured from trade
+ *   data: **`competenceCriterionEstimated === tokens` means the whole rate is an UPPER BOUND on the
+ *   RAISE-85 rate**, which is what every route this repo has today produces, and without it a reader
+ *   would take an estimate for the measure. `measure.mjs` → `PUMPFUN_GRADUATION_ESTIMATOR` owns what
+ *   that estimator is worth in each direction — its negative is exact, its positive is the bound.
+ *
+ *   **AND THE VENDOR PAIR MOVED TOO, WHICH SCHEMA 19'S NOTE ABOVE SPECIFICALLY SAID 351 COULD NOT
+ *   DO.** `vendorCompleted` / `vendorCompletionRate` are a THIRD quantity at this version: 351 could
+ *   not touch them because the MadeOnSol page carries no mayhem column, but 352b reads the criterion
+ *   off that page's own `complete` field, and `measure.mjs` → `toTokenRecords` folds a missing or
+ *   malformed one to UNREADABLE — so a schema-21 vendor reading drops those rows from both sides
+ *   where a schema-≤20 one counted them as failures. That pair is a GATE INPUT on `--ownership-only`
+ *   runs and in `feed.mjs`, not a bystander field, so **a schema-≤20 `vendorCompletionRate` must not
+ *   be pooled with a schema-21 one either** — and it therefore GETS the two companion counts the
+ *   gate rate has, `vendorCompetenceCriterionUnreadable` and `vendorCompetenceCriterionEstimated`,
+ *   so a reader can see how many vendor rows left both sides and how much of that rate rests on the
+ *   estimator. **There is still no vendor twin of the MAYHEM pair, and that is not an
+ *   inconsistency**: schema 19's reasoning — the page carries no mayhem column, so 351 cannot move
+ *   that rate by construction — holds unchanged; what does not survive 352b is applying it to the
+ *   criterion, which IS read off that page's own `complete` field.
+ *
+ *   **AND THE `consistency` BLOCK MOVED TOO, INDEPENDENTLY OF THE GATE READING.**
+ *   `rank.mjs` → `measureConsistency` drops a criterion-unreadable launch rather than letting `if
+ *   (r.completed)` read it as a FAILED one, which would manufacture dispersion out of a coverage gap
+ *   and could mark a deployer STREAKY for a walk that came back short. So `epochs`, `minEpochRate`,
+ *   `maxEpochRate`, `dispersion` and `streaky` are a different quantity at this version, and **a
+ *   schema-≤20 `dispersion` must not be pooled with a schema-21 one** — the same rule this note
+ *   applies to `completionRate`. **The independence is the trap**: consistency is computed over its
+ *   OWN fresh creator walk, not over the gate's reading, so a gate reading with no unreadable launch
+ *   does NOT imply a consistency reading with none, and this block can move on a wallet that passed.
+ *   No key was added for it: the count that left travels on the block's own `note`, so a consumer's
+ *   key set does not move for a disclosure.
+ *
+ *   **What this version does NOT claim.** Nothing here establishes that the bar is equally strict
+ *   across venues: the same 85 SOL is reached by 0.80% of new pump.fun tokens, 0.25% on Meteora DBC
+ *   and 46.71% on Meteora CPAMM. `measure.mjs` → `CROSS_VENUE_STRICTNESS_UNESTABLISHED` carries
+ *   that, and no record, doc or rendered line here may read as cross-venue comparability.
+ *
+ *   **And it moved no bar and no committed verdict.** `minCompletionRate` stays 0.25; every route
+ *   this repo has reads the criterion through the estimator, whose disagreement with pump.fun's own
+ *   flag is nil by construction, so Stage 0's committed-tape regressions are byte-identical. The
+ *   one behaviour that DID move is the launch neither source could answer for: it was written
+ *   `completed: false` and is `null` now, so it leaves both sides instead of understating the rate.
+ *   Re-deriving the 112, the 58 and the monthly gate populations under the adopted measure is
+ *   `slot-zero-rederive-gate-population-post-351` and is deliberately not done here.
  */
-export const RECORD_SCHEMA_VERSION = 20;
+export const RECORD_SCHEMA_VERSION = 21;
 
 /**
  * The predictions-document contract version, carried inside the document itself.

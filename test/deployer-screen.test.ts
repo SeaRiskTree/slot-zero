@@ -73,9 +73,14 @@ import {
   MAYHEM_NOT_COMPETENCE,
 } from '../tools/deployer-screen/dune.mjs';
 import {
+  CROSS_VENUE_STRICTNESS_UNESTABLISHED,
   CURVE_INITIAL_PRICE_SOL,
   LAMPORTS_PER_SOL,
+  RAISE_85_IS_THE_COMPLETION_MEASURE,
+  RAISE_85_SOL_BAR,
+  RAISE_85_WINDOW_HOURS,
   blockTxIndex,
+  completionFlagOf,
   createSlotGroups,
   mayhemFlagOf,
   measureCompletion,
@@ -84,6 +89,8 @@ import {
   median,
   parseFill,
   percentile,
+  raise85FromPumpfunGraduation,
+  raise85FromQuoteInflow,
   roomIsProven,
   solBetweenPrices,
   tallyCreateSlot,
@@ -92,7 +99,7 @@ import {
   walletTransactions,
 } from '../tools/deployer-screen/measure.mjs';
 import { GRADUATED_LIFE_TAPE_DIR, POPULATION_TAPE_DIR } from '../config/data-root.mjs';
-import type { Fill } from '../tools/deployer-screen/measure.mjs';
+import type { Fill, TokenRecord } from '../tools/deployer-screen/measure.mjs';
 import {
   COVERAGE_ATTRIBUTION_CAVEAT,
   ENTRY_VERDICTS,
@@ -180,6 +187,8 @@ import {
 } from '../tools/deployer-screen/stage0.mjs';
 import {
   applyGate,
+  competenceEmptiedByCriterion,
+  competenceCriterionIncomplete,
   competenceEmptiedByMayhem,
   measureConsistency,
   rankCandidates,
@@ -248,6 +257,7 @@ import {
 } from '../tools/deployer-screen/screen.mjs';
 import {
   LIMITATIONS,
+  renderCompetenceCriterion,
   renderCompetenceMayhem,
   renderDryRun,
   renderEntry,
@@ -1266,6 +1276,49 @@ describe('consistency over time', () => {
 
     // The default must be the safe one, never an implied "complete".
     expect(measureConsistency(records, C).historyTruncated).toBe(false);
+  });
+
+  it('says how many launches the criterion exclusion removed, on both outcomes', () => {
+    // Captain decision 352b: an unreadable launch leaves this reading rather than sitting in an
+    // epoch's denominator as a failure. That narrows the sample, and a dispersion figure computed
+    // over a narrowed sample has to SAY it was narrowed — the same rule
+    // `competenceCriterionUnreadable` keeps one measurement over. The note is persisted on the
+    // candidate row and this repo never retro-edits a record.
+    const readable = Array.from({ length: 60 }, (_, i) => ({
+      deployedAtMs: T0 + i * 1.5 * DAY,
+      completed: i % 2 === 0,
+    }));
+    const withUnreadable: TokenRecord[] = [
+      ...readable,
+      ...Array.from({ length: 4 }, (_, i) => ({
+        deployedAtMs: T0 + (60 + i) * 1.5 * DAY,
+        completed: null,
+      })),
+    ];
+
+    const measured = measureConsistency(withUnreadable, C);
+    expect(measured.state).toBe('measured');
+    expect(measured.note).toMatch(/4 launch\(es\) left this reading/);
+    expect(measured.note).toMatch(/NARROWED sample/);
+    // Stated once, and never as a second population on top of the epochs it reports.
+    expect(measured.note.match(/left this reading/g) ?? []).toHaveLength(1);
+    // The unreadable four are excluded from BOTH sides: they are not counted as failures, so the
+    // spread is the readable history's own.
+    expect(measured.dispersion).toBeCloseTo(measureConsistency(readable, C).dispersion, 10);
+    // A fully readable history says nothing about an exclusion that did not happen.
+    expect(measureConsistency(readable, C).note).not.toMatch(/left this reading/);
+
+    // And the unmeasured outcome carries it too — that is where the exclusion is most likely to be
+    // what emptied the epochs, and the note is the only thing a reader gets there.
+    const tooFew = measureConsistency(
+      [
+        { deployedAtMs: T0, completed: true },
+        { deployedAtMs: T0 + DAY, completed: null },
+      ],
+      C,
+    );
+    expect(tooFew.state).toBe('unmeasured');
+    expect(tooFew.note).toMatch(/1 launch\(es\) left this reading/);
   });
 });
 
@@ -4640,6 +4693,535 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
       expect(text, `${module} must not read the mayhem flag`).not.toMatch(/mayhem/i);
     }
   });
+
+  // ==========================================================================================
+  // CAPTAIN DECISION 352b — RAISE-85 IS THE COMPLETION MEASURE, AND THE SEAM WITH 351
+  // ==========================================================================================
+  //
+  // These sit INSIDE the 351 block on purpose. The hazard 352b creates is not a property of either
+  // decision alone; it is a property of the two composing, and a test for it that lived somewhere
+  // else would be one rename away from nobody noticing that the pair had drifted apart.
+  //
+  // THE HAZARD, stated exactly. RAISE-85 as a DEFINITION only ever touches the NUMERATOR: it simply
+  // never registers a mayhem graduation, which is preceded by a median 0.291 SOL against 85.005 for
+  // a classic curve one. So if mayhem LAUNCHES were left in the denominator while the criterion
+  // decided the numerator, a mayhem-heavy deployer's rate would run to 0.0000 and the gate would
+  // drop them — WHICH IS CAPTAIN DECISION 227c, *excluding mayhem-heavy deployers outright*, AND
+  // 227c REMAINS DECLINED. The two changes must not be allowed to compose into an outcome the
+  // captain declined, and the ORDER of the two filters is the whole of what prevents it.
+  describe('352b: RAISE-85 is the measure, and it must not compose with 351 into 227c', () => {
+    /**
+     * A mayhem-heavy deployer, built the way the hazard actually arrives.
+     *
+     * Every mayhem launch GRADUATED on pump.fun and none of them raised 85 SOL — which is what a
+     * mayhem graduation IS, at 292x cheaper — so under RAISE-85 every one of them is a
+     * not-completed launch. That is the input on which a denominator mistake shows up as 227c.
+     */
+    const mayhemHeavy = (mayhemLaunches: number, ordinary: readonly boolean[]): TokenRecord[] => [
+      ...Array.from({ length: mayhemLaunches }, (_, i) => ({
+        deployedAtMs: Date.UTC(2026, 0, 1 + i),
+        // RAISE-85 does not register a mayhem graduation, so `false` here is the criterion speaking
+        // truthfully about a launch that really did graduate on pump.fun.
+        completed: false,
+        criterion: 'raise-85-quote-sol' as const,
+        mayhem: true,
+      })),
+      // Spread five days apart so the ordinary half clears `minSpanDays` on its own: `spanDays` is
+      // measured over the launches that SURVIVE both exclusions, so a fixture whose non-mayhem half
+      // is a burst would fail this gate for a reason that has nothing to do with the seam.
+      ...ordinary.map((reached, i) => ({
+        deployedAtMs: Date.UTC(2026, 2, 1 + i * 5),
+        completed: reached,
+        criterion: 'raise-85-quote-sol' as const,
+        mayhem: false,
+      })),
+    ];
+
+    it('judges a mayhem-heavy deployer on their NON-MAYHEM record, not at 0.0000 — 227c stays declined', () => {
+      // 30 mayhem launches, all of which graduated on pump.fun and none of which raised 85 SOL,
+      // plus 10 ordinary launches of which 4 reached the bar.
+      const records = mayhemHeavy(30, [true, true, true, true, false, false, false, false, false, false]);
+      const completion = measureCompletion(records);
+
+      // THE CORRECT COMPOSITION: mayhem leaves BOTH sides first, then the criterion scores what is
+      // left. 4 of 10.
+      expect(completion.mayhemExcluded).toBe(30);
+      expect(completion.tokens).toBe(10);
+      expect(completion.completed).toBe(4);
+      expect(completion.rate).toBeCloseTo(0.4, 10);
+
+      // AND THE WRONG ONE, NAMED SO IT CANNOT BE ARRIVED AT BY ACCIDENT. Leaving mayhem launches in
+      // the denominator while RAISE-85 decides the numerator gives 4/40 = 0.1, which fails the
+      // committed 0.25 bar. That is 227c by arithmetic and this assertion is what forbids it.
+      expect(completion.rate).not.toBeCloseTo(4 / 40, 10);
+      const gate = { minTokens: 3, minCompletionRate: 0.25, minSpanDays: 14 };
+      const applied = applyGate({ completion, historySource: 'creation-derived' }, gate);
+      expect(applied.passed, 'a mayhem-heavy deployer with a good non-mayhem record must PASS').toBe(true);
+      expect(verdictFor({ gate: applied, completion, capped: false }).verdict).toBe('gate-passed');
+    });
+
+    it('never lets a mayhem launch be counted as criterion-unreadable — the order of the two filters', () => {
+      // A mayhem launch whose criterion could not be read either. It left the reading BEFORE the
+      // criterion was consulted, so it belongs to 351's count and to no other. Were the order
+      // reversed it would land in `criterionUnreadable`, the two counts would double-count it, and
+      // a reader summing them would over-count this wallet's history.
+      const records: TokenRecord[] = [
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: null, criterion: null, mayhem: true },
+        { deployedAtMs: Date.UTC(2026, 1, 1), completed: true, criterion: 'raise-85-quote-sol', mayhem: false },
+      ];
+      const completion = measureCompletion(records);
+      expect(completion.mayhemExcluded).toBe(1);
+      expect(completion.criterionUnreadable).toBe(0);
+      expect(completion.tokens).toBe(1);
+
+      // The four buckets partition the input exactly, at every input. That is the invariant that
+      // makes the two counts safe to print side by side: they are disjoint, so no reader can
+      // reconstruct a launch count by adding them to `tokens` twice.
+      for (const [dropped, mayhem, unreadable, ok] of [
+        [0, 1, 0, 1],
+        [2, 3, 4, 5],
+        [0, 0, 0, 3],
+      ] as const) {
+        const mixed: TokenRecord[] = [
+          ...Array.from({ length: dropped }, () => ({ deployedAtMs: 0, completed: true, mayhem: false })),
+          ...Array.from({ length: mayhem }, (_, i) => ({
+            deployedAtMs: Date.UTC(2026, 0, 1 + i),
+            completed: true,
+            mayhem: true,
+          })),
+          ...Array.from({ length: unreadable }, (_, i) => ({
+            deployedAtMs: Date.UTC(2026, 1, 1 + i),
+            completed: null,
+            mayhem: false,
+          })),
+          ...Array.from({ length: ok }, (_, i) => ({
+            deployedAtMs: Date.UTC(2026, 2, 1 + i),
+            completed: true,
+            mayhem: false,
+          })),
+        ];
+        const m = measureCompletion(mixed);
+        expect(m.droppedNoTimestamp).toBe(dropped);
+        expect(m.mayhemExcluded).toBe(mayhem);
+        expect(m.criterionUnreadable).toBe(unreadable);
+        expect(m.tokens).toBe(ok);
+        expect(m.droppedNoTimestamp + m.mayhemExcluded + m.criterionUnreadable + m.tokens).toBe(mixed.length);
+      }
+    });
+
+    it('an ALL-mayhem deployer is UNMEASURED under RAISE-85 too, never 0.0000', () => {
+      // The state 351 created, re-checked under the new numerator: every launch graduated on
+      // pump.fun and none raised 85 SOL, so a numerator-only reading would say 0 of 8 = 0.0000 and
+      // reject. Zero of zero is an absent measurement.
+      const completion = measureCompletion(mayhemHeavy(8, []));
+      expect(completion.tokens).toBe(0);
+      expect(completion.completed).toBe(0);
+      expect(completion.rate).toBeNaN();
+      const gate = { minTokens: 3, minCompletionRate: 0.25, minSpanDays: 14 };
+      const applied = applyGate({ completion, historySource: 'creation-derived' }, gate);
+      const { verdict, rationale } = verdictFor({ gate: applied, completion, capped: false });
+      expect(verdict).toBe('gate-unmeasured');
+      expect(rationale).toMatch(/NOT a rejection and NOT a pass/);
+      expect(rationale).toMatch(/227c/);
+    });
+
+    it('when BOTH exclusions empty the reading, the verdict names both and overstates neither', () => {
+      // `verdictFor` checks the mayhem case first, and its sentence says "left with no NON-MAYHEM
+      // launch to read". On its own that would be an overstatement here — there WERE non-mayhem
+      // launches, and what removed them was our own coverage rather than their mayhem flag. So the
+      // criterion clause is appended to that rationale rather than left to a field beside it. These
+      // sentences are persisted on a candidate row and this repo never retro-edits a record, so an
+      // overstatement in one is permanent.
+      const records: TokenRecord[] = [
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: false, criterion: 'raise-85-quote-sol', mayhem: true },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: false, criterion: 'raise-85-quote-sol', mayhem: true },
+        { deployedAtMs: Date.UTC(2026, 0, 3), completed: null, mayhem: false },
+      ];
+      const completion = measureCompletion(records);
+      expect(completion.tokens).toBe(0);
+      expect(completion.mayhemExcluded).toBe(2);
+      expect(completion.criterionUnreadable).toBe(1);
+
+      const gate = { minTokens: 3, minCompletionRate: 0.25, minSpanDays: 14 };
+      const applied = applyGate({ completion, historySource: 'creation-derived' }, gate);
+      const { verdict, rationale } = verdictFor({ gate: applied, completion, capped: false });
+      expect(verdict).toBe('gate-unmeasured');
+      // BOTH counts are stated, and stated as separate populations rather than as one total.
+      expect(rationale).toMatch(/2 launch\(es\)/);
+      expect(rationale).toMatch(/a further 1 launch\(es\)/);
+      expect(rationale).toMatch(/mayhem-mode flag/);
+      expect(rationale).toMatch(/completion criterion \(RAISE-85/);
+      // And the gate's own sentences carry both too, so a reader of `gateReasons` alone is not
+      // sent looking for a truncated walk that is not there.
+      const reasons = applied.reasons.join(' ');
+      expect(reasons).toMatch(/mayhem-mode flag/);
+      expect(reasons).toMatch(/completion criterion/);
+    });
+
+    it('a launch the criterion cannot be READ on leaves BOTH sides and is never scored as a failure', () => {
+      // Four launches, two of which nothing could apply the criterion to. Scoring the unreadable
+      // pair as failures gives 2/4 = 0.5 and clears the bar for the wrong reason; keeping them in
+      // the denominator alone gives the same 0.5 with a denominator nobody measured. Both are
+      // wrong, and the second is the one that quietly rejects: at 1 of 4 readable it would read
+      // 0.25 against a true 1.0.
+      const records: TokenRecord[] = [
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: true, criterion: 'raise-85-quote-sol', mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: true, criterion: 'raise-85-quote-sol', mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 3), completed: null, criterion: null, mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 4), completed: null, mayhem: false },
+      ];
+      const completion = measureCompletion(records);
+      expect(completion.criterionUnreadable).toBe(2);
+      expect(completion.tokens).toBe(2);
+      expect(completion.completed).toBe(2);
+      expect(completion.rate).toBe(1);
+
+      // `null` and a MISSING field are ONE state, which is what `completionFlagOf` is for — the
+      // fourth record above omits `completed` entirely and lands in the same bucket.
+      expect(completionFlagOf(records[3] as TokenRecord)).toBeNull();
+      expect(completionFlagOf(records[0] as TokenRecord)).toBe(true);
+    });
+
+    it('a deployer whose whole history is unreadable is UNMEASURED, not rejected — our coverage, not their record', () => {
+      const records: TokenRecord[] = Array.from({ length: 30 }, (_, i) => ({
+        deployedAtMs: Date.UTC(2026, 0, 1 + i),
+        completed: null,
+        mayhem: false,
+      }));
+      const completion = measureCompletion(records);
+      expect(completion.criterionUnreadable).toBe(30);
+      expect(completion.tokens).toBe(0);
+      expect(completion.rate).toBeNaN();
+      expect(competenceEmptiedByCriterion(completion)).toBe(true);
+      // And NOT attributed to the mayhem exclusion, which removed nothing here.
+      expect(competenceEmptiedByMayhem(completion)).toBe(false);
+
+      const gate = { minTokens: 3, minCompletionRate: 0.25, minSpanDays: 14 };
+      const applied = applyGate({ completion, historySource: 'creation-derived' }, gate);
+      const { verdict, rationale } = verdictFor({ gate: applied, completion, capped: false });
+      expect(verdict).toBe('gate-unmeasured');
+      expect(rationale).toMatch(/NOT a rejection and NOT a pass/);
+      expect(rationale).toMatch(/OUR coverage gap/);
+      // The rejection sentences say which exclusion produced the shortfall, rather than reading as
+      // an ordinary empty history and sending an operator to look for a truncated walk.
+      expect(applied.reasons.join(' ')).toMatch(/completion criterion/);
+      expect(applied.reasons.join(' ')).toMatch(/ABSENT measurement, not a rate of 0/);
+    });
+
+    it('states the bar, refuses to lower it, and keeps the two exclusions nameable apart in prose', () => {
+      // THE BAR DOES NOT MOVE. Lowering it to buy recall destroys the zero-false-positive property
+      // that makes a rate computed from it a lower bound, which is the entire safety argument for
+      // adopting it — at 50 SOL there are already 42 promotions. Pinned as a value, so a lane that
+      // wants to move it has to come here on purpose.
+      expect(RAISE_85_SOL_BAR).toBe(85);
+      expect(RAISE_85_WINDOW_HOURS).toBe(24);
+
+      // The two contract sentences say the things the decision turns on, and they are separate
+      // strings because one is the measure and the other is what the measure does not establish.
+      expect(RAISE_85_IS_THE_COMPLETION_MEASURE).toMatch(/227c/);
+      expect(RAISE_85_IS_THE_COMPLETION_MEASURE).toMatch(/BOTH sides/);
+      expect(RAISE_85_IS_THE_COMPLETION_MEASURE).toMatch(/85 SOL-equivalent/);
+      expect(CROSS_VENUE_STRICTNESS_UNESTABLISHED).toMatch(/NOT ESTABLISHED/);
+      expect(CROSS_VENUE_STRICTNESS_UNESTABLISHED).toMatch(/46\.71%/);
+
+      // AND NO DOCUMENT OR SURFACE THIS LANE TOUCHES MAY CLAIM CROSS-VENUE COMPARABILITY. The
+      // caveat travels with the number rather than living in a document: it is in the standing
+      // limitation block, which reaches every rendered surface AND the run record.
+      const limits = LIMITATIONS.join(' ').replace(/\s+/g, ' ');
+      expect(limits).toMatch(/EQUIVALENT STRICTNESS ACROSS VENUES IS NOT ESTABLISHED/);
+      expect(limits).toMatch(/cross-venue COMPARABILITY is not claimed by it/i);
+      expect(limits).toMatch(/46\.71% on Meteora CPAMM/);
+    });
+
+    it('names the DENOMINATION it judged in, and refuses a SOL figure when the quote asset is unknown', () => {
+      // A SOL-quoted market is judged in SOL against an exact constant.
+      expect(raise85FromQuoteInflow({ quoteIsSol: true, netQuoteInflowSol: 85 })).toEqual({
+        reached: true,
+        criterion: 'raise-85-quote-sol',
+      });
+      expect(raise85FromQuoteInflow({ quoteIsSol: true, netQuoteInflowSol: 84.999 })).toEqual({
+        reached: false,
+        criterion: 'raise-85-quote-sol',
+      });
+
+      // A market quoted in anything else falls back to USD and SAYS SO, because that bar MOVES —
+      // 85 SOL was worth $6,236 to $7,004 across five days, so two launches a week apart are judged
+      // at bars 12% apart and the record has to carry which reading applied.
+      expect(
+        raise85FromQuoteInflow({ quoteIsSol: false, netQuoteInflowUsd: 7000, usdPerSol: 80 }),
+      ).toEqual({ reached: true, criterion: 'raise-85-usd-equivalent' });
+      expect(
+        raise85FromQuoteInflow({ quoteIsSol: false, netQuoteInflowUsd: 6000, usdPerSol: 80 }),
+      ).toEqual({ reached: false, criterion: 'raise-85-usd-equivalent' });
+
+      // THE GUARD, and it is captain decision 295b implemented rather than filed. A pump.fun launch
+      // can be quoted in something other than SOL — `maxxing` `97nnzgv9…` is USDC-quoted and all 384
+      // of its fills return `sol_raw = 0` LEGITIMATELY — so a zero is only ever believed where the
+      // quote asset is KNOWN to be SOL. An unknown quote asset is UNREADABLE, never a 0-SOL raise.
+      expect(raise85FromQuoteInflow({ quoteIsSol: null, netQuoteInflowSol: 0 })).toEqual({
+        reached: null,
+        criterion: null,
+      });
+      expect(raise85FromQuoteInflow({ quoteIsSol: undefined, netQuoteInflowSol: 900 })).toEqual({
+        reached: null,
+        criterion: null,
+      });
+      // And a non-SOL market's SOL figure is not consulted even when one is supplied: that zero is
+      // the artefact, and reading it would be the same defect one currency over.
+      expect(raise85FromQuoteInflow({ quoteIsSol: false, netQuoteInflowSol: 0 })).toEqual({
+        reached: null,
+        criterion: null,
+      });
+      // A USD leg with no price cannot convert an exact SOL bar and refuses rather than guessing.
+      expect(raise85FromQuoteInflow({ quoteIsSol: false, netQuoteInflowUsd: 9e9, usdPerSol: 0 })).toEqual({
+        reached: null,
+        criterion: null,
+      });
+    });
+
+    it('counts how much of a rate is ESTIMATED rather than measured, and says so on the passing sentence', () => {
+      // pump.fun's graduation flag is an ESTIMATOR of RAISE-85, not the measure: its NEGATIVE is
+      // exact (every token that reached 85 SOL graduated, precision 1.0000) and its POSITIVE is an
+      // upper bound (0.82% of graduations did not reach it, recall 0.9918). A rate resting on it
+      // therefore errs towards ACCEPTANCE, which is the direction this gate is set to fail in — and
+      // a reader has to be able to see how much of the rate that is.
+      expect(raise85FromPumpfunGraduation(true)).toEqual({
+        reached: true,
+        criterion: 'pumpfun-graduation-estimator',
+      });
+      expect(raise85FromPumpfunGraduation(null)).toEqual({ reached: null, criterion: null });
+
+      const estimated: TokenRecord[] = Array.from({ length: 8 }, (_, i) => ({
+        deployedAtMs: Date.UTC(2026, 0, 1 + i),
+        ...raise85FromPumpfunGraduation(i < 4),
+        mayhem: false,
+      })).map((r) => ({ deployedAtMs: r.deployedAtMs, completed: r.reached, criterion: r.criterion, mayhem: false }));
+      const completion = measureCompletion(estimated);
+      expect(completion.tokens).toBe(8);
+      expect(completion.criterionEstimated).toBe(8);
+      expect(completion.rate).toBe(0.5);
+
+      const gate = { minTokens: 3, minCompletionRate: 0.25, minSpanDays: 5 };
+      const applied = applyGate({ completion, historySource: 'creation-derived' }, gate);
+      const { verdict, rationale } = verdictFor({ gate: applied, completion, capped: false });
+      expect(verdict).toBe('gate-passed');
+      expect(rationale, 'a passing sentence quoted out of context must say the rate is a bound').toMatch(
+        /UPPER BOUND on the RAISE-85 rate/,
+      );
+
+      // A producer that predates 352b's readers supplies no `criterion` at all, and that counts as
+      // ESTIMATED rather than as measured — the direction that cannot overstate what was read.
+      const unlabelled = measureCompletion([
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: true, mayhem: false },
+      ]);
+      expect(unlabelled.criterionEstimated).toBe(1);
+      // A genuinely measured reading is not counted as an estimate, in either denomination.
+      const measured = measureCompletion([
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: true, criterion: 'raise-85-quote-sol', mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: false, criterion: 'raise-85-usd-equivalent', mayhem: false },
+      ]);
+      expect(measured.criterionEstimated).toBe(0);
+    });
+
+    it('the mayhem-unreadable conjunct still means what schema 19 says, with launches criterion-excluded', () => {
+      // `mayhemExcluded === 0 && mayhemUnreadable === tokens` is the pre-351 reading, and `tokens`
+      // is the POST-criterion count. Counting the unreadable flags over the pre-criterion set would
+      // break that conjunct silently, in the direction that overstates how much of the rate was
+      // checked for mayhem.
+      const completion = measureCompletion([
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: true, criterion: 'raise-85-quote-sol' },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: null },
+        { deployedAtMs: Date.UTC(2026, 0, 3), completed: false, criterion: 'raise-85-quote-sol' },
+      ]);
+      expect(completion.tokens).toBe(2);
+      expect(completion.criterionUnreadable).toBe(1);
+      expect(completion.mayhemExcluded).toBe(0);
+      expect(completion.mayhemUnreadable).toBe(2);
+      expect(completion.mayhemUnreadable).toBe(completion.tokens);
+    });
+
+    it('the rendered line keeps the two exclusions apart and never merges them into one unknown', () => {
+      const completion = measureCompletion([
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: true, criterion: 'raise-85-quote-sol', mayhem: true },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: null, mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 3), completed: true, criterion: 'pumpfun-graduation-estimator', mayhem: false },
+      ]);
+      const mayhemLine = renderCompetenceMayhem(completion, '  ').join('\n');
+      const criterionLine = renderCompetenceCriterion(completion, '  ').join('\n');
+      expect(mayhemLine).toMatch(/1 mayhem launch\(es\) excluded from BOTH sides/);
+      expect(criterionLine).toMatch(/1 launch\(es\) UNREADABLE/);
+      expect(criterionLine).toMatch(/never scored as failures/);
+      expect(criterionLine).toMatch(/UPPER BOUND/);
+      // Two lines, not one: a merged "unknown" would make the rate unauditable in exactly the way a
+      // pre-351 rate was.
+      expect(mayhemLine).not.toBe(criterionLine);
+      expect(mayhemLine).not.toMatch(/RAISE-85/);
+    });
+
+    it('PARTIAL criterion-unreadability is UNMEASURED, never a rejection through the count bars', () => {
+      // 352b option B. The exclusion takes the launches out of `tokens` and `spanDays` as well as
+      // out of the rate, so a history of 30 with 6 unreadable is judged at 24 and would fail
+      // `minTokens` 25 — a rejection earned by OUR coverage, and permanent, because a graded wallet
+      // is filed in feed/ledger.json and never offered again.
+      const day = 86_400_000;
+      const start = Date.UTC(2026, 0, 1);
+      const records: TokenRecord[] = [
+        ...Array.from({ length: 24 }, (_, i) => ({
+          deployedAtMs: start + i * 8 * day,
+          completed: i < 10,
+          criterion: 'pumpfun-graduation-estimator' as const,
+          mayhem: false,
+        })),
+        ...Array.from({ length: 6 }, (_, i) => ({
+          deployedAtMs: start + (24 + i) * 8 * day,
+          completed: null,
+          mayhem: false,
+        })),
+      ];
+      const completion = measureCompletion(records);
+      expect(completion.tokens).toBe(24);
+      expect(completion.criterionUnreadable).toBe(6);
+      expect(competenceEmptiedByCriterion(completion)).toBe(false);
+      expect(competenceCriterionIncomplete(completion)).toBe(true);
+
+      const gate = applyGate(
+        { completion, historySource: 'ownership-only' },
+        { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 },
+      );
+      // The bars themselves still read what they read — the reading is withheld, not repaired.
+      expect(gate.passed).toBe(false);
+      const { verdict, rationale } = verdictFor({ gate, completion, capped: false });
+      expect(verdict).toBe('gate-unmeasured');
+      expect(rationale).toMatch(/NOT a rejection and NOT a pass/);
+      expect(rationale).toMatch(/could not be read on 6 of the launch\(es\)/);
+      expect(rationale).toMatch(/24/);
+      expect(rationale).toMatch(/OUR coverage/);
+      // It must NOT claim the whole history was unreadable — that is the emptied case's sentence.
+      expect(rationale).not.toMatch(/could not be read on any of/);
+      // No mayhem here, so the sentence may not invent a mayhem population.
+      expect(rationale).not.toMatch(/mayhem/);
+
+      // A readable history of the same shape is still decided normally: the guard is narrow.
+      const readable = measureCompletion(
+        Array.from({ length: 30 }, (_, i) => ({
+          deployedAtMs: start + i * 8 * day,
+          completed: i < 10,
+          criterion: 'pumpfun-graduation-estimator' as const,
+          mayhem: false,
+        })),
+      );
+      expect(competenceCriterionIncomplete(readable)).toBe(false);
+      const readableGate = applyGate(
+        { completion: readable, historySource: 'ownership-only' },
+        { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 },
+      );
+      expect(verdictFor({ gate: readableGate, completion: readable, capped: false }).verdict).toBe(
+        'gate-passed',
+      );
+      // And an ordinary shortfall on a fully readable reading still REJECTS — this did not turn the
+      // gate into a machine that never says no.
+      const short = measureCompletion(
+        Array.from({ length: 5 }, (_, i) => ({
+          deployedAtMs: start + i * 8 * day,
+          completed: false,
+          criterion: 'pumpfun-graduation-estimator' as const,
+          mayhem: false,
+        })),
+      );
+      const shortGate = applyGate(
+        { completion: short, historySource: 'ownership-only' },
+        { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 },
+      );
+      expect(verdictFor({ gate: shortGate, completion: short, capped: false }).verdict).toBe(
+        'gate-failed',
+      );
+    });
+
+    it('the EMPTIED sentence still outranks the partial one, and the mayhem one outranks both', () => {
+      // The three-way order is load-bearing: each sentence above says something strictly stronger
+      // than the one below, and a partial sentence printed over an emptied reading would understate
+      // what went missing.
+      const emptiedByCriterion = measureCompletion([
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: null, mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: null, mayhem: false },
+      ]);
+      expect(competenceCriterionIncomplete(emptiedByCriterion)).toBe(true);
+      expect(
+        verdictFor({
+          gate: applyGate({ completion: emptiedByCriterion }, GATE),
+          completion: emptiedByCriterion,
+          capped: false,
+        }).rationale,
+      ).toMatch(/could not be read on any of the 2 launch\(es\) that reached it/);
+
+      const emptiedByMayhem = measureCompletion([
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: true, criterion: 'raise-85-quote-sol', mayhem: true },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: null, mayhem: false },
+      ]);
+      expect(competenceCriterionIncomplete(emptiedByMayhem)).toBe(true);
+      expect(
+        verdictFor({
+          gate: applyGate({ completion: emptiedByMayhem }, GATE),
+          completion: emptiedByMayhem,
+          capped: false,
+        }).rationale,
+      ).toMatch(/no non-mayhem launch to read/);
+    });
+
+    it('a criterion-emptied gate reason states the criterion count ONCE, as the mayhem one does', () => {
+      // The rule the mayhem path already keeps: where `zeroBlame` has stated an exclusion, that
+      // exclusion's note is suppressed in the same sentence rather than appended after it. These
+      // reasons are persisted on the candidate row and in the feed ledger's `shortfalls`, and this
+      // repo never retro-edits a record.
+      const completion = measureCompletion([
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: null, mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: null, mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 3), completed: null, mayhem: false },
+      ]);
+      expect(completion.tokens).toBe(0);
+      expect(completion.criterionUnreadable).toBe(3);
+      const applied = applyGate(
+        { completion, historySource: 'creation-derived' },
+        { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 },
+      );
+      const sample = applied.reasons.find((r) => /sample too small/.test(r))!;
+      expect(sample).toMatch(/completion criterion \(RAISE-85, captain decision 352b\)/);
+      expect(sample).toMatch(/ABSENT measurement, not a rate of 0/);
+      expect(sample.match(/completion criterion \(RAISE-85/g) ?? []).toHaveLength(1);
+      expect(sample.match(/3 launch\(es\) that reached it/g) ?? []).toHaveLength(1);
+      // Never a SECOND population: nothing was left for the unreadable set to be "further" to.
+      expect(sample).not.toMatch(/a further/);
+      // Every other reason still names the exclusion exactly once.
+      for (const reason of applied.reasons) {
+        expect(reason.match(/completion criterion \(RAISE-85/g) ?? [], reason).toHaveLength(1);
+      }
+      expect(verdictFor({ gate: applied, completion, capped: false }).verdict).toBe('gate-unmeasured');
+    });
+
+    it('a criterion-emptied reading is stated UNMEASURED and claims no bound on a rate nobody took', () => {
+      // The headline state 352b creates: every launch that reached the criterion is unreadable, so
+      // `tokens` is 0, `rate` is NaN and `rank.mjs` routes the candidate to `gate-unmeasured`. At
+      // `tokens === 0` the estimated conjunct is vacuously true (0 === 0), so the line must not
+      // reach the UPPER-BOUND wording — there is no rate for it to bound.
+      const completion = measureCompletion([
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: null, mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: null, mayhem: false },
+      ]);
+      expect(completion.tokens).toBe(0);
+      expect(completion.criterionUnreadable).toBe(2);
+      expect(completion.criterionEstimated).toBe(0);
+      const criterionLine = renderCompetenceCriterion(completion, '  ').join('\n');
+      expect(criterionLine).toMatch(/2 launch\(es\)/);
+      expect(criterionLine).toMatch(/UNREADABLE/);
+      expect(criterionLine).toMatch(/never scored as failures/);
+      expect(criterionLine).toMatch(/UNMEASURED/);
+      expect(criterionLine).not.toMatch(/UPPER BOUND/);
+      expect(criterionLine).not.toMatch(/upper bound/);
+      expect(criterionLine).not.toMatch(/ESTIMATED/);
+      // Still one line and still its own: the genuinely-nothing-to-say case keeps returning none.
+      expect(renderCompetenceCriterion(measureCompletion([]), '  ')).toEqual([]);
+    });
+  });
 });
 
 describe('the flag reaches the gate through the RUN, not only through a helper', () => {
@@ -4803,7 +5385,7 @@ describe('the flag reaches the gate through the RUN, not only through a helper',
         creationRow(100 + i, { bonded: true, mayhem: true, total: 40, atMs: base + i * DAY }),
       ),
     ];
-    const { row } = await runScreen({
+    const { record, row } = await runScreen({
       creationRows,
       listing: [],
       profileTokens: [{ mint: 'V1', created_timestamp: base, complete: true }],
@@ -4819,6 +5401,36 @@ describe('the flag reaches the gate through the RUN, not only through a helper',
     // And the pooled reading the exclusion replaced is genuinely a different number, so a call site
     // that stopped handing the flags over could not coincide with this.
     expect(22 / 40).not.toBe(row['completionRate']);
+    // SCHEMA 20, captain decision 352b, read off the SAME written record. The criterion pair sits
+    // beside the mayhem pair and is not additive with it: every one of the 30 launches that reached
+    // the criterion could be read, and every one was read through pump.fun's graduation flag, so
+    // this rate is an upper bound on the RAISE-85 rate and the row is what says so.
+    expect(row['competenceCriterionUnreadable']).toBe(0);
+    expect(row['competenceCriterionEstimated']).toBe(row['tokens']);
+    // AND THE VENDOR TWINS DESCRIBE THE VENDOR PAGE, not the gate reading. 352b moves
+    // `vendorCompletionRate` too — the criterion is read off that page's own `complete` field — so
+    // these two are what let a reader of it see the same thing the gate pair shows. Sourcing them
+    // from `completion` instead would make them 30 here and go unnoticed.
+    expect(row['vendorTokens']).toBe(1);
+    expect(row['vendorCompetenceCriterionUnreadable']).toBe(0);
+    expect(row['vendorCompetenceCriterionEstimated']).toBe(row['vendorTokens']);
+    // The four counts partition the history the gate read, on a real record rather than a fixture.
+    expect(
+      (row['tokens'] as number) +
+        (row['competenceMayhemExcluded'] as number) +
+        (row['competenceCriterionUnreadable'] as number),
+    ).toBe(40);
+    // AND THE CAVEAT REACHES THE WRITTEN RECORD, not only the terminal. 352b adopts ONE bar applied
+    // identically everywhere and establishes nothing about whether it is equally strict on two
+    // venues — the same 85 SOL is reached by 0.80% of new pump.fun tokens against 46.71% on Meteora
+    // CPAMM — and a cheap one-bar reading makes that misreading EASIER to reach for, which is why
+    // the caveat travels with the number instead of living in a document.
+    const written = record as unknown as { schemaVersion: number; limitations: string[] };
+    expect(written.schemaVersion).toBe(21);
+    // The block is wrapped for a terminal, so the assertion reads it as prose rather than as lines.
+    const caveat = written.limitations.join(' ').replace(/\s+/g, ' ');
+    expect(caveat).toMatch(/EQUIVALENT STRICTNESS ACROSS VENUES IS NOT ESTABLISHED/);
+    expect(caveat).toMatch(/cross-venue COMPARABILITY is not claimed by it/i);
   }, 120_000);
 
   it('a REFUSED Dune reading reaches the gate with nothing — the pre-351 reading', async () => {
@@ -4877,6 +5489,11 @@ describe('the flag reaches the gate through the RUN, not only through a helper',
     expect(row['completed']).toBe(12);
     expect(row['competenceMayhemExcluded']).toBe(0);
     expect(row['competenceMayhemUnreadable']).toBe(row['tokens']);
+    // Schema 20: a walk-sourced candidate reads its criterion off the curve state and the ownership
+    // listing, both of which are pump.fun's graduation flag, so the whole rate is ESTIMATED — and
+    // nothing about the refusal made a launch unreadable.
+    expect(row['competenceCriterionUnreadable']).toBe(0);
+    expect(row['competenceCriterionEstimated']).toBe(row['tokens']);
   }, 120_000);
 });
 
@@ -6143,6 +6760,9 @@ const ROTATION_BLOCK_KEYS_20 = [
 ];
 const ROTATION_BLOCK_KEYS_BY_SCHEMA: Record<number, string[]> = {
   20: ROTATION_BLOCK_KEYS_20,
+  // Schema 21 changes what a completion rate MEANS (captain decision 352b) and leaves the
+  // rotation block's own shape alone.
+  21: ROTATION_BLOCK_KEYS_20,
 };
 
 describe('the keyless boundary holds in both directions', () => {
@@ -6256,12 +6876,35 @@ describe('the keyless boundary holds in both directions', () => {
     'competenceMayhemExcluded',
     'competenceMayhemUnreadable',
   ].sort();
-
   // Schema 20 adds NO candidate row field. Captain decision 336a changes WHICH gate survivors the
   // scoring cap is spent on — the least-recently-scored rather than the head of the list — and what
   // it adds is a run-level block naming the state that decided it. A candidate's own row says the
   // same things it said at 19.
   PERSISTED_BY_SCHEMA[20] = [...PERSISTED_BY_SCHEMA[19]!];
+
+  // Schema 21 adds TWO more, and for the same reason one decision later: captain decision 352b
+  // makes the completion measure RAISE-85 on every venue including pump.fun, so `completed` and
+  // `completionRate` are a THIRD quantity — narrower again than schema 19's, and not poolable with
+  // it either. `competenceCriterionUnreadable` is how many launches left BOTH sides because the
+  // criterion could not be read on them at all (never scored as failures — that would default our
+  // own coverage into a rejection); `competenceCriterionEstimated` is how many of the launches that
+  // REMAIN had it read through pump.fun's graduation flag rather than measured, so
+  // `=== tokens` means the whole rate is an upper bound on the RAISE-85 rate.
+  //
+  // They are NOT additive with the mayhem pair and a reader must not sum them: the mayhem exclusion
+  // runs first and over the whole history, the criterion only over what it leaves. That order is
+  // what keeps 351 and 352b from composing into captain decision 227c, which remains DECLINED.
+  PERSISTED_BY_SCHEMA[21] = [
+    ...PERSISTED_BY_SCHEMA[20]!,
+    'competenceCriterionEstimated',
+    'competenceCriterionUnreadable',
+    // The vendor twins, which schema 19 deliberately did NOT have for the mayhem pair: that page
+    // carries no mayhem column, so the vendor rate was unmovable by 351 by construction. 352b moves
+    // it — the criterion is read off the page's own `complete` field — so the vendor rate needs the
+    // same auditability the gate rate has.
+    'vendorCompetenceCriterionEstimated',
+    'vendorCompetenceCriterionUnreadable',
+  ].sort();
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -6380,6 +7023,8 @@ describe('the keyless boundary holds in both directions', () => {
     19: ENTRY_KEYS_14,
     // Schema 20 changes WHICH survivors the scoring cap is spent on, not what a score carries.
     20: ENTRY_KEYS_14,
+    // Schema 21's two new keys are candidate ROW fields — PERSISTED_BY_SCHEMA above.
+    21: ENTRY_KEYS_14,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -6471,6 +7116,10 @@ describe('the keyless boundary holds in both directions', () => {
     // fifth key here.
     19: CREATION_KEYS_15,
     20: CREATION_KEYS_15,
+    // Schema 21 leaves `creation` alone for the same reason 19 did: 352b's two counts are over the
+    // MERGED history the gate read, not over what the enumeration returned, so they are candidate
+    // ROW fields and not further keys here.
+    21: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -6529,6 +7178,7 @@ describe('the keyless boundary holds in both directions', () => {
     18: ENTRY_COVERAGE_KEYS_6,
     19: ENTRY_COVERAGE_KEYS_6,
     20: ENTRY_COVERAGE_KEYS_6,
+    21: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -6605,6 +7255,7 @@ describe('the keyless boundary holds in both directions', () => {
     18: SPEND_KEYS_8,
     19: SPEND_KEYS_8,
     20: SPEND_KEYS_8,
+    21: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -6662,6 +7313,7 @@ describe('the keyless boundary holds in both directions', () => {
     18: DUNE_KEYS_13,
     19: DUNE_KEYS_13,
     20: DUNE_KEYS_13,
+    21: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -6702,6 +7354,7 @@ describe('the keyless boundary holds in both directions', () => {
     18: DUNE_COVERAGE_KEYS_9,
     19: DUNE_COVERAGE_KEYS_9,
     20: DUNE_COVERAGE_KEYS_9,
+    21: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -6729,6 +7382,7 @@ describe('the keyless boundary holds in both directions', () => {
     18: DUNE_COVERAGE_TABLE_KEYS_9,
     19: DUNE_COVERAGE_TABLE_KEYS_9,
     20: DUNE_COVERAGE_TABLE_KEYS_9,
+    21: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -6792,6 +7446,7 @@ describe('the keyless boundary holds in both directions', () => {
     18: ENTRY_SOURCE_AGREEMENT_KEYS_18,
     19: ENTRY_SOURCE_AGREEMENT_KEYS_18,
     20: ENTRY_SOURCE_AGREEMENT_KEYS_18,
+    21: ENTRY_SOURCE_AGREEMENT_KEYS_18,
   };
   // This leg's own Dune meter. It is deliberately NOT folded into the run-level `dune` block: that
   // one bounds an enumeration answering a whole batch in ONE execution, this one bounds a leg
@@ -6816,6 +7471,7 @@ describe('the keyless boundary holds in both directions', () => {
     18: AGREEMENT_DUNE_SPEND_KEYS_18,
     19: AGREEMENT_DUNE_SPEND_KEYS_18,
     20: AGREEMENT_DUNE_SPEND_KEYS_18,
+    21: AGREEMENT_DUNE_SPEND_KEYS_18,
   };
   // And the per-candidate row, which is where the class that can be WRONG lives. The run level only
   // counts these, so a field vanishing here would be invisible to every pin above it.
@@ -6824,6 +7480,7 @@ describe('the keyless boundary holds in both directions', () => {
     18: ENTRY_AGREEMENT_KEYS_18,
     19: ENTRY_AGREEMENT_KEYS_18,
     20: ENTRY_AGREEMENT_KEYS_18,
+    21: ENTRY_AGREEMENT_KEYS_18,
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -6957,7 +7614,12 @@ describe('the keyless boundary holds in both directions', () => {
      */
     const SCORING_IMPORTS: Record<string, string[]> = {
       'measure.mjs': [], // the pure core imports nothing, and must not start
-      'rank.mjs': [],
+      // Captain decision 352b, and this edge was added HERE on purpose, which is what this
+      // allow-list is for. `rank.mjs` states the RAISE-85 bar and window in the sentences it
+      // persists, and it takes them from the pure core rather than restating them: a bar written
+      // twice is a bar that can be moved once. `measure.mjs` imports nothing and reaches no vendor,
+      // so the closure below is unaffected.
+      'rank.mjs': ['measure.mjs'],
       'entry.mjs': ['measure.mjs'],
       'stage0.mjs': ['entry.mjs', 'measure.mjs', 'rank.mjs'],
       // `client.mjs` for the ceiling and transport error types, `record.mjs` for redaction, and the
@@ -8069,9 +8731,20 @@ describe('merging a bounded creation walk with the ownership listing', () => {
     expect(merged.bondedUndecidable).toBe(1);
     expect(merged.bondedFromCurve).toBe(0);
     expect(merged.bondedFromListing).toBe(0);
-    // Still counted as not-bonded so the rate can only be understated — but the reading is now
-    // recognisably unmeasured rather than a confident rejection.
-    expect(merged.records[0]?.completed).toBe(false);
+    // CAPTAIN DECISION 352b MOVED THIS ASSERTION AND THE MOVE IS THE POINT. It used to read
+    // `false` — "counted as not-bonded so the rate can only be understated" — which is a coverage
+    // gap wearing a measurement's clothes, and understating is the permanent, invisible direction.
+    // The completion measure is RAISE-85 now and this launch is one nothing could apply it to, so
+    // it is `null`: UNREADABLE, never the positive claim that its market took in under 85 SOL.
+    expect(merged.records[0]?.completed).toBeNull();
+    expect(merged.records[0]?.criterion).toBeNull();
+    // And `measureCompletion` takes it out of BOTH sides rather than out of the numerator alone —
+    // which is the whole of why `completed: false` was wrong here.
+    const completion = measureCompletion(merged.records);
+    expect(completion.tokens).toBe(0);
+    expect(completion.criterionUnreadable).toBe(1);
+    expect(completion.completed).toBe(0);
+    expect(completion.rate).toBeNaN();
   });
 
   it('reconciles the three bonded-provenance counts with the launch count, always', () => {

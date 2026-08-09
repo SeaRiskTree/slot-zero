@@ -88,7 +88,12 @@ import {
 } from './ledger.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
 import { redactAll, redactVendorIdentifiers } from './record.mjs';
-import { applyGate, verdictFor } from './rank.mjs';
+import {
+  applyGate,
+  competenceCriterionIncomplete,
+  competenceEmptiedByMayhem,
+  verdictFor,
+} from './rank.mjs';
 import { PREFILTER_MIN_DEPLOYED, buildSeedPlan, mergeSeeds, prefilterReason, readSeedResponse } from './seed.mjs';
 import { runStage0 } from './stage0.mjs';
 import { exitForRefusal, loadThresholds, partialOutPath } from './screen.mjs';
@@ -422,12 +427,39 @@ export function triage(profile, gateThresholds) {
   // rejections and the feed dies quietly; graded as unmeasured it is visible per wallet and it
   // trips the run-level alarm. An empty profile and a moved response shape look identical from
   // here, so neither may be recorded as a finding.
+  // WHICH way a reading empties is named from the counts in hand, never asserted. A profile whose
+  // rows all carry a usable `created_timestamp` and no readable `complete` field empties through the
+  // criterion, not through the deploy time, and blaming the deploy time sends an operator looking
+  // for a gap that is not there. The note is persisted in the feed run record and this repo never
+  // retro-edits one, so an overstatement here is permanent.
+  // AND IT STATES ONLY WHAT `verdictFor` DOES NOT — the same "state it once" rule `applyGate` keeps
+  // one module over. The mayhem count and the criterion count are `verdictFor`'s own branches to
+  // state, so this entry carries the deploy-time cause and the nothing-at-all case and stays silent
+  // where repeating would be the whole of its contribution.
+  const emptiedByMayhem = competenceEmptiedByMayhem(completion);
+  /** @type {string[]} */
+  const emptiedBy = [];
+  if (completion.droppedNoTimestamp > 0 && !emptiedByMayhem) {
+    emptiedBy.push(`${completion.droppedNoTimestamp} carried no usable deploy time`);
+  }
+  // A branch of `verdictFor` already reaches `gate-unmeasured` and names the cause, so an entry
+  // adding nothing may be dropped without changing the outcome. Where it adds nothing AND no such
+  // branch fires, it is what makes an empty profile unmeasured rather than failed — so it is pushed.
+  const verdictNamesTheCause = emptiedByMayhem || competenceCriterionIncomplete(completion);
+  // AND THE PREFIX MAY NOT CLAIM A COMPLETE CAUSE IT DOES NOT HAVE. Where `verdictFor` has already
+  // named the criterion count, the deploy-time count is an ADDITIONAL cause and not the emptying
+  // one — "the gate was left no launch record to read: 2 carried no usable deploy time" is false
+  // when 30 more left through the criterion, and it is persisted.
   const notMeasured =
-    completion.tokens === 0
+    completion.tokens === 0 && (emptiedBy.length > 0 || !verdictNamesTheCause)
       ? [
-          "the vendor's profile carried no launch record with a usable deploy time, so the gate had " +
-            'nothing to decide over — an empty deployer and a moved response shape are ' +
-            'indistinguishable from here',
+          (emptiedBy.length === 0
+            ? "the vendor's profile carried no launch record at all"
+            : verdictNamesTheCause
+              ? `a further ${emptiedBy.join('; ')}, on top of the exclusion named above`
+              : `the gate was left no launch record to read: ${emptiedBy.join('; ')}`) +
+            ', so the gate had nothing to decide over — an empty deployer and a moved response ' +
+            'shape are indistinguishable from here',
         ]
       : [];
   const { verdict, rationale } = verdictFor({ gate, completion, capped, notMeasured });
@@ -612,7 +644,8 @@ export async function main(opts, env, out, err, deps = {}) {
   let newPrefiltered = 0;
   /** @type {{ wallet: string, state: string, gateVerdict: string, rationale: string,
    *           tokens: number, completionRate: number, spanDays: number,
-   *           lagDaysAtLeast: number | null, fromBacklog: boolean }[]} */
+   *           criterionUnreadable: number, lagDaysAtLeast: number | null,
+   *           fromBacklog: boolean }[]} */
   const gradedThisRun = [];
 
   const client = new BoundedClient({
@@ -722,6 +755,11 @@ export async function main(opts, env, out, err, deps = {}) {
         tokens: t.completion.tokens,
         completionRate: t.completion.rate,
         spanDays: t.completion.spanDays,
+        // Carried so the run-level alarm can tell an unparseable profile from a history that HELD
+        // launch records and still could not be judged — two different faults with two different
+        // remedies, and the extent of the second is not a third. `ledger.mjs` -> `feedAlarm` owns
+        // the distinction.
+        criterionUnreadable: t.completion.criterionUnreadable,
         // The stored figure, which is measured from FIRST SIGHT of the wallet. Recomputing it
         // against this run's clock would inflate every backlog wallet's lag by its queue latency.
         lagDaysAtLeast: graded.discoveryLagDaysAtLeast,
@@ -811,6 +849,9 @@ export async function main(opts, env, out, err, deps = {}) {
       dryStreakAlarm: feedT.dryStreakAlarm,
       gated: row.gated,
       unmeasured: row.unmeasured,
+      unmeasuredWithRecords: gradedThisRun.filter(
+        (g) => g.state === 'unmeasured' && g.criterionUnreadable > 0,
+      ).length,
     });
 
     saveLedger(resolve(opts.ledger), ledger, new Date().toISOString());

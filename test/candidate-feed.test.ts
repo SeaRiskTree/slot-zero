@@ -491,6 +491,44 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
     });
     expect(alarm.alarmed).toBe(true);
     expect(alarm.reasons.join(' ')).toMatch(/ALL 2 wallet\(s\) gated this run/);
+    expect(alarm.reasons.join(' ')).toMatch(/no readable launch record/);
+    expect(alarm.reasons.join(' ')).toMatch(/profile shape having moved/);
+  });
+
+  it('does not claim "no readable launch record" when the wallets plainly had them', () => {
+    // Captain decision 352b routes a wallet to unmeasured whenever the completion criterion could
+    // not be read on PART of its history, so a profile with 29 readable records and one missing
+    // `complete` now reaches this alarm. Claiming it carried nothing readable — and sending the
+    // operator to `toTokenRecords` or to a wider source — is wrong on both counts, and the feed run
+    // record is never retro-edited. The TRIGGER is unchanged; only the claim is.
+    const all = feedAlarm({
+      seeds: healthySeeds,
+      dryStreak: 0,
+      dryStreakAlarm: 3,
+      gated: 3,
+      unmeasured: 3,
+      unmeasuredWithRecords: 3,
+    });
+    expect(all.alarmed).toBe(true);
+    const allText = all.reasons.join(' ');
+    expect(allText).toMatch(/DID carry launch records that parsed/);
+    expect(allText).toMatch(/completion criterion \(RAISE-85/);
+    expect(allText).toMatch(/'complete'/);
+    expect(allText).not.toMatch(/came back with no readable launch record/);
+    expect(allText).not.toMatch(/profile shape having moved/);
+
+    // Mixed: both faults are named and neither count is overstated.
+    const mixed = feedAlarm({
+      seeds: healthySeeds,
+      dryStreak: 0,
+      dryStreakAlarm: 3,
+      gated: 5,
+      unmeasured: 5,
+      unmeasuredWithRecords: 2,
+    });
+    const mixedText = mixed.reasons.join(' ');
+    expect(mixedText).toMatch(/2 DID carry launch records that parsed/);
+    expect(mixedText).toMatch(/other 3 carried no readable launch record at all/);
   });
 
   it('counts the streak over LIVE runs only', () => {
@@ -585,6 +623,94 @@ describe('a failure on the cheap reading is HELD, never rejected', () => {
     expect(t.gateVerdict).toBe('gate-unmeasured');
     expect(triage(null, GATE).state).toBe('unmeasured');
     expect(triage({ unexpected: 'shape' }, GATE).state).toBe('unmeasured');
+  });
+
+  it('a partly-unreadable profile is UNMEASURED, never HELD on the count bars', () => {
+    // 352b option B, on the leg where a wrong answer is permanent: `held` files the wallet in
+    // feed/ledger.json and it is never offered as new again. 30 vendor rows, 6 of them carrying no
+    // readable `complete` field, leaves 24 against a minTokens of 25 — a rejection produced by our
+    // own coverage rather than by anything in the deployer's record.
+    const readable = profile(24, 10, 160).pump_tokens;
+    const unreadable = Array.from({ length: 6 }, (_, i) => ({
+      created_timestamp: T0 - DAY + (i + 1) * DAY,
+    }));
+    const t = triage({ pump_tokens: [...readable, ...unreadable] }, GATE);
+    expect(t.completion.tokens).toBe(24);
+    expect(t.completion.criterionUnreadable).toBe(6);
+    expect(t.state).toBe('unmeasured');
+    expect(t.gateVerdict).toBe('gate-unmeasured');
+    expect(t.rationale).toMatch(/could not be read on 6 of the launch\(es\)/);
+
+    // The same page with every `complete` readable is still triaged the ordinary way.
+    const allReadable = triage(profile(30, 12, 160), GATE);
+    expect(allReadable.completion.criterionUnreadable).toBe(0);
+    expect(allReadable.state).toBe('queued');
+  });
+
+  it('names the exclusion that actually emptied the reading, not the deploy time', () => {
+    // Captain decision 352b: a missing or malformed `complete` field folds to UNREADABLE, so a
+    // profile whose rows all carry a perfectly usable `created_timestamp` can still reach zero
+    // tokens through the criterion. The rationale is persisted in the feed run record and this
+    // repo never retro-edits one, so blaming the deploy time there is permanently wrong and sends
+    // an operator looking for a gap that is not there.
+    const rows = Array.from({ length: 30 }, (_, i) => ({
+      created_timestamp: T0 - DAY - (29 - i) * 5 * DAY,
+    }));
+    const t = triage({ pump_tokens: rows }, GATE);
+    expect(t.state).toBe('unmeasured');
+    expect(t.gateVerdict).toBe('gate-unmeasured');
+    expect(t.completion.tokens).toBe(0);
+    expect(t.completion.droppedNoTimestamp).toBe(0);
+    expect(t.completion.criterionUnreadable).toBe(30);
+    expect(t.rationale).toMatch(/completion criterion could not be read/);
+    expect(t.rationale).toMatch(/RAISE-85/);
+    expect(t.rationale).toMatch(/30/);
+    expect(t.rationale).not.toMatch(/no launch record with a usable deploy time/);
+    expect(t.rationale).not.toMatch(/carried no usable deploy time/);
+
+    // And the deploy-time cause is still named where it IS the cause.
+    const noTimes = triage({ pump_tokens: [{ complete: true }, { complete: false }] }, GATE);
+    expect(noTimes.state).toBe('unmeasured');
+    expect(noTimes.completion.droppedNoTimestamp).toBe(2);
+    expect(noTimes.rationale).toMatch(/2 carried no usable deploy time/);
+    expect(noTimes.rationale).not.toMatch(/completion criterion/);
+  });
+
+  it('states the criterion count ONCE in a persisted rationale, as the gate reasons do', () => {
+    // The house rule, third application: `verdictFor`'s own branch names the criterion count, so
+    // triage's `notMeasured` entry may not restate it. These rationales are persisted in the feed
+    // run record and this repo never retro-edits one.
+    const rows = Array.from({ length: 30 }, (_, i) => ({
+      created_timestamp: T0 - DAY - (29 - i) * 5 * DAY,
+    }));
+    const t = triage({ pump_tokens: rows }, GATE);
+    expect(t.state).toBe('unmeasured');
+    expect(t.rationale.match(/completion criterion/g) ?? []).toHaveLength(1);
+    expect(t.rationale.match(/30/g) ?? []).toHaveLength(1);
+    expect(t.rationale).not.toMatch(/The reading was also incomplete/);
+
+    // A cause the verdict does NOT state still travels: deploy time beside an unreadable criterion.
+    const mixed = triage(
+      { pump_tokens: [...rows, { complete: true }, { complete: false }] },
+      GATE,
+    );
+    expect(mixed.completion.droppedNoTimestamp).toBe(2);
+    expect(mixed.state).toBe('unmeasured');
+    expect(mixed.rationale).toMatch(/2 carried no usable deploy time/);
+    expect(mixed.rationale.match(/completion criterion/g) ?? []).toHaveLength(1);
+    // ...and it travels as an ADDITIONAL cause, never as the emptying one. 30 more launches left
+    // through the criterion, so "the gate was left no launch record to read: 2 carried no usable
+    // deploy time" would assert a complete cause the counts do not support.
+    expect(mixed.rationale).toMatch(/a further 2 carried no usable deploy time/);
+    expect(mixed.rationale).not.toMatch(/left no launch record to read: 2 carried/);
+    // The deploy-time-only case still states it as the cause, because there it is one.
+    const noTimesOnly = triage({ pump_tokens: [{ complete: true }, { complete: false }] }, GATE);
+    expect(noTimesOnly.rationale).toMatch(/left no launch record to read: 2 carried/);
+
+    // And an empty profile is STILL unmeasured — the entry that produces that state is not
+    // suppressed, because no other branch would fire.
+    expect(triage({ pump_tokens: [] }, GATE).state).toBe('unmeasured');
+    expect(triage({ pump_tokens: [] }, GATE).rationale).toMatch(/no launch record at all/);
   });
 });
 
@@ -845,6 +971,41 @@ describe('the feed end to end', () => {
     // A reader with no version cannot tell a disarmed run from a record written before the field.
     expect(read(disarmedPath).schemaVersion).toBe(FEED_RECORD_SCHEMA_VERSION);
     expect(FEED_RECORD_SCHEMA_VERSION).toBeGreaterThanOrEqual(2);
+  });
+
+  it('blames the vendor field, not our parser, when every profile parsed and no `complete` did', async () => {
+    // The scenario FEED.md, README.md and `competenceCriterionIncomplete` all name as the tell: the
+    // vendor stops serving `complete`, so every deployer's whole readable history is
+    // criterion-unreadable and lands at `tokens === 0`. The rows PARSED and the deploy times were
+    // fine, so blaming `toTokenRecords` or a wider source sends an operator to the wrong place —
+    // and the alarm reason is persisted in the feed run record, which is never retro-edited.
+    const noFlag = (n: number) => ({
+      pump_tokens: Array.from({ length: n }, (_, i) => ({
+        created_timestamp: T0 - DAY - (n - 1 - i) * 5 * DAY,
+      })),
+    });
+    const outPath = join(dir, 'criterion.json');
+    const { fetchImpl } = vendor(
+      { 'recent-bonds': ['Wa', 'Wb'] },
+      { Wa: noFlag(30), Wb: noFlag(30) },
+    );
+    const code = await main(opts({ gate: 2, out: outPath, json: true }), env, () => {}, () => {}, {
+      fetchImpl,
+      sleepImpl,
+    });
+
+    // The TRIGGER is unchanged: every gated wallet unmeasured still exits 9.
+    expect(code).toBe(9);
+    const record = JSON.parse(readFileSync(outPath, 'utf8')) as {
+      alarm: { alarmed: boolean; reasons: string[] };
+    };
+    expect(record.alarm.alarmed).toBe(true);
+    const text = record.alarm.reasons.join(' ');
+    expect(text).toMatch(/DID carry launch records that parsed/);
+    expect(text).toMatch(/'complete'/);
+    expect(text).not.toMatch(/came back with no readable launch record/);
+    expect(text).not.toMatch(/profile shape having moved/);
+    expect(text).not.toMatch(/toTokenRecords/);
   });
 
   it("the cadence filter's reported cost counts only wallets the gate could still have spent on", async () => {

@@ -115,6 +115,7 @@ import {
   serialiseRotation,
 } from './rotation.mjs';
 import {
+  renderCompetenceCriterion,
   renderCompetenceMayhem,
   renderDryRun,
   renderMayhemShare,
@@ -2600,8 +2601,9 @@ export async function main(opts, env, out, err, seam = {}) {
         if (merged.bondedUndecidable > 0) {
           notMeasured.push(
             `${merged.bondedUndecidable} of ${merged.records.length} launch(es) have no bonded ` +
-              `status from EITHER source — the bonding-curve account could not be read and the ` +
-              `ownership listing has no row for them (which is what a hidden launch looks like)`,
+              `status from EITHER source — the bonding-curve account could not be read, and the ` +
+              `ownership listing either has no row for them (which is what a hidden launch looks ` +
+              `like) or carries no readable completion flag on the row it does have`,
           );
           // The run level too, not only the candidate row. A record whose `unmeasured` reads empty
           // and `truncated` reads false has told its reader it measured everything, and a wallet
@@ -2707,6 +2709,7 @@ export async function main(opts, env, out, err, seam = {}) {
           // gate reading, not only 227a's enumeration-wide share — an operator watching a run is
           // the reader most likely to take the share for the gate's own denominator.
           for (const line of renderCompetenceMayhem(completion, '      ')) out(line);
+          for (const line of renderCompetenceCriterion(completion, '      ')) out(line);
           for (const r of duneFallbackReasons) out(`      ^ DUNE READING REFUSED, walked instead: ${r}`);
           if (notMeasured.length > 0) {
             out(`      ^ READING NOT MEASURED — verdict ${verdict}, not a rejection: ${notMeasured.join('; ')}`);
@@ -3446,6 +3449,23 @@ function toRecordRow(c, run) {
     // so `vendorCompletionRate` is unmovable by 351 by construction rather than by measurement.
     competenceMayhemExcluded: c.completion.mayhemExcluded,
     competenceMayhemUnreadable: c.completion.mayhemUnreadable,
+    // Schema 20, captain decision 352b. `completed`/`completionRate` above are RAISE-85 now — net
+    // quote inflow reaching 85 SOL-equivalent in 24 hours — on every venue including pump.fun, and
+    // these two are what let a reader tell how much of that rate was actually MEASURED.
+    //
+    // They sit BESIDE the mayhem pair and are never additive with it, because the two exclusions
+    // answer different questions: a mayhem launch is *not competence evidence* (351) and left
+    // before the criterion was consulted; a criterion-unreadable launch is *nothing could measure
+    // this* (352b) and left because scoring it as a failure would default our own coverage gap into
+    // a rejection. Merging them into one "unknown" would make this rate unauditable in exactly the
+    // way a pre-351 one was.
+    //
+    // `competenceCriterionEstimated === tokens` says the WHOLE rate is an upper bound on the
+    // RAISE-85 rate, read through pump.fun's graduation flag rather than measured from trade data.
+    // That is every route this repo has today, which is precisely why it has to be on the row: a
+    // reader who cannot see it takes an estimate for the measure.
+    competenceCriterionUnreadable: c.completion.criterionUnreadable,
+    competenceCriterionEstimated: c.completion.criterionEstimated,
     vendorPageCapped: c.vendorPageCapped,
     gateReadingPageCapped: c.completionCapped,
     historySource: c.historySource,
@@ -3458,6 +3478,16 @@ function toRecordRow(c, run) {
       ? Number(c.vendorCompletion.rate.toFixed(6))
       : null,
     vendorSpanDays: Number(c.vendorCompletion.spanDays.toFixed(2)),
+    // Schema 20, and the criterion pair DOES get vendor twins where the mayhem pair deliberately
+    // does not. Schema 19's reasoning was that the MadeOnSol page carries no mayhem column, so that
+    // rate was unmovable BY CONSTRUCTION; it does not survive 352b, because the page carries
+    // `complete` and `measure.mjs` -> `toTokenRecords` folds a missing or malformed one to
+    // UNREADABLE — so vendor rows leave both sides here where a schema-<=19 reading scored them as
+    // failures. Without these two a reader of `vendorCompletionRate` cannot see how many rows were
+    // dropped or how much of it rests on the estimator, which is the exact auditability the gate
+    // pair above exists to give.
+    vendorCompetenceCriterionUnreadable: c.vendorCompletion.criterionUnreadable,
+    vendorCompetenceCriterionEstimated: c.vendorCompletion.criterionEstimated,
     vendorVerdict: c.vendorVerdict,
     // Only a MEASURED gate verdict can differ from the vendor's. `gate-unmeasured` is not a
     // different answer to the same question, it is the absence of one, and recording it as a

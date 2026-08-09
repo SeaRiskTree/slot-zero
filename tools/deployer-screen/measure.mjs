@@ -633,9 +633,220 @@ export function walletTransactions(fills, wallets, slot) {
 }
 
 /**
+ * The bar, in SOL, and it is exact in that unit.
+ *
+ * **RAISE-85** — *net quote inflow into a token's own primary market, over its first
+ * {@link RAISE_85_WINDOW_HOURS} hours, reaching this many SOL-equivalent* — is what
+ * {@link TokenRecord.completed} means since captain decision 352b. The constant was READ OFF THE
+ * DATA rather than fitted: over the 157,259 pump.fun launches created 2026-07-01→05, graduating
+ * non-mayhem tokens read **85.005 SOL at p50 AND at p99, to three decimals**, so the distribution
+ * has no shoulder to place a bar on — 85 is the edge of a step.
+ *
+ * **DO NOT LOWER IT TO BUY RECALL.** The property that makes this measure usable is that it has
+ * **zero token-level false positives** against 108,310 non-graduating tokens, which is what makes
+ * a rate computed from it a LOWER BOUND on the real one, which is in turn why adopting it can only
+ * ever refuse a deployer and never promote one. At 50 SOL that property is already gone — 42
+ * promotions — and a measure that can promote is no longer a lower bound, so the safety argument
+ * for adopting it at all evaporates with it. (Captain decision 352b, and
+ * `slot-zero-offlaunchpad-graduation-criterion` → `report.md` §§2.2, 3 and 8.2, held in firstmate's
+ * records, not in this repo — see `CLAUDE.md` → "Citing a report this repo does not hold".)
+ */
+export const RAISE_85_SOL_BAR = 85;
+
+/** The window the inflow is accumulated over, from the token's own mint. */
+export const RAISE_85_WINDOW_HOURS = 24;
+
+/**
+ * The one sentence that says what the completion measure IS, and it is printed once per run.
+ *
+ * Captain decision 352b adopts RAISE-85 as **the** completion measure on every venue **including
+ * pump.fun**, replacing pump.fun's own graduation flag as the definition. One yardstick for every
+ * deployer: the two halves of that decision cannot be separated, because adopting a venue-agnostic
+ * criterion off-launchpad while pump.fun kept its native reading would leave pump.fun deployers a
+ * ~46% graduation credit no off-launchpad deployer could earn.
+ *
+ * `render.mjs` prints this verbatim beside the gate's inputs, the same way
+ * `dune.mjs` → `MAYHEM_NOT_COMPETENCE` is printed, because a rate sitting next to a bar has to say
+ * which quantity it is.
+ */
+export const RAISE_85_IS_THE_COMPLETION_MEASURE =
+  'CAPTAIN DECISION 352b: the completion measure is RAISE-85 — net quote inflow into a token\'s ' +
+  `own primary market, over its first ${RAISE_85_WINDOW_HOURS} hours, reaching ` +
+  `${RAISE_85_SOL_BAR} SOL-equivalent — on EVERY venue, pump.fun included, replacing pump.fun's ` +
+  'own graduation flag as the definition. One yardstick for every deployer. It has zero ' +
+  'token-level false positives, so a rate computed from it is a LOWER BOUND and adopting it can ' +
+  'only ever refuse a deployer, never promote one; the bar is not to be lowered to buy recall, ' +
+  'because at 50 SOL that property is already gone. THE MAYHEM EXCLUSION RUNS FIRST AND IS ' +
+  'UNCHANGED (captain decision 351): a mayhem launch leaves BOTH sides of the rate before this ' +
+  'criterion is applied to anything, because RAISE-85 never registers a mayhem graduation and ' +
+  'leaving those launches in the denominator would drive a mayhem-heavy deployer to 0.0000 — ' +
+  'which is captain decision 227c, and 227c REMAINS DECLINED. A launch this criterion cannot be ' +
+  'READ on leaves both sides too and is counted apart, because a criterion no surface could ' +
+  'apply is not a failed launch.';
+
+/**
+ * What this measure does NOT establish, and it travels with every reading rather than living in a
+ * document.
+ *
+ * The same 85-SOL bar is reached by **0.80%** of new pump.fun tokens, **0.25%** on Meteora DBC and
+ * **46.71%** on Meteora CPAMM. Those three numbers are not a ranking of the venues' deployers; they
+ * are three different populations of token meeting one absolute capital bar, and nothing here
+ * separates "this venue attracts more capital per token" from "this venue's tokens are counted
+ * differently". So **equivalent strictness across venues is NOT established** and no document,
+ * record or rendered line this repo writes may claim cross-venue comparability.
+ * `slot-zero-cross-venue-strictness-measure` owns that question (held in firstmate's records, not
+ * in this repo).
+ *
+ * What IS established is narrower and is the whole of what 352b rests on: one bar, applied
+ * identically everywhere, with zero token-level false positives on the venue it was measured on.
+ */
+export const CROSS_VENUE_STRICTNESS_UNESTABLISHED =
+  'EQUIVALENT STRICTNESS ACROSS VENUES IS NOT ESTABLISHED: the same 85-SOL bar is reached by ' +
+  '0.80% of new pump.fun tokens, 0.25% on Meteora DBC and 46.71% on Meteora CPAMM, and nothing ' +
+  'measured here separates a venue that attracts more capital per token from a venue whose tokens ' +
+  'are counted differently. One bar applied identically everywhere is what 352b adopts; ' +
+  'cross-venue COMPARABILITY is not claimed by it and must not be claimed from it. ' +
+  '(slot-zero-cross-venue-strictness-measure owns the question; it is held in firstmate\'s ' +
+  'records, not in this repo.)';
+
+/**
+ * What pump.fun's own graduation flag is worth as a stand-in for RAISE-85, in both directions.
+ *
+ * Measured over the 157,259 pump.fun launches created 2026-07-01→05: RAISE-85 predicts classic
+ * curve graduation at **precision 1.0000** (zero false positives against 108,310 non-graduating
+ * tokens) and **recall 0.9918**. Read that as a set relation and it is exact:
+ *
+ * - **Every token that reached 85 SOL graduated.** So `graduated === false` is a PROOF that
+ *   RAISE-85 was not reached — the estimator's negative is exact, not an estimate.
+ * - **0.82% of graduations did not reach 85 SOL.** So `graduated === true` is an UPPER BOUND on
+ *   RAISE-85 — the estimator's positive can be wrong, and only in the direction that reads a rate
+ *   HIGH.
+ *
+ * A rate resting on it is therefore an upper bound on the RAISE-85 rate, which errs towards
+ * ACCEPTANCE — the direction this gate is deliberately set to fail in, because a false rejection
+ * here is permanent and invisible (the wallet is graded, filed in `feed/ledger.json` and never
+ * offered again) while a false acceptance costs Stage 2 keyless requests and is then refused by
+ * `stage2_entry.minRoomLeft`. {@link CompletionMeasurement.criterionEstimated} is how a reader sees
+ * how much of a rate rests on it.
+ *
+ * **THE ONE PLACE IT IS NOT AN UPPER BOUND IS A MAYHEM LAUNCH, AND THAT IS WHY THE ORDER OF
+ * OPERATIONS IS LOAD-BEARING.** A mayhem graduation is preceded by a median **0.291 SOL**, so
+ * `graduated === true` there is not 0.82% wrong, it is 292x wrong. Captain decision 351 removes a
+ * known-mayhem launch from both sides *before* {@link measureCompletion} applies any criterion, so
+ * the estimator is only ever asked about launches the measurement above was taken on. Where the
+ * mayhem flag itself is UNREADABLE the estimator can still be asked about a mayhem launch and read
+ * it high — that is a stated residual, it runs towards acceptance, and
+ * {@link CompletionMeasurement.mayhemUnreadable} is what makes it visible.
+ */
+export const PUMPFUN_GRADUATION_ESTIMATOR =
+  'READ THROUGH pump.fun\'s own graduation flag, which is an ESTIMATOR of RAISE-85 and not the ' +
+  'measure itself: every token that reached 85 SOL graduated (precision 1.0000 against 108,310 ' +
+  'non-graduating tokens), so a NOT-graduated launch is proof the bar was not reached, while ' +
+  '0.82% of graduations did not reach it (recall 0.9918), so a graduated launch is an UPPER BOUND. ' +
+  'A rate resting on this estimator is therefore an upper bound on the RAISE-85 rate and errs ' +
+  'towards ACCEPTANCE, which is the direction this gate is deliberately set to fail in. It is ' +
+  'asked only about launches the mayhem exclusion has already kept, because on a mayhem launch it ' +
+  'is not 0.82% wrong but 292x wrong.';
+
+/**
+ * How a launch's RAISE-85 reading was arrived at, and in which unit the bar was applied.
+ *
+ * Recorded per launch rather than inferred per run, because a single history legitimately mixes
+ * them: a SOL-quoted launch is judged in SOL against an exact constant, a USDC-quoted one has to be
+ * judged in USD against a constant that MOVES, and a launch nothing could read is judged not at all.
+ *
+ * - `'raise-85-quote-sol'` — the token's primary market is quoted in SOL and the inflow was
+ *   compared against {@link RAISE_85_SOL_BAR} directly. **Exact**, and the only reading that is.
+ * - `'raise-85-usd-equivalent'` — the quote asset is not SOL, so the bar was converted through a
+ *   SOL price. **Inexact by construction**: 85 SOL was worth between **$6,236 and $7,004 across
+ *   five days**, so two launches a week apart are judged at bars 12% apart and neither reading is
+ *   wrong. It is a fallback and never a preference.
+ * - `'pumpfun-graduation-estimator'` — no trade reading was available and pump.fun's own graduation
+ *   flag stood in. See {@link PUMPFUN_GRADUATION_ESTIMATOR} for what that is worth in each
+ *   direction.
+ *
+ * @typedef {'raise-85-quote-sol' | 'raise-85-usd-equivalent' | 'pumpfun-graduation-estimator'} CompletionCriterion
+ */
+
+/**
+ * @typedef {object} Raise85Reading
+ * @property {boolean | null} reached `null` when nothing could read this launch — never `false`.
+ * @property {CompletionCriterion | null} criterion Which reading answered, `null` when none did.
+ */
+
+/**
+ * Apply RAISE-85 to one launch's measured net quote inflow.
+ *
+ * **`quoteIsSol` is REQUIRED and an unknown quote asset is UNREADABLE, which is the whole guard.**
+ * A pump.fun launch can be quoted in something other than SOL — `maxxing` `97nnzgv9…`, the second
+ * launch of that name, is USDC-quoted, and all 384 of its fills return `sol_raw = 0` **legitimately**
+ * (`CLAUDE.md` → the Dune entry-statement bullet, trap 3; captain decision 295b filed the guard
+ * against a cutover, which is this one). A reader that took a bare SOL figure would score every
+ * such launch as a 0-SOL raise and call it a failure with total confidence. So a zero is only ever
+ * believed where the quote asset is KNOWN to be SOL, and where the quote asset is unknown this
+ * function refuses rather than guessing — `null`, which leaves the launch out of both sides of the
+ * rate and is counted as {@link CompletionMeasurement.criterionUnreadable}.
+ *
+ * @param {object} input
+ * @param {boolean | null | undefined} input.quoteIsSol Whether the token's own primary market is
+ *   quoted in SOL. `null`/absent means nobody established it, which is not `false`.
+ * @param {number | null | undefined} [input.netQuoteInflowSol] Net quote inflow over the window, in
+ *   SOL. Read ONLY when `quoteIsSol` is `true`.
+ * @param {number | null | undefined} [input.netQuoteInflowUsd] The same inflow in USD, for a market
+ *   quoted in anything else.
+ * @param {number | null | undefined} [input.usdPerSol] The SOL price the bar is converted through.
+ *   Required for the USD leg, and its own inexactness is the reason the denomination is recorded.
+ * @returns {Raise85Reading}
+ */
+export function raise85FromQuoteInflow(input) {
+  const finite = (/** @type {unknown} */ v) => typeof v === 'number' && Number.isFinite(v);
+  if (input.quoteIsSol === true) {
+    return finite(input.netQuoteInflowSol)
+      ? { reached: /** @type {number} */ (input.netQuoteInflowSol) >= RAISE_85_SOL_BAR, criterion: 'raise-85-quote-sol' }
+      : { reached: null, criterion: null };
+  }
+  // The USD leg is reachable ONLY on a market positively established as not-SOL-quoted. An unknown
+  // quote asset falls through to `null` below with the SOL figure deliberately unread: a USD reading
+  // built on a spurious zero is the same defect one currency over.
+  if (input.quoteIsSol === false && finite(input.netQuoteInflowUsd) && finite(input.usdPerSol)) {
+    const usdPerSol = /** @type {number} */ (input.usdPerSol);
+    if (usdPerSol > 0) {
+      return {
+        reached: /** @type {number} */ (input.netQuoteInflowUsd) >= RAISE_85_SOL_BAR * usdPerSol,
+        criterion: 'raise-85-usd-equivalent',
+      };
+    }
+  }
+  return { reached: null, criterion: null };
+}
+
+/**
+ * Read RAISE-85 through pump.fun's own graduation flag, which is what every route this repo has
+ * can actually answer today.
+ *
+ * {@link PUMPFUN_GRADUATION_ESTIMATOR} owns what the estimator is worth in each direction and why
+ * it is only ever asked about launches the mayhem exclusion has already kept. What this function
+ * adds is the three-state fold: a flag that is not a boolean is a flag NOBODY READ, and it becomes
+ * `null` rather than `false`. That is the difference between *this launch did not raise 85 SOL* and
+ * *nothing here could say whether it did*, and defaulting the second to the first is the invisible
+ * false rejection this whole tool exists to remove.
+ *
+ * @param {boolean | null | undefined} graduated pump.fun's own completion flag — the curve's
+ *   `complete` byte, the `CompleteEvent` the same transition emits, or the ownership listing's
+ *   mirror of it.
+ * @returns {Raise85Reading}
+ */
+export function raise85FromPumpfunGraduation(graduated) {
+  return typeof graduated === 'boolean'
+    ? { reached: graduated, criterion: 'pumpfun-graduation-estimator' }
+    : { reached: null, criterion: null };
+}
+
+/**
  * @typedef {object} CompletionMeasurement
- * @property {number} tokens        Denominator: token records seen, AFTER the mayhem exclusion.
- * @property {number} completed     Numerator: records whose curve completed, over the same set.
+ * @property {number} tokens        Denominator: token records seen, AFTER the mayhem exclusion and
+ *   after the criterion-unreadable exclusion.
+ * @property {number} completed     Numerator: records that met RAISE-85, over the same set.
  * @property {number} rate          `completed / tokens`, or `NaN` when `tokens === 0`.
  * @property {number} spanDays      First to last deploy, in days, over the same set.
  * @property {string | null} firstDeployIso
@@ -653,25 +864,39 @@ export function walletTransactions(fills, wallets, slot) {
  *   touched. **Both conjuncts, and the first is the one that is easy to drop**: a candidate
  *   whose enumerated creates were all mayhem while the launches that survived came from the
  *   ownership listing reads `mayhemUnreadable === tokens` with launches genuinely excluded.
+ * @property {number} criterionUnreadable Records removed from BOTH sides of the fraction because
+ *   RAISE-85 could not be READ on them at all — captain decision 352b, and see
+ *   {@link measureCompletion} for why they leave rather than being scored as failures. **Nameable
+ *   apart from `mayhemExcluded` on purpose**: the two answer different questions (*this launch is
+ *   not competence evidence* against *nothing here could measure this launch*) and merging them
+ *   into one "unknown" would make a post-352b rate unauditable in exactly the way a pre-351 one was.
+ * @property {number} criterionEstimated Of the `tokens` that remain, how many had RAISE-85 read
+ *   through pump.fun's own graduation flag rather than measured from trade data —
+ *   {@link PUMPFUN_GRADUATION_ESTIMATOR}. **`criterionEstimated === tokens` means the whole rate is
+ *   an UPPER BOUND on the RAISE-85 rate**, which is the state every route this repo has today
+ *   produces, and a reader who cannot see that would take an estimate for the measure.
  */
 
 /**
  * @typedef {object} TokenRecord
  * @property {number} deployedAtMs
- * @property {boolean} completed Whether this launch counts as a success — today, pump.fun's own
- *   graduation, read from the bonding curve's `complete` byte, the `CompleteEvent` the Dune
- *   enumeration indexes, or the ownership listing's flag as the fallback.
+ * @property {boolean | null} completed Whether this launch met **RAISE-85** — net quote inflow into
+ *   its own primary market reaching {@link RAISE_85_SOL_BAR} SOL-equivalent over its first
+ *   {@link RAISE_85_WINDOW_HOURS} hours. Captain decision 352b: that is the completion measure on
+ *   every venue, pump.fun included, and pump.fun's own graduation flag is no longer the definition —
+ *   it is an ESTIMATOR of this, with a measured error in each direction
+ *   ({@link raise85FromPumpfunGraduation}).
  *
- *   **SEAM for `slot-zero-raise85-pooled-criterion-adopt` (captain decision 352b).** That lane
- *   replaces this field's MEANING with a venue-agnostic criterion — net quote inflow into the
- *   token's own primary market reaching 85 SOL-equivalent in 24 hours — and it is blocked on this
- *   lane because it needs the three-state denominator `mayhem` establishes below rather than a
- *   two-state one. Two things it will need from here. **A launch whose criterion cannot be READ is
- *   the same class as an unreadable mayhem flag and takes the same route**: kept, counted and
- *   named on the record, never defaulted to `false`, because a criterion no surface could apply is
- *   not a failed launch. And **the two counts must stay nameable apart** — *excluded as mayhem* and
- *   *criterion unreadable* answer different questions, and merging them into one "unknown" would
- *   make a post-352b rate unauditable in exactly the way a pre-351 one was.
+ *   **`null` is UNREADABLE and is never the same claim as `false`.** A launch nothing could apply
+ *   the criterion to leaves BOTH sides of the rate and is counted as
+ *   {@link CompletionMeasurement.criterionUnreadable}; scoring it as a failure would be defaulting
+ *   a coverage gap into a rejection, which is permanent and invisible here. Producers must therefore
+ *   go through {@link raise85FromQuoteInflow} or {@link raise85FromPumpfunGraduation} rather than
+ *   writing a boolean, because both of those refuse where a bare `=== true` would fabricate.
+ * @property {CompletionCriterion | null} [criterion] Which reading answered {@link TokenRecord.completed}
+ *   and in which unit the bar was applied. Absent or `null` alongside a non-null `completed` is a
+ *   producer that has not been brought through 352b's readers; the measurement counts it as
+ *   estimated rather than as measured, which is the direction that cannot overstate what was read.
  * @property {boolean | null} [mayhem] pump.fun's `is_mayhem_mode` for this launch. `true` excludes
  *   it from the competence measure entirely; `false` is a launch PROVEN ordinary; **`null` or
  *   absent is UNREADABLE — the surface this record came from does not carry the column — and is
@@ -695,6 +920,26 @@ export function walletTransactions(fills, wallets, slot) {
  */
 export function mayhemFlagOf(record) {
   return typeof record.mayhem === 'boolean' ? record.mayhem : null;
+}
+
+/**
+ * Read a token record's RAISE-85 result as one of three states, never two.
+ *
+ * The sibling of {@link mayhemFlagOf}, and it exists for the identical reason one column over:
+ * `undefined` (a producer written before captain decision 352b) and `null` (a producer that looked
+ * and could not tell) are the SAME state — *nobody could apply the criterion to this launch* — and
+ * neither of them is `false`, which is the positive claim that a token's own primary market took in
+ * less than {@link RAISE_85_SOL_BAR} SOL-equivalent in its first day.
+ *
+ * Writing `r.completed === true` at each call site would work today and would quietly acquire a
+ * fourth reading the first time someone wrote `!r.completed` — which is precisely how a coverage gap
+ * becomes a rejection — so the fold happens once, here.
+ *
+ * @param {TokenRecord} record
+ * @returns {boolean | null} `null` when RAISE-85 was not readable on this launch.
+ */
+export function completionFlagOf(record) {
+  return typeof record.completed === 'boolean' ? record.completed : null;
 }
 
 /**
@@ -762,15 +1007,63 @@ export function mayhemFlagOf(record) {
  * Zero-of-zero is an absent measurement and not a failing rate, and conflating the two is 227c
  * arriving through the back door.
  *
- * **SEAM for `slot-zero-raise85-pooled-criterion-adopt` (captain decision 352b).** That lane
- * replaces what `TokenRecord.completed` MEANS — a venue-agnostic RAISE-85 criterion rather than
- * pump.fun's own graduation — and it is blocked on this lane because it needs the three-state
- * denominator established here, not a two-state one. What it will need from this function is
- * unchanged: `mayhemFlagOf`'s null-is-unreadable fold, `mayhemUnreadable` as the count of launches
- * a criterion could not be applied to, and the rule that an emptied denominator is unmeasured
- * rather than failed. What it must NOT do is add a fourth state here — a launch whose RAISE-85
- * reading is unavailable is the same *unreadable* class this already carries, and the two counts
- * must stay nameable apart on the record rather than merged into one "unknown".
+ * ## The measure itself is RAISE-85 now — captain decision 352b
+ *
+ * `TokenRecord.completed` no longer means *pump.fun said this graduated*; it means *this token's own
+ * primary market took in {@link RAISE_85_SOL_BAR} SOL-equivalent in its first
+ * {@link RAISE_85_WINDOW_HOURS} hours*, on every venue including pump.fun.
+ * {@link RAISE_85_IS_THE_COMPLETION_MEASURE} is the sentence; {@link RAISE_85_SOL_BAR} owns why the
+ * bar does not move and {@link CROSS_VENUE_STRICTNESS_UNESTABLISHED} owns what it does not
+ * establish. This function's arithmetic did not change for it — what changed is what the numerator
+ * counts, and the third state below.
+ *
+ * ## THE SEAM: 351 AND 352b COMPOSE IN ONE ORDER AND ONLY ONE
+ *
+ * **The mayhem exclusion runs FIRST, over the whole history, before any launch is asked whether it
+ * raised 85 SOL.** RAISE-85 as a *definition* only ever touches the numerator: it simply never
+ * registers a mayhem graduation, which is preceded by a median 0.291 SOL against 85.005 for a
+ * classic curve one. So if mayhem LAUNCHES were left in the denominator while the criterion decided
+ * the numerator, a mayhem-heavy deployer's rate would run to 0.0000 and the gate would drop them —
+ * **which is captain decision 227c, *excluding mayhem-heavy deployers outright*, and 227c is NOT
+ * reversed and REMAINS DECLINED.** The two changes must not be allowed to compose into an outcome
+ * the captain declined, and the order of the two filters below is the whole of what prevents it: a
+ * mayhem launch is gone from both sides before the criterion is consulted, so a deployer is judged
+ * on their non-mayhem record exactly as 351 requires.
+ *
+ * A consequence worth stating rather than leaving to be rediscovered: a mayhem launch is counted in
+ * {@link CompletionMeasurement.mayhemExcluded} and NEVER in
+ * {@link CompletionMeasurement.criterionUnreadable}, whatever its `completed` field says, because it
+ * left the reading before the criterion could fail to read it.
+ *
+ * ## The unreadable criterion: the third state, and it leaves both sides
+ *
+ * A launch RAISE-85 cannot be READ on — no trade reading, and no graduation flag either — is
+ * removed from BOTH sides and counted in {@link CompletionMeasurement.criterionUnreadable}. It is
+ * **never scored as a failure**, and that is the same rule the mayhem exclusion runs on, for the
+ * same reason in the same direction: a criterion no surface could apply is not a failed launch, and
+ * defaulting a coverage gap into a rejection is permanent and invisible here — the wallet is
+ * graded, filed in `feed/ledger.json` and never offered again.
+ *
+ * Note the deliberate asymmetry with the unreadable MAYHEM flag, which is *kept* in the reading.
+ * The two are not the same case and treating them alike would be wrong both ways round. An
+ * unreadable mayhem flag costs the measurement nothing, because the launch's own criterion is known
+ * independently and the launch can still be judged; an unreadable criterion leaves nothing to judge
+ * at all, so keeping it would mean counting it as a failure under another name.
+ *
+ * **A reading left with NO judgeable launch is UNDEFINED, not 0.0000.** `tokens === 0` yields
+ * `rate: NaN` exactly as an empty history always has, and `rank.mjs` → `verdictFor` routes that
+ * case to `gate-unmeasured` rather than `gate-failed` whenever an exclusion is what emptied it —
+ * `competenceEmptiedByMayhem` and `competenceEmptiedByCriterion` are the two predicates. Zero of
+ * zero is an absent measurement and not a failing rate, whichever exclusion produced it, and
+ * conflating the two is 227c arriving through the back door.
+ *
+ * **AND A PARTLY-UNREADABLE READING IS UNMEASURED TOO** (`rank.mjs` →
+ * `competenceCriterionIncomplete`). The criterion exclusion does not only shrink the rate's two
+ * sides: `tokens`, `spanDays` and the two deploy instants below are all taken over `usable`, so
+ * `minTokens` and `minSpanDays` are compared against a count the unreadable launches have already
+ * left. Judging on that would reject a wallet over OUR coverage — the same defect one bar over —
+ * so the verdict is withheld rather than the count repaired, because `tokens`, `rate` and
+ * `spanDays` are three statements about ONE sample.
  *
  * @param {readonly TokenRecord[]} records
  * @returns {CompletionMeasurement}
@@ -779,11 +1072,30 @@ export function measureCompletion(records) {
   const timestamped = records.filter((r) => Number.isFinite(r.deployedAtMs) && r.deployedAtMs > 0);
   const dropped = records.length - timestamped.length;
 
-  // Captain decision 351. `=== true` and not truthiness: `mayhemFlagOf` has already folded the two
-  // unreadable spellings to `null`, and only a flag that positively READ true may remove a launch.
-  const usable = timestamped.filter((r) => mayhemFlagOf(r) !== true);
-  const mayhemExcluded = timestamped.length - usable.length;
+  // Captain decision 351, and IT RUNS FIRST — see this function's doc, "THE SEAM". `=== true` and
+  // not truthiness: `mayhemFlagOf` has already folded the two unreadable spellings to `null`, and
+  // only a flag that positively READ true may remove a launch.
+  const nonMayhem = timestamped.filter((r) => mayhemFlagOf(r) !== true);
+  const mayhemExcluded = timestamped.length - nonMayhem.length;
+
+  // Captain decision 352b, and it runs SECOND, over what 351 left. A launch nothing could apply
+  // RAISE-85 to leaves both sides rather than being scored as a failure; `completionFlagOf` is the
+  // same three-state fold one column over, so `null` and a missing field are one state and neither
+  // is `false`.
+  const usable = nonMayhem.filter((r) => completionFlagOf(r) !== null);
+  const criterionUnreadable = nonMayhem.length - usable.length;
+
+  // Over `usable`, NOT over `nonMayhem`, and the difference is load-bearing: this count's whole job
+  // is the documented conjunct `mayhemExcluded === 0 && mayhemUnreadable === tokens`, i.e. "no
+  // mayhem evidence touched this rate". `tokens` is the post-criterion set, so counting over the
+  // pre-criterion one would break that test the moment a launch went criterion-unreadable, and it
+  // would break it silently, in the direction that overstates how much of the rate was checked.
   const mayhemUnreadable = usable.filter((r) => mayhemFlagOf(r) === null).length;
+  // A producer that has not been brought through 352b's readers supplies no `criterion` at all.
+  // Counting that as ESTIMATED rather than as measured is the direction that cannot overstate what
+  // was read: it can only make a rate look more provisional than it is, never less.
+  const measuredCriteria = new Set(['raise-85-quote-sol', 'raise-85-usd-equivalent']);
+  const criterionEstimated = usable.filter((r) => !measuredCriteria.has(r.criterion ?? '')).length;
 
   if (usable.length === 0) {
     return {
@@ -796,6 +1108,8 @@ export function measureCompletion(records) {
       droppedNoTimestamp: dropped,
       mayhemExcluded,
       mayhemUnreadable,
+      criterionUnreadable,
+      criterionEstimated: 0,
     };
   }
 
@@ -804,7 +1118,7 @@ export function measureCompletion(records) {
   const hi = times[times.length - 1];
   if (lo === undefined || hi === undefined) throw new Error('unreachable: non-empty array has no bounds');
 
-  const completed = usable.filter((r) => r.completed).length;
+  const completed = usable.filter((r) => completionFlagOf(r) === true).length;
   return {
     tokens: usable.length,
     completed,
@@ -815,6 +1129,8 @@ export function measureCompletion(records) {
     droppedNoTimestamp: dropped,
     mayhemExcluded,
     mayhemUnreadable,
+    criterionUnreadable,
+    criterionEstimated,
   };
 }
 
@@ -846,9 +1162,18 @@ export function toTokenRecords(profile) {
   for (const entry of raw) {
     if (typeof entry !== 'object' || entry === null) continue;
     const row = /** @type {Record<string, unknown>} */ (entry);
+    // Captain decision 352b. `complete` is pump.fun's own graduation flag mirrored by this vendor,
+    // which is an ESTIMATOR of RAISE-85 and no longer the measure itself, so it goes through the
+    // reader rather than being coerced here. `=== true` used to read a MISSING or malformed field
+    // as a failed launch — a vendor schema change would have driven every rate on this leg to
+    // 0.0000 with nothing saying so — and the reader makes that state UNREADABLE instead, which
+    // leaves the launch out of both sides and counts it.
+    const graduated = row['complete'];
+    const reading = raise85FromPumpfunGraduation(typeof graduated === 'boolean' ? graduated : null);
     records.push({
       deployedAtMs: Number(row['created_timestamp']),
-      completed: row['complete'] === true,
+      completed: reading.reached,
+      criterion: reading.criterion,
     });
   }
   // 70 is the page pump.fun's creator listing serves regardless of the limit asked for, and

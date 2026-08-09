@@ -177,6 +177,21 @@ excludes a mayhem-mode launch from both sides of its rate, and this lane's canno
 profile page carries no such column, so every launch here is unreadable for it and this rate is the
 pre-351 pooled quantity by construction. `README.md` → *"The mayhem-mode flag"* owns the rule.
 
+Captain decision 352b then changed what **both** rates COUNT, and it changes this lane's number by
+nothing. The completion measure is now **RAISE-85** — net quote inflow into a token's own primary
+market reaching 85 SOL-equivalent in its first 24 hours — on every venue including pump.fun, and
+`profile.pump_tokens[].complete` is no longer the definition: it is an **estimator** of it, whose
+negative is exact and whose positive is an upper bound, so a rate here errs towards acceptance
+exactly as it did before. One thing did move: a `complete` field that is **missing or malformed**
+used to read `false`, and is UNREADABLE now — so a vendor schema change makes this lane's wallets
+`unmeasured` rather than driving every rate to 0.0000 with nothing saying so. **That holds however
+FEW rows are unreadable, not only when all of them are**: an unreadable launch leaves `tokens` and
+`spanDays` as well as the rate, so a partly-unreadable page would otherwise be `held` on a
+sample-size or span bar over launches that left for OUR coverage — and a `held` wallet is filed in
+the ledger and never offered again. `rank.mjs` → `competenceCriterionIncomplete` is the rule and it
+lives in `verdictFor`, so this lane gets it by construction rather than by remembering to ask.
+`README.md` → *"The completion measure is RAISE-85"* owns the rule and the seam with 351.
+
 The design follows from that, and it is the single most important thing to understand about this
 lane's output:
 
@@ -184,7 +199,7 @@ lane's output:
 |---|---|
 | `queued` | Cleared the gate on the ownership reading. **The feed's product**: worth putting through the beatability screen. **Not a pass** — the rate that cleared it may read up to +0.6929 above the gate's on the same wallet. |
 | `held` | Did **not** clear it. **This is NOT a rejection.** It is a triage outcome on a reading whose count bars fail 46 more of 82 wallets than the gate reading does. |
-| `unmeasured` | The vendor's profile carried no readable launch record. An empty deployer and a moved response shape are indistinguishable from here, so neither is recorded as a finding. |
+| `unmeasured` | The vendor's profile carried no readable launch record — **or the completion criterion could not be read on some of the records it did carry** (captain decision 352b), since those launches leave the count and span bars as well as the rate. An empty deployer and a moved response shape are indistinguishable from here, so neither is recorded as a finding. |
 | `prefiltered` | Never gated: the vendor's trailing deploy count was below the floor. The cadence filter. |
 | `deferred` | Surfaced and recorded, waiting for a gate batch. |
 
@@ -218,7 +233,23 @@ So every run reports, in this order — alarm first, then the new count, then th
 1. **A seed returned rows we read no wallet from.** Our bug — the 2026-07-29 defect recurring. Loud on
    the *first* occurrence, never after a streak.
 2. **Every seed inert.** No input at all: check the tier filter, the credential's scope, the vendor.
-3. **Every gated wallet unreadable.** The profile shape moved. Requires **at least 2 gated wallets**
+3. **Every gated wallet unmeasured.** The profile shape moved — **or the completion criterion could
+   not be read on the records the profile did yield** (captain decision 352b), which is a wallet that
+   HAS launch records and still cannot be judged, and points at the vendor's `complete` field rather
+   than at our parser or at a wider source. **Whether that covered a whole history or part of one is
+   not a third fault** — same field, same remedy — and the count that separates the two is
+   `criterionUnreadable > 0`, never a surviving token count: a wallet whose every record was
+   criterion-unreadable reads `tokens === 0` and is still this fault, not an empty profile. The
+   message distinguishes them from the counts; the trigger is the same either way. **The consequence to know before reading this alarm:** one missing or malformed
+   `complete` field anywhere in a candidate's history withholds that candidate's whole verdict
+   (`rank.mjs` → `competenceCriterionIncomplete` owns the rule), so were the vendor to stop serving
+   `complete` on ungraduated rows, nothing would ever be queued and this lane would report itself DRY
+   rather than rejecting anybody. **What that buys on THIS lane is not re-offerability** — an
+   `unmeasured` wallet is graded, written into the ledger and never offered again, exactly like a
+   `held` one, and `markWorthARequest` restores only the pre-filter's own state — but (i) no
+   rejection computed on OUR OWN COVERAGE through the count and span bars, and (ii) VISIBILITY: the
+   run stops at exit 9 instead of quietly filing a population of ordinary rejections, and **the tell
+   is exactly this alarm firing on wallets that plainly have launch records.** Requires **at least 2 gated wallets**
    (`ALL_UNMEASURED_MIN_GATED`): this condition *asserts* a move at the vendor, and its own message
    says one empty deployer is not evidence of that, so it must not be assertable from a sample of
    one. **What that floor actually costs, exactly:**

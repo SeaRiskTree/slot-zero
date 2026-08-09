@@ -626,9 +626,8 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   of the subject's 252 launches read `null`, and all three fields are `null` — UNMEASURED, not 0% —
   on a walk-sourced candidate), while 351's counts are over the MERGED history the gate read.
   **The 112, the 58 and the monthly gate populations below are PRE-351 pooled readings and must be
-  re-derived rather than adjusted** — `slot-zero-rederive-gate-population-post-351`, a separate lane.
-  Adopting RAISE-85 (captain decision 352b) is another, blocked on 351's three-state denominator;
-  `measure.mjs` → `TokenRecord.completed` carries the seam note.
+  re-derived rather than adjusted** — `slot-zero-rederive-gate-population-post-351`, a separate lane
+  which is now also PRE-352b and must re-derive under the measure as adopted.
 - **A FAILED EXECUTION IS STILL BILLED AND IS TERMINAL — AND "FREE IF IT FAILS" IS TRUE ONLY OF A
   STATEMENT THAT FAILS TO *COMPILE*.** Dune bills compute by engine time consumed: a statement the
   planner rejects consumes none and costs nothing, and a statement the planner ACCEPTS and cannot
@@ -757,8 +756,27 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   non-positive cap REFUSES, in the same place and by the same rule as an unpriceable plan, rather
   than leaving a lane silently uncapped. Each tool's README section "The monthly credit ceiling" owns
   the rest; do not restate the figures, and re-read the live balance rather than quoting one.
-- **Free tier: 2,500 credits/month on that plan, UNSHARED, and only 10 PRIVATE QUERIES — but
-  the account is NOT at that cap, and "the slots are full" is a stale claim that once blocked a lane
+- **THE PLAN IS *ANALYST*, 4,000 CREDITS/MONTH, $0.016 PER EXTRA CREDIT, AND ZERO PRIVATE QUERIES —
+  captain-supplied 2026-08-09 and AUTHORITATIVE, superseding the free-tier figures the rest of this
+  section was written against.** Never quote a Dune plan number from memory or from Dune's published
+  material; the captain's figures outrank both, and the live `POST /usage` balance outranks any
+  pinned number (`bindingCreditCeiling` takes the `min()` of the vendor's `credits_included` and the
+  captain's own `dune.monthlyCreditCapCredits`, which is 4,000 in both keyed bounds files). Two
+  consequences that are easy to get wrong in opposite directions. **FAILED EXECUTIONS STILL BILL, so
+  a lane bounds spend for ATTEMPTS and not for successes** — an older scout report claiming a failed
+  execution costs 0 credits and that probing is therefore free is **WRONG and outranked**; do not
+  build a budget on it, and see the "A FAILED EXECUTION IS STILL BILLED" bullet above, which is the
+  correct account. And **every saved query on this account is PUBLIC**, so never write a secret, a
+  key or a client name into query SQL, and keep gate values as query PARAMETERS rather than in the
+  query text. **Prefer `GET /query/{id}/results`, the cached read, over re-executing.**
+  Sizing note, captain-supplied and worth carrying because it decides a lane's SHAPE: scoring all
+  **857,288 launches of 2026-07 cost 31.19 credits and 109 seconds in ONE execution**, and the cost
+  is set by the trade table's DATE RANGE rather than by how many tokens are scored — so a trade-table
+  criterion is cheap as a **census** and pointless as a **per-candidate lookup**.
+- **Free tier: 2,500 credits/month on that plan, UNSHARED, and only 10 PRIVATE QUERIES — READ THE
+  BULLET ABOVE FIRST, which supersedes the plan and the credit figure here; what survives is the
+  saved-query discipline. The
+  account is NOT at that cap, and "the slots are full" is a stale claim that once blocked a lane
   on nothing. AND ON THE KEY THIS FLEET IS USING TODAY THE PRIVATE ALLOWANCE IS *ZERO*, measured
   2026-08-08** — `GET /queries` reports `total: 0` and `POST /usage` reports `private_queries: 0`,
   yet `POST /api/v1/query` with `is_private: true` returns `402 Max number of private queries
@@ -1280,6 +1298,60 @@ dev currently?"*, and the shape of the answer is the point:
   `justification` in `thresholds.json` owns the ceiling (`7ufmve7Z…` reads 0.4325 there, so a higher
   bar excludes the control), the sweep and the false-rejection asymmetry. Cite it rather than
   restating the figures, and name the reading whenever this bar is described.
+- **WHAT THAT RATE COUNTS AS A COMPLETION IS *RAISE-85* NOW, ON EVERY VENUE INCLUDING PUMP.FUN —
+  captain decision 352b (record schema 21, thresholds 6.9.0).** *Net quote inflow into a token's own
+  primary market, over its first 24 hours, reaching 85 SOL-equivalent*, replacing pump.fun's own
+  graduation flag as the DEFINITION. One yardstick for every deployer; the two halves of 352b cannot
+  be separated, because adopting it off-launchpad while pump.fun kept its native reading leaves
+  pump.fun deployers a ~46% graduation credit no off-launchpad deployer can earn. `measure.mjs` →
+  `RAISE_85_IS_THE_COMPLETION_MEASURE` is the sentence, printed once per run;
+  `tools/deployer-screen/README.md` → "The completion measure is RAISE-85" owns the long form. **The
+  bar does not move and is not to be lowered to buy recall** — the 85 was read off the data (85.005
+  at p50 AND p99 over 157,259 launches) and has ZERO token-level false positives, which is what makes
+  a rate from it a LOWER BOUND and adoption safe in one direction (measured over 176,200 July-active
+  deployers: **zero promotions**, 1,417 demotions); at 50 SOL that property is gone (42 promotions)
+  and the safety argument with it. `measure.mjs` → `RAISE_85_SOL_BAR` owns it.
+  **THE SEAM WITH 351 IS THE THING NOT TO GET WRONG, AND THE ORDER OF THE TWO FILTERS IS ALL THAT
+  PREVENTS IT.** RAISE-85 as a definition touches only the NUMERATOR — it simply never registers a
+  mayhem graduation — so mayhem LAUNCHES left in the denominator would drive a mayhem-heavy deployer
+  to 0.0000 and drop them, **which is 227c, and 227c REMAINS DECLINED**. So the mayhem exclusion runs
+  FIRST over the whole history and the criterion only over what it leaves; a mayhem launch is counted
+  in `competenceMayhemExcluded` and NEVER in `competenceCriterionUnreadable`, and **the two pairs are
+  not additive in meaning**. Both mutations — mayhem back into the denominator, unreadable scored as
+  a failure — are pinned by `test/deployer-screen.test.ts` → "352b: RAISE-85 is the measure, and it
+  must not compose with 351 into 227c".
+  **Three more things bind.** (1) **A launch the criterion cannot be READ on leaves BOTH sides and is
+  never scored as a failure**; a candidate with none readable is `gate-unmeasured`, never 0.0000
+  (`rank.mjs` → `competenceEmptiedByCriterion`), **and so is a candidate with ANY unreadable launch,
+  on EVERY leg** (`rank.mjs` → `competenceCriterionIncomplete`, checked in `verdictFor` so the vendor
+  reading, `--ownership-only`, `feed.mjs` and the bundling census get it by construction): those
+  launches leave `tokens` and `spanDays` as well as the rate, so `minTokens`/`minSpanDays` would
+  otherwise gate-FAIL a wallet over OUR coverage — permanent and invisible, since a graded wallet is
+  filed in `feed/ledger.json` and never offered again. **That is blunt on purpose: ONE missing or
+  malformed `complete` field anywhere in a history withholds that candidate's whole verdict, so if a
+  vendor stopped serving the field nothing would be queued and the feed would report itself DRY
+  rather than rejecting anybody. What that buys is no rejection computed on OUR coverage, and
+  VISIBILITY — the tell is exit 9 on wallets that plainly have launch records — plus, on
+  `screen.mjs` alone, a wallet a later run can still judge. It does NOT buy re-offerability in the
+  FEED, where an unmeasured wallet is graded and never offered again exactly like a `held` one**;
+  that predicate's doc, `ledger.mjs` → `markWorthARequest` and `ledger.mjs` → `feedAlarm` own it. The one behaviour that genuinely moved is the launch
+  neither the curve nor the ownership listing could answer for — it was `completed: false`, and is
+  unreadable now. (2) **Every route this repo has READS the criterion through pump.fun's graduation
+  flag, which is an ESTIMATOR**: its negative is exact (every token reaching 85 SOL graduated,
+  precision 1.0000), its positive is an upper bound (0.82% of graduations did not, recall 0.9918), so
+  a rate here errs towards ACCEPTANCE and `competenceCriterionEstimated === tokens` says the whole
+  rate is that bound. `measure.mjs` → `PUMPFUN_GRADUATION_ESTIMATOR` owns it, including that on a
+  MAYHEM launch it is 292x wrong rather than 0.82% wrong — which is why it is only ever asked about
+  launches 351 already kept. (3) **Cross-venue comparability is NOT established and must not be
+  claimed**: the same bar is reached by 0.80% of new pump.fun tokens, 0.25% on Meteora DBC and 46.71%
+  on Meteora CPAMM. `measure.mjs` → `CROSS_VENUE_STRICTNESS_UNESTABLISHED` travels with the number
+  (it is in `LIMITATIONS`, so it reaches every rendered surface and the run record);
+  `slot-zero-cross-venue-strictness-measure` owns the question, held in firstmate's records, not in
+  this repo. **No bar and no committed verdict moved** — `minCompletionRate` stays 0.25 and Stage 0's
+  tape regressions are byte-identical — and **a schema-≤20 rate is a different quantity from a
+  schema-21 one**, which is now true at two of the last three versions (19 moved the same quantity,
+  20 left it alone), so read `schemaVersion`
+  before pooling any two `completionRate` values from this tool.
 - **A pinned value's `justification` must name the measurement the CALL SITE applies it to, and a
   test now pins that every parameter has one** (`test/deployer-screen.test.ts` → "every pinned
   parameter carries a stated reason"). The 2026-08-02 provenance audit found three justifications
@@ -1869,29 +1941,35 @@ this repo (see "Citing a report this repo does not hold"):
   **Captain decision 351 IS NOW IMPLEMENTED** (schema 19, thresholds 6.8.0 — see the Dune section's
   `is_mayhem_mode` bullet, which owns the rule): a mayhem launch is excluded from both sides of
   `minCompletionRate`, so those 13 are judged on their non-mayhem record rather than reading 0.0000.
-  One thing follows for a reader today. **The 58 / 112 / 240 counts above still rest on the pre-351
-  pooled reading of graduation, and 351 requires them RE-DERIVED rather than adjusted in prose** —
-  `slot-zero-rederive-gate-population-post-351`, which has not run. `tools/deployer-screen/README.md`'s
+  **And captain decision 352b has since replaced what that rate COUNTS with RAISE-85** (schema 21,
+  thresholds 6.9.0), which is why the 13 must not be read from the census figure above as landing at
+  0.0000: that figure is the pre-351 arithmetic, and the adopted implementation removes the mayhem
+  launches before the criterion is applied to anything.
+  One thing follows for a reader today. **The 58 / 112 / 240 counts above rest on the pre-351,
+  pre-352b pooled reading of graduation, and both decisions require them RE-DERIVED rather than
+  adjusted in prose** — `slot-zero-rederive-gate-population-post-351`, which has not run and which
+  must re-derive under the measure as 352b adopted it. `tools/deployer-screen/README.md`'s
   schema-15 row now carries the correction in place; the row itself is the record of what schema 15
   did and is deliberately not rewritten.
   `slot-zero-offlaunchpad-graduation-criterion` → `report.md` §4 and §8.2, and its
   `decision-351-mayhem-not-competence.md`.
-- **RAISE-85 IS THE VENUE-AGNOSTIC SUBSTITUTE FOR GRADUATION, AND IT IS UNADOPTED — AN OPEN
-  QUESTION, NOT A RULE.** *Net quote inflow into a token's own primary market over its first 24
-  hours, reaching 85 SOL-equivalent.* It is computable from one cross-venue trade table with no
-  venue-specific code, and against the classic curve it reproduces pump.fun's own graduation almost
-  exactly on that 157,259-launch sample: **precision 1.0000 — zero false positives against 108,310
-  non-graduating tokens — recall 0.9918, F1 0.9959**, with the 85 SOL constant read off the data
-  rather than fitted (graduating non-mayhem tokens read 85.005 SOL, p50 = p99, to three decimals).
-  **No bar, gate, verdict or line of code in this repository reads it, and adopting it is filed as a
-  captain decision (352, `venue-agnostic-criterion-adoption`) that has not been taken.** The two
-  halves of that decision cannot be separated: adopting it off-launchpad while pump.fun keeps its
-  native reading leaves pump.fun deployers a ~46% graduation credit no off-launchpad deployer can
-  earn. Its measured direction on the existing population is **entirely towards refusal — zero
-  deployers gain admission at any floor** — which under this repo's stated asymmetry (a false
-  rejection is permanent and invisible) is the dangerous direction, not the safe one. Its limits are
-  stated in the source and travel with it: equivalent strictness across venues is **not**
-  established, and the rate-level result is one month of one venue.
+- **RAISE-85 IS THE VENUE-AGNOSTIC SUBSTITUTE FOR GRADUATION, AND CAPTAIN DECISION 352b HAS NOW
+  ADOPTED IT AS *THE* COMPLETION MEASURE — read this entry as the EVIDENCE behind that decision, not
+  as an open question.** *Net quote inflow into a token's own primary market over its first 24 hours,
+  reaching 85 SOL-equivalent.* Computable from one cross-venue trade table with no venue-specific
+  code, and against the classic curve it reproduces pump.fun's own graduation almost exactly on that
+  157,259-launch sample: **precision 1.0000 — zero false positives against 108,310 non-graduating
+  tokens — recall 0.9918, F1 0.9959**, with the 85 SOL constant read off the data rather than fitted
+  (graduating non-mayhem tokens read 85.005 SOL, p50 = p99, to three decimals). **The rule and its
+  seam with 351 now live one section up** — see "WHAT THAT RATE COUNTS AS A COMPLETION IS *RAISE-85*
+  NOW" under the deployer screen's stages, which owns the implementation, the order of the two
+  exclusions and the three things that bind. Two things this entry keeps, because they are the
+  evidence and not the rule. **The direction is entirely towards refusal — zero deployers gain
+  admission at any floor** — which under this repo's stated asymmetry (a false rejection is permanent
+  and invisible) is the dangerous direction; what makes adopting it safe anyway is that the
+  zero-false-positive property makes the rate a LOWER BOUND, so the measure can only ever refuse, and
+  the bar is therefore not to be lowered to buy recall. And its limits travel with it: **equivalent
+  strictness across venues is not established** and the rate-level result is one month of one venue.
   `slot-zero-offlaunchpad-graduation-criterion` → `report.md` §§2.2, 3, 8.2 and 9.
 - **DISCOVERY PIVOTED TWICE, AND THE SECOND STEP CLOSED IDENTIFICATION. RANK BY MEASURED BEHAVIOUR;
   DO NOT TRY TO IDENTIFY WHO ANYONE IS.** First (captain decision 359d) the question moved from

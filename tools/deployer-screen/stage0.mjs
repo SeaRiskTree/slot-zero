@@ -70,6 +70,7 @@ import {
   median,
   parseFill,
   percentile,
+  raise85FromPumpfunGraduation,
   roomIsProven,
   solBetweenPrices,
 } from './measure.mjs';
@@ -197,9 +198,15 @@ export function readGroundTruthCompletion(dataDir) {
   const records = [];
   for (const r of rows.slice(1)) {
     if (r.length <= Math.max(iCreated, iGrad)) continue;
+    // Captain decision 352b: `graduated` is pump.fun's own flag, which is an ESTIMATOR of the
+    // completion measure rather than the measure itself, so it goes through the reader and the
+    // record says which reading answered. The COUNT does not move — the tape's column is `1`/`0`
+    // on every row — and Stage 0's own assertion of 103/239 is what proves that on every run.
+    const reading = raise85FromPumpfunGraduation(r[iGrad] === '1' ? true : r[iGrad] === '0' ? false : null);
     records.push({
       deployedAtMs: Date.parse(String(r[iCreated])),
-      completed: r[iGrad] === '1',
+      completed: reading.reached,
+      criterion: reading.criterion,
     });
   }
   return measureCompletion(records);

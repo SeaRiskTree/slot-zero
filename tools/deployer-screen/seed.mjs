@@ -92,6 +92,21 @@ export const PREFILTER_MIN_DEPLOYED = 5;
  * @property {number} bestRank
  * @property {number | null} vendorDeployed Trailing-window count, for the pre-filter only.
  * @property {number | null} vendorBonded   Trailing-window count, for the pre-filter only.
+ * @property {CandidateSource} candidateSource WHERE THIS ADDRESS CAME FROM — this module's own
+ *   enumeration, or an operator-supplied list (`wallet-list.mjs`, captain decision 398a). It travels
+ *   on the candidate rather than being derived once per run, because it is a fact about the
+ *   candidate and a run that ever carried both kinds must not have to guess. Everything downstream
+ *   is identical either way: the same pre-filter, the same gate, the same Stage 2.
+ */
+
+/**
+ * Where a candidate address came from.
+ *
+ * `vendor-seed` is MadeOnSol's own enumeration, which gatekeeps WHICH deployers this project can
+ * see; `wallet-list` is an address handed in by an operator, which is a SEED and never a substitute
+ * for the gate — `wallet-list.mjs` → `WALLET_LIST_IS_A_SEED` owns that constraint.
+ *
+ * @typedef {'vendor-seed' | 'wallet-list'} CandidateSource
  */
 
 /**
@@ -447,6 +462,10 @@ export function mergeSeeds(results) {
           bestRank: i,
           vendorDeployed: w.vendorDeployed,
           vendorBonded: w.vendorBonded,
+          // Every candidate this function produces came from a vendor enumeration query, by
+          // construction — the wallet-list route never reaches here. Stated on the row rather than
+          // inferred by a consumer from the shape of `seededBy`.
+          candidateSource: 'vendor-seed',
         });
       } else {
         if (!entry.seededBy.includes(label)) entry.seededBy.push(label);

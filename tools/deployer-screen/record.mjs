@@ -648,8 +648,53 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `completed: false` and is `null` now, so it leaves both sides instead of understating the rate.
  *   Re-deriving the 112, the 58 and the monthly gate populations under the adopted measure is
  *   `slot-zero-rederive-gate-population-post-351` and is deliberately not done here.
+ *
+ * - **22** — **THE SCREEN CAN BE HANDED A WALLET LIST, so a candidate no longer has to have come
+ *   from the vendor** (captain decision 398a, 2026-08-09). ONE new candidate ROW key,
+ *   `candidateSource` — `'vendor-seed'` or `'wallet-list'` — and ONE new run-level block,
+ *   `walletList`. `ENTRY_KEYS_BY_SCHEMA[22]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[22]`,
+ *   `SPEND_KEYS_BY_SCHEMA[22]`, `DUNE_KEYS_BY_SCHEMA[22]`, `CREATION_KEYS_BY_SCHEMA[22]` and
+ *   `ROTATION_BLOCK_KEYS_BY_SCHEMA[22]` all equal `[21]`, and **no measured quantity moves at all**
+ *   — unlike 19 and 21, a schema-21 `completionRate` and a schema-22 one are the same quantity and
+ *   may be pooled.
+ *
+ *   **Why it needs a version.** Until this one, every candidate in every record came from a
+ *   MadeOnSol enumeration endpoint, so *where a candidate came from* was a property of the tool
+ *   rather than of the row and nothing had to say it. That stops being true here: 64% of the
+ *   deployers that passed this gate in 2026-07 are invisible to every discovery source this repo
+ *   has, and the two populations are **not interchangeable** — the listed one is by construction the
+ *   part the vendor never surfaced. A reader pooling them without version-detecting would describe a
+ *   discovery surface that measured neither. **On a schema-≤21 record the field's absence is
+ *   unambiguous: every candidate there is `vendor-seed`, because nothing before this version could
+ *   supply a list.**
+ *
+ *   **What it does NOT change, and this is the load-bearing half.** A supplied list is a SEED and
+ *   never a substitute for the gate: a listed address becomes an ordinary `SeedCandidate` and enters
+ *   the ONE gate loop, so there is no second path and no bar it can skip. `candidateSource` is
+ *   provenance and is read by nothing — no bar, no verdict, no stage, no rotation comparator. A
+ *   listed wallet failing the competence bars carries `verdict: "gate-failed"` exactly as a seeded
+ *   one does, and `test/deployer-screen.test.ts` → "398a: a LISTED wallet still has to pass the
+ *   gate" drives that end to end. `wallet-list.mjs` → `WALLET_LIST_IS_A_SEED` is the sentence, and
+ *   the run-level block carries it verbatim as `isASeed` so a record states its own constraint.
+ *
+ *   **The run-level block, and why it names a digest.** `walletList` is `null` on every enumerated
+ *   run, which is every default run. When present it carries `path`, `digest` (SHA-256 of the file's
+ *   bytes), `label` (the `wallet-list:<file>` value on every listed candidate's `seededBy`),
+ *   `entriesRead`, `wallets` and `seedsIssued`. The digest is there for the reason `scoringRotation`
+ *   names its own: this file IS the run's whole population, so a record carrying only a path would
+ *   stay reproducible exactly as long as nobody edited it. **`seedsIssued: 0` is stated rather than
+ *   inferred** from an empty `coverage.seeds`, because an empty seed table also describes a run
+ *   whose enumeration failed — two opposite facts under one shape.
+ *
+ *   **The plan arithmetic moved with it, and a reader of `spend` should know how.** A listed run
+ *   issues NO enumeration request, so `spend.plannedWorstCaseKeyed` is `0 + <addresses>` rather than
+ *   `6 + <cap>`, and `spend.candidateCap` is the list's own length rather than a ceiling it was
+ *   allowed to fall short of. Nothing else in the cost model moves: the keyless and Helius ceilings
+ *   are per candidate and unchanged, Stage 2's keyless ceiling is `maxCandidatesScored ×
+ *   maxLaunchesPerCandidate × maxRequestsPerLaunch` and none of those three moved, and no Dune
+ *   execution or Helius credit is spent that a seeded run would not spend.
  */
-export const RECORD_SCHEMA_VERSION = 21;
+export const RECORD_SCHEMA_VERSION = 22;
 
 /**
  * The predictions-document contract version, carried inside the document itself.

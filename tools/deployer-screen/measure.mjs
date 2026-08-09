@@ -649,7 +649,10 @@ export function walletTransactions(fills, wallets, slot) {
  * @property {number} mayhemUnreadable Records COUNTED in the reading whose flag could not be read
  *   at all. **They are in `tokens` and in `completed`, and that is the stated decision, not an
  *   oversight** — {@link measureCompletion} owns why, and this count is what makes it auditable:
- *   `mayhemUnreadable === tokens` is a reading no mayhem evidence touched.
+ *   `mayhemExcluded === 0 && mayhemUnreadable === tokens` is a reading no mayhem evidence
+ *   touched. **Both conjuncts, and the first is the one that is easy to drop**: a candidate
+ *   whose enumerated creates were all mayhem while the launches that survived came from the
+ *   ownership listing reads `mayhemUnreadable === tokens` with launches genuinely excluded.
  */
 
 /**
@@ -733,7 +736,9 @@ export function mayhemFlagOf(record) {
  *
  * - **It is not silently non-mayhem.** The count is on the measurement, on the candidate row and on
  *   the rendered line, so a reader can see exactly how much of a rate rests on launches no mayhem
- *   evidence touched. `mayhemUnreadable === tokens` is the pre-351 reading, stated as such.
+ *   evidence touched. `mayhemExcluded === 0 && mayhemUnreadable === tokens` is the pre-351
+ *   reading, stated as such — the unreadable count ALONE does not establish it, because a
+ *   reading can have had launches excluded and still have nothing readable left in it.
  * - **It does not silently vanish.** Dropping it was the other candidate and it fails on the
  *   repo's own asymmetry. The flag's readability is a property of the ENUMERATION ROUTE, not of the
  *   launch: `is_mayhem_mode` is a column on Dune's `pump_evt_createevent` and nowhere else, so the

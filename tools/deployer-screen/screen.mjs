@@ -3165,8 +3165,10 @@ function toRecordRow(c, run) {
     //
     // `competenceMayhemUnreadable` is the honest half. Those launches ARE in `tokens` and in
     // `completed`; it is a stated decision, not a defaulting, and this count is what makes it
-    // auditable — equal to `tokens` means no mayhem evidence touched this rate at all, which is
-    // every walk-sourced and every `--ownership-only` candidate, and was every candidate before 351.
+    // auditable — equal to `tokens` AND `competenceMayhemExcluded` 0 means no mayhem evidence
+    // touched this rate at all, which is every walk-sourced and every `--ownership-only`
+    // candidate, and was every candidate before 351. The excluded count is half of that test:
+    // a row can carry excluded launches and still have nothing readable left among the rest.
     // There are deliberately no `vendor*` twins: the MadeOnSol profile page carries no such column,
     // so `vendorCompletionRate` is unmovable by 351 by construction rather than by measurement.
     competenceMayhemExcluded: c.completion.mayhemExcluded,

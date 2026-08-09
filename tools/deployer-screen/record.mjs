@@ -510,8 +510,10 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   exclusion removed from both sides. `competenceMayhemUnreadable` is how many of the launches
  *   that REMAIN carry no readable flag — they are counted in `tokens` and `completed`, which is a
  *   stated decision rather than a default, and this key is what makes it auditable:
- *   `competenceMayhemUnreadable === tokens` is a rate no mayhem evidence touched, i.e. the pre-351
- *   reading. `measure.mjs` → `measureCompletion` owns the argument, including why dropping those
+ *   `competenceMayhemExcluded === 0 && competenceMayhemUnreadable === tokens` is a rate no mayhem
+ *   evidence touched, i.e. the pre-351 reading. **A reader of a persisted row must apply BOTH
+ *   conjuncts**: a row carrying excluded launches whose remainder is entirely unreadable
+ *   satisfies the second alone, and is a rate the exclusion did move. `measure.mjs` → `measureCompletion` owns the argument, including why dropping those
  *   launches instead would empty the denominator of every walk-sourced candidate on evidence about
  *   the SURFACE rather than about the deployer.
  *

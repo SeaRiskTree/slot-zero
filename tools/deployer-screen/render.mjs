@@ -557,8 +557,10 @@ export function renderMayhemShare(creation, indent) {
  * gate read, plus how much of what remains rests on launches no mayhem evidence touched.
  *
  * **The unreadable count is printed even when nothing was excluded**, and that is the point of it:
- * `unreadable === tokens` is the pre-351 reading and a reader must be able to see that a rate is
- * one, rather than infer it from an enumeration source three lines up. It is silent only where
+ * `mayhemExcluded === 0 && unreadable === tokens` is the pre-351 reading and a reader must be
+ * able to see that a rate is one, rather than infer it from an enumeration source three lines
+ * up. Both conjuncts: an excluded launch beside an all-unreadable remainder is NOT that reading,
+ * which is why the line below is guarded on the pair and not on the count alone. It is silent only where
  * there is genuinely nothing to say — no launches at all.
  *
  * A formatter and nothing more: no caller may branch on what it returns.

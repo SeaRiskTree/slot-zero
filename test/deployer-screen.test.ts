@@ -4324,6 +4324,26 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
     // entirely on unread flags says so, so nobody has to infer it from an enumeration source.
     expect(renderCompetenceMayhem(unreadable.completion, '  ').join('\n')).toMatch(/pre-351 reading/);
     expect(renderCompetenceMayhem(readable.completion, '  ').join('\n')).not.toMatch(/pre-351/);
+
+  });
+
+  it('"all unreadable" ALONE is not the pre-351 reading — the test is the CONJUNCTION', () => {
+    // The rule a reader of a persisted schema-19 row applies is `competenceMayhemExcluded === 0 &&
+    // competenceMayhemUnreadable === tokens`, and the first conjunct is the one that is easy to
+    // drop. It is reachable: a candidate whose enumerated creates were all mayhem, with the
+    // launches that survived coming from the ownership listing (which has no such column), reads
+    // `mayhemUnreadable === tokens` over a rate the exclusion demonstrably moved. Records are never
+    // retro-edited, so a reader applying the weaker test misreads that row permanently.
+    const excludedYetAllUnreadable = { tokens: 10, mayhemExcluded: 3, mayhemUnreadable: 10 };
+    const line = renderCompetenceMayhem(excludedYetAllUnreadable, '  ').join('\n');
+    expect(line).not.toMatch(/pre-351/);
+    expect(line).toMatch(/3 mayhem launch\(es\) excluded from BOTH sides/);
+    expect(line).toMatch(/10 carry NO readable flag/);
+
+    // And the reading that genuinely is the pre-351 one still says so, so this is a narrowing of
+    // the claim rather than a suppression of it.
+    expect(renderCompetenceMayhem({ tokens: 10, mayhemExcluded: 0, mayhemUnreadable: 10 }, '  ').join('\n'))
+      .toMatch(/pre-351 reading/);
   });
 
   it('every producer that cannot see the flag is byte-identical to its pre-351 self', () => {
@@ -6155,7 +6175,8 @@ describe('the keyless boundary holds in both directions', () => {
   // must not be pooled with those. `competenceMayhemExcluded` is what the exclusion removed;
   // `competenceMayhemUnreadable` is how many of the launches that REMAIN carry no readable flag and
   // are counted anyway, which is the stated decision rather than a default and is the number that
-  // makes it auditable — equal to `tokens` means no mayhem evidence touched the rate at all.
+  // makes it auditable — equal to `tokens` AND `competenceMayhemExcluded` 0 means no mayhem
+  // evidence touched the rate at all; the unreadable count alone does not establish that.
   PERSISTED_BY_SCHEMA[19] = [
     ...PERSISTED_BY_SCHEMA[18]!,
     'competenceMayhemExcluded',

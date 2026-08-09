@@ -614,7 +614,7 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   schema-≤18 rate is a different quantity and must not be pooled with a schema-19 one**. Beyond the
   gate nothing reads the flag: 227a's per-candidate SHARE is still an observation, and no Stage 2 bar
   or verdict touches it. **Four traps.** An **unreadable** flag is KEPT in the competence denominator
-  and counted (`competenceMayhemUnreadable`; equal to `tokens` ⇒ the pre-351 reading) — dropping it
+  and counted (`competenceMayhemUnreadable`; equal to `tokens` AND `competenceMayhemExcluded` 0 ⇒ the pre-351 reading, both conjuncts) — dropping it
   would empty the denominator of every walk-sourced candidate on evidence about the SURFACE, the
   permanent invisible direction — so 351 is inert on every route that cannot see the column. An
   **all-mayhem** deployer reads **UNMEASURED, never 0.0000** (`rank.mjs` → `competenceEmptiedByMayhem`

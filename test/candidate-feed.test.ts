@@ -586,6 +586,34 @@ describe('a failure on the cheap reading is HELD, never rejected', () => {
     expect(triage(null, GATE).state).toBe('unmeasured');
     expect(triage({ unexpected: 'shape' }, GATE).state).toBe('unmeasured');
   });
+
+  it('names the exclusion that actually emptied the reading, not the deploy time', () => {
+    // Captain decision 352b: a missing or malformed `complete` field folds to UNREADABLE, so a
+    // profile whose rows all carry a perfectly usable `created_timestamp` can still reach zero
+    // tokens through the criterion. The rationale is persisted in the feed run record and this
+    // repo never retro-edits one, so blaming the deploy time there is permanently wrong and sends
+    // an operator looking for a gap that is not there.
+    const rows = Array.from({ length: 30 }, (_, i) => ({
+      created_timestamp: T0 - DAY - (29 - i) * 5 * DAY,
+    }));
+    const t = triage({ pump_tokens: rows }, GATE);
+    expect(t.state).toBe('unmeasured');
+    expect(t.gateVerdict).toBe('gate-unmeasured');
+    expect(t.completion.tokens).toBe(0);
+    expect(t.completion.droppedNoTimestamp).toBe(0);
+    expect(t.completion.criterionUnreadable).toBe(30);
+    expect(t.rationale).toMatch(/completion criterion \(RAISE-85/);
+    expect(t.rationale).toMatch(/30/);
+    expect(t.rationale).not.toMatch(/no launch record with a usable deploy time/);
+    expect(t.rationale).not.toMatch(/carried no usable deploy time/);
+
+    // And the deploy-time cause is still named where it IS the cause.
+    const noTimes = triage({ pump_tokens: [{ complete: true }, { complete: false }] }, GATE);
+    expect(noTimes.state).toBe('unmeasured');
+    expect(noTimes.completion.droppedNoTimestamp).toBe(2);
+    expect(noTimes.rationale).toMatch(/2 carried no usable deploy time/);
+    expect(noTimes.rationale).not.toMatch(/completion criterion \(RAISE-85/);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------

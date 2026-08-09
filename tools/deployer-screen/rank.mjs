@@ -165,7 +165,10 @@ export function applyGate(input, t) {
         `part of that count`
       : '');
 
-  // NO REASON STATES THE MAYHEM COUNT TWICE, and none of them may read as a SECOND set of launches.
+  // NO REASON STATES EITHER EXCLUSION'S COUNT TWICE, and none of them may read as a SECOND set of
+  // launches. The rule binds the criterion count exactly as it binds the mayhem one: where a
+  // `zeroBlame` clause below already states one of them, that exclusion's note is suppressed in the
+  // same sentence rather than appended after it.
   // "a further N" is what the exclusion removed from a sample that still holds something; where the
   // exclusion emptied the sample there is nothing for it to be further to, and a reader of
   // "0 tokens ... a further 2" totals more launches than the wallet has.
@@ -183,7 +186,8 @@ export function applyGate(input, t) {
   // a rate measured over part of a history has to say so where it is stated. The two notes are
   // concatenated and never merged — *not competence evidence* and *nothing could measure this*
   // answer different questions, and one "unknown" would make the rate unauditable.
-  const criterionNote = criterionNoteFor(completion, competenceEmptiedByCriterion(completion));
+  const emptiedByCriterionToo = competenceEmptiedByCriterion(completion);
+  const criterionNote = criterionNoteFor(completion, emptiedByCriterionToo);
   const notes = mayhemNote + criterionNote;
 
   if (completion.tokens < t.minTokens) {
@@ -195,9 +199,11 @@ export function applyGate(input, t) {
     // precedence when it applies, for the same reason: it is where the launches actually went.
     const zeroBlame = emptied
       ? ` (${emptiedByMayhem} — an ABSENT measurement, not a rate of 0)`
-      : competenceEmptiedByCriterion(completion)
-        ? ` (the completion criterion could not be read on any launch that reached it — an ABSENT ` +
-          `measurement, not a rate of 0)`
+      : emptiedByCriterionToo
+        ? ` (the completion criterion (RAISE-85, captain decision 352b) could not be read on any ` +
+          `of the ${completion.criterionUnreadable} launch(es) that reached it, and a launch no ` +
+          `surface could measure is excluded from both sides rather than scored as a failure — an ` +
+          `ABSENT measurement, not a rate of 0)`
         : input.historySource === 'creation-derived'
           ? ' (the creation-derived history came out empty — see this candidate\'s `creation` block ' +
             'for what the walk covered and what the merge did with the ownership listing)'
@@ -205,7 +211,7 @@ export function applyGate(input, t) {
     reasons.push(
       `sample too small: ${completion.tokens} tokens < ${t.minTokens} required` +
         (completion.tokens > 0 ? '' : zeroBlame) +
-        (emptied ? criterionNote : notes),
+        (emptied ? criterionNote : emptiedByCriterionToo ? mayhemNote : notes),
     );
   }
   if (!Number.isFinite(completion.rate)) {
@@ -213,7 +219,7 @@ export function applyGate(input, t) {
       emptied
         ? `completion rate is undefined (${emptiedByMayhem} — captain decision 351; this is NOT a ` +
           `rate of 0 and NOT a rejection, see the verdict)${criterionNote}`
-        : competenceEmptiedByCriterion(completion)
+        : emptiedByCriterionToo
           ? `completion rate is undefined${criterionNote} — this is NOT a rate of 0 and NOT a ` +
             `rejection, see the verdict`
           : 'completion rate is undefined (no usable token records)',

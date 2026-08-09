@@ -422,12 +422,37 @@ export function triage(profile, gateThresholds) {
   // rejections and the feed dies quietly; graded as unmeasured it is visible per wallet and it
   // trips the run-level alarm. An empty profile and a moved response shape look identical from
   // here, so neither may be recorded as a finding.
+  // WHICH of the three ways a reading empties is named from the counts in hand, never asserted.
+  // A profile whose rows all carry a usable `created_timestamp` and no readable `complete` field
+  // empties through the criterion, not through the deploy time, and blaming the deploy time sends
+  // an operator looking for a gap that is not there. The note is persisted in the feed run record
+  // and this repo never retro-edits one, so an overstatement here is permanent.
+  /** @type {string[]} */
+  const emptiedBy = [];
+  if (completion.droppedNoTimestamp > 0) {
+    emptiedBy.push(`${completion.droppedNoTimestamp} carried no usable deploy time`);
+  }
+  if (completion.mayhemExcluded > 0) {
+    emptiedBy.push(
+      `${completion.mayhemExcluded} carry pump.fun's mayhem-mode flag and are excluded from both ` +
+        `sides (captain decision 351)`,
+    );
+  }
+  if (completion.criterionUnreadable > 0) {
+    emptiedBy.push(
+      `${completion.criterionUnreadable} could not have the completion criterion (RAISE-85, ` +
+        `captain decision 352b) read on them at all, which is OUR coverage and not this ` +
+        `deployer's record`,
+    );
+  }
   const notMeasured =
     completion.tokens === 0
       ? [
-          "the vendor's profile carried no launch record with a usable deploy time, so the gate had " +
-            'nothing to decide over — an empty deployer and a moved response shape are ' +
-            'indistinguishable from here',
+          (emptiedBy.length === 0
+            ? "the vendor's profile carried no launch record at all"
+            : `the gate was left no launch record to read: ${emptiedBy.join('; ')}`) +
+            ', so the gate had nothing to decide over — an empty deployer and a moved response ' +
+            'shape are indistinguishable from here',
         ]
       : [];
   const { verdict, rationale } = verdictFor({ gate, completion, capped, notMeasured });

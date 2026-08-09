@@ -5014,6 +5014,36 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
       expect(mayhemLine).not.toMatch(/RAISE-85/);
     });
 
+    it('a criterion-emptied gate reason states the criterion count ONCE, as the mayhem one does', () => {
+      // The rule the mayhem path already keeps: where `zeroBlame` has stated an exclusion, that
+      // exclusion's note is suppressed in the same sentence rather than appended after it. These
+      // reasons are persisted on the candidate row and in the feed ledger's `shortfalls`, and this
+      // repo never retro-edits a record.
+      const completion = measureCompletion([
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: null, mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: null, mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 3), completed: null, mayhem: false },
+      ]);
+      expect(completion.tokens).toBe(0);
+      expect(completion.criterionUnreadable).toBe(3);
+      const applied = applyGate(
+        { completion, historySource: 'creation-derived' },
+        { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 },
+      );
+      const sample = applied.reasons.find((r) => /sample too small/.test(r))!;
+      expect(sample).toMatch(/completion criterion \(RAISE-85, captain decision 352b\)/);
+      expect(sample).toMatch(/ABSENT measurement, not a rate of 0/);
+      expect(sample.match(/completion criterion \(RAISE-85/g) ?? []).toHaveLength(1);
+      expect(sample.match(/3 launch\(es\) that reached it/g) ?? []).toHaveLength(1);
+      // Never a SECOND population: nothing was left for the unreadable set to be "further" to.
+      expect(sample).not.toMatch(/a further/);
+      // Every other reason still names the exclusion exactly once.
+      for (const reason of applied.reasons) {
+        expect(reason.match(/completion criterion \(RAISE-85/g) ?? [], reason).toHaveLength(1);
+      }
+      expect(verdictFor({ gate: applied, completion, capped: false }).verdict).toBe('gate-unmeasured');
+    });
+
     it('a criterion-emptied reading is stated UNMEASURED and claims no bound on a rate nobody took', () => {
       // The headline state 352b creates: every launch that reached the criterion is unreadable, so
       // `tokens` is 0, `rate` is NaN and `rank.mjs` routes the candidate to `gate-unmeasured`. At

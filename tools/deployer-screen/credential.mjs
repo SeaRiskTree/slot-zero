@@ -529,8 +529,9 @@ export function classifyAuthFailure(status, bodyExcerpt) {
         `      curl -sD- -o/dev/null -H "authorization: Bearer $${KEY_ENV_VAR}" \\\n` +
         `        'https://madeonsol.com/api/v1/deployer-hunter/leaderboard?sort=total_bonded&limit=1' \\\n` +
         `        | grep -i ratelimit\n` +
-        `  x-ratelimit-remaining and x-ratelimit-reset say whether the day is actually spent. The\n` +
-        `  screen is stateless, so a rerun costs no more than the first run did.\n` +
+        `  x-ratelimit-remaining and x-ratelimit-reset say whether the day is actually spent. A\n` +
+        `  rerun costs no more than the first run did: nothing here is priced on what an earlier\n` +
+        `  run spent.\n` +
         `  This is NOT a negative result: the run stopped early.${tail}`,
     };
   }

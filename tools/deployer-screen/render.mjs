@@ -1004,7 +1004,7 @@ export function renderStage1(run) {
       L.push('THIS IS NOT A NEGATIVE RESULT. The run did not complete, so "nothing cleared the gate"');
       L.push('here means "the run stopped", not "these deployers are not competent". Candidates that');
       L.push('were never requested cannot have failed. Resolve the failure above and rerun; the');
-      L.push('screen is stateless.');
+      L.push('gate reads no memory of this run, so a rerun costs no more than this one did.');
     }
   } else {
     L.push('CLEARED THE COMPETENCE GATE — and, where Stage 2 reached them, scored for ENTRY');

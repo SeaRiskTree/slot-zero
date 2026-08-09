@@ -2601,8 +2601,9 @@ export async function main(opts, env, out, err, seam = {}) {
         if (merged.bondedUndecidable > 0) {
           notMeasured.push(
             `${merged.bondedUndecidable} of ${merged.records.length} launch(es) have no bonded ` +
-              `status from EITHER source — the bonding-curve account could not be read and the ` +
-              `ownership listing has no row for them (which is what a hidden launch looks like)`,
+              `status from EITHER source — the bonding-curve account could not be read, and the ` +
+              `ownership listing either has no row for them (which is what a hidden launch looks ` +
+              `like) or carries no readable completion flag on the row it does have`,
           );
           // The run level too, not only the candidate row. A record whose `unmeasured` reads empty
           // and `truncated` reads false has told its reader it measured everything, and a wallet

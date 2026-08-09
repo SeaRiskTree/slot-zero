@@ -5013,6 +5013,30 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
       expect(mayhemLine).not.toBe(criterionLine);
       expect(mayhemLine).not.toMatch(/RAISE-85/);
     });
+
+    it('a criterion-emptied reading is stated UNMEASURED and claims no bound on a rate nobody took', () => {
+      // The headline state 352b creates: every launch that reached the criterion is unreadable, so
+      // `tokens` is 0, `rate` is NaN and `rank.mjs` routes the candidate to `gate-unmeasured`. At
+      // `tokens === 0` the estimated conjunct is vacuously true (0 === 0), so the line must not
+      // reach the UPPER-BOUND wording — there is no rate for it to bound.
+      const completion = measureCompletion([
+        { deployedAtMs: Date.UTC(2026, 0, 1), completed: null, mayhem: false },
+        { deployedAtMs: Date.UTC(2026, 0, 2), completed: null, mayhem: false },
+      ]);
+      expect(completion.tokens).toBe(0);
+      expect(completion.criterionUnreadable).toBe(2);
+      expect(completion.criterionEstimated).toBe(0);
+      const criterionLine = renderCompetenceCriterion(completion, '  ').join('\n');
+      expect(criterionLine).toMatch(/2 launch\(es\)/);
+      expect(criterionLine).toMatch(/UNREADABLE/);
+      expect(criterionLine).toMatch(/never scored as failures/);
+      expect(criterionLine).toMatch(/UNMEASURED/);
+      expect(criterionLine).not.toMatch(/UPPER BOUND/);
+      expect(criterionLine).not.toMatch(/upper bound/);
+      expect(criterionLine).not.toMatch(/ESTIMATED/);
+      // Still one line and still its own: the genuinely-nothing-to-say case keeps returning none.
+      expect(renderCompetenceCriterion(measureCompletion([]), '  ')).toEqual([]);
+    });
   });
 });
 

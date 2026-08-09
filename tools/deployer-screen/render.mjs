@@ -618,6 +618,10 @@ export function renderCompetenceMayhem(completion, indent) {
  * measured, and that is the state every route this repo has today produces. A reader who cannot see
  * it takes an estimate for the measure.
  *
+ * **When the criterion emptied the reading (`tokens === 0` with launches unreadable) there is no
+ * rate**, so the line states UNMEASURED and claims no bound: `criterionEstimated === tokens` is
+ * vacuously true at `0 === 0` and would otherwise print an upper bound on a measurement nobody took.
+ *
  * A formatter and nothing more: no caller may branch on what it returns.
  *
  * @param {{ tokens: number, criterionUnreadable: number, criterionEstimated: number } | null} completion
@@ -628,6 +632,13 @@ export function renderCompetenceCriterion(completion, indent) {
   if (completion === null) return [];
   const { tokens, criterionUnreadable, criterionEstimated } = completion;
   if (tokens === 0 && criterionUnreadable === 0) return [];
+  if (tokens === 0) {
+    return [
+      `${indent}completion criterion (RAISE-85, 352b): all ${criterionUnreadable} launch(es) that ` +
+        `reached the criterion are UNREADABLE and excluded from BOTH sides — never scored as ` +
+        `failures; nothing was left to read, so this reading is UNMEASURED and is NOT a rate`,
+    ];
+  }
   const read =
     criterionEstimated === tokens
       ? `all ${tokens} ESTIMATED through pump.fun's graduation flag, so this rate is an UPPER BOUND ` +

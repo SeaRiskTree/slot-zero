@@ -69,13 +69,14 @@ import {
   parseDuneTimestamp,
   summariseMayhem,
   toWalletEnumeration,
-  MAYHEM_OBSERVATION_ONLY,
+  MAYHEM_NOT_COMPETENCE,
 } from '../tools/deployer-screen/dune.mjs';
 import {
   CURVE_INITIAL_PRICE_SOL,
   LAMPORTS_PER_SOL,
   blockTxIndex,
   createSlotGroups,
+  mayhemFlagOf,
   measureCompletion,
   measureCreateSlot,
   ROOM_LEFT_RANGE,
@@ -178,6 +179,7 @@ import {
 } from '../tools/deployer-screen/stage0.mjs';
 import {
   applyGate,
+  competenceEmptiedByMayhem,
   measureConsistency,
   rankCandidates,
   verdictFor,
@@ -227,6 +229,7 @@ import {
 } from '../tools/deployer-screen/screen.mjs';
 import {
   LIMITATIONS,
+  renderCompetenceMayhem,
   renderDryRun,
   renderEntry,
   renderMayhemShare,
@@ -3946,22 +3949,36 @@ describe('a per-wallet reading is refused at the launch level too', () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// pump.fun's mayhem-mode flag — CAPTAIN DECISION 227a.
+// pump.fun's mayhem-mode flag — CAPTAIN DECISIONS 227a AND 351.
 //
 // `pump_evt_createevent` has always carried an `is_mayhem_mode` boolean and this repo never read it.
 // `slot-zero-graduation-regime-remeasure` sections 1.4 and 3 (held in firstmate's records, not in
-// this repo) measured what it is worth: 27.1% of 2026-07's pump.fun launches carried it, they
-// graduated at 4.1-4.7% against 1.8-2.1% for the rest, and they supplied 46.3% of that month's
-// graduations. It is therefore a first-order confounder for both halves of this screen.
+// this repo) measured what it is worth statistically: 27.1% of 2026-07's pump.fun launches carried
+// it, they graduated at 4.1-4.7% against 1.8-2.1% for the rest, and they supplied 46.3% of that
+// month's graduations. 227a's answer was the cheapest one available and the only one of the four
+// that changed no verdict: RECORD the flag and REPORT the share, and leave what the screen should DO
+// about it to a later decision on evidence that lane had yet to produce.
 //
-// 227a's answer was the cheapest one available and the ONLY one of the four that changes no verdict:
-// RECORD the flag and REPORT the share, so the survivor list is auditable for mayhem exposure, and
-// leave what the screen should DO about it to a later decision. Excluding those launches from the
-// competence measure (227b) and excluding mayhem-heavy deployers outright (227c) were both declined.
+// `slot-zero-offlaunchpad-graduation-criterion` sections 4 and 8.2 is that evidence, and it is
+// ECONOMIC rather than statistical: a mayhem graduation is preceded by a median net quote inflow of
+// 0.291 SOL against 85.005 SOL for a classic curve graduation — 292x cheaper, and not separable in
+// trade data from a token that churned about $1,700 and died. CAPTAIN DECISION 351 therefore
+// REVERSES 227b: a mayhem-mode graduation is not competence evidence, so such a launch leaves BOTH
+// sides of `minCompletionRate`.
 //
-// So the load-bearing assertion in this block is the NEGATIVE one: the gate's answer is byte for
-// byte the same with the column populated, absent and malformed.
-describe('the mayhem flag is RECORDED and REPORTED, and it decides nothing', () => {
+// CAPTAIN DECISION 227c — excluding mayhem-heavy DEPLOYERS outright — is NOT reversed and remains
+// DECLINED, and that is what shapes the assertions here. The load-bearing ones are:
+//
+//   1. the exclusion takes the DENOMINATOR with it, so a mayhem-heavy deployer is judged on their
+//      non-mayhem record rather than driven to 0.0000 and rejected (which would be 227c by
+//      arithmetic);
+//   2. an ALL-mayhem deployer ends UNMEASURED rather than failed, because zero of zero is an absent
+//      measurement;
+//   3. an UNREADABLE flag is kept and counted rather than read as non-mayhem or dropped; and
+//   4. a run whose flags are all unreadable — every walk-sourced candidate, every --ownership-only
+//      run, and every run before 351 — is byte for byte what it was, which is what makes the
+//      malformed-column case safe.
+describe('the flag DECIDES the competence measure and nothing else', () => {
   const coverage = () =>
     assessCoverage({ probe: parseCoverageProbe(HEALTHY_PROBE()), nowMs: NOW_MS, bounds: DUNE_BOUNDS });
 
@@ -3976,8 +3993,15 @@ describe('the mayhem flag is RECORDED and REPORTED, and it decides nothing', () 
       ...(m === undefined ? {} : { is_mayhem_mode: m }),
     }));
 
-  /** The whole gate path, from vendor rows to the verdict a candidate row carries. */
-  const gateOutcomeFor = (rows: readonly unknown[]) => {
+  /**
+   * The whole gate path, from vendor rows to the verdict a candidate row carries.
+   *
+   * `mayhemByMint` is threaded exactly as `screen.mjs` threads it, and that is the point of driving
+   * the path end to end here rather than calling `measureCompletion` on hand-built records: the flag
+   * reaches the gate through ONE named channel, and a test that reconstructed the channel itself
+   * would keep passing if the production wiring were removed.
+   */
+  const gateOutcomeFor = (rows: readonly unknown[], gate = { minTokens: 3, minCompletionRate: 0.25, minSpanDays: 14 }) => {
     const parsed = parseCreationRows(rows);
     const e = toWalletEnumeration({
       wallet: 'W',
@@ -3994,12 +4018,10 @@ describe('the mayhem flag is RECORDED and REPORTED, and it decides nothing', () 
       listed: [],
       covered: e.covered,
       unresolvedTransactions: 0,
+      mayhemByMint: e.mayhemByMint,
     });
     const completion = measureCompletion(merged.records);
-    const gate = applyGate(
-      { completion, historySource: 'creation-derived' },
-      { minTokens: 3, minCompletionRate: 0.25, minSpanDays: 14 },
-    );
+    const applied = applyGate({ completion, historySource: 'creation-derived' }, gate);
     return {
       unreadableRows: parsed.unreadableRows,
       usable: e.usable,
@@ -4010,41 +4032,189 @@ describe('the mayhem flag is RECORDED and REPORTED, and it decides nothing', () 
       curves: [...e.curves.entries()],
       covered: e.covered,
       completion,
-      gate,
-      ...verdictFor({ gate, completion, capped: false }),
+      gate: applied,
+      ...verdictFor({ gate: applied, completion, capped: false }),
     };
   };
 
-  it('THE VERDICT IS IDENTICAL with the column populated, absent and malformed', () => {
-    // The hard constraint of 227a, asserted rather than reviewed for. Eight launches, three of them
-    // mayhem, against the same eight with no such column at all and the same eight where every
-    // value is junk. Everything the gate reads — the creates, the curve states, the covered window,
-    // the completion measurement, the gate result and the verdict sentence — must be deep-equal.
-    const flags = [true, false, false, true, false, true, false, false];
-    const populated = gateOutcomeFor(rowsWith(flags));
-    const absent = gateOutcomeFor(rowsWith(flags.map(() => undefined)));
+  it('EXCLUDES a mayhem launch from BOTH sides, so a mixed record is judged on its non-mayhem half', () => {
+    // Nine launches. `rowsWith` bonds every third one (i % 3 === 0), so the pooled reading is
+    // 3 bonded of 9 = 0.3333. Mark the two NON-bonded launches 1 and 2 as mayhem: the numerator is
+    // untouched and only the denominator shrinks, which is the direction a numerator-only exclusion
+    // could never produce. 3 of 7 = 0.4286.
+    const flags = [false, true, true, false, false, false, false, false, false];
+    const mixed = gateOutcomeFor(rowsWith(flags));
+    expect(mixed.completion.mayhemExcluded).toBe(2);
+    expect(mixed.completion.tokens).toBe(7);
+    expect(mixed.completion.completed).toBe(3);
+    expect(mixed.completion.rate).toBeCloseTo(3 / 7, 10);
+
+    // The pre-351 reading of the SAME nine launches, for the contrast the whole decision rests on.
+    const pooled = gateOutcomeFor(rowsWith(flags.map(() => undefined)));
+    expect(pooled.completion.tokens).toBe(9);
+    expect(pooled.completion.completed).toBe(3);
+    expect(pooled.completion.rate).toBeCloseTo(3 / 9, 10);
+    expect(mixed.completion.rate).toBeGreaterThan(pooled.completion.rate);
+
+    // And the sentence a reader quotes says which record it is about.
+    expect(mixed.rationale).toMatch(/NON-MAYHEM record/);
+    expect(mixed.rationale).toMatch(/351/);
+    expect(pooled.rationale).not.toMatch(/NON-MAYHEM/);
+  });
+
+  it('EXCLUDING THE NUMERATOR ALONE WOULD BE 227c, and the denominator half is what prevents it', () => {
+    // The failure this shape exists to avoid, asserted as arithmetic rather than as a comment.
+    // A mayhem-heavy deployer: 12 launches, 8 of them mayhem, and the bonded ones are exactly the
+    // mayhem ones — the shape `slot-zero-offlaunchpad-graduation-criterion` measured, where a
+    // deployer's whole graduation record is mayhem-mode.
+    const rows = Array.from({ length: 12 }, (_, i) => ({
+      deployer: 'W',
+      mint: `M${i}`,
+      created_at: `2026-0${(i % 8) + 1}-01 00:00:00.000 UTC`,
+      bonded: i < 8,
+      launches_total: 12,
+      is_mayhem_mode: i < 8,
+    }));
+    const out = gateOutcomeFor(rows);
+
+    // Numerator-only would have read 0 of 12 = 0.0000 and gate-FAILED — captain decision 227c
+    // arriving by arithmetic, on a deployer 227c explicitly declines to remove.
+    expect(0 / 12).toBe(0);
+    // What actually happens: judged on the four non-mayhem launches, none of which bonded.
+    expect(out.completion.mayhemExcluded).toBe(8);
+    expect(out.completion.tokens).toBe(4);
+    expect(out.completion.completed).toBe(0);
+    expect(out.completion.rate).toBe(0);
+    // That IS a rejection here, and legitimately so — it is a measured 0 over four real non-mayhem
+    // launches, not a 0 manufactured by counting mayhem launches as failures. The distinction is
+    // the rationale's, so a reader can tell the two apart.
+    expect(out.verdict).toBe('gate-failed');
+    expect(out.gate.reasons.join(' ')).toMatch(/NON-MAYHEM record/);
+    expect(out.gate.reasons.join(' ')).toMatch(/8 launch\(es\) carry pump\.fun's mayhem-mode flag/);
+  });
+
+  it('an ALL-MAYHEM deployer is UNMEASURED, never a rate of 0.0000', () => {
+    // Zero of zero is an absent measurement and not a failing rate. Conflating them is the dangerous
+    // direction on this project: a false rejection is permanent and invisible, because the wallet is
+    // graded, filed in feed/ledger.json and never offered again.
+    const all = gateOutcomeFor(rowsWith([true, true, true, true, true, true]));
+    expect(all.completion.mayhemExcluded).toBe(6);
+    expect(all.completion.tokens).toBe(0);
+    expect(all.completion.rate).toBeNaN();
+    expect(all.completion.rate).not.toBe(0);
+    expect(competenceEmptiedByMayhem(all.completion)).toBe(true);
+
+    expect(all.verdict).toBe('gate-unmeasured');
+    expect(all.verdict).not.toBe('gate-failed');
+    expect(all.rationale).toMatch(/NOT a rejection and NOT a pass/);
+    expect(all.rationale).toMatch(/227c/);
+    expect(all.rationale).toMatch(/remains DECLINED/);
+
+    // The gate's own reasons still record what the thresholds would have said — they are kept in the
+    // record — but the VERDICT is what a consumer filters on, and it is the unmeasured one.
+    expect(all.gate.passed).toBe(false);
+    expect(all.gate.reasons.join(' ')).toMatch(/ABSENT measurement, not a rate of 0/);
+
+    // And the predicate is narrow: an ordinarily empty history keeps the gate-failed it always had,
+    // so this lane does not quietly widen what counts as unmeasured.
+    const emptyHistory = measureCompletion([]);
+    expect(emptyHistory.mayhemExcluded).toBe(0);
+    expect(competenceEmptiedByMayhem(emptyHistory)).toBe(false);
+    expect(verdictFor({ gate: applyGate({ completion: emptyHistory }, GATE), completion: emptyHistory, capped: false }).verdict).toBe(
+      'gate-failed',
+    );
+  });
+
+  it('an UNREADABLE flag is COUNTED and KEPT — not read as non-mayhem, not dropped', () => {
+    // The three states are kept apart at the fold, once, so no call site can acquire a fourth.
+    expect(mayhemFlagOf({ deployedAtMs: 1, completed: false, mayhem: true })).toBe(true);
+    expect(mayhemFlagOf({ deployedAtMs: 1, completed: false, mayhem: false })).toBe(false);
+    expect(mayhemFlagOf({ deployedAtMs: 1, completed: false, mayhem: null })).toBeNull();
+    expect(mayhemFlagOf({ deployedAtMs: 1, completed: false })).toBeNull();
+
+    // Six launches: two mayhem, two proven ordinary, two the flag could not be read on. The pair
+    // that could not be read stays in BOTH sides of the fraction, and the count says so — the
+    // decision is stated on the measurement rather than left to be inferred from a denominator.
+    const out = gateOutcomeFor(rowsWith([true, false, undefined, true, false, undefined]));
+    expect(out.completion.mayhemExcluded).toBe(2);
+    expect(out.completion.tokens).toBe(4);
+    expect(out.completion.mayhemUnreadable).toBe(2);
+    // Launch 0 and 3 are mayhem; `rowsWith` bonds 0 and 3 (i % 3 === 0), so both bonded launches
+    // left with the exclusion and the surviving four completed none.
+    expect(out.completion.completed).toBe(0);
+
+    // Dropping the unreadable pair instead would have measured this deployer over 2 launches rather
+    // than 4 — evidence about the SURFACE (`pump_call_create` has no such column) shrinking a
+    // deployer's record, in the permanent, invisible direction.
+    expect(out.completion.tokens - out.completion.mayhemUnreadable).toBe(2);
+
+    // And a run can report the bucket, which is the half of this that has to survive into a record.
+    const line = renderCompetenceMayhem(out.completion, '  ').join('\n');
+    expect(line).toMatch(/2 mayhem launch\(es\) excluded from BOTH sides/);
+    expect(line).toMatch(/2 carry NO readable flag and are counted anyway/);
+    expect(line).toMatch(/unreadable is kept, not read as non-mayhem/);
+  });
+
+  it('a MAYHEM-FREE deployer\'s rate does not move at all, however the column arrives', () => {
+    // The negative that keeps 351 honest, and it is what makes the malformed-column case safe.
+    // Eight launches, none of them mayhem, against the same eight with no such column and the same
+    // eight where every value is junk: every number the gate reads must be deep-equal.
+    const clean = rowsWith([false, false, false, false, false, false, false, false]);
+    const absent = rowsWith(Array.from({ length: 8 }, () => undefined));
     // Every shape a shifted, renamed or retyped column can arrive in. NONE of them may refuse a row:
     // an unreadable row refuses the WHOLE batch, every candidate in it falls back to the creation
-    // walk, and the walk can return a different history and therefore a different verdict — which
-    // would make an observation able to move a gate outcome.
-    const malformed = gateOutcomeFor(rowsWith([null, 'true', 'false', 1, 0, {}, [], 'MAYHEM']));
+    // walk, and the walk cannot see this column at all — so a rename would cost every candidate its
+    // Dune answer AND its mayhem reading in one move.
+    const malformed = rowsWith([null, 'true', 'false', 1, 0, {}, [], 'MAYHEM']);
 
-    expect(absent).toEqual(populated);
-    expect(malformed).toEqual(populated);
-    // And stated positively, so a future reader sees the three really did reach the same verdict
-    // rather than three identical failures.
-    expect(populated.usable).toBe(true);
-    expect(populated.verdict).not.toBe('gate-unmeasured');
-    expect(populated.unreadableRows).toBe(0);
-    expect(malformed.unreadableRows).toBe(0);
-    expect(populated.completion.tokens).toBe(8);
+    const readable = gateOutcomeFor(clean);
+    const unreadable = gateOutcomeFor(absent);
+    const junk = gateOutcomeFor(malformed);
+
+    expect(readable.completion.tokens).toBe(8);
+    expect(readable.completion.mayhemExcluded).toBe(0);
+    expect(readable.completion.rate).toBeCloseTo(3 / 8, 10);
+
+    // Absent and malformed are the SAME state — unreadable — and both are the pre-351 reading.
+    expect(junk).toEqual(unreadable);
+    expect(unreadable.completion.mayhemUnreadable).toBe(8);
+    expect(unreadable.completion.mayhemExcluded).toBe(0);
+    expect(unreadable.unreadableRows).toBe(0);
+    expect(junk.unreadableRows).toBe(0);
+
+    // And a proven-clean reading and an unread one reach the same verdict on the same launches: the
+    // exclusion cannot move a rate it has nothing to exclude.
+    expect(readable.completion.rate).toBe(unreadable.completion.rate);
+    expect(readable.verdict).toBe(unreadable.verdict);
+    expect(readable.gate).toEqual(unreadable.gate);
+    expect(readable.rationale).toBe(unreadable.rationale);
+
+    // The one thing that DOES differ, and it is a report rather than a reading: a rate resting
+    // entirely on unread flags says so, so nobody has to infer it from an enumeration source.
+    expect(renderCompetenceMayhem(unreadable.completion, '  ').join('\n')).toMatch(/pre-351 reading/);
+    expect(renderCompetenceMayhem(readable.completion, '  ').join('\n')).not.toMatch(/pre-351/);
+  });
+
+  it('every producer that cannot see the flag is byte-identical to its pre-351 self', () => {
+    // The blast radius, stated as a property. `measureCompletion`'s other callers — the MadeOnSol
+    // profile page (`toTokenRecords`), Stage 0's committed tape, `bundling.mjs`'s census — build
+    // records with no mayhem field at all, so 351 is inert there BY CONSTRUCTION rather than by
+    // measurement, and the two counts are what say so on the record.
+    const records = Array.from({ length: 10 }, (_, i) => ({ deployedAtMs: T0 + i * DAY, completed: i < 4 }));
+    const m = measureCompletion(records);
+    expect(m.tokens).toBe(10);
+    expect(m.completed).toBe(4);
+    expect(m.rate).toBe(0.4);
+    expect(m.mayhemExcluded).toBe(0);
+    expect(m.mayhemUnreadable).toBe(10);
   });
 
   it('a malformed mayhem column reads UNMEASURED, where a malformed `bonded` refuses the row', () => {
-    // The asymmetry is deliberate and it is the whole of "change no verdict". `bonded` and
-    // `launches_total` are gate inputs, so an absent one silently shortens a history and the row is
-    // refused. The mayhem flag is an observation, so an absent one can only understate a figure
-    // nothing reads — and refusing on it would let that figure cost a candidate its Dune answer.
+    // The asymmetry is deliberate and 351 makes it MORE load-bearing rather than less. `bonded` and
+    // `launches_total` are gate inputs whose absence silently SHORTENS a history, so the row is
+    // refused. An unreadable mayhem flag can only return this gate to the rate it computed before
+    // 351 — visibly, on a count a reader can check — and it can never REMOVE a launch, because only
+    // a flag that positively read `true` excludes anything.
     const good = parseCreationRows(rowsWith([true, false, true]));
     expect(good.unreadableRows).toBe(0);
     expect(summariseMayhem(good.byWallet.get('W') ?? [])).toEqual({
@@ -4084,6 +4254,38 @@ describe('the mayhem flag is RECORDED and REPORTED, and it decides nothing', () 
     expect(exposure.share, 'the whole history would have read 0.3333').not.toBeCloseTo(2 / 6, 4);
   });
 
+  it('227a\'s SHARE and 351\'s exclusion counts are different denominators and must stay apart', () => {
+    // `mayhemShare` is over what the ENUMERATION returned; the competence counts are over the MERGED
+    // history the gate read. Here the merge carries an ownership-listed launch the enumeration never
+    // returned, so the two denominators genuinely differ — which is why 351's counts are candidate
+    // ROW fields rather than a fourth and fifth key on the `creation` block.
+    const parsed = parseCreationRows(rowsWith([true, false, false]));
+    const e = toWalletEnumeration({
+      wallet: 'W',
+      launches: parsed.byWallet.get('W') ?? [],
+      declaredLaunches: 3,
+      coverage: coverage(),
+    });
+    const merged = mergeHistories({
+      creates: e.creates,
+      wallet: 'W',
+      curves: e.curves,
+      listed: [{ mint: 'OUTSIDE', deployedAtMs: Date.parse('2019-01-01T00:00:00Z'), completed: true }],
+      covered: e.covered,
+      unresolvedTransactions: 0,
+      mayhemByMint: e.mayhemByMint,
+    });
+    const completion = measureCompletion(merged.records);
+
+    expect(e.mayhem.launches).toBe(3);
+    expect(e.mayhem.share).toBeCloseTo(1 / 3, 10);
+    // The gate read four launches — three enumerated plus one carried over from the listing — and
+    // the carried one has NO flag, so it is unreadable rather than non-mayhem.
+    expect(completion.mayhemExcluded).toBe(1);
+    expect(completion.tokens).toBe(3);
+    expect(completion.mayhemUnreadable).toBe(1);
+  });
+
   it('carries the exposure on a REFUSED reading too, without letting it change the refusal', () => {
     // A refused reading is still the only mayhem evidence a run holds for that wallet, so the count
     // is taken. What it may not do is participate in the refusal — the reasons and `usable` are
@@ -4102,12 +4304,17 @@ describe('the mayhem flag is RECORDED and REPORTED, and it decides nothing', () 
     expect(refusedMayhem.reasons).toEqual(refusedPlain.reasons);
     expect(refusedMayhem.mayhem).toEqual({ launches: 1, mayhem: 1, unknown: 0, share: 1 });
     expect(refusedPlain.mayhem).toEqual({ launches: 0, mayhem: 0, unknown: 1, share: null });
+    // And `screen.mjs` never hands a refused reading's flags to the merge — the exclusion may not
+    // rest on a prefix or an out-of-coverage slice this run declined to gate on.
+    expect(refusedMayhem.mayhemByMint.get('M')).toBe(true);
   });
 
-  it('never reaches a CreateRecord, so nothing downstream of the merge can read it', () => {
-    // The structural half of "it decides nothing". `mergeHistories` consumes `creates` and `curves`;
-    // if the flag were on either, a later reader could branch on it without anything failing here.
-    const parsed = parseCreationRows(rowsWith([true, true, true]));
+  it('travels beside a CreateRecord and never inside one, so the ONE reader stays nameable', () => {
+    // The structural half. `mergeHistories` consumes `creates` and `curves`, and the walk produces
+    // both and cannot see this flag at any price — a field there would have to be invented as `null`
+    // on every walk-sourced launch, an absence indistinguishable from a measurement. So the flag
+    // rides a separate, named channel, `mayhemByMint`, whose only consumer is the competence measure.
+    const parsed = parseCreationRows(rowsWith([true, undefined, false]));
     const e = toWalletEnumeration({
       wallet: 'W',
       launches: parsed.byWallet.get('W') ?? [],
@@ -4121,6 +4328,19 @@ describe('the mayhem flag is RECORDED and REPORTED, and it decides nothing', () 
     }
     for (const s of e.curves.values()) expect(Object.keys(s).sort()).toEqual(['complete', 'creator']);
     expect(JSON.stringify([...e.creates, ...e.curves.values()])).not.toMatch(/mayhem/i);
+
+    // ONLY a readable flag gets an entry: an absent mint is unreadable, never non-mayhem, so the
+    // three-state rule survives the map's own two-state value type.
+    expect([...e.mayhemByMint.entries()].sort()).toEqual([
+      ['M0', true],
+      ['M2', false],
+    ]);
+    expect(e.mayhemByMint.has('M1')).toBe(false);
+
+    // And `screen.mjs` passes it — the channel exists in production and not only here. A test that
+    // rebuilt the wiring itself would stay green with the production call site deleted.
+    const screen = readFileSync(join(TOOL_DIR, 'screen.mjs'), 'utf8');
+    expect(screen).toMatch(/mayhemByMint:\s*useDune && fromDune !== null \? fromDune\.mayhemByMint : null/);
   });
 
   it('renders UNMEASURED rather than 0% on every route that cannot see the flag', () => {
@@ -4172,18 +4392,30 @@ describe('the mayhem flag is RECORDED and REPORTED, and it decides nothing', () 
     expect(zero).not.toMatch(/UNMEASURED/);
   });
 
-  it('states, in one place, that the flag is an observation and not an input', () => {
-    // The sentence travels with the number. 227b and 227c were declined, and a later lane meeting
-    // this field needs to find that in the code rather than in a decision record it may not have.
-    expect(MAYHEM_OBSERVATION_ONLY).toMatch(/227a/);
-    expect(MAYHEM_OBSERVATION_ONLY).toMatch(/no gate, no bar, no rate, no verdict/);
-    expect(MAYHEM_OBSERVATION_ONLY).toMatch(/never that/);
-    // And no gate-side module may import the summariser. `dune.mjs` is already walled off from the
-    // Stage 2 modules; this is the same rule stated for the one function a gate module might
-    // plausibly reach for.
+  it('states, in one place, what the flag decides and what it still may not', () => {
+    // The sentence travels with the number. A later lane meeting this field needs to find 351's
+    // reversal of 227b — AND 227c's survival — in the code rather than in a decision record it may
+    // not have.
+    expect(MAYHEM_NOT_COMPETENCE).toMatch(/351/);
+    expect(MAYHEM_NOT_COMPETENCE).toMatch(/REVERSES 227b/);
+    expect(MAYHEM_NOT_COMPETENCE).toMatch(/227c IS NOT REVERSED AND REMAINS DECLINED/);
+    expect(MAYHEM_NOT_COMPETENCE).toMatch(/numerator and the\s+denominator/);
+    expect(MAYHEM_NOT_COMPETENCE).toMatch(/never that/);
+    // The one sentence is PRINTED once per run, so it cannot become documentation nobody meets.
+    const render = readFileSync(join(TOOL_DIR, 'render.mjs'), 'utf8');
+    expect(render).toMatch(/wrap\(MAYHEM_NOT_COMPETENCE, 78\)/);
+
+    // And the gate side still may not compute a mayhem FIGURE of its own. `summariseMayhem` is
+    // 227a's share and belongs to `dune.mjs`; what the gate reads is a per-launch flag off a record,
+    // which is a different thing under a different name.
     for (const module of ['rank.mjs', 'measure.mjs', 'entry.mjs', 'stage2.mjs', 'stage0.mjs']) {
       const text = readFileSync(join(TOOL_DIR, module), 'utf8');
-      expect(text, `${module} must not compute a mayhem figure`).not.toMatch(/summariseMayhem/);
+      expect(text, `${module} must not compute a mayhem share`).not.toMatch(/summariseMayhem/);
+    }
+    // Stage 2 and Stage 3 read the flag NOWHERE — 351 moved one bar and only one.
+    for (const module of ['entry.mjs', 'stage2.mjs']) {
+      const text = readFileSync(join(TOOL_DIR, module), 'utf8');
+      expect(text, `${module} must not read the mayhem flag`).not.toMatch(/mayhem/i);
     }
   });
 });
@@ -5520,6 +5752,19 @@ describe('the keyless boundary holds in both directions', () => {
     'entrySource',
     'entrySourceFallbackReasons',
   ].sort();
+  // Schema 19 adds TWO candidate row fields, and they exist so the FOUR fields beside them can be
+  // read for what they now are. Captain decision 351 excludes a mayhem-mode launch from BOTH sides
+  // of the completion rate, so `tokens`, `completed`, `completionRate` and `spanDays` describe the
+  // deployer's NON-MAYHEM record — a narrower quantity than any schema-≤18 record's, and one that
+  // must not be pooled with those. `competenceMayhemExcluded` is what the exclusion removed;
+  // `competenceMayhemUnreadable` is how many of the launches that REMAIN carry no readable flag and
+  // are counted anyway, which is the stated decision rather than a default and is the number that
+  // makes it auditable — equal to `tokens` means no mayhem evidence touched the rate at all.
+  PERSISTED_BY_SCHEMA[19] = [
+    ...PERSISTED_BY_SCHEMA[18]!,
+    'competenceMayhemExcluded',
+    'competenceMayhemUnreadable',
+  ].sort();
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -5634,6 +5879,8 @@ describe('the keyless boundary holds in both directions', () => {
     // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
     // .recipeBlock), so a finding's shape does not depend on which transport produced it.
     18: ENTRY_KEYS_14,
+    // Schema 19's two new keys are candidate ROW fields — PERSISTED_BY_SCHEMA above.
+    19: ENTRY_KEYS_14,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -5682,7 +5929,8 @@ describe('the keyless boundary holds in both directions', () => {
     'enumerationSource',
   ];
   // Schema 15: captain decision 227a. pump.fun's mayhem-mode flag, RECORDED per launch and REPORTED
-  // as a per-candidate share, reaching no bar and no verdict. `mayhemFlagReadable` is the share's
+  // as a per-candidate share, which reaches no bar (the per-launch FLAG gates the competence
+  // measure since captain decision 351; this SHARE does not). `mayhemFlagReadable` is the share's
   // own DENOMINATOR and is persisted rather than derived — it is NOT `duneLaunches`, because
   // `pump_call_create` carries no such column and a history reaching back past
   // `pump_evt_createevent` therefore has launches the flag cannot be read on. All three are `null`
@@ -5718,6 +5966,11 @@ describe('the keyless boundary holds in both directions', () => {
     // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
     // .recipeBlock), so a finding's shape does not depend on which transport produced it.
     18: CREATION_KEYS_15,
+    // Schema 19 leaves `creation` alone ON PURPOSE. Its `mayhemLaunches`/`mayhemFlagReadable` are
+    // 227a's share of what the ENUMERATION returned; 351's two counts are over the MERGED history
+    // the gate read, a different denominator, so they are candidate ROW fields and not a fourth and
+    // fifth key here.
+    19: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -5774,6 +6027,7 @@ describe('the keyless boundary holds in both directions', () => {
     // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
     // .recipeBlock), so a finding's shape does not depend on which transport produced it.
     18: ENTRY_COVERAGE_KEYS_6,
+    19: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -5848,6 +6102,7 @@ describe('the keyless boundary holds in both directions', () => {
     // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
     // .recipeBlock), so a finding's shape does not depend on which transport produced it.
     18: SPEND_KEYS_8,
+    19: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -5903,6 +6158,7 @@ describe('the keyless boundary holds in both directions', () => {
     // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
     // .recipeBlock), so a finding's shape does not depend on which transport produced it.
     18: DUNE_KEYS_13,
+    19: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -5941,6 +6197,7 @@ describe('the keyless boundary holds in both directions', () => {
     // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
     // .recipeBlock), so a finding's shape does not depend on which transport produced it.
     18: DUNE_COVERAGE_KEYS_9,
+    19: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -5966,6 +6223,7 @@ describe('the keyless boundary holds in both directions', () => {
     // through: both sources score at ONE recipe (thresholds.json -> entry_source_agreement
     // .recipeBlock), so a finding's shape does not depend on which transport produced it.
     18: DUNE_COVERAGE_TABLE_KEYS_9,
+    19: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -6019,6 +6277,7 @@ describe('the keyless boundary holds in both directions', () => {
   ];
   const ENTRY_SOURCE_AGREEMENT_KEYS_BY_SCHEMA: Record<number, string[]> = {
     18: ENTRY_SOURCE_AGREEMENT_KEYS_18,
+    19: ENTRY_SOURCE_AGREEMENT_KEYS_18,
   };
   // This leg's own Dune meter. It is deliberately NOT folded into the run-level `dune` block: that
   // one bounds an enumeration answering a whole batch in ONE execution, this one bounds a leg
@@ -6041,12 +6300,14 @@ describe('the keyless boundary holds in both directions', () => {
   ];
   const AGREEMENT_DUNE_SPEND_KEYS_BY_SCHEMA: Record<number, string[]> = {
     18: AGREEMENT_DUNE_SPEND_KEYS_18,
+    19: AGREEMENT_DUNE_SPEND_KEYS_18,
   };
   // And the per-candidate row, which is where the class that can be WRONG lives. The run level only
   // counts these, so a field vanishing here would be invisible to every pin above it.
   const ENTRY_AGREEMENT_KEYS_18 = ['primary', 'recorded', 'class', 'readings', 'note'];
   const ENTRY_AGREEMENT_KEYS_BY_SCHEMA: Record<number, string[]> = {
     18: ENTRY_AGREEMENT_KEYS_18,
+    19: ENTRY_AGREEMENT_KEYS_18,
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {

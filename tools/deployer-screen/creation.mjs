@@ -335,12 +335,30 @@ export function coveredBoundMs(ms) {
  * @param {CoveredWindow} input.covered
  * @param {number} [input.unresolvedTransactions] Transactions the walk asked for and never got.
  *   Defaults to 0, which is the claim that the window is exact — pass the walk's own count.
+ * @param {ReadonlyMap<string, boolean> | null} [input.mayhemByMint] pump.fun's `is_mayhem_mode` per
+ *   mint, from the ONE surface that carries it — Dune's decoded `pump_evt_createevent`. **A mint
+ *   absent from this map, and every mint when the map is absent or `null`, is UNREADABLE and not
+ *   non-mayhem**; `measure.mjs` → `measureCompletion` owns what that costs and why the two are
+ *   never folded together (captain decision 351).
+ *
+ *   **It is a separate parameter rather than a field on {@link CreateRecord} or
+ *   {@link CurveState}, deliberately.** Those two are what the creation WALK produces and the walk
+ *   cannot see this flag at any price, so a field there would have to be invented as `null` on
+ *   every walk-sourced launch — an absence indistinguishable from a measurement. Keeping it a
+ *   distinct channel also keeps its ONE reader nameable: the competence measure, and nothing else.
  * @returns {MergedHistory}
  */
 export function mergeHistories(input) {
   const { creates, wallet, curves, listed, covered } = input;
   const unresolvedTransactions = input.unresolvedTransactions ?? 0;
   const windowExact = unresolvedTransactions === 0;
+  const mayhemByMint = input.mayhemByMint ?? null;
+  // Captain decision 351, and the `?? null` is the whole of the rule at this seam: a mint the map
+  // has no entry for reads UNREADABLE, never `false`. `Map.get` already returns `undefined` there,
+  // which `measureCompletion` folds the same way — the explicit `null` exists so the intent is on
+  // the page rather than resting on that coincidence.
+  /** @param {string} mint @returns {boolean | null} */
+  const mayhemOf = (mint) => mayhemByMint?.get(mint) ?? null;
 
   // A walk that never finished a page covered NOTHING, and the window has to be empty rather than
   // unbounded. `null` is how the walk says so; `<= 0` is the same claim from an older or
@@ -399,7 +417,7 @@ export function mergeHistories(input) {
     } else {
       bondedUndecidable += 1;
     }
-    byMint.set(c.mint, { deployedAtMs: c.createdAtMs, completed });
+    byMint.set(c.mint, { deployedAtMs: c.createdAtMs, completed, mayhem: mayhemOf(c.mint) });
     // `null` is "nobody looked", not "it did not move". See CurveState.creator.
     if (curve !== undefined && curve.creator === null) creatorMovementUnmeasured += 1;
     else if (curve !== undefined && curve.creator !== wallet) movedCreator += 1;
@@ -433,7 +451,15 @@ export function mergeHistories(input) {
         continue;
       }
       if (!byMint.has(row.mint)) {
-        byMint.set(row.mint, { deployedAtMs: row.deployedAtMs, completed: row.completed });
+        // The ownership listing has no mayhem column, so `mayhemOf` answers `null` here in every
+        // real case — the map holds only mints the enumeration returned a CREATE for, and one of
+        // those is already in `byMint` by now. It is asked anyway rather than hardcoded, so this
+        // site cannot become the one place a flag goes missing if the map's contents ever widen.
+        byMint.set(row.mint, {
+          deployedAtMs: row.deployedAtMs,
+          completed: row.completed,
+          mayhem: mayhemOf(row.mint),
+        });
         bondedFromListing += 1;
         listedInWindowCarried += 1;
       }
@@ -441,7 +467,11 @@ export function mergeHistories(input) {
     }
     listedOutsideWindow += 1;
     if (!byMint.has(row.mint)) {
-      byMint.set(row.mint, { deployedAtMs: row.deployedAtMs, completed: row.completed });
+      byMint.set(row.mint, {
+        deployedAtMs: row.deployedAtMs,
+        completed: row.completed,
+        mayhem: mayhemOf(row.mint),
+      });
       bondedFromListing += 1;
     }
   }

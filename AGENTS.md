@@ -600,26 +600,35 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   `maxResultRows`, and the ceiling stays as the backstop that refuses such a result whole, exactly as
   before the cap existed. Bytes are bounded separately and unchanged, by `?limit=maxResultRows`.
   `CREATION-DERIVED.md` §8.2b owns it.
-- **`is_mayhem_mode` IS A SIXTH COLUMN THAT IS RECORDED AND REPORTED AND READ BY NOTHING** (captain
-  decision 227a, schema 15). pump.fun's mayhem-mode flag is a first-order confounder — 27.1% of
-  2026-07's launches carried it, they graduate at 4.1–4.7% against 1.8–2.1%, and they supplied 46.3%
-  of that month's graduations (`slot-zero-graduation-regime-remeasure` §§1.4 and 3, held in
-  firstmate's records, not in this repo). The screen records it per launch and prints each
-  candidate's share wherever a candidate is summarised; **no bar, gate, rate or verdict reads it and
-  no launch is dropped or weighted for it** — 227b and 227c were declined, and **227b has since been
-  REVERSED by captain decision 351, which is NOT implemented in this tree**, so this bullet describes
-  the code as it stands; **227c — dropping a mayhem-heavy deployer outright — is NOT reversed and
-  remains declined**, a deployer being judged on its non-mayhem record rather than removed for having
-  a mayhem one (see "How big the addressable population is" below, which owns 351's evidence).
-  `dune.mjs` →
-  `MAYHEM_OBSERVATION_ONLY` is the one sentence, and a test pins that verdicts are identical with the
-  column populated, absent and malformed. **Three traps.** A malformed value folds to `null` rather
-  than refusing the row, deliberately and unlike `bonded`/`launches_total`, because a refused row
-  refuses the WHOLE batch into the walk and would let a reporting field move a verdict. The share's
-  denominator is `mayhemFlagReadable`, **never the launch count** — only `pump_evt_createevent` has
-  the column, so the union's `pump_call_create` half reads `null` (101 of the subject's 252
-  launches). And **all three fields are `null` on a walk-sourced candidate, meaning UNMEASURED, not
-  0%** — `creatorMovementUnmeasured`'s trap running the other way.
+- **`is_mayhem_mode` IS A SIXTH COLUMN, AND SINCE CAPTAIN DECISION 351 IT DECIDES EXACTLY ONE THING:
+  A MAYHEM LAUNCH IS EXCLUDED FROM BOTH SIDES OF `minCompletionRate`** (schema 19, thresholds 6.8.0;
+  it REVERSES 227b, and **227c — dropping a mayhem-heavy DEPLOYER outright — is NOT reversed and
+  remains DECLINED**). A mayhem graduation raises a median **0.291 SOL** against **85.005** for a
+  classic curve one — 292x cheaper, indistinguishable in trade data from a token that churned ~$1,700
+  and died — and mayhem supplied **46.41%** of 2026-07's pump.fun graduations, so the bar that IS the
+  gate had been counting two achievements through one number. `measure.mjs` → `measureCompletion`
+  owns the rule and every argument; `dune.mjs` → `MAYHEM_NOT_COMPETENCE` is the one sentence, printed
+  once per run. **The denominator half is what keeps this out of 227c** — numerator-only drives a
+  mayhem-heavy deployer's rate to 0.0000 and removes them, which is 227c by arithmetic — and it is why
+  `tokens`, `completed`, `completionRate` and `spanDays` are ALL the non-mayhem reading now, so **a
+  schema-≤18 rate is a different quantity and must not be pooled with a schema-19 one**. Beyond the
+  gate nothing reads the flag: 227a's per-candidate SHARE is still an observation, and no Stage 2 bar
+  or verdict touches it. **Four traps.** An **unreadable** flag is KEPT in the competence denominator
+  and counted (`competenceMayhemUnreadable`; equal to `tokens` ⇒ the pre-351 reading) — dropping it
+  would empty the denominator of every walk-sourced candidate on evidence about the SURFACE, the
+  permanent invisible direction — so 351 is inert on every route that cannot see the column. An
+  **all-mayhem** deployer reads **UNMEASURED, never 0.0000** (`rank.mjs` → `competenceEmptiedByMayhem`
+  → `gate-unmeasured`): zero of zero is an absent measurement. A malformed value folds to `null`
+  rather than refusing the row, unlike `bonded`/`launches_total` — a refused row refuses the WHOLE
+  batch into the walk, which cannot see the column at all, and folding can only return the gate to
+  its pre-351 rate, never REMOVE a launch. And the two denominators are **different and legitimately
+  differ**: `creation.mayhemShare`'s is `mayhemFlagReadable` over what the ENUMERATION returned (101
+  of the subject's 252 launches read `null`, and all three fields are `null` — UNMEASURED, not 0% —
+  on a walk-sourced candidate), while 351's counts are over the MERGED history the gate read.
+  **The 112, the 58 and the monthly gate populations below are PRE-351 pooled readings and must be
+  re-derived rather than adjusted** — `slot-zero-rederive-gate-population-post-351`, a separate lane.
+  Adopting RAISE-85 (captain decision 352b) is another, blocked on 351's three-state denominator;
+  `measure.mjs` → `TokenRecord.completed` carries the seam note.
 - **A FAILED EXECUTION IS STILL BILLED AND IS TERMINAL — AND "FREE IF IT FAILS" IS TRUE ONLY OF A
   STATEMENT THAT FAILS TO *COMPILE*.** Dune bills compute by engine time consumed: a statement the
   planner rejects consumes none and costs nothing, and a statement the planner ACCEPTS and cannot
@@ -1816,13 +1825,14 @@ this repo (see "Citing a report this repo does not hold"):
   three days**. **The consequence for this repo is that `minCompletionRate` counts two different
   achievements through one number** — of the 58 all-time gate-passers active in July, **13 are
   mayhem-heavy and read exactly 0.0000 under an economic reading against a real rate up to 0.6897**.
-  **Nothing here reads the flag and nothing in this section changes that**: `is_mayhem_mode` remains
-  recorded-and-unread per captain decision 227a (see the Dune section). Whether it should is captain
-  decision 351, taken 2026-08-07 and **not implemented in this tree**; implementing it is its own
-  lane. Two things follow for a reader today. **The 58 / 112 / 240 counts above rest on the
-  pre-351 reading of graduation and 351 requires them re-derived rather than adjusted in prose.**
-  And **`tools/deployer-screen/README.md`'s schema-15 row, which records 227b as declined, is stale
-  in that clause** — left as found here, because correcting it belongs with the implementation.
+  **Captain decision 351 IS NOW IMPLEMENTED** (schema 19, thresholds 6.8.0 — see the Dune section's
+  `is_mayhem_mode` bullet, which owns the rule): a mayhem launch is excluded from both sides of
+  `minCompletionRate`, so those 13 are judged on their non-mayhem record rather than reading 0.0000.
+  One thing follows for a reader today. **The 58 / 112 / 240 counts above still rest on the pre-351
+  pooled reading of graduation, and 351 requires them RE-DERIVED rather than adjusted in prose** —
+  `slot-zero-rederive-gate-population-post-351`, which has not run. `tools/deployer-screen/README.md`'s
+  schema-15 row now carries the correction in place; the row itself is the record of what schema 15
+  did and is deliberately not rewritten.
   `slot-zero-offlaunchpad-graduation-criterion` → `report.md` §4 and §8.2, and its
   `decision-351-mayhem-not-competence.md`.
 - **RAISE-85 IS THE VENUE-AGNOSTIC SUBSTITUTE FOR GRADUATION, AND IT IS UNADOPTED — AN OPEN

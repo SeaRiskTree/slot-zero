@@ -634,20 +634,65 @@ export function walletTransactions(fills, wallets, slot) {
 
 /**
  * @typedef {object} CompletionMeasurement
- * @property {number} tokens        Denominator: token records seen.
- * @property {number} completed     Numerator: records whose curve completed.
+ * @property {number} tokens        Denominator: token records seen, AFTER the mayhem exclusion.
+ * @property {number} completed     Numerator: records whose curve completed, over the same set.
  * @property {number} rate          `completed / tokens`, or `NaN` when `tokens === 0`.
- * @property {number} spanDays      First to last deploy, in days.
+ * @property {number} spanDays      First to last deploy, in days, over the same set.
  * @property {string | null} firstDeployIso
  * @property {string | null} lastDeployIso
  * @property {number} droppedNoTimestamp Records excluded for an unusable deploy time.
+ * @property {number} mayhemExcluded Records removed from BOTH sides of the fraction because
+ *   pump.fun's `is_mayhem_mode` read `true` on them — captain decision 351, and see
+ *   {@link measureCompletion} for the argument. Counted rather than left implicit: `tokens`
+ *   is smaller than the history the reading was taken over by exactly this many launches, and a
+ *   reader who cannot see that cannot tell a short history from an excluded one.
+ * @property {number} mayhemUnreadable Records COUNTED in the reading whose flag could not be read
+ *   at all. **They are in `tokens` and in `completed`, and that is the stated decision, not an
+ *   oversight** — {@link measureCompletion} owns why, and this count is what makes it auditable:
+ *   `mayhemUnreadable === tokens` is a reading no mayhem evidence touched.
  */
 
 /**
  * @typedef {object} TokenRecord
  * @property {number} deployedAtMs
- * @property {boolean} completed
+ * @property {boolean} completed Whether this launch counts as a success — today, pump.fun's own
+ *   graduation, read from the bonding curve's `complete` byte, the `CompleteEvent` the Dune
+ *   enumeration indexes, or the ownership listing's flag as the fallback.
+ *
+ *   **SEAM for `slot-zero-raise85-pooled-criterion-adopt` (captain decision 352b).** That lane
+ *   replaces this field's MEANING with a venue-agnostic criterion — net quote inflow into the
+ *   token's own primary market reaching 85 SOL-equivalent in 24 hours — and it is blocked on this
+ *   lane because it needs the three-state denominator `mayhem` establishes below rather than a
+ *   two-state one. Two things it will need from here. **A launch whose criterion cannot be READ is
+ *   the same class as an unreadable mayhem flag and takes the same route**: kept, counted and
+ *   named on the record, never defaulted to `false`, because a criterion no surface could apply is
+ *   not a failed launch. And **the two counts must stay nameable apart** — *excluded as mayhem* and
+ *   *criterion unreadable* answer different questions, and merging them into one "unknown" would
+ *   make a post-352b rate unauditable in exactly the way a pre-351 one was.
+ * @property {boolean | null} [mayhem] pump.fun's `is_mayhem_mode` for this launch. `true` excludes
+ *   it from the competence measure entirely; `false` is a launch PROVEN ordinary; **`null` or
+ *   absent is UNREADABLE — the surface this record came from does not carry the column — and is
+ *   never the same claim as `false`.** Optional because most producers of this type cannot see the
+ *   flag at all (the MadeOnSol profile page, the ownership listing, the committed tape), and an
+ *   absent field there is the honest reading rather than a defaulted one.
  */
+
+/**
+ * Read a token record's mayhem flag as one of three states, never two.
+ *
+ * The whole hazard captain decision 351 has to avoid lives in this coercion. `undefined` (a
+ * producer with no such column) and `null` (a producer whose column would not parse) are the SAME
+ * state — *nobody could read this launch's flag* — and neither is `false`, which is the positive
+ * claim that a launch was an ordinary curve launch. Writing `r.mayhem === true` at each call site
+ * would work today and would quietly acquire a fourth reading the first time someone wrote
+ * `!r.mayhem`, so the fold happens once, here.
+ *
+ * @param {TokenRecord} record
+ * @returns {boolean | null} `null` when the flag was not readable on this launch.
+ */
+export function mayhemFlagOf(record) {
+  return typeof record.mayhem === 'boolean' ? record.mayhem : null;
+}
 
 /**
  * Compute a completion rate from denominator-complete per-token records.
@@ -661,12 +706,79 @@ export function walletTransactions(fills, wallets, slot) {
  * both outcomes is `profile.pump_tokens`, which is why {@link toTokenRecords} reads that and
  * nothing else.
  *
+ * ## A mayhem launch is not competence evidence — captain decision 351
+ *
+ * pump.fun graduates tokens two different ways and the capital between them differs by **292x**: a
+ * classic curve graduation is preceded by a median net quote inflow of **85.005 SOL** into the
+ * token's own primary market, a mayhem-mode graduation by **0.291 SOL** — a figure not separable in
+ * trade data from a token that churned about $1,700 and died. In 2026-07 mayhem was **27.15% of
+ * pump.fun launches and 46.41% of its graduations**. So this rate — the bar that IS the gate — was
+ * measuring two very different achievements through one number, and nearly half of what it counted
+ * was the cheap one. (`slot-zero-offlaunchpad-graduation-criterion` → `report.md` §4 and §8.2, and
+ * its `decision-351-mayhem-not-competence.md`, both held in firstmate's records, not in this repo —
+ * see `CLAUDE.md` → "Citing a report this repo does not hold".)
+ *
+ * **A known-mayhem launch leaves BOTH sides of the fraction, and the denominator half is not
+ * optional.** Dropping mayhem graduations from the numerator alone would drive a mayhem-heavy
+ * deployer's rate towards 0.0000 and remove them from the gate — which is captain decision **227c**,
+ * *excluding mayhem-heavy deployers outright*, and 227c is **NOT** reversed and remains **declined**.
+ * 351 is about competence and not about removing anyone: a mayhem launch is no more evidence of
+ * failure than of success, so a deployer is judged **on their non-mayhem record**.
+ *
+ * ## The unreadable flag: an explicit decision, and it points the same way as every other bar here
+ *
+ * A launch whose flag could not be read is **kept in the reading** and counted in
+ * {@link CompletionMeasurement.mayhemUnreadable}. It is neither relabelled non-mayhem nor dropped,
+ * and both halves of that matter:
+ *
+ * - **It is not silently non-mayhem.** The count is on the measurement, on the candidate row and on
+ *   the rendered line, so a reader can see exactly how much of a rate rests on launches no mayhem
+ *   evidence touched. `mayhemUnreadable === tokens` is the pre-351 reading, stated as such.
+ * - **It does not silently vanish.** Dropping it was the other candidate and it fails on the
+ *   repo's own asymmetry. The flag's readability is a property of the ENUMERATION ROUTE, not of the
+ *   launch: `is_mayhem_mode` is a column on Dune's `pump_evt_createevent` and nowhere else, so the
+ *   creation walk reads it on nothing, `pump_call_create` rows carry it on nothing, and the
+ *   ownership listing carries it on nothing. Dropping unreadable launches would therefore empty the
+ *   denominator of **every walk-sourced candidate and every pre-`pump_evt_createevent` era**, on
+ *   evidence about the surface rather than about the deployer. A false REJECTION here is permanent
+ *   and invisible — the wallet is graded, filed in `feed/ledger.json` and never offered again — while
+ *   a false acceptance is visible and cheap, refused downstream by `stage2_entry.minRoomLeft`
+ *   (`thresholds.json` → `justification.minCompletionRate`, which owns that asymmetry). Keeping the
+ *   launch errs towards acceptance; dropping it errs towards the permanent direction.
+ *
+ * The consequence worth stating plainly: **this function is byte-identical to its pre-351 self on
+ * every producer that cannot see the flag**, which is every caller except the Dune-enumerated
+ * creation-derived history. It is not inert there by accident — it is inert because those readings
+ * hold no mayhem evidence to act on.
+ *
+ * **A reading left with NO non-mayhem launch is UNDEFINED, not 0.0000.** `tokens === 0` yields
+ * `rate: NaN` exactly as an empty history always has, and `rank.mjs` → `verdictFor` routes that
+ * case to `gate-unmeasured` rather than `gate-failed` whenever the exclusion is what emptied it.
+ * Zero-of-zero is an absent measurement and not a failing rate, and conflating the two is 227c
+ * arriving through the back door.
+ *
+ * **SEAM for `slot-zero-raise85-pooled-criterion-adopt` (captain decision 352b).** That lane
+ * replaces what `TokenRecord.completed` MEANS — a venue-agnostic RAISE-85 criterion rather than
+ * pump.fun's own graduation — and it is blocked on this lane because it needs the three-state
+ * denominator established here, not a two-state one. What it will need from this function is
+ * unchanged: `mayhemFlagOf`'s null-is-unreadable fold, `mayhemUnreadable` as the count of launches
+ * a criterion could not be applied to, and the rule that an emptied denominator is unmeasured
+ * rather than failed. What it must NOT do is add a fourth state here — a launch whose RAISE-85
+ * reading is unavailable is the same *unreadable* class this already carries, and the two counts
+ * must stay nameable apart on the record rather than merged into one "unknown".
+ *
  * @param {readonly TokenRecord[]} records
  * @returns {CompletionMeasurement}
  */
 export function measureCompletion(records) {
-  const usable = records.filter((r) => Number.isFinite(r.deployedAtMs) && r.deployedAtMs > 0);
-  const dropped = records.length - usable.length;
+  const timestamped = records.filter((r) => Number.isFinite(r.deployedAtMs) && r.deployedAtMs > 0);
+  const dropped = records.length - timestamped.length;
+
+  // Captain decision 351. `=== true` and not truthiness: `mayhemFlagOf` has already folded the two
+  // unreadable spellings to `null`, and only a flag that positively READ true may remove a launch.
+  const usable = timestamped.filter((r) => mayhemFlagOf(r) !== true);
+  const mayhemExcluded = timestamped.length - usable.length;
+  const mayhemUnreadable = usable.filter((r) => mayhemFlagOf(r) === null).length;
 
   if (usable.length === 0) {
     return {
@@ -677,6 +789,8 @@ export function measureCompletion(records) {
       firstDeployIso: null,
       lastDeployIso: null,
       droppedNoTimestamp: dropped,
+      mayhemExcluded,
+      mayhemUnreadable,
     };
   }
 
@@ -694,6 +808,8 @@ export function measureCompletion(records) {
     firstDeployIso: new Date(lo).toISOString(),
     lastDeployIso: new Date(hi).toISOString(),
     droppedNoTimestamp: dropped,
+    mayhemExcluded,
+    mayhemUnreadable,
   };
 }
 

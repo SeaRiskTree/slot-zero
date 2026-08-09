@@ -4152,6 +4152,58 @@ describe('the flag DECIDES the competence measure and nothing else', () => {
     );
   });
 
+  it('the unmeasured sentence claims only the mayhem exclusion, never a launch dropped for another reason', () => {
+    // `measureCompletion` filters unusable timestamps BEFORE the mayhem filter, so an emptied
+    // denominator can have TWO producers and the rationale may only claim the one it measured. It
+    // is written into a run record and this repo never retro-edits one, so an overstatement there
+    // is permanently wrong even on a rare path.
+    const mayhemOnly = measureCompletion([
+      { deployedAtMs: T0, completed: true, mayhem: true },
+      { deployedAtMs: T0 + DAY, completed: true, mayhem: true },
+    ]);
+    expect(mayhemOnly.droppedNoTimestamp).toBe(0);
+    const mayhemOnlySentence = verdictFor({
+      gate: applyGate({ completion: mayhemOnly }, GATE),
+      completion: mayhemOnly,
+      capped: false,
+    });
+    expect(mayhemOnlySentence.verdict).toBe('gate-unmeasured');
+    expect(mayhemOnlySentence.rationale).toMatch(/2 launch\(es\) in the history this gate read carry/);
+    expect(mayhemOnlySentence.rationale).not.toMatch(/no usable deploy time/);
+
+    // The same wallet's non-mayhem launches arriving with an unparseable deploy time — an
+    // ownership-listing row whose `created_timestamp` is not a number. They are NOT mayhem, so a
+    // sentence saying every launch carried the flag would be false about them.
+    const alsoDropped = measureCompletion([
+      { deployedAtMs: T0, completed: true, mayhem: true },
+      { deployedAtMs: T0 + DAY, completed: true, mayhem: true },
+      { deployedAtMs: Number.NaN, completed: false, mayhem: false },
+      { deployedAtMs: Number.NaN, completed: true, mayhem: null },
+    ]);
+    expect(alsoDropped.tokens).toBe(0);
+    expect(alsoDropped.mayhemExcluded).toBe(2);
+    expect(alsoDropped.droppedNoTimestamp).toBe(2);
+    // The verdict does not move — unmeasured is right in both — and the predicate is untouched.
+    expect(competenceEmptiedByMayhem(alsoDropped)).toBe(true);
+    const droppedSentence = verdictFor({
+      gate: applyGate({ completion: alsoDropped }, GATE),
+      completion: alsoDropped,
+      capped: false,
+    });
+    expect(droppedSentence.verdict).toBe('gate-unmeasured');
+    expect(droppedSentence.rationale).toMatch(/2 launch\(es\) in the history this gate read carry/);
+    expect(droppedSentence.rationale).toMatch(/a further 2 had no usable deploy time and are NOT part of that count/);
+    // And every clause the decision record rests on survives in both.
+    for (const r of [mayhemOnlySentence.rationale, droppedSentence.rationale]) {
+      expect(r).toMatch(/NOT a rejection and NOT a pass/);
+      expect(r).toMatch(/0\.291 SOL against 85\.005/);
+      expect(r).toMatch(/227c/);
+      expect(r).toMatch(/remains DECLINED/);
+      // The claim that was overstated: no sentence may say the mayhem flag accounts for everything.
+      expect(r).not.toMatch(/Every one of the/);
+    }
+  });
+
   it('an UNREADABLE flag is COUNTED and KEPT — not read as non-mayhem, not dropped', () => {
     // The three states are kept apart at the fold, once, so no call site can acquire a fourth.
     expect(mayhemFlagOf({ deployedAtMs: 1, completed: false, mayhem: true })).toBe(true);
@@ -4560,8 +4612,8 @@ describe('the flag reaches the gate through the RUN, not only through a helper',
   });
 
   /** One row of the keyless ownership listing. */
-  const listedRow = (i: number, atMs: number, complete: boolean) => ({
-    mint: `LISTED${i}`,
+  const listedRow = (mint: string, atMs: number, complete: boolean) => ({
+    mint,
     created_timestamp: atMs,
     complete,
   });
@@ -4685,13 +4737,20 @@ describe('the flag reaches the gate through the RUN, not only through a helper',
     // probed coverage is refused. The mayhem evidence in it may not exclude anything: this
     // candidate falls back to the walk and its rate is what it was before 351.
     const base = Date.parse('2026-02-01T00:00:00Z');
-    const creationRows = [
-      // Before the probed surfaces' own first row, which is what refuses this wallet's reading.
-      creationRow(0, { bonded: true, mayhem: true, total: 3, atMs: Date.parse('2023-01-01T00:00:00Z') }),
-      creationRow(1, { bonded: true, mayhem: true, total: 3, atMs: base }),
-      creationRow(2, { bonded: false, mayhem: false, total: 3, atMs: base + DAY }),
-    ];
-    const listing = Array.from({ length: 30 }, (_, i) => listedRow(i, base + i * 4 * DAY, i < 12));
+    // THE MINTS ARE THE SAME ONES THE MERGED HISTORY HOLDS, which is what makes this case
+    // sensitive: the flags are looked up by mint, so a refusal that leaked them would exclude ten
+    // of these thirty launches and move `tokens` off 30.
+    const creationRows = Array.from({ length: 30 }, (_, i) =>
+      creationRow(i, {
+        bonded: i < 12,
+        mayhem: i >= 20,
+        total: 30,
+        // The first row sits before the probed surfaces' own first row, which is what refuses this
+        // wallet's whole reading.
+        atMs: i === 0 ? Date.parse('2023-01-01T00:00:00Z') : base + i * 4 * DAY,
+      }),
+    );
+    const listing = creationRows.map((r, i) => listedRow(r.mint, base + i * 4 * DAY, i < 12));
     const { row } = await runScreen({
       creationRows,
       listing,

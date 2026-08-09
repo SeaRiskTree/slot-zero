@@ -327,9 +327,14 @@ export function verdictFor(input) {
     return {
       verdict: 'gate-unmeasured',
       rationale:
-        `GATE UNMEASURED — this is NOT a rejection and NOT a pass. Every one of the ` +
-        `${input.completion.mayhemExcluded} launch(es) in the history this gate read carries ` +
-        `pump.fun's mayhem-mode flag, and a mayhem-mode graduation is not competence evidence — it ` +
+        `GATE UNMEASURED — this is NOT a rejection and NOT a pass. The competence measure was left ` +
+        `with no non-mayhem launch to read: ${input.completion.mayhemExcluded} launch(es) in the ` +
+        `history this gate read carry pump.fun's mayhem-mode flag` +
+        (input.completion.droppedNoTimestamp > 0
+          ? `, and a further ${input.completion.droppedNoTimestamp} had no usable deploy time and ` +
+            `are NOT part of that count — they left this reading for an unrelated reason`
+          : '') +
+        `. A mayhem-mode graduation is not competence evidence — it ` +
         `raises a median 0.291 SOL against 85.005 for a classic curve graduation (captain decision ` +
         `351). Excluding them leaves NO non-mayhem record to measure, which is an absent reading ` +
         `and not a rate of 0. Captain decision 227c — dropping a mayhem-heavy deployer outright — ` +

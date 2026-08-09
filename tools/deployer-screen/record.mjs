@@ -347,6 +347,13 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   mayhem launches from the competence measure (227b) and excluding mayhem-heavy deployers (227c)
  *   were both declined; this version must not be read as a step towards either.
  *
+ *   **CORRECTION — that last sentence describes SCHEMA 15 and every record written at 15–18, and it
+ *   is no longer true of this build.** Captain decision **351** (2026-08-07) REVERSES 227b: a
+ *   mayhem launch is now excluded from both sides of `minCompletionRate`, and schema **19** carries
+ *   the two counts that say so. **227c is NOT reversed and remains declined.** The three `creation`
+ *   keys this version added are unchanged and are still the observation nothing reads — 351's own
+ *   counts are candidate ROW fields over a different denominator. See schema 19 below.
+ *
  *   **The one that will bite a reader: all three are `null` on a candidate the creation walk
  *   answered, and `null` is UNMEASURED rather than 0%.** The flag lives on Dune's decoded create
  *   event, and the walk reads transactions and curve accounts — so a walk-sourced candidate has no
@@ -476,8 +483,56 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   under that sentence would describe a gate it did not use, permanently, since a record is never
  *   retro-edited. `prediction.mjs` → `entryReadingFor` refuses an unknown source rather than
  *   defaulting to another's.
+ * - **19** — **A MAYHEM-MODE GRADUATION IS NOT COMPETENCE EVIDENCE, so a mayhem launch leaves BOTH
+ *   sides of `minCompletionRate`** (captain decision 351, 2026-08-07, which REVERSES 227b). This is
+ *   the first version at which `tokens`, `completed`, `completionRate` and `spanDays` describe
+ *   something narrower than the history the gate read, so **a schema-≤18 rate and a schema-19 one
+ *   are not the same quantity and must not be pooled or compared.** Two candidate row keys —
+ *   `competenceMayhemExcluded` and `competenceMayhemUnreadable`; `ENTRY_KEYS_BY_SCHEMA[19]`,
+ *   `ENTRY_COVERAGE_KEYS_BY_SCHEMA[19]`, `SPEND_KEYS_BY_SCHEMA[19]`, `DUNE_KEYS_BY_SCHEMA[19]` and
+ *   `CREATION_KEYS_BY_SCHEMA[19]` all equal `[18]`.
+ *
+ *   **The evidence.** A mayhem graduation is preceded by a median net quote inflow of **0.291 SOL**
+ *   against **85.005 SOL** for a classic curve graduation — 292x cheaper, and not separable in trade
+ *   data from a token that churned about $1,700 and died — while in 2026-07 mayhem was **27.15% of
+ *   pump.fun launches and 46.41% of its graduations**
+ *   (`slot-zero-offlaunchpad-graduation-criterion` → `report.md` §4 and §8.2, held in firstmate's
+ *   records, not in this repo). So the bar that IS the gate was measuring two very different
+ *   achievements through one number.
+ *
+ *   **Why the DENOMINATOR moves too, and it is not optional.** Excluding mayhem graduations from
+ *   the numerator alone drives a mayhem-heavy deployer's rate towards 0.0000 and removes them from
+ *   the gate — which is captain decision **227c**, *excluding mayhem-heavy deployers outright*, and
+ *   **227c is NOT reversed and remains DECLINED**. A deployer is judged on their non-mayhem record,
+ *   not removed for having a mayhem one.
+ *
+ *   **What the two new keys are for.** `competenceMayhemExcluded` is how many launches the
+ *   exclusion removed from both sides. `competenceMayhemUnreadable` is how many of the launches
+ *   that REMAIN carry no readable flag — they are counted in `tokens` and `completed`, which is a
+ *   stated decision rather than a default, and this key is what makes it auditable:
+ *   `competenceMayhemExcluded === 0 && competenceMayhemUnreadable === tokens` is a rate no mayhem
+ *   evidence touched, i.e. the pre-351 reading. **A reader of a persisted row must apply BOTH
+ *   conjuncts**: a row carrying excluded launches whose remainder is entirely unreadable
+ *   satisfies the second alone, and is a rate the exclusion did move. `measure.mjs` → `measureCompletion` owns the argument, including why dropping those
+ *   launches instead would empty the denominator of every walk-sourced candidate on evidence about
+ *   the SURFACE rather than about the deployer.
+ *
+ *   **Both counts are over the MERGED history the gate read, which is a different denominator from
+ *   `creation.mayhemLaunches`/`mayhemFlagReadable` and the two legitimately differ.** That block is
+ *   227a's share of what the ENUMERATION returned; these two are what the exclusion did to the
+ *   reading the rate beside them was computed on, and the merge both adds launches the enumeration
+ *   never returned (ownership-listed ones) and drops ones it did.
+ *
+ *   **The one that will bite a reader: a schema-≤18 record carries neither key and one cannot be
+ *   reconstructed from it.** `creation.mayhemLaunches` is not a substitute — different denominator,
+ *   and `null` on every walk-sourced candidate. Read a schema-≤18 `completionRate` as the pre-351
+ *   quantity: mayhem and non-mayhem graduations pooled.
+ *
+ *   **There are deliberately no `vendor*` twins.** The MadeOnSol profile page has no such column, so
+ *   `vendorCompletionRate` is unmovable by 351 by construction, and a pair of zeroes beside it would
+ *   imply a measurement nobody took.
  */
-export const RECORD_SCHEMA_VERSION = 18;
+export const RECORD_SCHEMA_VERSION = 19;
 
 /**
  * The predictions-document contract version, carried inside the document itself.
@@ -505,6 +560,14 @@ export const PREDICTION_COMPARATORS = ['<', '<=', '>', '>=', '==', 'between', 'i
  * `not-a-rate` is for a prediction about something that is not a completion rate at all — a count, a
  * spend, an overlap — and it is spelled out rather than left implicit so that omitting `reading`
  * stays an error.
+ *
+ * **`gate` NARROWED at record schema 19 and the name did not move** (captain decision 351): it is
+ * now the NON-MAYHEM slice of that merged history, since a mayhem-mode launch is excluded from both
+ * sides of the rate. The name stays because the reading it distinguishes itself from — the vendor
+ * page — is unchanged, and a fourth value would imply the two eras are separately predictable when
+ * a record already dates itself. A grader comparing a claim made against a schema-≤18 record with
+ * one made against a schema-19 record is comparing two quantities: read `schemaVersion` beside
+ * `reading`.
  */
 export const PREDICTION_READINGS = ['gate', 'vendor-page', 'not-a-rate'];
 

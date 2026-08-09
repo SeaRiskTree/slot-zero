@@ -57,7 +57,35 @@
  */
 
 /**
+ * Whether the mayhem exclusion is what left a competence reading with nothing to measure.
+ *
+ * Captain decision 351 removes a known-mayhem launch from BOTH sides of the completion rate
+ * (`measure.mjs` → `measureCompletion` owns the argument). A deployer whose launches are ALL mayhem
+ * therefore ends with a denominator of zero — and **zero of zero is an absent measurement, not a
+ * failing rate.** The distinction is the whole reason the exclusion could take the denominator with
+ * it without becoming captain decision 227c, *excluding mayhem-heavy deployers outright*, which is
+ * NOT reversed and remains declined: a rate of 0.0000 rejects, an undefined reading does not.
+ *
+ * So this predicate exists to keep those two apart at the one place a verdict is decided, rather
+ * than leaving it to a caller to remember. It is deliberately narrow — it fires only where the
+ * exclusion actually removed something — so an ordinarily empty history keeps the `gate-failed` it
+ * has always had, and this lane does not quietly widen what counts as unmeasured.
+ *
+ * @param {import('./measure.mjs').CompletionMeasurement} completion
+ * @returns {boolean}
+ */
+export function competenceEmptiedByMayhem(completion) {
+  return completion.mayhemExcluded > 0 && completion.tokens === 0;
+}
+
+/**
  * Apply the Stage 1 completion gate.
+ *
+ * **The three bars read the NON-MAYHEM history** since captain decision 351 — `tokens`, `rate` and
+ * `spanDays` all describe the launches that survived the exclusion, because they are three
+ * statements about one sample and a rate computed over one set with a count taken over another is
+ * exactly the "two achievements through one number" defect 351 exists to fix. Both counts of what
+ * was set aside travel on the measurement, and the rejection sentences below name them.
  *
  * @param {GateInput} input
  * @param {{ minTokens: number, minCompletionRate: number, minSpanDays: number }} t
@@ -68,31 +96,73 @@ export function applyGate(input, t) {
   /** @type {string[]} */
   const reasons = [];
 
+  // Captain decision 351: whenever the exclusion removed anything, every rejection sentence below
+  // has to say so. "Sample too small" or "rate 0.0000" over a history that plainly holds launches
+  // sends an operator looking for a truncated walk that is not there, and hides the one fact that
+  // decides how to read the number — that what remains is this deployer's NON-MAYHEM record.
+  // The emptied-denominator sentence, in the one wording every bar below uses. It claims only what
+  // the measurement supports: `measureCompletion` drops a launch with no usable deploy time BEFORE
+  // the mayhem filter, so a non-mayhem launch can have left this reading for an unrelated reason
+  // and "every launch is mayhem" would be false about it. Every sentence here is persisted on the
+  // candidate row and this repo never retro-edits a record, so an overstatement there is permanent.
+  const emptied = competenceEmptiedByMayhem(completion);
+  const emptiedByMayhem =
+    `the competence measure was left with no non-mayhem launch to read: ` +
+    `${completion.mayhemExcluded} launch(es) carry pump.fun's mayhem-mode flag` +
+    (completion.droppedNoTimestamp > 0
+      ? `, and a further ${completion.droppedNoTimestamp} had no usable deploy time and are NOT ` +
+        `part of that count`
+      : '');
+
+  // NO REASON STATES THE MAYHEM COUNT TWICE, and none of them may read as a SECOND set of launches.
+  // "a further N" is what the exclusion removed from a sample that still holds something; where the
+  // exclusion emptied the sample there is nothing for it to be further to, and a reader of
+  // "0 tokens ... a further 2" totals more launches than the wallet has.
+  const mayhemNote =
+    completion.mayhemExcluded === 0
+      ? ''
+      : emptied
+        ? ` — ${emptiedByMayhem} (captain decision 351)`
+        : ` — measured on the NON-MAYHEM record: a further ${completion.mayhemExcluded} launch(es) ` +
+          `carry pump.fun's mayhem-mode flag and are excluded from both sides of this rate ` +
+          `(captain decision 351)`;
+
   if (completion.tokens < t.minTokens) {
     // A zero has to name the party it actually came from. Under the creation-derived reading the
     // vendor can have listed plenty — the merge is what produced the zero — and blaming the vendor
     // sends an operator to the wrong place to look. Observed live: a wallet whose vendor profile
     // carried 11 tokens and whose listing served 11 rows was rejected for "the vendor listed no
-    // tokens".
-    const zeroBlame =
-      input.historySource === 'creation-derived'
+    // tokens". The mayhem exclusion is a THIRD party that can produce the same zero, and it takes
+    // precedence when it applies, for the same reason: it is where the launches actually went.
+    const zeroBlame = emptied
+      ? ` (${emptiedByMayhem} — an ABSENT measurement, not a rate of 0)`
+      : input.historySource === 'creation-derived'
         ? ' (the creation-derived history came out empty — see this candidate\'s `creation` block ' +
           'for what the walk covered and what the merge did with the ownership listing)'
         : ' (the vendor listed no tokens with a usable deploy time)';
     reasons.push(
       `sample too small: ${completion.tokens} tokens < ${t.minTokens} required` +
-        (completion.tokens > 0 ? '' : zeroBlame),
+        (completion.tokens > 0 ? '' : zeroBlame) +
+        (emptied ? '' : mayhemNote),
     );
   }
   if (!Number.isFinite(completion.rate)) {
-    reasons.push('completion rate is undefined (no usable token records)');
+    reasons.push(
+      emptied
+        ? `completion rate is undefined (${emptiedByMayhem} — captain decision 351; this is NOT a ` +
+          `rate of 0 and NOT a rejection, see the verdict)`
+        : 'completion rate is undefined (no usable token records)',
+    );
   } else if (completion.rate < t.minCompletionRate) {
-    reasons.push(`completion rate ${completion.rate.toFixed(4)} < ${t.minCompletionRate} required`);
+    reasons.push(
+      `completion rate ${completion.rate.toFixed(4)} < ${t.minCompletionRate} required${mayhemNote}`,
+    );
   }
   if (completion.spanDays < t.minSpanDays) {
     reasons.push(
       `history spans ${completion.spanDays.toFixed(1)} days < ${t.minSpanDays} required ` +
-        `(a rate earned inside a burst is not a record)`,
+        `(a rate earned inside a burst is not a record)` +
+        mayhemNote,
     );
   }
 
@@ -184,11 +254,15 @@ export function applyGate(input, t) {
  *   does not report a current creator. `movedCreator` says nothing about these — the Dune
  *   enumeration answers who created a mint and whether it completed, and nothing about who owns the
  *   curve today. Do not add the two.
- * @property {number | null} mayhemLaunches How many of this candidate's enumerated launches carry
- *   pump.fun's `is_mayhem_mode` flag — captain decision 227a, and an OBSERVATION. Nothing in this
- *   module or any other reads it: it reaches no gate, bar, rate or verdict, and no launch is
- *   dropped or weighted for carrying it. `dune.mjs` → `MAYHEM_OBSERVATION_ONLY` owns the rule and
- *   the evidence behind it.
+ * @property {number | null} mayhemLaunches How many of this candidate's ENUMERATED launches carry
+ *   pump.fun's `is_mayhem_mode` flag — captain decision 227a's reported observation, and still an
+ *   observation: no bar reads this number. **It is not the competence measure's own count and the
+ *   two legitimately differ.** Since captain decision 351 the gate excludes a mayhem launch from
+ *   both sides of its rate, and the candidate row's `competenceMayhemExcluded` is what that
+ *   exclusion actually removed — over the MERGED history the gate read, which carries launches the
+ *   enumeration never returned (the ownership listing's rows) and drops ones it did (a mint created
+ *   by somebody else). `dune.mjs` → `MAYHEM_NOT_COMPETENCE` owns the rule and the evidence behind
+ *   it; `measure.mjs` → `measureCompletion` owns the exclusion.
  * @property {number | null} mayhemFlagReadable The share's DENOMINATOR — launches the flag was
  *   readable on. **Not `duneLaunches`**: `pump_call_create` has no such column, so a history
  *   reaching back past `pump_evt_createevent` holds launches with nothing to read, and the
@@ -255,12 +329,41 @@ export function applyGate(input, t) {
  * incomplete, the thresholds have not decided anything, and the rationale says so in the same
  * breath as the verdict rather than qualifying an otherwise ordinary sentence.
  *
+ * {@link competenceEmptiedByMayhem} is a second, structural producer of the same state, and it is
+ * checked HERE rather than pushed onto every caller's `notMeasured` list on purpose: captain
+ * decision 351 removed launches from the gate's own denominator, so the case it creates is a
+ * property of the measurement rather than of one call site's plumbing, and a caller that forgot it
+ * would emit `gate-failed` on an absent measurement — 227c by accident, permanently and invisibly.
+ *
  * @param {{ gate: GateResult, completion: import('./measure.mjs').CompletionMeasurement,
  *           capped: boolean, notMeasured?: readonly string[] }} input
  * @returns {{ verdict: Verdict, rationale: string }}
  */
 export function verdictFor(input) {
   const notMeasured = input.notMeasured ?? [];
+  if (competenceEmptiedByMayhem(input.completion)) {
+    return {
+      verdict: 'gate-unmeasured',
+      rationale:
+        `GATE UNMEASURED — this is NOT a rejection and NOT a pass. The competence measure was left ` +
+        `with no non-mayhem launch to read: ${input.completion.mayhemExcluded} launch(es) in the ` +
+        `history this gate read carry pump.fun's mayhem-mode flag` +
+        (input.completion.droppedNoTimestamp > 0
+          ? `, and a further ${input.completion.droppedNoTimestamp} had no usable deploy time and ` +
+            `are NOT part of that count — they left this reading for an unrelated reason`
+          : '') +
+        `. A mayhem-mode graduation is not competence evidence — it ` +
+        `raises a median 0.291 SOL against 85.005 for a classic curve graduation (captain decision ` +
+        `351). Excluding them leaves NO non-mayhem record to measure, which is an absent reading ` +
+        `and not a rate of 0. Captain decision 227c — dropping a mayhem-heavy deployer outright — ` +
+        `remains DECLINED, so this wallet is not rejected: it is UNJUDGED. A later SCREEN run over a ` +
+        `reading that holds a non-mayhem launch would judge it — the screen is stateless between ` +
+        `runs. That is a statement about screen.mjs and about nothing else: what the discovery feed ` +
+        `does with a gate-unmeasured verdict is ledger.mjs's, and ledger.mjs -> markWorthARequest ` +
+        `owns that rule.` +
+        (notMeasured.length > 0 ? ` The reading was also incomplete: ${notMeasured.join('; ')}.` : ''),
+    };
+  }
   if (notMeasured.length > 0) {
     return {
       verdict: 'gate-unmeasured',
@@ -286,6 +389,13 @@ export function verdictFor(input) {
     rationale:
       `completed ${c.completed}/${c.tokens} launches (${(c.rate * 100).toFixed(1)}%) over ` +
       `${c.spanDays.toFixed(0)} days` +
+      // Captain decision 351, on the PASSING sentence too and not only on the rejections. This
+      // rationale is the line a later reader quotes out of context, so a rate that is a NON-MAYHEM
+      // rate has to say so where it is stated rather than in a field beside it.
+      (c.mayhemExcluded > 0
+        ? `, on their NON-MAYHEM record — a further ${c.mayhemExcluded} mayhem-mode launch(es) are ` +
+          `excluded from both sides of that rate (captain decision 351)`
+        : '') +
       (input.capped ? ', on a TRUNCATED page so older launches exist that this surface hides' : '') +
       `. Competent enough to be worth measuring. NOT a recommendation: whether this deployer ` +
       `leaves an outsider any room, and whether that room is profitable, is UNMEASURED here.`,

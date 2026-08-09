@@ -172,6 +172,11 @@ keeping this lane on the vendor page defensible — is that **every ledger row r
 `gateReading`**: `ownership-only` here, `creation-derived` under `screen.mjs`'s default. Read that
 field before comparing, pooling or ranking rates across the two sources.
 
+Captain decision 351 widened that gap rather than narrowing it: `screen.mjs`'s gate reading now
+excludes a mayhem-mode launch from both sides of its rate, and this lane's cannot — the vendor
+profile page carries no such column, so every launch here is unreadable for it and this rate is the
+pre-351 pooled quantity by construction. `README.md` → *"The mayhem-mode flag"* owns the rule.
+
 The design follows from that, and it is the single most important thing to understand about this
 lane's output:
 

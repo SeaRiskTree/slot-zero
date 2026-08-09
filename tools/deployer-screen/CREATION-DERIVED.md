@@ -554,10 +554,15 @@ rule behind it.
 ### 8.2c The sixth column, and the byte ceiling re-measured rather than assumed — 2026-08-05
 
 **Captain decision 227a** adds `is_mayhem_mode` to `CREATION_SQL` as a sixth column: pump.fun's
-mayhem-mode flag, **RECORDED per launch and REPORTED as a per-candidate share, reaching no bar, no
-rate and no verdict.** The evidence is `slot-zero-graduation-regime-remeasure` §§1.4 and 3 (held in
-firstmate's records, not in this repo). 227b (drop those launches from the competence measure) and
-227c (drop mayhem-heavy deployers) were declined and this is not a step towards either.
+mayhem-mode flag, **RECORDED per launch and REPORTED as a per-candidate share**, reaching no bar at
+the time. The evidence is `slot-zero-graduation-regime-remeasure` §§1.4 and 3 (held in firstmate's
+records, not in this repo). **Captain decision 351 (2026-08-07) has since REVERSED 227b and the
+column IS now read**: a launch it marks is excluded from both the numerator and the denominator of
+`minCompletionRate`, because a mayhem graduation raises a median 0.291 SOL against 85.005 SOL for a
+classic curve one (`slot-zero-offlaunchpad-graduation-criterion` → `report.md` §4). **227c —
+dropping mayhem-heavy DEPLOYERS outright — is NOT reversed and remains declined**, which is exactly
+why the denominator moves with the numerator; `measure.mjs` → `measureCompletion` owns the rule.
+None of that touches the byte arithmetic below: it is the same sixth column either way.
 
 **Why the ceiling had to be re-measured.** `dune.resultBytesPerRowCeiling` was 121 and that number
 was **97 measured at four columns plus <=24 of arithmetic for a fifth nobody had read batch-shaped**.

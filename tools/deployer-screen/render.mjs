@@ -24,7 +24,7 @@ import { MADEONSOL_DAILY_REQUESTS, buildPath, ENDPOINT_ROLES } from './client.mj
 // threshold — no Dune-derived value crosses this import.
 import {
   LAUNCH_CAP_FLOOR,
-  MAYHEM_OBSERVATION_ONLY,
+  MAYHEM_NOT_COMPETENCE,
   duneSpendPlan,
   launchCapPerWallet,
   priceWalkFallbackCliff,
@@ -489,7 +489,16 @@ export function renderDropTally(total, by, indent) {
  * Every surface that summarises a candidate prints this: `screen.mjs`'s live line, this module's
  * gate-passed block and the same block's gate-failed sibling. It is a formatter and nothing more:
  * it reads three fields off a `creation` block and returns a line, and no caller may branch on what
- * it returns. See `dune.mjs` → `MAYHEM_OBSERVATION_ONLY`.
+ * it returns. See `dune.mjs` → `MAYHEM_NOT_COMPETENCE`.
+ *
+ * **This SHARE is still the observation nothing reads, and the line says so — but the per-launch
+ * FLAG is not, since captain decision 351.** The two are printed as a pair,
+ * {@link renderCompetenceMayhem} on the next line, and they have different denominators: this one
+ * is over the launches the ENUMERATION returned, that one over the merged history the GATE read. A
+ * line reading "reaching no bar" with nothing beside it would now be read as a claim about the
+ * flag rather than about the share, which is why the suffix names both — and names the other line
+ * rather than pointing at a position, because the two are printed in either order depending on the
+ * block (the competence line is outside the `creation` guard and the share is inside it).
  *
  * **`null` prints as UNMEASURED, never as 0%.** The share is `null` on every candidate the creation
  * walk answered, because `is_mayhem_mode` is a column on Dune's decoded create event and the walk
@@ -532,7 +541,48 @@ export function renderMayhemShare(creation, indent) {
   return [
     `${indent}mayhem mode: ${mayhemLaunches} of ${mayhemFlagReadable} launch(es) the flag was ` +
       `readable on = ${pct(mayhemShare)}` +
-      `${unreadable > 0 ? `, ${unreadable} unreadable` : ''} — RECORDED, reaching no bar (227a)`,
+      `${unreadable > 0 ? `, ${unreadable} unreadable` : ''} — this SHARE is RECORDED, reaching ` +
+      `no bar (227a); the per-launch flag itself gates competence — see the competence ` +
+      `measure line (351)`,
+  ];
+}
+
+/**
+ * What the competence measure SET ASIDE, as ONE sentence written in ONE place — captain decision 351.
+ *
+ * Printed beside every candidate's rate, on the same three surfaces {@link renderMayhemShare}
+ * reaches, because the two figures answer different questions and a reader who sees only the first
+ * will read the second as its denominator. `renderMayhemShare` is the share of what the
+ * ENUMERATION returned; this is what the exclusion actually removed from the MERGED history the
+ * gate read, plus how much of what remains rests on launches no mayhem evidence touched.
+ *
+ * **The unreadable count is printed even when nothing was excluded**, and that is the point of it:
+ * `mayhemExcluded === 0 && unreadable === tokens` is the pre-351 reading and a reader must be
+ * able to see that a rate is one, rather than infer it from an enumeration source three lines
+ * up. Both conjuncts: an excluded launch beside an all-unreadable remainder is NOT that reading,
+ * which is why the line below is guarded on the pair and not on the count alone. It is silent only where
+ * there is genuinely nothing to say — no launches at all.
+ *
+ * A formatter and nothing more: no caller may branch on what it returns.
+ *
+ * @param {{ tokens: number, mayhemExcluded: number, mayhemUnreadable: number } | null} completion
+ * @param {string} indent
+ * @returns {string[]} One line, or none when there is no reading to describe.
+ */
+export function renderCompetenceMayhem(completion, indent) {
+  if (completion === null) return [];
+  const { tokens, mayhemExcluded, mayhemUnreadable } = completion;
+  if (tokens === 0 && mayhemExcluded === 0) return [];
+  if (mayhemExcluded === 0 && mayhemUnreadable === tokens) {
+    return [
+      `${indent}competence measure: all ${tokens} launch(es) UNREADABLE for mayhem mode, so no ` +
+        `launch was excluded — this rate is the pre-351 reading (351)`,
+    ];
+  }
+  return [
+    `${indent}competence measure: ${mayhemExcluded} mayhem launch(es) excluded from BOTH sides; ` +
+      `${tokens} left, of which ${mayhemUnreadable} carry NO readable flag and are counted anyway ` +
+      `(351 — unreadable is kept, not read as non-mayhem)`,
   ];
 }
 
@@ -970,6 +1020,13 @@ export function renderStage1(run) {
           `${padl(num(c.completion.spanDays, 0), 5)}  ${pad(c.completionCapped ? 'yes' : 'no', 4)}  ` +
           `${c.seededBy.length}`,
       );
+      // Captain decision 351, beside 227a's share and never instead of it: the share is over what
+      // the ENUMERATION returned, this is what the exclusion removed from the history the RATE on
+      // the line above was computed on, and reading either as the other is what this pair prevents.
+      // OUTSIDE the `creation` guard below, unlike the share: the exclusion is a fact about the
+      // gate's own reading, which exists on an --ownership-only run too, where the honest answer is
+      // "nothing here could be read for mayhem mode" rather than silence.
+      for (const line of renderCompetenceMayhem(c.completion, '      ')) L.push(line);
       if (c.creation !== null) {
         L.push(
           `      created ${c.creation.createdInWindow} in a ${num(c.creation.coveredDays, 1)}d window ` +
@@ -1111,6 +1168,7 @@ export function renderStage1(run) {
       // 227a. An unjudged wallet is still a candidate this run enumerated, and its mayhem exposure
       // is a fact about the launches rather than about the gate that could not decide over them.
       for (const line of renderMayhemShare(c.creation, '      · ')) L.push(line);
+      for (const line of renderCompetenceMayhem(c.completion, '      · ')) L.push(line);
     }
   }
 
@@ -1147,6 +1205,7 @@ export function renderStage1(run) {
       // §3 of `slot-zero-graduation-regime-remeasure` names (held in firstmate's records, not in
       // this repo) — and that question is answered from the REJECTIONS as much as the survivors.
       for (const line of renderMayhemShare(c.creation, '      · ')) L.push(line);
+      for (const line of renderCompetenceMayhem(c.completion, '      · ')) L.push(line);
       if (c.historySource === 'ownership-only') {
         L.push('      · OWNERSHIP-ONLY run: this rejection was computed on the biased reading');
       }
@@ -1154,7 +1213,7 @@ export function renderStage1(run) {
   }
 
   L.push('');
-  for (const line of wrap(MAYHEM_OBSERVATION_ONLY, 78)) L.push(`  ! ${line}`);
+  for (const line of wrap(MAYHEM_NOT_COMPETENCE, 78)) L.push(`  ! ${line}`);
 
   L.push('');
   L.push('='.repeat(78));

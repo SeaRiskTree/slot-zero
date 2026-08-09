@@ -403,6 +403,21 @@ export function planOversizedSplit(input) {
  * directions inside a single day, and `ENTRY_SQL` was deployed as a fourth saved query rather than
  * by displacing one. `README.md` → "Deploying a change to the committed SQL" owns the step and is
  * the one place that names ids and counts.
+ *
+ * **THE SIXTH COLUMN'S OWN COMMENT INSIDE THIS TEXT IS STALE, AND DELIBERATELY SO.** It states
+ * captain decision 227a — the flag is recorded and reported and "reaches no bar, no rate and no
+ * verdict" — which stopped being true at **captain decision 351 (2026-08-07)**: `is_mayhem_mode` is
+ * READ now, and a launch it marks is excluded from BOTH the numerator and the denominator of
+ * `stage1_gate.minCompletionRate`. **227c — dropping a mayhem-heavy DEPLOYER outright — is NOT
+ * reversed and remains DECLINED**, which is why the denominator moves with the numerator. The rule
+ * and every figure behind it are {@link MAYHEM_NOT_COMPETENCE}'s and `measure.mjs` →
+ * `measureCompletion`'s.
+ *
+ * The comment inside the literal is left at its pre-351 bytes because this text and saved query
+ * `8204672` must stay byte-identical and 351's lane made no deploy — editing it would refuse the
+ * whole Dune leg terminally on the next real run, for a sentence. So a reader meeting that query in
+ * Dune's own browser meets the 227a wording, and THIS paragraph is where they find out it is stale.
+ * Correcting it in place is a deploy step and a captain decision, not a passing fix.
  */
 export const CREATION_SQL = `-- slot-zero: ORIGINAL-CREATOR launch enumeration. One execution per candidate batch.
 --
@@ -823,41 +838,59 @@ export function assessCoverage(input) {
  * @property {boolean | null} mayhem pump.fun's `is_mayhem_mode` on the create event, or `null`
  *   when this launch's row could not say. **`null` is "not measured", never "not a mayhem
  *   launch"** — `pump_call_create` has no such column, so a mint only that surface knows about
- *   reaches here with nothing to read. See {@link MAYHEM_OBSERVATION_ONLY} for why an unreadable
+ *   reaches here with nothing to read. See {@link MAYHEM_NOT_COMPETENCE} for why an unreadable
  *   value is folded to `null` here rather than refusing the row the way `bonded` does.
  */
 
 /**
- * The one sentence that says what the mayhem flag is FOR, and what it is forbidden to do.
+ * The one sentence that says what the mayhem flag is FOR, and what it is still forbidden to do.
  *
  * WHERE IT ACTUALLY GOES, and it claims nothing beyond this: it is the rule this module's reading
- * of `is_mayhem_mode` and {@link summariseMayhem} are written to, and it is printed VERBATIM once
- * per run in `render.mjs` → `renderStage1`'s legend, because a count sitting beside a gate's inputs
- * reads like one of them unless it says otherwise. It is NOT persisted on the run record: the
- * per-candidate `creation` block carries the three numbers and `renderMayhemShare`'s own short
- * "RECORDED, reaching no bar (227a)" suffix carries the pointer, so the sentence is stated once
- * for a reader rather than repeated on every row.
+ * of `is_mayhem_mode`, {@link summariseMayhem} and {@link WalletEnumeration.mayhemByMint} are
+ * written to, and it is printed VERBATIM once per run in `render.mjs` → `renderStage1`'s legend,
+ * because a count sitting beside a gate's inputs has to say which of them it is. It is NOT persisted
+ * on the run record: the per-candidate `creation` block carries the enumeration-wide numbers, the
+ * candidate row carries the competence measure's own two counts, and the sentence is stated once for
+ * a reader rather than repeated on every row.
  *
- * **Captain decision 227a**, on the evidence of `slot-zero-graduation-regime-remeasure` → `report.md`
- * §1.4 and §3 (held in firstmate's records, not in this repo — see `CLAUDE.md` → "Citing a report
- * this repo does not hold"): 27.1% of pump.fun's 2026-07 launches carried `is_mayhem_mode`, they
- * graduated at 4.1–4.7% against 1.8–2.1% for the rest, and they supplied 46.3% of that month's
- * graduations. That makes the flag a first-order confounder for both halves of this screen — a
- * completion rate mixing the two buckets measures two things through one number, and a create-slot
- * field on a mayhem launch may hold a house agent rather than the independent snipers Stage 2's
- * entry model assumes. The captain's answer was the cheapest one that changes nothing: RECORD it
- * and REPORT it, so the survivor list is auditable for mayhem exposure, and leave what the screen
- * should DO about it to a later decision on evidence this lane is what produces.
+ * **The evidence, in two decisions.** `slot-zero-graduation-regime-remeasure` → `report.md` §1.4 and
+ * §3 established the flag as a first-order confounder: 27.1% of pump.fun's 2026-07 launches carried
+ * `is_mayhem_mode`, they graduated at 4.1–4.7% against 1.8–2.1% for the rest, and they supplied
+ * 46.3% of that month's graduations. **Captain decision 227a** answered that with the cheapest move
+ * that changed nothing — RECORD it and REPORT it, and leave what the screen should DO about it to a
+ * later decision on evidence that lane had yet to produce. `slot-zero-offlaunchpad-graduation-criterion`
+ * → `report.md` §4 and §8.2 is that evidence: a mayhem graduation is preceded by a median net quote
+ * inflow of **0.291 SOL** against **85.005 SOL** for a classic curve graduation — **292x cheaper**,
+ * and not separable in trade data from a token that churned about $1,700 and died. (Both reports are
+ * held in firstmate's records, not in this repo — see `CLAUDE.md` → "Citing a report this repo does
+ * not hold".)
  *
- * Excluding mayhem launches from the competence measure (227b) and excluding mayhem-heavy deployers
- * outright (227c) were both declined and must not be quietly adopted.
+ * **Captain decision 351 (2026-08-07) therefore REVERSES 227b**: a mayhem-mode graduation is not
+ * competence evidence, so a known-mayhem launch is excluded from the numerator AND the denominator
+ * of `minCompletionRate`. `measure.mjs` → `measureCompletion` is the one reader and owns the whole
+ * argument, including what an unreadable flag does.
+ *
+ * **227c is NOT reversed and remains DECLINED.** No deployer is dropped, weighted or refused for
+ * HAVING a mayhem record; they are judged on their non-mayhem one. That is why the exclusion had to
+ * take the denominator with it — a numerator-only exclusion drives a mayhem-heavy deployer's rate
+ * towards 0.0000 and removes them from the gate, which is 227c arriving by arithmetic.
+ *
+ * The rest of the posture is unchanged: nothing but the competence measure reads the flag, no
+ * STAGE 2 bar, verdict or field takes it as an input, and a `null` share still means the route did
+ * not measure it rather than that the candidate has no mayhem launches.
  */
-export const MAYHEM_OBSERVATION_ONLY =
-  'CAPTAIN DECISION 227a: pump.fun\'s mayhem-mode flag is RECORDED per launch and REPORTED as a ' +
-  'per-candidate share. It is an observation printed beside the existing numbers and an input to ' +
-  'NOTHING — no gate, no bar, no rate, no verdict reads it, and no launch is dropped or weighted ' +
-  'for carrying it. A null share means the enumeration route did not measure the flag, never that ' +
-  'the candidate has no mayhem launches.';
+export const MAYHEM_NOT_COMPETENCE =
+  'CAPTAIN DECISION 351 (which REVERSES 227b): a mayhem-mode graduation is not competence ' +
+  'evidence — it raises a median 0.291 SOL against 85.005 for a classic curve graduation — so a ' +
+  'launch pump.fun\'s mayhem-mode flag marks is excluded from BOTH the numerator and the ' +
+  'denominator of the completion gate, and a deployer is judged on their non-mayhem record. ' +
+  'CAPTAIN DECISION 227c IS NOT REVERSED AND REMAINS DECLINED: no deployer is dropped, weighted ' +
+  'or refused for having a mayhem record, which is exactly why the denominator moves with the ' +
+  'numerator. Nothing else reads the flag — no Stage 2 bar, no entry verdict — and the ' +
+  'per-candidate share beside these counts is still 227a\'s REPORTED observation. A null share ' +
+  'means the enumeration route did not measure the flag, never that the candidate has no mayhem ' +
+  'launches; an UNREADABLE flag is counted and kept in the competence reading rather than being ' +
+  'read as non-mayhem or silently dropped.';
 
 /**
  * @typedef {object} MayhemExposure
@@ -918,15 +951,28 @@ export function summariseMayhem(launches) {
  * detection the day the column is renamed, and every capped wallet would be gated on a prefix of its
  * history reported as a total — silently, on a run reporting itself fully measured.
  *
- * **`is_mayhem_mode` is read exactly the OPPOSITE way, and the asymmetry is the whole of captain
- * decision 227a's "change no verdict".** A value that is not a boolean folds to `null` — "not
- * measured" — and the row is kept. It must not join the two columns above in refusing the row,
- * because a refused row refuses the whole batch, every candidate in it falls back to the creation
- * walk, and the walk can return a different history and therefore a different verdict. That would
- * make an OBSERVATION able to move a gate outcome, which is precisely what 227a forbids. The
- * asymmetry is safe in the direction that matters: `bonded` and `launches_total` are gate inputs
- * where an absent column silently shortens a history, while an absent mayhem flag can only
- * understate a reported share, on a figure nothing reads. See {@link MAYHEM_OBSERVATION_ONLY}.
+ * **`is_mayhem_mode` is read exactly the OPPOSITE way, and captain decision 351 makes the asymmetry
+ * MORE load-bearing rather than less.** A value that is not a boolean folds to `null` — "not
+ * measured" — and the row is kept. Since 351 the flag does reach a gate (`measure.mjs` →
+ * `measureCompletion` excludes a known-mayhem launch from both sides of the completion rate), so
+ * the old justification — *an observation cannot move a verdict* — no longer holds and the rule is
+ * now held by the DIRECTION of each failure instead:
+ *
+ * - **Refusing the row is the worse failure, and it is worse now than it was.** An unreadable row
+ *   refuses the WHOLE batch, every candidate in it falls back to the creation walk, and the walk
+ *   cannot see this column at all — so a shifted or renamed `is_mayhem_mode` would cost every
+ *   candidate its Dune answer AND its mayhem reading, in one move, on a run reporting itself
+ *   measured.
+ * - **Folding to `null` degrades to the pre-351 reading and nothing worse.** An unreadable flag is
+ *   KEPT in the competence measure and counted (`CompletionMeasurement.mayhemUnreadable`), so a
+ *   column that vanishes returns this gate to exactly the rate it computed before 351 — visibly, on
+ *   a count a reader can check — rather than to a different one. Critically, folding to `null` can
+ *   never REMOVE a launch: only a flag that positively read `true` excludes anything, so junk in
+ *   this column cannot shrink a deployer's evidence towards the invisible false rejection.
+ *
+ * `bonded` and `launches_total` stay in the other bucket for the reason they always were: an absent
+ * one silently SHORTENS a history, which no count on the record could show.
+ * See {@link MAYHEM_NOT_COMPETENCE}.
  *
  * `declaredByWallet` carries that count per wallet, or `null` when the wallet's own rows disagreed
  * about it. A disagreement is nameable per wallet, unlike a parse failure, so it refuses that wallet
@@ -1044,11 +1090,18 @@ function readRowCount(value) {
  *   look like a batch that lost nothing.
  * @property {number} bonded       How many of them the chain says completed.
  * @property {MayhemExposure} mayhem What share of them pump.fun's mayhem-mode flag marks — captain
- *   decision 227a, and an OBSERVATION rather than an input. It is computed over whatever rows came
- *   back, INCLUDING on a reading that is `usable: false`, because a refused reading is still the
- *   only mayhem evidence this run holds for the wallet and the alternative is a blank where the
- *   answer "we saw N and could read the flag on none" belongs. Nothing downstream may branch on it;
- *   see {@link MAYHEM_OBSERVATION_ONLY}.
+ *   decision 227a's REPORTED figure, and still reported rather than read: no bar takes this SHARE
+ *   as an input. It is computed over whatever rows came back, INCLUDING on a reading that is
+ *   `usable: false`, because a refused reading is still the only mayhem evidence this run holds for
+ *   the wallet and the alternative is a blank where the answer "we saw N and could read the flag on
+ *   none" belongs. See {@link MAYHEM_NOT_COMPETENCE}.
+ * @property {Map<string, boolean>} mayhemByMint The PER-LAUNCH flag, for the one consumer captain
+ *   decision 351 licensed: `creation.mjs` → `mergeHistories`, which hands it to the competence
+ *   measure so a mayhem launch leaves both sides of `minCompletionRate`. **Only launches the flag
+ *   was READABLE on have an entry** — an absent mint is unreadable, never non-mayhem, which is the
+ *   same three-state rule {@link MayhemExposure} keeps apart as `launches` against `unknown`.
+ *   Distinct from `creates`/`curves` on purpose: those are the walk's own shape and the walk cannot
+ *   see this column, so the flag travels beside them rather than inside them.
  * @property {number | null} firstLaunchMs
  * @property {number | null} lastLaunchMs
  */
@@ -1197,8 +1250,15 @@ export function toWalletEnumeration(input) {
   const creates = [];
   /** @type {Map<string, import('./creation.mjs').CurveState>} */
   const curves = new Map();
+  // Captain decision 351's one channel out of this module. Only a launch whose flag positively READ
+  // as a boolean gets an entry: an unreadable one is left out, so a consumer that asks the map gets
+  // `undefined` — the same "nobody looked" the `null` on the row means — rather than a `false` this
+  // reading never established.
+  /** @type {Map<string, boolean>} */
+  const mayhemByMint = new Map();
   let bonded = 0;
   for (const l of launches) {
+    if (typeof l.mayhem === 'boolean') mayhemByMint.set(l.mint, l.mayhem);
     creates.push({
       mint: l.mint,
       // Neither is recoverable from a decoded creation event, and neither is read by the merge. They
@@ -1234,9 +1294,11 @@ export function toWalletEnumeration(input) {
     truncatedByLaunchCap,
     bonded,
     // Computed from the same rows and touching none of the fields above it. Deliberately placed
-    // AFTER `usable` is decided rather than before: nothing about 227a's flag may participate in
-    // deciding whether this reading may be gated on.
+    // AFTER `usable` is decided rather than before: the flag decides what a reading MEASURES
+    // (captain decision 351, one module over in `measureCompletion`) and never whether the reading
+    // may be gated on at all. A wallet does not fall back to the walk for anything mayhem-shaped.
     mayhem: summariseMayhem(launches),
+    mayhemByMint,
     firstLaunchMs,
     lastLaunchMs,
   };

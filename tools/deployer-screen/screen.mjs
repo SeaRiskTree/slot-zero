@@ -102,7 +102,14 @@ import {
   readEntryReading,
 } from './entry-agreement.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
-import { renderDryRun, renderMayhemShare, renderStage0, renderStage1, LIMITATIONS } from './render.mjs';
+import {
+  renderCompetenceMayhem,
+  renderDryRun,
+  renderMayhemShare,
+  renderStage0,
+  renderStage1,
+  LIMITATIONS,
+} from './render.mjs';
 import {
   addDropReasons,
   emptyDropReasons,
@@ -680,6 +687,25 @@ export function duneFillSourceCredentialRefusal(credential) {
     `two-source comparison that silently became a one-source one would report itself ` +
     `complete having compared nothing.`
   );
+}
+
+/**
+ * CAPTAIN DECISION 351's ONE CHANNEL: the per-launch mayhem flags this run may hand to the merge,
+ * or `null` where it holds none it is entitled to gate on.
+ *
+ * Gated on `useDune` for the same reason 227a's share is: a REFUSED Dune reading is a prefix or an
+ * out-of-coverage slice, and excluding launches from a gate on the strength of a reading this run
+ * declined to gate on would be the observation deciding more than the measurement. `null` on every
+ * other route means UNREADABLE, not "no mayhem launch" — so those candidates' rates are
+ * byte-identical to their pre-351 selves. See `measure.mjs` → `measureCompletion`.
+ *
+ * @param {boolean} useDune Whether this run enumerated on Dune at all.
+ * @param {import('./dune.mjs').WalletEnumeration | null} fromDune The reading it gated on, or
+ *   `null` where Dune answered nothing usable for this candidate.
+ * @returns {ReadonlyMap<string, boolean> | null}
+ */
+export function gateMayhemFlags(useDune, fromDune) {
+  return useDune && fromDune !== null ? fromDune.mayhemByMint : null;
 }
 
 /**
@@ -2449,6 +2475,9 @@ export async function main(opts, env, out, err, seam = {}) {
           listed: listing.records,
           covered: walk.covered,
           unresolvedTransactions: walk.unresolvedTransactions,
+          // CAPTAIN DECISION 351 — the per-launch mayhem flag, on its way to the ONE bar that reads
+          // it. {@link gateMayhemFlags} owns which readings this run is entitled to hand over.
+          mayhemByMint: gateMayhemFlags(useDune, fromDune),
         });
 
         completion = measureCompletion(merged.records);
@@ -2533,8 +2562,13 @@ export async function main(opts, env, out, err, seam = {}) {
           duneLaunches,
           duneFallbackReasons,
           creatorMovementUnmeasured: merged.creatorMovementUnmeasured,
-          // CAPTAIN DECISION 227a — pump.fun's mayhem-mode flag, RECORDED and REPORTED, reaching
-          // no bar and no verdict. All three are `null` on a candidate the Dune enumeration did not
+          // CAPTAIN DECISION 227a — this SHARE of pump.fun's mayhem-mode flag is RECORDED and
+          // REPORTED, reaching no bar and no verdict. The per-launch FLAG is a different matter
+          // since captain decision 351, which excludes a launch it marks from both sides of the
+          // gate's completion rate (`measure.mjs` → `measureCompletion`); the two have different
+          // denominators — this one is over what the ENUMERATION returned, the gate's counts are
+          // over the merged history it read.
+          // All three are `null` on a candidate the Dune enumeration did not
           // answer for, and that is the same distinction `creatorMovementUnmeasured` already draws
           // one line up: the creation walk reads a transaction, not a decoded create event, so it
           // measures NOTHING here. A `0` would say "this wallet launches no mayhem tokens", which
@@ -2561,6 +2595,10 @@ export async function main(opts, env, out, err, seam = {}) {
           // printed when it was non-zero would leave a reader unable to tell "no mayhem launches"
           // from "nobody looked", which is the distinction the whole field exists to carry.
           for (const line of renderMayhemShare(creation, '      ')) out(line);
+          // Captain decision 351. The live line carries what the exclusion did to THIS candidate's
+          // gate reading, not only 227a's enumeration-wide share — an operator watching a run is
+          // the reader most likely to take the share for the gate's own denominator.
+          for (const line of renderCompetenceMayhem(completion, '      ')) out(line);
           for (const r of duneFallbackReasons) out(`      ^ DUNE READING REFUSED, walked instead: ${r}`);
           if (notMeasured.length > 0) {
             out(`      ^ READING NOT MEASURED — verdict ${verdict}, not a rejection: ${notMeasured.join('; ')}`);
@@ -3124,6 +3162,22 @@ function toRecordRow(c, run) {
     spanDays: Number(c.completion.spanDays.toFixed(2)),
     windowFirstDeploy: c.completion.firstDeployIso,
     windowLastDeploy: c.completion.lastDeployIso,
+    // Schema 19. WHAT THE COMPETENCE MEASURE SET ASIDE, so the four numbers above can be read as
+    // what they are — a reading of this deployer's NON-MAYHEM record (captain decision 351).
+    // Both counts are over the MERGED history the gate read, which is why they are here and not in
+    // `creation`: that block's `mayhemLaunches` is a share of what the ENUMERATION returned, a
+    // different denominator, and the two legitimately differ.
+    //
+    // `competenceMayhemUnreadable` is the honest half. Those launches ARE in `tokens` and in
+    // `completed`; it is a stated decision, not a defaulting, and this count is what makes it
+    // auditable — equal to `tokens` AND `competenceMayhemExcluded` 0 means no mayhem evidence
+    // touched this rate at all, which is every walk-sourced and every `--ownership-only`
+    // candidate, and was every candidate before 351. The excluded count is half of that test:
+    // a row can carry excluded launches and still have nothing readable left among the rest.
+    // There are deliberately no `vendor*` twins: the MadeOnSol profile page carries no such column,
+    // so `vendorCompletionRate` is unmovable by 351 by construction rather than by measurement.
+    competenceMayhemExcluded: c.completion.mayhemExcluded,
+    competenceMayhemUnreadable: c.completion.mayhemUnreadable,
     vendorPageCapped: c.vendorPageCapped,
     gateReadingPageCapped: c.completionCapped,
     historySource: c.historySource,

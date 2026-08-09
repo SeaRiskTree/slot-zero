@@ -682,7 +682,11 @@ Four rules keep that window from claiming more than it covers.
   field a vendor mirror of agreed with our tape 67/67), then `bondedUndecidable`. The three sum to
   the launch count. A launch **hidden from the ownership listing has no row by definition**, so a
   failed curve read on exactly the launch this route exists to find is undecidable rather than
-  quietly scored as a failure.
+  quietly scored as a failure. **Since captain decision 352b the provenance follows the ANSWER
+  rather than the source**: a listing row whose own `complete` flag is missing or malformed decided
+  nothing, so it counts as `bondedUndecidable` and not as `bondedFromListing`, and the launch leaves
+  both sides of the rate as `competenceCriterionUnreadable` — see *"The completion measure is
+  RAISE-85"* above, which owns the third state.
 
 **Any undecidable launch makes the whole reading unmeasured**, and so does an ownership listing that
 could not be read at all. The verdict is then `gate-unmeasured` — a third value in the gate's

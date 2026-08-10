@@ -72,6 +72,7 @@ import {
   percentile,
   raise85FromPumpfunGraduation,
   roomIsProven,
+  sidSlotField,
   solBetweenPrices,
 } from './measure.mjs';
 import { applyGate, verdictFor } from './rank.mjs';
@@ -871,8 +872,8 @@ export function verifyAdjacencyRuns(launches) {
         unreadableIndexes += 1;
         continue;
       }
-      // The leading field is everything before the 6-digit index and the 4-digit inner index.
-      if (Number(f.sid.slice(0, -10)) !== f.slot) slotPrefixMismatches += 1;
+      // The same comparison the live guard makes, read from the one owner so the two cannot drift.
+      if (sidSlotField(f.sid) !== f.slot) slotPrefixMismatches += 1;
       const seen = indexByTx.get(f.tx);
       if (seen === undefined) indexByTx.set(f.tx, index);
       else if (seen !== index) txWithTwoIndexes += 1;

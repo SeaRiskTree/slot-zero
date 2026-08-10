@@ -346,8 +346,9 @@ const emptyEntryCoverage = (): Stage2Coverage => ({
  *
  * `sid` matters as much as `slot` and is defaulted rather than omitted: it is pump.fun's
  * within-slot ordering key, and it is what the create-slot fill queue — and therefore
- * `solQueuedAheadSol` — is derived from. It defaults to a monotonically increasing value in
- * declaration order, so a test's fill list reads as the queue it looks like.
+ * `solQueuedAheadSol` — is derived from. It defaults to a key at the fill's own slot whose block
+ * index advances in declaration order, so within one slot a test's fill list reads as the queue it
+ * looks like (until the 999-wrap below, which collides two indices rather than reordering them).
  *
  * The default is built at the fill's OWN slot, not with a zero prefix: `createSlotGroups` checks
  * the key's leading field against `slot` and degrades to half (a) when they disagree, so a
@@ -390,7 +391,7 @@ const fill = (
  * fills the leading field is always the fill's own slot and no transaction ever carries two block
  * indices — and `measure.mjs` → `blockTxIndex` is what reads it. Fixtures that care about the
  * co-ordination rule's ADJACENCY half must build their keys here rather than take `fill`'s default
- * counter, which pads to 22 digits and therefore hands every transaction block index 0.
+ * counter, whose block indices are slot-prefixed and spaced 1,000 apart and so are never adjacent.
  */
 const sidAt = (slot: number, blockTxIndex: number, innerIndex = 0) =>
   String(slot).padStart(12, '0') +

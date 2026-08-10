@@ -1389,7 +1389,7 @@ So the cap now goes to the survivors a visit covers the most **new ground** on. 
 `stage2_entry.maxLaunchesPerCandidate` launches and no more and ground beyond that is not reachable
 by this visit.
 
-**Two costs, both accepted knowingly, and neither is to be presented as free.**
+**Three costs, all accepted knowingly, and none is to be presented as free.**
 
 1. **It is a selection-quality trade.** Visiting the highest-tempo wallets most often concentrates
    the cap on the busiest launches, which are exactly the ones
@@ -1399,6 +1399,17 @@ by this visit.
 2. **The tempo is LIFETIME, so a wallet that has gone quiet is still visited on it.** Clamping flow
    by the wallet's last deploy would park a dormant wallet forever, which is the starvation the
    saturation ceiling exists to prevent. A visit spent on stale ground is the price of the guarantee.
+3. **A MAYHEM-HEAVY SURVIVOR IS RANKED ON LESS FLOW THAN IT HAS, so it is UNDER-VISITED.** The tempo
+   is `completion.tokens / completion.spanDays`, and `measure.mjs` → `measureCompletion` computes
+   both over the mayhem-EXCLUDED set (captain decision **351**) while Stage 2 harvests from
+   `toLaunchRefs`, which includes every launch. A deployer launching ~1.0/day of which only ~0.3/day
+   is non-mayhem is ranked on the 0.3, saturates in ~33 days instead of ~10, and comes round roughly
+   3x less often than its real harvestable flow merits — exactly the 13-of-58 population 351 exists
+   to stop penalising. **It is UNDER-SERVICE AND NEVER STARVATION**: the key still saturates and
+   336a's FIFO tiebreak still brings that wallet round, it just waits longer than its flow warrants.
+   The gate's own reading is kept anyway because the alternatives are worse readings, not better
+   ones — a mayhem-inclusive enumerated count is UNMEASURED on every walk-sourced candidate, and
+   `toLaunchRefs` is the vendor's capped, success-biased 70-record page.
 
 **Capacity did not move and this is not a capacity change.** `maxScored` is still 7 a run — captain
 decision **339a** — because raising it means moving the scoring cap and the request budget together,

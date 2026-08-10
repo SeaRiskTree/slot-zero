@@ -16546,8 +16546,9 @@ describe('the scoring cap goes where a visit covers the most new ground — 399a
     // Round robin gives every survivor 3 or 4 visits whatever its tempo — 58 wallets against 210
     // scorings — which is exactly the allowance that strands the tail.
     expect(Math.max(...roundRobin.visits) - Math.min(...roundRobin.visits)).toBeLessThanOrEqual(1);
-    // Flow-weighted spends up to 12 on the busiest, which is `128 / windowCap` rounded up: the
-    // number of visits that wallet's own launch flow actually needs.
+    // Flow-weighted spends up to 12 on the busiest wallet. That 12 is the OBSERVED allocation these
+    // 30 runs at a cap of 7 made — not a derivation — and the point is that it is far above the 3
+    // to 4 a round robin gives that same wallet.
     expect(Math.max(...flowWeighted.visits)).toBe(12);
     expect(Math.max(...flowWeighted.visits)).toBeGreaterThan(Math.max(...roundRobin.visits));
   });
@@ -16661,6 +16662,38 @@ describe('the scoring cap goes where a visit covers the most new ground — 399a
     // Without the two extra inputs the same tampered block still passes the ORDER check, which is
     // exactly why the deeper check exists and is worth handing the inputs to.
     expect(verifySelection(tamperedRow, 2).ok).toBe(true);
+  });
+
+  it('an UNUSABLE window cap refuses the key re-derivation once, and accuses no row', () => {
+    // The same reading discipline the comparator applies to a row that states no flow term, one
+    // function over. `newGroundWindows` folds a non-positive or absent cap to a cap of ZERO, so a
+    // reader handing in `windowCap: undefined` (a pre-399a record) or `null` (a schema-23 record
+    // whose selection was null) would otherwise be told every single row lied about its own key.
+    const nowIso = '2026-08-09T00:00:00.000Z';
+    const rotation = emptyRotation();
+    markScored(rotation, 'A', '2026-08-07T00:00:00.000Z');
+    markScored(rotation, 'B', '2026-08-05T00:00:00.000Z');
+    const sel = selectForScoring(rotation, ['A', 'B', 'C'], 2, {
+      nowIso,
+      windowCap: WINDOW_CAP,
+      launchesPerDay: { A: 3, B: 0.25 },
+    });
+    expect(verifySelection(sel, 2, { nowIso, windowCap: WINDOW_CAP })).toEqual({
+      ok: true,
+      problems: [],
+    });
+
+    for (const unusable of [undefined, null, 0, -1, Number.NaN]) {
+      const refused = verifySelection(sel, 2, {
+        nowIso,
+        windowCap: unusable as unknown as number,
+      });
+      expect(refused.ok).toBe(false);
+      // ONE problem naming the unusable cap — not one per row.
+      expect(refused.problems).toHaveLength(1);
+      expect(refused.problems[0]).toContain(String(unusable));
+      expect(refused.problems.join(' ')).not.toContain('states newGroundWindows');
+    }
   });
 
   it('a PRE-399a order still verifies, because a missing key is not zero flow', () => {

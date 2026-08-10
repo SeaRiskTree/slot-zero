@@ -1726,13 +1726,19 @@ lane that touches Stage 2:
   no flow would park a wallet permanently and invisibly on OUR coverage. **With no tempo readable
   anywhere the rule degenerates to exactly 336a's**, which is how the superseded allocation stays
   testable through production code with no second comparator to drift from the live one.
-- **TWO COSTS THE CAPTAIN ACCEPTED KNOWINGLY, and neither may be presented as free.** (1) It is a
+- **THREE COSTS THE CAPTAIN ACCEPTED KNOWINGLY, and none may be presented as free.** (1) It is a
   **selection-quality trade**: visiting the highest-tempo wallets most often concentrates the cap on
   the busiest launches, which `stage2_entry.justification.maxLaunchesPerCandidate` already records
   the request cap dropping most often, and the one stranger leg on record read a **0.1333** usable
   fraction. (2) The tempo is **LIFETIME**, so a wallet that has gone quiet is still visited on it —
   clamping by last deploy would park a dormant wallet, which is the starvation the saturation ceiling
-  exists to prevent. **AND THE USABLE FRACTION MUST BE RE-MEASURED ON THE WIDENED POPULATION BEFORE
+  exists to prevent. (3) **A MAYHEM-HEAVY SURVIVOR IS UNDER-VISITED**: the tempo is the gate's own
+  `tokens / spanDays`, computed over the mayhem-EXCLUDED set (351) while Stage 2 harvests every
+  launch, so that wallet saturates late and comes round less often than its real flow merits — the
+  same 13-of-58 population 351 protects. It is **under-service and never starvation** (the key still
+  saturates, 336a's FIFO still brings it round), and the alternative readings are worse ones;
+  `rotation.mjs` → `RotationRow.launchesPerDay` owns the argument.
+  **AND THE USABLE FRACTION MUST BE RE-MEASURED ON THE WIDENED POPULATION BEFORE
   ANYTHING ELSE ON THIS LADDER IS SIZED**: it swung from **0.1333 to 0.90** across our own runs, and
   at the low end nothing here clears the 1,000 floor. Do not size from the pooled figure.
 - **THE SCREEN IS NO LONGER STATELESS AND REPRODUCIBILITY IS PRESERVED ANOTHER WAY — that condition

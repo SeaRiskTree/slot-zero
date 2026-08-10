@@ -178,7 +178,8 @@ export const NEW_GROUND_RULE =
   'same number of visits whatever its tempo, which stranded the tail.';
 
 /**
- * The unit the flow term is quantised to before it is compared or recorded.
+ * The RECIPROCAL of the unit the flow term is quantised to — quanta per window, so the grid itself
+ * is `1 / GROUND_QUANTA_PER_WINDOW` = 1e-6 of a window. RAISING this number makes the grid FINER.
  *
  * A rank key that is a product of two floats has ties that exist in the arithmetic and not in the
  * evidence, and a comparator that separates two rows by 1e-15 makes a published selection turn on a
@@ -186,14 +187,14 @@ export const NEW_GROUND_RULE =
  * comparison is not transitive and would sort differently depending on the input order — and 1e-6 of
  * a window is far below anything this measurement can distinguish.
  */
-const GROUND_QUANTUM = 1e6;
+const GROUND_QUANTA_PER_WINDOW = 1e6;
 
 /**
  * @param {number} value
  * @returns {number}
  */
 function quantise(value) {
-  return Math.round(value * GROUND_QUANTUM) / GROUND_QUANTUM;
+  return Math.round(value * GROUND_QUANTA_PER_WINDOW) / GROUND_QUANTA_PER_WINDOW;
 }
 
 /**
@@ -241,6 +242,19 @@ function quantise(value) {
  *   limits (post-mayhem-exclusion and criterion-readable since thresholds 6.8.0/6.9.0, and a vendor
  *   page rather than a merged history under `--ownership-only`). `null` when it cannot be read,
  *   which is never the same as no flow — see {@link newGroundWindows}.
+ *
+ *   **A MAYHEM-HEAVY SURVIVOR'S FLOW IS SYSTEMATICALLY UNDERSTATED HERE, and that is a known,
+ *   accepted limit of this tempo source rather than a defect.** `measure.mjs` → `measureCompletion`
+ *   computes `tokens` and `spanDays` over the mayhem-EXCLUDED set (captain decision 351) while
+ *   Stage 2 harvests from `toLaunchRefs`, which includes every launch — so a deployer launching
+ *   ~1.0/day of which only ~0.3/day is non-mayhem is ranked on the 0.3, saturates in ~33 days
+ *   instead of ~10, and is visited roughly 3x less often than its real harvestable flow merits.
+ *   That is exactly the 13-of-58 population 351 exists to stop penalising. **The bound that makes
+ *   it survivable is that it is UNDER-SERVICE AND NEVER STARVATION**: the key still saturates and
+ *   336a's FIFO tiebreak still brings that wallet round — it simply waits longer than its real flow
+ *   warrants. The alternatives are worse readings, not better ones: a mayhem-inclusive enumerated
+ *   count is `null`/UNMEASURED on every walk-sourced candidate, and `toLaunchRefs` is the vendor's
+ *   capped, success-biased 70-record page.
  * @property {number} newGroundWindows THE SORT KEY: how many distinct windows a visit would cover
  *   now, saturating at the per-visit window cap.
  */
@@ -625,6 +639,11 @@ export function selectForScoring(rotation, wallets, max, flow) {
  *   recipe instead would be told a correct `--score 3` run selected the wrong wallets.
  * @param {{ nowIso: string, windowCap: number }} [expected] The run's own instant and per-visit
  *   window cap, for re-deriving the flow term. Omit for a pre-399a record, whose rows carry none.
+ *   A cap handed in that is not a positive number of launches — an absent one off a pre-399a
+ *   record, or the `null` a schema-23 record carries when its selection was null — REFUSES the
+ *   re-derivation with ONE problem naming the cap, rather than folding to a cap of zero and
+ *   accusing every row of stating a key its own inputs do not give. Same reading discipline
+ *   {@link compareRotationRows} applies to a row that states no flow term.
  * @returns {{ ok: boolean, problems: string[] }}
  */
 export function verifySelection(block, max, expected) {
@@ -646,15 +665,25 @@ export function verifySelection(block, max, expected) {
   }
 
   if (expected !== undefined) {
-    for (const row of order) {
-      const want = newGroundWindows(row, expected);
-      if (statedGround(row) !== want) {
-        problems.push(
-          `${row.wallet} states newGroundWindows ${String(row.newGroundWindows)}; its own ` +
-            `launchesPerDay ${String(row.launchesPerDay)} and lastScoredAtIso ` +
-            `${row.lastScoredAtIso ?? 'never scored'} give ${want} at a window cap of ` +
-            `${expected.windowCap}`,
-        );
+    if (!Number.isFinite(expected.windowCap) || expected.windowCap <= 0) {
+      problems.push(
+        `cannot re-derive the flow term: the window cap handed in is ${String(expected.windowCap)}, ` +
+          'which is not a positive number of launches — a pre-399a record carries none, and a ' +
+          'schema-23 record whose selection was null records it as null. Omit `expected` to check ' +
+          'the order alone rather than reading an unusable cap as a cap of zero, which would report ' +
+          'every row as having stated a key its own inputs do not give',
+      );
+    } else {
+      for (const row of order) {
+        const want = newGroundWindows(row, expected);
+        if (statedGround(row) !== want) {
+          problems.push(
+            `${row.wallet} states newGroundWindows ${String(row.newGroundWindows)}; its own ` +
+              `launchesPerDay ${String(row.launchesPerDay)} and lastScoredAtIso ` +
+              `${row.lastScoredAtIso ?? 'never scored'} give ${want} at a window cap of ` +
+              `${expected.windowCap}`,
+          );
+        }
       }
     }
   }

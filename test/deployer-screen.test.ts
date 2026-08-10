@@ -6801,6 +6801,13 @@ const ROTATION_BLOCK_KEYS_BY_SCHEMA: Record<number, string[]> = {
 // tempo is persisted beside the saturating ground it produced: the first lets a reader re-derive the
 // KEY, the second lets them re-derive the ORDER, and dropping either quietly narrows what can be
 // checked while every other assertion stays green.
+//
+// **IT IS ASSERTED IN TWO PLACES AND THE SECOND IS THE ONE THAT CURRENTLY BITES.** The pin over
+// `runs/*.json` below can only fire on a committed record whose schema this map names, and the
+// committed records are schema 3 and 12 — so today that lookup is `undefined` for every one of them
+// and the pin is inert, exactly as `ROTATION_BLOCK_KEYS_BY_SCHEMA`'s is. The live assertion in the
+// end-to-end rotation block rescues it against a record this build actually WROTE. Both read THIS
+// list, because two lists that merely agree is the drift this repo keeps paying for.
 const ROTATION_ORDER_ROW_KEYS_20 = ['wallet', 'lastScoredAtIso', 'timesScored'];
 const ROTATION_ORDER_ROW_KEYS_BY_SCHEMA: Record<number, string[]> = {
   20: ROTATION_ORDER_ROW_KEYS_20,
@@ -16909,6 +16916,19 @@ describe('the rotation reaches the RUN, and a run stays reproducible given its s
     // field at an unchanged version with every other assertion green. ONE list, shared with that
     // pin, because two lists that merely agree is the drift this repo keeps paying for.
     expect(Object.keys(r1).sort()).toEqual([...ROTATION_BLOCK_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
+    // AND EVERY ROW OF THE RANKED `order`, for the identical reason one level down — captain
+    // decision 399a put the comparator's own inputs on those rows, and the pin over `runs/` cannot
+    // see them either: the committed records are schema 3 and 12, so
+    // `ROTATION_ORDER_ROW_KEYS_BY_SCHEMA[schemaVersionOf(parsed)]` is `undefined` for every one of
+    // them and that assertion never fires. Without this the rows could lose `launchesPerDay` or
+    // `newGroundWindows` at an unchanged version with every other assertion green — and those two
+    // ARE the re-derivation input, so the loss would take `verifySelection`'s deeper check with it
+    // while the block's own shape still looked right. ONE list, shared with that pin.
+    expect(r1['order']).not.toHaveLength(0);
+    for (const row of r1['order'] as Record<string, unknown>[]) {
+      expect(Object.keys(row).sort(), `scoringRotation.order row ${String(row['wallet'])}`)
+        .toEqual([...ROTATION_ORDER_ROW_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
+    }
     expect(r1['enabled']).toBe(true);
     expect(r1['reason']).toBeNull();
     expect(r1['survivors']).toBe(WALLETS.length);

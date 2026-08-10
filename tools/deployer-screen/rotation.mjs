@@ -43,6 +43,13 @@
  *    often. The one stranger leg on record read a 0.1333 usable fraction, and this change points
  *    capacity at the population that reading came from. Nothing here makes a dropped window
  *    reachable; it makes more windows be attempted.
+ *    **THAT COST IS NOW MEASURED ON THE WIDENED POPULATION AND IT IS A REVERSAL, NOT A DISCOUNT.**
+ *    The usable fraction FALLS as flow rises — 0.0333 for survivors at >= 1 launch/day against
+ *    0.2917 below it (Spearman -0.4719, t -2.333 on 19 df, n = 21 wallets) — so weighting the
+ *    harvest by flow raises the DISTINCT window count (1,067 -> 1,963) and LOWERS the usable one
+ *    (193 -> 91 a month). `measurements/2026-08-09-widened-usable-fraction/` owns the figures, the
+ *    restated ladder and the n = 21 limit; cite it rather than restating them. This changes no
+ *    behaviour here — re-deciding 399a on that evidence is the captain's.
  * 2. **The tempo is LIFETIME, so a wallet that has gone quiet is still visited on it.** Clamping
  *    flow by the wallet's last deploy would park a dormant wallet forever, which is the starvation
  *    the saturation ceiling exists to prevent — see below. A visit spent on stale ground is the

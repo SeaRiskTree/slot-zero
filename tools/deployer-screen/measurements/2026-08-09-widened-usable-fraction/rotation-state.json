@@ -1,0 +1,155 @@
+{
+  "tool": "deployer-screen-stage2-rotation",
+  "schemaVersion": 1,
+  "updatedAtIso": "2026-08-10T06:05:23.988Z",
+  "reproducibility": "ROTATION STATE IS COMMITTED EVIDENCE: this run spent its scoring cap where a visit covers the most NEW GROUND — remaining unharvested launch flow, saturating at the per-visit window cap, with least-recently-scored breaking ties — so its output depends on every run before it. The run record names the state it read (path, schema version, SHA-256 before and after) and carries the whole ranked order with the flow term on every row, so the selection is re-derivable from committed artefacts alone — rotation.mjs -> verifySelection.",
+  "wallets": {
+    "2E94st2NZnzA943HBceijgkw75gXTTxch39yquMBfeQk": {
+      "wallet": "2E94st2NZnzA943HBceijgkw75gXTTxch39yquMBfeQk",
+      "firstScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "lastScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "2NQNzbEx5vYyGmLe2ELU5p8J7P4VMg3rnV4VM4CAb4oU": {
+      "wallet": "2NQNzbEx5vYyGmLe2ELU5p8J7P4VMg3rnV4VM4CAb4oU",
+      "firstScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "lastScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "49nSpmxwnTTyXujNm3zHqoin1mg1y1rKd1THXwJjYdLa": {
+      "wallet": "49nSpmxwnTTyXujNm3zHqoin1mg1y1rKd1THXwJjYdLa",
+      "firstScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "lastScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "4DrtsW86GarGJJeYrBwYCjoyMgDPG95QWSGhFHvCkU2s": {
+      "wallet": "4DrtsW86GarGJJeYrBwYCjoyMgDPG95QWSGhFHvCkU2s",
+      "firstScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "lastScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "5Xpa73eaxqDgUmsnUq4dZYPXskoSvo9SDRCsJfVniLEF": {
+      "wallet": "5Xpa73eaxqDgUmsnUq4dZYPXskoSvo9SDRCsJfVniLEF",
+      "firstScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "lastScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "5dUXg97Ltrjid2KVTQAb6p6PVZXBneHcgV1Z8A9xzKgg": {
+      "wallet": "5dUXg97Ltrjid2KVTQAb6p6PVZXBneHcgV1Z8A9xzKgg",
+      "firstScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "lastScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "8HFHbdAg9goKSt1SXaMmFpaQK2Ghp8Mm4gr4y4GFXFb7": {
+      "wallet": "8HFHbdAg9goKSt1SXaMmFpaQK2Ghp8Mm4gr4y4GFXFb7",
+      "firstScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "lastScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "8dPdrqFuoJVFTc97JXqjLXT1Wwdf4S7k24Ywq9tMdTGV": {
+      "wallet": "8dPdrqFuoJVFTc97JXqjLXT1Wwdf4S7k24Ywq9tMdTGV",
+      "firstScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "lastScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "9VXuNqqqzniYYW3fRDeaCtUUtqWsEeWWn5umh3aF9h17": {
+      "wallet": "9VXuNqqqzniYYW3fRDeaCtUUtqWsEeWWn5umh3aF9h17",
+      "firstScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "lastScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "A257pvy8sJoXKAsLY7oP1ZBCkk94dTRPQfKEh1XrQoen": {
+      "wallet": "A257pvy8sJoXKAsLY7oP1ZBCkk94dTRPQfKEh1XrQoen",
+      "firstScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "lastScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "BQTBiCHg2tw6nF9f9ccMdu55vaKw7y1P5xUFEZxiV8yt": {
+      "wallet": "BQTBiCHg2tw6nF9f9ccMdu55vaKw7y1P5xUFEZxiV8yt",
+      "firstScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "lastScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "CKe8kev7FGtnEFST3s7Mfoi3SDHuuMBnL6SwozNxCzTf": {
+      "wallet": "CKe8kev7FGtnEFST3s7Mfoi3SDHuuMBnL6SwozNxCzTf",
+      "firstScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "lastScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "CfkaAru9ArJ2tAStYHvbAyRBJL3EhDzsWYV2KYg9shxB": {
+      "wallet": "CfkaAru9ArJ2tAStYHvbAyRBJL3EhDzsWYV2KYg9shxB",
+      "firstScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "lastScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "DHicUhRqTzaQRZaAoStMVizJL83UziUTa9pDuW83w8ph": {
+      "wallet": "DHicUhRqTzaQRZaAoStMVizJL83UziUTa9pDuW83w8ph",
+      "firstScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "lastScoredAtIso": "2026-08-10T03:49:14.209Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "EYfdt8cNFyyTEJKp18dcoVbgUHDnM1SK3bT2uKj9XXHc": {
+      "wallet": "EYfdt8cNFyyTEJKp18dcoVbgUHDnM1SK3bT2uKj9XXHc",
+      "firstScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "lastScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "EgFYLqyAHFfpbDNd3HtnytnJ2xV2yyduChNWHBih9fvv": {
+      "wallet": "EgFYLqyAHFfpbDNd3HtnytnJ2xV2yyduChNWHBih9fvv",
+      "firstScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "lastScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "FwVtfTE6jYmEH6z4zF5W5PwC9S4Y4R34fDiEsjja3Gwm": {
+      "wallet": "FwVtfTE6jYmEH6z4zF5W5PwC9S4Y4R34fDiEsjja3Gwm",
+      "firstScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "lastScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "H5Wh4EDvWQT4mShH746V5VDqxHQkaQZyPWfuhy1PRVBg": {
+      "wallet": "H5Wh4EDvWQT4mShH746V5VDqxHQkaQZyPWfuhy1PRVBg",
+      "firstScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "lastScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "HH7jLETzcSBnFQcAG5D4VUiFYPSATTyhu5R3QCgzW2M": {
+      "wallet": "HH7jLETzcSBnFQcAG5D4VUiFYPSATTyhu5R3QCgzW2M",
+      "firstScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "lastScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "gVDXhoGbePACvSqN7CZBtQXFW9eyJwsgudPEwSydAkx": {
+      "wallet": "gVDXhoGbePACvSqN7CZBtQXFW9eyJwsgudPEwSydAkx",
+      "firstScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "lastScoredAtIso": "2026-08-10T06:05:23.988Z",
+      "timesScored": 1,
+      "origin": "screen"
+    },
+    "hZPbb8fV418cRdFRzyLDumct9SgEsEqeLEoos9JF8DP": {
+      "wallet": "hZPbb8fV418cRdFRzyLDumct9SgEsEqeLEoos9JF8DP",
+      "firstScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "lastScoredAtIso": "2026-08-10T05:00:37.375Z",
+      "timesScored": 1,
+      "origin": "screen"
+    }
+  }
+}

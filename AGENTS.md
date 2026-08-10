@@ -1104,7 +1104,10 @@ dev currently?"*, and the shape of the answer is the point:
   FOR THE GATE** (captain decision 398a, 2026-08-09; record **schema 22**). `--wallets <file>` gates
   the addresses in a file instead of enumerating from MadeOnSol. It exists because **supply, not
   measuring capacity, binds the captain's 1,000-window floor**: the reachable population yields ~309
-  distinct usable windows a month against a capacity of ~1,160, and **37 of the 58 deployers that
+  distinct usable windows a month against a capacity of ~1,160 **at the superseded pooled usable
+  fraction of 0.5526 — re-measured on the widened population itself those two read ~101 and ~380;
+  see "The usable fraction has been re-measured" below, which owns the correction and which every
+  figure in this bullet and the next now defers to**, and **37 of the 58 deployers that
   passed this gate in 2026-07 — 64% — are invisible to every discovery source here**, worth 1,442
   windows a month. It is cheap because **the vendor gatekeeps ENUMERATION, not measurement**:
   `/deployer-hunter/{wallet}` answered in full for two wallets its own hunter feeds have never
@@ -1705,7 +1708,10 @@ lane that touches Stage 2:
   the 58 launching more than the 36.2-window round-robin allowance and stranding 935 between them,
   and full harvest needing 231 visits against 210 available (only 10% oversubscribed, so the loss is
   ALLOCATION and not capacity). Worth **590 → 1,085** usable windows a month on top of `--wallets`
-  (398a); **neither clears the captain's 1,000 floor alone.** **Neither decision is a capacity
+  (398a) **at the superseded 0.5526 — at the re-measured fraction those same two rungs read 193 and
+  91, i.e. 399a's harvest gain is a usable-window LOSS on the widened population, and NEITHER rung
+  nor the two together clear the floor; the bullet below owns it**; **neither clears the captain's
+  1,000 floor alone.** **Neither decision is a capacity
   change**: `maxCandidatesScored` stays 7 (captain decision **339a**; raising it moves the scoring
   cap and the request budget together and is a separate decision), `maxLaunchesPerCandidate` and
   `maxRequestsPerLaunch` stay 10 and 18 so **Stage 2's keyless ceiling — their product — never
@@ -1730,7 +1736,10 @@ lane that touches Stage 2:
   **selection-quality trade**: visiting the highest-tempo wallets most often concentrates the cap on
   the busiest launches, which `stage2_entry.justification.maxLaunchesPerCandidate` already records
   the request cap dropping most often, and the one stranger leg on record read a **0.1333** usable
-  fraction. (2) The tempo is **LIFETIME**, so a wallet that has gone quiet is still visited on it —
+  fraction. **THAT COST IS NOW MEASURED AND IT IS LARGER THAN A TRADE-OFF: on the widened population
+  the usable fraction FALLS as flow rises** (≥1 launch/day: 0.0333 over 9 wallets; <1/day: 0.2917
+  over 12; Spearman −0.4719, t −2.333 on 19 df), so flow-weighting the harvest lowers the usable
+  count — see the bullet below. (2) The tempo is **LIFETIME**, so a wallet that has gone quiet is still visited on it —
   clamping by last deploy would park a dormant wallet, which is the starvation the saturation ceiling
   exists to prevent. (3) **A MAYHEM-HEAVY SURVIVOR IS UNDER-VISITED**: the tempo is the gate's own
   `tokens / spanDays`, computed over the mayhem-EXCLUDED set (351) while Stage 2 harvests every
@@ -1738,9 +1747,28 @@ lane that touches Stage 2:
   same 13-of-58 population 351 protects. It is **under-service and never starvation** (the key still
   saturates, 336a's FIFO still brings it round), and the alternative readings are worse ones;
   `rotation.mjs` → `RotationRow.launchesPerDay` owns the argument.
-  **AND THE USABLE FRACTION MUST BE RE-MEASURED ON THE WIDENED POPULATION BEFORE
-  ANYTHING ELSE ON THIS LADDER IS SIZED**: it swung from **0.1333 to 0.90** across our own runs, and
-  at the low end nothing here clears the 1,000 floor. Do not size from the pooled figure.
+- **THE USABLE FRACTION HAS NOW BEEN RE-MEASURED ON THE WIDENED POPULATION, IT IS `0.1810`, AND THE
+  LADDER DOES NOT CLEAR THE 1,000 FLOOR.** `tools/deployer-screen/measurements/2026-08-09-widened-usable-fraction/`
+  owns every figure and reproduces them offline; cite it rather than restating them. **`0.5526` is
+  SUPERSEDED for any widened-population sizing** — it was pooled over four vendor-seeded legs
+  (2026-08-04→05) whose 0.1333-to-0.90 swing made it unusable, and the widened measurement replaces
+  it with 38 room readings over 210 planned windows across 21 deployers and three legs that agree
+  with each other (0.2571 / 0.1571 / 0.1286). The two are **different populations and are never
+  pooled**; each figure travels with its own date and population. **Restated in 379b's unit —
+  distinct usable windows a month — the ladder reads 101 today, 193 with 398a, and 91 with 399a
+  flow-weighted (355 if the pooled fraction is applied instead), against a floor of 1,000**; even
+  the absolute ceiling of all 58 gate-passers harvested whole reads **362**, so the floor is ~2.8x
+  the entire addressable pump.fun supply at this fraction. **The binding constraint is NOT our
+  budget and NOT discovery**: 209 of 210 windows walked cleanly and **171 of 210 (81.4%) were
+  refused by `roomIsProven`** — the same rule, and the same dominant cause, that
+  `runs/2026-08-04-full-day-default.md` found on 18 of its 22 walked windows — and captain decision
+  **203a** already established that the evidence which would make a stranger's create slot provable
+  has been looked for and is not there. The measurement ran WITHOUT the Dune enumeration leg (the
+  key holding the saved queries is short of the pinned worst case), so the gate reading is
+  listing-dominated; that gap is bounded and does not change the verdict — the listing gate-passed
+  34 of 37 against the census's 37, and even a perfect Dune reading caps the fraction at 0.2833.
+  **Sizing anything else on this ladder is a captain decision now, not an inference from this
+  measurement.**
 - **THE SCREEN IS NO LONGER STATELESS AND REPRODUCIBILITY IS PRESERVED ANOTHER WAY — that condition
   is an acceptance criterion, not a nicety.** A rotation that cannot be reproduced from committed
   evidence is not acceptable here. Three things pay for it and all three must survive any edit: the

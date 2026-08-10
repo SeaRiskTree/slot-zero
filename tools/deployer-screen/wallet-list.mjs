@@ -7,7 +7,12 @@
  * ## Why it exists — captain decision 398a, 2026-08-09
  *
  * Supply, not measuring capacity, is what binds the captain's floor of 1,000 distinct usable
- * windows a month. The reachable population yields ~309 a month against a capacity of ~1,160, and
+ * windows a month. The reachable population yields ~309 a month against a capacity of ~1,160 — both
+ * at the pooled usable fraction of 0.5526, which
+ * `measurements/2026-08-09-widened-usable-fraction/` has since SUPERSEDED for this population at
+ * 0.1810, restating those two as ~101 and ~380 and finding the ladder short of the 1,000 floor. The
+ * argument for this input is unaffected and the arithmetic below is left as 398a was decided on;
+ * cite that measurement for any sizing. And
  * **37 of the 58 pump.fun deployers that passed the committed competence gate in 2026-07 — 64% of
  * them — are invisible to every discovery source this repo has**, worth 1,442 distinct windows a
  * month between them.

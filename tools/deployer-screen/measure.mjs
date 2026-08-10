@@ -570,6 +570,332 @@ export function createSlotGroups(fills) {
 }
 
 /**
+ * @typedef {object} WindowFill
+ * The minimum a fill must carry for {@link measureWindowParticipation} to read it.
+ *
+ * **It is deliberately SMALLER than {@link Fill}, and every field it drops was dropped on purpose.**
+ * No `sid`: pump.fun's within-slot ordering key is a pump.fun key, and half (b) of the create-slot
+ * rule is the only thing that needs one. No `tx`: the shared-transaction half is the only thing that
+ * needs one, and on the population this measure exists for it fires on 0.00% of launches. No `venue`
+ * and no `priceSol`: the venue enum names two pump.fun programs, and neither the enum nor a price is
+ * something this measure reads. {@link Fill} is structurally assignable to this, so a pump.fun window
+ * can be handed in unchanged — but a walk over a venue this repo does not yet read only has to
+ * produce these four fields, which is the whole point of stating them apart.
+ *
+ * @property {number} slot   Solana slot.
+ * @property {string} wallet The **swapping** wallet, never the fee payer — {@link Fill} owns why on
+ *   pump.fun, and the distinction is native rather than reconstructed on Meteora DBC, where
+ *   `call_swap.account_payer` is the trader and `call_tx_signer` is the fee payer.
+ * @property {'buy' | 'sell'} side
+ * @property {number} sol    Swap-quote SOL, **gross of the venue fee and of priority fees**, exactly
+ *   as {@link Fill.sol} is.
+ */
+
+/**
+ * @typedef {object} WindowParticipation
+ * What {@link measureWindowParticipation} saw in one window, kept in halves a later reader can
+ * recompose without re-running the walk.
+ *
+ * **The two halves are the create slot and everything after it**, reported apart for the same reason
+ * {@link CreateSlotMeasurement} reports `bundledTx` and `runTx` apart: the narrow reading and the
+ * wide one are then both recoverable from a saved record, and the size of what the wide framing ADDS
+ * is a number rather than an argument. `windowOnlyOutsiderWallets` is that size — the exact analogue
+ * of `adjacencyMarks` one framing over.
+ *
+ * @property {string | null} deployer   The wallet credited with the launch, as the CALLER
+ *   established it — `null` when nobody did. It is an input here and not a derivation, which is a
+ *   real difference from {@link createSlotGroups}: reading the deployer off the fills works on
+ *   pump.fun because the deployer's own buy opens every curve, and it does NOT work on a venue where
+ *   the creator buys its own launch on 60.59% of the band and not at all on the rest.
+ * @property {number | null} createSlot The window's opening slot, as the caller established it.
+ *   `null` leaves the two halves UNREAD rather than guessed — see the `null` fields below.
+ * @property {number} fills             Fills handed in, whoever made them.
+ * @property {number} outsiderWallets   Distinct wallets that are neither the deployer nor one of the
+ *   caller's supplied operation wallets. **This is the quantity the predicate reads.**
+ * @property {number} outsiderFills
+ * @property {number} outsiderBuySol    Buy-side SOL from those wallets, gross of fees.
+ * @property {number} outsiderSellSol   Sell-side SOL from those wallets, gross of fees. Kept apart
+ *   from the buy side rather than netted: a net figure cannot be told from a small gross one, and
+ *   the two are what a later deployer-take-versus-field series would be built from.
+ * @property {number} operationWallets  Distinct supplied operation wallets that actually filled —
+ *   never the size of the supplied set, which would count wallets that never traded.
+ * @property {number} operationFills
+ * @property {number} operationBuySol
+ * @property {number} operationSellSol
+ * @property {number | null} createSlotOutsiderWallets     Half one, on its own. `null` when no
+ *   create slot was supplied.
+ * @property {number | null} createSlotOutsiderFills
+ * @property {number | null} afterCreateSlotOutsiderWallets Half two, on its own.
+ * @property {number | null} afterCreateSlotOutsiderFills
+ * @property {number | null} windowOnlyOutsiderWallets     Wallets half two shows that half one did
+ *   NOT. The size of what the whole-window framing adds over a create-slot-only one, and the number
+ *   that reads 134 on this venue's median launch and 0 on a launch whose whole contest is in the
+ *   create slot. **The halves do not sum to `outsiderWallets`** — a wallet present in both is
+ *   counted in both — which is exactly why this field exists rather than a subtraction.
+ * @property {number} preCreateSlotFills Fills at a slot EARLIER than the supplied create slot. A
+ *   tripwire, and it should be 0: a non-zero value means the caller's window bounds and its create
+ *   slot disagree, which is the same shape as a backwards walk that overshot its own mint. Those
+ *   fills are in `fills` and in the outsider/operation totals; they are in NEITHER half.
+ * @property {number | null} firstFillSlot
+ * @property {number | null} lastFillSlot Both `null` on an empty window. **Their difference is not a
+ *   duration** — slot time is not constant and this repo has already paid for treating it as though
+ *   it were (`pumpfun.mjs` → `windowReachMs`) — so a window length in seconds is the caller's to
+ *   establish from the venue's own timestamps, not this measure's to infer.
+ */
+
+/**
+ * The statement of what a proven whole-window reading claims, and what it does not.
+ *
+ * It is a constant rather than a paragraph in a document because a caller can print it, a record can
+ * carry it, and a reader who never opened this file still gets it — the same reason
+ * {@link RAISE_85_IS_THE_COMPLETION_MEASURE} and `dune.mjs` → `MAYHEM_NOT_COMPETENCE` are constants.
+ *
+ * **The distinction it protects is the reason a second predicate exists at all.**
+ * {@link roomIsProven} asks whether the co-ordination rule could see ANYTHING in the create slot,
+ * and a launch that passes it is one whose `roomLeft` may be read as measured rather than as the
+ * absence of evidence. This asks something else entirely: whether the window was CONTESTED — whether
+ * wallets outside the launch operation traded in it at all. A window can be heavily contested and
+ * carry no co-ordination evidence whatever, which is precisely the population this measure was built
+ * for, and a create slot can carry co-ordination evidence in a window nobody else entered.
+ * **Neither predicate implies the other, and this one is NOT a loosened {@link roomIsProven}.**
+ */
+export const WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM =
+  'CONTESTED PARTICIPATION OVER A WINDOW IS NOT OPERATOR CO-ORDINATION. A proven reading here says ' +
+  'that wallets outside the launch operation traded inside the window, and says NOTHING about ' +
+  'whether the operation co-ordinated a book of its own, nor about how much of the window it took. ' +
+  'It is therefore a DIFFERENT CLAIM from measure.mjs -> roomIsProven and not a looser version of ' +
+  'it: roomIsProven licenses a room SHARE to be read as measured, this licenses only the statement ' +
+  'that the window had a field in it. Neither implies the other. NO roomLeft, operationShare, ' +
+  'entry verdict or spend may be computed from a reading proven under this predicate alone — ' +
+  'wiring it to anything that decides is a captain decision, not an implementation step.';
+
+/**
+ * The outsider-wallet counts the evidence was measured at, ASCENDING — and this is not a bar.
+ *
+ * `slot-zero-meteora-dbc-venue-scope` → `report.md` §4 (held in firstmate's records, not in this
+ * repo — see `CLAUDE.md` → "Citing a report this repo does not hold") counts supply at exactly these
+ * three, over SOL-quoted Meteora DBC launches on configs whose migration threshold is ≥ 10 SOL:
+ *
+ * | bar | usable, 2026-06 | usable, 2026-07 | repeat-deployer slice, 2026-06 |
+ * |---:|---:|---:|---:|
+ * | ≥ 5  | 17,657 | 21,139 | 3,626 |
+ * | ≥ 20 | 13,459 | 19,062 | 1,778 |
+ * | ≥ 50 | 11,260 | 17,590 | — |
+ *
+ * So the range where evidence exists is **5 to 50**, and inside it the supply question is already
+ * answered in both directions: even the weakest month at the strictest measured bar clears the
+ * captain's 1,000-window floor by 1.8x, so **a bar in this range is not chosen to buy supply.** What
+ * a higher bar buys is a stronger claim about the window having been contested; what it costs is the
+ * thinner launches, and nothing measured says which way that trade should go, because
+ * net-of-fees profitability on this band has not been measured at all (that report's §6 says so
+ * itself, and a parallel lane is measuring it now).
+ *
+ * **This module pins NO bar and must not acquire one.** {@link windowParticipationIsProven} takes it
+ * as a required parameter and refuses without it, because a default IS a pin and this pass measures
+ * rather than tunes. Picking the number returns to the captain.
+ *
+ * @type {readonly number[]}
+ */
+export const WINDOW_OUTSIDER_BAR_MEASURED_AT = Object.freeze([5, 20, 50]);
+
+/**
+ * Measure who, other than the launch operation, traded inside one window.
+ *
+ * ## Why this exists beside {@link roomIsProven} rather than replacing it
+ *
+ * {@link roomIsProven} is create-slot-scoped by construction — it reads
+ * {@link CreateSlotMeasurement.coordinatedWallets}, which {@link createSlotGroups} computes over the
+ * create slot alone. On pump.fun that is where the contest is, and the hard part is telling the
+ * operator's own wallets from strangers: the evidence exists and is ambiguous, and captain decision
+ * 203a established that the disambiguating evidence cannot be got.
+ *
+ * **On Meteora DBC the difficulty is the opposite one, and it was measured rather than predicted.**
+ * Over July 2026's SOL-quoted launches on 10–30 SOL migration-threshold configs — 19,826 pools with
+ * any create-slot fill — the co-ordination rule fires on **0.00%**, with a **maximum of one wallet
+ * per transaction across the entire month**, computed twice by independent routes. The create slot
+ * holds **one wallet and one fill at the median**. There is no co-ordination evidence there because
+ * at the create slot there is nothing to co-ordinate: the contest runs over the following window,
+ * which on that band is a median **134 seconds, 134 distinct outsider wallets and 181 fills**, with
+ * the first outsider fill a median 0.9 s in. So porting {@link roomIsProven} unchanged refuses ~100%
+ * of that band — **which is a measurement of the wrong instrument being pointed at it, not a
+ * measurement that the band is unprovable.** Captain decision 408a settled the direction: the
+ * create-slot framing is replaced by a whole-window one for that venue.
+ * `slot-zero-meteora-dbc-venue-scope` → `report.md` §§2 and 3 owns every figure above and is held in
+ * firstmate's records, not in this repo.
+ *
+ * ## What it claims
+ *
+ * {@link WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM}, and that constant is the statement rather than
+ * this paragraph. In one line: **contested participation, not operator co-ordination.**
+ *
+ * ## The three things it takes as INPUTS rather than deriving, and why each has to be
+ *
+ * 1. **The window.** The fills handed in ARE the window; this function does not bound one and could
+ *    not. On the venue it was built for the window ends at curve completion, which is an event in a
+ *    different table and is not in the fill stream at all. Handing in an unbounded fill list
+ *    measures participation over whatever was handed in, and says so honestly.
+ * 2. **The deployer.** {@link createSlotGroups} reads it off the fills — the first curve buyer in the
+ *    earliest slot — and that works on pump.fun because the deployer's own buy is what opens every
+ *    curve. It does NOT work here: the creator buys its own launch on **60.59%** of that band, so on
+ *    the rest the first filling wallet is a stranger, and crediting them would attribute the whole
+ *    window's opening to the wrong side. `null` is a supported answer and means the caller
+ *    established nobody; then nothing is attributed to the operation from the deployer side, and
+ *    every filling wallet is an outsider. That reads participation HIGH, which is the direction that
+ *    manufactures an instrument where there is none, so a caller that can name the deployer must.
+ * 3. **The operation's other wallets.** There is no structural rule here to recover them with — that
+ *    is the whole finding above. Whatever the caller knows (a supplied cohort, the create-slot rule's
+ *    own marks on a venue where it fires, nothing at all) is what gets excluded, and the same
+ *    asymmetry applies: an operation wallet the caller cannot name is counted as an outsider and
+ *    reads participation HIGH. `tools/window-decay-tripwire/` takes a cohort on the same terms and
+ *    for the same reason.
+ *
+ * ## What it is not
+ *
+ * Not a room figure, not a share, not a verdict, and not evidence that entering the window is
+ * profitable — every wallet in any window this ever reads is a wallet that already won, which is
+ * `entry.mjs` → `WINNERS_ONLY_CAVEAT` one venue over. It is pure, reads no clock and no vendor, and
+ * nothing in this repository calls it.
+ *
+ * @param {object} input
+ * @param {readonly WindowFill[]} input.fills One window's fills, bounded by the caller, any order.
+ * @param {string | null} [input.deployer] The wallet credited with the launch, or `null`/absent when
+ *   nobody established one.
+ * @param {Iterable<string> | null} [input.operationWallets] Wallets already known to belong to the
+ *   launch operation. The deployer is added to this set when it is known, so a caller never has to
+ *   remember to include it.
+ * @param {number | null} [input.createSlot] The window's opening slot, or `null`/absent to leave the
+ *   two halves unread rather than guess them from the earliest fill.
+ * @returns {WindowParticipation}
+ */
+export function measureWindowParticipation(input) {
+  const deployer = input.deployer ?? null;
+  const createSlot = input.createSlot ?? null;
+  /** @type {Set<string>} */
+  const operation = new Set(input.operationWallets ?? []);
+  if (deployer !== null) operation.add(deployer);
+
+  /** @type {Set<string>} */
+  const outsiders = new Set();
+  /** @type {Set<string>} */
+  const outsidersInCreateSlot = new Set();
+  /** @type {Set<string>} */
+  const outsidersAfterCreateSlot = new Set();
+  /** @type {Set<string>} */
+  const operationSeen = new Set();
+
+  let fillCount = 0;
+  let outsiderFills = 0;
+  let outsiderBuySol = 0;
+  let outsiderSellSol = 0;
+  let operationFills = 0;
+  let operationBuySol = 0;
+  let operationSellSol = 0;
+  let createSlotOutsiderFills = 0;
+  let afterCreateSlotOutsiderFills = 0;
+  let preCreateSlotFills = 0;
+  /** @type {number | null} */
+  let firstFillSlot = null;
+  /** @type {number | null} */
+  let lastFillSlot = null;
+
+  for (const f of input.fills) {
+    fillCount += 1;
+    if (firstFillSlot === null || f.slot < firstFillSlot) firstFillSlot = f.slot;
+    if (lastFillSlot === null || f.slot > lastFillSlot) lastFillSlot = f.slot;
+    if (createSlot !== null && f.slot < createSlot) preCreateSlotFills += 1;
+
+    if (operation.has(f.wallet)) {
+      operationSeen.add(f.wallet);
+      operationFills += 1;
+      if (f.side === 'buy') operationBuySol += f.sol;
+      else operationSellSol += f.sol;
+      continue;
+    }
+
+    outsiders.add(f.wallet);
+    outsiderFills += 1;
+    if (f.side === 'buy') outsiderBuySol += f.sol;
+    else outsiderSellSol += f.sol;
+    // The halves are computed only where a create slot was established, and a fill EARLIER than it
+    // goes in neither: it is already counted by `preCreateSlotFills`, and filing it under "after"
+    // would let a caller whose bounds disagree with its own create slot read the window half high.
+    if (createSlot === null) continue;
+    if (f.slot === createSlot) {
+      outsidersInCreateSlot.add(f.wallet);
+      createSlotOutsiderFills += 1;
+    } else if (f.slot > createSlot) {
+      outsidersAfterCreateSlot.add(f.wallet);
+      afterCreateSlotOutsiderFills += 1;
+    }
+  }
+
+  let windowOnlyOutsiderWallets = 0;
+  for (const w of outsidersAfterCreateSlot) if (!outsidersInCreateSlot.has(w)) windowOnlyOutsiderWallets += 1;
+
+  return {
+    deployer,
+    createSlot,
+    fills: fillCount,
+    outsiderWallets: outsiders.size,
+    outsiderFills,
+    outsiderBuySol,
+    outsiderSellSol,
+    operationWallets: operationSeen.size,
+    operationFills,
+    operationBuySol,
+    operationSellSol,
+    createSlotOutsiderWallets: createSlot === null ? null : outsidersInCreateSlot.size,
+    createSlotOutsiderFills: createSlot === null ? null : createSlotOutsiderFills,
+    afterCreateSlotOutsiderWallets: createSlot === null ? null : outsidersAfterCreateSlot.size,
+    afterCreateSlotOutsiderFills: createSlot === null ? null : afterCreateSlotOutsiderFills,
+    windowOnlyOutsiderWallets: createSlot === null ? null : windowOnlyOutsiderWallets,
+    preCreateSlotFills,
+    firstFillSlot,
+    lastFillSlot,
+  };
+}
+
+/**
+ * Whether a window's participation reading rests on evidence, at a bar the CALLER states.
+ *
+ * The shape is {@link roomIsProven}'s — a floor on the evidence, expressed as a count — and the
+ * claim is not; {@link WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM} is the statement of the
+ * difference and is why this is not named `windowRoomIsProven`.
+ *
+ * **`minOutsiderWallets` is REQUIRED and there is deliberately no default.** {@link roomIsProven}'s
+ * `>= 1` is not a threshold at all — one mark is the minimum evidence that a structural rule saw
+ * anything — but a count of distinct outsider wallets IS a threshold, and picking it decides which
+ * launches a venue supplies. This repo's standing rule is that a measurement pass measures and does
+ * not tune, so this function refuses rather than defaulting: a default would be a pinned bar wearing
+ * a convenience's clothes, and it would be pinned by whoever wrote this line rather than by the
+ * captain. {@link WINDOW_OUTSIDER_BAR_MEASURED_AT} carries the three counts the supply evidence
+ * exists at and the argument for the 5–50 range; the number itself is the captain's.
+ *
+ * The second reason it stays a parameter: a parallel lane is measuring net-of-fees profitability on
+ * the same band, and if profit turns out to sit in a narrow slice of wallets rather than broadly,
+ * the bar this instrument wants is tighter. That result decides the number and not the instrument,
+ * so the instrument must be able to take either answer without being rewritten.
+ *
+ * @param {Pick<WindowParticipation, 'outsiderWallets'>} m
+ * @param {{ minOutsiderWallets?: number | null }} [options] Optional in the TYPE so the refusal
+ *   below is reachable from a caller and a test; required in FACT.
+ * @returns {boolean}
+ * @throws {Error} When no usable bar was supplied. Never a silent `>= 1`.
+ */
+export function windowParticipationIsProven(m, options) {
+  const bar = options?.minOutsiderWallets;
+  if (typeof bar !== 'number' || !Number.isInteger(bar) || bar < 1) {
+    throw new Error(
+      'windowParticipationIsProven requires an explicit integer minOutsiderWallets >= 1; there is ' +
+        'no default, because a default is a pinned bar. See measure.mjs -> ' +
+        `WINDOW_OUTSIDER_BAR_MEASURED_AT (${WINDOW_OUTSIDER_BAR_MEASURED_AT.join(', ')}) for the ` +
+        'counts the supply evidence exists at. Pinning one is a captain decision.',
+    );
+  }
+  return m.outsiderWallets >= bar;
+}
+
+/**
  * @typedef {object} WalletTransaction
  * One on-chain transaction a set of wallets traded in, and what the fill tape says each of them
  * committed inside it.

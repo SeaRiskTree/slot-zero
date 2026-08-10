@@ -364,6 +364,41 @@ describe('the census is bounded before it spends, and it spends nothing keyed', 
     expect(lagged).toContain('THE FLOOR IS THE GATE THE FILL SOURCE ITSELF APPLIES');
   });
 
+  it('the printed reach is DERIVED, and a reach off the measured one suppresses the page cost', () => {
+    // The `MEASURED_PAGE_COST` anti-rot guard shipped unasserted (PR #43, `guard-untested`), which
+    // is the green-but-still-wrong class: a guard that exists, passes CI, and would not catch the
+    // thing it was written for. Two properties, and both are checked against a SECOND entry whose
+    // reach differs from today's, because a plan printing a hardcoded constant that happens to
+    // equal the current value agrees with the derivation on the default entry and only there.
+    const widened: Stage2Thresholds = { ...ENTRY, windowSlotSpan: ENTRY.windowSlotSpan + 100 };
+    const plan = (entry: Stage2Thresholds) =>
+      renderDryRun({
+        cohortSize: 82,
+        cohortCap: T['bundling_census'].maxCohortSize,
+        maxCandidates: T['bundling_census'].maxCandidatesSurveyed,
+        census: T['bundling_census'],
+        entry,
+        entryEligibility: { known: true, kind: 'swap-api', minAgeMs: windowReachMs(entry), billed: false } as const,
+        listingIntervalMs: T['budget'].keylessMinIntervalMs,
+      });
+    const atMeasured = plan(ENTRY);
+    const offMeasured = plan(widened);
+    expect(windowReachMs(widened)).not.toBe(windowReachMs(ENTRY));
+
+    // (1) The reach the plan prints is `windowReachMs` of the entry it was handed — the value the
+    // walk's own cursor will be placed with — on BOTH entries. A restated constant fails the second.
+    expect(atMeasured).toContain(`seek reach ${windowReachMs(ENTRY)}ms.`);
+    expect(offMeasured).toContain(`seek reach ${windowReachMs(widened)}ms.`);
+    expect(offMeasured).not.toContain(`seek reach ${windowReachMs(ENTRY)}ms.`);
+
+    // (2) The guard BITES: off the reach the page cost was measured at, the expected-cost figure is
+    // suppressed rather than quoted from a different reach, and the plan says so in place.
+    expect(atMeasured).toContain('the EXPECTED cost is nearer');
+    expect(offMeasured).toContain('NO EXPECTED COST IS PRINTED');
+    expect(offMeasured).not.toContain('the EXPECTED cost is nearer');
+    expect(offMeasured).toContain('Plan against the worst case above');
+  });
+
   it('a floor this plan could not have for free prints UNAVAILABLE with its reason', async () => {
     // Captain decision 286c, on the census's own plan surface. This pass is keyless throughout —
     // captain decision 173a's "zero keyed requests" is a property of the tree — so its source

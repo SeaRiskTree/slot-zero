@@ -1111,11 +1111,12 @@ their tolerance is unmeasured.
 `walletList` block names the file, its SHA-256, the counts and `seedsIssued: 0`. Record schema 22 —
 see the schema table below for what a reader of an older record may and may not assume.
 
-**Not built here, deliberately.** The flow-weighted scoring allocation (captain decision 399a,
-`slot-zero-rotation-tempo-weighted-slots`) is its own lane and blocked on this one — `rotation.mjs`'s
-comparator is untouched. The recurring chain-wide enumeration that would PRODUCE these lists (350a)
-is its own lane. And nothing here tries to establish who anyone is: captain decision 370a closed
-that question permanently.
+**Not built here, deliberately.** The flow-weighted scoring allocation (captain decision 399a) was
+its own lane and blocked on this one — 398a left `rotation.mjs`'s comparator untouched, and 399a has
+since landed and moved it; "WHICH survivors the cap is spent on" below owns it, and the two are the
+pair that clears the captain's 1,000-window floor, neither doing it alone. The recurring chain-wide
+enumeration that would PRODUCE these lists (350a) is still its own lane. And nothing here tries to
+establish who anyone is: captain decision 370a closed that question permanently.
 
 ## Retention — MadeOnSol terms §5a(d)
 

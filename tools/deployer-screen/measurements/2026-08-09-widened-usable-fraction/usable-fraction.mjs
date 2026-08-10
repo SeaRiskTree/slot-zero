@@ -49,8 +49,12 @@ export const SUPERSEDED_POOLED = { planned: 190, room: 105, fraction: 0.5526 };
  * Window dispositions of one run record.
  *
  * @param {any} record
+ * A scored candidate with NO planned window carries `fraction: null`, never 0 — every planned window
+ * of its was ineligible, so nothing about it was measured. It stays in `perWallet` so a reader sees
+ * it, and every statistic below skips it, by the same rule `flowWeightedFraction` states for tempo.
+ *
  * @returns {{ scored: number, planned: number, walked: number, room: number, drops: Record<string, number>,
- *   perWallet: { wallet: string, planned: number, room: number, fraction: number, launchesPerDay: number | null }[] }}
+ *   perWallet: { wallet: string, planned: number, room: number, fraction: number | null, launchesPerDay: number | null }[] }}
  */
 export function dispositions(record) {
   let scored = 0;
@@ -66,7 +70,7 @@ export function dispositions(record) {
    * is re-derivable from the record alone — which is what lets this script weight the fraction the
    * way captain decision 399a allocates, without asking any vendor anything.
    *
-   * @type {{ wallet: string, planned: number, room: number, fraction: number, launchesPerDay: number | null }[]}
+   * @type {{ wallet: string, planned: number, room: number, fraction: number | null, launchesPerDay: number | null }[]}
    */
   const perWallet = [];
   /** @type {Record<string, number>} */
@@ -79,7 +83,7 @@ export function dispositions(record) {
     scored += 1;
     const p = c.entry.coverage?.launchesPlanned ?? 0;
     const s = c.entry.launchesSampled ?? 0;
-    perWallet.push({ wallet: c.wallet, planned: p, room: s, fraction: p === 0 ? 0 : s / p, launchesPerDay: tempo[c.wallet] ?? null });
+    perWallet.push({ wallet: c.wallet, planned: p, room: s, fraction: p === 0 ? null : s / p, launchesPerDay: tempo[c.wallet] ?? null });
     const cov = c.entry.coverage ?? {};
     planned += cov.launchesPlanned ?? 0;
     walked += cov.launchesUsable ?? 0;
@@ -102,16 +106,18 @@ export function dispositions(record) {
  * in proportion to their tempo. Weighting each wallet's own fraction by that tempo is the like-for-
  * like figure for that rung, and on this population it is FAR below the pooled one.
  *
- * Returns `null` when no scored wallet carried a readable tempo — never 0, which would read as
- * "nothing is usable" rather than "this was not measurable".
+ * Returns `null` when no scored wallet carried a readable tempo AND a measured fraction — never 0,
+ * which would read as "nothing is usable" rather than "this was not measurable". A wallet with no
+ * planned window carries a `null` fraction and is skipped for the same reason.
  *
- * @param {{ fraction: number, launchesPerDay: number | null }[]} rows
+ * @param {{ fraction: number | null, launchesPerDay: number | null }[]} rows
  * @returns {number | null}
  */
 export function flowWeightedFraction(rows) {
   let num = 0;
   let den = 0;
   for (const r of rows) {
+    if (typeof r.fraction !== 'number') continue;
     if (typeof r.launchesPerDay !== 'number' || !Number.isFinite(r.launchesPerDay) || r.launchesPerDay <= 0) continue;
     num += r.launchesPerDay * r.fraction;
     den += r.launchesPerDay;
@@ -165,6 +171,25 @@ function main() {
   const baseline = pool('baseline');
   const widenedPool = pool('widened');
 
+  /**
+   * The baseline reproduction is a GUARD, not a narration.
+   *
+   * It is the only thing establishing that the superseded 0.5526 and the widened figure are the
+   * same quantity measured twice rather than two quantities compared. If it stops holding, the
+   * widened block below is no longer comparable to anything, so this refuses rather than printing a
+   * confident-looking report on top of a broken premise.
+   */
+  const reproduced = baseline.planned === SUPERSEDED_POOLED.planned && baseline.room === SUPERSEDED_POOLED.room;
+  if (!reproduced) {
+    process.stderr.write(
+      `!! DOES NOT REPRODUCE the published pool: read ${baseline.room}/${baseline.planned} against ` +
+        `${SUPERSEDED_POOLED.room}/${SUPERSEDED_POOLED.planned}. The superseded fraction and the widened one ` +
+        'are no longer known to be the same quantity, so no widened figure is reported.\n',
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   if (json) {
     process.stdout.write(
       JSON.stringify(
@@ -197,8 +222,7 @@ function main() {
     `${'  pooled (the published 0.5526)'.padEnd(58)} ${String(baseline.scored).padStart(3)} ${String(baseline.planned).padStart(4)} ` +
       `${String(baseline.walked).padStart(4)} ${String(baseline.room).padStart(4)}  ${f4(ratio(baseline.room, baseline.planned))}  ${f4(ratio(baseline.room, baseline.walked))}`,
   );
-  const reproduced = baseline.planned === SUPERSEDED_POOLED.planned && baseline.room === SUPERSEDED_POOLED.room;
-  console.log(`  ${reproduced ? 'REPRODUCED' : '!! DOES NOT REPRODUCE'} the published pool (${SUPERSEDED_POOLED.room}/${SUPERSEDED_POOLED.planned})`);
+  console.log(`  REPRODUCED the published pool (${SUPERSEDED_POOLED.room}/${SUPERSEDED_POOLED.planned})`);
   console.log('');
   if (rows.some((r) => r.kind === 'widened')) {
     console.log('THE WIDENED POPULATION — 2026-08-09, the 37 census-unseen 2026-07 gate-passers');
@@ -220,11 +244,11 @@ function main() {
     const allRows = rows.filter((r) => r.kind === 'widened').flatMap((r) => r.perWallet);
     const flow = flowWeightedFraction(allRows);
     console.log('HOW THE FRACTION VARIES WITH LAUNCH FLOW — the term 399a allocates on');
-    const withFlow = allRows.filter((r) => typeof r.launchesPerDay === 'number');
+    const withFlow = allRows.filter((r) => typeof r.launchesPerDay === 'number' && typeof r.fraction === 'number');
     const hi = withFlow.filter((r) => (r.launchesPerDay ?? 0) >= 1);
     const lo = withFlow.filter((r) => (r.launchesPerDay ?? 0) < 1);
-    /** @param {{fraction:number}[]} a */
-    const mean = (a) => (a.length === 0 ? null : a.reduce((x, r) => x + r.fraction, 0) / a.length);
+    /** @param {{fraction: number | null}[]} a */
+    const mean = (a) => (a.length === 0 ? null : a.reduce((x, r) => x + (r.fraction ?? 0), 0) / a.length);
     console.log(`  flow >= 1 launch/day : n=${hi.length}  mean usable fraction ${f4(mean(hi))}`);
     console.log(`  flow <  1 launch/day : n=${lo.length}  mean usable fraction ${f4(mean(lo))}`);
     console.log(`  pooled, every planned window counted once : ${f4(m)}`);

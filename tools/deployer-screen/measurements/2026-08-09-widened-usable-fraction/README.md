@@ -26,7 +26,9 @@ That is exactly the definition `slot-zero-discovery-beyond-madeonsol` → `repor
 the pooled 0.5526 (held in firstmate's records, not in this repo). **The script reproduces that
 pooled figure from the committed records before reporting any new one** — 105/190 = 0.5526, with
 every per-leg value matching — so the old number and the new one are known to be the same quantity
-measured two ways, not two quantities compared.
+measured two ways, not two quantities compared. That step is a **guard, not a narration**: if the
+pool ever stops reproducing, the script exits non-zero and reports no widened figure at all, rather
+than printing one on top of a premise that no longer holds.
 
 **Two denominators, and they answer different questions.** `usable / PLANNED` is what a scoring
 slot is worth and is the only one a throughput figure may be multiplied by. `usable / WALKED` is
@@ -140,9 +142,21 @@ accepted knowingly when adopting 399a, and re-deciding it is the captain's, not 
 ## 7. What this measurement does NOT establish, and one it is robust to
 
 - **The gate reading is the ownership listing, not creation-derived history.** The Dune enumeration
-  leg could not run: the account holding the four saved queries has 455.643 credits against a pinned
-  worst case of 690.4 that is independent of candidate count, so the guard refuses it (shortfall
-  259.757). The legs therefore ran `--no-dune`, and the keyless creation walk covers **nothing**:
+  leg could not run, and there are **TWO separate blockers, one per key — do not read them as one.**
+  (a) **`DUNE_API_KEY`, the paid key, has the credits and not the queries.** It holds 3,590.173 of
+  4,000 over the billing period 2026-08-06 → 2026-09-06, so its allowance verdict is
+  `sufficient` (`ok: true`, `shortfallCredits: 0`, binding ceiling `vendor-plan`) — but its
+  workspace holds **none** of the four saved queries: `GET /queries` reports `total: 0` and
+  `/query/8204603` returns **HTTP 404 `Query not found`**, which is AGENTS.md's known
+  workspace-scoped saved-query hazard. `runs/widened-2.partial.json` → `dune.unusableNote` records
+  exactly that 404, after which the run was refused at the walk-fallback spend cliff.
+  (b) **`DUNE_API_KEY_FREE`, the query-bearing key, has the queries and not the credits.** It holds
+  455.643 of 2,500 over 2026-07-29 → 2026-08-29 against a pinned worst case of **690.4** that is
+  independent of candidate count, giving a shortfall of **259.757**. **That verdict is an OFFLINE
+  computation and is carried by no committed file** — it was computed through this repo's own
+  `estimatePlanCredits`/`decideAllowance` against a live free `POST /usage` read, and unlike (a)
+  there is no run record for it.
+  The legs therefore ran `--no-dune`, and the keyless creation walk covers **nothing**:
   `candidates[].creation.coveredDays` is **0 on 35 of the 37**, every one stopping on
   `request-ceiling` with `createdInWindow: 0`, so the merged history is the 280-record
   `frontend-api-v3` ownership listing carried over. `historySource` on every record says
@@ -154,8 +168,18 @@ accepted knowingly when adopting 399a, and re-deciding it is the captain's, not 
   0.2326 and 0.2179 against a 0.25 bar — near-misses, not coverage artefacts, and notably not the
   `minSpanDays` failures the shorter 70-record vendor page produced. So a Dune-gated run could add at
   most 3 wallets, and even if all 30 of their windows were perfectly usable the fraction would reach
-  only **68/240 = 0.2833** — still half the superseded figure, and still 646 short of the floor at
-  the 399a rung. **No Dune reading rescues the supply plan.**
+  only **68/240 = 0.2833** — still half the superseded figure, and still **444 short** of the floor
+  at the 399a rung (1,963 × 0.2833 = 556). **No Dune reading rescues the supply plan.**
+- **THE SCORED SAMPLE IS SKEWED TOWARDS HIGH FLOW, and the direction is conservative.** 34 of the 37
+  gate-passed, but `maxCandidatesScored` is 7 per leg, so **21 of the 34 survivors were scored**.
+  The rotation state was fresh, so every row saturated (`newGroundWindows` 10 on every row of all
+  three records) and selection collapsed to survivor-list order — which is the wallet file's census
+  rank by lifetime launches. Scored wallets have a median `launchesPerDay` of **0.945** against
+  **0.133** for the 13 deferred. Because §5 measures LOW-flow wallets as MORE usable (0.2917 against
+  0.0333), the pooled **0.1810 most likely UNDERSTATES** the population-wide unweighted fraction, so
+  the pooled rungs read conservative rather than optimistic; the flow-weighted **0.0462** is the
+  figure least affected, since it weights by flow explicitly. The floor verdict is unaffected either
+  way — the shortfall is 645 to 909.
 - **One month, one population, one measurement.** 21 wallets and 210 windows. The census's own
   caution applies: 58 is a reading of 2026-07 taken on 2026-08-07, not a stationary rate.
 - **It says nothing about captain decision 343a**, which is the only authorised lever that raises the
@@ -171,13 +195,20 @@ accepted knowingly when adopting 399a, and re-deciding it is the captain's, not 
 | Dune | ~11 credits if the leg ran | **0 credits, 0 executions** | leg refused before its first billed request |
 | Helius | 0 | **0 credits** | `HELIUS_API_KEY` unset for every child |
 | keyless `api.mainnet-beta` | ≤3,700 + ≤3,500/run | **3,663** over the legs | pinned per-candidate ceilings |
-| keyless `frontend-api-v3` | ≤148/run | **583** over the legs | ceiling 1,400/run |
+| keyless `frontend-api-v3` | ≤148/run | **56** over the legs | ceiling 1,400/run |
 | keyless `swap-api` | ≤1,260/run | **527** over the legs, **0 shed** | ceiling 1,260/run |
 | money | EUR 0 | **EUR 0** | — |
 
+**Read the record's two keyless counters apart.** `keylessRequests` (583 summed over the three legs)
+is the **TOTAL** keyless count *including* Stage 2 — `screen.mjs` sets it to
+`keyless.issued() + stage2Keyless.issued()` — and `keylessRequestsStage2` (527) is the swap-api half.
+So `frontend-api-v3` is 583 − 527 = **56**, and quoting 583 against the `frontend-api-v3` row
+double-counts the swap-api walk.
+
 Dune contact was limited to the free `POST /usage` metadata endpoint, which consumes no credits, plus
 one 404 on a saved query. Both accounts' balances were unmoved by this lane: 3,590.173 remaining on
-the paid key, 455.643 on the query-bearing one.
+the paid key (recorded in `runs/widened-2.partial.json`), 455.643 on the query-bearing free key (an
+offline reading, carried by no committed file).
 
 Wall clock: three legs in **3.6 h** (71 + 65 + 78 min).
 
@@ -186,7 +217,10 @@ Wall clock: three legs in **3.6 h** (71 + 65 + 78 min).
 - `widened-37.txt` — the population; `widened-37-part{1,2,3}.txt` — the three disjoint legs.
 - `runs/widened-part{1,2,3}.json` — the run records every figure here is computed from.
 - `runs/widened-2.partial.json` — the Dune-enumerated run that was refused, kept because its `dune`
-  block is the evidence for §7's allowance shortfall.
+  block is the evidence for §7 blocker (a): the paid key's allowance reads `sufficient` while
+  `/query/8204603` returns HTTP 404, i.e. the saved queries are scoped to a workspace that key
+  cannot see. **It is NOT evidence of the free key's allowance shortfall**, which is blocker (b) and
+  is recorded nowhere.
 - `recon/recon-ownership.json` — the free `--ownership-only --no-stage2` reconnaissance over all 37.
 - `usable-fraction.mjs` — the analysis, offline and credential-free.
 - `chain-free.sh` — the runner that produced the three legs, carrying its own declared bound.
@@ -197,5 +231,6 @@ Wall clock: three legs in **3.6 h** (71 + 65 + 78 min).
 `DUNE_API_KEY`, and `test/deployer-screen.test.ts` → "only the credential module names an
 environment variable that holds a key" refuses that anywhere under `tools/deployer-screen/` except
 `credential.mjs` and `screen.mjs`. The guard is right and was not weakened to keep a convenience:
-the balances this lane needed are recorded in `runs/widened-2.partial.json` → `dune.allowance`,
-which is the run's own reading and better evidence than a helper's.
+the paid key's balance is recorded in `runs/widened-2.partial.json` → `dune.allowance`, which is the
+run's own reading and better evidence than a helper's. The free key's balance has no such record —
+see §7 blocker (b), which says so in place.

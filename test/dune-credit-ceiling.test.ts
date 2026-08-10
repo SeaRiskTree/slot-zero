@@ -57,6 +57,9 @@ import {
   USAGE_PATH,
   describeExecutionDeadline,
   executionDeadlineCredits,
+  LANE_CEILING_IS_NOT_A_PROJECTION,
+  LANE_SPEND_IS_TWO_QUANTITIES,
+  openDuneLaneBudget,
 } from '../tools/deployer-screen/client.mjs';
 import {
   DuneClient as CensusDuneClient,
@@ -66,6 +69,7 @@ import {
   estimatePlanCredits as censusEstimatePlanCredits,
   executionDeadlineCredits as censusExecutionDeadlineCredits,
   EXECUTION_DEADLINE_CAVEAT as CENSUS_DEADLINE_CAVEAT,
+  openDuneLaneBudget as censusOpenDuneLaneBudget,
 } from '../tools/creation-census/client.mjs';
 import {
   DUNE_LEG_ORDER,
@@ -2547,5 +2551,231 @@ describe('AN EXECUTION WE ARE NO LONGER WILLING TO PAY FOR IS CANCELLED, AND IT 
       expect(out).toMatch(/at most 13 credit\(s\) of compute/);
       expect(out).toMatch(/worst case\s+224\.51 credit\(s\)/);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * **The ceiling a LANE spends against, enforced before every execution rather than written in a
+ * brief.**
+ *
+ * Every case here corresponds to one of the three recorded overruns. None of them passes against the
+ * pre-existing guard, which runs once per RUN and cannot see an iterating lane at all: the whole
+ * defect is that iteration happens after the pre-flight check.
+ */
+describe('a lane credit ceiling is enforced at the execution boundary', () => {
+  /** A client whose `POST /usage` answers a scripted sequence of period totals. */
+  function usageClient(usedSequence: number[], included = 2500) {
+    let i = 0;
+    const calls: number[] = [];
+    return {
+      calls,
+      client: {
+        readUsage: async () => {
+          const used = usedSequence[Math.min(i, usedSequence.length - 1)] ?? 0;
+          i += 1;
+          calls.push(used);
+          return usageBody([period(used, included)]);
+        },
+      },
+    };
+  }
+
+  /** The two lanes' pinned execution deadline: 120 s, which prices one execution at 13 credits. */
+  const DEADLINE_MS = 120_000;
+
+  /** A plan for exactly one execution that reads no rows, so the arithmetic is the compute alone. */
+  function oneExecution(creditsPerExecution: number) {
+    return {
+      lane: 'scout',
+      executions: 1,
+      creditsPerExecution,
+      resultReads: 0,
+      rowsPerRead: 0,
+      bytesPerRow: 0,
+    };
+  }
+
+  function budget(over: Partial<Parameters<typeof openDuneLaneBudget>[0]> = {}) {
+    return openDuneLaneBudget({
+      lane: 'scout',
+      ceilingCredits: 50,
+      reserveCredits: 0,
+      executionDeadlineMs: DEADLINE_MS,
+      monthlyCapCredits: CAP,
+      tightMultiple: 2,
+      allowanceRequired: true,
+      ...over,
+    });
+  }
+
+  it('refuses the execution that would take the lane past its ceiling, and says so with numbers', async () => {
+    // 50-credit ceiling, 13 credits of worst case per execution: three clear, the fourth cannot.
+    // The pre-existing run-level guard clears this whole lane once and never looks again — which is
+    // exactly how a 50-credit stop came to be spent to 50.334.
+    const { client, calls } = usageClient([100]);
+    const b = budget();
+    for (let n = 0; n < 3; n += 1) {
+      const ok = await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
+      expect(ok.estimate.worstCaseCredits).toBe(13);
+    }
+    expect(b.executionsAuthorised()).toBe(3);
+
+    const err = await b
+      .authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect(err?.name).toBe('DuneLaneCeilingReached');
+    // A refusal, not a warning: the lane cannot proceed past it, and the count did not advance.
+    expect(b.executionsAuthorised()).toBe(3);
+    const thrown = err as unknown as { message: string; shortfallCredits: number; ceilingCredits: number };
+    expect(thrown.ceilingCredits).toBe(50);
+    expect(thrown.shortfallCredits).toBe(2);
+    expect(thrown.message).toContain('50 credit(s) cannot cover');
+    expect(thrown.message).toContain('2 credit(s) short');
+    expect(thrown.message).toContain(LANE_CEILING_IS_NOT_A_PROJECTION);
+    expect(thrown.message).toContain(LANE_SPEND_IS_TWO_QUANTITIES);
+    // And the live balance was re-read before EVERY authorisation, the refused one included. A check
+    // that runs once is the thing being replaced.
+    expect(calls).toHaveLength(4);
+  });
+
+  it('does not let a MEASURED prior execution set the next one\'s bound', async () => {
+    // Evidence 2, reproduced. Batch 2 was measured at 14.226 credits; batch 3 was identical in shape
+    // and cost 20.028. A lane projecting the next from the last hands in 14.226 and, under a
+    // projection-based budget, would clear ~3 more executions inside a 50-credit stop.
+    const { client } = usageClient([100]);
+    const b = budget({ executionDeadlineMs: ENGINE_TIMEOUT_MS });
+    b.recordExecutionOutcome({ executionCostCredits: 14.226, resultBytes: 0 });
+
+    const err = await b
+      .authoriseExecution(client, { plan: oneExecution(14.226), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect(err?.name).toBe('DuneLaneCeilingReached');
+    // The bound taken is the ENGINE FLOOR — what Dune can bill before this client stops it — and not
+    // the caller's measured figure. 181, not 14.226, and 181 does not fit a 50-credit lane.
+    expect((err as unknown as { worstCaseCredits: number }).worstCaseCredits).toBe(
+      executionDeadlineCredits(ENGINE_TIMEOUT_MS),
+    );
+    expect((err as unknown as { worstCaseCredits: number }).worstCaseCredits).toBe(181);
+  });
+
+  it('never lets a cheap reported outcome lower a later worst case', async () => {
+    // The same rule at the other end of the loop: what the vendor said an execution COST is spend
+    // evidence and is never allowed to narrow the next bound. Both authorisations price identically
+    // although a 0.001-credit outcome was reported between them.
+    const { client } = usageClient([100]);
+    const b = budget();
+    const first = await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
+    b.recordExecutionOutcome({ executionCostCredits: 0.001, resultBytes: 0 });
+    const second = await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
+    expect(second.estimate.worstCaseCredits).toBe(first.estimate.worstCaseCredits);
+    // A caller pricing ABOVE the floor keeps its own number — a lane may know its statement is worse
+    // than average and may never claim it is better.
+    const dearer = await b.authoriseExecution(client, { plan: oneExecution(20), nowMs: NOW_MS });
+    expect(dearer.estimate.worstCaseCredits).toBe(20);
+  });
+
+  it('enforces against the ACCOUNT COUNTER DELTA once it exceeds the local estimate', async () => {
+    // Evidence 3: the settled counter ran 8.000 credits above the summed `execution_cost_credits`.
+    // A budget enforced on attributed cost alone under-reads exactly the way today's lane did, so
+    // the counter delta is read every time and the LARGER of the two binds.
+    const { client } = usageClient([100, 100, 140]);
+    const b = budget();
+    await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
+    b.recordExecutionOutcome({ executionCostCredits: 5, resultBytes: 0 });
+
+    // Second authorisation: counter still at baseline, so the local estimate (13) binds.
+    const second = await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
+    expect(second.spend.bindingQuantity).toBe('local-estimate');
+    expect(second.spend.counterDeltaCredits).toBe(0);
+
+    // Third: the counter has settled 40 credits above the lane's baseline, well past both the local
+    // estimate (26) and everything the vendor attributed (5). It binds, and it refuses.
+    const err = await b
+      .authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect(err?.name).toBe('DuneLaneCeilingReached');
+    const thrown = err as unknown as {
+      bindingQuantity: string;
+      bindingSpendCredits: number;
+      counterDeltaCredits: number;
+      localEstimateCredits: number;
+    };
+    expect(thrown.bindingQuantity).toBe('account-counter-delta');
+    expect(thrown.bindingSpendCredits).toBe(40);
+    expect(thrown.counterDeltaCredits).toBe(40);
+    // Both under-readings are visible on the refusal rather than being rewritten into the binding one.
+    expect(thrown.localEstimateCredits).toBe(26);
+    expect(b.spentSoFar().attributedExecutionCredits).toBe(5);
+  });
+
+  it('refuses when the balance cannot be read at all — an unreadable counter is not headroom', async () => {
+    const b = budget();
+    const err = await b
+      .authoriseExecution({ readUsage: async () => ({ nonsense: true }) }, { plan: oneExecution(13), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect(err?.name).toBe('DuneLaneCeilingReached');
+    expect((err as unknown as { counterDeltaCredits: number | null }).counterDeltaCredits).toBeNull();
+    expect(err?.message).toContain('The MONTHLY ceiling refused independently');
+  });
+
+  it('refuses to OPEN on a ceiling that does not price, rather than clearing every comparison', () => {
+    // `NaN < worst` is false, so an unpriced ceiling authorises without limit while reporting a
+    // budget — the guard exactly inverted. It is caught at construction, before a first execution.
+    for (const broken of [
+      { ceilingCredits: undefined as unknown as number },
+      { ceilingCredits: Number.NaN },
+      { reserveCredits: Number.NaN },
+      { executionDeadlineMs: undefined as unknown as number },
+    ]) {
+      expect(() => budget(broken)).toThrow(/not a finite non-negative number/);
+    }
+  });
+
+  it('names WHICH ceiling refused, because the two call for different responses', async () => {
+    // The lane's own stop, with the month wide open.
+    const roomy = usageClient([0]);
+    const lane = budget({ ceilingCredits: 5 });
+    const laneErr = await lane
+      .authoriseExecution(roomy.client, { plan: oneExecution(13), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect((laneErr as unknown as { refusedBy: string }).refusedBy).toBe('lane-ceiling');
+    expect(laneErr?.message).toContain('8 credit(s) short');
+
+    // The account's, with the lane's own budget untouched. Raising the lane ceiling buys nothing
+    // here, and a headline that always blamed the lane would report a 0-credit shortfall as the
+    // reason a run stopped.
+    const spent = usageClient([2_499]);
+    const monthly = budget({ ceilingCredits: 10_000 });
+    const monthlyErr = await monthly
+      .authoriseExecution(spent.client, { plan: oneExecution(13), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect((monthlyErr as unknown as { refusedBy: string }).refusedBy).toBe('monthly-ceiling');
+    expect(monthlyErr?.message).toContain("The lane's own ceiling of 10000 credit(s) still had room");
+    expect((monthlyErr as unknown as { shortfallCredits: number }).shortfallCredits).toBe(0);
+  });
+
+  it('is carried by BOTH keyed copies and reaches the same verdict from each', async () => {
+    // The textual pin above covers the bytes; this covers the half it cannot see, since the two
+    // copies are separate module instances with separate constants.
+    for (const open of [openDuneLaneBudget, censusOpenDuneLaneBudget]) {
+      const { client } = usageClient([100]);
+      const b = open({
+        lane: 'scout',
+        ceilingCredits: 20,
+        reserveCredits: 0,
+        executionDeadlineMs: DEADLINE_MS,
+        monthlyCapCredits: CAP,
+        tightMultiple: 2,
+        allowanceRequired: true,
+      });
+      await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
+      const err = await b
+        .authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS })
+        .then(() => null, (e: Error) => e);
+      expect(err?.name).toBe('DuneLaneCeilingReached');
+      expect((err as unknown as { shortfallCredits: number }).shortfallCredits).toBe(6);
+    }
   });
 });

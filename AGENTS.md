@@ -675,6 +675,28 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   (1) cannot take the engine floor and stay plannable at 82 executions, and repricing an unactivated
   Gate 3 leg is that decision's; `dune-reproduction.mjs` → `WORST_CASE_CREDITS_PER_EXECUTION` moved
   10 → **61**, the floor its own 600 s deadline buys.
+- **A LANE CEILING WRITTEN IN A BRIEF IS NOT A CEILING — three lanes have now overrun one, and the
+  guard is `client.mjs` → `openDuneLaneBudget`.** It is inside the SHARED REGION, so it is duplicated
+  byte for byte in both keyed `client.mjs` files and pinned by `test/dune-credit-ceiling.test.ts`;
+  it re-reads the live balance and clears **one** execution at a time, and it **throws**
+  `DuneLaneCeilingReached` rather than returning a verdict, because a verdict is what an iterating
+  worker walks past. It reuses `estimatePlanCredits` + `decideAllowance` for the monthly ceiling —
+  one mechanism, not a second. **Nothing wires it yet**; a lane opts in. Three things bind, and each
+  is one of the overruns. **(1) NO MEASURED COST MAY SET THE NEXT BOUND**: the per-execution price is
+  floored at `executionDeadlineCredits(deadlineMs)` and a caller's smaller number is discarded. Two
+  executions IDENTICAL in shape (same generator, 350 launches, same two-month block list, 138.4 KB
+  of SQL) cost **14.226 and 20.028** — 41% apart for 25 more rows — and the lane that sized the
+  second from the first still overran a 50-credit stop (50.334). Per-execution price is not
+  predictable from date range, result size, or an identically-shaped prior batch; it is dominated by
+  wide repeated array columns (46.6 credits for a SINGLE DAY in the 40-credit/70.467-spent overrun).
+  **(2) THE CEILING IS ENFORCED AGAINST THE ACCOUNT COUNTER DELTA**, with the local estimate as the
+  other half and the LARGER binding — `LANE_SPEND_IS_TWO_QUANTITIES` owns it. Summed
+  `execution_cost_credits` under-reads the settled counter (measured **+8.000 credits over 1.085 MB**
+  of reads, on top of retrieval not being in that field at all), and the counter itself lags in
+  whole-credit jumps so it under-reads just after an execution. **(3) `EXPORT_CREDITS_PER_MB` (20) is
+  used at its EXPENSIVE published value and is NOT re-pinned** — two readings now put the real rate
+  at ~7.4 and ~4.9/MB, both cheap, which is the unsafe direction to assume persists; captain decision
+  248c owns Dune pricing.
 - **Budget from *billed* credits, not
   `execution_cost_credits`, which understates by ~3.5×** — retrieving results is ~71% of the bill at
   ~20 credits/MB. Hence: aggregate server-side, select only the columns the tool reads (dropping the

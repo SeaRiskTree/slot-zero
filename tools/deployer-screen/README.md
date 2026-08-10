@@ -3371,12 +3371,11 @@ evidence contract, pure and tested against synthetic and report-derived fixtures
 walk that does not exist yet. Captain decision 409 — how deployer completion is measured on that
 venue, given RAISE-85 cannot be evaluated there as written — is **MOOT: closed unanswered** by 413a,
 **WITHOUT a DBC completion measure being pinned**, and the closure must not be read as an answer to
-it. One clause of the reason is worth carrying because it is reusable: **curve completion on that
-venue is PURCHASABLE** — eight deployers were observed completing their own curve with a single
-threshold-sized buy from a second wallet, 10.96–10.98 SOL against a ~11 SOL threshold, never selling
-— so a completion measure built on *did the curve complete* measures a purchase and not an
-achievement. `CLAUDE.md` → "Meteora DBC: the venue line is CLOSED" owns the verdict and the evidence
-pointers; a reader arriving at this section must not take the pre-413a story from it.
+it. One clause of the reason is worth knowing because it is reusable: **curve completion on that
+venue is PURCHASABLE**, so a completion measure built on *did the curve complete* measures a purchase
+and not an achievement. `CLAUDE.md` → "Meteora DBC: the venue line is CLOSED" owns the verdict, the
+observation behind that clause and the evidence pointers — cite it rather than restating the figures
+here; a reader arriving at this section must not take the pre-413a story from it.
 
 ## Scope: what is and is not built
 

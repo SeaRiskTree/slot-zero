@@ -16694,6 +16694,19 @@ describe('the scoring cap goes where a visit covers the most new ground — 399a
       expect(refused.problems[0]).toContain(String(unusable));
       expect(refused.problems.join(' ')).not.toContain('states newGroundWindows');
     }
+
+    // AND IT BINDS ONLY WHERE THERE IS A KEY TO RE-DERIVE. This is the exact block
+    // `rotationRecordBlock` files on every run whose selection was null — `--no-rotation`, a run
+    // that scores nothing, a run that stopped before Stage 2 chose — and a reader walking committed
+    // records uniformly must not be told those correct runs failed.
+    const noSelection = {
+      order: [],
+      selected: [],
+      deferred: [],
+    } as unknown as Parameters<typeof verifySelection>[0];
+    expect(
+      verifySelection(noSelection, 7, { nowIso, windowCap: null as unknown as number }),
+    ).toEqual({ ok: true, problems: [] });
   });
 
   it('a PRE-399a order still verifies, because a missing key is not zero flow', () => {

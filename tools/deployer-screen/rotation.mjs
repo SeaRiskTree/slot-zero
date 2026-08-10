@@ -35,7 +35,7 @@
  * per-visit window cap** — a visit harvests `stage2_entry.maxLaunchesPerCandidate` launches and no
  * more, so ground beyond that is not reachable by this visit and must not earn priority.
  *
- * **Two costs, both accepted knowingly.**
+ * **Three costs, all accepted knowingly.**
  *
  * 1. **It is a selection-quality trade, not a free win.** Visiting the highest-tempo wallets most
  *    often concentrates the cap on the busiest launches, which are exactly the ones
@@ -47,6 +47,13 @@
  *    flow by the wallet's last deploy would park a dormant wallet forever, which is the starvation
  *    the saturation ceiling exists to prevent — see below. A visit spent on stale ground is the
  *    price of the guarantee.
+ * 3. **A MAYHEM-HEAVY SURVIVOR IS RANKED ON LESS FLOW THAN IT HAS, so it is UNDER-VISITED.** The
+ *    tempo is the gate's own reading and that reading excludes mayhem launches (captain decision
+ *    351) while a visit harvests every launch, so such a wallet saturates late and comes round less
+ *    often than its real flow merits. It is UNDER-SERVICE AND NEVER STARVATION — the key still
+ *    saturates and the FIFO tiebreak below still brings that wallet round, it simply waits longer
+ *    than its flow warrants. {@link RotationRow.launchesPerDay} owns the argument and the
+ *    alternatives declined.
  *
  * ## HOW A LOW-FLOW WALLET IS NOT PARKED FOREVER
  *
@@ -644,6 +651,14 @@ export function selectForScoring(rotation, wallets, max, flow) {
  *   re-derivation with ONE problem naming the cap, rather than folding to a cap of zero and
  *   accusing every row of stating a key its own inputs do not give. Same reading discipline
  *   {@link compareRotationRows} applies to a row that states no flow term.
+ *
+ *   **That refusal binds only when there is SOMETHING TO RE-DERIVE.** An EMPTY `order` holds no row
+ *   key, so the cap cannot be unusable FOR ANYTHING and an absent or `null` one is simply
+ *   irrelevant — the block passes. That is the shape `screen.mjs` → `rotationRecordBlock` files on
+ *   every run where the selection was null (`--no-rotation`, a run that scores nothing, a run that
+ *   stopped before Stage 2 chose): `order: []` beside `windowCap: null`. A reader walking committed
+ *   records uniformly must not be told those correct runs failed — absence is not a failure, the
+ *   same discipline one function over.
  * @returns {{ ok: boolean, problems: string[] }}
  */
 export function verifySelection(block, max, expected) {
@@ -664,7 +679,7 @@ export function verifySelection(block, max, expected) {
     }
   }
 
-  if (expected !== undefined) {
+  if (expected !== undefined && order.length > 0) {
     if (!Number.isFinite(expected.windowCap) || expected.windowCap <= 0) {
       problems.push(
         `cannot re-derive the flow term: the window cap handed in is ${String(expected.windowCap)}, ` +

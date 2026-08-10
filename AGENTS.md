@@ -432,6 +432,14 @@ Learned at real cost; the citations are to
   `sid.slice(-10, -4)` for the index. A 22-digit `sid` is past `Number.MAX_SAFE_INTEGER`, so
   arithmetic on it can round a fill down into the previous slot. The low 10 digits order fills
   *within* a slot and are not a timestamp — never difference two `sid`s as a duration.
+  **The layout is CHECKED on every live read, not only offline**: `measure.mjs` → `sidSlotField`
+  compares the key's leading field against the fill's own slot inside `createSlotGroups`, because
+  index uniqueness and per-transaction constancy are a WEAK test of the layout — a moved field
+  boundary can satisfy both while the six digits read are not a block index, and the run built on
+  them marks outsiders as the operation, the one direction 134a forbids. A mismatch degrades to
+  half (a) alone, exactly like the other two conditions. That function's doc owns what the
+  comparison can see on each fill source (a genuine cross-check on the tape and the Dune source, a
+  field-WIDTH check on swap-api, where `slot` is itself derived from the key).
 - **THE TWO PUMP.FUN SURFACES DO NOT AGREE ON A MINT INSTANT, and the disagreement runs in exactly
   the direction that deletes a create slot.** `frontend-api-v3`'s `coins?creator=` rows carry
   **millisecond-precision** `created_timestamp` on older launches while `swap-api`'s fill `ts` is

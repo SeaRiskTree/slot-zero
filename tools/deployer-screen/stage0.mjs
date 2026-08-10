@@ -825,7 +825,12 @@ export function replayRollingRoom(launches, t) {
  *    the assertion report §7.4 asks for.
  * 2. **The `sid` decomposition still holds** — its leading field is the fill's own slot, and no
  *    transaction carries two different block indices. That is `evidence/exp9.mjs`'s validation, run
- *    every time rather than once.
+ *    every time rather than once. The leading-field half of it is no longer offline-only:
+ *    `measure.mjs` → {@link import('./measure.mjs').sidSlotField} makes the same comparison inside
+ *    `createSlotGroups`, so a LIVE run against a stranger degrades to half (a) on a moved layout
+ *    instead of building a run out of digits that are not a block index. What this check adds over
+ *    that one is the COUNT and the population — it says the subject's own tape still decomposes,
+ *    where the live guard only ever refuses the launch in front of it, silently.
  * 3. **The recovery is still complete** — 45 of 45 cohort wallet-instances marked.
  * 4. **It still marks nobody else** — zero non-cohort create-slot wallets. A format change that
  *    made indexes collide rather than vanish would sweep the whole create slot into the run, which

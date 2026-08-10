@@ -97,6 +97,7 @@ import {
   raise85FromPumpfunGraduation,
   raise85FromQuoteInflow,
   roomIsProven,
+  sidSlotField,
   solBetweenPrices,
   tallyCreateSlot,
   toLaunchRefs,
@@ -347,6 +348,16 @@ const emptyEntryCoverage = (): Stage2Coverage => ({
  * within-slot ordering key, and it is what the create-slot fill queue — and therefore
  * `solQueuedAheadSol` — is derived from. It defaults to a monotonically increasing value in
  * declaration order, so a test's fill list reads as the queue it looks like.
+ *
+ * The default is built at the fill's OWN slot, not with a zero prefix: `createSlotGroups` checks
+ * the key's leading field against `slot` and degrades to half (a) when they disagree, so a
+ * zero-prefixed default would silently disable the adjacency half in every fixture that does not
+ * spell its keys out. The block indices are spaced 1,000 apart for the mirror-image reason — a
+ * default that ran 1, 2, 3 would make every fixture's fills ADJACENT and hand the co-ordination
+ * rule's half (b) marks nobody wrote. A fixture that means to test adjacency spells its keys out
+ * with `sidAt`. The counter wraps at 999 so the index stays six digits — a wider one would push the
+ * key to 23 characters and read as a moved layout; a wrap merely collides two indices, which is the
+ * same safe fallback and cannot manufacture a mark.
  */
 let sidCounter = 0;
 const fill = (
@@ -362,7 +373,7 @@ const fill = (
   }>,
 ): Fill => ({
   slot: o.slot ?? 100,
-  sid: o.sid ?? String(++sidCounter).padStart(22, '0'),
+  sid: o.sid ?? sidAt(o.slot ?? 100, ((sidCounter++ % 999) + 1) * 1000),
   tx: o.tx ?? 'tx0',
   wallet: o.wallet ?? 'w',
   side: o.side ?? ('buy' as const),
@@ -918,6 +929,55 @@ describe('the co-ordination rule, half (b) — the deployer-anchored block-index
     expect(m!.runTx).toBe(0);
     expect(m!.adjacencyMarks).toBe(0);
     expect(roomIsProven(m!)).toBe(false);
+  });
+
+  it('THE MOVED FIELD LAYOUT: consistent-looking indices are still refused when the sid prefix is not the slot', () => {
+    // The case the uniqueness and per-transaction-constancy checks CANNOT catch, and the reason the
+    // prefix comparison belongs in the live read rather than only in Stage 0's offline tripwire.
+    //
+    // Suppose the key's field boundaries move to `slot(13) + blockTxIndex(6) + innerIndex(3)`. The
+    // six digits `blockTxIndex` reads are then the slot field's last digit followed by five of the
+    // index's — still unique per transaction, still constant across one transaction's fills, and
+    // still capable of coming out ONE APART for two transactions that are ten apart in reality. The
+    // run built on that is not short, it is wrong: it sweeps a genuine outsider into the operation,
+    // lowering `roomLeft` and turning an unproven launch into a proven one. That is the single
+    // direction decision 134a forbids.
+    //
+    // The leading field, however, no longer equals the fill's own slot — 13 digits of slot read as
+    // 12 — and that is what the guard sees.
+    const SLOT = 4_116_399_651;
+    const moved = (blockIndex: number, innerIndex = 0) =>
+      String(SLOT).padStart(13, '0') +
+      String(blockIndex).padStart(6, '0') +
+      String(innerIndex).padStart(3, '0');
+
+    // Real indices 500 and 510: ten apart, and adjacent to nobody. Misread they are 100050 and
+    // 100051, which is a contiguous run through the deployer's own transaction.
+    const fills = [
+      fill({ slot: SLOT, sid: moved(500), tx: 'devtx', wallet: 'dev', sol: 10 }),
+      fill({ slot: SLOT, sid: moved(510), tx: 'outtx', wallet: 'outsider', sol: 10 }),
+    ];
+
+    // The premise of the test: today's two conditions are both satisfied by this fixture, so
+    // nothing but the prefix comparison stands between it and a false mark.
+    const misreadIndexes = fills.map((f) => blockTxIndex(f.sid));
+    expect(misreadIndexes).toEqual([100_050, 100_051]);
+    expect(new Set(misreadIndexes).size).toBe(fills.length);
+
+    const m = measureCreateSlot(fills);
+    expect(m!.runTx).toBe(0);
+    expect(m!.adjacencyMarks).toBe(0);
+    expect(m!.coordinatedWallets).toBe(0);
+    // The outsider keeps its stake, and the launch is UNPROVEN rather than falsely scored.
+    expect(m!.independentSol).toBe(10);
+    expect(roomIsProven(m!)).toBe(false);
+  });
+
+  it('reads the sid slot field, and refuses a leading field that is not decimal digits', () => {
+    expect(sidSlotField(sidAt(411_639_965, 776, 2))).toBe(411_639_965);
+    expect(sidSlotField(sidAt(100, 0))).toBe(100);
+    expect(sidSlotField('not-a-sid-at-all-2222')).toBeNaN();
+    expect(sidSlotField('0000000001')).toBeNaN(); // no leading field left at all
   });
 
   it('a transaction whose own fills disagree about their index disables the run too', () => {

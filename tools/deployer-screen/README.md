@@ -3342,14 +3342,13 @@ Inside that range the supply question is already answered in both directions (ev
 at the strictest measured bar clears the captain's 1,000-window floor by 1.8×), so a bar there is not
 chosen to buy supply; what a higher bar buys is a stronger claim, and what it costs is the thinner
 launches. **That trade is MOOT rather than open now, because the venue line is CLOSED** — captain
-decision 413a, 2026-08-10. Net-of-fees profitability on that band HAS been measured:
-`slot-zero-dbc-netfees-profitability` → `report.md` (held in firstmate's records, not in this repo)
-finds it loses **13.6–29.5% of deployed capital on every sampled day**, across 306,886 wallet-launch
-pairs, and negative **BEFORE** fees rather than after, with fewer than 1,000 wallets of ~11,000
-holding 99%+ of all gains. So no bar buys anything on this venue. The conclusion here is unchanged:
+decision 413a, 2026-08-10. Net-of-fees profitability on that band HAS been measured, and the band is
+loss-making **before** fees rather than after — `CLAUDE.md` → "Meteora DBC: the venue line is CLOSED"
+owns every figure and the evidence pointers, `slot-zero-dbc-netfees-profitability` → `report.md`
+included (held in firstmate's records, not in this repo); cite it rather than restating them here. So
+no bar buys anything on this venue. The conclusion here is unchanged:
 this repo still pins no bar, and pinning the number still returns to the captain. The predicate is
-**DORMANT, not orphaned or retired** — it stays in place, unwired and with its bar unpinned. See
-`CLAUDE.md` → "Meteora DBC: the venue line is CLOSED" for the verdict and the evidence pointers.
+**DORMANT, not orphaned or retired** — it stays in place, unwired and with its bar unpinned.
 
 **Three inputs it takes rather than derives**, each because deriving it works on pump.fun and does
 not here. The **window** is the fills handed in — the band's window ends at curve completion, an

@@ -3341,9 +3341,15 @@ supply evidence was measured at, so **5–50 is where evidence exists and is not
 Inside that range the supply question is already answered in both directions (even the weaker month
 at the strictest measured bar clears the captain's 1,000-window floor by 1.8×), so a bar there is not
 chosen to buy supply; what a higher bar buys is a stronger claim, and what it costs is the thinner
-launches. **Nothing measured says which way that trade should go** — net-of-fees profitability on
-that band has not been measured, and a parallel lane is measuring it now. Pinning the number returns
-to the captain.
+launches. **That trade is MOOT rather than open now, because the venue line is CLOSED** — captain
+decision 413a, 2026-08-10. Net-of-fees profitability on that band HAS been measured:
+`slot-zero-dbc-netfees-profitability` → `report.md` (held in firstmate's records, not in this repo)
+finds it loses **13.6–29.5% of deployed capital on every sampled day**, across 306,886 wallet-launch
+pairs, and negative **BEFORE** fees rather than after, with fewer than 1,000 wallets of ~11,000
+holding 99%+ of all gains. So no bar buys anything on this venue. The conclusion here is unchanged:
+this repo still pins no bar, and pinning the number still returns to the captain. The predicate is
+**DORMANT, not orphaned or retired** — it stays in place, unwired and with its bar unpinned. See
+`CLAUDE.md` → "Meteora DBC: the venue line is CLOSED" for the verdict and the evidence pointers.
 
 **Three inputs it takes rather than derives**, each because deriving it works on pump.fun and does
 not here. The **window** is the fills handed in — the band's window ends at curve completion, an
@@ -3364,8 +3370,14 @@ whole contest is in the create slot.
 the only venue module and there is no venue abstraction. This pass added the predicate and its
 evidence contract, pure and tested against synthetic and report-derived fixtures, ready for a window
 walk that does not exist yet. Captain decision 409 — how deployer completion is measured on that
-venue, given RAISE-85 cannot be evaluated there as written — is deliberately open, and nothing here
-assumes an answer to it.
+venue, given RAISE-85 cannot be evaluated there as written — is **MOOT: closed unanswered** by 413a,
+**WITHOUT a DBC completion measure being pinned**, and the closure must not be read as an answer to
+it. One clause of the reason is worth carrying because it is reusable: **curve completion on that
+venue is PURCHASABLE** — eight deployers were observed completing their own curve with a single
+threshold-sized buy from a second wallet, 10.96–10.98 SOL against a ~11 SOL threshold, never selling
+— so a completion measure built on *did the curve complete* measures a purchase and not an
+achievement. `CLAUDE.md` → "Meteora DBC: the venue line is CLOSED" owns the verdict and the evidence
+pointers; a reader arriving at this section must not take the pre-413a story from it.
 
 ## Scope: what is and is not built
 

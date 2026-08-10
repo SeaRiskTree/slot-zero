@@ -1049,6 +1049,14 @@ distinct usable windows a month: the reachable population yields ~309 a month ag
 invisible to every discovery source this repo has**, worth 1,442 distinct windows a month between
 them. Worth of this change: **309 → 590** distinct usable windows a month.
 
+> **THOSE TWO FIGURES REST ON A SUPERSEDED USABLE FRACTION.** 309 and 590 convert distinct windows
+> at the pooled **0.5526** measured over four vendor-seeded legs. Re-measured on the widened
+> population this input reaches — the 37 wallets themselves — the fraction is **0.1810**, and the
+> same two rungs read **101** and **193** distinct usable windows a month against a floor of 1,000.
+> The *distinct*-window counts (560, 1,067) are unchanged; only the conversion moved.
+> `measurements/2026-08-09-widened-usable-fraction/` owns the measurement, the restated ladder and
+> the limits — cite it rather than restating them, and never pool the two populations' fractions.
+
 **The finding it rests on, measured 2026-08-09.** `/deployer-hunter/{wallet}` returned a full
 70-record `pump_tokens` profile for two wallets the vendor's own hunter feeds have never surfaced,
 identical in shape to a known tier wallet's — so Stage 2 already has everything it needs for such a
@@ -1379,7 +1387,19 @@ and **17 of the 58 launched more than that in July, stranding 935 windows betwee
 harvesting all 58 needs **231** visits against 210 available, so the population is only **10%
 oversubscribed** — the loss is ALLOCATION and not capacity. Worth **590 → 1,085** distinct usable
 windows a month on top of `--wallets` (captain decision 398a); **neither change clears the captain's
-1,000 floor alone**. Those figures are `slot-zero-discovery-beyond-madeonsol` §5.2, held in
+1,000 floor alone**.
+
+> **RE-MEASURED, AND THE SIGN OF THIS ROW CHANGES.** 590 and 1,085 convert at the superseded pooled
+> **0.5526**. On the widened population the usable fraction is **0.1810**, and it *falls as launch
+> flow rises* — 0.0333 for wallets at ≥1 launch/day against 0.2917 below that. Since this selector
+> allocates by flow, the like-for-like conversion for this row is the **flow-weighted 0.0462**, and
+> the two rungs read **193** round-robin against **91** flow-weighted. So the allocation gain is
+> real in *distinct* windows (1,067 → 1,963, unchanged) and **negative in usable ones** on that
+> population. Neither rung, nor both together, clears the 1,000 floor.
+> `measurements/2026-08-09-widened-usable-fraction/` §5–§6 owns it. Re-deciding 399a on this
+> evidence is the captain's, not a lane's.
+
+Those figures are `slot-zero-discovery-beyond-madeonsol` §5.2, held in
 firstmate's records and not in this repo, so they are evidence from elsewhere and are asserted by no
 test here — what the test suite asserts is that a population of the same SHAPE harvests materially
 more through this selector, not that these counts reproduce.
@@ -1397,6 +1417,11 @@ by this visit.
    `stage2_entry.justification.maxLaunchesPerCandidate` records the request cap dropping most often.
    The one stranger leg on record read a **0.1333** usable fraction. Nothing here makes a dropped
    window reachable — it makes more windows be attempted.
+   **MEASURED SINCE, and it is worse than a trade:** on the widened population the usable fraction
+   is **anti-correlated with flow** (Spearman −0.4719, t −2.333 on 19 df; 0.0333 at ≥1 launch/day
+   against 0.2917 below it, and the fastest wallet measured — 17.10 launches/day — returned 0 of 10
+   windows). Flow-weighting therefore *lowers* the usable count even as it raises the distinct one.
+   `measurements/2026-08-09-widened-usable-fraction/` §5 owns the figures and their n = 21 limit.
 2. **The tempo is LIFETIME, so a wallet that has gone quiet is still visited on it.** Clamping flow
    by the wallet's last deploy would park a dormant wallet forever, which is the starvation the
    saturation ceiling exists to prevent. A visit spent on stale ground is the price of the guarantee.

@@ -1,0 +1,29 @@
+# The WIDENED population: the 37 pump.fun deployers that passed the committed Stage 1 gate in
+# 2026-07 and are invisible to every discovery source this repo has.
+#
+# Source: `slot-zero-census-gate-true-denominator` -> `gate-passers-2026-07.md`, the rows marked
+# **unseen** (held in firstmate's records, not in this repo). Census read 2026-08-07 over all
+# 176,200 pump.fun deployers active in 2026-07; 58 passed, 21 are reachable by some current source,
+# these 37 are not. Captain decision 398a is what makes them measurable.
+#
+# A supplied wallet list is a SEED, never a substitute for the gate (398a) -- every address below is
+# gated by the committed Stage 1 bars exactly as a vendor-seeded one is.
+#
+# Trailing comment on each line: census rank by lifetime launches, and that wallet's actual 2026-07
+# launch count.
+#
+# SUBSET 2 of 3 — every third address of widened-37.txt by census rank, so this subset
+# spans the launch-flow distribution instead of its head or its tail. The three subsets are
+# disjoint and their union is exactly widened-37.txt.
+hZPbb8fV418cRdFRzyLDumct9SgEsEqeLEoos9JF8DP # rank 6, july 174
+5dUXg97Ltrjid2KVTQAb6p6PVZXBneHcgV1Z8A9xzKgg # rank 11, july 111
+H5Wh4EDvWQT4mShH746V5VDqxHQkaQZyPWfuhy1PRVBg # rank 16, july 9
+EgFYLqyAHFfpbDNd3HtnytnJ2xV2yyduChNWHBih9fvv # rank 20, july 46
+BQTBiCHg2tw6nF9f9ccMdu55vaKw7y1P5xUFEZxiV8yt # rank 25, july 51
+9VXuNqqqzniYYW3fRDeaCtUUtqWsEeWWn5umh3aF9h17 # rank 28, july 3
+8dPdrqFuoJVFTc97JXqjLXT1Wwdf4S7k24Ywq9tMdTGV # rank 32, july 52
+5wHuMhntF2At2iWVCPm3Cj9H3ZJvZsWHWq4QvPmg5jMV # rank 36, july 5
+2K5by5vAcdExMmroWSi4s2cyFpW1xgyYGXd39DTaTGgT # rank 41, july 29
+5scjzbYCiBzJVeHKnExzxgGT9q64gZoi2FPgSpf8BWAA # rank 47, july 3
+DgXVwhDRi6gDJg3XZ37jYnP1oaDmyGTa67AmJkyTwMCU # rank 52, july 29
+3AGPvBE6ErX9tQ7ciyRfmPbfjmxcoYWKoX899N8iNXrr # rank 55, july 9

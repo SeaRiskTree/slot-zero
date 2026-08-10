@@ -8,11 +8,17 @@ the measured fraction the full 398a + 399a ladder delivers **91–355 distinct u
 month against a floor of 1,000** — short by 645 at best and 909 at worst. The floor is not
 reachable at the current gate by any combination of the authorised levers.
 
-Reproduce every figure here offline, with no credential and no socket:
+Reproduce the fractions, the disposition split and the restated ladder offline, with no credential
+and no socket:
 
 ```
 node tools/deployer-screen/measurements/2026-08-09-widened-usable-fraction/usable-fraction.mjs
 ```
+
+The script prints §1's guard, §3, §4, §5's two group means and §6. §5's rank correlation and its *t*
+are **not** printed by it: they are computed from the same three run records — `entry.launchesSampled`
+over `entry.coverage.launchesPlanned` against `scoringRotation.order[].launchesPerDay` — and the
+direction the argument rests on is the group means the script does print.
 
 ---
 

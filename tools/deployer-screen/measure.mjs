@@ -686,9 +686,12 @@ export const WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM =
  * answered in both directions: even the weakest month at the strictest measured bar clears the
  * captain's 1,000-window floor by 1.8x, so **a bar in this range is not chosen to buy supply.** What
  * a higher bar buys is a stronger claim about the window having been contested; what it costs is the
- * thinner launches, and nothing measured says which way that trade should go, because
- * net-of-fees profitability on this band has not been measured at all (that report's §6 says so
- * itself, and a parallel lane is measuring it now).
+ * thinner launches — and that trade is MOOT rather than open, because the venue line is CLOSED
+ * (captain decision 413a, 2026-08-10). Net-of-fees profitability on this band HAS since been
+ * measured and the band is loss-making BEFORE fees rather than after, so no bar buys anything here.
+ * `CLAUDE.md` → "Meteora DBC: the venue line is CLOSED" owns the figures and the evidence pointers,
+ * `slot-zero-dbc-netfees-profitability` → `report.md` included (held in firstmate's records, not in
+ * this repo); cite it rather than restating them.
  *
  * **This module pins NO bar and must not acquire one.** {@link windowParticipationIsProven} takes it
  * as a required parameter and refuses without it, because a default IS a pin and this pass measures
@@ -871,10 +874,13 @@ export function measureWindowParticipation(input) {
  * captain. {@link WINDOW_OUTSIDER_BAR_MEASURED_AT} carries the three counts the supply evidence
  * exists at and the argument for the 5–50 range; the number itself is the captain's.
  *
- * The second reason it stays a parameter: a parallel lane is measuring net-of-fees profitability on
- * the same band, and if profit turns out to sit in a narrow slice of wallets rather than broadly,
- * the bar this instrument wants is tighter. That result decides the number and not the instrument,
- * so the instrument must be able to take either answer without being rewritten.
+ * The second reason it stays a parameter was a pending measurement, and that contingency has
+ * RESOLVED — in the narrow-slice direction, gains on that band being concentrated in a small
+ * fraction of the wallets rather than broad. Captain decision 413a then CLOSED the venue line, so NO
+ * bar is pinned either way and this function's conclusion is unchanged: it still takes the bar from
+ * the caller and still refuses without one. The instrument stays able to take either answer without
+ * being rewritten, and stays DORMANT — unwired, not orphaned or retired. `CLAUDE.md` → "Meteora DBC:
+ * the venue line is CLOSED" owns the figures and the evidence pointers.
  *
  * @param {Pick<WindowParticipation, 'outsiderWallets'>} m
  * @param {{ minOutsiderWallets?: number | null }} [options] Optional in the TYPE so the refusal

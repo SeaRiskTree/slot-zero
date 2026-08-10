@@ -1717,7 +1717,9 @@ rather than restating the figures. Five things bind:
   so 5–50 is **where evidence exists and is not a recommendation**; inside it the supply question is
   already answered either way (the weaker month at the strictest measured bar clears the 1,000-window
   floor by 1.8×), and net-of-fees profitability on that band is UNMEASURED. Pinning the number is the
-  captain's.
+  captain's. **Profitability on that band HAS since been measured and the venue line is CLOSED — see
+  "Meteora DBC: the venue line is CLOSED" below before sizing anything on the supply figures here.
+  The predicate is DORMANT, not orphaned, and stays unwired with its bar unpinned.**
 - **IT TAKES THE WINDOW, THE DEPLOYER AND THE OPERATION'S WALLETS AS INPUTS, and the error runs one
   way.** Deriving each works on pump.fun and not there: the window ends at curve completion (a
   different table, not in the fill stream), the creator buys its own launch on only **60.59%** of the
@@ -1728,7 +1730,53 @@ rather than restating the figures. Five things bind:
   recomposes narrow or wide without re-walking.
 - **THERE IS STILL NO DBC DATA PATH IN THIS TREE** — `pumpfun.mjs` is the only venue module and there
   is no venue abstraction — and **captain decision 409** (how deployer completion is measured there,
-  RAISE-85 being unevaluable on it as written) is deliberately OPEN. Do not design around an answer.
+  RAISE-85 being unevaluable on it as written) was deliberately OPEN and is now **MOOT**, closed
+  unanswered by 413a below. Do not design around an answer, and do not read the closure as one.
+
+## Meteora DBC: the venue line is CLOSED
+
+Captain decisions **413a** (close the line), **414a** (leave the post-migration exit measurement
+declined) and the moot-closure of **409**, all 2026-08-10. **The verdict: the windows are real; they
+are not opportunities; and this project's screen-the-deployer method does not convert them either —
+the line fails on deployer TURNOVER before it fails on edge.** Three lanes measured it for 73.9 Dune
+credits total, and the scratch query they shared (public `8280657`) is archived. **Nothing in this
+tree changed for the closure** — no threshold, gate, screen or measurement path — and the section
+above's predicate is dormant rather than retired. Read this before spending a credit on the venue.
+
+The evidence, held in firstmate's records and not in this repo (see "Citing a report this repo does
+not hold"); **point at them rather than restating them**:
+
+- `slot-zero-meteora-dbc-venue-scope` → `report.md` — the venue splits by config threshold. Below
+  10 SOL the curve completes IN THE CREATE SLOT and there is no window at all (72.4% of SOL
+  launches); the 10–30 SOL band has a real **134 s median window, 134 distinct outsider wallets**,
+  and 1,778–4,512 usable windows a month against the captain's floor of 1,000. **Supply was never
+  the problem.**
+- `slot-zero-dbc-netfees-profitability` → `report.md` — that band loses **13.6–29.5% of deployed
+  capital on every sampled day**, across 306,886 wallet-launch pairs, and it is negative **BEFORE
+  fees** rather than after. Fewer than 1,000 wallets of ~11,000 hold 99%+ of all gains.
+- `slot-zero-dbc-per-deployer-conditional` → `report.md` — **0 of 398 and 0 of 2,039 deployers has a
+  profitable field.** The screened advantage is small, overlapping, capital-concentrated, and
+  explained by launch size and closure share rather than by deployer skill. Only **18.4%** of June's
+  gate-clearing deployers launch at all in July, which is the turnover the verdict turns on.
+
+Three specifics worth keeping in their own right, because they are reusable and not obvious:
+
+- **CURVE COMPLETION ON THIS VENUE IS PURCHASABLE, so a completion measure built on "did the curve
+  complete" measures a PURCHASE and not an achievement.** Eight deployers were observed completing
+  their own curve with a single threshold-sized buy from a second wallet — one wallet, one pair per
+  launch, **10.96–10.98 SOL against a ~11 SOL threshold**, never selling. That is why 409 closed
+  without a DBC completion measure being pinned. It is this repo's own `SETTLED_OUTSIDERS` trap one
+  venue over (`src/cohort.ts`, and the "a counterparty row is not a trader" hazard above):
+  **`payer <> creator` does not mean "independent trader".**
+- **RAISE-85 IS UNREACHABLE ON THE DBC CURVE.** The tradeable band completes at ~11 SOL, so anything
+  reaching the 85-SOL bar does so in the POST-MIGRATION market rather than on the curve — which is
+  what made 352b's measure unevaluable there as written.
+- **ONE GAP IS OPEN AND WAS DELIBERATELY LEFT UNBOUGHT — the verdict is not a complete accounting.**
+  About **90% of outsider positions still hold tokens when the curve completes** and are marked at
+  zero, and **closure share is the strongest single predictor** of a deployer's measured field rate.
+  The post-migration exit measurement (**81–221 Dune credits**) is the thing that would settle it.
+  **414a declined it because the line is being closed, NOT because the gap was resolved.** A lane
+  reopening the venue buys that measurement first.
 
 ## Stage 2 scoring has a MEMORY now, and it is allocated by FLOW
 

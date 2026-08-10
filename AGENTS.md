@@ -1695,7 +1695,7 @@ dev currently?"*, and the shape of the answer is the point:
 Captain decision 408a, 2026-08-10. **NOTHING CALLS THEM** — no stage, no threshold, no record — and a
 test pins that absence, so wiring them is a decision rather than a diff.
 `tools/deployer-screen/README.md` → "A SECOND provability instrument" owns the long form; cite it
-rather than restating the figures. Four things bind:
+rather than restating the figures. Five things bind:
 
 - **THE TWO CLAIMS ARE DIFFERENT, NOT NESTED, AND CONFLATING THEM IS THE WHOLE HAZARD.**
   `roomIsProven` licenses a room SHARE to be read as measured (create-slot-scoped, and it is

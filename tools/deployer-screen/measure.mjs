@@ -629,7 +629,7 @@ export function createSlotGroups(fills) {
  * @property {number | null} afterCreateSlotOutsiderFills
  * @property {number | null} windowOnlyOutsiderWallets     Wallets half two shows that half one did
  *   NOT. The size of what the whole-window framing adds over a create-slot-only one, and the number
- *   that reads ~133 on this venue's median launch and 0 on a launch whose whole contest is in the
+ *   that reads 134 on this venue's median launch and 0 on a launch whose whole contest is in the
  *   create slot. **The halves do not sum to `outsiderWallets`** — a wallet present in both is
  *   counted in both — which is exactly why this field exists rather than a subtraction.
  * @property {number} preCreateSlotFills Fills at a slot EARLIER than the supplied create slot. A

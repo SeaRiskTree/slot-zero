@@ -9,8 +9,79 @@
  * 168 windows a month against roughly 2,571 of available supply, and the captain's floor is 1,000
  * window measurements a month.
  *
- * So the cap now spends itself on the **least-recently-scored** survivors and cycles through the
- * population instead of repeating its head.
+ * So the cap now spends itself on the survivors a visit covers the most NEW GROUND on, and cycles
+ * through the population instead of repeating its head.
+ *
+ * ## WHICH survivors, and why recency alone was not it — captain decision 399a
+ *
+ * 336a ordered survivors on `lastScoredAtIso` alone. That is correct for its own purpose and it is
+ * BLIND to how much new ground a visit actually covers: a round robin gives every survivor the same
+ * number of visits whatever its launch tempo, and a deployer creating forty tokens a month gets the
+ * same three-and-a-bit visits as one creating six. Measured over the 58 census July gate-passers and
+ * their real July launch counts, the same 210 monthly scorings harvest **1,067** distinct windows
+ * round-robin against **1,963** allocated by remaining unharvested flow. The tail is what is
+ * stranded: 58 wallets against 210 scorings is 3.62 visits each, i.e. 36.2 windows of allowance, and
+ * **17 of the 58 launched more than that in July, stranding 935 windows between them**. Fully
+ * harvesting all 58 needs 231 visits against 210 available — the population is only 10%
+ * oversubscribed, so the loss is ALLOCATION and not capacity.
+ * (`slot-zero-discovery-beyond-madeonsol` §5.2, held in firstmate's records, not in this repo — so
+ * every figure in this paragraph is evidence from elsewhere and is asserted by no test here. What
+ * `test/deployer-screen.test.ts` → "CHANGES THE HARVEST on a heavy tail" does assert is that a
+ * population of the same SHAPE harvests materially more through this selector; it does not
+ * reproduce those counts and must not be read as doing so.)
+ *
+ * The rank key is therefore {@link newGroundWindows}: how many DISTINCT windows a visit would cover
+ * now, which is the wallet's launch flow multiplied by how long it has waited, **saturating at the
+ * per-visit window cap** — a visit harvests `stage2_entry.maxLaunchesPerCandidate` launches and no
+ * more, so ground beyond that is not reachable by this visit and must not earn priority.
+ *
+ * **Three costs, all accepted knowingly.**
+ *
+ * 1. **It is a selection-quality trade, not a free win.** Visiting the highest-tempo wallets most
+ *    often concentrates the cap on the busiest launches, which are exactly the ones
+ *    `stage2_entry.justification.maxLaunchesPerCandidate` records the request cap dropping most
+ *    often. The one stranger leg on record read a 0.1333 usable fraction, and this change points
+ *    capacity at the population that reading came from. Nothing here makes a dropped window
+ *    reachable; it makes more windows be attempted.
+ * 2. **The tempo is LIFETIME, so a wallet that has gone quiet is still visited on it.** Clamping
+ *    flow by the wallet's last deploy would park a dormant wallet forever, which is the starvation
+ *    the saturation ceiling exists to prevent — see below. A visit spent on stale ground is the
+ *    price of the guarantee.
+ * 3. **A MAYHEM-HEAVY SURVIVOR IS RANKED ON LESS FLOW THAN IT HAS, so it is UNDER-VISITED.** The
+ *    tempo is the gate's own reading and that reading excludes mayhem launches (captain decision
+ *    351) while a visit harvests every launch, so such a wallet saturates late and comes round less
+ *    often than its real flow merits. It is UNDER-SERVICE AND NEVER STARVATION — the key still
+ *    saturates and the FIFO tiebreak below still brings that wallet round, it simply waits longer
+ *    than its flow warrants. {@link RotationRow.launchesPerDay} owns the argument and the
+ *    alternatives declined.
+ *
+ * ## HOW A LOW-FLOW WALLET IS NOT PARKED FOREVER
+ *
+ * Pure greed by flow would park one, so the rule is deliberately not pure greed. Three clauses, and
+ * the guarantee is a consequence of the second:
+ *
+ * 1. A survivor this screen has never scored ranks first, ahead of every measured one whatever its
+ *    flow. Newcomers are never outbid.
+ * 2. Then descending {@link RotationRow.newGroundWindows} — and it **SATURATES**. A wallet's ground
+ *    grows with the time it has waited, so a low-flow wallet's key rises every day and reaches the
+ *    ceiling after `windowCap / launchesPerDay` days, which is exactly how long that wallet takes to
+ *    produce a full visit's worth of new launches. Every gate survivor has a strictly positive
+ *    tempo, because passing the gate requires `stage1_gate.minTokens` launches over a finite span,
+ *    so every survivor saturates in bounded time.
+ * 3. Once saturated, rows tie on flow and the tiebreak is 336a's own: ascending `lastScoredAtIso`,
+ *    least recently measured first. That is a strict FIFO queue — anything scored after a saturated
+ *    wallet sorts BEHIND it forever — so the set ahead of a saturated wallet only shrinks, and it is
+ *    selected within a bounded number of runs.
+ *
+ * An UNREADABLE tempo is treated as SATURATED, never as no flow. That is this repo's standing
+ * direction for a missing measurement one lane over (`measure.mjs` → `measureCompletion`'s unreadable
+ * flag) applied here: reading absence as zero would park the wallet on evidence about our own
+ * coverage, and the failure would be permanent and invisible. Treating it as saturated costs at
+ * worst one keyless walk.
+ *
+ * With no tempo readable ANYWHERE the rule degenerates to exactly 336a's — every row saturated,
+ * every flow comparison a tie, recency deciding — which is how the superseded allocation stays
+ * reachable and testable without a second comparator to drift from this one.
  *
  * ## What this module is NOT
  *
@@ -55,7 +126,11 @@
  *    `order` the rotation produced, not just the slice it took, and {@link verifySelection} — the
  *    same ranking rule the live selection uses — recomputes the slice from it. A reader who never
  *    saw the state file can still check that the run scored the wallets its own rule says it should
- *    have.
+ *    have. **399a's flow term is subject to that condition rather than exempt from it**: a
+ *    comparator reading anything the record does not carry would break it, so every input the
+ *    ranking uses — the tempo AND the saturating ground it produced — is persisted on the row, and
+ *    {@link verifySelection} will re-derive the second from the first when handed the run's own
+ *    instant and window cap, both of which the record already states.
  *
  * {@link REPRODUCIBILITY_RULE} is that condition in one sentence and it travels on the state file,
  * on the run record and on the rendered Stage 2 block, for the reason `LANDING_TIP_CAVEAT` does:
@@ -89,10 +164,45 @@ export const ROTATION_SCHEMA_VERSION = 1;
  * claim has to be the place they meet the selection.
  */
 export const REPRODUCIBILITY_RULE =
-  'ROTATION STATE IS COMMITTED EVIDENCE: this run scored the least-recently-scored survivors, so ' +
-  'its output depends on every run before it. The run record names the state it read (path, schema ' +
-  'version, SHA-256 before and after) and carries the whole ranked order, so the selection is ' +
-  're-derivable from committed artefacts alone — rotation.mjs -> verifySelection.';
+  'ROTATION STATE IS COMMITTED EVIDENCE: this run spent its scoring cap where a visit covers the ' +
+  'most NEW GROUND — remaining unharvested launch flow, saturating at the per-visit window cap, ' +
+  'with least-recently-scored breaking ties — so its output depends on every run before it. The ' +
+  'run record names the state it read (path, schema version, SHA-256 before and after) and carries ' +
+  'the whole ranked order with the flow term on every row, so the selection is re-derivable from ' +
+  'committed artefacts alone — rotation.mjs -> verifySelection.';
+
+/**
+ * What the rank key means, in one sentence, for the surfaces that print a selection.
+ *
+ * Kept apart from {@link REPRODUCIBILITY_RULE} because they answer different questions — that one
+ * says the selection can be CHECKED, this one says what it OPTIMISES — and a reader deciding whether
+ * a run's wallet list looks right needs the second.
+ */
+export const NEW_GROUND_RULE =
+  'FLOW-WEIGHTED (captain decision 399a): the cap goes where a visit covers the most windows it has ' +
+  'not already covered — launch flow times time waited, capped at the per-visit window cap — and ' +
+  'never-scored first, least-recently-scored breaking ties. Recency alone gave every survivor the ' +
+  'same number of visits whatever its tempo, which stranded the tail.';
+
+/**
+ * The RECIPROCAL of the unit the flow term is quantised to — quanta per window, so the grid itself
+ * is `1 / GROUND_QUANTA_PER_WINDOW` = 1e-6 of a window. RAISING this number makes the grid FINER.
+ *
+ * A rank key that is a product of two floats has ties that exist in the arithmetic and not in the
+ * evidence, and a comparator that separates two rows by 1e-15 makes a published selection turn on a
+ * rounding difference nobody can reproduce. Rounding to a fixed grid is a TOTAL order — an epsilon
+ * comparison is not transitive and would sort differently depending on the input order — and 1e-6 of
+ * a window is far below anything this measurement can distinguish.
+ */
+const GROUND_QUANTA_PER_WINDOW = 1e6;
+
+/**
+ * @param {number} value
+ * @returns {number}
+ */
+function quantise(value) {
+  return Math.round(value * GROUND_QUANTA_PER_WINDOW) / GROUND_QUANTA_PER_WINDOW;
+}
 
 /**
  * @typedef {object} RotationEntry
@@ -124,11 +234,103 @@ export const REPRODUCIBILITY_RULE =
  * 56-year window, and a `1970-01-01` here would read as "scored, a very long time ago" and sort
  * identically to one that genuinely was.
  *
+ * `launchesPerDay` and `newGroundWindows` are captain decision 399a's rank key and BOTH are
+ * persisted, not just the second. The comparator needs only `newGroundWindows`, so recording the
+ * tempo beside it is redundant for re-deriving the ORDER and is what lets a reader re-derive the KEY
+ * — the difference between checking that a run obeyed its own numbers and checking that its numbers
+ * were the right ones.
+ *
  * @typedef {object} RotationRow
  * @property {string} wallet
  * @property {string | null} lastScoredAtIso
  * @property {number} timesScored
+ * @property {number | null} launchesPerDay The survivor's launch tempo on the reading THE GATE read
+ *   — `completion.tokens / completion.spanDays`, so it is that reading's population and carries its
+ *   limits (post-mayhem-exclusion and criterion-readable since thresholds 6.8.0/6.9.0, and a vendor
+ *   page rather than a merged history under `--ownership-only`). `null` when it cannot be read,
+ *   which is never the same as no flow — see {@link newGroundWindows}.
+ *
+ *   **A MAYHEM-HEAVY SURVIVOR'S FLOW IS SYSTEMATICALLY UNDERSTATED HERE, and that is a known,
+ *   accepted limit of this tempo source rather than a defect.** `measure.mjs` → `measureCompletion`
+ *   computes `tokens` and `spanDays` over the mayhem-EXCLUDED set (captain decision 351) while
+ *   Stage 2 harvests from `toLaunchRefs`, which includes every launch — so a deployer launching
+ *   ~1.0/day of which only ~0.3/day is non-mayhem is ranked on the 0.3, saturates in ~33 days
+ *   instead of ~10, and is visited roughly 3x less often than its real harvestable flow merits.
+ *   That is exactly the 13-of-58 population 351 exists to stop penalising. **The bound that makes
+ *   it survivable is that it is UNDER-SERVICE AND NEVER STARVATION**: the key still saturates and
+ *   336a's FIFO tiebreak still brings that wallet round — it simply waits longer than its real flow
+ *   warrants. The alternatives are worse readings, not better ones: a mayhem-inclusive enumerated
+ *   count is `null`/UNMEASURED on every walk-sourced candidate, and `toLaunchRefs` is the vendor's
+ *   capped, success-biased 70-record page.
+ * @property {number} newGroundWindows THE SORT KEY: how many distinct windows a visit would cover
+ *   now, saturating at the per-visit window cap.
  */
+
+/**
+ * What the ranking needs that a rotation state does not hold.
+ *
+ * Passed in rather than read here, for the reason the eligibility gate asks its fill source one
+ * module over: the window cap is `stage2_entry`'s and is source-scoped, the tempo is the gate's own
+ * reading, and the instant is the run's. A module that reached for any of the three itself would be
+ * a second derivation of a number that already has one.
+ *
+ * @typedef {object} RotationFlow
+ * @property {string} nowIso The RUN's instant — the same one `markScored` stamps, so the ground a
+ *   row is ranked on and the instant that row will carry afterwards are one clock.
+ * @property {number} windowCap `stage2_entry.maxLaunchesPerCandidate`: how many launches ONE visit
+ *   harvests. The saturation ceiling, because ground beyond what a visit can reach is ground this
+ *   visit does not cover.
+ * @property {Readonly<Record<string, number | null>>} launchesPerDay Per survivor. An absent or
+ *   `null` entry is UNREADABLE, never zero.
+ */
+
+/**
+ * A survivor's launch tempo, from the completion measurement the gate judged it on.
+ *
+ * Refuses rather than guesses, and every refusal lands on the visit-favouring side: a zero or
+ * negative span (every launch on one day) would give an infinite tempo and a zero token count would
+ * give none, and both come back `null`, which {@link newGroundWindows} reads as saturated.
+ *
+ * @param {{ tokens: number, spanDays: number }} completion
+ * @returns {number | null}
+ */
+export function launchesPerDayOf(completion) {
+  const { tokens, spanDays } = completion;
+  if (!Number.isFinite(tokens) || !Number.isFinite(spanDays)) return null;
+  if (tokens <= 0 || spanDays <= 0) return null;
+  return quantise(tokens / spanDays);
+}
+
+/**
+ * How many DISTINCT windows a visit to this survivor would cover now — captain decision 399a.
+ *
+ * `launchesPerDay × days waited`, capped at the per-visit window cap. Three readings return the cap
+ * flat, and they are three different facts that happen to share an answer:
+ *
+ * - **Never scored.** Nothing about this wallet has been harvested, so a visit covers as much as a
+ *   visit can. It is the cap EXACTLY rather than approximately, because a gate survivor carries at
+ *   least `stage1_gate.minTokens` launches and that floor is above the window cap — a test pins the
+ *   inequality, so a lane that lowered the floor below the cap is told rather than left with a value
+ *   that quietly overstates.
+ * - **An unreadable tempo.** Absence of evidence, and reading it as no flow would park the wallet
+ *   permanently and invisibly on a failure of OUR coverage.
+ * - **An unusable instant.** Same direction, same reason.
+ *
+ * @param {{ lastScoredAtIso: string | null, launchesPerDay?: number | null }} row
+ * @param {{ nowIso: string, windowCap: number }} flow
+ * @returns {number}
+ */
+export function newGroundWindows(row, flow) {
+  const cap = Number.isFinite(flow.windowCap) && flow.windowCap > 0 ? quantise(flow.windowCap) : 0;
+  if (row.lastScoredAtIso === null) return cap;
+  const tempo = row.launchesPerDay;
+  if (typeof tempo !== 'number' || !Number.isFinite(tempo) || tempo <= 0) return cap;
+  const now = Date.parse(flow.nowIso);
+  const last = Date.parse(row.lastScoredAtIso);
+  if (!Number.isFinite(now) || !Number.isFinite(last)) return cap;
+  const days = Math.max(0, now - last) / 86_400_000;
+  return Math.min(quantise(tempo * days), cap);
+}
 
 /** @returns {Rotation} */
 export function emptyRotation() {
@@ -294,19 +496,26 @@ export function markScored(rotation, wallet, scoredAtIso) {
 }
 
 /**
- * Rank survivors least-recently-scored first.
+ * Rank survivors by the ground a visit covers, least-recently-scored breaking ties.
  *
- * **The rule, and all three clauses matter.**
+ * **The rule, and all four clauses matter.**
  *
  * 1. A survivor this screen has never scored comes before one it has. There is no measurement to
- *    refresh, so there is nothing to wait for.
- * 2. Among scored survivors, ascending `lastScoredAtIso` — least recently measured first. That is
- *    `nextGateBatch`'s shape one lane over and it is chosen for the same reason: draining
- *    freshest-first leaves the oldest permanently starved while every run reports a healthy count.
- * 3. Ties break on the survivor's position in the list the caller passed, which `mergeSeeds` makes
+ *    refresh, so there is nothing to wait for — and it is a clause rather than a consequence of the
+ *    next one, so a newcomer's priority does not depend on the flow arithmetic agreeing.
+ * 2. Then descending {@link newGroundWindows} — captain decision 399a. Recency alone gave every
+ *    survivor the same number of visits whatever its tempo, which strands the tail; the module
+ *    comment carries the measurement and the two costs.
+ * 3. Among rows the flow term does not separate — which is every row once they saturate, and every
+ *    row at all when no tempo is readable — ascending `lastScoredAtIso`, least recently measured
+ *    first. That is `nextGateBatch`'s shape one lane over and it is chosen for the same reason:
+ *    draining freshest-first leaves the oldest permanently starved while every run reports a healthy
+ *    count. Here it does second duty as the anti-starvation guarantee — see the module comment.
+ * 4. Ties break on the survivor's position in the list the caller passed, which `mergeSeeds` makes
  *    deterministic. So two runs over the same state and the same population rank identically, and
- *    with no state at all the ranking IS the caller's order — which is what makes the first run
- *    after 336a byte-identical to the `slice(0, maxScored)` it replaced.
+ *    with no state at all every row is never-scored and saturated, so the ranking IS the caller's
+ *    order — which is what keeps the first run after 336a byte-identical to the
+ *    `slice(0, maxScored)` it replaced, 399a included.
  *
  * **A survivor set that shrank costs nothing.** Wallets the rotation knows and this run's gate did
  * not return simply do not appear; their rows are kept, so a wallet that drops out for a day and
@@ -316,17 +525,27 @@ export function markScored(rotation, wallet, scoredAtIso) {
  *
  * @param {Rotation} rotation
  * @param {readonly string[]} wallets Gate survivors, in the order the screen would have sliced.
+ * @param {RotationFlow} flow What the flow term is computed from. Required rather than defaulted:
+ *   a caller that forgot it would get 336a's allocation while the record claimed 399a's.
  * @returns {RotationRow[]}
  */
-export function rotationOrder(rotation, wallets) {
+export function rotationOrder(rotation, wallets, flow) {
   const rows = wallets.map((wallet, index) => {
     const entry = rotation.wallets[wallet];
+    const lastScoredAtIso = entry?.lastScoredAtIso ?? null;
+    const tempo = flow.launchesPerDay[wallet];
+    const launchesPerDay =
+      typeof tempo === 'number' && Number.isFinite(tempo) && tempo > 0 ? quantise(tempo) : null;
     return {
       index,
       row: /** @type {RotationRow} */ ({
         wallet,
-        lastScoredAtIso: entry?.lastScoredAtIso ?? null,
+        lastScoredAtIso,
         timesScored: entry?.timesScored ?? 0,
+        launchesPerDay,
+        // Computed from the QUANTISED tempo, which is the number the record carries, so a reader
+        // re-deriving the key from the row gets this figure back exactly rather than nearly.
+        newGroundWindows: newGroundWindows({ lastScoredAtIso, launchesPerDay }, flow),
       }),
     };
   });
@@ -348,6 +567,12 @@ export function rotationOrder(rotation, wallets) {
  * Returns 0 for rows the rule does not separate; the caller supplies the positional tiebreak,
  * which a record cannot carry and a verifier therefore must not demand.
  *
+ * **A row that states no flow term does not lose to one that does.** Records written before captain
+ * decision 399a carry `order` rows with no `newGroundWindows` at all, and they were produced under a
+ * rule that had none — so the flow clause simply does not separate such a pair and the comparator
+ * falls through to 336a's recency, which is the rule those rows were ranked by. Scoring an absent
+ * key as zero would report every pre-399a record as having ranked its own survivors wrongly.
+ *
  * @param {RotationRow} a
  * @param {RotationRow} b
  * @returns {number}
@@ -356,6 +581,9 @@ export function compareRotationRows(a, b) {
   const an = a.lastScoredAtIso === null;
   const bn = b.lastScoredAtIso === null;
   if (an !== bn) return an ? -1 : 1;
+  const ag = statedGround(a);
+  const bg = statedGround(b);
+  if (ag !== null && bg !== null && ag !== bg) return ag > bg ? -1 : 1;
   if (an || bn) return 0;
   const sx = /** @type {string} */ (a.lastScoredAtIso);
   const sy = /** @type {string} */ (b.lastScoredAtIso);
@@ -366,15 +594,27 @@ export function compareRotationRows(a, b) {
 }
 
 /**
+ * The flow term a row STATES, or `null` for a row that states none.
+ *
+ * @param {RotationRow} row
+ * @returns {number | null}
+ */
+function statedGround(row) {
+  const g = row.newGroundWindows;
+  return typeof g === 'number' && Number.isFinite(g) ? g : null;
+}
+
+/**
  * Choose the survivors this run's scoring cap is spent on.
  *
  * @param {Rotation} rotation
  * @param {readonly string[]} wallets
  * @param {number} max
+ * @param {RotationFlow} flow
  * @returns {{ order: RotationRow[], selected: string[], deferred: string[], neverScored: number }}
  */
-export function selectForScoring(rotation, wallets, max) {
-  const order = rotationOrder(rotation, wallets);
+export function selectForScoring(rotation, wallets, max, flow) {
+  const order = rotationOrder(rotation, wallets, flow);
   const take = Math.max(0, Math.min(max, order.length));
   return {
     order,
@@ -392,14 +632,36 @@ export function selectForScoring(rotation, wallets, max) {
  * that run scored the wallets its own stated rule says it should have. Reported as problems rather
  * than a boolean so a reader is told WHICH clause failed; an empty list is the pass.
  *
+ * **The flow term is checked at two depths, and the second is optional because it needs two more
+ * fields off the record.** Replaying the comparator checks that the run obeyed the numbers it wrote
+ * down. Handing in `expected` — the run's own `startedAtIso` and the `maxLaunchesPerCandidate` of
+ * the recipe it recorded — additionally re-derives each row's `newGroundWindows` from its
+ * `launchesPerDay`, which checks that those numbers were the right ones. A record cannot be trusted
+ * to grade its own key without it, so a reader with the whole record should pass it.
+ *
  * @param {{ order: readonly RotationRow[], selected: readonly string[], deferred: readonly string[] }} block
  * @param {number} max The scoring cap the run APPLIED, which is its own recorded `scoringCap.max`
  *   and never `thresholds.stage2_entry.maxCandidatesScored`. The two differ whenever `--score` was
  *   passed — the applied cap is the `min()` of the two — and a reader who reaches for the pinned
  *   recipe instead would be told a correct `--score 3` run selected the wrong wallets.
+ * @param {{ nowIso: string, windowCap: number }} [expected] The run's own instant and per-visit
+ *   window cap, for re-deriving the flow term. Omit for a pre-399a record, whose rows carry none.
+ *   A cap handed in that is not a positive number of launches — an absent one off a pre-399a
+ *   record, or the `null` a schema-23 record carries when its selection was null — REFUSES the
+ *   re-derivation with ONE problem naming the cap, rather than folding to a cap of zero and
+ *   accusing every row of stating a key its own inputs do not give. Same reading discipline
+ *   {@link compareRotationRows} applies to a row that states no flow term.
+ *
+ *   **That refusal binds only when there is SOMETHING TO RE-DERIVE.** An EMPTY `order` holds no row
+ *   key, so the cap cannot be unusable FOR ANYTHING and an absent or `null` one is simply
+ *   irrelevant — the block passes. That is the shape `screen.mjs` → `rotationRecordBlock` files on
+ *   every run where the selection was null (`--no-rotation`, a run that scores nothing, a run that
+ *   stopped before Stage 2 chose): `order: []` beside `windowCap: null`. A reader walking committed
+ *   records uniformly must not be told those correct runs failed — absence is not a failure, the
+ *   same discipline one function over.
  * @returns {{ ok: boolean, problems: string[] }}
  */
-export function verifySelection(block, max) {
+export function verifySelection(block, max, expected) {
   /** @type {string[]} */
   const problems = [];
   const order = [...block.order];
@@ -409,10 +671,35 @@ export function verifySelection(block, max) {
     const here = /** @type {RotationRow} */ (order[i]);
     if (compareRotationRows(prev, here) > 0) {
       problems.push(
-        `order is not least-recently-scored first at position ${i}: ${prev.wallet} ` +
-          `(${prev.lastScoredAtIso ?? 'never scored'}) before ${here.wallet} ` +
-          `(${here.lastScoredAtIso ?? 'never scored'})`,
+        `order is not new-ground-first, least-recently-scored breaking ties, at position ${i}: ` +
+          `${prev.wallet} (${prev.lastScoredAtIso ?? 'never scored'}, ` +
+          `${statedGround(prev) ?? 'no flow term'}) before ${here.wallet} ` +
+          `(${here.lastScoredAtIso ?? 'never scored'}, ${statedGround(here) ?? 'no flow term'})`,
       );
+    }
+  }
+
+  if (expected !== undefined && order.length > 0) {
+    if (!Number.isFinite(expected.windowCap) || expected.windowCap <= 0) {
+      problems.push(
+        `cannot re-derive the flow term: the window cap handed in is ${String(expected.windowCap)}, ` +
+          'which is not a positive number of launches — a pre-399a record carries none, and a ' +
+          'schema-23 record whose selection was null records it as null. Omit `expected` to check ' +
+          'the order alone rather than reading an unusable cap as a cap of zero, which would report ' +
+          'every row as having stated a key its own inputs do not give',
+      );
+    } else {
+      for (const row of order) {
+        const want = newGroundWindows(row, expected);
+        if (statedGround(row) !== want) {
+          problems.push(
+            `${row.wallet} states newGroundWindows ${String(row.newGroundWindows)}; its own ` +
+              `launchesPerDay ${String(row.launchesPerDay)} and lastScoredAtIso ` +
+              `${row.lastScoredAtIso ?? 'never scored'} give ${want} at a window cap of ` +
+              `${expected.windowCap}`,
+          );
+        }
+      }
     }
   }
 

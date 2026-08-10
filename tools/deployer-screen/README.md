@@ -1111,11 +1111,12 @@ their tolerance is unmeasured.
 `walletList` block names the file, its SHA-256, the counts and `seedsIssued: 0`. Record schema 22 —
 see the schema table below for what a reader of an older record may and may not assume.
 
-**Not built here, deliberately.** The flow-weighted scoring allocation (captain decision 399a,
-`slot-zero-rotation-tempo-weighted-slots`) is its own lane and blocked on this one — `rotation.mjs`'s
-comparator is untouched. The recurring chain-wide enumeration that would PRODUCE these lists (350a)
-is its own lane. And nothing here tries to establish who anyone is: captain decision 370a closed
-that question permanently.
+**Not built here, deliberately.** The flow-weighted scoring allocation (captain decision 399a) was
+its own lane and blocked on this one — 398a left `rotation.mjs`'s comparator untouched, and 399a has
+since landed and moved it; "WHICH survivors the cap is spent on" below owns it, and the two are the
+pair that clears the captain's 1,000-window floor, neither doing it alone. The recurring chain-wide
+enumeration that would PRODUCE these lists (350a) is still its own lane. And nothing here tries to
+establish who anyone is: captain decision 370a closed that question permanently.
 
 ## Retention — MadeOnSol terms §5a(d)
 
@@ -1217,6 +1218,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 20 | **Stage 2 scoring has a MEMORY, so the cap goes to the LEAST-RECENTLY-SCORED survivors** — captain decision 336a. No new candidate ROW field, no new `entry` field, no new `entry.coverage` field, no new `spend` field, no new `dune` field and no new `creation` field: `PERSISTED_BY_SCHEMA[20]`, `ENTRY_KEYS_BY_SCHEMA[20]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[20]`, `SPEND_KEYS_BY_SCHEMA[20]`, `DUNE_KEYS_BY_SCHEMA[20]` and `CREATION_KEYS_BY_SCHEMA[20]` all equal `[19]`. One new run-level block, `scoringRotation`. **What changed:** until this version `screen.mjs` took `survivors.slice(0, maxScored)` — the first seven gate survivors in `mergeSeeds` order, which is deterministic — so a daily run re-measured the same seven wallets every day, while the median survivor needs about **21.5 days** for its ten windows to refresh and **0 of 27** refresh within a day. Distinct yield was about **168 windows a month** against roughly **2,571** of available supply, against the captain's floor of **1,000 window measurements a month**. `maxScored` itself does **not** move — captain decision **339a** keeps capacity at 7 per run, and raising it means moving the scoring cap and the request budget together, which is a separate decision. This version changes WHICH seven. **Why it needs a version at all: a pre-20 run was STATELESS** — same inputs, same output, and anyone could re-run it and reproduce a published result — and rotation makes a run's output depend on every run before it. The captain accepted that trade only on condition that reproducibility be preserved another way, and `scoringRotation` is that condition implemented rather than promised. It NAMES the state it read: `statePath` (repo-relative), `stateSchemaVersion`, and `stateDigestBefore`/`stateDigestAfter`, the SHA-256 of the bytes read and of the bytes written — so run N's `after` is run N+1's `before` and the whole chain of runs is checkable from committed artefacts. It carries `order`, **the WHOLE ranked survivor list rather than the slice taken from it**, which is what lets `rotation.mjs` → `verifySelection` re-derive the selection from the record ALONE, with no state file, no survivor list and no clock; `selected`, `deferred`, `walletsScored`, `scoredAtIso` (one instant per run, stamped on every wallet it scored), `neverScoredBefore` and `importedFromRunRecords` are the counts a reader judges it by, and `reproducibility` carries the condition in one sentence. **`enabled: false` is a real state and is not the block's absence:** a run made with `--no-rotation`, or one where Stage 2 selected nobody, records the block with a `reason`, so a stateless run is never read as a rotated one that happened to repeat. **An UNMEASURED verdict advances the rotation**, because it consumed the cap and the keyless walk that goes with it — that is not captain decision 174b's forbidden filter, since nobody is dropped, the wallet keeps its place in the cycle and the record still surfaces and counts its verdict. **The one that will bite:** on a schema-≤19 record the absence of this block means the run took the HEAD of the survivor list, so **two such records scoring the same wallets are not evidence about those wallets** — they are evidence that the seed order did not move; and `scoringCap.survivorsUnscored` means the same thing across the boundary while the wallets behind it do not, being the list's tail before 20 and whichever were measured most recently after it. |
 | 21 | **THE COMPLETION MEASURE IS RAISE-85 ON EVERY VENUE, pump.fun INCLUDED** — captain decision 352b (2026-08-09). `completed` and `completionRate` no longer mean *pump.fun said these graduated*; they mean *this many of these tokens' own primary markets took in 85 SOL-equivalent in their first 24 hours*. **So a schema-≤20 rate and a schema-21 one are not the same quantity either** — that is now true at two of the last three versions (19 moved the same quantity, 20 left it alone), so read `schemaVersion` before pooling any two `completionRate` values from this tool, ever. Four new candidate ROW fields — `competenceCriterionUnreadable` and `competenceCriterionEstimated` for the gate reading, plus their vendor twins `vendorCompetenceCriterionUnreadable` and `vendorCompetenceCriterionEstimated` (`PERSISTED_BY_SCHEMA[21]`); `ENTRY_KEYS_BY_SCHEMA[21]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[21]`, `SPEND_KEYS_BY_SCHEMA[21]`, `DUNE_KEYS_BY_SCHEMA[21]` and `CREATION_KEYS_BY_SCHEMA[21]` all equal `[20]`. **The evidence:** the 85 was read off the data rather than fitted — graduating non-mayhem tokens read 85.005 SOL at p50 *and* p99 over 157,259 launches — and it has **zero token-level false positives** against 108,310 non-graduating tokens, so a rate computed from it is a LOWER BOUND: measured over 176,200 July-active deployers the proxy **promoted zero** deployers over the 0.25 bar and demoted 1,417. The bar is not lowered to buy recall, because at 50 SOL that zero-false-positive property is already gone (42 promotions) and the safety argument goes with it. **THE SEAM WITH 351, and it is what these two fields exist to make auditable:** RAISE-85 as a definition only touches the NUMERATOR — it simply never registers a mayhem graduation, which raises a median 0.291 SOL — so had mayhem LAUNCHES stayed in the denominator a mayhem-heavy deployer would run to 0.0000 and be dropped, **which is captain decision 227c and 227c REMAINS DECLINED**. The mayhem exclusion therefore runs FIRST, over the whole history, and the criterion is applied only to what it leaves; a mayhem launch is counted in `competenceMayhemExcluded` and NEVER in `competenceCriterionUnreadable`, and **the two pairs are not additive in meaning** — *not competence evidence* and *nothing could measure this* answer different questions. **`competenceCriterionUnreadable`** is how many launches left BOTH sides because the criterion could not be read on them at all; they are never scored as failures, because defaulting our own coverage gap into a rejection is permanent and invisible, and a candidate whose whole history reads that way is `gate-unmeasured` rather than 0.0000 (`rank.mjs` → `competenceEmptiedByCriterion`) — **as is a candidate with ANY unreadable launch** (`rank.mjs` → `competenceCriterionIncomplete`), because those launches leave `tokens` and `spanDays` too, so `minTokens`/`minSpanDays` would otherwise reject a wallet over OUR coverage; **a schema-21 row with `competenceCriterionUnreadable > 0` therefore carries `verdict: "gate-unmeasured"`**. **AND THE VENDOR PAIR MOVED, which schema 19's note said 351 could not do:** `vendorCompleted`/`vendorCompletionRate` are a THIRD quantity here — 352b reads the criterion off the MadeOnSol page's own `complete` field and `toTokenRecords` folds a missing or malformed one to unreadable, so a schema-21 vendor reading drops those rows from both sides where a schema-≤20 one counted them as failures. That pair is a GATE INPUT on `--ownership-only` runs and in `feed.mjs`, so a schema-≤20 `vendorCompletionRate` must not be pooled with a schema-21 one either — which is why it gets the two companion counts the gate rate has. **There is still no vendor twin of the MAYHEM pair and that is not an inconsistency**: schema 19's reasoning (the page carries no mayhem column, so 351 cannot move that rate by construction) holds unchanged; what does not survive 352b is applying it to the criterion, which IS read off that page's own `complete` field. **`competenceCriterionEstimated`** is how many of the `tokens` that REMAIN had RAISE-85 read through pump.fun's own graduation flag rather than measured from trade data — an ESTIMATOR whose negative is exact (every token reaching 85 SOL graduated, precision 1.0000) and whose positive is an upper bound (0.82% of graduations did not reach it, recall 0.9918) — so **`competenceCriterionEstimated === tokens` means the whole rate is an upper bound on the RAISE-85 rate**, which is every route this repo has today. **What it does NOT claim:** equivalent strictness across venues is not established — the same bar is reached by 0.80% of new pump.fun tokens, 0.25% on Meteora DBC and 46.71% on Meteora CPAMM — and no record or doc here may read as cross-venue comparability (`slot-zero-cross-venue-strictness-measure` owns it, held in firstmate's records, not in this repo). **AND THE `consistency` BLOCK MOVED TOO, INDEPENDENTLY OF THE GATE READING** — `rank.mjs` → `measureConsistency` drops a criterion-unreadable launch instead of reading it as a FAILED one (which would manufacture dispersion out of a coverage gap and could mark a deployer STREAKY for a walk that came back short), so `epochs`, `minEpochRate`, `maxEpochRate`, `dispersion` and `streaky` are a different quantity here and **a schema-≤20 `dispersion` must not be pooled with a schema-21 one**. The independence is the trap: consistency walks its OWN creator history rather than the gate's reading, so a gate reading with no unreadable launch does not imply a consistency reading with none, and this block can move on a wallet that PASSED. No key was added for it — the count that left rides on the block's own `note`. **The one that will bite:** a schema-≤20 record carries neither field and one cannot be reconstructed from it; and the one behaviour that genuinely moved is the launch NEITHER source could answer for, which was written `completed: false` (understating the rate) and is `null` now, so it leaves both sides instead. No bar moved and no committed verdict moved — re-deriving the 112, the 58 and the monthly gate populations under the adopted measure is `slot-zero-rederive-gate-population-post-351`. |
 | 22 | **THE SCREEN CAN BE HANDED A WALLET LIST, so a candidate no longer has to have come from the vendor** — captain decision 398a (2026-08-09). ONE new candidate ROW field, `candidateSource` (`"vendor-seed"` or `"wallet-list"`), and ONE new run-level block, `walletList`; `ENTRY_KEYS_BY_SCHEMA[22]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[22]`, `SPEND_KEYS_BY_SCHEMA[22]`, `DUNE_KEYS_BY_SCHEMA[22]`, `CREATION_KEYS_BY_SCHEMA[22]` and `ROTATION_BLOCK_KEYS_BY_SCHEMA[22]` all equal `[21]`. **No measured quantity moves at all** — unlike the 19 and 21 boundaries, a schema-21 `completionRate` and a schema-22 one are the same quantity and may be pooled. **Why it needs a version:** until this one every candidate in every record came from a MadeOnSol enumeration endpoint, so *where a candidate came from* was a property of the tool rather than of the row and nothing had to say it. `--wallets` ends that, and the two populations are not interchangeable — the listed one is by construction the part the vendor never surfaced, and 37 of the 58 deployers that passed this gate in 2026-07 (64%) are invisible to every discovery source this repo has. A reader pooling them without version-detecting would describe a discovery surface that measured neither. **On a schema-≤21 record the field's absence is unambiguous:** nothing before this version could supply a list, so every candidate in one is `vendor-seed`. **What it does NOT change, and this is the load-bearing half:** a supplied list is a SEED and never a substitute for the gate. A listed address becomes an ordinary `SeedCandidate` and enters the ONE gate loop, so there is no second path and no bar it can skip; `candidateSource` is provenance and is read by nothing — no bar, no verdict, no stage, no rotation comparator, and a test scans the scoring modules' executable half for it. A listed wallet failing the competence bars carries `verdict: "gate-failed"` and `entry: null` exactly as a seeded one does. **The run-level block** is `null` on every enumerated run; when present it carries `path`, `digest` (SHA-256 of the file's bytes), `label` (the `wallet-list:<file>` value on every listed candidate's `seededBy`), `entriesRead`, `wallets`, `seedsIssued` and `isASeed`, the constraint verbatim. **`path` is NEVER an absolute path** — it is repo-relative when the list lives inside the tree (the form `scoringRotation.statePath` already uses) and the file's base name followed by `(outside the repo)` when it does not, which is the common case for a list another lane hands over. These records are committed to a world-readable repository (captain decision 377a) and an absolute path there would disclose the operator's username and local layout, which nothing else this tool persists does; nothing is lost, because `digest` is the list's real identity and `label` already carries the base name. The digest is there for the reason `scoringRotation` names its own: this file IS the run's whole population, so a record carrying only a path would stay reproducible exactly as long as nobody edited it — and `seedsIssued: 0` is STATED rather than inferred from an empty `coverage.seeds`, because an empty seed table also describes a run whose enumeration failed. **The plan arithmetic moved with it:** a listed run issues NO enumeration request, so `spend.plannedWorstCaseKeyed` is `0 + <addresses>` rather than `6 + <cap>` and `spend.candidateCap` is the list's own length rather than a ceiling the run was allowed to fall short of. Nothing else in the cost model moves — the keyless and Helius ceilings are per candidate and unchanged, Stage 2's keyless ceiling is `maxCandidatesScored x maxLaunchesPerCandidate x maxRequestsPerLaunch` and none of those three moved, and no Dune execution or Helius credit is spent that a seeded run would not spend. |
+| 23 | **THE STAGE 2 SCORING CAP IS ALLOCATED BY LAUNCH FLOW, not by recency alone** — captain decision 399a (2026-08-09). NO new candidate ROW field and no new block: `PERSISTED_BY_SCHEMA[23]`, `ENTRY_KEYS_BY_SCHEMA[23]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[23]`, `SPEND_KEYS_BY_SCHEMA[23]`, `DUNE_KEYS_BY_SCHEMA[23]` and `CREATION_KEYS_BY_SCHEMA[23]` all equal `[22]`. TWO new keys on the `scoringRotation` block — `windowCap` and `newGroundRule` — and TWO new keys on every row of its `order`: `launchesPerDay` and `newGroundWindows`. **No measured quantity moves**, so a schema-22 `completionRate`, `entry` block or `spend` figure and a schema-23 one may be pooled. **What changed:** schema 20 ordered survivors on `lastScoredAtIso` alone, which gives every survivor the same number of visits whatever its launch tempo. Measured over the 58 census July gate-passers and their real July launch counts, the same **210** monthly scorings harvest **1,067** distinct windows round-robin against **1,963** allocated by remaining unharvested flow: 58 wallets against 210 scorings is 3.62 visits each, i.e. 36.2 windows of allowance, and **17 of the 58 launched more than that in July, stranding 935 windows between them**. Fully harvesting all 58 needs 231 visits against 210 available, so the population is only 10% oversubscribed and the loss is ALLOCATION rather than capacity. **Why it needs a version:** schema 20's guarantee is that the selection is re-derivable from the record ALONE, and that is only as good as the record carrying everything the comparator reads — so `launchesPerDay` (the survivor's launch tempo on the reading THE GATE read, `completion.tokens / completion.spanDays`) and `newGroundWindows` (that tempo times the days waited, saturating at `windowCap`) are both persisted, and `windowCap` sits on the block so a reader re-derives every row's key from the block plus the run's own `startedAtIso` and nothing else. **A schema-≤22 `order` row carries neither key, and `rotation.mjs` → `compareRotationRows` reads that absence as *this row states no flow term* rather than as zero flow** — so `verifySelection` still passes such a record by schema 20's own recency rule instead of reporting every pre-399a run as having ranked its survivors wrongly. **The one that will bite:** two schema-≤22 records scoring the same wallets and two schema-23 ones do not mean the same thing — before this version the wallet list says only how long ago each was last seen, and from 23 it also says which have the most unharvested flow, so a rate computed over *wallets this tool scored* is drawn from a differently-weighted sample either side of the boundary, weighted deliberately towards the busiest deployers. That is the selection-quality cost 399a accepted knowingly: the busiest launches are the ones `stage2_entry.justification.maxLaunchesPerCandidate` records the request cap dropping most often, and `rotation.mjs`'s module comment states it in full alongside the second cost, that the tempo is LIFETIME so a wallet that has gone quiet is still visited on it. **What it does NOT change:** `maxCandidatesScored` stays 7 (captain decision 339a), `maxLaunchesPerCandidate` stays 10 and `maxRequestsPerLaunch` stays 18, so Stage 2's keyless ceiling — their product — is untouched and no threshold moved at all; it costs zero in every currency, reaching no vendor and reading a field the gate already measured; and every clause of schema 20's reproducibility contract holds unchanged, `enabled: false` still being a state rather than the block's absence. |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -1364,23 +1366,95 @@ to refresh and **0 of 27** refresh within a day, so a same-day re-measure re-ans
 already answered. Distinct yield was about **168 windows a month** against roughly **2,571** of
 available supply, against the captain's floor of **1,000 window measurements a month**.
 
-The cap now goes to the **least-recently-scored** survivors, so the population cycles.
+336a made the cap go to the **least-recently-scored** survivors, so the population cycles.
+
+#### Recency alone stranded the tail — captain decision 399a
+
+A round robin gives every survivor the same number of visits **whatever its launch tempo**, which is
+blind to how much new ground a visit actually covers. Measured over the 58 census July gate-passers
+and their real July launch counts, the same **210** monthly scorings harvest **1,067** distinct
+windows round-robin against **1,963** allocated by remaining unharvested flow. The tail is what is
+lost: 58 wallets against 210 scorings is **3.62 visits each**, i.e. **36.2 windows of allowance**,
+and **17 of the 58 launched more than that in July, stranding 935 windows between them**. Fully
+harvesting all 58 needs **231** visits against 210 available, so the population is only **10%
+oversubscribed** — the loss is ALLOCATION and not capacity. Worth **590 → 1,085** distinct usable
+windows a month on top of `--wallets` (captain decision 398a); **neither change clears the captain's
+1,000 floor alone**. Those figures are `slot-zero-discovery-beyond-madeonsol` §5.2, held in
+firstmate's records and not in this repo, so they are evidence from elsewhere and are asserted by no
+test here — what the test suite asserts is that a population of the same SHAPE harvests materially
+more through this selector, not that these counts reproduce.
+
+So the cap now goes to the survivors a visit covers the most **new ground** on. The rank key is
+`rotation.mjs` → `newGroundWindows`: the wallet's launch flow times how long it has waited,
+**saturating at the per-visit window cap**, because a visit harvests
+`stage2_entry.maxLaunchesPerCandidate` launches and no more and ground beyond that is not reachable
+by this visit.
+
+**Three costs, all accepted knowingly, and none is to be presented as free.**
+
+1. **It is a selection-quality trade.** Visiting the highest-tempo wallets most often concentrates
+   the cap on the busiest launches, which are exactly the ones
+   `stage2_entry.justification.maxLaunchesPerCandidate` records the request cap dropping most often.
+   The one stranger leg on record read a **0.1333** usable fraction. Nothing here makes a dropped
+   window reachable — it makes more windows be attempted.
+2. **The tempo is LIFETIME, so a wallet that has gone quiet is still visited on it.** Clamping flow
+   by the wallet's last deploy would park a dormant wallet forever, which is the starvation the
+   saturation ceiling exists to prevent. A visit spent on stale ground is the price of the guarantee.
+3. **A MAYHEM-HEAVY SURVIVOR IS RANKED ON LESS FLOW THAN IT HAS, so it is UNDER-VISITED.** The tempo
+   is `completion.tokens / completion.spanDays`, and `measure.mjs` → `measureCompletion` computes
+   both over the mayhem-EXCLUDED set (captain decision **351**) while Stage 2 harvests from
+   `toLaunchRefs`, which includes every launch. A deployer launching ~1.0/day of which only ~0.3/day
+   is non-mayhem is ranked on the 0.3, saturates in ~33 days instead of ~10, and comes round roughly
+   3x less often than its real harvestable flow merits — exactly the 13-of-58 population 351 exists
+   to stop penalising. **It is UNDER-SERVICE AND NEVER STARVATION**: the key still saturates and
+   336a's FIFO tiebreak still brings that wallet round, it just waits longer than its flow warrants.
+   The gate's own reading is kept anyway because the alternatives are worse readings, not better
+   ones — a mayhem-inclusive enumerated count is UNMEASURED on every walk-sourced candidate, and
+   `toLaunchRefs` is the vendor's capped, success-biased 70-record page.
 
 **Capacity did not move and this is not a capacity change.** `maxScored` is still 7 a run — captain
 decision **339a** — because raising it means moving the scoring cap and the request budget together,
-and that is a separate decision. Nor did any Stage 1 bar move; loosening the minimum-launches bar is
-captain decision **337a** and is its own lane. This changes *which* seven and nothing else, and it
-costs **zero in every currency**: `rotation.mjs` reads one local file and the committed run records,
-and reaches no vendor.
+and that is a separate decision. `maxLaunchesPerCandidate` (10) and `maxRequestsPerLaunch` (18) did
+not move either, so **Stage 2's keyless ceiling — their product — is untouched by both decisions**.
+Nor did any Stage 1 bar move; loosening the minimum-launches bar is captain decision **337a** and is
+its own lane, as is letting the room bound emit `entry-room-absent` (**343a**) — both are required
+headroom under captain decision **400a** and both are next in the sequence, not here. This changes
+*which* seven and nothing else, and it costs **zero in every currency**: `rotation.mjs` reads one
+local file and the committed run records, reaches no vendor, and the tempo is a field the gate
+already measured.
 
-**The rule, and all three clauses matter** (`rotation.mjs` → `rotationOrder`):
+**The rule, and all four clauses matter** (`rotation.mjs` → `rotationOrder`):
 
 1. A survivor never scored comes first — there is no measurement to refresh, so nothing to wait for.
-2. Among the rest, ascending `lastScoredAtIso`. That is `ledger.mjs` → `nextGateBatch`'s shape one
-   lane over, chosen for the same reason: draining freshest-first starves the tail permanently while
-   every run reports a healthy count.
-3. Ties break on the survivor list's own order. So with **no state at all the ranking IS that
-   order**, which makes the first run after this change byte-identical to the slice it replaced.
+   It is a clause rather than a consequence of the next one, so a newcomer's priority does not depend
+   on the flow arithmetic agreeing.
+2. Then descending `newGroundWindows` — most reachable new windows first.
+3. Among rows the flow term does not separate — which is every row once they saturate, and every row
+   at all when no tempo is readable — ascending `lastScoredAtIso`. That is `ledger.mjs` →
+   `nextGateBatch`'s shape one lane over, chosen for the same reason: draining freshest-first starves
+   the tail permanently while every run reports a healthy count.
+4. Ties break on the survivor list's own order. So with **no state at all** every row is never-scored
+   and saturated and the ranking IS that order, which keeps the first run after either change
+   byte-identical to the slice it replaced.
+
+#### How a low-flow wallet is not parked forever
+
+Pure greed by flow would park one, so the rule is deliberately not pure greed and the guarantee falls
+out of clauses 2 and 3. `newGroundWindows` **saturates**: a wallet's ground grows with the time it
+has waited and reaches the ceiling after `windowCap / launchesPerDay` days — exactly how long that
+wallet takes to produce a full visit's worth of new launches. Every gate survivor has a strictly
+positive tempo, because passing the gate needs `stage1_gate.minTokens` launches over a finite span,
+so **every survivor saturates in bounded time**. Once saturated, rows tie on flow and clause 3 orders
+them least-recently-scored first, which is a strict FIFO queue: anything scored *after* a saturated
+wallet sorts behind it forever, so the set ahead of it only shrinks and it is selected within a
+bounded number of runs.
+
+An **unreadable tempo is treated as SATURATED, never as no flow** — this repo's standing direction
+for a missing measurement, applied here: reading absence as zero would park the wallet on a failure
+of OUR coverage, permanently and invisibly, where treating it as saturated costs at worst one keyless
+walk. With no tempo readable **anywhere** the rule degenerates to exactly 336a's, which is how the
+superseded allocation stays reachable and testable without a second comparator to drift from this
+one.
 
 A survivor set that **shrank** costs nothing: rows for wallets this run's gate did not return are
 kept and unread, so a wallet that drops out for a day and comes back **resumes its place** rather
@@ -1413,7 +1487,12 @@ committed evidence is not acceptable in this lab. Three things pay for it:
   to hand it is the record's own `scoringCap.max`, the cap that run APPLIED, never
   `thresholds.stage2_entry.maxCandidatesScored`**: a run made with `--score` applies the `min()` of
   the two, so the pinned ceiling would report a perfectly correct run as having selected the wrong
-  wallets.
+  wallets. **399a's flow term is subject to that condition rather than exempt from it** — a
+  comparator reading anything the record does not carry would break it — so from schema 23 every row
+  carries `launchesPerDay` AND the `newGroundWindows` it produced, and the block carries `windowCap`.
+  Hand `verifySelection` the run's own `startedAtIso` and that `windowCap` and it re-derives each
+  row's key from its tempo too: the difference between checking that a run obeyed the numbers it
+  wrote down and checking that those numbers were the right ones.
 
 `rotation.mjs` → `REPRODUCIBILITY_RULE` is that condition in one sentence, and it rides on the state
 file, the run record and the rendered Stage 2 block for the reason `LANDING_TIP_CAVEAT` rides on a

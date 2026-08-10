@@ -80,12 +80,16 @@ import {
   RAISE_85_IS_THE_COMPLETION_MEASURE,
   RAISE_85_SOL_BAR,
   RAISE_85_WINDOW_HOURS,
+  WINDOW_OUTSIDER_BAR_MEASURED_AT,
+  WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM,
   blockTxIndex,
   completionFlagOf,
   createSlotGroups,
   mayhemFlagOf,
   measureCompletion,
   measureCreateSlot,
+  measureWindowParticipation,
+  windowParticipationIsProven,
   ROOM_LEFT_RANGE,
   median,
   parseFill,
@@ -924,6 +928,283 @@ describe('the co-ordination rule, half (b) — the deployer-anchored block-index
     ]);
     expect(m!.runTx).toBe(0);
     expect(m!.adjacencyMarks).toBe(0);
+  });
+});
+
+// =============================================================================================
+// THE WHOLE-WINDOW PARTICIPATION MEASURE — A SECOND PREDICATE, NOT A LOOSER FIRST ONE
+// =============================================================================================
+//
+// Captain decision 408a. `roomIsProven` is create-slot-scoped, and on the Meteora DBC tradeable band
+// — July 2026, SOL-quoted, migration threshold 10-30 SOL, 19,826 pools with any create-slot fill —
+// it fires on 0.00%, with a MAXIMUM OF ONE WALLET PER TRANSACTION across the whole month, computed
+// twice by independent routes. The cause is the opposite of pump.fun's: there is no co-ordination
+// evidence because at the create slot there is nothing to co-ordinate. That create slot holds one
+// wallet and one fill at the median, and the contest runs over the following window — a median 134
+// seconds, 134 distinct outsider wallets, 181 fills.
+//
+// So these tests assert a pair of things at once, and the pair is the point: the SAME fixture is
+// refused by `roomIsProven` and admitted here, and the new predicate is not thereby a rubber stamp —
+// the degenerate window below is refused by both. `slot-zero-meteora-dbc-venue-scope` -> `report.md`
+// §§2-4 owns every figure quoted here and is held in firstmate's records, not in this repo.
+describe('the whole-window participation measure — the instrument the create-slot rule is not', () => {
+  const DBC_CREATE_SLOT = 432_955_704;
+
+  /**
+   * One window in the measured shape of that band's median launch.
+   *
+   * The creator buys its own launch (it does on 60.59% of the band, and in the create slot on
+   * 13,822 of those 13,843), alone, in one transaction — so the create slot is 1 wallet and 1 fill.
+   * Then 134 distinct outsider wallets make 181 fills over the following slots. Every transaction
+   * carries exactly one wallet, which is what makes half (a) of the co-ordination rule read zero
+   * over an entire month, and the block indices are far apart so half (b) reads zero too.
+   */
+  const dbcWindow = (): Fill[] => {
+    const out: Fill[] = [
+      fill({
+        slot: DBC_CREATE_SLOT,
+        sid: sidAt(DBC_CREATE_SLOT, 500),
+        tx: 'initbuy',
+        wallet: 'creator',
+        sol: 1.2,
+      }),
+    ];
+    for (let i = 0; i < 134; i++) {
+      const slot = DBC_CREATE_SLOT + 1 + i;
+      out.push(fill({ slot, sid: sidAt(slot, 100 + i), tx: `buy${i}`, wallet: `out${i}`, sol: 0.4 }));
+    }
+    // 47 of the 134 come back and sell inside the same window: 134 + 47 = the 181 fills measured.
+    for (let i = 0; i < 47; i++) {
+      const slot = DBC_CREATE_SLOT + 200 + i;
+      out.push(
+        fill({ slot, sid: sidAt(slot, 300 + i), tx: `sell${i}`, wallet: `out${i}`, side: 'sell', sol: 0.35 }),
+      );
+    }
+    return out;
+  };
+
+  it('admits the measured DBC shape that the create-slot rule refuses at 0.00%', () => {
+    const fills = dbcWindow();
+
+    // THE REFUSAL, reproduced rather than described. One wallet per transaction all the way down,
+    // so half (a) has nothing to mark; the deployer's own transaction sits alone between two gaps,
+    // so half (b) has nothing to mark either. `roomIsProven` is therefore false — correctly, on its
+    // own terms — and a port of it to this venue would refuse ~100% of the band.
+    const created = measureCreateSlot(fills)!;
+    expect(created.deployer).toBe('creator');
+    expect(created.maxWalletsInOneTx).toBe(1);
+    expect(created.bundledTx).toBe(0);
+    expect(created.runTx).toBe(1);
+    expect(created.adjacencyMarks).toBe(0);
+    expect(created.coordinatedWallets).toBe(0);
+    expect(roomIsProven(created)).toBe(false);
+
+    // THE ADMISSION, at the shape the population was measured in.
+    const p = measureWindowParticipation({
+      fills,
+      deployer: 'creator',
+      createSlot: DBC_CREATE_SLOT,
+    });
+    expect(p.outsiderWallets).toBe(134);
+    expect(p.outsiderFills).toBe(181);
+    expect(p.operationWallets).toBe(1);
+    expect(p.operationFills).toBe(1);
+    // The create slot holds ONE wallet and ONE fill, and it is the creator's — which is exactly why
+    // the create-slot framing sees nothing here. Everything the whole-window framing adds is in the
+    // second half, and `windowOnlyOutsiderWallets` is the size of what it added.
+    expect(p.createSlotOutsiderWallets).toBe(0);
+    expect(p.createSlotOutsiderFills).toBe(0);
+    expect(p.afterCreateSlotOutsiderWallets).toBe(134);
+    expect(p.afterCreateSlotOutsiderFills).toBe(181);
+    expect(p.windowOnlyOutsiderWallets).toBe(134);
+    expect(p.preCreateSlotFills).toBe(0);
+
+    // And it is admitted at every bar the supply evidence was measured at, not merely at the
+    // loosest one. The bar is the caller's; this asserts the reading, not a pin.
+    for (const bar of WINDOW_OUTSIDER_BAR_MEASURED_AT) {
+      expect(windowParticipationIsProven(p, { minOutsiderWallets: bar })).toBe(true);
+    }
+  });
+
+  it('refuses the degenerate one-wallet-one-fill create slot, as the create-slot rule does', () => {
+    // The kill case, and it is 72.4% of that venue's SOL-quoted July launches: the curve completes
+    // at or near the creator's own first buy, so the window is one slot holding one fill. The whole
+    // point of a second predicate is that it is a DIFFERENT claim rather than a weaker one, and a
+    // predicate that admitted this would be a weaker one. Both refuse it, for the same reason and
+    // from opposite directions: nothing co-ordinated, and nobody contested.
+    const fills = [
+      fill({
+        slot: DBC_CREATE_SLOT,
+        sid: sidAt(DBC_CREATE_SLOT, 500),
+        tx: 'initbuy',
+        wallet: 'creator',
+        sol: 1.2,
+      }),
+    ];
+    expect(roomIsProven(measureCreateSlot(fills)!)).toBe(false);
+
+    const p = measureWindowParticipation({ fills, deployer: 'creator', createSlot: DBC_CREATE_SLOT });
+    expect(p.fills).toBe(1);
+    expect(p.outsiderWallets).toBe(0);
+    expect(p.outsiderFills).toBe(0);
+    expect(p.operationWallets).toBe(1);
+    expect(p.operationBuySol).toBeCloseTo(1.2, 10);
+    expect(p.createSlotOutsiderWallets).toBe(0);
+    expect(p.afterCreateSlotOutsiderWallets).toBe(0);
+    expect(p.windowOnlyOutsiderWallets).toBe(0);
+    // Refused even at the loosest bar an integer allows, so no choice of bar rescues it.
+    expect(windowParticipationIsProven(p, { minOutsiderWallets: 1 })).toBe(false);
+  });
+
+  it('an empty window measures zero and claims nothing, rather than dividing by it', () => {
+    const p = measureWindowParticipation({ fills: [], deployer: 'creator', createSlot: DBC_CREATE_SLOT });
+    expect(p.fills).toBe(0);
+    expect(p.outsiderWallets).toBe(0);
+    expect(p.outsiderFills).toBe(0);
+    // `operationWallets` counts wallets that FILLED, never the size of the supplied set — a deployer
+    // that never bought is not a participant, and on this venue 39.41% of the band never buys.
+    expect(p.operationWallets).toBe(0);
+    expect(p.firstFillSlot).toBeNull();
+    expect(p.lastFillSlot).toBeNull();
+    expect(p.windowOnlyOutsiderWallets).toBe(0);
+    expect(windowParticipationIsProven(p, { minOutsiderWallets: 1 })).toBe(false);
+
+    // And with no create slot established the two halves are UNREAD rather than guessed from the
+    // earliest fill. `null` here is "nobody established the opening slot", which is not zero.
+    const unsplit = measureWindowParticipation({ fills: dbcWindow(), deployer: 'creator' });
+    expect(unsplit.outsiderWallets).toBe(134); // the predicate's own input is unaffected
+    expect(unsplit.createSlot).toBeNull();
+    expect(unsplit.createSlotOutsiderWallets).toBeNull();
+    expect(unsplit.afterCreateSlotOutsiderWallets).toBeNull();
+    expect(unsplit.windowOnlyOutsiderWallets).toBeNull();
+    expect(unsplit.preCreateSlotFills).toBe(0);
+  });
+
+  it('a window that is entirely the operation\'s own wallets is refused, and naming them is the caller\'s job', () => {
+    // There is no structural rule here to recover an operation's book with — that absence IS the
+    // finding this instrument exists because of. So the exclusion set is whatever the caller can
+    // name, exactly as `tools/window-decay-tripwire/` takes a supplied cohort, and the direction of
+    // the error when a caller names nothing is asserted below rather than argued for.
+    const slot = DBC_CREATE_SLOT;
+    const fills = [
+      fill({ slot, sid: sidAt(slot, 500), tx: 'initbuy', wallet: 'creator', sol: 1.2 }),
+      fill({ slot: slot + 3, sid: sidAt(slot + 3, 40), tx: 'b1', wallet: 'book1', sol: 2 }),
+      fill({ slot: slot + 9, sid: sidAt(slot + 9, 41), tx: 'b2', wallet: 'book2', sol: 2 }),
+      fill({ slot: slot + 12, sid: sidAt(slot + 12, 42), tx: 'b3', wallet: 'book1', side: 'sell', sol: 1.5 }),
+    ];
+
+    const named = measureWindowParticipation({
+      fills,
+      deployer: 'creator',
+      operationWallets: ['book1', 'book2'],
+      createSlot: slot,
+    });
+    expect(named.outsiderWallets).toBe(0);
+    expect(named.outsiderFills).toBe(0);
+    expect(named.operationWallets).toBe(3);
+    expect(named.operationFills).toBe(4);
+    expect(named.operationBuySol).toBeCloseTo(5.2, 10);
+    expect(named.operationSellSol).toBeCloseTo(1.5, 10);
+    expect(named.windowOnlyOutsiderWallets).toBe(0);
+    expect(windowParticipationIsProven(named, { minOutsiderWallets: 1 })).toBe(false);
+
+    // THE DIRECTION OF ERROR, as a property rather than a comment: an operation wallet the caller
+    // cannot name is counted as an outsider, so an unnamed book reads participation HIGH — the
+    // direction that manufactures an instrument where there is none. Same window, same fills, no
+    // cohort supplied, and the verdict flips.
+    const blind = measureWindowParticipation({ fills, deployer: 'creator', createSlot: slot });
+    expect(blind.outsiderWallets).toBe(2);
+    expect(blind.outsiderWallets).toBeGreaterThan(named.outsiderWallets);
+    expect(windowParticipationIsProven(blind, { minOutsiderWallets: 1 })).toBe(true);
+
+    // And the same asymmetry one field over: an unknown deployer is attributed to nobody, so the
+    // wallet that opened the window is read as a stranger too.
+    const anonymous = measureWindowParticipation({ fills, createSlot: slot });
+    expect(anonymous.deployer).toBeNull();
+    expect(anonymous.outsiderWallets).toBe(3);
+    expect(anonymous.createSlotOutsiderWallets).toBe(1);
+  });
+
+  it('REFUSES to run without a bar — a default would be a pin, and pinning is the captain\'s', () => {
+    // This repo's standing rule is that a measurement pass measures and does not tune.
+    // `roomIsProven`'s `>= 1` is not a threshold at all — one mark is the minimum evidence that a
+    // structural rule saw anything — but a count of distinct outsider wallets IS one, and it decides
+    // which launches a venue supplies. So there is no default, and the refusal says why.
+    const p = measureWindowParticipation({ fills: dbcWindow(), deployer: 'creator', createSlot: DBC_CREATE_SLOT });
+    expect(() => windowParticipationIsProven(p)).toThrow(/no default/);
+    expect(() => windowParticipationIsProven(p, {})).toThrow(/minOutsiderWallets/);
+    expect(() => windowParticipationIsProven(p, { minOutsiderWallets: null })).toThrow();
+    expect(() => windowParticipationIsProven(p, { minOutsiderWallets: 0 })).toThrow();
+    expect(() => windowParticipationIsProven(p, { minOutsiderWallets: 2.5 })).toThrow();
+    // The refusal names where the evidence is, so a reader is not left to invent one.
+    expect(() => windowParticipationIsProven(p)).toThrow(/WINDOW_OUTSIDER_BAR_MEASURED_AT/);
+
+    // Those counts are the three the supply evidence was measured at, ascending and frozen. They
+    // are a RANGE where evidence exists, never a recommended value — the module states that and
+    // this pins that the module has not quietly acquired a fourth, favoured one.
+    expect(WINDOW_OUTSIDER_BAR_MEASURED_AT).toEqual([5, 20, 50]);
+    expect(Object.isFrozen(WINDOW_OUTSIDER_BAR_MEASURED_AT)).toBe(true);
+    // Monotone in the bar, which is the only property a caller may assume of it.
+    expect(windowParticipationIsProven(p, { minOutsiderWallets: 134 })).toBe(true);
+    expect(windowParticipationIsProven(p, { minOutsiderWallets: 135 })).toBe(false);
+  });
+
+  it('reports a fill older than the window it was handed, rather than filing it under the window', () => {
+    // The tripwire. A non-zero `preCreateSlotFills` means the caller's window bounds and its own
+    // create slot disagree — the same shape as a backwards walk that overshot its mint, which this
+    // repo has paid for twice. Such a fill is counted, is in the totals, and is in NEITHER half, so
+    // it can never inflate the whole-window half that the predicate's evidence rests on.
+    const slot = DBC_CREATE_SLOT;
+    const p = measureWindowParticipation({
+      fills: [
+        fill({ slot: slot - 5, sid: sidAt(slot - 5, 10), tx: 'early', wallet: 'ghost', sol: 1 }),
+        fill({ slot, sid: sidAt(slot, 500), tx: 'initbuy', wallet: 'creator', sol: 1.2 }),
+        fill({ slot: slot + 2, sid: sidAt(slot + 2, 20), tx: 'late', wallet: 'out0', sol: 1 }),
+      ],
+      deployer: 'creator',
+      createSlot: slot,
+    });
+    expect(p.preCreateSlotFills).toBe(1);
+    expect(p.outsiderWallets).toBe(2); // ghost and out0 are both counted
+    expect(p.createSlotOutsiderFills).toBe(0);
+    expect(p.afterCreateSlotOutsiderFills).toBe(1); // the early fill is NOT filed here
+    expect(p.windowOnlyOutsiderWallets).toBe(1);
+    expect(p.firstFillSlot).toBe(slot - 5);
+    expect(p.lastFillSlot).toBe(slot + 2);
+  });
+
+  it('states what it claims, and NOTHING in this tool is wired to it', () => {
+    // Requirement one of the decision: the claim travels as a constant, so a caller can print it and
+    // a record can carry it, rather than living in a document a reader may never open.
+    expect(WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM).toMatch(/NOT OPERATOR CO-ORDINATION/);
+    expect(WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM).toMatch(/not a looser version of it/);
+    expect(WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM).toMatch(/roomIsProven/);
+    expect(WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM).toMatch(/captain decision/i);
+
+    const all = readAll(TOOL_DIR, 'tools/deployer-screen/');
+    // ONE DEFINITION, AND CALLERS CALL IT. `bundling.mjs` tracks `measure.mjs` -> `roomIsProven`
+    // rather than carrying a copy, precisely because the first version of that census froze a local
+    // copy which then drifted from the screen it was a finding about. The same discipline binds
+    // here from the start: the predicate is defined once and nowhere else.
+    for (const [path, text] of all) {
+      if (!path.endsWith('.mjs') || path.endsWith('/measure.mjs')) continue;
+      expect(text, `${path} may not define its own copy of the predicate`).not.toMatch(
+        /function\s+windowParticipationIsProven/,
+      );
+    }
+
+    // AND IT IS UNWIRED, which is the acceptance condition of this pass and not an accident. It
+    // decides nothing, is read by no stage, and reaches no threshold — so wiring it means editing
+    // this assertion on purpose, which is what makes that a decision rather than a diff.
+    for (const [path, text] of all) {
+      if (!path.endsWith('.mjs') || path.endsWith('/measure.mjs')) continue;
+      expect(executableHalf(text), `${path} must not read the whole-window measure yet`).not.toMatch(
+        /windowParticipationIsProven|measureWindowParticipation|WINDOW_OUTSIDER_BAR_MEASURED_AT/,
+      );
+    }
+    // And the pure core still imports nothing — the exhaustive allow-list further down asserts that
+    // for every scoring module; this says the new code did not need an edge to be added for it.
+    expect(localModuleLoads(all.get('tools/deployer-screen/measure.mjs') ?? '')).toEqual([]);
   });
 });
 

@@ -1689,6 +1689,47 @@ dev currently?"*, and the shape of the answer is the point:
   postdictions is that the document is committed in its own commit ahead of the run, exactly as
   `thresholds.json` is — the record cannot prove that and does not claim to.
 
+## There are TWO provability predicates now, and the second is not a looser first
+
+`measure.mjs` → `measureWindowParticipation` / `windowParticipationIsProven`, beside `roomIsProven`.
+Captain decision 408a, 2026-08-10. **NOTHING CALLS THEM** — no stage, no threshold, no record — and a
+test pins that absence, so wiring them is a decision rather than a diff.
+`tools/deployer-screen/README.md` → "A SECOND provability instrument" owns the long form; cite it
+rather than restating the figures. Four things bind:
+
+- **THE TWO CLAIMS ARE DIFFERENT, NOT NESTED, AND CONFLATING THEM IS THE WHOLE HAZARD.**
+  `roomIsProven` licenses a room SHARE to be read as measured (create-slot-scoped, and it is
+  co-ordination evidence); this licenses only *the window had a field in it* (whole-window, and it is
+  CONTESTED PARTICIPATION). **Neither implies the other**, and no `roomLeft`, `operationShare`,
+  verdict or spend may be computed from a reading proven under the new one alone.
+  `measure.mjs` → `WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM` is the sentence — cite the constant.
+- **THE REASON IT EXISTS IS A MEASUREMENT, AND IT IS THE MIRROR IMAGE OF pump.fun's PROBLEM.** On the
+  Meteora DBC tradeable band (July 2026, SOL-quoted, 10–30 SOL migration threshold, 19,826 pools with
+  a create-slot fill) `roomIsProven` fires on **0.00%**, max **one wallet per transaction** all month,
+  create slot **1 wallet / 1 fill at the median** — not because the evidence is ambiguous but because
+  at the create slot there is nothing to co-ordinate. The contest is the following window: median
+  **134 s, 134 outsider wallets, 181 fills**. So **captain decision 203a does NOT transfer** — it was
+  measured on pump.fun, where the evidence exists and is ambiguous.
+  `slot-zero-meteora-dbc-venue-scope` → `report.md` §§2–4 (held in firstmate's records, not in this
+  repo) owns every figure.
+- **THE BAR IS A REQUIRED PARAMETER AND THE FUNCTION THROWS WITHOUT ONE — a default IS a pin.**
+  `WINDOW_OUTSIDER_BAR_MEASURED_AT` is `[5, 20, 50]`, the counts the supply evidence was measured at,
+  so 5–50 is **where evidence exists and is not a recommendation**; inside it the supply question is
+  already answered either way (the weaker month at the strictest measured bar clears the 1,000-window
+  floor by 1.8×), and net-of-fees profitability on that band is UNMEASURED. Pinning the number is the
+  captain's.
+- **IT TAKES THE WINDOW, THE DEPLOYER AND THE OPERATION'S WALLETS AS INPUTS, and the error runs one
+  way.** Deriving each works on pump.fun and not there: the window ends at curve completion (a
+  different table, not in the fill stream), the creator buys its own launch on only **60.59%** of the
+  band, and there is no structural rule to recover a book with. A wallet the caller cannot name is
+  counted as an outsider, so an unnamed book reads participation **HIGH** — the direction that
+  manufactures an instrument where there is none. Evidence is kept in halves (create slot vs after),
+  with `windowOnlyOutsiderWallets` the size of what the wide framing adds, so a saved reading
+  recomposes narrow or wide without re-walking.
+- **THERE IS STILL NO DBC DATA PATH IN THIS TREE** — `pumpfun.mjs` is the only venue module and there
+  is no venue abstraction — and **captain decision 409** (how deployer completion is measured there,
+  RAISE-85 being unevaluable on it as written) is deliberately OPEN. Do not design around an answer.
+
 ## Stage 2 scoring has a MEMORY now, and it is allocated by FLOW
 
 `tools/deployer-screen/rotation.mjs`, state at `tools/deployer-screen/rotation/stage2-scored.json`,

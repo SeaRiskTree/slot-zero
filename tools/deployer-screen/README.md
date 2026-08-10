@@ -3297,6 +3297,76 @@ which are wider still. Longer windows give a position more time to close, so Sta
 closed-round-trip count is if anything *more* generous than a live run — which strengthens the
 known-negative control rather than weakening it.
 
+## A SECOND provability instrument — whole-window participation, and it is not a looser `roomIsProven`
+
+**Captain decision 408a.** `measure.mjs` now carries `measureWindowParticipation` and
+`windowParticipationIsProven` beside `roomIsProven`. **Nothing calls them.** No stage reads them, no
+threshold names them, no record carries them, and a test asserts that absence — wiring them is a
+separate decision, not the next commit.
+
+**Why a second one exists.** `roomIsProven` is create-slot-scoped by construction: it reads
+`coordinatedWallets`, which `createSlotGroups` computes over the create slot alone. That is the right
+scope on pump.fun, where the create slot is contested and the hard part is telling the operator's own
+wallets from strangers — the evidence exists, it is ambiguous, and captain decision 203a established
+that the disambiguating evidence cannot be got.
+
+**On the Meteora DBC tradeable band the difficulty is the opposite one, and it was measured.** Over
+July 2026's SOL-quoted launches on 10–30 SOL migration-threshold configs — 19,826 pools with any
+create-slot fill — the co-ordination rule fires on **0.00%**, with a **maximum of one wallet per
+transaction across the whole month**, computed twice by independent routes. That create slot holds
+**one wallet and one fill at the median**. There is no co-ordination evidence because at the create
+slot there is nothing to co-ordinate: the contest runs over the following window, a median **134
+seconds, 134 distinct outsider wallets and 181 fills**. Porting `roomIsProven` unchanged refuses
+~100% of that band, which is a measurement of the wrong instrument being pointed at it rather than a
+measurement that the band is unprovable. `slot-zero-meteora-dbc-venue-scope` → `report.md` §§2–4 owns
+every figure and is held in firstmate's records, not in this repo.
+
+**The claim, and it is a different claim rather than a weaker one.**
+`measure.mjs` → `WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM` is the sentence; cite it rather than
+restating it. In short: a proven reading here says wallets **outside the launch operation traded in
+the window**, and says nothing about whether the operation co-ordinated a book, nor about how much of
+the window it took. `roomIsProven` licenses a room SHARE to be read as measured; this licenses only
+the statement that the window had a field in it. **Neither implies the other**, and no `roomLeft`,
+`operationShare`, verdict or spend may be computed from a reading proven under this predicate alone.
+The tests make the pair concrete: the same fixture is refused by `roomIsProven` and admitted here,
+and the degenerate one-wallet-one-fill window — 72.4% of that venue's SOL-quoted July launches — is
+refused by both.
+
+**The bar is a parameter and this repo pins none of it.** `windowParticipationIsProven` takes
+`minOutsiderWallets` and **throws without it**: `roomIsProven`'s `>= 1` is not a threshold at all
+(one mark is the minimum evidence a structural rule saw anything), but a count of distinct outsider
+wallets is one, and it decides which launches a venue supplies. A default would be a pin written by
+whoever typed the line. `WINDOW_OUTSIDER_BAR_MEASURED_AT` is `[5, 20, 50]` — the three counts the
+supply evidence was measured at, so **5–50 is where evidence exists and is not a recommendation**.
+Inside that range the supply question is already answered in both directions (even the weaker month
+at the strictest measured bar clears the captain's 1,000-window floor by 1.8×), so a bar there is not
+chosen to buy supply; what a higher bar buys is a stronger claim, and what it costs is the thinner
+launches. **Nothing measured says which way that trade should go** — net-of-fees profitability on
+that band has not been measured, and a parallel lane is measuring it now. Pinning the number returns
+to the captain.
+
+**Three inputs it takes rather than derives**, each because deriving it works on pump.fun and does
+not here. The **window** is the fills handed in — the band's window ends at curve completion, an
+event in a different table that is not in the fill stream. The **deployer** is supplied, because the
+creator buys its own launch on only **60.59%** of that band and reading "first buyer in the earliest
+slot" would credit a stranger on the rest. The **operation's other wallets** are supplied, because
+there is no structural rule here to recover them with — that absence is the finding. On the last two
+the error runs the same way: a wallet the caller cannot name is counted as an outsider, so an unnamed
+book reads participation **high**, and a test pins that direction rather than arguing it.
+
+**The evidence is kept in halves** — create slot and everything after it — the way the bundling
+census reports `bundledTx` and `runTx` apart, so a saved reading can be recomposed narrow or wide
+without re-running a walk. `windowOnlyOutsiderWallets` is the size of what the whole-window framing
+adds over a create-slot-only one; it reads 134 on that band's median launch and 0 on a launch whose
+whole contest is in the create slot.
+
+**What is not built here.** There is no Meteora DBC data path in this repository — `pumpfun.mjs` is
+the only venue module and there is no venue abstraction. This pass added the predicate and its
+evidence contract, pure and tested against synthetic and report-derived fixtures, ready for a window
+walk that does not exist yet. Captain decision 409 — how deployer completion is measured on that
+venue, given RAISE-85 cannot be evaluated there as written — is deliberately open, and nothing here
+assumes an answer to it.
+
 ## Scope: what is and is not built
 
 **Built — Stage 0**, local validation, no network. Asserts that the gate **passes** our own subject

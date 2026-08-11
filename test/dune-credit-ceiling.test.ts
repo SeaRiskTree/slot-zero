@@ -3021,14 +3021,20 @@ describe('437(a): every Dune-spending lane is WIRED to the budget, not merely of
     // only while it is the sole caller of `DuneClient.execute`; a new module calling it directly
     // would be a lane outside the budget, and that is precisely the failure this decision names.
     // `recordCustody`'s forwarding decorator is the one licensed exception and is listed by name.
+    //
+    // THE PATTERN IS ANY RECEIVER, NOT A RECEIVER NAMED `client`. It used to be
+    // `/(?<!#)\bclient\.execute\(/`, which a spend path written `duneClient.execute(...)` — a
+    // receiver name `screen.mjs` already uses — or `this.dune.execute(...)` walks straight past,
+    // so the pin did not enforce what this comment claims. `DuneClient`'s own method DEFINITION is
+    // `async execute(`, with no receiver, so it does not match and the set stays the call sites.
     const sites: string[] = [];
     const walk = (dir: string): void => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const full = join(dir, entry.name);
         if (entry.isDirectory()) walk(full);
         else if (entry.name.endsWith('.mjs')) {
-          for (const [i, line] of readFileSync(full, 'utf8').split('\n').entries()) {
-            if (/(?<!#)\bclient\.execute\(/.test(line)) sites.push(relative(TOOLS, full));
+          for (const line of readFileSync(full, 'utf8').split('\n')) {
+            if (/\.execute\(/.test(line)) sites.push(relative(TOOLS, full));
           }
         }
       }

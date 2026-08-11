@@ -751,10 +751,24 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   the floor term alone was the first cut and it was wrong in the direction the guard exists to
   prevent**: a single-execution lane took the floor branch and cleared, while a multi-execution lane
   whose cleared plan was the larger term ran every batch but its LAST and then threw
-  `DuneLaneCeilingReached` with the earlier executions already billed. It bit immediately at the
-  floor end too: the census's cleared plan (224.51) was **12.745 credits under** its own single
-  execution plus the reserve, so before this rule that lane would have refused itself at the boundary
-  with its seed reads already spent. **Two per-lane stops were raised and no threshold moved**:
+  `DuneLaneCeilingReached` with the earlier executions already billed. **On the census the CLEARED
+  term binds and the floor clause does not fire at all** — its pre-flight prices 224.51 against one
+  execution's own 212.255 — so what keeps that lane's single execution affordable is purely the
+  reserve on top: a stop of exactly 224.51 is **12.745 credits under** 212.255 + 25, and this lane's
+  only execution is also its last.
+  **AND THE SAME "ONE BOUND, TWO NUMBERS" DEFECT WAS SITTING ONE TERM OVER, IN THE REPRODUCTION
+  LANE'S OWN PRE-FLIGHT.** `estimateReproductionCredits` priced retrieval from each batch's ACTUAL
+  `plannedRows` while every authorisation was priced from `reproductionSpendPlan`'s `rowsPerRead`,
+  which is the row CAP — and `planReproduction` breaks batches on MONTH boundaries as well as on
+  that cap, so real batches sit well under it and the cleared figure was smaller than the sum of the
+  authorisations it had to cover. A tape-shaped 8-batch plan cleared **1,985.6 against 8 × 281**:
+  batches 1–7 ran and batch 8 threw, seven executions billed. It is now
+  `estimatePlanCredits(reproductionSpendPlan(batches))` and nothing else — **`reproductionSpendPlan`
+  is the single owner of the shape and the estimate is a thin caller of it**, so a future edit cannot
+  reintroduce a second basis. Pricing retrieval at the cap over-states the plan and refuses EARLIER,
+  which is the direction a lane whose executions cannot be taken back must fail in; a tighter
+  per-batch estimate is unavailable at this price, because a per-batch retrieval figure cannot bound
+  an authorisation priced per execution. **Two per-lane stops were raised and no threshold moved**:
   `dune-reproduction.mjs` → `WORST_CASE_CREDITS_PER_EXECUTION` **61 → 181** (61 was
   `executionDeadlineCredits` of that lane's own 600 s deadline — the per-lane-number-chosen-too-low
   shape 429a removed the knob for — and the raise keeps its pre-flight and its budget pricing one

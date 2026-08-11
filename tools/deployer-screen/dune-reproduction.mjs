@@ -65,6 +65,7 @@ import {
   DuneClient,
   EXPORT_CREDITS_PER_MB,
   decideAllowance,
+  estimatePlanCredits,
   parseUsageResponse,
 } from './client.mjs';
 import { resolveDuneCredential } from './credential.mjs';
@@ -365,7 +366,9 @@ export function scanWindowFor(launch) {
 }
 
 /**
- * This lane's plan, in the shape both its pre-flight and its lane budget price.
+ * This lane's plan, in the shape both its pre-flight and its lane budget price. **It is the SINGLE
+ * OWNER of that shape**, and {@link estimateReproductionCredits} is a thin caller of it rather than
+ * a second arithmetic beside it.
  *
  * **It is ONE builder because it is one plan.** `checkReproductionAllowance` rules on it before the
  * run and `runReproduction`'s lane budget sizes its stop from it; two literals that merely agree is
@@ -389,26 +392,32 @@ export function reproductionSpendPlan(batches) {
 /**
  * Price a plan in credits, before anything is spent.
  *
- * Executions are priced at the ceiling ({@link WORST_CASE_CREDITS_PER_EXECUTION} each) because a
- * plan is admissible only when its WORST case fits. Bytes are priced from the tape's own row counts
- * rather than from the row cap, because the tape is a measurement of how many rows these windows
- * hold and the cap is only a bound on how they are grouped — pricing 12 reads at the cap would
- * refuse a run over rows that provably do not exist.
+ * **THE CLEARED PLAN AND EVERY PER-EXECUTION AUTHORISATION ARE ONE DERIVATION — this function is
+ * `estimatePlanCredits(`{@link reproductionSpendPlan}`(batches))` and nothing else.** It used to
+ * price retrieval from each batch's ACTUAL `plannedRows` while the lane budget priced every
+ * authorisation from that same plan's `rowsPerRead`, which is
+ * {@link MAX_PLANNED_ROWS_PER_EXECUTION}. Since `planReproduction` breaks batches on MONTH
+ * boundaries as well as on the row cap, real batches sit well under the cap — so the cleared figure
+ * was SMALLER than the sum of the authorisations it had to cover, and an 8-batch tape-shaped plan
+ * cleared 1,985.6 against 8 × 281 of authorisations: batches 1–7 ran and batch 8 threw
+ * `DuneLaneCeilingReached` with seven executions already billed. That is captain decision 144a's
+ * defect — one bound written as two numbers free to drift — and the same shape as the reserve the
+ * ceiling rule omitted, one term over.
+ *
+ * **Pricing retrieval at the CAP rather than at the tape's own counts is deliberate and it is the
+ * conservative direction.** It over-states the plan, so the pre-flight refuses EARLIER; a lane whose
+ * executions cannot be taken back may refuse a run it could have afforded, and may never admit one
+ * it cannot finish. The tighter estimate is not available at this price, because a per-batch
+ * retrieval figure cannot bound an authorisation that is priced per execution.
+ *
+ * Executions stay priced at the ceiling ({@link WORST_CASE_CREDITS_PER_EXECUTION} each) because a
+ * plan is admissible only when its WORST case fits.
  *
  * @param {readonly ReproductionBatch[]} batches
  * @returns {import('./client.mjs').DuneSpendEstimate}
  */
 export function estimateReproductionCredits(batches) {
-  const executionCredits = batches.length * WORST_CASE_CREDITS_PER_EXECUTION;
-  const exportBytes = batches.reduce((n, b) => n + b.plannedRows, 0) * ESTIMATED_BYTES_PER_ROW;
-  const exportCredits = (exportBytes / 1_000_000) * EXPORT_CREDITS_PER_MB;
-  const round = (/** @type {number} */ n) => Number(n.toFixed(3));
-  return {
-    executionCredits: round(executionCredits),
-    exportBytes,
-    exportCredits: round(exportCredits),
-    worstCaseCredits: round(executionCredits + exportCredits),
-  };
+  return estimatePlanCredits(reproductionSpendPlan(batches));
 }
 
 /**

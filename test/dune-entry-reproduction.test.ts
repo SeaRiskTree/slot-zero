@@ -27,7 +27,7 @@ import { describe, expect, it } from 'vitest';
 import { budgetedBounds, clearedAllowance, isUsagePath, usageResponseBody } from './dune-lane-budget-fixture.js';
 
 import { POPULATION_TAPE_DIR } from '../config/data-root.mjs';
-import { DuneClient } from '../tools/deployer-screen/client.mjs';
+import { DuneClient, estimatePlanCredits } from '../tools/deployer-screen/client.mjs';
 import { assertSavedQueryMatches, describeExecutionError, executeAndRead } from '../tools/deployer-screen/dune.mjs';
 import {
   ENTRY_QUERY_ID,
@@ -55,6 +55,7 @@ import {
   planReproduction,
   readTapeLaunches,
   recordCustody,
+  reproductionSpendPlan,
   runReproduction,
   scanWindowFor,
 } from '../tools/deployer-screen/dune-reproduction.mjs';
@@ -426,9 +427,45 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     // the month partly gone, which is the failure this guard exists to prevent.
     //
     // Every other reproduction test here runs ONE batch, which takes the floor branch and cannot see
-    // it. Three batches sized at the planner's own row cap make the cleared plan exactly three
-    // per-execution worst cases, which is the shape that bites.
-    const batches = ['2026-04', '2026-05', '2026-06'].map((month, i) => ({
+    // it. Three batches sized at the planner's own row cap are the shape that isolates the reserve:
+    // the cleared plan is three per-execution worst cases on EITHER row basis, so nothing but the
+    // reserve clause can decide the last batch. The row-basis defect gets its own case below.
+    const { rowsByMint, executions } = await threeBatchRun([
+      MAX_PLANNED_ROWS_PER_EXECUTION,
+      MAX_PLANNED_ROWS_PER_EXECUTION,
+      MAX_PLANNED_ROWS_PER_EXECUTION,
+    ]);
+    expect(executions).toBe(3);
+    // Every batch's result was read, not merely authorised — the stub answers each with one row.
+    expect(rowsByMint.get(MINT)).toHaveLength(3);
+  });
+
+  it('a multi-batch run of PARTIAL batches clears too — the cleared plan and the authorisations price one row basis', async () => {
+    // THE SECOND REGRESSION, and it is a different failure from the reserve one above. The
+    // pre-flight used to price retrieval from each batch's ACTUAL `plannedRows` while every
+    // authorisation was priced from `reproductionSpendPlan`'s `rowsPerRead`, which is the row CAP.
+    // `planReproduction` breaks batches on MONTH boundaries as well as on that cap, so every real
+    // batch is well under it — and the cleared figure was then SMALLER than the sum of the
+    // authorisations it had to cover, so the lane died partway with the earlier executions billed.
+    //
+    // These are the partial counts a month boundary actually produces, which is exactly the shape
+    // the at-cap case above cannot see: there the two bases coincide.
+    const rows = [448, 1_200, 300];
+    const { rowsByMint, executions } = await threeBatchRun(rows);
+    expect(executions).toBe(3);
+    expect(rowsByMint.get(MINT)).toHaveLength(3);
+
+    // And the property underneath it, rather than the arithmetic: the plan a run is admitted on does
+    // not depend on how the rows fall across its batches, because it is the same derivation every
+    // authorisation uses.
+    expect(estimateReproductionCredits(threeBatches(rows)).worstCaseCredits).toBe(
+      estimateReproductionCredits(threeBatches([1, 1, 1])).worstCaseCredits,
+    );
+  });
+
+  /** Three month-separated batches carrying the given planned row counts. */
+  function threeBatches(plannedRows: number[]) {
+    return ['2026-04', '2026-05', '2026-06'].map((month, i) => ({
       month,
       launches: [
         {
@@ -436,27 +473,30 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
           symbol: `s${i}`,
           createdAtMs: Date.parse(`${month}-07T13:27:14.000Z`),
           windowMs: 60_000,
-          tapeFills: MAX_PLANNED_ROWS_PER_EXECUTION,
+          tapeFills: plannedRows[i]!,
         },
       ],
-      plannedRows: MAX_PLANNED_ROWS_PER_EXECUTION,
+      plannedRows: plannedRows[i]!,
     }));
-    // The stop is the plan the pre-flight cleared, so the fixture hands over exactly that verdict
-    // rather than a comfortable one — a generous ceiling would pass either way and prove nothing.
-    const cleared = estimateReproductionCredits(batches).worstCaseCredits;
-    expect(cleared).toBe(batches.length * (WORST_CASE_CREDITS_PER_EXECUTION + 100));
+  }
 
+  /**
+   * Run those three batches against the verdict the pre-flight would have cleared them on.
+   *
+   * The allowance is the run's OWN estimate rather than a comfortable one: a generous ceiling would
+   * pass whatever the arithmetic did, and prove nothing about either defect.
+   */
+  async function threeBatchRun(plannedRows: number[]) {
+    const batches = threeBatches(plannedRows);
     const { impl } = stub();
     const c = client(impl);
     const { rowsByMint } = await runReproduction(c, {
       batches,
       bounds: BOUNDS,
-      allowance: clearedAllowance({ worstCaseCredits: cleared }),
+      allowance: clearedAllowance({ worstCaseCredits: estimateReproductionCredits(batches).worstCaseCredits }),
     });
-    expect(c.executions()).toBe(3);
-    // Every batch's result was read, not merely authorised — the stub answers each with one row.
-    expect(rowsByMint.get(MINT)).toHaveLength(3);
-  });
+    return { rowsByMint, executions: c.executions() };
+  }
 
   it('and that refusal is not an artefact of the fixture — the same stub executes when it matches', async () => {
     // Without this, "zero executions" above would also hold for a stub that simply cannot execute,
@@ -514,11 +554,21 @@ describe('the plan, and the ceiling that refuses before the first request', () =
     expect(oversizedBatches(planReproduction([small]))).toEqual([]);
   });
 
-  it('prices executions at the ceiling and bytes at the tape\'s own row counts', () => {
-    const estimate = estimateReproductionCredits(batchOf([MINT, OTHER_MINT]));
+  it('prices executions at the ceiling and bytes at the row CAP the authorisations are priced at', () => {
+    // The cleared plan is `estimatePlanCredits(reproductionSpendPlan(batches))` and nothing else, so
+    // retrieval is priced at `MAX_PLANNED_ROWS_PER_EXECUTION` per read rather than at the tape's own
+    // counts. That over-states the plan and refuses EARLIER, which is the direction a lane whose
+    // executions cannot be taken back must fail in; pricing the tape's counts here made the cleared
+    // figure smaller than the authorisations it had to cover.
+    const batches = batchOf([MINT, OTHER_MINT]);
+    const estimate = estimateReproductionCredits(batches);
+    expect(estimate).toEqual(estimatePlanCredits(reproductionSpendPlan(batches)));
     expect(estimate.executionCredits).toBe(WORST_CASE_CREDITS_PER_EXECUTION);
-    expect(estimate.exportBytes).toBe(20 * ESTIMATED_BYTES_PER_ROW);
-    expect(estimate.worstCaseCredits).toBeCloseTo(WORST_CASE_CREDITS_PER_EXECUTION + (20 * ESTIMATED_BYTES_PER_ROW * 20) / 1e6, 6);
+    expect(estimate.exportBytes).toBe(MAX_PLANNED_ROWS_PER_EXECUTION * ESTIMATED_BYTES_PER_ROW);
+    expect(estimate.worstCaseCredits).toBeCloseTo(
+      WORST_CASE_CREDITS_PER_EXECUTION + (MAX_PLANNED_ROWS_PER_EXECUTION * ESTIMATED_BYTES_PER_ROW * 20) / 1e6,
+      6,
+    );
   });
 
   it('defaults to a dry run, so spending is something you ask for', () => {

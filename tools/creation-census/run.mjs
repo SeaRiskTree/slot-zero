@@ -791,13 +791,15 @@ export async function main(argv, env, say) {
     // happens to make today. Its stop is `duneSpendPlan`'s own worst case, the same plan the
     // pre-flight priced, so there is one number and not two free to drift.
     //
-    // AND THE FLOOR CLAUSE OF `client.mjs` -> `laneCeilingCredits` BITES HERE, MEASURABLY. The
-    // pre-flight prices `maxExecutionsPerRun` executions and one MORE result read than executions
-    // (headroom for a re-read), which at the shipped pins is 224.51 credits; one execution's own
-    // worst case is 212.255 and the reserve is 25, so the cleared figure is 12.745 credits short of
-    // authorising the single execution this run exists to make. Without the floor — and without the
-    // reserve sitting ON TOP of whichever term binds — this lane would refuse itself at the
-    // execution boundary with its seed reads already spent.
+    // AND ON THIS LANE IT IS THE CLEARED TERM THAT BINDS, WITH THE RESERVE RIDING ON TOP OF IT.
+    // `client.mjs` -> `laneCeilingCredits` is `max(cleared, one engine-floored execution) + the
+    // reserve`, and here the pre-flight prices `maxExecutionsPerRun` executions and one MORE result
+    // read than executions (headroom for a re-read), which at the shipped pins is 224.51 credits
+    // against one execution's own 212.255 — so the cleared term is the larger and the floor clause
+    // does not fire at all. The stop is 249.51. What keeps the single execution this run exists to
+    // make affordable is the reserve sitting on top of whichever term binds: a stop of exactly the
+    // cleared plan leaves that plan's last execution short by the 25 the reserve holds back, and
+    // this lane's only execution is also its last.
     // ONE execution's worth: one result read at the `?limit=` this run reads at.
     const executionPlan = { ...spendPlan, executions: 1, resultReads: 1 };
     const laneBudget = openDuneLaneBudget({

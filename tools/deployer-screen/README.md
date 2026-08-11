@@ -106,9 +106,12 @@ node tools/deployer-screen/grade.mjs --help
 
 # THE DUNE ENTRY STATEMENT, RUN AGAINST THE COMMITTED TAPE. Also a DRY RUN by default: it prints
 # the batch plan and its credit estimate and opens no socket. --live SPENDS, and it is the most
-# expensive thing in this directory — a 1269.195-credit planned worst case against a 2,500-credit
-# shared month (657.195 when the record below was written, before captain decision 381 moved this
-# lane's per-execution pin 10 -> 61), ~495 spent in fact, almost all of it result bytes. The
+# expensive thing in this directory — the planned worst case was 657.195 credits against a
+# 2,500-credit shared month when the record below was written, and it has been repriced twice since:
+# captain decision 381 took this lane's per-execution pin 10 -> 61, and 437(a) took it 61 -> 181,
+# the ENGINE floor, because 61 was executionDeadlineCredits of this lane's own 600 s deadline and
+# 429a removed that knob — the failure class is a per-lane number chosen too low. The dry run prints
+# the current figure; ~495 was spent in fact, almost all of it result bytes. The
 # measurement record owns the SPENT figures; read "The reproduction" below before running it,
 # because the committed answer is already in measurements/2026-08-05-dune-entry-reproduction/ and a
 # test asserts it.
@@ -2778,6 +2781,23 @@ Four things follow, and each of them is why it is built this way:
 `parseUsageResponse` is the reader; `dune.mjs` → `checkDuneAllowance` is the decision, and it runs
 **before the coverage probe**, because the probe is itself a billed read.
 
+**AND IT IS RE-CHECKED IMMEDIATELY BEFORE EVERY EXECUTION, BECAUSE A PRE-FLIGHT VERDICT IS NOT A
+BOUND** (captain decision 437(a)). The verdict above is **not replaced**: it still runs once, and its
+own `worstCaseCredits` is what this lane's stop is DERIVED from, so the budget enforces the plan the
+run was ADMITTED on rather than a second number free to drift from it. What is added is enforcement
+after the check, which is where the iteration happens. `dune.mjs` → `executeAndRead` **requires** a
+lane budget (`client.mjs` → `openDuneLaneBudget`) and a one-execution plan, and refuses terminally
+without them, before issuing anything — and it is the single place `DuneClient.execute` is called in
+this tool, so the creation enumeration, its oversized split, both coverage probes, the Stage 2 Dune
+fill source and the entry reproduction all funnel through it. The budget **re-reads the live balance
+before every execution** and clears one at a time; what it clears is debited **whole**, retrieval
+included, so a lane cannot authorise more than it reserved. The per-execution worst case is floored
+at the ENGINE bound and a caller's smaller number is discarded, so a sub-floor lane stop is
+unrepresentable. Refusal is `DuneLaneCeilingReached` — terminal, and a `DuneRefused`, so the
+fallback to the Solana RPC walk is exactly what it was. The guard's own rules and figures are owned
+by `client.mjs` → `openDuneLaneBudget` and `laneCeilingCredits` and by AGENTS.md's 437(a) bullet;
+cite them rather than restating them.
+
 **What a run does when the allowance is insufficient.** `dune.mjs` → `duneSpendPlan` prices the
 CEILINGS this leg admits — `maxExecutionsPerRun` executions at
 `worstCaseCreditsPerExecution`, plus one result read each and one of headroom, every read at
@@ -2823,7 +2843,8 @@ crash there.
   a reservation.* **This is not the lag caveat above and neither stands in for the other**: unshared
   says no stranger is spending the balance; the counter is still behind the truth, and the reserve
   still comes off before any comparison.
-- **IT CANNOT BOUND WHAT AN EXECUTION ACTUALLY COSTS — only what this run is allowed to PLAN.** The
+- **IT CANNOT BOUND WHAT AN EXECUTION ACTUALLY COSTS — only what this run is allowed to PLAN** (which
+  is why the per-execution lane budget above exists; this bullet is about the pre-flight verdict). The
   spend happens after the check passes, and Dune caps a single execution's cost nowhere, so the
   protection is only ever as good as the pin. That is measured, not hypothetical: a lane running
   behind this exact code path, with the counter re-read before every execution, printed
@@ -2847,7 +2868,9 @@ crash there.
   moved and say so in place**: `entry_source_agreement.worstCaseComputeCreditsPerExecution` cannot
   take the engine floor and stay plannable at 82 executions, so repricing it belongs with Gate 3;
   `dune-reproduction.mjs` → `WORST_CASE_CREDITS_PER_EXECUTION` moved 10 → 61, the floor its own 600 s
-  deadline buys.
+  deadline buys — **and captain decision 437(a) has since taken it to 181**, the engine floor, because
+  pricing a lane off its own deadline is exactly the per-lane-number-chosen-too-low shape 429a removed
+  the knob for; the floor is `executionDeadlineCredits(ENGINE_TIMEOUT_MS)` unconditionally.
 - **Execution compute is not predictable from the vendor.** Dune publishes no price table for it, so
   `worstCaseCreditsPerExecution` is pinned per lane. A statement that grew a `dex_solana.trades`
   join would need it re-measured — and the ~9× figure on record is a SUCCESSFUL execution, which

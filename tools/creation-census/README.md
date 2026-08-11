@@ -79,7 +79,8 @@ A run writes two files to `runs/`:
 - **`<month>-census.json`** — the reading of it. A versioned contract (`RECORD_SCHEMA_VERSION`):
   bump, never retro-edit, because committed records are evidence that a census ran and what it saw.
 
-Exit codes: `0` ran, `2` refused (a real answer about our own evidence, not a fault), `3` credential,
+Exit codes: `0` ran, `2` refused (a real answer about our own evidence or our own budget — the
+pre-flight allowance and the lane budget's own ceiling share it — not a fault), `3` credential,
 `4` vendor refused — and on `4` the execution may already have been billed — and **`5` WE STOPPED
 IT**: the execution was still running at `bounds.json` → `dune.executionDeadlineMs` and this run
 cancelled it rather than keep paying (captain decision 381). `5` is deliberately not folded into `4`.
@@ -135,7 +136,7 @@ not).
 | | |
 |---|---|
 | executions | **1 per run**, which is one census month. The coverage probe rides in the same result. |
-| requests | **48**, covering the credit-guard `POST /usage`, the verification, the execution, up to 40 polls and the one read, plus one retry of headroom. It is `maxPollAttempts + 5` and must stay there: below it the request ceiling binds first, and a run that exhausts its budget between the execution and the read has burned a billed, unrecoverable execution and thrown its answer away. **The cancel is exempt from it** — a ceiling that could refuse the one request that stops a spend would be the wrong way round — so a run that had to cancel reports one request above this figure. |
+| requests | **48**, covering the credit-guard `POST /usage`, the verification, the lane budget's own `POST /usage` re-read immediately before the execution, the execution itself, up to 40 polls and the one read, with the pin's remaining 3 as retry headroom. That sum is `maxPollAttempts + 5` and this value must never sit below it: below it the request ceiling binds first, and a run that exhausts its budget between the execution and the read has burned a billed, unrecoverable execution and thrown its answer away. **The cancel is exempt from it** — a ceiling that could refuse the one request that stops a spend would be the wrong way round — so a run that had to cancel reports one request above this figure. |
 | execution deadline | **120,000 ms**, the give-up point at which a still-running execution is CANCELLED rather than abandoned. Exactly `maxPollAttempts × pollIntervalMs`, so nothing about *when* this lane gives up moved; what moved is that it now stops the engine. Worth at most **13 credits** of compute if cancelling stops Dune's clock, against the **200** the guard reserves in case it does not. |
 | result rows | **5,000** deployer rows, ceiling 20,000; read at `?limit=` rows + 64 |
 | pacing | **250 ms** between request starts |
@@ -175,6 +176,18 @@ a cap that needlessly deferred a census would fail the requirement as surely as 
 `credits_used` / `credits_included` per period. `client.mjs` → `readUsage` fetches it,
 `parseUsageResponse` reads it, `run.mjs` → `checkDuneAllowance` decides, and it runs **first**:
 ahead of the saved-query verification and long ahead of the execution.
+
+**AND IT IS RE-CHECKED IMMEDIATELY BEFORE THE EXECUTION, BECAUSE A PRE-FLIGHT VERDICT IS NOT A
+BOUND** (captain decision 437(a)). `run.mjs` → `executeAndRead` **requires** a lane budget
+(`client.mjs` → `openDuneLaneBudget`) and refuses terminally without one, so the guarantee is a
+property of the code path rather than of this lane happening to issue a single execution. The budget
+re-reads the live balance, clears one execution at a time against a ceiling derived from the plan
+this run was ADMITTED on, and throws `DuneLaneCeilingReached` — **refused, exit 2**, before
+`client.execute` is called and so before anything is billed. It costs one extra free `POST /usage`
+per execution, which the request ceiling above already covers. The guard's own rules — why the
+per-execution price is floored at the engine bound and why the reserve rides on top of whichever
+term binds — are owned by `client.mjs` → `openDuneLaneBudget` and `laneCeilingCredits`; cite them
+rather than restating them.
 
 **What a run does when it does not fit.** `run.mjs` → `duneSpendPlan` prices the CEILINGS — one
 execution at `worstCaseCreditsPerExecution`, plus reads at this month's own `?limit=` of at most

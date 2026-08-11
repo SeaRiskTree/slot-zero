@@ -1364,7 +1364,7 @@ const ROW_CACHE_IO = { writeFileSync, renameSync, unlinkSync, readFileSync, exis
  * Write a `--rows` cache without ever destroying rows already paid for.
  *
  * **THREE CONDITIONS GUARD THIS, THEY FAIL DIFFERENTLY, AND NONE REPLACES ANOTHER.** The same loss —
- * an operator's complete cache from an earlier full-tape fetch (~530 credits) gone, and the rows to
+ * an operator's complete cache from an earlier full-tape fetch of ~530 credits gone, and the rows to
  * be bought again — has arrived by three separate routes, so it is closed at three separate points
  * and a later reader tempted to simplify one away should read all three:
  *

@@ -683,7 +683,16 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   worker walks past. It reuses `estimatePlanCredits` + `decideAllowance` for the monthly ceiling —
   one mechanism, not a second. **Nothing wires it yet**; a lane opts in. Three things bind, and each
   is one of the overruns. **(1) NO MEASURED COST MAY SET THE NEXT BOUND**: the per-execution price is
-  floored at `executionDeadlineCredits(deadlineMs)` and a caller's smaller number is discarded. Two
+  floored at the ENGINE floor — `executionDeadlineCredits(ENGINE_TIMEOUT_MS)`, **181 credits**,
+  UNCONDITIONALLY and never at the lane's own `executionDeadlineMs` — and a caller's smaller number
+  is discarded while a larger one is kept. **The knob is REMOVED rather than re-tuned, because the
+  failure class is a per-lane number chosen too low**, so a sub-181 lane stop is unrepresentable
+  under this guard and that is the intended message: a single execution was measured at 46.6 credits,
+  so a 40- or 50-credit stop was never a stop. `executionDeadlineMs` stays a required, validated
+  parameter — a lane must still state how long it lets an execution run — and prices nothing. What
+  is authorised is also what is spent down: a cleared execution debits the price it cleared at, so a
+  lane pricing above the floor cannot clear 200 credits and be charged 181 against its own ceiling.
+  Two
   executions IDENTICAL in shape (same generator, 350 launches, same two-month block list, 138.4 KB
   of SQL) cost **14.226 and 20.028** — 41% apart for 25 more rows — and the lane that sized the
   second from the first still overran a 50-credit stop (50.334). Per-execution price is not

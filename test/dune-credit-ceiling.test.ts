@@ -2582,8 +2582,14 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
     };
   }
 
-  /** The two lanes' pinned execution deadline: 120 s, which prices one execution at 13 credits. */
+  /**
+   * The two lanes' REAL pinned execution deadline, 120 s — and it prices nothing. Every case below
+   * runs at it, because the per-execution worst case is the ENGINE floor unconditionally.
+   */
   const DEADLINE_MS = 120_000;
+
+  /** `executionDeadlineCredits(ENGINE_TIMEOUT_MS)`: what one execution is bounded at, always. */
+  const ENGINE_FLOOR = 181;
 
   /** A plan for exactly one execution that reads no rows, so the arithmetic is the compute alone. */
   function oneExecution(creditsPerExecution: number) {
@@ -2600,7 +2606,7 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
   function budget(over: Partial<Parameters<typeof openDuneLaneBudget>[0]> = {}) {
     return openDuneLaneBudget({
       lane: 'scout',
-      ceilingCredits: 50,
+      ceilingCredits: 722,
       reserveCredits: 0,
       executionDeadlineMs: DEADLINE_MS,
       monthlyCapCredits: CAP,
@@ -2611,14 +2617,14 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
   }
 
   it('refuses the execution that would take the lane past its ceiling, and says so with numbers', async () => {
-    // 50-credit ceiling, 13 credits of worst case per execution: three clear, the fourth cannot.
-    // The pre-existing run-level guard clears this whole lane once and never looks again — which is
+    // 722-credit ceiling at the engine floor of 181: three clear (543), the fourth cannot. The
+    // pre-existing run-level guard clears this whole lane once and never looks again — which is
     // exactly how a 50-credit stop came to be spent to 50.334.
     const { client, calls } = usageClient([100]);
     const b = budget();
     for (let n = 0; n < 3; n += 1) {
       const ok = await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
-      expect(ok.estimate.worstCaseCredits).toBe(13);
+      expect(ok.estimate.worstCaseCredits).toBe(ENGINE_FLOOR);
     }
     expect(b.executionsAuthorised()).toBe(3);
 
@@ -2629,9 +2635,9 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
     // A refusal, not a warning: the lane cannot proceed past it, and the count did not advance.
     expect(b.executionsAuthorised()).toBe(3);
     const thrown = err as unknown as { message: string; shortfallCredits: number; ceilingCredits: number };
-    expect(thrown.ceilingCredits).toBe(50);
+    expect(thrown.ceilingCredits).toBe(722);
     expect(thrown.shortfallCredits).toBe(2);
-    expect(thrown.message).toContain('50 credit(s) cannot cover');
+    expect(thrown.message).toContain('722 credit(s) cannot cover');
     expect(thrown.message).toContain('2 credit(s) short');
     expect(thrown.message).toContain(LANE_CEILING_IS_NOT_A_PROJECTION);
     expect(thrown.message).toContain(LANE_SPEND_IS_TWO_QUANTITIES);
@@ -2643,9 +2649,10 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
   it('does not let a MEASURED prior execution set the next one\'s bound', async () => {
     // Evidence 2, reproduced. Batch 2 was measured at 14.226 credits; batch 3 was identical in shape
     // and cost 20.028. A lane projecting the next from the last hands in 14.226 and, under a
-    // projection-based budget, would clear ~3 more executions inside a 50-credit stop.
+    // projection-based budget, would clear ~3 more executions inside a 50-credit stop. It runs at the
+    // lanes' OWN pinned 120 s deadline, because that is the configuration a wired lane will have.
     const { client } = usageClient([100]);
-    const b = budget({ executionDeadlineMs: ENGINE_TIMEOUT_MS });
+    const b = budget({ ceilingCredits: 50 });
     b.recordExecutionOutcome({ executionCostCredits: 14.226, resultBytes: 0 });
 
     const err = await b
@@ -2665,33 +2672,55 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
     // evidence and is never allowed to narrow the next bound. Both authorisations price identically
     // although a 0.001-credit outcome was reported between them.
     const { client } = usageClient([100]);
-    const b = budget();
+    const b = budget({ ceilingCredits: 1_000 });
     const first = await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
     b.recordExecutionOutcome({ executionCostCredits: 0.001, resultBytes: 0 });
     const second = await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
     expect(second.estimate.worstCaseCredits).toBe(first.estimate.worstCaseCredits);
+    expect(second.estimate.worstCaseCredits).toBe(ENGINE_FLOOR);
     // A caller pricing ABOVE the floor keeps its own number — a lane may know its statement is worse
     // than average and may never claim it is better.
-    const dearer = await b.authoriseExecution(client, { plan: oneExecution(20), nowMs: NOW_MS });
-    expect(dearer.estimate.worstCaseCredits).toBe(20);
+    const dearer = await b.authoriseExecution(client, { plan: oneExecution(400), nowMs: NOW_MS });
+    expect(dearer.estimate.worstCaseCredits).toBe(400);
+  });
+
+  it('spends down what it AUTHORISED, not the floor, when the caller prices above the floor', async () => {
+    // The lane is cleared for 400 credits of worst case, so 400 is what its own ceiling is debited.
+    // Debiting the 181 floor instead would let this 1,000-credit lane clear five such executions —
+    // 2,000 credits of authorised worst case — with only the lagging account counter to stop it.
+    const { client } = usageClient([100]);
+    const b = budget({ ceilingCredits: 1_000 });
+    await b.authoriseExecution(client, { plan: oneExecution(400), nowMs: NOW_MS });
+    expect(b.spentSoFar().localEstimateCredits).toBe(400);
+    const second = await b.authoriseExecution(client, { plan: oneExecution(400), nowMs: NOW_MS });
+    expect(second.spend.localEstimateCredits).toBe(800);
+
+    // Third: 200 spendable against a 400-credit worst case, so it refuses.
+    const err = await b
+      .authoriseExecution(client, { plan: oneExecution(400), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect(err?.name).toBe('DuneLaneCeilingReached');
+    expect((err as unknown as { shortfallCredits: number }).shortfallCredits).toBe(200);
+    expect((err as unknown as { localEstimateCredits: number }).localEstimateCredits).toBe(800);
+    expect(b.executionsAuthorised()).toBe(2);
   });
 
   it('enforces against the ACCOUNT COUNTER DELTA once it exceeds the local estimate', async () => {
     // Evidence 3: the settled counter ran 8.000 credits above the summed `execution_cost_credits`.
     // A budget enforced on attributed cost alone under-reads exactly the way today's lane did, so
     // the counter delta is read every time and the LARGER of the two binds.
-    const { client } = usageClient([100, 100, 140]);
-    const b = budget();
+    const { client } = usageClient([100, 100, 600]);
+    const b = budget({ ceilingCredits: 600 });
     await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
     b.recordExecutionOutcome({ executionCostCredits: 5, resultBytes: 0 });
 
-    // Second authorisation: counter still at baseline, so the local estimate (13) binds.
+    // Second authorisation: counter still at baseline, so the local estimate (181) binds.
     const second = await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
     expect(second.spend.bindingQuantity).toBe('local-estimate');
     expect(second.spend.counterDeltaCredits).toBe(0);
 
-    // Third: the counter has settled 40 credits above the lane's baseline, well past both the local
-    // estimate (26) and everything the vendor attributed (5). It binds, and it refuses.
+    // Third: the counter has settled 500 credits above the lane's baseline, well past both the local
+    // estimate (362) and everything the vendor attributed (5). It binds, and it refuses.
     const err = await b
       .authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS })
       .then(() => null, (e: Error) => e);
@@ -2703,10 +2732,10 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
       localEstimateCredits: number;
     };
     expect(thrown.bindingQuantity).toBe('account-counter-delta');
-    expect(thrown.bindingSpendCredits).toBe(40);
-    expect(thrown.counterDeltaCredits).toBe(40);
+    expect(thrown.bindingSpendCredits).toBe(500);
+    expect(thrown.counterDeltaCredits).toBe(500);
     // Both under-readings are visible on the refusal rather than being rewritten into the binding one.
-    expect(thrown.localEstimateCredits).toBe(26);
+    expect(thrown.localEstimateCredits).toBe(362);
     expect(b.spentSoFar().attributedExecutionCredits).toBe(5);
   });
 
@@ -2741,7 +2770,7 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
       .authoriseExecution(roomy.client, { plan: oneExecution(13), nowMs: NOW_MS })
       .then(() => null, (e: Error) => e);
     expect((laneErr as unknown as { refusedBy: string }).refusedBy).toBe('lane-ceiling');
-    expect(laneErr?.message).toContain('8 credit(s) short');
+    expect(laneErr?.message).toContain('176 credit(s) short');
 
     // The account's, with the lane's own budget untouched. Raising the lane ceiling buys nothing
     // here, and a headline that always blamed the lane would report a 0-credit shortfall as the
@@ -2763,7 +2792,7 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
       const { client } = usageClient([100]);
       const b = open({
         lane: 'scout',
-        ceilingCredits: 20,
+        ceilingCredits: 356,
         reserveCredits: 0,
         executionDeadlineMs: DEADLINE_MS,
         monthlyCapCredits: CAP,

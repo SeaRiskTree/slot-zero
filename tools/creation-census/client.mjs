@@ -1334,8 +1334,18 @@ export function localCreditEstimate(input) {
  * Reading 2 is the one that decides this design. **A pre-flight estimate taken from a measured,
  * identically-shaped prior batch was still not a bound**, so no measured cost may ever narrow the
  * next execution's worst case. {@link openDuneLaneBudget} therefore floors every per-execution price
- * at {@link executionDeadlineCredits}, which is what the engine can bill before this client stops it,
- * and a caller handing in a smaller figure gets the floor rather than its own number.
+ * at the ENGINE FLOOR — `executionDeadlineCredits(ENGINE_TIMEOUT_MS)`, 181 credits, what the vendor's
+ * own 30-minute limit can bill — and a caller handing in a smaller figure gets that floor rather than
+ * its own number.
+ *
+ * **The floor is the engine's and not the lane's deadline, because the failure class here is A
+ * PER-LANE NUMBER CHOSEN TOO LOW and there are three recorded instances of it. The knob is REMOVED
+ * rather than re-tuned**: a lane may still pin HIGHER, and a sub-181 lane stop being unrepresentable
+ * under this guard is the intended message rather than a regression — evidence 1 measured a SINGLE
+ * execution at 46.6 credits, so a 40- or 50-credit stop was never a stop. A deadline bounds the WAIT
+ * for certain and the BILL only if Dune stops the engine on cancel, which is undocumented (see
+ * {@link EXECUTION_DEADLINE_CAVEAT}), so pricing a lane's worst case off it assumes the unsettled
+ * answer in the expensive direction's favour.
  */
 export const LANE_CEILING_IS_NOT_A_PROJECTION =
   'A lane ceiling is enforced against a WORST CASE and never against a projection from a prior ' +
@@ -1436,8 +1446,9 @@ export class DuneLaneCeilingReached extends DuneRefused {
  * @typedef {object} LaneSpendReading
  * @property {number | null} counterDeltaCredits  `credits_used` now, less the baseline this budget
  *   took before its first execution. `null` when the reading could not be taken.
- * @property {number} localEstimateCredits        Executions issued at the floored per-execution worst
- *   case, plus bytes read at {@link EXPORT_CREDITS_PER_MB}.
+ * @property {number} localEstimateCredits        The summed worst case this budget AUTHORISED — every
+ *   execution at the price it was actually cleared at, never at the floor when the caller priced
+ *   above it — plus bytes read at {@link EXPORT_CREDITS_PER_MB}.
  * @property {number} attributedExecutionCredits  Summed `execution_cost_credits` as the vendor
  *   reported it. **Reported only — it is not what the ceiling is enforced against.**
  * @property {number} resultBytes                 Result bytes the vendor's metadata declared.
@@ -1473,10 +1484,17 @@ export class DuneLaneCeilingReached extends DuneRefused {
  *
  * - **It re-reads live usage before EVERY execution.** A pre-flight check that runs once is exactly
  *   what the overrunning lanes had; the whole failure is that iteration happens after it.
- * - **The worst case is floored at {@link executionDeadlineCredits} and a caller cannot lower it.**
- *   A lane sizing the next execution from the last one's measured cost hands in a small
- *   `creditsPerExecution`; it gets the engine floor. Nothing a vendor has reported about a completed
- *   execution reaches this number, by construction.
+ * - **The worst case is floored at the ENGINE FLOOR — `executionDeadlineCredits(ENGINE_TIMEOUT_MS)`,
+ *   181 credits — and a caller cannot lower it.** A lane sizing the next execution from the last
+ *   one's measured cost hands in a small `creditsPerExecution`; it gets the engine floor. Nothing a
+ *   vendor has reported about a completed execution reaches this number, by construction. The floor
+ *   is NOT derived from `executionDeadlineMs`: the failure this guard exists to close is a per-lane
+ *   number chosen too low, so the knob is removed rather than re-tuned, and a lane wanting a 40- or
+ *   50-credit stop cannot have one here — see {@link LANE_CEILING_IS_NOT_A_PROJECTION}. A lane that
+ *   knows its statement is worse than the floor may still pin HIGHER.
+ * - **What was authorised is what is spent down.** Each cleared execution debits the price it was
+ *   cleared at, so a lane pricing above the floor cannot clear 200 credits of worst case and be
+ *   charged 13 against its own ceiling — which would be a projection re-entering by the back door.
  * - **Spend is `max(counter delta, local estimate)`** — {@link LANE_SPEND_IS_TWO_QUANTITIES}.
  * - **It THROWS.** A returned verdict is a warning, and a warning is what a worker iterates past.
  *
@@ -1490,7 +1508,10 @@ export class DuneLaneCeilingReached extends DuneRefused {
  * @param {number} config.ceilingCredits       THIS LANE's budget, in credits. Smaller than the month.
  * @param {number} config.reserveCredits       Held back against the counter's lag; never spendable.
  * @param {number} config.executionDeadlineMs  How long one execution may run before this client
- *   cancels it. It is what makes a per-execution worst case sayable at all.
+ *   cancels it. **It is required and validated, and it does NOT set the per-execution worst case** —
+ *   that is the engine floor above, unconditionally. It is stated because a lane that cannot say how
+ *   long it lets an execution run has not bounded its wait, and silently ignoring a supplied deadline
+ *   would be worse than not taking one; the budget itself makes no other use of it.
  * @param {number} config.monthlyCapCredits    The operator's fleet-wide cap, for {@link decideAllowance}.
  * @param {number} config.tightMultiple
  * @param {boolean} config.allowanceRequired
@@ -1516,31 +1537,35 @@ export function openDuneLaneBudget(config) {
       );
     }
   }
-  const floorPerExecution = executionDeadlineCredits(config.executionDeadlineMs);
+  // THE ENGINE FLOOR, NOT THIS LANE'S DEADLINE. `config.executionDeadlineMs` is validated above and
+  // deliberately does not price anything: the failure class is a per-lane number chosen too low, so
+  // the knob is removed rather than re-tuned.
+  const floorPerExecution = executionDeadlineCredits(ENGINE_TIMEOUT_MS);
   /** @type {number | null} */ let baselineUsed = null;
   let executions = 0;
+  let authorisedExecutionCredits = 0;
   let attributedExecutionCredits = 0;
   let resultBytes = 0;
   /** @type {number | null} */ let counterDeltaCredits = null;
 
   /** @returns {LaneSpendReading} */
   const reading = () => {
-    // The local half is built from EXECUTIONS ISSUED at the floored worst case — never from what
-    // any of them was reported to cost. `attributedExecutionCredits` is carried beside it for an
-    // operator to read and is deliberately absent from this arithmetic.
-    const local = localCreditEstimate({
-      executions,
-      creditsPerExecution: floorPerExecution,
-      resultBytes,
-    });
+    // The local half is built from what was AUTHORISED — each execution at the worst case it was
+    // cleared against, which is at least the engine floor — never from what any of them was reported
+    // to cost. Debiting the floor while clearing a larger figure would let a lane pricing above it
+    // authorise many multiples of its own ceiling inside the counter's lag window.
+    // `attributedExecutionCredits` is carried beside it for an operator to read and is deliberately
+    // absent from this arithmetic.
+    const bytesHalf = localCreditEstimate({ executions: 0, creditsPerExecution: 0, resultBytes });
+    const localEstimateCredits = round3(authorisedExecutionCredits + bytesHalf.exportCredits);
     const counter = counterDeltaCredits;
-    const counterBinds = counter !== null && counter > local.estimatedCredits;
+    const counterBinds = counter !== null && counter > localEstimateCredits;
     return {
       counterDeltaCredits: counter,
-      localEstimateCredits: local.estimatedCredits,
+      localEstimateCredits,
       attributedExecutionCredits: round3(attributedExecutionCredits),
       resultBytes,
-      bindingSpendCredits: counterBinds ? counter : local.estimatedCredits,
+      bindingSpendCredits: counterBinds ? counter : localEstimateCredits,
       bindingQuantity: counterBinds ? 'account-counter-delta' : 'local-estimate',
     };
   };
@@ -1643,8 +1668,10 @@ export function openDuneLaneBudget(config) {
 
       // AUTHORISED MEANS SPENT, immediately. A cleared execution is an execution that will run, and
       // the counter will not show it for minutes — so the local half moves here rather than on the
-      // way back, where a transport failure would lose it.
+      // way back, where a transport failure would lose it. It moves by the figure this execution was
+      // CLEARED at, so authorisation and spend price the same execution the same way.
       executions += 1;
+      authorisedExecutionCredits = round3(authorisedExecutionCredits + plan.creditsPerExecution);
       return { estimate, allowance, spend: reading(), spendableCredits: spendable };
     },
   };

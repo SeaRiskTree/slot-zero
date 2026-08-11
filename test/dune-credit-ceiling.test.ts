@@ -59,6 +59,7 @@ import {
   executionDeadlineCredits,
   LANE_CEILING_IS_NOT_A_PROJECTION,
   LANE_SPEND_IS_TWO_QUANTITIES,
+  laneCeilingCredits as screenLaneCeilingCredits,
   openDuneLaneBudget,
 } from '../tools/deployer-screen/client.mjs';
 import {
@@ -69,6 +70,7 @@ import {
   estimatePlanCredits as censusEstimatePlanCredits,
   executionDeadlineCredits as censusExecutionDeadlineCredits,
   EXECUTION_DEADLINE_CAVEAT as CENSUS_DEADLINE_CAVEAT,
+  laneCeilingCredits as censusLaneCeilingCredits,
   openDuneLaneBudget as censusOpenDuneLaneBudget,
 } from '../tools/creation-census/client.mjs';
 import {
@@ -79,7 +81,6 @@ import {
   duneSpendPlan,
   enumerateCreations,
   executeAndRead as screenExecuteAndRead,
-  laneCeilingCredits as screenLaneCeilingCredits,
   openDuneCreditLedger,
   openLaneBudget as screenOpenLaneBudget,
 } from '../tools/deployer-screen/dune.mjs';
@@ -100,7 +101,6 @@ import {
   EXIT,
   checkDuneAllowance as censusCheckDuneAllowance,
   executeAndRead as censusExecuteAndRead,
-  laneCeilingCredits as censusLaneCeilingCredits,
   main as censusMain,
   readBounds,
 } from '../tools/creation-census/run.mjs';
@@ -3043,16 +3043,13 @@ describe('437(a): every Dune-spending lane is WIRED to the budget, not merely of
       'deployer-screen/dune.mjs',
     ]);
 
-    // And each real one sits inside its tool's `executeAndRead`, below the authorisation.
-    for (const [file, fn] of [
-      ['deployer-screen/dune.mjs', 'executeAndRead'],
-      ['creation-census/run.mjs', 'executeAndRead'],
-    ] as const) {
-      const src = readFileSync(join(TOOLS, file), 'utf8');
-      const body = src.slice(src.indexOf(`export async function ${fn}(`));
-      expect(body.indexOf('requireLaneBudget(bounds)')).toBeGreaterThan(-1);
-      expect(body.indexOf('requireLaneBudget(bounds)')).toBeLessThan(body.indexOf('client.execute('));
-    }
+    // WHAT IS DELIBERATELY *NOT* ASSERTED HERE: that the authorisation appears above the execute in
+    // each file's source text. That ordering is already carried BEHAVIOURALLY by the two
+    // `an UNBUDGETED execution is refused, and nothing is requested` cases below, which drive both
+    // `executeAndRead` entry points and assert nothing left the client; a source-order check would
+    // additionally fail on a rename, an inline, or a move into a helper, none of which are bugs.
+    // The ENUMERATION above is the half that is the acceptance criterion — a spend path nobody
+    // found is the failure this decision names — so a third file gaining a call site fails here.
   });
 
   for (const [which, run] of [
@@ -3177,7 +3174,7 @@ describe('437(a): every Dune-spending lane is WIRED to the budget, not merely of
     // unchanged and no candidate is read as having created nothing — 156a's rule, which enforcing a
     // ceiling must not breach on its way past.
     expect((err as unknown as { terminal: boolean }).terminal).toBe(true);
-    expect(err?.message).toMatch(/credit ceiling of 206 credit\(s\)/);
+    expect(err?.message).toMatch(/credit ceiling of 231 credit\(s\)/);
   });
 
   it('RAISES a lane whose own pin is under the engine floor, rather than letting it clear nothing', () => {
@@ -3192,8 +3189,12 @@ describe('437(a): every Dune-spending lane is WIRED to the budget, not merely of
     expect(screenLaneCeilingCredits(40, plan, 25)).toBe(ENGINE_FLOOR + 25);
     expect(censusLaneCeilingCredits(50, plan, 25)).toBe(ENGINE_FLOOR + 25);
     // A lane pricing ABOVE the floor keeps its own figure, and a cleared plan larger than the floor
-    // is not shrunk to it.
-    expect(screenLaneCeilingCredits(5_000, plan, 25)).toBe(5_000);
+    // is not shrunk to it — but the reserve rides on TOP of whichever term binds, because
+    // `authoriseExecution` subtracts it from what the ceiling makes spendable. A ceiling of exactly
+    // the cleared plan leaves that plan's LAST execution short by the reserve; the multi-batch case
+    // in `test/dune-entry-reproduction.test.ts` is that failure driven end to end.
+    expect(screenLaneCeilingCredits(5_000, plan, 25)).toBe(5_025);
+    expect(censusLaneCeilingCredits(5_000, plan, 25)).toBe(5_025);
     expect(screenLaneCeilingCredits(0, { ...plan, creditsPerExecution: 400 }, 0)).toBe(400);
   });
 
@@ -3212,7 +3213,8 @@ describe('437(a): every Dune-spending lane is WIRED to the budget, not merely of
     b.recordExecutionOutcome({ executionCostCredits: 0.25, resultBytes: 0 });
     expect(b.spentSoFar().localEstimateCredits).toBe(ENGINE_FLOOR);
     expect(b.spentSoFar().attributedExecutionCredits).toBe(0.25);
-    // 300 - 181 cleared - 25 reserve = 94, which is under one more floor-priced execution.
+    // Ceiling 325 (the cleared 300 plus the reserve) - 181 cleared - 25 reserve = 119, which is
+    // under one more floor-priced execution.
     const err = await b
       .authoriseExecution(client, { plan: oneExecution(0.25), nowMs: NOW_MS })
       .then(() => null, (e: Error) => e);

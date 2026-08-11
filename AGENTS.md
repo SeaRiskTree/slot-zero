@@ -738,15 +738,23 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   them. `test/dune-credit-ceiling.test.ts` → "437(a)" pins the call-site enumeration as a source
   fact (a third file calling `client.execute` fails it), drives the unbudgeted refusal through both,
   and refuses a real `enumerateCreations` at its ceiling.
-  **The stop is DERIVED, never written**: `dune.mjs` → `laneCeilingCredits` is
-  `max(the pre-flight verdict's own worstCaseCredits, one engine-floored execution + the reserve)`.
-  The first half means a lane enforces the plan it was ADMITTED on rather than a second number free
-  to drift from it; the second is the "raise it so it fits" rule applied by construction, and both
-  clauses of it are load-bearing — **the reserve is not spendable and is subtracted from the
-  ceiling**, so a stop of exactly one execution leaves that execution short. It bit immediately:
-  the census's cleared plan (224.51) was **12.745 credits under** its own single execution plus the
-  reserve, so before this rule that lane would have refused itself at the boundary with its seed
-  reads already spent. **Two per-lane stops were raised and no threshold moved**:
+  **The stop is DERIVED, never written, and it lives in the SHARED REGION** — `client.mjs` →
+  `laneCeilingCredits`, duplicated byte for byte in both keyed copies and covered by the same pin as
+  `openDuneLaneBudget`, because a copy per lane is a rule free to be fixed in one place and forgotten
+  in the other. It is
+  `max(the pre-flight verdict's own worstCaseCredits, one engine-floored execution) + the reserve`.
+  The first term means a lane enforces the plan it was ADMITTED on rather than a second number free
+  to drift from it; the second is the "raise it so it fits" rule applied by construction; and **the
+  reserve rides on TOP of whichever of the two binds**, because it is never spendable and
+  `authoriseExecution` subtracts it from what the ceiling makes spendable — so a stop of exactly one
+  execution, or of exactly the cleared plan, leaves that execution short. **Carrying the reserve on
+  the floor term alone was the first cut and it was wrong in the direction the guard exists to
+  prevent**: a single-execution lane took the floor branch and cleared, while a multi-execution lane
+  whose cleared plan was the larger term ran every batch but its LAST and then threw
+  `DuneLaneCeilingReached` with the earlier executions already billed. It bit immediately at the
+  floor end too: the census's cleared plan (224.51) was **12.745 credits under** its own single
+  execution plus the reserve, so before this rule that lane would have refused itself at the boundary
+  with its seed reads already spent. **Two per-lane stops were raised and no threshold moved**:
   `dune-reproduction.mjs` → `WORST_CASE_CREDITS_PER_EXECUTION` **61 → 181** (61 was
   `executionDeadlineCredits` of that lane's own 600 s deadline — the per-lane-number-chosen-too-low
   shape 429a removed the knob for — and the raise keeps its pre-flight and its budget pricing one

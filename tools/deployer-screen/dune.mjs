@@ -112,14 +112,16 @@
 import {
   DuneExecutionAbandoned,
   DuneRefused,
-  ENGINE_TIMEOUT_MS,
   abandonExecution,
   cancelExecutionQuietly,
   decideAllowance,
   estimatePlanCredits,
   executionDeadlineCredits,
+  laneCeilingCredits,
   openDuneLaneBudget,
   parseUsageResponse,
+  requireLaneBudget,
+  vendorNumberOrNull,
 } from './client.mjs';
 
 /**
@@ -1320,20 +1322,6 @@ function field(value, key) {
 }
 
 /**
- * A vendor-reported number, or `null` when it is absent or unreadable.
- *
- * Nothing this returns reaches an enforcement decision — it feeds the lane budget's REPORTED-ONLY
- * counters — so an unreadable figure folds to `null` rather than refusing anything. Reading a
- * missing cost as `0` would understate the very gap those counters exist to show.
- *
- * @param {unknown} value
- * @returns {number | null}
- */
-function numberOrNull(value) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-/**
  * Normalise SQL for comparison: line endings and trailing whitespace only.
  *
  * Deliberately NOT a semantic comparison. Two texts that differ by a comment are two different
@@ -1498,58 +1486,6 @@ export function describeExecutionError(status) {
 }
 
 /**
- * **A LANE'S CEILING IS WHAT ITS PRE-FLIGHT CLEARED, FLOORED AT ONE ENGINE-PRICED EXECUTION —
- * never a number a brief chose.** Captain decision 437(a), which is the ADOPTION of `client.mjs` →
- * {@link openDuneLaneBudget}: a guard nothing is bound to prevents nothing.
- *
- * Two inputs, and the LARGER binds:
- *
- * - **What the pre-flight cleared.** Every lane here is already ruled on once by
- *   {@link decideAllowance} before it spends, and that verdict's `worstCaseCredits` is precisely
- *   "what this lane was authorised to spend this run". Taking it as the stop means the budget
- *   enforces the plan the run was admitted on, execution by execution, rather than introducing a
- *   second number free to disagree with it — captain decision 144a's rule, one currency over.
- * - **One execution at the ENGINE floor.** `authoriseExecution` floors every per-execution price at
- *   `executionDeadlineCredits(ENGINE_TIMEOUT_MS)` and cannot be talked below it (captain decision
- *   429a), so a stop taken from the cleared figure ALONE could be a budget that clears nothing: a
- *   lane whose own pin is sub-181 would refuse its first execution while reporting a healthy plan.
- *   Flooring here is the "raise the ceiling so it fits" rule applied by CONSTRUCTION, so it cannot
- *   be forgotten for one lane, and it is the only reason a lane pricing below the floor is
- *   representable at all.
- *
- * **No measured cost is an input to either.** The pre-flight prices pins and the floor is the
- * vendor's own limit; nothing a completed execution reported reaches this number
- * ({@link openDuneLaneBudget}'s `LANE_CEILING_IS_NOT_A_PROJECTION}).
- *
- * **AND THE FLOOR CARRIES THE RESERVE, which is not a rounding detail.** `authoriseExecution`
- * subtracts `reserveCredits` from what the ceiling makes spendable — it is held back against the
- * counter's lag and is never spendable — so a ceiling of EXACTLY one execution leaves that execution
- * short by the reserve and the lane refuses its own first step while reporting a budget. The floor
- * is therefore one engine-priced execution PLUS the reserve, which is the smallest ceiling under
- * which this budget can clear anything at all.
- *
- * @param {number} clearedWorstCaseCredits The pre-flight verdict's own `worstCaseCredits`.
- * @param {import('./client.mjs').DuneSpendPlan} executionPlan ONE execution's shape.
- * @param {number} reserveCredits Held back against the counter's lag; never spendable.
- * @returns {number} Credits.
- */
-export function laneCeilingCredits(clearedWorstCaseCredits, executionPlan, reserveCredits) {
-  const oneAtTheFloor = estimatePlanCredits({
-    ...executionPlan,
-    executions: 1,
-    resultReads: Math.max(1, executionPlan.resultReads),
-    creditsPerExecution: Math.max(
-      executionDeadlineCredits(ENGINE_TIMEOUT_MS),
-      executionPlan.creditsPerExecution,
-    ),
-  }).worstCaseCredits;
-  return Math.max(
-    Number.isFinite(clearedWorstCaseCredits) ? clearedWorstCaseCredits : 0,
-    oneAtTheFloor + Math.max(0, Number.isFinite(reserveCredits) ? reserveCredits : 0),
-  );
-}
-
-/**
  * Open a lane's credit budget against the verdict that cleared it. Captain decision 437(a).
  *
  * **One opener for every lane in this tool**, so the ceiling rule ({@link laneCeilingCredits}) and
@@ -1590,47 +1526,6 @@ export function openLaneBudget(input) {
 }
 
 /**
- * **EVERY DUNE EXECUTION THIS TOOL ISSUES PASSES THROUGH A LANE BUDGET, AND ONE THAT CANNOT IS
- * REFUSED BEFORE IT IS BILLED.** Captain decision 437(a).
- *
- * `executeAndRead` is the ONE place `DuneClient.execute` is called in this tool — the enumeration,
- * its oversized split, both coverage probes, the Stage 2 entry fill source and the entry
- * reproduction all funnel through it — so requiring the budget HERE guards every one of them and
- * any path added later. A caller that supplies no budget does not spend unguarded: it throws,
- * having issued nothing, which is what makes an unwired spend path a test failure rather than an
- * invisible hole. `test/dune-credit-ceiling.test.ts` drives every caller with the budget withheld
- * and asserts exactly that.
- */
-export const EXECUTION_MUST_BE_BUDGETED =
-  'A Dune execution may only be issued through a lane budget (client.mjs -> openDuneLaneBudget). ' +
-  'A pre-flight check that runs once is what three overrunning lanes already had; the ceiling has ' +
-  'to be re-checked before every single execution, because iteration happens after the check. ' +
-  'Nothing was requested and nothing was billed.';
-
-/**
- * @param {{ laneBudget?: import('./client.mjs').DuneLaneBudget | undefined,
- *   executionPlan?: import('./client.mjs').DuneSpendPlan | undefined }} bounds
- * @returns {{ budget: import('./client.mjs').DuneLaneBudget, plan: import('./client.mjs').DuneSpendPlan }}
- */
-function requireLaneBudget(bounds) {
-  const budget = bounds.laneBudget;
-  const plan = bounds.executionPlan;
-  if (budget == null || typeof budget.authoriseExecution !== 'function' || plan == null) {
-    throw new DuneRefused(
-      `REFUSED before the execution: this call reached dune.mjs -> executeAndRead with ` +
-        `${budget == null || typeof budget.authoriseExecution !== 'function' ? 'no lane budget' : 'no one-execution plan'}. ` +
-        EXECUTION_MUST_BE_BUDGETED,
-      { status: null, terminal: true },
-    );
-  }
-  // ONE EXECUTION, WHATEVER THE CALLER'S PLAN SAYS. `authoriseExecution` prices the plan as handed
-  // in, so a lane passing its whole RUN-level plan would reserve the entire run on every single
-  // authorisation and refuse after one. The lane's run-level shape is the CEILING's input, not the
-  // per-authorisation one, and pinning it here means a caller cannot conflate the two.
-  return { budget, plan: { ...plan, executions: 1, resultReads: Math.max(1, plan.resultReads) } };
-}
-
-/**
  * Run a saved query and wait for it.
  *
  * **The execution is issued exactly once.** A failed or cancelled execution is reported, never
@@ -1664,7 +1559,7 @@ function requireLaneBudget(bounds) {
  * `maxPollAttempts × pollIntervalMs >= executionDeadlineMs`. It defaults to exactly that product, so
  * a caller that pins nothing keeps the give-up point it already had and gains only the cancel.
  *
- * **AND THE LANE BUDGET CLEARS IT FIRST.** See {@link EXECUTION_MUST_BE_BUDGETED}: `laneBudget`
+ * **AND THE LANE BUDGET CLEARS IT FIRST.** See `client.mjs` → `EXECUTION_MUST_BE_BUDGETED`: `laneBudget`
  * and `executionPlan` are REQUIRED, the budget re-reads the live balance and either clears this one
  * execution or throws `DuneLaneCeilingReached`, and what it clears is debited whole — so the refusal
  * lands before `client.execute` rather than after the bill. The vendor's own reported cost and
@@ -1688,7 +1583,7 @@ export async function executeAndRead(client, queryId, parameters, bounds) {
   const deadlineMs = bounds.executionDeadlineMs ?? bounds.maxPollAttempts * bounds.pollIntervalMs;
   // BEFORE THE EXECUTION IS ISSUED. A `DuneLaneCeilingReached` from here is terminal and reaches the
   // caller unchanged, so every fallback that already handles a Dune refusal handles this one.
-  const { budget, plan } = requireLaneBudget(bounds);
+  const { budget, plan } = requireLaneBudget(bounds, 'dune.mjs -> executeAndRead');
   // WALL TIME, NOT `bounds.clock`. That clock is an ELAPSED-time seam a test injects to reach the
   // deadline without waiting for it, and it starts wherever the test starts it; the budget compares
   // its reading against the billing period the vendor declares, so handing it an elapsed count would
@@ -1724,7 +1619,7 @@ export async function executeAndRead(client, queryId, parameters, bounds) {
         // narrow the next one (`LANE_CEILING_IS_NOT_A_PROJECTION`). It is handed over so an operator
         // can read attributed cost and bytes beside the reservation and see the gap for themselves.
         budget.recordExecutionOutcome({
-          executionCostCredits: numberOrNull(field(status, 'execution_cost_credits')),
+          executionCostCredits: vendorNumberOrNull(field(status, 'execution_cost_credits')),
           resultBytes: read.resultBytes,
         });
         return read;

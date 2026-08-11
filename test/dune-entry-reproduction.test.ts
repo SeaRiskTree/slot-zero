@@ -417,6 +417,47 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     expect(rowsByMint.get(MINT)).toHaveLength(2);
   });
 
+  it('a MULTI-BATCH run clears EVERY batch it was admitted on, the last one included', async () => {
+    // THE REGRESSION, driven end to end. `laneCeilingCredits` used to add the never-spendable
+    // reserve to the ENGINE-FLOOR term only, so a lane whose cleared plan was the larger term got a
+    // ceiling equal to that plan exactly — and `authoriseExecution` subtracts the reserve from what
+    // a ceiling makes spendable. Batches 1 and 2 cleared and batch 3 threw `DuneLaneCeilingReached`
+    // ~25 credits short, with the first two executions already billed: the lane dying partway with
+    // the month partly gone, which is the failure this guard exists to prevent.
+    //
+    // Every other reproduction test here runs ONE batch, which takes the floor branch and cannot see
+    // it. Three batches sized at the planner's own row cap make the cleared plan exactly three
+    // per-execution worst cases, which is the shape that bites.
+    const batches = ['2026-04', '2026-05', '2026-06'].map((month, i) => ({
+      month,
+      launches: [
+        {
+          mint: i === 0 ? MINT : OTHER_MINT,
+          symbol: `s${i}`,
+          createdAtMs: Date.parse(`${month}-07T13:27:14.000Z`),
+          windowMs: 60_000,
+          tapeFills: MAX_PLANNED_ROWS_PER_EXECUTION,
+        },
+      ],
+      plannedRows: MAX_PLANNED_ROWS_PER_EXECUTION,
+    }));
+    // The stop is the plan the pre-flight cleared, so the fixture hands over exactly that verdict
+    // rather than a comfortable one — a generous ceiling would pass either way and prove nothing.
+    const cleared = estimateReproductionCredits(batches).worstCaseCredits;
+    expect(cleared).toBe(batches.length * (WORST_CASE_CREDITS_PER_EXECUTION + 100));
+
+    const { impl } = stub();
+    const c = client(impl);
+    const { rowsByMint } = await runReproduction(c, {
+      batches,
+      bounds: BOUNDS,
+      allowance: clearedAllowance({ worstCaseCredits: cleared }),
+    });
+    expect(c.executions()).toBe(3);
+    // Every batch's result was read, not merely authorised — the stub answers each with one row.
+    expect(rowsByMint.get(MINT)).toHaveLength(3);
+  });
+
   it('and that refusal is not an artefact of the fixture — the same stub executes when it matches', async () => {
     // Without this, "zero executions" above would also hold for a stub that simply cannot execute,
     // and the test would pass against a broken harness. Same stub, same runner, matching text.

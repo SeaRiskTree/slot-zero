@@ -20,6 +20,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { clearedAllowance, isUsagePath, usageResponseBody } from './dune-lane-budget-fixture.js';
+
 import { MADEONSOL_DAILY_REQUESTS } from '../tools/deployer-screen/client.mjs';
 import {
   CREATION_SQL,
@@ -345,6 +347,8 @@ describe('264a end to end — the 27,731-row batch is read at the shipped ceilin
       );
     const fetchImpl = async (url: unknown) => {
       const path = String(url).replace('https://api.dune.com/api/v1', '');
+      // The lane budget re-reads the live balance before EVERY execution — captain decision 437(a).
+      if (isUsagePath(path)) return new Response(JSON.stringify(usageResponseBody()), { status: 200 });
       if (path.startsWith('/query/8204603/results')) return body(probeRows());
       if (path.startsWith('/query/8204603')) return new Response(JSON.stringify({ query_sql: COVERAGE_SQL }), { status: 200 });
       if (path.startsWith('/query/8204672/execute')) return new Response(JSON.stringify({ execution_id: 'e1' }), { status: 200 });
@@ -374,25 +378,11 @@ describe('264a end to end — the 27,731-row batch is read at the shipped ceilin
         maxResultRows,
         maxCoverageLagMs: T['dune'].maxCoverageLagMs as number,
       },
-      allowance: {
-        verdict: 'sufficient' as const,
-        ok: true,
-        worstCaseCredits: 1,
-        creditsUsed: 0,
-        creditsIncluded: 2500,
-        monthlyCapCredits: 4000,
-        creditsIncludedVendor: 2500,
-        bindingCeiling: 'vendor-plan' as const,
-        creditsRemaining: 2500,
-        reserveCredits: 25,
-        spendableCredits: 2475,
-        shortfallCredits: 0,
-        periodStart: '2026-07-29',
-        periodEnd: '2026-08-29',
-        readAtUtc: '2026-08-05T12:00:00.000Z',
-        reasons: [],
-        caveats: ['test fixture'],
-      },
+      // The pre-flight verdict this run was ADMITTED on, which is also its lane budget's stop
+      // (captain decision 437(a)). Sized for the executions this batch makes rather than left at a
+      // token 1: a stop under one engine-floored execution refuses the enumeration, which is the
+      // budget working and not this suite's subject.
+      allowance: clearedAllowance({ creditsIncluded: 2500, creditsIncludedVendor: 2500 }),
     });
   };
 

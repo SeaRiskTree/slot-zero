@@ -57,6 +57,7 @@ import {
   describeWalkFallbackCliff,
   enumerateCreations,
   openDuneCreditLedger,
+  openLaneBudget,
   priceWalkFallbackCliff,
   walkFallbackRefusalReason,
   walkFallbackReasons,
@@ -431,6 +432,47 @@ export async function buildDuneEntryFillSource(client, opts) {
     );
   }
 
+  // ---- THE LANE BUDGET, RE-CHECKED BEFORE EVERY EXECUTION THIS LEG ISSUES. --------------------
+  //
+  // Captain decision 437(a). `checkDuneAllowance` above is this run's ONE pre-flight verdict, taken
+  // once; this leg then executes ONCE PER WINDOW and iterates over every window it plans, which is
+  // precisely the shape of the three recorded overruns — a pre-flight estimate is not a bound, and
+  // iteration happens after the check. The budget re-reads the live balance before each execution
+  // and debits the whole worst case it clears.
+  //
+  // **ITS STOP IS WHAT THE PRE-FLIGHT CLEARED, FLOORED AT ONE ENGINE-PRICED EXECUTION PLUS THE
+  // RESERVE — AND THE FLOOR IS WHAT MAKES THIS LEG REPRESENTABLE AT ALL.**
+  // `entry_source_agreement.worstCaseComputeCreditsPerExecution` is 1, far under the 181 an execution
+  // left running to Dune's own 30-minute limit bills, and `openDuneLaneBudget` floors every
+  // per-execution price at that engine bound and cannot be talked below it (captain decision 429a).
+  // Without the floor this leg's ceiling would be a budget that clears nothing — it would refuse its
+  // own first execution while reporting a healthy plan — so `laneCeilingCredits` raises it, which is
+  // 429a's "raise the ceiling so it fits" rule applied by construction rather than a bypass of it.
+  //
+  // **THE PIN ITSELF IS DELIBERATELY NOT MOVED.** Captain decision 381 recorded that it "cannot take
+  // the engine floor and stay plannable at 82 executions", and repricing an unactivated Gate 3 leg
+  // is that decision's, not this wiring's. So the consequence is STATED rather than hidden: the
+  // pre-flight prices a window at ~17 credits and the budget enforces it at ≥181, so on the run that
+  // first routes through here this LANE's ceiling binds after roughly a fifteenth of the windows the
+  // plan asked for, and `DuneLaneCeilingReached` names the lane's own ceiling in its first clause —
+  // which is the reading that tells an operator to take the repricing to the captain rather than to
+  // wait for the period to roll. Refusing early is the intended direction. **Nothing routes through
+  // this source today, so no live run's arithmetic moves.**
+  /** One execution's worth of this leg: one window, one result read at that window's own row cap. */
+  const executionPlan = {
+    ...tradeFillSpendPlan(opts.agreementBounds, 1),
+    executions: 1,
+    resultReads: 1,
+    rowsPerRead: opts.agreementBounds.maxResultRowsPerWindow,
+  };
+  const laneBudget = openLaneBudget({
+    lane: 'tools/deployer-screen (Stage 2 entry fills)',
+    allowance: checked.decision,
+    executionPlan,
+    executionDeadlineMs:
+      opts.duneBounds.executionDeadlineMs ?? opts.duneBounds.maxPollAttempts * opts.duneBounds.pollIntervalMs,
+  });
+
   // THE WATERMARK, READ BEFORE THE SOURCE EXISTS. `readTradeCoverageProbe` refuses outright while
   // `TRADE_COVERAGE_QUERY_ID` is undeployed — the one place that refusal lives, so the deploy is the
   // only thing standing between this path and a working one. A cached read is the default and costs
@@ -446,6 +488,10 @@ export async function buildDuneEntryFillSource(client, opts) {
       // drift the moment either pin moves. Captain decision 381.
       executionDeadlineMs: opts.duneBounds.executionDeadlineMs,
       maxResultRows: opts.duneBounds.maxResultRows,
+      // The probe's REFRESH executes, so it spends out of the same lane budget every window does —
+      // one leg, one stop. The cached read below it issues no execution and needs none.
+      laneBudget,
+      executionPlan: { ...executionPlan, rowsPerRead: opts.duneBounds.maxResultRows },
     },
     onRefreshFailure: (note) =>
       opts.announce?.(`! the trade coverage probe's refresh failed and the cache answered: ${note}`),
@@ -460,6 +506,8 @@ export async function buildDuneEntryFillSource(client, opts) {
       maxPollAttempts: opts.duneBounds.maxPollAttempts,
       executionDeadlineMs: opts.duneBounds.executionDeadlineMs,
       maxResultRows: opts.agreementBounds.maxResultRowsPerWindow,
+      laneBudget,
+      executionPlan,
     },
     coverage: assessTradeCoverage({
       probe,

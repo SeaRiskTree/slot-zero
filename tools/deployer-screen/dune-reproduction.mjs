@@ -68,7 +68,7 @@ import {
   parseUsageResponse,
 } from './client.mjs';
 import { resolveDuneCredential } from './credential.mjs';
-import { assertSavedQueryMatches, executeAndRead, normaliseSql } from './dune.mjs';
+import { assertSavedQueryMatches, executeAndRead, normaliseSql, openLaneBudget } from './dune.mjs';
 import { ENTRY_QUERY_ID, ENTRY_SQL, duneRowsToWindow, entryQueryParameters } from './dune-fills.mjs';
 import { measureLaunchEntry } from './entry.mjs';
 import { createSlotGroups } from './measure.mjs';
@@ -179,12 +179,29 @@ export const ESTIMATED_BYTES_PER_ROW = 250;
  * dominant (~495 credits of bytes over the full tape); the guard refuses more and refuses earlier,
  * which is the safe direction for a lane whose executions cannot be taken back.
  *
- * **WHY THIS LANE'S PIN IS NOT THE 200 THE TWO KEYED `dune` BLOCKS TOOK.** Those price at most two
- * executions and can afford the vendor's own 30-minute floor outright; this one prices one execution
- * per batch, so it is pinned at the floor its DEADLINE buys instead. That is honest only because the
- * deadline exists and is enforced — and only conditionally, since cancelling bounds the wait for
- * certain and the bill only if Dune stops the engine on cancel, which the vendor does not document.
- * A batch that ever needs longer than 600 s must move this number with the deadline.
+ * **AND 61 WAS STILL A PER-LANE NUMBER CHOSEN TOO LOW, WHICH IS CAPTAIN DECISION 429a AND ITS
+ * ADOPTION 437(a). IT IS 181 NOW.** 61 was `executionDeadlineCredits` of this lane's own 600 s
+ * deadline, and the reasoning above for preferring the deadline to the engine limit — "honest only
+ * because the deadline exists and is enforced" — is exactly the reasoning 429a removed. What a
+ * cancel bounds for certain is the WAIT; whether it stops the BILL is undocumented
+ * ({@link EXECUTION_DEADLINE_CAVEAT}), so pricing off the deadline assumes the unsettled answer in
+ * the expensive direction's favour. `client.mjs` → `openDuneLaneBudget` therefore floors every
+ * per-execution price at `executionDeadlineCredits(ENGINE_TIMEOUT_MS)` = **181** and cannot be
+ * talked below it, and this pin is raised to meet it so that this lane's PRE-FLIGHT and its lane
+ * budget price an execution the same way. Two numbers for one bound is captain decision 144a's
+ * defect, and here it would have shown as a plan cleared at `batches × 61` that the budget then
+ * refused at `batches × 181` — a lane dying partway with the month partly gone.
+ *
+ * **What the raise costs:** the full-tape plan's compute term goes `batches × 61` → `batches × 181`
+ * against a retrieval half that is unchanged and still dominant (~495 credits of bytes over the full
+ * tape, ~95% of this lane's real bill). The guard refuses more and refuses earlier, which is the safe
+ * direction for a lane whose executions cannot be taken back. No committed measurement moves: this
+ * lane's record is already written and this figure prices FUTURE runs only.
+ *
+ * **WHY THIS IS NOW THE SAME SHAPE AS THE 200 THE TWO KEYED `dune` BLOCKS TOOK.** Those price at most
+ * two executions and took the vendor's own 30-minute floor plus ~10% of headroom outright; this one
+ * prices one execution per batch and takes the floor itself. A lane may still pin HIGHER — it may
+ * know its statement is worse than average and may never claim it is better.
  *
  * **THE COST OF THIS LANE IS RETRIEVAL, NOT COMPUTE** — ~495 credits of bytes against ~24 of
  * compute over the full tape — which inverts the assumption `thresholds.json` → `stage2_entry_dune`
@@ -193,7 +210,7 @@ export const ESTIMATED_BYTES_PER_ROW = 250;
  * fill. It is stated here because a reader arriving from that block will otherwise size this one
  * wrongly.
  */
-export const WORST_CASE_CREDITS_PER_EXECUTION = 61;
+export const WORST_CASE_CREDITS_PER_EXECUTION = 181;
 
 /**
  * Credits held back for the usage counter's lag. Same reserve the screen's Dune leg pins, and for
@@ -344,6 +361,28 @@ export function scanWindowFor(launch) {
     mint: launch.mint,
     fromMs: launch.createdAtMs - SCAN_MARGIN_MS,
     toMs: launch.createdAtMs + launch.windowMs,
+  };
+}
+
+/**
+ * This lane's plan, in the shape both its pre-flight and its lane budget price.
+ *
+ * **It is ONE builder because it is one plan.** `checkReproductionAllowance` rules on it before the
+ * run and `runReproduction`'s lane budget sizes its stop from it; two literals that merely agree is
+ * captain decision 144a's defect, and here the disagreement would have shown as a run cleared at one
+ * price and refused partway at another.
+ *
+ * @param {readonly ReproductionBatch[]} batches
+ * @returns {import('./client.mjs').DuneSpendPlan}
+ */
+export function reproductionSpendPlan(batches) {
+  return {
+    lane: 'tools/deployer-screen (Dune entry reproduction)',
+    executions: batches.length,
+    creditsPerExecution: WORST_CASE_CREDITS_PER_EXECUTION,
+    resultReads: batches.length,
+    rowsPerRead: MAX_PLANNED_ROWS_PER_EXECUTION,
+    bytesPerRow: ESTIMATED_BYTES_PER_ROW,
   };
 }
 
@@ -958,14 +997,7 @@ export async function checkReproductionAllowance(client, batches, nowMs, thresho
     };
   }
   const decision = decideAllowance({
-    plan: {
-      lane: 'tools/deployer-screen (Dune entry reproduction)',
-      executions: batches.length,
-      creditsPerExecution: WORST_CASE_CREDITS_PER_EXECUTION,
-      resultReads: batches.length,
-      rowsPerRead: MAX_PLANNED_ROWS_PER_EXECUTION,
-      bytesPerRow: ESTIMATED_BYTES_PER_ROW,
-    },
+    plan: reproductionSpendPlan(batches),
     estimate,
     allowance: reading.allowance,
     unreadableReasons: reading.reasons,
@@ -989,6 +1021,10 @@ export async function checkReproductionAllowance(client, batches, nowMs, thresho
  *   maxResultRows: number }} opts.bounds `executionDeadlineMs` is the give-up point an execution is
  *   cancelled at; absent, it defaults to the poll budget's own product. See `dune.mjs` ->
  *   `executeAndRead` and captain decision 381.
+ * @param {import('./client.mjs').AllowanceDecision} opts.allowance The verdict
+ *   {@link checkReproductionAllowance} reached before this run was admitted. **It is the lane
+ *   budget's ceiling and its policy** (captain decision 437(a)), so a run cannot be admitted on one
+ *   set of terms and then spend against another.
  * @param {number} [opts.queryId]
  * @param {string} [opts.sql]
  * @param {(line: string) => void} [opts.say]
@@ -1012,6 +1048,26 @@ export async function runReproduction(client, opts) {
   await assertSavedQueryMatches(client, queryId, sql);
   say(`  saved query ${queryId} matches the committed ENTRY_SQL byte for byte; executing.`);
 
+  // ---- THE LANE BUDGET, RE-CHECKED BEFORE EVERY BATCH. ----------------------------------------
+  //
+  // Captain decision 437(a). `checkReproductionAllowance` is this lane's pre-flight and it runs
+  // ONCE, before the loop below issues one execution PER BATCH. That is the exact shape of the three
+  // recorded overruns — and of overrun 2 in particular, where a lane sized its final batch from a
+  // measured, identically-shaped prior batch and that batch still cost 41% more. Nothing measured
+  // reaches this budget: its stop is `estimateReproductionCredits`, the same plan the pre-flight
+  // priced, at the same raised {@link WORST_CASE_CREDITS_PER_EXECUTION}, floored again at the engine
+  // bound by `laneCeilingCredits` so the two can never disagree about one execution's price.
+  /** One BATCH's worth: one execution, one result read at this lane's own planned-row cap. */
+  const executionPlan = { ...reproductionSpendPlan(opts.batches), executions: 1, resultReads: 1 };
+  const laneBudget = openLaneBudget({
+    lane: 'tools/deployer-screen (Dune entry reproduction)',
+    allowance: opts.allowance,
+    executionPlan,
+    executionDeadlineMs:
+      opts.bounds.executionDeadlineMs ?? opts.bounds.maxPollAttempts * opts.bounds.pollIntervalMs,
+  });
+  const bounds = { ...opts.bounds, laneBudget, executionPlan };
+
   /** @type {Map<string, unknown[]>} */
   const rowsByMint = new Map();
   let unplacedRows = 0;
@@ -1022,7 +1078,7 @@ export async function runReproduction(client, opts) {
   for (const [index, batch] of opts.batches.entries()) {
     const parameters = entryQueryParameters(batch.launches.map(scanWindowFor));
     const before = client.resultBytes();
-    const result = await executeAndRead(client, queryId, parameters, opts.bounds);
+    const result = await executeAndRead(client, queryId, parameters, bounds);
     for (const row of result.rows) {
       // A row for a mint this RUN did not ask about — or one carrying no readable mint at all — is
       // a statement that ignored its own predicate, and it is COUNTED rather than dropped quietly.
@@ -1414,7 +1470,15 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   const { client: recorded, log } = recordCustody(client);
-  const { rowsByMint, unplacedRows } = await runReproduction(recorded, { batches, bounds, say });
+  // The verdict this run was ADMITTED on is what its lane budget then enforces, execution by
+  // execution — captain decision 437(a). Passing the decision rather than re-deriving a ceiling here
+  // is what stops a run being cleared on one set of terms and spending against another.
+  const { rowsByMint, unplacedRows } = await runReproduction(recorded, {
+    batches,
+    bounds,
+    allowance: decision,
+    say,
+  });
   const custody = custodyOrderVerdict(log);
 
   // KEEP WHAT WAS PAID FOR, when asked to. The first full run of this lane spent ~530 credits, threw

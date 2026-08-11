@@ -26,6 +26,8 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { clearedAllowance, isUsagePath, usageResponseBody } from './dune-lane-budget-fixture.js';
+
 import { DuneClient } from '../tools/deployer-screen/client.mjs';
 import {
   CREATION_SQL,
@@ -50,25 +52,12 @@ const BOUNDS = {
 // A cleared monthly credit allowance, so these fixtures exercise the split rather than the credit
 // guard in front of it. `enumerateCreations` refuses outright without one; test/dune-credit-ceiling
 // .test.ts owns that behaviour.
-const ALLOWANCE_CLEARED = {
-  verdict: 'sufficient' as const,
-  ok: true,
-  worstCaseCredits: 1,
-  creditsUsed: 0,
-  creditsIncluded: 2500,
-  monthlyCapCredits: 4000,
-  creditsIncludedVendor: 2500,
-  bindingCeiling: 'vendor-plan' as const,
-  creditsRemaining: 2500,
-  reserveCredits: 25,
-  spendableCredits: 2475,
-  shortfallCredits: 0,
-  periodStart: '2026-07-29',
-  periodEnd: '2026-08-29',
-  readAtUtc: '2026-08-04T00:00:00.000Z',
-  reasons: [],
-  caveats: ['test fixture'],
-};
+// The pre-flight verdict these runs were ADMITTED on. Its `worstCaseCredits` is what the lane
+// budget's stop is taken from (captain decision 437(a)), so it is sized here for the several
+// executions the split issues rather than left at a token 1 — a ceiling under one execution's
+// engine-floored price refuses the split's very first follow-up, which is the budget working and
+// not this suite's subject.
+const ALLOWANCE_CLEARED = clearedAllowance({ creditsIncluded: 2500, creditsIncludedVendor: 2500 });
 
 /**
  * A base58-shaped address, so nothing is dropped by `WALLET_SHAPE` before it can be measured. The
@@ -133,6 +122,10 @@ function stub(perExecution: (unknown[] | 'fail')[]) {
   const asked: string[][] = [];
   const impl = async (url: unknown, init?: RequestInit) => {
     const path = String(url);
+    // The lane budget re-reads the live balance before EVERY execution (captain decision 437(a)), so
+    // a stub that did not answer this would make the balance unreadable and the lane would refuse.
+    // That refusal has its own test; here it would only hide what this suite is about.
+    if (isUsagePath(path)) return new Response(JSON.stringify(usageResponseBody()), { status: 200 });
     if (path.includes('/query/2/results')) return resultBody(probeRows());
     if (path.endsWith('/query/2')) return new Response(JSON.stringify({ query_sql: COVERAGE_SQL }), { status: 200 });
     if (path.endsWith('/query/1')) return new Response(JSON.stringify({ query_sql: CREATION_SQL }), { status: 200 });

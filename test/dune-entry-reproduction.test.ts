@@ -24,6 +24,8 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
+import { budgetedBounds, clearedAllowance, isUsagePath, usageResponseBody } from './dune-lane-budget-fixture.js';
+
 import { POPULATION_TAPE_DIR } from '../config/data-root.mjs';
 import { DuneClient } from '../tools/deployer-screen/client.mjs';
 import { assertSavedQueryMatches, describeExecutionError, executeAndRead } from '../tools/deployer-screen/dune.mjs';
@@ -121,6 +123,12 @@ function stub(opts: { savedSql?: () => string; rows?: unknown[] } = {}) {
   let executions = 0;
   const impl = async (url: unknown) => {
     const path = String(url);
+    // The lane budget re-reads the live balance before EVERY execution — captain decision 437(a).
+    // Answered ABOVE `paths.push`, deliberately: this stub's `paths` is what the CUSTODY assertions
+    // below read, and custody is a statement about the saved-query read and the execution. A free
+    // balance read is neither, and letting it take slot 0 would break an ordering claim it is not
+    // part of.
+    if (isUsagePath(path)) return new Response(JSON.stringify(usageResponseBody()), { status: 200 });
     paths.push(path);
     if (path.endsWith(`/query/${ENTRY_QUERY_ID}`)) {
       return new Response(JSON.stringify({ query_sql: savedSql() }), { status: 200 });
@@ -332,7 +340,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
   it('the production runner reads the saved query BEFORE its first execution', async () => {
     const { impl, paths } = stub();
     const { client: recorded, log } = recordCustody(client(impl));
-    await runReproduction(recorded, { batches: batchOf([MINT]), bounds: BOUNDS });
+    await runReproduction(recorded, { batches: batchOf([MINT]), bounds: BOUNDS, allowance: clearedAllowance() });
     expect(custodyOrderVerdict(log).ok).toBe(true);
     // Belt and braces on the wire itself: the saved-query read is the first request of the run.
     expect(paths[0]).toBe(`https://api.dune.com/api/v1/query/${ENTRY_QUERY_ID}`);
@@ -349,7 +357,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     const { client: recorded, log } = recordCustody(client(impl));
     const executeFirst = async () => {
       const parameters = entryQueryParameters(batchOf([MINT])[0]!.launches.map(scanWindowFor));
-      await executeAndRead(recorded, ENTRY_QUERY_ID, parameters, BOUNDS);
+      await executeAndRead(recorded, ENTRY_QUERY_ID, parameters, budgetedBounds(BOUNDS));
       await assertSavedQueryMatches(recorded, ENTRY_QUERY_ID, ENTRY_SQL);
     };
     await executeFirst();
@@ -365,7 +373,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     const { impl } = stub({ savedSql: () => `${ENTRY_SQL}\n-- edited from a browser` });
     const c = client(impl);
     const { client: recorded, log } = recordCustody(c);
-    await expect(runReproduction(recorded, { batches: batchOf([MINT]), bounds: BOUNDS })).rejects.toThrow(
+    await expect(runReproduction(recorded, { batches: batchOf([MINT]), bounds: BOUNDS, allowance: clearedAllowance() })).rejects.toThrow(
       /no longer matches the SQL committed/,
     );
     // The deliverable: zero executions. An execution is billed whether or not its answer is used.
@@ -388,6 +396,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     const { unplacedRows, rowsByMint } = await runReproduction(client(impl), {
       batches: batchOf([MINT]),
       bounds: BOUNDS,
+      allowance: clearedAllowance(),
     });
     // Two unplaceable rows and one unreadable one; only the asked-for mint was kept.
     expect(unplacedRows).toBe(3);
@@ -402,6 +411,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     const { unplacedRows, rowsByMint } = await runReproduction(client(impl), {
       batches: batchOf([MINT]),
       bounds: BOUNDS,
+      allowance: clearedAllowance(),
     });
     expect(unplacedRows).toBe(0);
     expect(rowsByMint.get(MINT)).toHaveLength(2);
@@ -412,7 +422,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     // and the test would pass against a broken harness. Same stub, same runner, matching text.
     const { impl } = stub();
     const c = client(impl);
-    await runReproduction(c, { batches: batchOf([MINT]), bounds: BOUNDS });
+    await runReproduction(c, { batches: batchOf([MINT]), bounds: BOUNDS, allowance: clearedAllowance() });
     expect(c.executions()).toBe(1);
   });
 });
@@ -734,6 +744,8 @@ describe('a failed execution is billed, so its reason must reach the operator', 
     // statement's first execution came back with.
     const impl = async (url: unknown) => {
       const path = String(url);
+      // The lane budget re-reads the live balance before EVERY execution — captain decision 437(a).
+      if (isUsagePath(path)) return new Response(JSON.stringify(usageResponseBody()), { status: 200 });
       if (path.endsWith(`/query/${ENTRY_QUERY_ID}`)) return new Response(JSON.stringify({ query_sql: ENTRY_SQL }), { status: 200 });
       if (path.includes('/execute')) return new Response(JSON.stringify({ execution_id: 'e1' }), { status: 200 });
       return new Response(
@@ -745,7 +757,7 @@ describe('a failed execution is billed, so its reason must reach the operator', 
       );
     };
     await expect(
-      executeAndRead(client(impl), ENTRY_QUERY_ID, { launches: 'x' }, BOUNDS),
+      executeAndRead(client(impl), ENTRY_QUERY_ID, { launches: 'x' }, budgetedBounds(BOUNDS)),
     ).rejects.toThrow(/integer overflow/);
   });
 

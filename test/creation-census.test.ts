@@ -33,6 +33,8 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { budgetedBounds, isUsagePath, usageResponseBody } from './dune-lane-budget-fixture.js';
+
 import {
   CENSUS_SQL,
   CENSUS_TABLES,
@@ -132,6 +134,8 @@ function client(script: (path: string, init: RequestInit) => Response, over: Rec
   const fetchImpl = vi.fn(async (url: unknown, init: RequestInit) => {
     const path = String(url).slice(DUNE_API_BASE.length);
     calls.push(path);
+    // The lane budget re-reads the live balance before EVERY execution — captain decision 437(a).
+    if (isUsagePath(path)) return json(usageResponseBody());
     return script(path, init);
   });
   const c = new DuneClient({
@@ -417,7 +421,7 @@ describe('spending is bounded, and an execution is never bought twice', () => {
       return json({});
     });
     await expect(
-      executeAndRead(c, 1, {}, { pollIntervalMs: 0, maxPollAttempts: 3, resultLimit: 100 }),
+      executeAndRead(c, 1, {}, budgetedBounds({ pollIntervalMs: 0, maxPollAttempts: 3, resultLimit: 100 })),
     ).rejects.toThrow(/ended QUERY_STATE_FAILED/);
     expect(executes).toBe(1);
     expect(c.executions()).toBe(1);

@@ -684,14 +684,17 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   NOT move are recorded where they live**: `entry_source_agreement.worstCaseComputeCreditsPerExecution`
   (1) cannot take the engine floor and stay plannable at 82 executions, and repricing an unactivated
   Gate 3 leg is that decision's; `dune-reproduction.mjs` → `WORST_CASE_CREDITS_PER_EXECUTION` moved
-  10 → **61**, the floor its own 600 s deadline buys.
+  10 → **61**, the floor its own 600 s deadline buys — **and 437(a) has since taken it to 181**, the
+  engine floor, because pricing off a lane's own deadline is the very shape 429a removed the knob
+  for; see the adoption bullet below.
 - **A LANE CEILING WRITTEN IN A BRIEF IS NOT A CEILING — three lanes have now overrun one, and the
   guard is `client.mjs` → `openDuneLaneBudget`.** It is inside the SHARED REGION, so it is duplicated
   byte for byte in both keyed `client.mjs` files and pinned by `test/dune-credit-ceiling.test.ts`;
   it re-reads the live balance and clears **one** execution at a time, and it **throws**
   `DuneLaneCeilingReached` rather than returning a verdict, because a verdict is what an iterating
   worker walks past. It reuses `estimatePlanCredits` + `decideAllowance` for the monthly ceiling —
-  one mechanism, not a second. **Nothing wires it yet**; a lane opts in. Three things bind, and each
+  one mechanism, not a second. **EVERY DUNE-SPENDING LANE IS WIRED TO IT NOW — captain decision
+  437(a), 2026-08-10, and the bullet below owns the adoption.** Three things bind, and each
   is one of the overruns. **(1) NO MEASURED COST MAY SET THE NEXT BOUND**: the per-execution price is
   floored at the ENGINE floor — `executionDeadlineCredits(ENGINE_TIMEOUT_MS)`, **181 credits**,
   UNCONDITIONALLY and never at the lane's own `executionDeadlineMs` — and a caller's smaller number
@@ -725,6 +728,38 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   at ~7.4 and ~4.9/MB, both cheap, which is the unsafe direction to assume persists; captain decision
   248c owns Dune pricing, and the reserved retrieval term makes this guard depend on that pin more
   than a measured one would.
+- **EVERY CODE PATH THAT SPENDS A DUNE CREDIT NOW GOES THROUGH THAT BUDGET, AND THE ENUMERATION OF
+  THOSE PATHS IS SHORT BECAUSE EACH TOOL HAS EXACTLY ONE** (captain decision 437(a), 2026-08-10).
+  `dune.mjs` → `executeAndRead` and `tools/creation-census/run.mjs` → `executeAndRead` are the ONLY
+  callers of `DuneClient.execute` in this repository — the screen's enumeration, its oversized split,
+  both coverage probes, the Stage 2 Dune fill source and the entry reproduction all funnel through
+  the first; the census through the second — so both **require** a `laneBudget` and a one-execution
+  `executionPlan` on their bounds and **refuse, terminally and before issuing anything**, without
+  them. `test/dune-credit-ceiling.test.ts` → "437(a)" pins the call-site enumeration as a source
+  fact (a third file calling `client.execute` fails it), drives the unbudgeted refusal through both,
+  and refuses a real `enumerateCreations` at its ceiling.
+  **The stop is DERIVED, never written**: `dune.mjs` → `laneCeilingCredits` is
+  `max(the pre-flight verdict's own worstCaseCredits, one engine-floored execution + the reserve)`.
+  The first half means a lane enforces the plan it was ADMITTED on rather than a second number free
+  to drift from it; the second is the "raise it so it fits" rule applied by construction, and both
+  clauses of it are load-bearing — **the reserve is not spendable and is subtracted from the
+  ceiling**, so a stop of exactly one execution leaves that execution short. It bit immediately:
+  the census's cleared plan (224.51) was **12.745 credits under** its own single execution plus the
+  reserve, so before this rule that lane would have refused itself at the boundary with its seed
+  reads already spent. **Two per-lane stops were raised and no threshold moved**:
+  `dune-reproduction.mjs` → `WORST_CASE_CREDITS_PER_EXECUTION` **61 → 181** (61 was
+  `executionDeadlineCredits` of that lane's own 600 s deadline — the per-lane-number-chosen-too-low
+  shape 429a removed the knob for — and the raise keeps its pre-flight and its budget pricing one
+  execution the same way), and the Gate 3 entry leg's stop is floored in code while
+  `entry_source_agreement.worstCaseComputeCreditsPerExecution` **stays 1 deliberately**: captain
+  decision 381 recorded that repricing an unactivated Gate 3 leg is its own decision. The visible
+  consequence, since nothing routes through that source today: on the first run that does, the
+  pre-flight prices a window at ~17 credits while the budget enforces it at ≥181, so that **lane's
+  own** ceiling binds after roughly a fifteenth of the windows the plan asked for and
+  `DuneLaneCeilingReached` names it in its first clause — the reading that says *take the repricing
+  to the captain*, rather than *wait for the period to roll*. **The budget reads wall-clock time, never `bounds.clock`** — that clock is an elapsed-time
+  seam a test injects to reach the execution deadline, and handing it to the balance reader puts
+  every authorisation outside the vendor's billing period.
 - **Budget from *billed* credits, not
   `execution_cost_credits`, which understates by ~3.5×** — retrieving results is ~71% of the bill at
   ~20 credits/MB. Hence: aggregate server-side, select only the columns the tool reads (dropping the

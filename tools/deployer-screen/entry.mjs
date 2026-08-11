@@ -1408,7 +1408,10 @@ export function describeRoomMedianBound(b) {
  *   {@link EntryScore.positionsHorizonNotObserved}.
  * @property {Distribution} fieldReturnPerSolOverAllPositionsGrossOfFees  The same, per SOL staked.
  * @property {BoundedHitRate} fieldHitRateOverAllPositionsGrossOfFees  Share of every position taken above
- *   zero at that resolution, with its exact (Clopper–Pearson) interval. The conditioned twin is
+ *   zero at that resolution, with its exact (Clopper–Pearson) interval. `n` is the same `n` the
+ *   distribution above reports: a position whose SOL amount is unreadable carries no realized figure
+ *   and is EXCLUDED rather than scored as a loss, so this `n` can sit below the resolvable count.
+ *   The conditioned twin is
  *   {@link EntryScore.fieldHitRateGrossOfFees}, whose `n` is the exited subset of this `n`.
  * @property {Distribution} fieldRealisedSolOverAllPositionsNetOfMeasuredFees  The same construction, net of
  *   measured fees. **Its population is the positions whose WHOLE window was priced**, which for an
@@ -1660,8 +1663,18 @@ export function scoreEntry(launches, t, context = {}) {
   const resolvablePriced = resolvable.filter((e) =>
     Number.isFinite(e.realisedSolAtZeroRecoveryNetOfMeasuredFees),
   );
+  // A position resolvable by TOKEN readability can still carry an unreadable SOL amount, so it
+  // contributes to no realized figure — `distribution` drops it — and it is excluded from the rate
+  // rather than scored as a loss, which would manufacture a loss out of OUR OWN coverage in the same
+  // direction 461 exists to close. So this rate's `n` may sit BELOW `resolvable.length`, and it is
+  // the same `n` the gross distribution beside it reports. (The pre-existing conditioned
+  // `fieldHitRateGrossOfFees` has the same shape and is deliberately NOT moved: it is a published
+  // quantity and schema 25 claims every `…OfFees` figure is poolable across the boundary.)
+  const resolvableGross = resolvable.filter((e) =>
+    Number.isFinite(e.realisedSolAtZeroRecoveryGrossOfFees),
+  );
   const fieldHitRateOverAllPositionsGrossOfFees = boundedHitRate(
-    resolvable,
+    resolvableGross,
     (e) => e.realisedSolAtZeroRecoveryGrossOfFees > 0,
   );
   const fieldHitRateOverAllPositionsNetOfMeasuredFees = boundedHitRate(

@@ -14134,6 +14134,31 @@ describe('every position taken is counted — captain decision 461, the realizat
     expect(s.positionsHorizonNotObserved).toBe(8);
   });
 
+  it('a position whose SOL amount is unreadable is EXCLUDED from the rate, never counted as a loss', () => {
+    // Closure is decidable from the TOKEN amounts, so such a position is resolvable — but it carries
+    // no realized figure, and scoring it below zero would manufacture a loss out of our own coverage
+    // in the same direction this correction closes. The distribution beside the rate already drops
+    // it, so the two must report one `n` rather than silently disagree.
+    const withMute = () => [
+      ...window461(),
+      fill({ slot: 100, tx: 'bMute', wallet: 'mute', sol: Number.NaN, tokens: 100, sid: sidAt(100, 4005) }),
+    ];
+    const mute = measureLaunchEntry(withMute())!.field.find((f) => f.wallet === 'mute')!;
+    expect(mute.positionOutcome).toBe('still-held-at-horizon');
+    expect(mute.realisedSolAtZeroRecoveryGrossOfFees).toBeNaN();
+    const s = scoreEntry(Array.from({ length: 8 }, () => measureLaunchEntry(withMute())!), ENTRY_T);
+    // 8 windows x 3 unreadable-free resolvable positions, and the 8 unreadable ones are in neither
+    // the rate nor the distribution — the rate's `n` therefore sits below the resolvable count.
+    expect(s.fieldHitRateOverAllPositionsGrossOfFees.n).toBe(
+      s.fieldRealisedSolOverAllPositionsGrossOfFees.n,
+    );
+    expect(s.fieldHitRateOverAllPositionsGrossOfFees.n).toBe(24);
+    expect(s.fieldHitRateOverAllPositionsGrossOfFees.hits).toBe(8);
+    expect(s.fieldHitRateOverAllPositionsGrossOfFees.rate).toBeCloseTo(1 / 3, 9);
+    // It is still a position taken, and it is still counted as one.
+    expect(s.positionsStillHeldAtHorizon).toBe(24);
+  });
+
   it('THE HEADLINE: the same positions read profitable one way and loss-making the other', () => {
     // The whole point of the correction, on a window built to show it. Conditioning on exiting sees
     // one round trip, and it is the winner; counting every position taken sees the two that never

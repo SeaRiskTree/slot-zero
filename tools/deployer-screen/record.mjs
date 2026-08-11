@@ -784,7 +784,7 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  * - **25 — EVERY POSITION TAKEN IS COUNTED, NOT ONLY THE ONES THAT EXITED.** Captain decision 461
  *   (2026-08-11), the realization correction. **This is the version boundary at which a headline
  *   figure changes sign**, and it changes sign because of a counting choice rather than because of
- *   new data. Eleven new keys inside `entry` —
+ *   new data. Nine new keys inside `entry` —
  *   `fieldRealisedSolOverAllPositionsGrossOfFees`, `fieldReturnPerSolOverAllPositionsGrossOfFees`,
  *   `fieldHitRateOverAllPositionsGrossOfFees`, `fieldRealisedSolOverAllPositionsNetOfMeasuredFees`,
  *   `fieldReturnPerSolOverAllPositionsNetOfMeasuredFees`, `fieldHitRateOverAllPositionsNetOfMeasuredFees`,

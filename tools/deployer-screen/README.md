@@ -1169,7 +1169,7 @@ establish who anyone is: captain decision 370a closed that question permanently.
 - **Stage 2 holds a mint list in memory and writes none of it.** It needs mints to seek the keyless
   fill tape at all, and they come from the profile Stage 1 already fetched — `toLaunchRefs` in
   `measure.mjs`. What survives is `entry`: quantiles, counts, a hit rate and a verdict, computed by
-  us from pump.fun's public fills.
+  us from pump.fun's public fills — and, since schema 24, the entrant rows the next bullet owns.
 - **COUNTERPARTY WALLET ADDRESSES USED TO BE DROPPED TOO, AND SINCE SCHEMA 24 THEY ARE KEPT**
   (captain decision 459). The stated reason for dropping them was that *"a list of who was in it
   would be an accumulation with no question attached to it"* — the missing thing was the question,
@@ -1199,7 +1199,8 @@ third-party display. The output is a text report and an optional local JSON file
 (captain decision 377a), so the clause is struck rather than left asserting something untrue. What
 the argument above actually rests on is unchanged and is the paragraph before this one: **no vendor
 per-token record is ever written** — they live in memory for one run, and what a committed record
-holds is our own counts, quantiles, rate and verdict, with counterparty addresses dropped. That is
+holds is our own counts, quantiles, rate and verdict, plus (since schema 24) the entrant rows the
+bullet above owns, every byte of which is pump.fun's keyless public data and the chain's. That is
 what makes the persisted output not an accumulation and not a re-display of their data, whoever can
 read it. **What the repository's visibility does change is the audience for the derived output, and
 whether §5a(b) is satisfied on those terms is the captain's reading and not this file's** — it is
@@ -3398,7 +3399,10 @@ book reads participation **high**, and a test pins that direction rather than ar
 census reports `bundledTx` and `runTx` apart, so a saved reading can be recomposed narrow or wide
 without re-running a walk. `windowOnlyOutsiderWallets` is the size of what the whole-window framing
 adds over a create-slot-only one; it reads 134 on that band's median launch and 0 on a launch whose
-whole contest is in the create slot.
+whole contest is in the create slot. **Since captain decision 459 the reading NAMES as well as
+counts** — `WindowParticipation.identities` hands back the wallets behind every count, in the same
+halves — which widens no claim: it is still contested participation and never co-ordination, and
+the dormancy above is untouched, nothing in the tool calling it.
 
 **What is not built here.** There is no Meteora DBC data path in this repository — `pumpfun.mjs` is
 the only venue module and there is no venue abstraction. This pass added the predicate and its

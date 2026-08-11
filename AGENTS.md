@@ -1212,9 +1212,12 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
   lane's alone, so budget against the whole allowance (see the Helius section below).
   `tools/deployer-screen/README.md` → "Bounds" owns the numbers and the endpoint list.
 - **ToS §5a(b)/(d) bind us**: internal research only, and no accumulation beyond what is necessary.
-  The screen derives and discards — per-token records live in memory for one run, and only derived
-  counts are ever written. `tools/deployer-screen/README.md` → "Retention" owns which files a run
-  writes and when. Test fixtures are synthetic, never captured payloads.
+  The screen derives and discards — **no vendor per-token record is ever written**, they live in
+  memory for one run. What a record holds beyond derived counts is this repo's own reading of
+  pump.fun's keyless fills and of the chain, entrant addresses included since schema 24 (see "The
+  screen PERSISTS its entrants now" below). `tools/deployer-screen/README.md` → "Retention" owns
+  which files a run writes and what survives them. Test fixtures are synthetic, never captured
+  payloads.
 
 ## The deployer screen's stages, and the two wallets that keep it honest
 
@@ -1817,7 +1820,7 @@ dev currently?"*, and the shape of the answer is the point:
 24**. Captain decision 459, 2026-08-11 — increment 1 of the pivot to scoring entrants; the design is
 `slot-zero-entrant-scoring-pivot` → `report.md` §7 (held in firstmate's records, not in this repo).
 `tools/deployer-screen/README.md`'s schema-24 row and `record.mjs`'s version comment own the long
-form; cite them rather than restating the field list. Five things bind:
+form; cite them rather than restating the field list. Seven things bind:
 
 - **THE GAP IT CLOSES IS THE REASON TO KEEP IT RUNNING.** Two committed measurements walked **353
   stranger windows across 36 scored deployers** and counted **1,058 field entrants**, and persisted

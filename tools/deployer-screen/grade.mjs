@@ -341,8 +341,8 @@ export function planFits(priced, bounds) {
  * **PACING IS CARRIED ACROSS THE CLIENT BOUNDARY and is therefore not loosened by the change.**
  * A {@link KeylessClient} starts its own interval clock at zero, so a fresh client per claim would
  * let the first request of claim N+1 follow the last of claim N with no gap. The pool holds the
- * instant of the last request issued through ANY of its clients — `onRequest` fires on the same
- * line that stamps the client's own clock — and waits out the remainder of `minIntervalMs` before
+ * instant of the last request issued through ANY of its clients — `onRequest` fires immediately
+ * after the client stamps its own clock — and waits out the remainder of `minIntervalMs` before
  * handing over the next client. The courtesy owed a shared public endpoint is a property of the
  * RUN, not of a client object's lifetime.
  *

@@ -810,7 +810,7 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   while counting every position taken reads 86/265 and **−8.12 SOL** — a nested-subset comparison,
  *   not two pooled populations, and the 107 that never got out are worth −116.40 SOL between them.
  *   **And they are not unknowns: 7 of 140 priced unexited entries are above water even marked at the
- *   best price the chain has since shown**, so the schema-≤24 denominator deletes losers rather than
+ *   token's LATEST known price**, so the schema-≤24 denominator deletes losers rather than
  *   unknowns and is OPTIMISTIC rather than conservative. A consumer must be able to tell a record
  *   that carries both constructions from one that carries only the flattering one, and no schema-24
  *   field says which. (`slot-zero-stage3-exit-design` → `report.md` §§5.3, 5.4, held in firstmate's

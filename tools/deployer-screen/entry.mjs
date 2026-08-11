@@ -84,7 +84,7 @@
  *
  * **And those positions are not unknowns, they are losses.** Of the 140 priced create-slot outsider
  * entries that never closed, **7 = 0.0500 [0.0203, 0.1003]** are above water once their remaining
- * tokens are marked at the best price the chain has since shown. So dropping them deletes losers
+ * tokens are marked at the token's LATEST known price. So dropping them deletes losers
  * rather than unknowns, and the conditioned denominator is **optimistic rather than conservative**.
  * (`slot-zero-stage3-exit-design` → `report.md` §§5.3, 5.4, held in firstmate's records, not in
  * this repo.)
@@ -223,7 +223,7 @@ export const REALISATION_CONSTRUCTION_CAVEAT =
   'conditioned on the position having EXITED, which is the OPTIMISTIC one: a position that was ' +
   'entered and never exited is dropped from that denominator rather than resolved, and on the ' +
   'committed tape those dropped positions are 95% LOSSES even when their remaining tokens are ' +
-  'marked at the best price the chain has since shown — so dropping them deletes losers, not ' +
+  "marked at the token's LATEST known price — so dropping them deletes losers, not " +
   'unknowns. The *OverAllPositions figures beside them count every position taken, with the ones ' +
   'still held at the horizon resolved at ZERO RECOVERY (the worst case) and their marked residual ' +
   'reported separately. Positions whose closure our own rows cannot decide are in NEITHER ' +
@@ -381,7 +381,7 @@ export function hitRate(values, predicate) {
  * @property {number} residualMarkedSolAtWindowLastPrice  {@link FieldEntrant.residualTokens} valued
  *   at the LAST price the walked window itself showed. **The bound printed beside the zero-recovery
  *   resolution, never instead of it** — a mark is a price nobody paid, and on the committed tape
- *   95% of unexited positions are losses even marked at the best price the chain has since shown.
+ *   95% of unexited positions are losses even marked at the token's LATEST known price.
  *   `NaN` when the residual or the window's last price is unreadable. Gross of fees like every other
  *   fill-derived figure.
  * @property {number} realisedSolAtZeroRecoveryGrossOfFees  `sol out − sol in` with anything still held
@@ -539,7 +539,7 @@ export function measureLaunchEntry(fills) {
   //
   // It exists to BOUND the zero-recovery resolution, never to replace it: the design's own
   // measurement puts 54 of 140 unexited positions above water at this mark against 7 of 140 at the
-  // best price the chain has since shown, so this is the FLATTERING mark of the two and is reported
+  // token's LATEST known price, so this is the FLATTERING mark of the two and is reported
   // as a bound rather than as an outcome.
   /** @type {import('./measure.mjs').Fill | null} */
   let newest = null;
@@ -1423,7 +1423,7 @@ export function describeRoomMedianBound(b) {
  *   RESOLUTION, over the positions still held at the horizon** — what their remaining tokens would
  *   be worth at the last price the walked window itself showed. It is reported BESIDE the worst-case
  *   figures and is never substituted into one: a mark is a price nobody paid, and on the committed
- *   tape 95% of unexited positions are losses even at the best price the chain has since shown.
+ *   tape 95% of unexited positions are losses even at the token's LATEST known price.
  *   Empty when nothing is still held.
  * @property {number} positionsStillHeldAtHorizon   Positions entered, decidable, and NOT flat at the
  *   horizon. Resolved at zero recovery above; this is how many that was.

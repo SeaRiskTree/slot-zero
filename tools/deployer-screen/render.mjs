@@ -429,8 +429,8 @@ export function renderEntry(e, coverage) {
   );
   if (e.fieldResidualMarkedSolAtWindowLastPrice.n > 0) {
     // The BOUND on the worst case, printed under it rather than into it. A mark is a price nobody
-    // paid: on the committed tape 95% of unexited positions are losses even at the best price the
-    // chain has since shown, which is why the headline resolves at zero and this sits beside it.
+    // paid: on the committed tape 95% of unexited positions are losses even at the token's LATEST
+    // known price, which is why the headline resolves at zero and this sits beside it.
     L.push(distLine('residual MARKED (bound)', e.fieldResidualMarkedSolAtWindowLastPrice));
   }
   L.push('      ^ NOT a profit verdict: the landing tip and the cost of failed attempts are still');

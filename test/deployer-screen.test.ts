@@ -14015,8 +14015,8 @@ describe('every position taken is counted — captain decision 461, the realizat
   // fee-inclusive: conditioned on exiting, 80/158 positive and +108.28 SOL; over every position
   // taken, 86/265 and -8.12 SOL. A nested-subset comparison, not two pooled populations — and the
   // 107 that never got out are worth -116.40 SOL between them. Of the 140 priced unexited entries
-  // only 7 = 0.0500 [0.0203, 0.1003] are above water even marked at the best price the chain has
-  // since shown, so the old denominator deletes LOSERS rather than unknowns.
+  // only 7 = 0.0500 [0.0203, 0.1003] are above water even marked at the token's LATEST known
+  // price, so the old denominator deletes LOSERS rather than unknowns.
   // (`slot-zero-stage3-exit-design` -> `report.md` §§5.3, 5.4, held in firstmate's records.)
 
   /**
@@ -14180,7 +14180,7 @@ describe('every position taken is counted — captain decision 461, the realizat
 
   it('the marked residual is a BOUND printed beside the worst case, never substituted into it', () => {
     // A mark is a price nobody paid. On the committed tape 95% of unexited positions are losses even
-    // at the best price the chain has since shown, so the headline resolves at zero and this states
+    // at the token's LATEST known price, so the headline resolves at zero and this states
     // how much is still there.
     const e = measureLaunchEntry(window461());
     // The window's last readable price is `sPart`: 0.5 SOL for 40 tokens = 0.0125 SOL/token.
@@ -14244,6 +14244,8 @@ describe('every position taken is counted — captain decision 461, the realizat
       'positionsStillHeldAtHorizon',
       'positionsHorizonNotObserved',
       'residualMarkedSolAtWindowLastPrice',
+      'residualTokens',
+      'windowTxCount',
     ];
     for (const file of ['rank.mjs', 'rotation.mjs', 'stage0.mjs', 'grade.mjs', 'prediction.mjs', 'outcome.mjs', 'bundling.mjs', 'feed.mjs']) {
       const half = executableHalf(readFileSync(join(TOOL_DIR, file), 'utf8'));

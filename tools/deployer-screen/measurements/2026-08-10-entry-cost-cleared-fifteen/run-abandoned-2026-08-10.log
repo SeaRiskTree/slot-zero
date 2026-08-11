@@ -1,0 +1,17 @@
+thresholds 6.9.0 — minRoomLeft 0.55, maxEntryCostPerSolStaked 0.12
+candidates 15, windows 145
+fill source: swap-api, 7000ms pacing, 18 request(s)/launch
+cost source: https://mainnet.helius-rpc.com (helius), 200ms pacing, <=500 request(s)/candidate
+lane ceiling 1400 RPC request(s) against a 1500-credit hard stop
+
+Dzp1SrZ474xwGp6ZEP6cNKo39u9zeXe1YAuTkyZyv3t4 — census room 0.747664, 10 census window(s)
+    13 page(s) / 13 request(s), 1185 fill(s), room 0.772, 14 competing wallet(s)
+    7 page(s) / 7 request(s), 639 fill(s), room 0.656, 11 competing wallet(s)
+    4 page(s) / 4 request(s), 378 fill(s), room 0.669, 6 competing wallet(s)
+    12 page(s) / 12 request(s), 1030 fill(s), room 0.748, 5 competing wallet(s)
+    6 page(s) / 6 request(s), 498 fill(s), room 0.502, 4 competing wallet(s)
+    3 page(s) / 3 request(s), 286 fill(s), room 0.743, 4 competing wallet(s)
+    11 page(s) / 11 request(s), 938 fill(s), room 0.807, 13 competing wallet(s)
+    DROPPED: spent 16 of the 18-request cap on 1600 row(s) without reaching the mint, and the remaining headroom is less than one page costs, so the earliest slot seen is NOT the create slot. This launch was busier than the cap allows for, and busy launches are exactly the interesting ones — see the sampling caveat.
+    14 page(s) / 14 request(s), 1070 fill(s), room 0.851, 5 competing wallet(s)
+    13 page(s) / 13 request(s), 1181 fill(s), room 0.822, 16 competing wallet(s)

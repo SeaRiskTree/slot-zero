@@ -1,0 +1,49 @@
+{
+  "attempted": 15,
+  "decided": 12,
+  "stage3": 6,
+  "byVerdict": {
+    "entry-open-after-costs": 6,
+    "entry-field-loss-making": 6,
+    "entry-cost-unmeasured": 3
+  },
+  "byCause": {
+    "too-little-of-the-field-priced": 3
+  },
+  "costLegRan": 12,
+  "costPricedLaunches": 90,
+  "costTargeted": 2389,
+  "costPriced": 2024,
+  "costReadOn": 9,
+  "costReadBelowPricedBar": 3,
+  "clearsCostGate": 9,
+  "intervals": {
+    "stage3OfAttempted": {
+      "k": 6,
+      "n": 15,
+      "rate": 0.4,
+      "lo": 0.16336432385951372,
+      "hi": 0.677130233793718
+    },
+    "stage3OfDecided": {
+      "k": 6,
+      "n": 12,
+      "rate": 0.5,
+      "lo": 0.21094463823929704,
+      "hi": 0.7890553617607028
+    },
+    "costGateOfCostRead": {
+      "k": 9,
+      "n": 9,
+      "rate": 1,
+      "lo": 0.6637328831200568,
+      "hi": 1
+    }
+  },
+  "spend": {
+    "keylessRequests": 611,
+    "keylessShed": 0,
+    "rpcRequests": 1398,
+    "rpcShed": 0
+  }
+}

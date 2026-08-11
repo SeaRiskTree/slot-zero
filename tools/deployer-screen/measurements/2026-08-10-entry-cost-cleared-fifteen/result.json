@@ -1,0 +1,3118 @@
+{
+  "lane": "2026-08-10-entry-cost-cleared-fifteen",
+  "startedAtIso": "2026-08-11T03:42:38.130Z",
+  "finishedAtIso": "2026-08-11T04:57:20.479Z",
+  "thresholdsVersion": "6.9.0",
+  "censusInput": "slot-zero-july-stage3-census (held in firstmate records, not in this repo) -> artifacts/census-per-candidate.csv + census-per-window.csv",
+  "fillSourceKind": "swap-api",
+  "costEndpointLabel": "https://mainnet.helius-rpc.com",
+  "costEndpointProvider": "helius",
+  "costEndpointRejected": null,
+  "costPacingMs": 200,
+  "laneRpcCeiling": 1400,
+  "laneCreditHardStop": 1500,
+  "spend": {
+    "keylessRequests": 611,
+    "keylessShed": 0,
+    "rpcRequests": 1398,
+    "rpcShed": 0
+  },
+  "candidates": [
+    {
+      "deployer": "Dzp1SrZ474xwGp6ZEP6cNKo39u9zeXe1YAuTkyZyv3t4",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.036145,
+      "census": {
+        "roomMedian": 0.7476635513769387,
+        "boundLo": 0.7453768594989292,
+        "boundHi": 0.7679222613691137,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 10,
+        "proven": 9
+      },
+      "measuredToday": {
+        "verdict": "entry-open-after-costs",
+        "unmeasuredCause": null,
+        "unmeasuredCauseAttribution": null,
+        "laneUnmeasuredCause": null,
+        "rationale": "median room left 0.748 over 9 scored launches (8/9 clear the 0.55 bar); landing costs a median 0.043 SOL per SOL staked per launch (0.040 pooled over entries, 0.052 SOL at the median entry, p90 1.186); and after that cost the field still clears — 52/75 priced round trips positive, median 0.103 SOL NET OF MEASURED FEES against 0.153 gross. NOT a recommendation and NOT a profit claim: A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was. Exit feasibility is unmeasured entirely. This means the exit question is worth asking, and nothing more. ROOM MEDIAN 0.7477 IS INCOMPLETE: it is taken over 9 launch(es) while 1 more produced no room figure (0 REFUSED as unproven and measured, 1 never measured at all), and they did not go missing at random. Completing the sample puts the median in [0.7454, 0.7598], so this figure may overstate room by up to 0.0023. The bound is exact rather than tuned: a refused launch's measured room is a strict UPPER bound on its true room (the co-ordination rule can only under-mark on a launch it marked nothing in), an unmeasured one lies anywhere in room's algebraic support, and the median is monotone in every observation. It is REPORTED and never gated on: no refusal is relaxed by it (captain decision 208b).",
+        "launchesSampled": 9,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 9,
+          "min": 0.5021949077054824,
+          "p10": 0.6248466750594287,
+          "p25": 0.6691305192892087,
+          "median": 0.7476635513769387,
+          "p75": 0.8074897196821583,
+          "p90": 0.8278368339391396,
+          "max": 0.8506243742965616
+        },
+        "roomLeftBound": {
+          "median": 0.7476635513769387,
+          "lo": 0.7453768594989292,
+          "hi": 0.7597559565889855,
+          "overstatementMax": 0.0022866918780095613,
+          "understatementMax": 0.012092405212046797,
+          "provablyOverstated": false,
+          "launchesScored": 9,
+          "launchesMissing": 1,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 1,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.7477 IS INCOMPLETE: it is taken over 9 launch(es) while 1 more produced no room figure (0 REFUSED as unproven and measured, 1 never measured at all), and they did not go missing at random. Completing the sample puts the median in [0.7454, 0.7598], so this figure may overstate room by up to 0.0023. The bound is exact rather than tuned: a refused launch's measured room is a strict UPPER bound on its true room (the co-ordination rule can only under-mark on a launch it marked nothing in), an unmeasured one lies anywhere in room's algebraic support, and the median is monotone in every observation. It is REPORTED and never gated on: no refusal is relaxed by it (captain decision 208b)."
+        },
+        "roomHitRate": {
+          "n": 9,
+          "hits": 8,
+          "rate": 0.8888888888888888
+        },
+        "devSol": {
+          "n": 9,
+          "min": 4.5,
+          "p10": 4.5,
+          "p25": 4.5,
+          "median": 4.5,
+          "p75": 4.5,
+          "p90": 4.5,
+          "max": 4.5
+        },
+        "fieldEntrants": 78,
+        "fieldClosedRoundTrips": 75,
+        "fieldOpenPositions": 3,
+        "fieldHitRateGrossOfFees": {
+          "n": 75,
+          "hits": 56,
+          "rate": 0.7466666666666667
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 75,
+          "min": -1.9501196039999997,
+          "p10": -0.25816452600000006,
+          "p25": -0.001801783500000001,
+          "median": 0.15348237999999997,
+          "p75": 1.2108506930000003,
+          "p90": 7.9933904720000015,
+          "max": 40.722518253
+        },
+        "entryCostSol": {
+          "n": 78,
+          "min": 0.0022531749999999996,
+          "p10": 0.004492789799999998,
+          "p25": 0.009782056749999976,
+          "median": 0.051657662000000215,
+          "p75": 0.2141295837499998,
+          "p90": 1.1862366753,
+          "max": 12.940886043999999
+        },
+        "entryCostPerSolStaked": {
+          "n": 78,
+          "min": 0.00768716325768718,
+          "p10": 0.014954428117294947,
+          "p25": 0.022413739796158173,
+          "median": 0.04036524110417451,
+          "p75": 0.07387139796070376,
+          "p90": 0.20132384665592437,
+          "max": 0.5241058848179012
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 9,
+          "min": 0.022740601209240822,
+          "p10": 0.025831950627838707,
+          "p25": 0.03331984649568328,
+          "median": 0.04292814528522093,
+          "p75": 0.05311126194346026,
+          "p90": 0.09360222521446603,
+          "max": 0.20017743910627775
+        },
+        "entryTxFeeSol": {
+          "n": 78,
+          "min": 0.000005,
+          "p10": 0.000062,
+          "p25": 0.000317,
+          "median": 0.0033079240000000003,
+          "p75": 0.053755,
+          "p90": 0.3900095013999992,
+          "max": 8.500005
+        },
+        "entryCostPriced": {
+          "n": 78,
+          "hits": 78,
+          "rate": 1
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 75,
+          "hits": 52,
+          "rate": 0.6933333333333334
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 75,
+          "min": -9.934225233000006,
+          "p10": -0.6382917263999992,
+          "p25": -0.034432718499999924,
+          "median": 0.10284456200000003,
+          "p75": 1.019721613,
+          "p90": 7.394615328800004,
+          "max": 26.571623951000003
+        },
+        "fieldClosedRoundTripsPriced": 75,
+        "caveats": [
+          "ROOM MEDIAN 0.7477 IS INCOMPLETE: it is taken over 9 launch(es) while 1 more produced no room figure (0 REFUSED as unproven and measured, 1 never measured at all), and they did not go missing at random. Completing the sample puts the median in [0.7454, 0.7598], so this figure may overstate room by up to 0.0023. The bound is exact rather than tuned: a refused launch's measured room is a strict UPPER bound on its true room (the co-ordination rule can only under-mark on a launch it marked nothing in), an unmeasured one lies anywhere in room's algebraic support, and the median is monotone in every observation. It is REPORTED and never gated on: no refusal is relaxed by it (captain decision 208b).",
+          "1 launch window(s) could not be walked back to the mint and were DROPPED rather than measured from a partial window",
+          "3 of 78 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "78 of 78 create-slot entries were priced on-chain (1.000), and 75 of 75 closed round trips were priced across their whole window. The rest carry NO cost figure — not a zero.",
+          "A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was.",
+          "THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won the auction; the wallets that paid and did not land are invisible to it. Post-break our own subject saw a median 41.6 attempts per landed transaction, so this understates the cost of TRYING to enter — again in the optimistic direction.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 10,
+        "minAgeMs": 85000,
+        "launchesPlanned": 10,
+        "launchesAttempted": 10,
+        "launchesUsable": 9,
+        "launchesDropped": 1,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 1,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [
+          "DROPPED: spent 16 of the 18-request cap on 1600 row(s) without reaching the mint, and the remaining headroom is less than one page costs, so the earliest slot seen is NOT the create slot. This launch was busier than the cap allows for, and busy launches are exactly the interesting ones — see the sampling caveat."
+        ],
+        "requestsIssued": 99,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": true,
+          "rpcRequests": 320,
+          "launchesPriced": 9,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 0,
+          "transactionsTargeted": 399,
+          "transactionsPriced": 399,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 88,
+          "viaTransaction": 311,
+          "stoppedForBudget": false,
+          "notes": []
+        }
+      },
+      "spend": {
+        "keylessRequests": 99,
+        "keylessShed": 0,
+        "rpcRequests": 320,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 500
+      }
+    },
+    {
+      "deployer": "ARB8KYfnnUwhEa8HFwWkdJrkas1vQeHUYRaW3gCr1wKx",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.035256,
+      "census": {
+        "roomMedian": 0.7451760353695775,
+        "boundLo": 0.7426532456939194,
+        "boundHi": 0.7522802857655495,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 10,
+        "proven": 9
+      },
+      "measuredToday": {
+        "verdict": "entry-field-loss-making",
+        "unmeasuredCause": null,
+        "unmeasuredCauseAttribution": null,
+        "laneUnmeasuredCause": null,
+        "rationale": "the opening window leaves room (median 0.745), but the field loses money BEFORE costs: 22/45 closed round trips positive (0.489), median -0.000 SOL gross. Fees only make that worse, so this is conclusive: room exists and nobody is converting it. No RPC request was spent pricing it. ROOM MEDIAN 0.7452 IS INCOMPLETE: it is taken over 9 launch(es) while 1 more produced no room figure (1 REFUSED as unproven and measured, 0 never measured at all), and they did not go missing at random. Completing the sample puts the median in [0.7427, 0.7523], so this figure may overstate room by up to 0.0025. The bound is exact rather than tuned: a refused launch's measured room is a strict UPPER bound on its true room (the co-ordination rule can only under-mark on a launch it marked nothing in), an unmeasured one lies anywhere in room's algebraic support, and the median is monotone in every observation. It is REPORTED and never gated on: no refusal is relaxed by it (captain decision 208b).",
+        "launchesSampled": 9,
+        "launchesRoomUnproven": 1,
+        "roomLeft": {
+          "n": 9,
+          "min": 0.6197765654431885,
+          "p10": 0.6243318762446072,
+          "p25": 0.6362620043565594,
+          "median": 0.7451760353695775,
+          "p75": 0.763465546735736,
+          "p90": 0.7704905524846963,
+          "max": 0.7713598321676172
+        },
+        "roomLeftBound": {
+          "median": 0.7451760353695775,
+          "lo": 0.7426532456939194,
+          "hi": 0.7522802857655495,
+          "overstatementMax": 0.0025227896756581103,
+          "understatementMax": 0.007104250395971956,
+          "provablyOverstated": false,
+          "launchesScored": 9,
+          "launchesMissing": 1,
+          "launchesRefusedMeasured": 1,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 1,
+            "min": 0.9998624256132582,
+            "p10": 0.9998624256132582,
+            "p25": 0.9998624256132582,
+            "median": 0.9998624256132582,
+            "p75": 0.9998624256132582,
+            "p90": 0.9998624256132582,
+            "max": 0.9998624256132582
+          },
+          "caveat": "ROOM MEDIAN 0.7452 IS INCOMPLETE: it is taken over 9 launch(es) while 1 more produced no room figure (1 REFUSED as unproven and measured, 0 never measured at all), and they did not go missing at random. Completing the sample puts the median in [0.7427, 0.7523], so this figure may overstate room by up to 0.0025. The bound is exact rather than tuned: a refused launch's measured room is a strict UPPER bound on its true room (the co-ordination rule can only under-mark on a launch it marked nothing in), an unmeasured one lies anywhere in room's algebraic support, and the median is monotone in every observation. It is REPORTED and never gated on: no refusal is relaxed by it (captain decision 208b)."
+        },
+        "roomHitRate": {
+          "n": 9,
+          "hits": 9,
+          "rate": 1
+        },
+        "devSol": {
+          "n": 9,
+          "min": 0.000987654,
+          "p10": 0.000987654,
+          "p25": 0.000987654,
+          "median": 0.000987654,
+          "p75": 0.000987654,
+          "p90": 0.040296295800000034,
+          "max": 0.197530863
+        },
+        "fieldEntrants": 50,
+        "fieldClosedRoundTrips": 45,
+        "fieldOpenPositions": 5,
+        "fieldHitRateGrossOfFees": {
+          "n": 45,
+          "hits": 22,
+          "rate": 0.4888888888888889
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 45,
+          "min": -0.33792445199999976,
+          "p10": -0.10298904600000001,
+          "p25": -0.038920602000000026,
+          "median": -1.0000000272292198e-9,
+          "p75": 0.13363129000000007,
+          "p90": 0.5227501599999999,
+          "max": 1.2955162
+        },
+        "entryCostSol": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "entryCostPerSolStaked": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "entryTxFeeSol": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "entryCostPriced": {
+          "n": 50,
+          "hits": 0,
+          "rate": 0
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 0,
+          "hits": 0,
+          "rate": null
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "fieldClosedRoundTripsPriced": 0,
+        "caveats": [
+          "ROOM MEDIAN 0.7452 IS INCOMPLETE: it is taken over 9 launch(es) while 1 more produced no room figure (1 REFUSED as unproven and measured, 0 never measured at all), and they did not go missing at random. Completing the sample puts the median in [0.7427, 0.7523], so this figure may overstate room by up to 0.0025. The bound is exact rather than tuned: a refused launch's measured room is a strict UPPER bound on its true room (the co-ordination rule can only under-mark on a launch it marked nothing in), an unmeasured one lies anywhere in room's algebraic support, and the median is monotone in every observation. It is REPORTED and never gated on: no refusal is relaxed by it (captain decision 208b).",
+          "1 of 10 measured launch(es) had NO co-ordination evidence in the create slot — no shared transaction and no deployer-anchored block-index run — so the co-ordination rule recovered nothing there and the opening is UNPROVEN rather than open. Those launches are NOT SCORED — not their room, not their field. Scoring them would book the operation's own stake as outsider capital and inflate room, which is the one direction that manufactures an edge (captain decisions 134a and 182a).",
+          "5 of 50 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "NO ENTRY COST WAS MEASURED for this candidate, so every figure above is gross of fees and the price of the seat is unknown. That is a limit of this reading, not a finding that entry was cheap.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 10,
+        "minAgeMs": 85000,
+        "launchesPlanned": 10,
+        "launchesAttempted": 10,
+        "launchesUsable": 10,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 16,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": false,
+          "rpcRequests": 0,
+          "launchesPriced": 0,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 0,
+          "transactionsTargeted": 0,
+          "transactionsPriced": 0,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 0,
+          "viaTransaction": 0,
+          "stoppedForBudget": false,
+          "notes": []
+        }
+      },
+      "spend": {
+        "keylessRequests": 16,
+        "keylessShed": 0,
+        "rpcRequests": 0,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 500
+      }
+    },
+    {
+      "deployer": "6MAmqJ7aGtTReML2DezAzmRckQyFoGfKKf6gWVak7P2d",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.071691,
+      "census": {
+        "roomMedian": 0.6997799172057142,
+        "boundLo": 0.6933019678066128,
+        "boundHi": 0.7028311351189903,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 10,
+        "proven": 9
+      },
+      "measuredToday": {
+        "verdict": "entry-open-after-costs",
+        "unmeasuredCause": null,
+        "unmeasuredCauseAttribution": null,
+        "laneUnmeasuredCause": null,
+        "rationale": "median room left 0.700 over 9 scored launches (8/9 clear the 0.55 bar); landing costs a median 0.035 SOL per SOL staked per launch (0.035 pooled over entries, 0.025 SOL at the median entry, p90 0.467); and after that cost the field still clears — 35/49 priced round trips positive, median 0.049 SOL NET OF MEASURED FEES against 0.091 gross. NOT a recommendation and NOT a profit claim: A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was. Exit feasibility is unmeasured entirely. This means the exit question is worth asking, and nothing more. ROOM MEDIAN 0.6998 IS INCOMPLETE: it is taken over 9 launch(es) while 1 more produced no room figure (1 REFUSED as unproven and measured, 0 never measured at all), and they did not go missing at random. Completing the sample puts the median in [0.6933, 0.7028], so this figure may overstate room by up to 0.0065. The bound is exact rather than tuned: a refused launch's measured room is a strict UPPER bound on its true room (the co-ordination rule can only under-mark on a launch it marked nothing in), an unmeasured one lies anywhere in room's algebraic support, and the median is monotone in every observation. It is REPORTED and never gated on: no refusal is relaxed by it (captain decision 208b).",
+        "launchesSampled": 9,
+        "launchesRoomUnproven": 1,
+        "roomLeft": {
+          "n": 9,
+          "min": 0,
+          "p10": 0.45625511116584383,
+          "p25": 0.6396789031422021,
+          "median": 0.6997799172057142,
+          "p75": 0.7096017531240981,
+          "p90": 0.7343693104885346,
+          "max": 0.7760033159258563
+        },
+        "roomLeftBound": {
+          "median": 0.6997799172057142,
+          "lo": 0.6933019678066128,
+          "hi": 0.7028311351189903,
+          "overstatementMax": 0.0064779493991014014,
+          "understatementMax": 0.0030512179132761164,
+          "provablyOverstated": false,
+          "launchesScored": 9,
+          "launchesMissing": 1,
+          "launchesRefusedMeasured": 1,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 1,
+            "min": 0.8265895953703097,
+            "p10": 0.8265895953703097,
+            "p25": 0.8265895953703097,
+            "median": 0.8265895953703097,
+            "p75": 0.8265895953703097,
+            "p90": 0.8265895953703097,
+            "max": 0.8265895953703097
+          },
+          "caveat": "ROOM MEDIAN 0.6998 IS INCOMPLETE: it is taken over 9 launch(es) while 1 more produced no room figure (1 REFUSED as unproven and measured, 0 never measured at all), and they did not go missing at random. Completing the sample puts the median in [0.6933, 0.7028], so this figure may overstate room by up to 0.0065. The bound is exact rather than tuned: a refused launch's measured room is a strict UPPER bound on its true room (the co-ordination rule can only under-mark on a launch it marked nothing in), an unmeasured one lies anywhere in room's algebraic support, and the median is monotone in every observation. It is REPORTED and never gated on: no refusal is relaxed by it (captain decision 208b)."
+        },
+        "roomHitRate": {
+          "n": 9,
+          "hits": 8,
+          "rate": 0.8888888888888888
+        },
+        "devSol": {
+          "n": 9,
+          "min": 2.962962962,
+          "p10": 2.962962962,
+          "p25": 2.962962962,
+          "median": 2.962962962,
+          "p75": 2.962962962,
+          "p90": 2.962962962,
+          "max": 2.962962962
+        },
+        "fieldEntrants": 49,
+        "fieldClosedRoundTrips": 49,
+        "fieldOpenPositions": 0,
+        "fieldHitRateGrossOfFees": {
+          "n": 49,
+          "hits": 39,
+          "rate": 0.7959183673469388
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 49,
+          "min": -0.7474565020000001,
+          "p10": -0.08913905700000002,
+          "p25": 0.01296350900000004,
+          "median": 0.09114393399999998,
+          "p75": 0.6130466110000001,
+          "p90": 1.7646654028,
+          "max": 5.840603671999999
+        },
+        "entryCostSol": {
+          "n": 49,
+          "min": 0.002249585,
+          "p10": 0.006681510000000002,
+          "p25": 0.008155736999999996,
+          "median": 0.024861167000000073,
+          "p75": 0.13561218200000003,
+          "p90": 0.46700328200000085,
+          "max": 1.6291183550000001
+        },
+        "entryCostPerSolStaked": {
+          "n": 49,
+          "min": 0.013936973008609481,
+          "p10": 0.014326699684323659,
+          "p25": 0.02008220891862631,
+          "median": 0.03478836302549597,
+          "p75": 0.09116689162878067,
+          "p90": 0.12484792612532225,
+          "max": 0.2749137224492053
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 8,
+          "min": 0.01670184971382234,
+          "p10": 0.02427848359591462,
+          "p25": 0.030249694522992403,
+          "median": 0.034830489171378466,
+          "p75": 0.05310445167793003,
+          "p90": 0.11724339611460399,
+          "max": 0.1501288765398853
+        },
+        "entryTxFeeSol": {
+          "n": 49,
+          "min": 0.000005,
+          "p10": 0.000105,
+          "p25": 0.000353,
+          "median": 0.002555809,
+          "p75": 0.011347,
+          "p90": 0.26000799999999996,
+          "max": 0.60348001
+        },
+        "entryCostPriced": {
+          "n": 49,
+          "hits": 49,
+          "rate": 1
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 49,
+          "hits": 35,
+          "rate": 0.7142857142857143
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 49,
+          "min": -1.8954709019999996,
+          "p10": -0.22506523119999977,
+          "p25": -0.005507449,
+          "median": 0.048822192000000014,
+          "p75": 0.4615126789999999,
+          "p90": 1.393738053800001,
+          "max": 4.7218096
+        },
+        "fieldClosedRoundTripsPriced": 49,
+        "caveats": [
+          "ROOM MEDIAN 0.6998 IS INCOMPLETE: it is taken over 9 launch(es) while 1 more produced no room figure (1 REFUSED as unproven and measured, 0 never measured at all), and they did not go missing at random. Completing the sample puts the median in [0.6933, 0.7028], so this figure may overstate room by up to 0.0065. The bound is exact rather than tuned: a refused launch's measured room is a strict UPPER bound on its true room (the co-ordination rule can only under-mark on a launch it marked nothing in), an unmeasured one lies anywhere in room's algebraic support, and the median is monotone in every observation. It is REPORTED and never gated on: no refusal is relaxed by it (captain decision 208b).",
+          "1 of 10 measured launch(es) had NO co-ordination evidence in the create slot — no shared transaction and no deployer-anchored block-index run — so the co-ordination rule recovered nothing there and the opening is UNPROVEN rather than open. Those launches are NOT SCORED — not their room, not their field. Scoring them would book the operation's own stake as outsider capital and inflate room, which is the one direction that manufactures an edge (captain decisions 134a and 182a).",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "49 of 49 create-slot entries were priced on-chain (1.000), and 49 of 49 closed round trips were priced across their whole window. The rest carry NO cost figure — not a zero.",
+          "A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was.",
+          "THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won the auction; the wallets that paid and did not land are invisible to it. Post-break our own subject saw a median 41.6 attempts per landed transaction, so this understates the cost of TRYING to enter — again in the optimistic direction.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 10,
+        "minAgeMs": 85000,
+        "launchesPlanned": 10,
+        "launchesAttempted": 10,
+        "launchesUsable": 10,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 31,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": true,
+          "rpcRequests": 132,
+          "launchesPriced": 9,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 0,
+          "transactionsTargeted": 184,
+          "transactionsPriced": 184,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 61,
+          "viaTransaction": 123,
+          "stoppedForBudget": false,
+          "notes": [
+            "the block route was not attempted: it replaces one request per create-slot transaction and there were fewer than two to replace."
+          ]
+        }
+      },
+      "spend": {
+        "keylessRequests": 31,
+        "keylessShed": 0,
+        "rpcRequests": 132,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 500
+      }
+    },
+    {
+      "deployer": "F9Jgf14YKQnczctnXf9WnjvFmv6EDDcm5mEHkt8cqfy7",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.130137,
+      "census": {
+        "roomMedian": 0.6704938110682432,
+        "boundLo": 0.6704938110682432,
+        "boundHi": 0.6704938110682432,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 10,
+        "proven": 10
+      },
+      "measuredToday": {
+        "verdict": "entry-open-after-costs",
+        "unmeasuredCause": null,
+        "unmeasuredCauseAttribution": null,
+        "laneUnmeasuredCause": null,
+        "rationale": "median room left 0.670 over 10 scored launches (7/10 clear the 0.55 bar); landing costs a median 0.031 SOL per SOL staked per launch (0.031 pooled over entries, 0.019 SOL at the median entry, p90 0.250); and after that cost the field still clears — 43/82 priced round trips positive, median 0.007 SOL NET OF MEASURED FEES against 0.029 gross. NOT a recommendation and NOT a profit claim: A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was. Exit feasibility is unmeasured entirely. This means the exit question is worth asking, and nothing more. ROOM MEDIAN 0.6705 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6705, 0.6705] — the figure itself.",
+        "launchesSampled": 10,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 10,
+          "min": 0,
+          "p10": 0.4065535719731583,
+          "p25": 0.5444133158723651,
+          "median": 0.6704938110682432,
+          "p75": 0.701904620739284,
+          "p90": 0.7298479720175537,
+          "max": 0.7814300150451
+        },
+        "roomLeftBound": {
+          "median": 0.6704938110682432,
+          "lo": 0.6704938110682432,
+          "hi": 0.6704938110682432,
+          "overstatementMax": 0,
+          "understatementMax": 0,
+          "provablyOverstated": false,
+          "launchesScored": 10,
+          "launchesMissing": 0,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.6705 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6705, 0.6705] — the figure itself."
+        },
+        "roomHitRate": {
+          "n": 10,
+          "hits": 7,
+          "rate": 0.7
+        },
+        "devSol": {
+          "n": 10,
+          "min": 3.52,
+          "p10": 3.52,
+          "p25": 4,
+          "median": 4,
+          "p75": 4.262499999999999,
+          "p90": 5.499999999999998,
+          "max": 10
+        },
+        "fieldEntrants": 83,
+        "fieldClosedRoundTrips": 82,
+        "fieldOpenPositions": 1,
+        "fieldHitRateGrossOfFees": {
+          "n": 82,
+          "hits": 48,
+          "rate": 0.5853658536585366
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 82,
+          "min": -0.74251062,
+          "p10": -0.1887027903,
+          "p25": -0.042010790750000006,
+          "median": 0.028593740000000003,
+          "p75": 0.3742089427499999,
+          "p90": 1.2900083463000012,
+          "max": 5.900867336000002
+        },
+        "entryCostSol": {
+          "n": 83,
+          "min": 0.0026494510000000006,
+          "p10": 0.0035161304000000024,
+          "p25": 0.007780124499999999,
+          "median": 0.019084651000000008,
+          "p75": 0.06845667349999984,
+          "p90": 0.2501689998,
+          "max": 1.6373642690000008
+        },
+        "entryCostPerSolStaked": {
+          "n": 83,
+          "min": 0.012915884615384543,
+          "p10": 0.01460875740467444,
+          "p25": 0.01704467007656007,
+          "median": 0.030875015118396857,
+          "p75": 0.05526325119818331,
+          "p90": 0.09314193573790233,
+          "max": 3.2973359091341705
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 9,
+          "min": 0.01795781972470227,
+          "p10": 0.022604435938606803,
+          "p25": 0.025254502005779972,
+          "median": 0.03125892890784707,
+          "p75": 0.04274183150034349,
+          "p90": 0.10563000533378897,
+          "max": 0.20263046634342496
+        },
+        "entryTxFeeSol": {
+          "n": 83,
+          "min": 0.000005,
+          "p10": 0.00005594000000000001,
+          "p25": 0.000105,
+          "median": 0.00021,
+          "p75": 0.0028026674999999997,
+          "p90": 0.034618792999999926,
+          "max": 1.51001
+        },
+        "entryCostPriced": {
+          "n": 83,
+          "hits": 83,
+          "rate": 1
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 82,
+          "hits": 43,
+          "rate": 0.524390243902439
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 82,
+          "min": -2.4687773250000005,
+          "p10": -0.2159222174,
+          "p25": -0.05290518275000008,
+          "median": 0.006862980000000102,
+          "p75": 0.30620102849999997,
+          "p90": 0.8882939716000002,
+          "max": 3.977903763
+        },
+        "fieldClosedRoundTripsPriced": 82,
+        "caveats": [
+          "ROOM MEDIAN 0.6705 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6705, 0.6705] — the figure itself.",
+          "1 of 83 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "83 of 83 create-slot entries were priced on-chain (1.000), and 82 of 82 closed round trips were priced across their whole window. The rest carry NO cost figure — not a zero.",
+          "A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was.",
+          "THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won the auction; the wallets that paid and did not land are invisible to it. Post-break our own subject saw a median 41.6 attempts per landed transaction, so this understates the cost of TRYING to enter — again in the optimistic direction.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 10,
+        "minAgeMs": 85000,
+        "launchesPlanned": 10,
+        "launchesAttempted": 10,
+        "launchesUsable": 10,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 41,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": true,
+          "rpcRequests": 177,
+          "launchesPriced": 9,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 0,
+          "transactionsTargeted": 271,
+          "transactionsPriced": 271,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 102,
+          "viaTransaction": 169,
+          "stoppedForBudget": false,
+          "notes": [
+            "the block route was not attempted: it replaces one request per create-slot transaction and there were fewer than two to replace."
+          ]
+        }
+      },
+      "spend": {
+        "keylessRequests": 41,
+        "keylessShed": 0,
+        "rpcRequests": 177,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 500
+      }
+    },
+    {
+      "deployer": "C2TFeiRyzzApUxvjrfaXF1RLfad2SfaHvSqGaEPmmxfv",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.097166,
+      "census": {
+        "roomMedian": 0.6704273422938904,
+        "boundLo": 0.6385768776545775,
+        "boundHi": 0.6847909326923161,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 10,
+        "proven": 8
+      },
+      "measuredToday": {
+        "verdict": "entry-open-after-costs",
+        "unmeasuredCause": null,
+        "unmeasuredCauseAttribution": null,
+        "laneUnmeasuredCause": null,
+        "rationale": "median room left 0.653 over 10 scored launches (8/10 clear the 0.55 bar); landing costs a median 0.031 SOL per SOL staked per launch (0.028 pooled over entries, 0.018 SOL at the median entry, p90 0.302); and after that cost the field still clears — 34/50 priced round trips positive, median 0.052 SOL NET OF MEASURED FEES against 0.091 gross. NOT a recommendation and NOT a profit claim: A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was. Exit feasibility is unmeasured entirely. This means the exit question is worth asking, and nothing more. ROOM MEDIAN 0.6535 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6535, 0.6535] — the figure itself.",
+        "launchesSampled": 10,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 10,
+          "min": 0,
+          "p10": 0.4580584269815877,
+          "p25": 0.5666536094930859,
+          "median": 0.6534631653383756,
+          "p75": 0.6888403207168641,
+          "p90": 0.7342115837027443,
+          "max": 0.7593092051732713
+        },
+        "roomLeftBound": {
+          "median": 0.6534631653383756,
+          "lo": 0.6534631653383756,
+          "hi": 0.6534631653383756,
+          "overstatementMax": 0,
+          "understatementMax": 0,
+          "provablyOverstated": false,
+          "launchesScored": 10,
+          "launchesMissing": 0,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.6535 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6535, 0.6535] — the figure itself."
+        },
+        "roomHitRate": {
+          "n": 10,
+          "hits": 8,
+          "rate": 0.8
+        },
+        "devSol": {
+          "n": 10,
+          "min": 2.469135801,
+          "p10": 2.9135802459000004,
+          "p25": 2.962962962,
+          "median": 2.962962962,
+          "p75": 3.7037037027500004,
+          "p90": 4.0493827151,
+          "max": 4.938271604
+        },
+        "fieldEntrants": 65,
+        "fieldClosedRoundTrips": 50,
+        "fieldOpenPositions": 15,
+        "fieldHitRateGrossOfFees": {
+          "n": 50,
+          "hits": 41,
+          "rate": 0.82
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 50,
+          "min": -0.364417703,
+          "p10": -0.01827837570000001,
+          "p25": 0.006923280250000011,
+          "median": 0.09099463399999999,
+          "p75": 0.40459082925000023,
+          "p90": 2.376756978200001,
+          "max": 4.408754254000001
+        },
+        "entryCostSol": {
+          "n": 65,
+          "min": -1.055277064,
+          "p10": 0.0029557028000000017,
+          "p25": 0.008417120999999972,
+          "median": 0.018304750000000203,
+          "p75": 0.044919279999999784,
+          "p90": 0.30216927999999976,
+          "max": 1.7114670850000002
+        },
+        "entryCostPerSolStaked": {
+          "n": 65,
+          "min": -1.0193185000377831,
+          "p10": 0.013251585631932468,
+          "p25": 0.019317727682344066,
+          "median": 0.028434042703720217,
+          "p75": 0.05902497351940025,
+          "p90": 0.10821092376456962,
+          "max": 2.1822063072063074
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 9,
+          "min": 0.01684217007594753,
+          "p10": 0.021753627539793853,
+          "p25": 0.02635535872444017,
+          "median": 0.030604493280604377,
+          "p75": 0.032323363499205414,
+          "p90": 0.07703301453521229,
+          "max": 0.09538462973760924
+        },
+        "entryTxFeeSol": {
+          "n": 65,
+          "min": 0,
+          "p10": 0.000005,
+          "p25": 0.000105,
+          "median": 0.00049,
+          "p75": 0.014005,
+          "p90": 0.06980801180000003,
+          "max": 0.9575070099999999
+        },
+        "entryCostPriced": {
+          "n": 65,
+          "hits": 65,
+          "rate": 1
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 50,
+          "hits": 34,
+          "rate": 0.68
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 50,
+          "min": -0.9231581450000004,
+          "p10": -0.0563695588,
+          "p25": -0.00717842074999997,
+          "median": 0.05226493700000001,
+          "p75": 0.2990719287499997,
+          "p90": 1.515005095200001,
+          "max": 4.163946433
+        },
+        "fieldClosedRoundTripsPriced": 50,
+        "caveats": [
+          "ROOM MEDIAN 0.6535 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6535, 0.6535] — the figure itself.",
+          "15 of 65 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "65 of 65 create-slot entries were priced on-chain (1.000), and 50 of 50 closed round trips were priced across their whole window. The rest carry NO cost figure — not a zero.",
+          "A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was.",
+          "THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won the auction; the wallets that paid and did not land are invisible to it. Post-break our own subject saw a median 41.6 attempts per landed transaction, so this understates the cost of TRYING to enter — again in the optimistic direction.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 10,
+        "minAgeMs": 85000,
+        "launchesPlanned": 10,
+        "launchesAttempted": 10,
+        "launchesUsable": 10,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 45,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": true,
+          "rpcRequests": 111,
+          "launchesPriced": 9,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 0,
+          "transactionsTargeted": 185,
+          "transactionsPriced": 185,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 83,
+          "viaTransaction": 102,
+          "stoppedForBudget": false,
+          "notes": [
+            "the block route was not attempted: it replaces one request per create-slot transaction and there were fewer than two to replace."
+          ]
+        }
+      },
+      "spend": {
+        "keylessRequests": 45,
+        "keylessShed": 0,
+        "rpcRequests": 111,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 500
+      }
+    },
+    {
+      "deployer": "68SJZt8q5ByeSgEjkGBhEtiKbHLGrfghJKAFPxmsama4",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.054054,
+      "census": {
+        "roomMedian": 0.6580485912209997,
+        "boundLo": 0.6468139902167109,
+        "boundHi": 0.6726182038382768,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 10,
+        "proven": 9
+      },
+      "measuredToday": {
+        "verdict": "entry-field-loss-making",
+        "unmeasuredCause": null,
+        "unmeasuredCauseAttribution": null,
+        "laneUnmeasuredCause": null,
+        "rationale": "the opening window leaves room (median 0.647) and the field looked positive gross — 28/45 closed round trips above zero — but NET OF MEASURED FEES it does not: 15/45 priced round trips positive (0.333), median -0.011 SOL. This is the leg the gross reading cannot see. A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was. ROOM MEDIAN 0.6468 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6468, 0.6468] — the figure itself.",
+        "launchesSampled": 10,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 10,
+          "min": 0,
+          "p10": 0.4794540804986798,
+          "p25": 0.5783504698946902,
+          "median": 0.6468139902167109,
+          "p75": 0.6892372081683893,
+          "p90": 0.6927249191039759,
+          "max": 0.7093870962386062
+        },
+        "roomLeftBound": {
+          "median": 0.6468139902167109,
+          "lo": 0.6468139902167109,
+          "hi": 0.6468139902167109,
+          "overstatementMax": 0,
+          "understatementMax": 0,
+          "provablyOverstated": false,
+          "launchesScored": 10,
+          "launchesMissing": 0,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.6468 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6468, 0.6468] — the figure itself."
+        },
+        "roomHitRate": {
+          "n": 10,
+          "hits": 8,
+          "rate": 0.8
+        },
+        "devSol": {
+          "n": 10,
+          "min": 0.740740739,
+          "p10": 1.1407407395,
+          "p25": 1.185185184,
+          "median": 1.185185184,
+          "p75": 1.185185184,
+          "p90": 1.185185184,
+          "max": 1.185185184
+        },
+        "fieldEntrants": 46,
+        "fieldClosedRoundTrips": 45,
+        "fieldOpenPositions": 1,
+        "fieldHitRateGrossOfFees": {
+          "n": 45,
+          "hits": 28,
+          "rate": 0.6222222222222222
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 45,
+          "min": -0.16814010899999987,
+          "p10": -0.028172768799999998,
+          "p25": -0.004949497000000025,
+          "median": 0.003507998000000012,
+          "p75": 0.05565129100000005,
+          "p90": 0.16493028820000008,
+          "max": 0.33633818699999973
+        },
+        "entryCostSol": {
+          "n": 46,
+          "min": 0.002207836999999999,
+          "p10": 0.0034941264999999964,
+          "p25": 0.007095302250000005,
+          "median": 0.012605681999999951,
+          "p75": 0.025382531749999937,
+          "p90": 0.09464042100000014,
+          "max": 0.14253148400000004
+        },
+        "entryCostPerSolStaked": {
+          "n": 46,
+          "min": 0.013640473961936229,
+          "p10": 0.01384507943959684,
+          "p25": 0.021922334148769027,
+          "median": 0.027250509525809395,
+          "p75": 0.05379295146034683,
+          "p90": 0.10262340924017266,
+          "max": 0.2537592297654886
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 9,
+          "min": 0.023517391523517284,
+          "p10": 0.02533958230723306,
+          "p25": 0.026431525568815537,
+          "median": 0.028579527774955565,
+          "p75": 0.033308671131445124,
+          "p90": 0.03797283199684383,
+          "max": 0.051523283423694874
+        },
+        "entryTxFeeSol": {
+          "n": 46,
+          "min": 0.000005,
+          "p10": 0.000010001,
+          "p25": 0.0000711645,
+          "median": 0.001005,
+          "p75": 0.001805,
+          "p90": 0.002906636,
+          "max": 0.117051661
+        },
+        "entryCostPriced": {
+          "n": 46,
+          "hits": 46,
+          "rate": 1
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 45,
+          "hits": 15,
+          "rate": 0.3333333333333333
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 45,
+          "min": -0.29930793999999983,
+          "p10": -0.05715541099999996,
+          "p25": -0.03121046900000002,
+          "median": -0.010938692,
+          "p75": 0.011668491999999975,
+          "p90": 0.07895716719999993,
+          "max": 0.28500395600000006
+        },
+        "fieldClosedRoundTripsPriced": 45,
+        "caveats": [
+          "ROOM MEDIAN 0.6468 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6468, 0.6468] — the figure itself.",
+          "1 of 46 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "46 of 46 create-slot entries were priced on-chain (1.000), and 45 of 45 closed round trips were priced across their whole window. The rest carry NO cost figure — not a zero.",
+          "A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was.",
+          "THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won the auction; the wallets that paid and did not land are invisible to it. Post-break our own subject saw a median 41.6 attempts per landed transaction, so this understates the cost of TRYING to enter — again in the optimistic direction.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 10,
+        "minAgeMs": 85000,
+        "launchesPlanned": 10,
+        "launchesAttempted": 10,
+        "launchesUsable": 10,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 14,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": true,
+          "rpcRequests": 68,
+          "launchesPriced": 9,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 0,
+          "transactionsTargeted": 108,
+          "transactionsPriced": 108,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 49,
+          "viaTransaction": 59,
+          "stoppedForBudget": false,
+          "notes": [
+            "the block route was not attempted: it replaces one request per create-slot transaction and there were fewer than two to replace."
+          ]
+        }
+      },
+      "spend": {
+        "keylessRequests": 14,
+        "keylessShed": 0,
+        "rpcRequests": 68,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 500
+      }
+    },
+    {
+      "deployer": "BWoZVgNjTg5uJG1aK7CWvtHUNraNuWZVY9GjTNFZmdYc",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.2,
+      "census": {
+        "roomMedian": 0.6578983824038883,
+        "boundLo": 0.6578983824038883,
+        "boundHi": 0.6578983824038883,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 10,
+        "proven": 10
+      },
+      "measuredToday": {
+        "verdict": "entry-field-loss-making",
+        "unmeasuredCause": null,
+        "unmeasuredCauseAttribution": null,
+        "laneUnmeasuredCause": null,
+        "rationale": "the opening window leaves room (median 0.658) and the field looked positive gross — 24/42 closed round trips above zero — but NET OF MEASURED FEES it does not: 18/42 priced round trips positive (0.429), median -0.004 SOL. This is the leg the gross reading cannot see. A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was. ROOM MEDIAN 0.6579 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6579, 0.6579] — the figure itself.",
+        "launchesSampled": 10,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 10,
+          "min": 0,
+          "p10": 0,
+          "p25": 0.5021487637506683,
+          "median": 0.6578983824038883,
+          "p75": 0.7384572771643856,
+          "p90": 0.7454114282313812,
+          "max": 0.7606165325494962
+        },
+        "roomLeftBound": {
+          "median": 0.6578983824038883,
+          "lo": 0.6578983824038883,
+          "hi": 0.6578983824038883,
+          "overstatementMax": 0,
+          "understatementMax": 0,
+          "provablyOverstated": false,
+          "launchesScored": 10,
+          "launchesMissing": 0,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.6579 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6579, 0.6579] — the figure itself."
+        },
+        "roomHitRate": {
+          "n": 10,
+          "hits": 7,
+          "rate": 0.7
+        },
+        "devSol": {
+          "n": 10,
+          "min": 0.000987654,
+          "p10": 0.000987654,
+          "p25": 0.000987654,
+          "median": 0.000987654,
+          "p75": 1.48172839425,
+          "p90": 2.962962962,
+          "max": 2.962962962
+        },
+        "fieldEntrants": 48,
+        "fieldClosedRoundTrips": 42,
+        "fieldOpenPositions": 6,
+        "fieldHitRateGrossOfFees": {
+          "n": 42,
+          "hits": 24,
+          "rate": 0.5714285714285714
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 42,
+          "min": -0.2971113839999999,
+          "p10": -0.05149950170000003,
+          "p25": -0.023749685249999992,
+          "median": 0.017157045499999996,
+          "p75": 0.41868280450000006,
+          "p90": 0.6047989870000001,
+          "max": 1.7304977240000001
+        },
+        "entryCostSol": {
+          "n": 48,
+          "min": 0.00221167,
+          "p10": 0.005392738899999996,
+          "p25": 0.007469794249999995,
+          "median": 0.015861413999999963,
+          "p75": 0.0479039,
+          "p90": 0.14563797100000025,
+          "max": 0.36508131799999965
+        },
+        "entryCostPerSolStaked": {
+          "n": 48,
+          "min": 0.014755423619050865,
+          "p10": 0.01742370168895478,
+          "p25": 0.01915208591086365,
+          "median": 0.03229012192870195,
+          "p75": 0.0499691746278159,
+          "p90": 0.09389786467045226,
+          "max": 2.6107152089769126
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 8,
+          "min": 0.02418871276823203,
+          "p10": 0.025561228473052332,
+          "p25": 0.026347536716122225,
+          "median": 0.029662066441365466,
+          "p75": 0.04441096729943115,
+          "p90": 0.059794169570964076,
+          "max": 0.0619182332398098
+        },
+        "entryTxFeeSol": {
+          "n": 48,
+          "min": 0.000005,
+          "p10": 0.0000085775,
+          "p25": 0.0000925,
+          "median": 0.000505,
+          "p75": 0.00851625,
+          "p90": 0.02439850000000001,
+          "max": 0.326005
+        },
+        "entryCostPriced": {
+          "n": 48,
+          "hits": 48,
+          "rate": 1
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 42,
+          "hits": 18,
+          "rate": 0.42857142857142855
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 42,
+          "min": -0.375225967,
+          "p10": -0.12494115699999998,
+          "p25": -0.04547150624999999,
+          "median": -0.003981332500000004,
+          "p75": 0.19467607950000015,
+          "p90": 0.45468396180000004,
+          "max": 1.6028345000000002
+        },
+        "fieldClosedRoundTripsPriced": 42,
+        "caveats": [
+          "ROOM MEDIAN 0.6579 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6579, 0.6579] — the figure itself.",
+          "6 of 48 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "48 of 48 create-slot entries were priced on-chain (1.000), and 42 of 42 closed round trips were priced across their whole window. The rest carry NO cost figure — not a zero.",
+          "A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was.",
+          "THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won the auction; the wallets that paid and did not land are invisible to it. Post-break our own subject saw a median 41.6 attempts per landed transaction, so this understates the cost of TRYING to enter — again in the optimistic direction.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 10,
+        "minAgeMs": 85000,
+        "launchesPlanned": 10,
+        "launchesAttempted": 10,
+        "launchesUsable": 10,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 19,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": true,
+          "rpcRequests": 71,
+          "launchesPriced": 8,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 0,
+          "transactionsTargeted": 118,
+          "transactionsPriced": 118,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 55,
+          "viaTransaction": 63,
+          "stoppedForBudget": false,
+          "notes": [
+            "the block route was not attempted: it replaces one request per create-slot transaction and there were fewer than two to replace."
+          ]
+        }
+      },
+      "spend": {
+        "keylessRequests": 19,
+        "keylessShed": 0,
+        "rpcRequests": 71,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 500
+      }
+    },
+    {
+      "deployer": "FVZRwUp6E4m9jV4VumF8q7m8q3mF9fpikRrJSCCfFAdP",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.017999,
+      "census": {
+        "roomMedian": 0.6530730121392778,
+        "boundLo": 0.6530730121392778,
+        "boundHi": 0.6530730121392778,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 10,
+        "proven": 10
+      },
+      "measuredToday": {
+        "verdict": "entry-open-after-costs",
+        "unmeasuredCause": null,
+        "unmeasuredCauseAttribution": null,
+        "laneUnmeasuredCause": null,
+        "rationale": "median room left 0.653 over 10 scored launches (9/10 clear the 0.55 bar); landing costs a median 0.036 SOL per SOL staked per launch (0.024 pooled over entries, 0.042 SOL at the median entry, p90 1.734); and after that cost the field still clears — 24/37 priced round trips positive, median 0.099 SOL NET OF MEASURED FEES against 0.223 gross. NOT a recommendation and NOT a profit claim: A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was. Exit feasibility is unmeasured entirely. This means the exit question is worth asking, and nothing more. ROOM MEDIAN 0.6531 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6531, 0.6531] — the figure itself.",
+        "launchesSampled": 10,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 10,
+          "min": 0,
+          "p10": 0.5045534101985316,
+          "p25": 0.6067666524518288,
+          "median": 0.6530730121392778,
+          "p75": 0.6815125540337151,
+          "p90": 0.71204569365419,
+          "max": 0.7713022306672322
+        },
+        "roomLeftBound": {
+          "median": 0.6530730121392778,
+          "lo": 0.6530730121392778,
+          "hi": 0.6530730121392778,
+          "overstatementMax": 0,
+          "understatementMax": 0,
+          "provablyOverstated": false,
+          "launchesScored": 10,
+          "launchesMissing": 0,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.6531 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6531, 0.6531] — the figure itself."
+        },
+        "roomHitRate": {
+          "n": 10,
+          "hits": 9,
+          "rate": 0.9
+        },
+        "devSol": {
+          "n": 10,
+          "min": 5,
+          "p10": 5,
+          "p25": 5,
+          "median": 5,
+          "p75": 5,
+          "p90": 5.1,
+          "max": 6
+        },
+        "fieldEntrants": 39,
+        "fieldClosedRoundTrips": 37,
+        "fieldOpenPositions": 2,
+        "fieldHitRateGrossOfFees": {
+          "n": 37,
+          "hits": 26,
+          "rate": 0.7027027027027027
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 37,
+          "min": -0.6303019849999998,
+          "p10": -0.2772963302,
+          "p25": -0.016676595999999932,
+          "median": 0.22265310299999985,
+          "p75": 0.8086375509999999,
+          "p90": 5.7467823014,
+          "max": 7.620545447
+        },
+        "entryCostSol": {
+          "n": 39,
+          "min": 0.005933432999999988,
+          "p10": 0.007534120200000017,
+          "p25": 0.017009096,
+          "median": 0.04218675500000035,
+          "p75": 0.3012263490000002,
+          "p90": 1.7342555992000028,
+          "max": 5.604229466000001
+        },
+        "entryCostPerSolStaked": {
+          "n": 39,
+          "min": 0.012660192592592549,
+          "p10": 0.014351424764351426,
+          "p25": 0.017522384597549456,
+          "median": 0.024148083356492222,
+          "p75": 0.06293271407997836,
+          "p90": 0.18147324528776762,
+          "max": 0.3782854889758058
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 9,
+          "min": 0.017882366707962748,
+          "p10": 0.018484122958009247,
+          "p25": 0.019274907945932774,
+          "median": 0.03569814221593261,
+          "p75": 0.062481660687984455,
+          "p90": 0.10837900716685206,
+          "max": 0.18657030518538473
+        },
+        "entryTxFeeSol": {
+          "n": 39,
+          "min": 0.000005,
+          "p10": 0.000005,
+          "p25": 0.00007999999999999999,
+          "median": 0.001105,
+          "p75": 0.01314,
+          "p90": 0.095102,
+          "max": 2.50428768
+        },
+        "entryCostPriced": {
+          "n": 39,
+          "hits": 39,
+          "rate": 1
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 37,
+          "hits": 24,
+          "rate": 0.6486486486486487
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 37,
+          "min": -1.1831239759999974,
+          "p10": -0.4840083486000001,
+          "p25": -0.07336825700000005,
+          "median": 0.09864490399999999,
+          "p75": 0.6096976110000001,
+          "p90": 3.4129790387999996,
+          "max": 5.4027395380000005
+        },
+        "fieldClosedRoundTripsPriced": 37,
+        "caveats": [
+          "ROOM MEDIAN 0.6531 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6531, 0.6531] — the figure itself.",
+          "2 of 39 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "39 of 39 create-slot entries were priced on-chain (1.000), and 37 of 37 closed round trips were priced across their whole window. The rest carry NO cost figure — not a zero.",
+          "A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was.",
+          "THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won the auction; the wallets that paid and did not land are invisible to it. Post-break our own subject saw a median 41.6 attempts per landed transaction, so this understates the cost of TRYING to enter — again in the optimistic direction.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 10,
+        "minAgeMs": 85000,
+        "launchesPlanned": 10,
+        "launchesAttempted": 10,
+        "launchesUsable": 10,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 55,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": true,
+          "rpcRequests": 135,
+          "launchesPriced": 9,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 0,
+          "transactionsTargeted": 166,
+          "transactionsPriced": 166,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 40,
+          "viaTransaction": 126,
+          "stoppedForBudget": false,
+          "notes": [
+            "the block route was not attempted: it replaces one request per create-slot transaction and there were fewer than two to replace."
+          ]
+        }
+      },
+      "spend": {
+        "keylessRequests": 55,
+        "keylessShed": 0,
+        "rpcRequests": 135,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 500
+      }
+    },
+    {
+      "deployer": "DxQ1iNidsGap2kr14VdEzA8NheqXabfh6fRkvZQbnZVY",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.154079,
+      "census": {
+        "roomMedian": 0.6510292024714053,
+        "boundLo": 0.6510292024714053,
+        "boundHi": 0.6510292024714053,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 10,
+        "proven": 10
+      },
+      "measuredToday": {
+        "verdict": "entry-field-loss-making",
+        "unmeasuredCause": null,
+        "unmeasuredCauseAttribution": null,
+        "laneUnmeasuredCause": null,
+        "rationale": "the opening window leaves room (median 0.651) and the field looked positive gross — 31/55 closed round trips above zero — but NET OF MEASURED FEES it does not: 27/55 priced round trips positive (0.491), median -0.003 SOL. This is the leg the gross reading cannot see. A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was. ROOM MEDIAN 0.6510 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6510, 0.6510] — the figure itself.",
+        "launchesSampled": 10,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 10,
+          "min": 0.5283841220578878,
+          "p10": 0.5690136528262562,
+          "p25": 0.595548530109569,
+          "median": 0.6510292024714053,
+          "p75": 0.6692756569461682,
+          "p90": 0.7552156875842249,
+          "max": 0.7863227068374288
+        },
+        "roomLeftBound": {
+          "median": 0.6510292024714053,
+          "lo": 0.6510292024714053,
+          "hi": 0.6510292024714053,
+          "overstatementMax": 0,
+          "understatementMax": 0,
+          "provablyOverstated": false,
+          "launchesScored": 10,
+          "launchesMissing": 0,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.6510 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6510, 0.6510] — the figure itself."
+        },
+        "roomHitRate": {
+          "n": 10,
+          "hits": 9,
+          "rate": 0.9
+        },
+        "devSol": {
+          "n": 10,
+          "min": 4.938271604,
+          "p10": 7.6049382707,
+          "p25": 7.901234567,
+          "median": 7.901234567,
+          "p75": 7.901234567,
+          "p90": 7.901234567,
+          "max": 7.901234567
+        },
+        "fieldEntrants": 71,
+        "fieldClosedRoundTrips": 55,
+        "fieldOpenPositions": 16,
+        "fieldHitRateGrossOfFees": {
+          "n": 55,
+          "hits": 31,
+          "rate": 0.5636363636363636
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 55,
+          "min": -5.6400815789999985,
+          "p10": -0.22000261319999995,
+          "p25": -0.12266744049999995,
+          "median": 0.014198088999999997,
+          "p75": 0.34881302100000006,
+          "p90": 4.828731703400004,
+          "max": 16.633864476
+        },
+        "entryCostSol": {
+          "n": 71,
+          "min": 0.0025961970000000015,
+          "p10": 0.005716075000000001,
+          "p25": 0.014534709500000048,
+          "median": 0.03149593400000006,
+          "p75": 0.07133677,
+          "p90": 0.39829738999999975,
+          "max": 5.651796158999998
+        },
+        "entryCostPerSolStaked": {
+          "n": 71,
+          "min": 0.013936973008609481,
+          "p10": 0.01684217007594753,
+          "p25": 0.02461096863177838,
+          "median": 0.032339938145212625,
+          "p75": 0.05208739538155152,
+          "p90": 0.13438314849932584,
+          "max": 3.206008379452723
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 10,
+          "min": 0.02118116802547074,
+          "p10": 0.02695150636207862,
+          "p25": 0.028614675548518258,
+          "median": 0.03101481903033071,
+          "p75": 0.035275505051566035,
+          "p90": 0.035718957509059734,
+          "max": 0.03667745765508402
+        },
+        "entryTxFeeSol": {
+          "n": 71,
+          "min": 0.000005,
+          "p10": 0.000105,
+          "p25": 0.000407426,
+          "median": 0.009005,
+          "p75": 0.0231675,
+          "p90": 0.150996154,
+          "max": 3.500005
+        },
+        "entryCostPriced": {
+          "n": 71,
+          "hits": 71,
+          "rate": 1
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 55,
+          "hits": 27,
+          "rate": 0.4909090909090909
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 55,
+          "min": -10.006413643999998,
+          "p10": -0.27022305679999997,
+          "p25": -0.15471022500000006,
+          "median": -0.0031899179999999995,
+          "p75": 0.25417806349999994,
+          "p90": 2.5590699442,
+          "max": 10.642078685999998
+        },
+        "fieldClosedRoundTripsPriced": 55,
+        "caveats": [
+          "ROOM MEDIAN 0.6510 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6510, 0.6510] — the figure itself.",
+          "16 of 71 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "71 of 71 create-slot entries were priced on-chain (1.000), and 55 of 55 closed round trips were priced across their whole window. The rest carry NO cost figure — not a zero.",
+          "A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was.",
+          "THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won the auction; the wallets that paid and did not land are invisible to it. Post-break our own subject saw a median 41.6 attempts per landed transaction, so this understates the cost of TRYING to enter — again in the optimistic direction.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 10,
+        "minAgeMs": 85000,
+        "launchesPlanned": 10,
+        "launchesAttempted": 10,
+        "launchesUsable": 10,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 59,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": true,
+          "rpcRequests": 144,
+          "launchesPriced": 10,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 0,
+          "transactionsTargeted": 220,
+          "transactionsPriced": 220,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 86,
+          "viaTransaction": 134,
+          "stoppedForBudget": false,
+          "notes": []
+        }
+      },
+      "spend": {
+        "keylessRequests": 59,
+        "keylessShed": 0,
+        "rpcRequests": 144,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 386
+      }
+    },
+    {
+      "deployer": "H6hPTUg73GDscH4Q9NAviJrUtMwUXE6PzZat2xWDszrJ",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.129683,
+      "census": {
+        "roomMedian": 0.6493501817602028,
+        "boundLo": 0.6493501817602028,
+        "boundHi": 0.6493501817602028,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 10,
+        "proven": 10
+      },
+      "measuredToday": {
+        "verdict": "entry-open-after-costs",
+        "unmeasuredCause": null,
+        "unmeasuredCauseAttribution": null,
+        "laneUnmeasuredCause": null,
+        "rationale": "median room left 0.649 over 10 scored launches (10/10 clear the 0.55 bar); landing costs a median 0.037 SOL per SOL staked per launch (0.031 pooled over entries, 0.014 SOL at the median entry, p90 0.308); and after that cost the field still clears — 34/59 priced round trips positive, median 0.016 SOL NET OF MEASURED FEES against 0.069 gross. NOT a recommendation and NOT a profit claim: A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was. Exit feasibility is unmeasured entirely. This means the exit question is worth asking, and nothing more. ROOM MEDIAN 0.6494 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6494, 0.6494] — the figure itself.",
+        "launchesSampled": 10,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 10,
+          "min": 0.5829033290613564,
+          "p10": 0.5982796875487951,
+          "p25": 0.6274489579611088,
+          "median": 0.6493501817602028,
+          "p75": 0.693960567637075,
+          "p90": 0.7083175180656479,
+          "max": 0.7168586852385086
+        },
+        "roomLeftBound": {
+          "median": 0.6493501817602028,
+          "lo": 0.6493501817602028,
+          "hi": 0.6493501817602028,
+          "overstatementMax": 0,
+          "understatementMax": 0,
+          "provablyOverstated": false,
+          "launchesScored": 10,
+          "launchesMissing": 0,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.6494 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6494, 0.6494] — the figure itself."
+        },
+        "roomHitRate": {
+          "n": 10,
+          "hits": 10,
+          "rate": 1
+        },
+        "devSol": {
+          "n": 10,
+          "min": 3.604938271,
+          "p10": 3.6493827154000003,
+          "p25": 3.654320987,
+          "median": 3.654320987,
+          "p75": 3.691358024,
+          "p90": 3.950617283,
+          "max": 3.950617283
+        },
+        "fieldEntrants": 88,
+        "fieldClosedRoundTrips": 59,
+        "fieldOpenPositions": 29,
+        "fieldHitRateGrossOfFees": {
+          "n": 59,
+          "hits": 38,
+          "rate": 0.6440677966101694
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 59,
+          "min": -0.4944335110000002,
+          "p10": -0.06170051160000001,
+          "p25": -0.01657533700000008,
+          "median": 0.06929533199999999,
+          "p75": 0.31676575850000005,
+          "p90": 1.8654945500000002,
+          "max": 7.573232052000002
+        },
+        "entryCostSol": {
+          "n": 88,
+          "min": 0.002896364999999998,
+          "p10": 0.007395858699999986,
+          "p25": 0.008850747000000048,
+          "median": 0.013754032500000013,
+          "p75": 0.036262405999999914,
+          "p90": 0.3078575183999985,
+          "max": 4.309315886
+        },
+        "entryCostPerSolStaked": {
+          "n": 88,
+          "min": 0.013936973008609481,
+          "p10": 0.016595562896776623,
+          "p25": 0.01809073481659643,
+          "median": 0.030992755805777324,
+          "p75": 0.05436039145020011,
+          "p90": 0.11864405906336417,
+          "max": 6.106872023120962
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 10,
+          "min": 0.01835019904761891,
+          "p10": 0.025062382013852365,
+          "p25": 0.027297901213170824,
+          "median": 0.036929968673701866,
+          "p75": 0.051056489168176615,
+          "p90": 0.15577717125071677,
+          "max": 0.28710463718518514
+        },
+        "entryTxFeeSol": {
+          "n": 88,
+          "min": 0.000005,
+          "p10": 0.000005,
+          "p25": 0.00011,
+          "median": 0.00051,
+          "p75": 0.00301,
+          "p90": 0.0100215007,
+          "max": 2.723801845
+        },
+        "entryCostPriced": {
+          "n": 88,
+          "hits": 88,
+          "rate": 1
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 59,
+          "hits": 34,
+          "rate": 0.576271186440678
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 59,
+          "min": -2.216512776000001,
+          "p10": -0.11301363360000001,
+          "p25": -0.0522743205,
+          "median": 0.01595475099999999,
+          "p75": 0.158362946,
+          "p90": 1.2013088382000006,
+          "max": 3.4299166420000002
+        },
+        "fieldClosedRoundTripsPriced": 59,
+        "caveats": [
+          "ROOM MEDIAN 0.6494 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6494, 0.6494] — the figure itself.",
+          "29 of 88 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "88 of 88 create-slot entries were priced on-chain (1.000), and 59 of 59 closed round trips were priced across their whole window. The rest carry NO cost figure — not a zero.",
+          "A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was.",
+          "THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won the auction; the wallets that paid and did not land are invisible to it. Post-break our own subject saw a median 41.6 attempts per landed transaction, so this understates the cost of TRYING to enter — again in the optimistic direction.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 10,
+        "minAgeMs": 85000,
+        "launchesPlanned": 10,
+        "launchesAttempted": 10,
+        "launchesUsable": 10,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 45,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": true,
+          "rpcRequests": 120,
+          "launchesPriced": 10,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 0,
+          "transactionsTargeted": 206,
+          "transactionsPriced": 206,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 95,
+          "viaTransaction": 111,
+          "stoppedForBudget": false,
+          "notes": [
+            "the block route was not attempted: it replaces one request per create-slot transaction and there were fewer than two to replace."
+          ]
+        }
+      },
+      "spend": {
+        "keylessRequests": 45,
+        "keylessShed": 0,
+        "rpcRequests": 120,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 242
+      }
+    },
+    {
+      "deployer": "7F4sTCyUqN33tSRtYDkVg9ABKW8CgfFSTXrFjadqQkRr",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.107692,
+      "census": {
+        "roomMedian": 0.6224451736115579,
+        "boundLo": 0.6224451736115579,
+        "boundHi": 0.6224451736115579,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 8,
+        "proven": 8
+      },
+      "measuredToday": {
+        "verdict": "entry-field-loss-making",
+        "unmeasuredCause": null,
+        "unmeasuredCauseAttribution": null,
+        "laneUnmeasuredCause": null,
+        "rationale": "the opening window leaves room (median 0.622), but the field loses money BEFORE costs: 36/77 closed round trips positive (0.468), median -0.010 SOL gross. Fees only make that worse, so this is conclusive: room exists and nobody is converting it. No RPC request was spent pricing it. ROOM MEDIAN 0.6224 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6224, 0.6224] — the figure itself.",
+        "launchesSampled": 8,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 8,
+          "min": 0,
+          "p10": 0.3618579272902493,
+          "p25": 0.5361084753381401,
+          "median": 0.6224451736115579,
+          "p75": 0.7448664666278328,
+          "p90": 0.7982334873050975,
+          "max": 0.8243473630343997
+        },
+        "roomLeftBound": {
+          "median": 0.6224451736115579,
+          "lo": 0.6224451736115579,
+          "hi": 0.6224451736115579,
+          "overstatementMax": 0,
+          "understatementMax": 0,
+          "provablyOverstated": false,
+          "launchesScored": 8,
+          "launchesMissing": 0,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.6224 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6224, 0.6224] — the figure itself."
+        },
+        "roomHitRate": {
+          "n": 8,
+          "hits": 5,
+          "rate": 0.625
+        },
+        "devSol": {
+          "n": 8,
+          "min": 2.962962962,
+          "p10": 2.962962962,
+          "p25": 2.962962962,
+          "median": 2.962962962,
+          "p75": 2.962962962,
+          "p90": 3.259259258,
+          "max": 3.950617282
+        },
+        "fieldEntrants": 79,
+        "fieldClosedRoundTrips": 77,
+        "fieldOpenPositions": 2,
+        "fieldHitRateGrossOfFees": {
+          "n": 77,
+          "hits": 36,
+          "rate": 0.4675324675324675
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 77,
+          "min": -0.5698803,
+          "p10": -0.27378974419999996,
+          "p25": -0.1375314270000001,
+          "median": -0.009789396000000006,
+          "p75": 0.2236700279999999,
+          "p90": 0.6583452460000006,
+          "max": 3.2700354470000006
+        },
+        "entryCostSol": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "entryCostPerSolStaked": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "entryTxFeeSol": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "entryCostPriced": {
+          "n": 79,
+          "hits": 0,
+          "rate": 0
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 0,
+          "hits": 0,
+          "rate": null
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "fieldClosedRoundTripsPriced": 0,
+        "caveats": [
+          "ROOM MEDIAN 0.6224 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6224, 0.6224] — the figure itself.",
+          "2 of 79 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "NO ENTRY COST WAS MEASURED for this candidate, so every figure above is gross of fees and the price of the seat is unknown. That is a limit of this reading, not a finding that entry was cheap.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 8,
+        "minAgeMs": 85000,
+        "launchesPlanned": 8,
+        "launchesAttempted": 8,
+        "launchesUsable": 8,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 29,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": false,
+          "rpcRequests": 0,
+          "launchesPriced": 0,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 0,
+          "transactionsTargeted": 0,
+          "transactionsPriced": 0,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 0,
+          "viaTransaction": 0,
+          "stoppedForBudget": false,
+          "notes": []
+        }
+      },
+      "spend": {
+        "keylessRequests": 29,
+        "keylessShed": 0,
+        "rpcRequests": 0,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 122
+      }
+    },
+    {
+      "deployer": "DJGm2u3ZRJJaaobyPPDQB9dvpaKTutUo5y4CdxoywRBJ",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.131313,
+      "census": {
+        "roomMedian": 0.6201312073897014,
+        "boundLo": 0.6201312073897014,
+        "boundHi": 0.6201312073897014,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 9,
+        "proven": 9
+      },
+      "measuredToday": {
+        "verdict": "entry-cost-unmeasured",
+        "unmeasuredCause": "too-little-of-the-field-priced",
+        "unmeasuredCauseAttribution": "our-coverage",
+        "laneUnmeasuredCause": null,
+        "rationale": "the opening window leaves room (median 0.620) and the field is not loss-making before costs, but only 35 of 45 create-slot entries could be priced on-chain (0.778, below the 0.8 this reading needs). Under the captain's ruling of 2026-08-02 the fee is part of the entry window, so a room figure with the price of the seat unmeasured beside it is NOT a finding that the window is enterable — it is the absence of one. ROOM MEDIAN 0.6201 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6201, 0.6201] — the figure itself.",
+        "launchesSampled": 9,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 9,
+          "min": 0,
+          "p10": 0,
+          "p25": 0.5439986509206123,
+          "median": 0.6201312073897014,
+          "p75": 0.6628657499354256,
+          "p90": 0.6802055872739051,
+          "max": 0.7165771093962716
+        },
+        "roomLeftBound": {
+          "median": 0.6201312073897014,
+          "lo": 0.6201312073897014,
+          "hi": 0.6201312073897014,
+          "overstatementMax": 0,
+          "understatementMax": 0,
+          "provablyOverstated": false,
+          "launchesScored": 9,
+          "launchesMissing": 0,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.6201 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6201, 0.6201] — the figure itself."
+        },
+        "roomHitRate": {
+          "n": 9,
+          "hits": 6,
+          "rate": 0.6666666666666666
+        },
+        "devSol": {
+          "n": 9,
+          "min": 4.938271604,
+          "p10": 4.938271604,
+          "p25": 4.938271604,
+          "median": 4.938271604,
+          "p75": 4.938271604,
+          "p90": 4.938271604,
+          "max": 4.938271604
+        },
+        "fieldEntrants": 45,
+        "fieldClosedRoundTrips": 44,
+        "fieldOpenPositions": 1,
+        "fieldHitRateGrossOfFees": {
+          "n": 44,
+          "hits": 30,
+          "rate": 0.6818181818181818
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 44,
+          "min": -0.35865156100000006,
+          "p10": -0.145554077,
+          "p25": -0.014591022250000002,
+          "median": 0.09356635650000009,
+          "p75": 0.2819916847499993,
+          "p90": 2.271544372200003,
+          "max": 6.536177711000002
+        },
+        "entryCostSol": {
+          "n": 35,
+          "min": 0.000011079999999999962,
+          "p10": 0.007446293000000026,
+          "p25": 0.008417120999999972,
+          "median": 0.024511061,
+          "p75": 0.13467786650000013,
+          "p90": 1.1986391446000002,
+          "max": 3.41354428
+        },
+        "entryCostPerSolStaked": {
+          "n": 35,
+          "min": 0.01285961447843989,
+          "p10": 0.016176601234580906,
+          "p25": 0.01769534692331935,
+          "median": 0.02482252596232261,
+          "p75": 0.06261194610151288,
+          "p90": 0.22214562298837445,
+          "max": 8.904307581399964
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 6,
+          "min": 0.02283293814783287,
+          "p10": 0.022832986874395444,
+          "p25": 0.023330408191299168,
+          "median": 0.026581988805765355,
+          "p75": 0.02891960047610137,
+          "p90": 0.04395167219552358,
+          "max": 0.0587910276393147
+        },
+        "entryTxFeeSol": {
+          "n": 35,
+          "min": 0.000005,
+          "p10": 0.0000070000000000000024,
+          "p25": 0.0000911505,
+          "median": 0.00021,
+          "p75": 0.005005,
+          "p90": 0.11694000000000004,
+          "max": 1.245005
+        },
+        "entryCostPriced": {
+          "n": 45,
+          "hits": 35,
+          "rate": 0.7777777777777778
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 35,
+          "hits": 18,
+          "rate": 0.5142857142857142
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 35,
+          "min": -2.439458956999998,
+          "p10": -0.3565813385999998,
+          "p25": -0.12797166050000003,
+          "median": 0.0028516490000000116,
+          "p75": 0.088704383,
+          "p90": 1.0667940200000006,
+          "max": 4.612770894999999
+        },
+        "fieldClosedRoundTripsPriced": 35,
+        "caveats": [
+          "ROOM MEDIAN 0.6201 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6201, 0.6201] — the figure itself.",
+          "1 of 45 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "35 of 45 create-slot entries were priced on-chain (0.778), and 35 of 44 closed round trips were priced across their whole window. The rest carry NO cost figure — not a zero.",
+          "A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was.",
+          "THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won the auction; the wallets that paid and did not land are invisible to it. Post-break our own subject saw a median 41.6 attempts per landed transaction, so this understates the cost of TRYING to enter — again in the optimistic direction.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here.",
+          "THIS IS A LIMIT OF OUR READING, NOT A FINDING ABOUT THIS DEPLOYER. `unmeasuredCause` names which of our own limits produced it and `unmeasuredCauseAttribution` reads `our-coverage`. A later stage MUST NOT drop this candidate on that basis: filtering it out silently filters on our budget and our evidence, which is the invisible false rejection this screen exists to remove. Carry it forward as NO ANSWER, counted and reported. `entry.mjs` → `isDeployerAttributable` is the predicate; captain decision 174b is the rule."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 9,
+        "minAgeMs": 85000,
+        "launchesPlanned": 9,
+        "launchesAttempted": 9,
+        "launchesUsable": 9,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 42,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": true,
+          "rpcRequests": 105,
+          "launchesPriced": 6,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 1,
+          "transactionsTargeted": 177,
+          "transactionsPriced": 145,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 46,
+          "viaTransaction": 99,
+          "stoppedForBudget": true,
+          "notes": [
+            "the block route was not attempted: it replaces one request per create-slot transaction and there were fewer than two to replace.",
+            "a launch needing 32 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way"
+          ]
+        }
+      },
+      "spend": {
+        "keylessRequests": 42,
+        "keylessShed": 0,
+        "rpcRequests": 105,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 122
+      }
+    },
+    {
+      "deployer": "4cXnf2z85UiZ5cyKsPMEULq1yufAtpkatmX4j4DBZqj2",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.024573,
+      "census": {
+        "roomMedian": 0.6105526006324513,
+        "boundLo": 0.6105526006324513,
+        "boundHi": 0.6105526006324513,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 8,
+        "proven": 8
+      },
+      "measuredToday": {
+        "verdict": "entry-cost-unmeasured",
+        "unmeasuredCause": "too-little-of-the-field-priced",
+        "unmeasuredCauseAttribution": "our-coverage",
+        "laneUnmeasuredCause": null,
+        "rationale": "the opening window leaves room (median 0.611) and the field is not loss-making before costs, but only 7 of 48 create-slot entries could be priced on-chain (0.146, below the 0.8 this reading needs). Under the captain's ruling of 2026-08-02 the fee is part of the entry window, so a room figure with the price of the seat unmeasured beside it is NOT a finding that the window is enterable — it is the absence of one. ROOM MEDIAN 0.6106 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6106, 0.6106] — the figure itself.",
+        "launchesSampled": 8,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 8,
+          "min": 0.547817941325972,
+          "p10": 0.5633289633771055,
+          "p25": 0.5813580968239698,
+          "median": 0.6105526006324513,
+          "p75": 0.6528670327582994,
+          "p90": 0.6649642619494328,
+          "max": 0.6688082576663703
+        },
+        "roomLeftBound": {
+          "median": 0.6105526006324513,
+          "lo": 0.6105526006324513,
+          "hi": 0.6105526006324513,
+          "overstatementMax": 0,
+          "understatementMax": 0,
+          "provablyOverstated": false,
+          "launchesScored": 8,
+          "launchesMissing": 0,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.6106 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6106, 0.6106] — the figure itself."
+        },
+        "roomHitRate": {
+          "n": 8,
+          "hits": 7,
+          "rate": 0.875
+        },
+        "devSol": {
+          "n": 8,
+          "min": 3,
+          "p10": 3,
+          "p25": 3,
+          "median": 3,
+          "p75": 3,
+          "p90": 3,
+          "max": 3
+        },
+        "fieldEntrants": 48,
+        "fieldClosedRoundTrips": 48,
+        "fieldOpenPositions": 0,
+        "fieldHitRateGrossOfFees": {
+          "n": 48,
+          "hits": 40,
+          "rate": 0.8333333333333334
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 48,
+          "min": -0.30270275299999994,
+          "p10": -0.005417278800000007,
+          "p25": 0.02871786024999999,
+          "median": 0.136541366,
+          "p75": 0.4789421910000002,
+          "p90": 1.2304192979999997,
+          "max": 2.272118165
+        },
+        "entryCostSol": {
+          "n": 7,
+          "min": 0.005373648999999994,
+          "p10": 0.0063435483999999985,
+          "p25": 0.007339915500000002,
+          "median": 0.018855754000000002,
+          "p75": 0.020016346500000004,
+          "p90": 0.14870086820000022,
+          "max": 0.34042699700000023
+        },
+        "entryCostPerSolStaked": {
+          "n": 7,
+          "min": 0.01986816746325452,
+          "p10": 0.025777352643072696,
+          "p25": 0.03309944816850127,
+          "median": 0.048471524046164956,
+          "p75": 0.05232442859489906,
+          "p90": 0.06711315149271863,
+          "max": 0.08617058363635985
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 1,
+          "min": 0.048471524046164956,
+          "p10": 0.048471524046164956,
+          "p25": 0.048471524046164956,
+          "median": 0.048471524046164956,
+          "p75": 0.048471524046164956,
+          "p90": 0.048471524046164956,
+          "max": 0.048471524046164956
+        },
+        "entryTxFeeSol": {
+          "n": 7,
+          "min": 0.00016,
+          "p10": 0.0006670000000000001,
+          "p25": 0.001160417,
+          "median": 0.001505806,
+          "p75": 0.0063549999999999995,
+          "p90": 0.12160500000000012,
+          "max": 0.289005
+        },
+        "entryCostPriced": {
+          "n": 48,
+          "hits": 7,
+          "rate": 0.14583333333333334
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 7,
+          "hits": 1,
+          "rate": 0.14285714285714285
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 7,
+          "min": -0.331917939,
+          "p10": -0.3086827986000003,
+          "p25": -0.21161346150000024,
+          "median": -0.06486086399999999,
+          "p75": -0.029856378000000003,
+          "p90": -0.0016657719999999682,
+          "max": 0.011013650000000055
+        },
+        "fieldClosedRoundTripsPriced": 7,
+        "caveats": [
+          "ROOM MEDIAN 0.6106 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.6106, 0.6106] — the figure itself.",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "7 of 48 create-slot entries were priced on-chain (0.146), and 7 of 48 closed round trips were priced across their whole window. The rest carry NO cost figure — not a zero.",
+          "A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was.",
+          "THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won the auction; the wallets that paid and did not land are invisible to it. Post-break our own subject saw a median 41.6 attempts per landed transaction, so this understates the cost of TRYING to enter — again in the optimistic direction.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here.",
+          "THIS IS A LIMIT OF OUR READING, NOT A FINDING ABOUT THIS DEPLOYER. `unmeasuredCause` names which of our own limits produced it and `unmeasuredCauseAttribution` reads `our-coverage`. A later stage MUST NOT drop this candidate on that basis: filtering it out silently filters on our budget and our evidence, which is the invisible false rejection this screen exists to remove. Carry it forward as NO ANSWER, counted and reported. `entry.mjs` → `isDeployerAttributable` is the predicate; captain decision 174b is the rule."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 8,
+        "minAgeMs": 85000,
+        "launchesPlanned": 8,
+        "launchesAttempted": 8,
+        "launchesUsable": 8,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 15,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": true,
+          "rpcRequests": 9,
+          "launchesPriced": 1,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 7,
+          "transactionsTargeted": 156,
+          "transactionsPriced": 16,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 8,
+          "viaTransaction": 8,
+          "stoppedForBudget": true,
+          "notes": [
+            "a launch needing 30 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "a launch needing 24 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "a launch needing 13 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "a launch needing 27 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "a launch needing 26 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "a launch needing 9 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "a launch needing 11 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way"
+          ]
+        }
+      },
+      "spend": {
+        "keylessRequests": 15,
+        "keylessShed": 0,
+        "rpcRequests": 9,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 17
+      }
+    },
+    {
+      "deployer": "4QwJ4AXMtSjnCwgM9kiDpsGtXmjEd3hAVRkDg3o3bDQs",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.091106,
+      "census": {
+        "roomMedian": 0.5825549021477897,
+        "boundLo": 0.5825549021477897,
+        "boundHi": 0.5825549021477897,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 10,
+        "proven": 10
+      },
+      "measuredToday": {
+        "verdict": "entry-field-loss-making",
+        "unmeasuredCause": null,
+        "unmeasuredCauseAttribution": null,
+        "laneUnmeasuredCause": null,
+        "rationale": "the opening window leaves room (median 0.583), but the field loses money BEFORE costs: 43/90 closed round trips positive (0.478), median -0.007 SOL gross. Fees only make that worse, so this is conclusive: room exists and nobody is converting it. No RPC request was spent pricing it. ROOM MEDIAN 0.5826 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.5826, 0.5826] — the figure itself.",
+        "launchesSampled": 10,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 10,
+          "min": 0.4868424054360124,
+          "p10": 0.5202169099503936,
+          "p25": 0.5413273969617303,
+          "median": 0.5825549021477897,
+          "p75": 0.6152169707869396,
+          "p90": 0.6497332299239674,
+          "max": 0.6770954815859569
+        },
+        "roomLeftBound": {
+          "median": 0.5825549021477897,
+          "lo": 0.5825549021477897,
+          "hi": 0.5825549021477897,
+          "overstatementMax": 0,
+          "understatementMax": 0,
+          "provablyOverstated": false,
+          "launchesScored": 10,
+          "launchesMissing": 0,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.5826 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.5826, 0.5826] — the figure itself."
+        },
+        "roomHitRate": {
+          "n": 10,
+          "hits": 7,
+          "rate": 0.7
+        },
+        "devSol": {
+          "n": 10,
+          "min": 4.938271604,
+          "p10": 4.938271604,
+          "p25": 4.938271604,
+          "median": 4.938271604,
+          "p75": 5.679012344749999,
+          "p90": 5.925925925,
+          "max": 5.925925925
+        },
+        "fieldEntrants": 96,
+        "fieldClosedRoundTrips": 90,
+        "fieldOpenPositions": 6,
+        "fieldHitRateGrossOfFees": {
+          "n": 90,
+          "hits": 43,
+          "rate": 0.4777777777777778
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 90,
+          "min": -0.48347019999999996,
+          "p10": -0.17277659330000006,
+          "p25": -0.07840033349999997,
+          "median": -0.0073568999999999996,
+          "p75": 0.22490860000000007,
+          "p90": 0.9415652539000018,
+          "max": 4.899131212
+        },
+        "entryCostSol": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "entryCostPerSolStaked": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "entryTxFeeSol": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "entryCostPriced": {
+          "n": 96,
+          "hits": 0,
+          "rate": 0
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 0,
+          "hits": 0,
+          "rate": null
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 0,
+          "min": null,
+          "p10": null,
+          "p25": null,
+          "median": null,
+          "p75": null,
+          "p90": null,
+          "max": null
+        },
+        "fieldClosedRoundTripsPriced": 0,
+        "caveats": [
+          "ROOM MEDIAN 0.5826 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.5826, 0.5826] — the figure itself.",
+          "6 of 96 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "NO ENTRY COST WAS MEASURED for this candidate, so every figure above is gross of fees and the price of the seat is unknown. That is a limit of this reading, not a finding that entry was cheap.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 10,
+        "minAgeMs": 85000,
+        "launchesPlanned": 10,
+        "launchesAttempted": 10,
+        "launchesUsable": 10,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 42,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": false,
+          "rpcRequests": 0,
+          "launchesPriced": 0,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 0,
+          "transactionsTargeted": 0,
+          "transactionsPriced": 0,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 0,
+          "viaTransaction": 0,
+          "stoppedForBudget": false,
+          "notes": []
+        }
+      },
+      "spend": {
+        "keylessRequests": 42,
+        "keylessShed": 0,
+        "rpcRequests": 0,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 8
+      }
+    },
+    {
+      "deployer": "3kpjBEboLyD3K2HDQTSSWgJwmLncRHXvVt7DvtofDxL3",
+      "arm": "sub-gate",
+      "lifetimeCompletionRate": 0.196078,
+      "census": {
+        "roomMedian": 0.5559429435897232,
+        "boundLo": 0.5559429435897232,
+        "boundHi": 0.5559429435897232,
+        "verdict": "entry-unmeasured",
+        "unmeasuredCause": "too-few-closed-round-trips",
+        "windowsPlanned": 10,
+        "proven": 10
+      },
+      "measuredToday": {
+        "verdict": "entry-cost-unmeasured",
+        "unmeasuredCause": "too-little-of-the-field-priced",
+        "unmeasuredCauseAttribution": "our-coverage",
+        "laneUnmeasuredCause": null,
+        "rationale": "the opening window leaves room (median 0.556) and the field is not loss-making before costs, but only 1 of 53 create-slot entries could be priced on-chain (0.019, below the 0.8 this reading needs). Under the captain's ruling of 2026-08-02 the fee is part of the entry window, so a room figure with the price of the seat unmeasured beside it is NOT a finding that the window is enterable — it is the absence of one. ROOM MEDIAN 0.5559 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.5559, 0.5559] — the figure itself.",
+        "launchesSampled": 10,
+        "launchesRoomUnproven": 0,
+        "roomLeft": {
+          "n": 10,
+          "min": 0,
+          "p10": 0.40662043402620857,
+          "p25": 0.47459802802729867,
+          "median": 0.5559429435897232,
+          "p75": 0.580306774715901,
+          "p90": 0.7083505031866787,
+          "max": 0.7584093228783049
+        },
+        "roomLeftBound": {
+          "median": 0.5559429435897232,
+          "lo": 0.5559429435897232,
+          "hi": 0.5559429435897232,
+          "overstatementMax": 0,
+          "understatementMax": 0,
+          "provablyOverstated": false,
+          "launchesScored": 10,
+          "launchesMissing": 0,
+          "launchesRefusedMeasured": 0,
+          "launchesUnmeasured": 0,
+          "refusedRoomLeft": {
+            "n": 0,
+            "min": null,
+            "p10": null,
+            "p25": null,
+            "median": null,
+            "p75": null,
+            "p90": null,
+            "max": null
+          },
+          "caveat": "ROOM MEDIAN 0.5559 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.5559, 0.5559] — the figure itself."
+        },
+        "roomHitRate": {
+          "n": 10,
+          "hits": 6,
+          "rate": 0.6
+        },
+        "devSol": {
+          "n": 10,
+          "min": 3.950617283,
+          "p10": 3.950617283,
+          "p25": 4.19753086325,
+          "median": 4.938271604,
+          "p75": 4.938271604,
+          "p90": 4.98765432,
+          "max": 5.432098764
+        },
+        "fieldEntrants": 53,
+        "fieldClosedRoundTrips": 51,
+        "fieldOpenPositions": 2,
+        "fieldHitRateGrossOfFees": {
+          "n": 51,
+          "hits": 31,
+          "rate": 0.6078431372549019
+        },
+        "fieldRealisedSolGrossOfFees": {
+          "n": 51,
+          "min": -0.4888887820000001,
+          "p10": -0.10608057800000004,
+          "p25": -0.07495461549999999,
+          "median": 0.04939999399999995,
+          "p75": 0.49657267000000016,
+          "p90": 2.83894249,
+          "max": 6.792884248999997
+        },
+        "entryCostSol": {
+          "n": 1,
+          "min": 2.4421626020000016,
+          "p10": 2.4421626020000016,
+          "p25": 2.4421626020000016,
+          "median": 2.4421626020000016,
+          "p75": 2.4421626020000016,
+          "p90": 2.4421626020000016,
+          "max": 2.4421626020000016
+        },
+        "entryCostPerSolStaked": {
+          "n": 1,
+          "min": 0.26545245673913065,
+          "p10": 0.26545245673913065,
+          "p25": 0.26545245673913065,
+          "median": 0.26545245673913065,
+          "p75": 0.26545245673913065,
+          "p90": 0.26545245673913065,
+          "max": 0.26545245673913065
+        },
+        "entryCostPerSolStakedByLaunch": {
+          "n": 1,
+          "min": 0.26545245673913065,
+          "p10": 0.26545245673913065,
+          "p25": 0.26545245673913065,
+          "median": 0.26545245673913065,
+          "p75": 0.26545245673913065,
+          "p90": 0.26545245673913065,
+          "max": 0.26545245673913065
+        },
+        "entryTxFeeSol": {
+          "n": 1,
+          "min": 0.000005,
+          "p10": 0.000005,
+          "p25": 0.000005,
+          "median": 0.000005,
+          "p75": 0.000005,
+          "p90": 0.000005,
+          "max": 0.000005
+        },
+        "entryCostPriced": {
+          "n": 53,
+          "hits": 1,
+          "rate": 0.018867924528301886
+        },
+        "fieldHitRateNetOfMeasuredFees": {
+          "n": 1,
+          "hits": 0,
+          "rate": 0
+        },
+        "fieldRealisedSolNetOfMeasuredFees": {
+          "n": 1,
+          "min": -0.7909379110000003,
+          "p10": -0.7909379110000003,
+          "p25": -0.7909379110000003,
+          "median": -0.7909379110000003,
+          "p75": -0.7909379110000003,
+          "p90": -0.7909379110000003,
+          "max": -0.7909379110000003
+        },
+        "fieldClosedRoundTripsPriced": 1,
+        "caveats": [
+          "ROOM MEDIAN 0.5559 IS COMPLETE: every planned launch produced a room figure, none was refused as unproven and none was dropped, so the bound on it is [0.5559, 0.5559] — the figure itself.",
+          "2 of 53 field entries were still open at the window's end and have NO complete P&L; they are excluded from the realised figures, never marked",
+          "Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority fees, landing tips, the venue fee and rent are all absent from the fill tape; the *NetOfMeasuredFees* figures beside them are the on-chain correction, and they replace none of the gross ones.",
+          "1 of 53 create-slot entries were priced on-chain (0.019), and 1 of 51 closed round trips were priced across their whole window. The rest carry NO cost figure — not a zero.",
+          "A LANDING TIP PAID IN A SEPARATE TRANSACTION OF THE SAME BUNDLE IS NOT IN ANY FIGURE ABOVE. It is not recoverable from the entrant's own transaction and it is not measured anywhere in this repo's ground truth either, so every cost here is a LOWER bound and every after-cost result an UPPER bound: entry looks cheaper, and the field more profitable, than either was.",
+          "THE COST ABOVE IS THE COST PAID BY WINNERS. Every fill in the tape belongs to a wallet that won the auction; the wallets that paid and did not land are invisible to it. Post-break our own subject saw a median 41.6 attempts per landed transaction, so this understates the cost of TRYING to enter — again in the optimistic direction.",
+          "ENTRY ONLY. Exit feasibility — when the dev sells, whether its trigger is a size our own buy would count towards, and whether an outsider could have left first — is NOT scored here.",
+          "THIS IS A LIMIT OF OUR READING, NOT A FINDING ABOUT THIS DEPLOYER. `unmeasuredCause` names which of our own limits produced it and `unmeasuredCauseAttribution` reads `our-coverage`. A later stage MUST NOT drop this candidate on that basis: filtering it out silently filters on our budget and our evidence, which is the invisible false rejection this screen exists to remove. Carry it forward as NO ANSWER, counted and reported. `entry.mjs` → `isDeployerAttributable` is the predicate; captain decision 174b is the rule."
+        ]
+      },
+      "coverage": {
+        "launchRefsAvailable": 10,
+        "minAgeMs": 85000,
+        "launchesPlanned": 10,
+        "launchesAttempted": 10,
+        "launchesUsable": 10,
+        "launchesDropped": 0,
+        "dropsByReason": {
+          "mintTimeDisagreement": 0,
+          "coverageUnproven": 0,
+          "unrecognisedBody": 0,
+          "requestCap": 0,
+          "stalledCursor": 0,
+          "unparsedRows": 0,
+          "noFills": 0,
+          "noCreateSlot": 0,
+          "transportError": 0,
+          "stageCeiling": 0
+        },
+        "dropNotes": [],
+        "requestsIssued": 59,
+        "stoppedForBudget": false,
+        "cost": {
+          "ran": true,
+          "rpcRequests": 6,
+          "launchesPriced": 1,
+          "launchesDiscarded": 0,
+          "launchesSkippedForBudget": 8,
+          "transactionsTargeted": 199,
+          "transactionsPriced": 6,
+          "transactionsDiscarded": 0,
+          "transactionsUnresolved": 0,
+          "viaBlock": 0,
+          "viaTransaction": 6,
+          "stoppedForBudget": true,
+          "notes": [
+            "a launch needing 27 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "a launch needing 38 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "a launch needing 19 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "the block route was not attempted: it replaces one request per create-slot transaction and there were fewer than two to replace.",
+            "a launch needing 23 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "a launch needing 35 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "a launch needing 14 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "a launch needing 26 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way",
+            "a launch needing 11 transaction(s) was not started: fewer remain of the per-candidate RPC ceiling, and a launch is never priced half-way"
+          ]
+        }
+      },
+      "spend": {
+        "keylessRequests": 59,
+        "keylessShed": 0,
+        "rpcRequests": 6,
+        "rpcShed": 0,
+        "rpcCeilingGranted": 8
+      }
+    }
+  ],
+  "thresholdsMinPricedFraction": 0.8
+}

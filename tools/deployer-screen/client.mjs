@@ -1917,7 +1917,8 @@ export class DuneLaneCeilingReached extends DuneRefused {
  * express — a budget SMALLER than the month, spent down across many executions, re-checked before
  * every single one.
  *
- * Four properties, and each of them is one of the three overruns:
+ * Six properties — the three overruns above are why the first three exist, and the rest close
+ * defects found while closing them:
  *
  * - **It re-reads live usage before EVERY execution.** A pre-flight check that runs once is exactly
  *   what the overrunning lanes had; the whole failure is that iteration happens after it.

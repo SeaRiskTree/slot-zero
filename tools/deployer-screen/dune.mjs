@@ -2221,11 +2221,14 @@ export async function checkDuneAllowance(client, input) {
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, executionDeadlineMs?: number | undefined,
  *   maxResultRows: number,
  *   maxCoverageLagMs: number, maxOversizedExecutions?: number, maxOversizedRowsPerExecution?: number,
- *   worstCaseCreditsPerExecution?: number, resultBytesPerRowCeiling?: number }} opts.bounds
- *   The last two price ONE execution for the lane budget (captain decision 437(a)). They are
- *   OPTIONAL and default to 0 rather than to a guess, because the ceiling is floored at the engine
- *   bound regardless — a caller that omits them gets a budget priced entirely at that floor, which
- *   is the direction that refuses early. A run passes the whole `dune` block and carries both.
+ *   worstCaseCreditsPerExecution: number, resultBytesPerRowCeiling: number }} opts.bounds
+ *   The last two price ONE execution for the lane budget (captain decision 437(a)) and are
+ *   **REQUIRED**: an absent one refuses this leg by name, before any request. They may not default,
+ *   because the CEILING is priced from the cleared plan's own real pins while an AUTHORISATION would
+ *   be priced without them — 181 + 0 retrieval against the 296.8 a real run gets — so more
+ *   executions would fit under the same stop. A guard that grows weaker when its inputs go missing
+ *   is the failure direction this decision closes, and it is the same rule
+ *   `openDuneLaneBudget` already applies to a non-finite ceiling at construction.
  * @param {boolean} [opts.splitOversized] **Opt-IN, and deliberately so.** Captain decision 196a
  *   authorises the split; wiring it into `screen.mjs` also moves `thresholds.json` →
  *   `dune.maxExecutionsPerRun`, whose justification currently reads "one execution for the
@@ -2251,6 +2254,19 @@ export async function enumerateCreations(client, opts) {
           ]
         : opts.allowance.reasons;
     return refusedEnumeration(opts.wallets, reasons);
+  }
+
+  for (const pin of /** @type {const} */ (['worstCaseCreditsPerExecution', 'resultBytesPerRowCeiling'])) {
+    const value = opts.bounds[pin];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      return refusedEnumeration(opts.wallets, [
+        `this leg refused to spend: bounds.${pin} read as ${String(value)}, which is not a finite ` +
+          `non-negative number. It prices ONE execution for the lane budget, and the budget's ` +
+          `CEILING is taken from the plan this run was already cleared on — so an authorisation ` +
+          `priced without it is cheaper than the plan reserved for it and MORE executions fit under ` +
+          `the same stop. Nothing was requested and nothing was billed.`,
+      ]);
+    }
   }
 
   // The probe FIRST, and its cost is a cached read. An enumeration executed against surfaces nobody
@@ -2281,8 +2297,8 @@ export async function enumerateCreations(client, opts) {
     ...duneSpendPlan({
       maxExecutionsPerRun: 1,
       maxResultRows: opts.bounds.maxResultRows,
-      worstCaseCreditsPerExecution: opts.bounds.worstCaseCreditsPerExecution ?? 0,
-      resultBytesPerRowCeiling: opts.bounds.resultBytesPerRowCeiling ?? 0,
+      worstCaseCreditsPerExecution: opts.bounds.worstCaseCreditsPerExecution,
+      resultBytesPerRowCeiling: opts.bounds.resultBytesPerRowCeiling,
     }),
     executions: 1,
     resultReads: 1,

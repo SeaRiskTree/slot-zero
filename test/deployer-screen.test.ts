@@ -3729,7 +3729,17 @@ const HEALTHY_PROBE = () =>
   ]);
 
 const NOW_MS = Date.parse('2026-08-03T10:00:00Z');
-const DUNE_BOUNDS = { pollIntervalMs: 0, maxPollAttempts: 5, maxResultRows: 20_000, maxCoverageLagMs: 21_600_000 };
+const DUNE_BOUNDS = {
+  pollIntervalMs: 0,
+  maxPollAttempts: 5,
+  maxResultRows: 20_000,
+  maxCoverageLagMs: 21_600_000,
+  // Required by `enumerateCreations`, and the real pins: the lane budget's ceiling is taken from the
+  // cleared plan's own figures, so an authorisation priced without them is cheaper than the plan
+  // reserved for it and more executions fit under one stop than a live run ever gets.
+  worstCaseCreditsPerExecution: 200,
+  resultBytesPerRowCeiling: 121,
+};
 
 // A cleared monthly credit allowance, so these fixtures exercise the enumeration rather than the
 // guard in front of it. `enumerateCreations` refuses outright without one — see

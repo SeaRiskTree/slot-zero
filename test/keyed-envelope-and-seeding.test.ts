@@ -377,6 +377,11 @@ describe('264a end to end — the 27,731-row batch is read at the shipped ceilin
         maxPollAttempts: T['dune'].maxPollAttempts as number,
         maxResultRows,
         maxCoverageLagMs: T['dune'].maxCoverageLagMs as number,
+        // Read off the shipped block like everything else here, and REQUIRED: they price ONE
+        // execution for the lane budget, whose ceiling comes from the plan this run was cleared on,
+        // so an authorisation priced without them is cheaper than the plan reserved for it.
+        worstCaseCreditsPerExecution: T['dune'].worstCaseCreditsPerExecution as number,
+        resultBytesPerRowCeiling: T['dune'].resultBytesPerRowCeiling as number,
       },
       // The pre-flight verdict this run was ADMITTED on, which is also its lane budget's stop
       // (captain decision 437(a)). Sized for the executions this batch makes rather than left at a

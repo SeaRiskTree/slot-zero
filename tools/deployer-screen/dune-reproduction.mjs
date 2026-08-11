@@ -1282,6 +1282,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       `${WORST_CASE_CREDITS_PER_EXECUTION} compute + ${estimate.exportCredits} export ` +
       `(${(estimate.exportBytes / 1_000_000).toFixed(1)} MB at ${EXPORT_CREDITS_PER_MB} credits/MB)`,
   );
+  say(
+    `                 retrieval is priced at ${MAX_PLANNED_ROWS_PER_EXECUTION.toLocaleString('en-US')} rows a read — ` +
+      `the PER-EXECUTION CAP, not the rows planned above — because the lane budget authorises each ` +
+      `execution at that same figure, and a plan cleared on a smaller basis than its own ` +
+      `authorisations dies partway with the earlier ones billed`,
+  );
   say(`  saved query    ${ENTRY_QUERY_ID}, compared against the committed text BEFORE any execution`);
   say(`  statement      sha256 ${entrySqlFingerprint()} of the normalised ENTRY_SQL`);
   say(
@@ -1456,10 +1462,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const client = new DuneClient({
     key: credential.key,
     maxExecutions: batches.length,
-    // Each batch costs one execute, up to `maxPollAttempts` status polls and one result read, plus
-    // the single saved-query read and the usage read at the top. Sized so the ceiling cannot stop a
-    // planned run half way, which is the one failure mode worse than refusing it.
-    maxRequests: batches.length * (bounds.maxPollAttempts + 2) + 4,
+    // Each batch costs one execute, up to `maxPollAttempts` status polls and one result read — and
+    // since captain decision 437(a) the lane budget's OWN `POST /usage` read before every execution,
+    // which retries once, so two more per batch. Plus the single saved-query read and the pre-flight
+    // usage read at the top, with retry headroom. Sized so the ceiling cannot stop a planned run
+    // half way, which is the one failure mode worse than refusing it: a `CeilingReached` in the
+    // final batch leaves every earlier execution billed and unanswerable.
+    maxRequests: batches.length * (bounds.maxPollAttempts + 4) + 4,
     minIntervalMs: 250,
   });
 

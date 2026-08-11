@@ -782,6 +782,21 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   to the captain*, rather than *wait for the period to roll*. **The budget reads wall-clock time, never `bounds.clock`** — that clock is an elapsed-time
   seam a test injects to reach the execution deadline, and handing it to the balance reader puts
   every authorisation outside the vendor's billing period.
+  **AND THE BUDGET'S OWN `POST /usage` READ IS FREE IN CREDITS BUT NOT IN REQUESTS — it counts
+  against each lane's `maxRequests`, once per execution and twice when it retries.** The
+  reproduction lane is the one that derives its ceiling in code, and it was widened for exactly that
+  (`batches × (maxPollAttempts + 4) + 4`); a `CeilingReached` in the final batch leaves every
+  earlier execution billed, which is the failure class this guard exists to remove. The screen's
+  `dune.maxRequestsPerRun` (100 against ~88 + ≤4) and the census's (48 against a derived floor of 45)
+  **absorb it as pinned and were NOT moved** — raising a pin is the captain's. One is flagged and
+  deliberately unfixed: `entry_source_agreement.maxRequestsPerRun` is 3,600 and would need roughly
+  **3,690** at 82 executions, so the Gate 3 entry leg needs that pin raised before it is ever
+  activated. Its file is fenced and the leg is dark, so nothing routes through it today.
+  **A pin the budget prices an execution from is REQUIRED, never defaulted** — `enumerateCreations`
+  refuses by name without `worstCaseCreditsPerExecution` or `resultBytesPerRowCeiling`, because the
+  ceiling comes from the plan the run was CLEARED on while a defaulted authorisation would be priced
+  below it, so more executions fit under the same stop. A guard that weakens when its inputs go
+  missing fails in the one direction this decision closes.
 - **Budget from *billed* credits, not
   `execution_cost_credits`, which understates by ~3.5×** — retrieving results is ~71% of the bill at
   ~20 credits/MB. Hence: aggregate server-side, select only the columns the tool reads (dropping the

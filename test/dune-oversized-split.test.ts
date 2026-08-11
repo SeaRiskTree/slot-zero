@@ -47,6 +47,12 @@ const BOUNDS = {
   maxPollAttempts: 3,
   maxResultRows: 20_000,
   maxCoverageLagMs: 6 * 3_600_000,
+  // THE REAL PINS, so every authorisation below is priced the way a live run's is. They are
+  // REQUIRED by `enumerateCreations` rather than defaulted, because the lane budget's ceiling comes
+  // from the cleared plan's own pins: an authorisation priced without them is cheaper than the plan
+  // reserved for it, and this suite would then exercise a budget no run ever gets.
+  worstCaseCreditsPerExecution: 200,
+  resultBytesPerRowCeiling: 121,
 };
 
 // A cleared monthly credit allowance, so these fixtures exercise the split rather than the credit

@@ -113,7 +113,7 @@ import {
   recordCustody,
 } from '../tools/deployer-screen/dune-reproduction.mjs';
 import { CENSUS_SQL } from '../tools/creation-census/census.mjs';
-import { budgetedBounds } from './dune-lane-budget-fixture.js';
+import { budgetedBounds, clearedAllowance } from './dune-lane-budget-fixture.js';
 
 const SCREEN_CLIENT = fileURLToPath(new URL('../tools/deployer-screen/client.mjs', import.meta.url));
 const CENSUS_CLIENT = fileURLToPath(new URL('../tools/creation-census/client.mjs', import.meta.url));
@@ -1299,6 +1299,37 @@ describe('THE SCREEN REFUSES BEFORE ITS FIRST BILLED READ', () => {
     expect(c.executions()).toBe(0);
     expect(e.byWallet.get(WALLET)!.reasons.join(' ')).toMatch(/never checked for this run/);
   });
+
+  for (const pin of ['worstCaseCreditsPerExecution', 'resultBytesPerRowCeiling'] as const) {
+    it(`refuses by name when bounds.${pin} is missing, rather than pricing an execution without it`, async () => {
+      // A GUARD MAY NOT GET WEAKER WHEN ITS INPUTS GO MISSING. These two price ONE execution for the
+      // lane budget, while the budget's CEILING is taken from the plan this run was already cleared
+      // on — so an authorisation priced without them is cheaper than the plan reserved for it and
+      // MORE executions fit under the same stop. They used to default to 0, which dropped an
+      // authorisation from 248.4 to 181 while the ceiling did not move.
+      const { c, paths } = client(() => new Response(JSON.stringify({}), { status: 200 }));
+      const { [pin]: _dropped, ...withoutThePin } = BOUNDS;
+      const e = await enumerateCreations(c, {
+        wallets: [WALLET],
+        creationQueryId: 1,
+        coverageQueryId: 2,
+        refreshProbe: false,
+        nowMs: NOW_MS,
+        bounds: withoutThePin as never,
+        allowance: clearedAllowance(),
+      });
+      // Before the probe, which is itself a billed read: nothing at all left the client.
+      expect(paths).toEqual([]);
+      expect(c.executions()).toBe(0);
+      expect(e.byWallet.get(WALLET)!.reasons.join(' ')).toMatch(
+        new RegExp(`bounds\\.${pin} read as undefined`),
+      );
+      // And it falls back per wallet exactly like every other refusal here, rather than reporting
+      // the wallet as having created nothing.
+      expect(e.byWallet.get(WALLET)!.usable).toBe(false);
+      expect(e.coverage.ok).toBe(false);
+    });
+  }
 
   it('treats a transport failure on the free read as an unknown balance, not as headroom', async () => {
     const { c } = client(() => {

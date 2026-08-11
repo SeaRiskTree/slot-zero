@@ -70,9 +70,9 @@ is, not this document; **no bar, predicate or threshold moved for this lane.**
 | Fill source | **swap-api**, keyless, production `swapapi-fills.mjs` at the pinned 7,000 ms pacing |
 | Cost source | **Helius**, production `rpc-costs.mjs` → `readCreateSlotCosts` over `SolanaRpcClient` |
 | **Dune spend** | **0 credits, 0 executions, 0 saved queries created, read or archived** |
-| **Helius spend** | **1,398 requests of a 1,500-credit hard stop**, 0 shed |
+| **Helius spend** | **1,398 requests of a 1,500-credit hard stop**, 0 shed (`result.json` → `spend.rpcRequests` / `spend.rpcShed`). This one IS the lane total: the abandoned first attempt never reached its cost leg, which its log shows by ending on a window walk with no `entry cost:` line, so it issued no Helius request to add |
 | MadeOnSol spend | **0 keyed requests** |
-| swap-api spend | **710 keyless requests across the LANE**, 0 shed — 611 in the run this record reports, plus **99 in the abandoned first attempt** (`run-abandoned-2026-08-10.log`). `result.json` → `spend.keylessRequests` records the 611 correctly: it is that run's own counter, not the lane's total |
+| swap-api spend | **710 keyless requests across the LANE** — 611 in the run this record reports, plus **99 in the abandoned first attempt** (`run-abandoned-2026-08-10.log`). `result.json` → `spend.keylessRequests` records the 611 correctly: it is that run's own counter, not the lane's total. **Shed cannot be pooled and is not:** the 611 are recorded at **0 shed** (`spend.keylessShed`); the abandoned 99 have **no shed figure on disk** — that log was stopped before the `DONE` line that prints the counter and its per-launch lines carry only pages, requests and fills — so their shed count is **UNKNOWN, not zero** |
 | Windows walked | **144 of 145**; 1 dropped at the pinned per-launch request cap |
 | Code, thresholds, bars, committed records, census artifacts changed | **none** |
 
@@ -222,8 +222,9 @@ credits of the authorised stop unspent rather than push at it, per the brief.
 **Measured today, by this lane, through production code**
 
 - Every fill: the swap-api walk, 611 keyless requests, 0 shed, 144 usable windows of 145 planned.
-  That 611 is THIS run's counter and is what `result.json` records; the lane issued **710** at that
-  endpoint once the abandoned first attempt's 99 are counted (Status table above).
+  That 611-and-0-shed is THIS run's counter and is what `result.json` records; the lane issued **710**
+  at that endpoint once the abandoned first attempt's 99 are counted, whose own shed count is not on
+  disk (Status table above).
 - Every room figure in the `today room` column, through `measure.mjs` → `roomIsProven` and
   `entry.mjs` → `scoreEntry`, unmodified.
 - Every entry cost: `entry.mjs` → `entryCostTargets` → `rpc-costs.mjs` → `pumpfun.mjs` →
@@ -316,11 +317,17 @@ projection from a measured ratio — even one measured on these very candidates 
 - **~370 Helius requests is a PROJECTION**, from the block route's observed 0.6907 requests per
   priced transaction on this run (1,398 over 2,024). Nothing holds the next run to that ratio: the
   block route's saving depends on how the create-slot transactions cluster.
-- **What IS bounded, and by what:** at most 1,500 Helius requests per candidate-share by
-  `costCeilingFor` and the raised lane ceiling, because `SolanaRpcClient` checks its ceiling
-  immediately before every attempt, retries included; and at most 486 keyless swap-api requests for
-  the re-walk of 27 windows (27 × the pinned 18-per-launch cap), enforced the same way by the
-  per-launch client. Those two are ceilings the code applies, not sizings from this run.
+- **What IS bounded, and by what — and these are TWO different ceilings, not one.**
+  **Per candidate:** `costCeilingFor` grants `min(stage2_cost.maxRpcRequestsPerCandidate, what is
+  left of the lane)`, so **at most 500** Helius requests go to any one candidate, enforced because
+  `SolanaRpcClient` checks its ceiling immediately before every attempt, retries included.
+  **Across the lane:** the total is whatever `LANE_RPC_CEILING` is set to for that run, enforced by
+  those per-candidate grants summing to it by construction — it was **1,400** here, against the
+  captain's separate 1,500-credit hard stop, and a run that finishes the remaining three would carry
+  a raised one. Neither figure is the other, and the hard stop is a captain's limit rather than
+  something the code enforces. **Keyless:** at most 486 requests for the re-walk of 27 windows
+  (27 × the pinned 18-per-launch cap), enforced the same way by the per-launch client. All three are
+  ceilings the code applies, not sizings from this run.
 
 Wall-clock is dominated by the pinned 7,000 ms fill pacing. **I have not run it.**
 

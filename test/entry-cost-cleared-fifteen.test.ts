@@ -207,6 +207,7 @@ describe('a partial run cannot replace the published artifact', () => {
     expect(() => assertResultPathWritable('/x/result.json', 1, () => null)).not.toThrow();
     expect(() => assertResultPathWritable('/x/result.json', 1, () => 'not json')).toThrow(/not readable JSON/);
   });
+
 });
 
 describe('the INCREMENTAL write cannot destroy the published artifact', () => {
@@ -306,6 +307,35 @@ describe('the INCREMENTAL write cannot destroy the published artifact', () => {
     writer.snapshot(recordOf(1));
     writer.publish(recordOf(15));
     expect(publishedCount(d.files)).toBe(15);
+  });
+
+  it('REGRESSION: an artifact that became UNREADABLE mid-run blocks promotion, not read as empty', () => {
+    // The exact window the publish-time re-read exists for: the published record is fine when the
+    // run opens and is truncated underneath it. Reading "unparsable" as "0 candidates" lets any run
+    // win the width comparison and promote over the wreckage.
+    const d = disk({ [PUBLISHED]: `${JSON.stringify(recordOf(15), null, 2)}\n` });
+    const writer = openResultWriter(PUBLISHED, d.io);
+    writer.snapshot(recordOf(1));
+    d.files[PUBLISHED] = '{"candidates": [ truncated';
+    const before = d.files[PUBLISHED];
+    expect(() => writer.publish(recordOf(15))).toThrow(/not readable JSON/);
+    expect(d.files[PUBLISHED]).toBe(before);
+    expect(JSON.parse(d.files[writer.partialPath]!).candidates).toHaveLength(1);
+  });
+
+  it('refuses to publish when the artifact was already unreadable at open time', () => {
+    const d = disk({ [PUBLISHED]: 'not json at all' });
+    const before = d.files[PUBLISHED];
+    const writer = openResultWriter(PUBLISHED, d.io);
+    expect(() => writer.publish(recordOf(15))).toThrow(/not readable JSON/);
+    expect(d.files[PUBLISHED]).toBe(before);
+  });
+
+  it('still treats a genuinely ABSENT artifact as zero, which is the other answer', () => {
+    const d = disk();
+    const writer = openResultWriter(PUBLISHED, d.io);
+    expect(() => writer.publish(recordOf(1))).not.toThrow();
+    expect(publishedCount(d.files)).toBe(1);
   });
 });
 

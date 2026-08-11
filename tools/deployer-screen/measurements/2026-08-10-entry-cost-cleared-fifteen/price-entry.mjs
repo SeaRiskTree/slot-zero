@@ -230,17 +230,11 @@ export function resultPathFor(only) {
  *   `null` when it does not exist.
  */
 export function assertResultPathWritable(path, candidatesToScore, readIfPresent = readFileIfPresent) {
-  const existing = readIfPresent(path);
-  if (existing === null) return;
-  /** @type {any} */
-  let parsed;
-  try {
-    parsed = JSON.parse(existing);
-  } catch {
+  const held = candidatesHeld(readIfPresent(path));
+  if (held === null) {
     // An unreadable artifact is not evidence that overwriting it is safe.
     throw new Error(`${path} exists and is not readable JSON. Refusing to overwrite it.`);
   }
-  const held = Array.isArray(parsed?.candidates) ? parsed.candidates.length : 0;
   if (held > candidatesToScore) {
     throw new Error(
       `${path} already holds ${held} candidate(s) and this run scores ${candidatesToScore}. Refusing ` +
@@ -262,10 +256,17 @@ function readFileIfPresent(path) {
 }
 
 /**
- * How many candidates a record holds, or 0 when there is no readable record.
+ * How many candidates a record holds — in THREE states, because two of them are not the same answer.
+ *
+ * **Absent and unreadable must not collapse into 0.** Both guards below ask this question, and if a
+ * present-but-unparsable artifact answers "0 candidates" then the narrower run wins a comparison it
+ * should have lost: a truncated or half-written published record reads as empty and gets promoted
+ * over. Absent really is zero — there is nothing to protect. Unreadable is *no answer*, and this
+ * lane's standing rule is that an absence of evidence never licenses the destructive branch.
  *
  * @param {string | null} text
- * @returns {number}
+ * @returns {number | null} The count, `0` when nothing is there, `null` when something is there and
+ *   cannot be read.
  */
 function candidatesHeld(text) {
   if (text === null) return 0;
@@ -273,7 +274,7 @@ function candidatesHeld(text) {
     const parsed = JSON.parse(text);
     return Array.isArray(parsed?.candidates) ? parsed.candidates.length : 0;
   } catch {
-    return 0;
+    return null;
   }
 }
 
@@ -292,7 +293,9 @@ function candidatesHeld(text) {
  * So the snapshots go to a `.partial` sibling and the published path is written **once**, by
  * {@link ResultWriter.publish}, and only when the finished record is at least as wide as whatever is
  * already published. The published count is re-read at publish time rather than trusted from open
- * time, so a record that grew underneath the run is not clobbered either.
+ * time, so a record that grew underneath the run is not clobbered either — and a record that became
+ * UNREADABLE underneath it is refused rather than read as empty, which is the same question
+ * {@link assertResultPathWritable} asks and now the same answer, through {@link candidatesHeld}.
  *
  * The property, stated so a test can hold it: **an aborted or narrower run leaves the published
  * record byte-identical.**
@@ -330,10 +333,18 @@ export function openResultWriter(publishedPath, io = {}) {
      */
     publish(record) {
       const scored = Array.isArray(record?.candidates) ? record.candidates.length : 0;
-      const heldNow = Math.max(heldAtOpen, candidatesHeld(read(publishedPath)));
-      if (scored < heldNow) {
+      const heldNow = candidatesHeld(read(publishedPath));
+      if (heldAtOpen === null || heldNow === null) {
         throw new Error(
-          `${publishedPath} holds ${heldNow} candidate(s) and this run finished with ${scored}. ` +
+          `${publishedPath} is present and not readable JSON. Refusing to publish over it — an ` +
+            `unreadable record is no answer about how wide it is, not an answer of zero. The run's ` +
+            `own output is at ${partialPath}.`,
+        );
+      }
+      const held = Math.max(heldAtOpen, heldNow);
+      if (scored < held) {
+        throw new Error(
+          `${publishedPath} holds ${held} candidate(s) and this run finished with ${scored}. ` +
             `Refusing to publish a narrower record; the run's own output is at ${partialPath}.`,
         );
       }

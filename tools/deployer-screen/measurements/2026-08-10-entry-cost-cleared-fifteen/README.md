@@ -72,7 +72,7 @@ is, not this document; **no bar, predicate or threshold moved for this lane.**
 | **Dune spend** | **0 credits, 0 executions, 0 saved queries created, read or archived** |
 | **Helius spend** | **1,398 requests of a 1,500-credit hard stop**, 0 shed |
 | MadeOnSol spend | **0 keyed requests** |
-| swap-api spend | 611 keyless requests, **0 shed** |
+| swap-api spend | **710 keyless requests across the LANE**, 0 shed — 611 in the run this record reports, plus **99 in the abandoned first attempt** (`run-abandoned-2026-08-10.log`). `result.json` → `spend.keylessRequests` records the 611 correctly: it is that run's own counter, not the lane's total |
 | Windows walked | **144 of 145**; 1 dropped at the pinned per-launch request cap |
 | Code, thresholds, bars, committed records, census artifacts changed | **none** |
 
@@ -201,6 +201,8 @@ needs the stop raised to about **1,800**; no allocation fits it under 1,500. I s
 **Measured today, by this lane, through production code**
 
 - Every fill: the swap-api walk, 611 keyless requests, 0 shed, 144 usable windows of 145 planned.
+  That 611 is THIS run's counter and is what `result.json` records; the lane issued **710** at that
+  endpoint once the abandoned first attempt's 99 are counted (Status table above).
 - Every room figure in the `today room` column, through `measure.mjs` → `roomIsProven` and
   `entry.mjs` → `scoreEntry`, unmodified.
 - Every entry cost: `entry.mjs` → `entryCostTargets` → `rpc-costs.mjs` → `pumpfun.mjs` →
@@ -234,7 +236,8 @@ medians are **identical to six decimal places on 13 of the 15**. The two that di
 `C2TFeiRyzzAp…` 0.670427 → 0.653463 and `68SJZt8q5Bye…` 0.658049 → 0.646814 — both moved **down**,
 the direction the census's §5 predicts for the swap-api `BuyExactSolIn` understatement, and both
 still clear 0.55. This is a stronger check than the census's own V2 (which was Dune against Dune) and
-it was free. It is **n = 15 on one population** and is offered as an observation, not a rate.
+it issued **no request of its own** — it reads the fills the cost leg had already walked for. It is
+**n = 15 on one population** and is offered as an observation, not a rate.
 
 ---
 
@@ -273,8 +276,10 @@ it was free. It is **n = 15 on one population** and is offered as an observation
 
 **The one thing that would finish this count.** Raising the Helius stop to ~1,800 credits prices the
 remaining three and turns 6-of-12 into 6-to-9 of 15. It is the cheapest outstanding measurement in
-this project and it is bounded exactly: 365 transactions, ~365 requests, one re-walk of 27 windows
-(free, ~25 minutes). **I have not run it.**
+this project and it is bounded exactly: 365 transactions, ~365 Helius requests, plus one re-walk of
+27 windows costing **no metered credit but at most 486 further keyless swap-api requests** (27 × the
+pinned 18-per-launch cap) — a bound, not an estimate, and at the pinned 7,000 ms pacing it is the
+wall-clock that dominates. **I have not run it.**
 
 **What I do not recommend.** Nothing here argues for moving `maxEntryCostPerSolStaked`: it refused
 nobody, so there is no evidence about where it should sit. Nothing here argues for moving
@@ -293,4 +298,4 @@ upper bound that survived.
 | `result.json` | every candidate's full score, coverage and spend, as the run emitted them — **except `laneUnmeasuredCause`, which was derived afterwards from the run's own recorded fields** (provenance note above) |
 | `summary.json` | the machine-readable roll-up, regenerated offline from `result.json` after that derivation |
 | `run.log` | **the run's own console output, verbatim — and it PREDATES the lane-cause derivation.** It prints the plan header and one verdict line per candidate; it never prints `laneUnmeasuredCause`, so look to `result.json` and the provenance note above for that field's history. Nothing in it was superseded |
-| `run-abandoned-2026-08-10.log` | a first attempt stopped after 9 windows when the fill route was reconsidered; **it produced no result and spent nothing**, kept so the record is not silent about it |
+| `run-abandoned-2026-08-10.log` | a first attempt on one candidate, stopped when the fill route was reconsidered: **ten windows attempted — nine walked and one dropped at the per-launch request cap — for 99 keyless swap-api requests and no metered credit of any kind.** It produced no result. Its 99 are NOT in the 611 above and ARE in the lane total of 710; kept so the record is not silent about it |

@@ -1,0 +1,209 @@
+thresholds 6.9.0 — minRoomLeft 0.55, maxEntryCostPerSolStaked 0.12
+candidates 15, windows 145
+fill source: swap-api, 7000ms pacing, 18 request(s)/launch
+cost source: https://mainnet.helius-rpc.com (helius), 200ms pacing, <=500 request(s)/candidate
+lane ceiling 1400 RPC request(s) against a 1500-credit hard stop
+
+Dzp1SrZ474xwGp6ZEP6cNKo39u9zeXe1YAuTkyZyv3t4 — census room 0.747664, 10 census window(s)
+    13 page(s) / 13 request(s), 1185 fill(s), room 0.772, 14 competing wallet(s)
+    7 page(s) / 7 request(s), 639 fill(s), room 0.656, 11 competing wallet(s)
+    4 page(s) / 4 request(s), 378 fill(s), room 0.669, 6 competing wallet(s)
+    12 page(s) / 12 request(s), 1030 fill(s), room 0.748, 5 competing wallet(s)
+    6 page(s) / 6 request(s), 498 fill(s), room 0.502, 4 competing wallet(s)
+    3 page(s) / 3 request(s), 286 fill(s), room 0.743, 4 competing wallet(s)
+    11 page(s) / 11 request(s), 938 fill(s), room 0.807, 13 competing wallet(s)
+    DROPPED: spent 16 of the 18-request cap on 1600 row(s) without reaching the mint, and the remaining headroom is less than one page costs, so the earliest slot seen is NOT the create slot. This launch was busier than the cap allows for, and busy launches are exactly the interesting ones — see the sampling caveat.
+    14 page(s) / 14 request(s), 1070 fill(s), room 0.851, 5 competing wallet(s)
+    13 page(s) / 13 request(s), 1181 fill(s), room 0.822, 16 competing wallet(s)
+    entry cost: 399 of 399 transaction(s) priced in 320 RPC request(s), 88 from a whole-block read
+  verdict entry-open-after-costs — room 0.747664 over 9, cost/SOL staked per launch 0.042928, priced 78/78, lane spent 320/1400
+
+ARB8KYfnnUwhEa8HFwWkdJrkas1vQeHUYRaW3gCr1wKx — census room 0.745176, 10 census window(s)
+    1 page(s) / 1 request(s), 67 fill(s), room 0.636, 7 competing wallet(s)
+    2 page(s) / 2 request(s), 125 fill(s), room 1.000, 8 competing wallet(s)
+    1 page(s) / 1 request(s), 65 fill(s), room 0.745, 4 competing wallet(s)
+    1 page(s) / 1 request(s), 59 fill(s), room 0.759, 5 competing wallet(s)
+    1 page(s) / 1 request(s), 26 fill(s), room 0.771, 6 competing wallet(s)
+    3 page(s) / 3 request(s), 195 fill(s), room 0.763, 7 competing wallet(s)
+    3 page(s) / 3 request(s), 222 fill(s), room 0.770, 6 competing wallet(s)
+    2 page(s) / 2 request(s), 178 fill(s), room 0.620, 5 competing wallet(s)
+    1 page(s) / 1 request(s), 26 fill(s), room 0.625, 5 competing wallet(s)
+    1 page(s) / 1 request(s), 39 fill(s), room 0.740, 5 competing wallet(s)
+  verdict entry-field-loss-making — room 0.745176 over 9, cost/SOL staked per launch n/a, priced 0/50, lane spent 320/1400
+
+6MAmqJ7aGtTReML2DezAzmRckQyFoGfKKf6gWVak7P2d — census room 0.699780, 10 census window(s)
+    6 page(s) / 6 request(s), 520 fill(s), room 0.687, 10 competing wallet(s)
+    1 page(s) / 1 request(s), 51 fill(s), room 0.570, 2 competing wallet(s)
+    3 page(s) / 3 request(s), 237 fill(s), room 0.700, 7 competing wallet(s)
+    2 page(s) / 2 request(s), 197 fill(s), room 0.776, 5 competing wallet(s)
+    3 page(s) / 3 request(s), 235 fill(s), room 0.724, 6 competing wallet(s)
+    7 page(s) / 7 request(s), 633 fill(s), room 0.706, 2 competing wallet(s)
+    3 page(s) / 3 request(s), 251 fill(s), room 0.710, 8 competing wallet(s)
+    1 page(s) / 1 request(s), 54 fill(s), room 0.640, 9 competing wallet(s)
+    3 page(s) / 3 request(s), 233 fill(s), room 0.827, 5 competing wallet(s)
+    2 page(s) / 2 request(s), 132 fill(s), room 0.000, 0 competing wallet(s)
+    entry cost: 184 of 184 transaction(s) priced in 132 RPC request(s), 61 from a whole-block read
+  verdict entry-open-after-costs — room 0.699780 over 9, cost/SOL staked per launch 0.034830, priced 49/49, lane spent 452/1400
+
+F9Jgf14YKQnczctnXf9WnjvFmv6EDDcm5mEHkt8cqfy7 — census room 0.670494, 10 census window(s)
+    6 page(s) / 6 request(s), 427 fill(s), room 0.700, 16 competing wallet(s)
+    4 page(s) / 4 request(s), 288 fill(s), room 0.682, 3 competing wallet(s)
+    3 page(s) / 3 request(s), 222 fill(s), room 0.452, 7 competing wallet(s)
+    2 page(s) / 2 request(s), 111 fill(s), room 0.531, 1 competing wallet(s)
+    4 page(s) / 4 request(s), 321 fill(s), room 0.586, 7 competing wallet(s)
+    5 page(s) / 5 request(s), 399 fill(s), room 0.781, 9 competing wallet(s)
+    4 page(s) / 4 request(s), 355 fill(s), room 0.659, 7 competing wallet(s)
+    2 page(s) / 2 request(s), 119 fill(s), room 0.724, 18 competing wallet(s)
+    9 page(s) / 9 request(s), 774 fill(s), room 0.000, 0 competing wallet(s)
+    2 page(s) / 2 request(s), 192 fill(s), room 0.703, 15 competing wallet(s)
+    entry cost: 271 of 271 transaction(s) priced in 177 RPC request(s), 102 from a whole-block read
+  verdict entry-open-after-costs — room 0.670494 over 10, cost/SOL staked per launch 0.031259, priced 83/83, lane spent 629/1400
+
+C2TFeiRyzzApUxvjrfaXF1RLfad2SfaHvSqGaEPmmxfv — census room 0.670427, 10 census window(s)
+    4 page(s) / 4 request(s), 360 fill(s), room 0.643, 2 competing wallet(s)
+    4 page(s) / 4 request(s), 280 fill(s), room 0.509, 6 competing wallet(s)
+    6 page(s) / 6 request(s), 505 fill(s), room 0.731, 9 competing wallet(s)
+    5 page(s) / 5 request(s), 456 fill(s), room 0.759, 8 competing wallet(s)
+    5 page(s) / 5 request(s), 386 fill(s), room 0.693, 11 competing wallet(s)
+    3 page(s) / 3 request(s), 231 fill(s), room 0.664, 10 competing wallet(s)
+    5 page(s) / 5 request(s), 458 fill(s), room 0.677, 5 competing wallet(s)
+    5 page(s) / 5 request(s), 383 fill(s), room 0.613, 8 competing wallet(s)
+    5 page(s) / 5 request(s), 333 fill(s), room 0.000, 0 competing wallet(s)
+    3 page(s) / 3 request(s), 182 fill(s), room 0.551, 6 competing wallet(s)
+    entry cost: 185 of 185 transaction(s) priced in 111 RPC request(s), 83 from a whole-block read
+  verdict entry-open-after-costs — room 0.653463 over 10, cost/SOL staked per launch 0.030604, priced 65/65, lane spent 740/1400
+
+68SJZt8q5ByeSgEjkGBhEtiKbHLGrfghJKAFPxmsama4 — census room 0.658049, 10 census window(s)
+    1 page(s) / 1 request(s), 26 fill(s), room 0.602, 2 competing wallet(s)
+    1 page(s) / 1 request(s), 35 fill(s), room 0.533, 3 competing wallet(s)
+    1 page(s) / 1 request(s), 56 fill(s), room 0.709, 10 competing wallet(s)
+    1 page(s) / 1 request(s), 49 fill(s), room 0.000, 0 competing wallet(s)
+    4 page(s) / 4 request(s), 331 fill(s), room 0.571, 3 competing wallet(s)
+    1 page(s) / 1 request(s), 33 fill(s), room 0.658, 5 competing wallet(s)
+    1 page(s) / 1 request(s), 90 fill(s), room 0.691, 8 competing wallet(s)
+    1 page(s) / 1 request(s), 50 fill(s), room 0.636, 3 competing wallet(s)
+    1 page(s) / 1 request(s), 56 fill(s), room 0.687, 6 competing wallet(s)
+    2 page(s) / 2 request(s), 118 fill(s), room 0.690, 6 competing wallet(s)
+    entry cost: 108 of 108 transaction(s) priced in 68 RPC request(s), 49 from a whole-block read
+  verdict entry-field-loss-making — room 0.646814 over 10, cost/SOL staked per launch 0.028580, priced 46/46, lane spent 808/1400
+
+BWoZVgNjTg5uJG1aK7CWvtHUNraNuWZVY9GjTNFZmdYc — census room 0.657898, 10 census window(s)
+    5 page(s) / 5 request(s), 421 fill(s), room 0.603, 6 competing wallet(s)
+    1 page(s) / 1 request(s), 76 fill(s), room 0.713, 5 competing wallet(s)
+    1 page(s) / 1 request(s), 81 fill(s), room 0.761, 6 competing wallet(s)
+    2 page(s) / 2 request(s), 151 fill(s), room 0.601, 7 competing wallet(s)
+    3 page(s) / 3 request(s), 185 fill(s), room 0.723, 4 competing wallet(s)
+    2 page(s) / 2 request(s), 85 fill(s), room 0.743, 6 competing wallet(s)
+    1 page(s) / 1 request(s), 78 fill(s), room 0.744, 10 competing wallet(s)
+    2 page(s) / 2 request(s), 114 fill(s), room 0.000, 0 competing wallet(s)
+    1 page(s) / 1 request(s), 31 fill(s), room 0.469, 4 competing wallet(s)
+    1 page(s) / 1 request(s), 42 fill(s), room 0.000, 0 competing wallet(s)
+    entry cost: 118 of 118 transaction(s) priced in 71 RPC request(s), 55 from a whole-block read
+  verdict entry-field-loss-making — room 0.657898 over 10, cost/SOL staked per launch 0.029662, priced 48/48, lane spent 879/1400
+
+FVZRwUp6E4m9jV4VumF8q7m8q3mF9fpikRrJSCCfFAdP — census room 0.653073, 10 census window(s)
+    6 page(s) / 6 request(s), 238 fill(s), room 0.561, 4 competing wallet(s)
+    9 page(s) / 9 request(s), 677 fill(s), room 0.678, 5 competing wallet(s)
+    6 page(s) / 6 request(s), 492 fill(s), room 0.614, 2 competing wallet(s)
+    4 page(s) / 4 request(s), 320 fill(s), room 0.705, 9 competing wallet(s)
+    3 page(s) / 3 request(s), 254 fill(s), room 0.683, 2 competing wallet(s)
+    7 page(s) / 7 request(s), 566 fill(s), room 0.771, 7 competing wallet(s)
+    6 page(s) / 6 request(s), 502 fill(s), room 0.000, 0 competing wallet(s)
+    7 page(s) / 7 request(s), 526 fill(s), room 0.631, 2 competing wallet(s)
+    5 page(s) / 5 request(s), 404 fill(s), room 0.675, 6 competing wallet(s)
+    2 page(s) / 2 request(s), 105 fill(s), room 0.604, 2 competing wallet(s)
+    entry cost: 166 of 166 transaction(s) priced in 135 RPC request(s), 40 from a whole-block read
+  verdict entry-open-after-costs — room 0.653073 over 10, cost/SOL staked per launch 0.035698, priced 39/39, lane spent 1014/1400
+
+DxQ1iNidsGap2kr14VdEzA8NheqXabfh6fRkvZQbnZVY — census room 0.651029, 10 census window(s)
+    6 page(s) / 6 request(s), 515 fill(s), room 0.574, 5 competing wallet(s)
+    8 page(s) / 8 request(s), 684 fill(s), room 0.752, 10 competing wallet(s)
+    5 page(s) / 5 request(s), 420 fill(s), room 0.583, 5 competing wallet(s)
+    2 page(s) / 2 request(s), 162 fill(s), room 0.528, 8 competing wallet(s)
+    3 page(s) / 3 request(s), 231 fill(s), room 0.633, 4 competing wallet(s)
+    6 page(s) / 6 request(s), 446 fill(s), room 0.646, 3 competing wallet(s)
+    10 page(s) / 10 request(s), 859 fill(s), room 0.672, 6 competing wallet(s)
+    6 page(s) / 6 request(s), 541 fill(s), room 0.786, 12 competing wallet(s)
+    8 page(s) / 8 request(s), 647 fill(s), room 0.662, 6 competing wallet(s)
+    5 page(s) / 5 request(s), 394 fill(s), room 0.656, 12 competing wallet(s)
+    entry cost: 220 of 220 transaction(s) priced in 144 RPC request(s), 86 from a whole-block read
+  verdict entry-field-loss-making — room 0.651029 over 10, cost/SOL staked per launch 0.031015, priced 71/71, lane spent 1158/1400
+
+H6hPTUg73GDscH4Q9NAviJrUtMwUXE6PzZat2xWDszrJ — census room 0.649350, 10 census window(s)
+    5 page(s) / 5 request(s), 351 fill(s), room 0.656, 8 competing wallet(s)
+    4 page(s) / 4 request(s), 289 fill(s), room 0.583, 11 competing wallet(s)
+    3 page(s) / 3 request(s), 262 fill(s), room 0.707, 16 competing wallet(s)
+    4 page(s) / 4 request(s), 292 fill(s), room 0.649, 13 competing wallet(s)
+    3 page(s) / 3 request(s), 235 fill(s), room 0.707, 11 competing wallet(s)
+    4 page(s) / 4 request(s), 320 fill(s), room 0.632, 1 competing wallet(s)
+    6 page(s) / 6 request(s), 518 fill(s), room 0.717, 10 competing wallet(s)
+    4 page(s) / 4 request(s), 345 fill(s), room 0.650, 2 competing wallet(s)
+    9 page(s) / 9 request(s), 665 fill(s), room 0.600, 10 competing wallet(s)
+    3 page(s) / 3 request(s), 267 fill(s), room 0.626, 6 competing wallet(s)
+    entry cost: 206 of 206 transaction(s) priced in 120 RPC request(s), 95 from a whole-block read
+  verdict entry-open-after-costs — room 0.649350 over 10, cost/SOL staked per launch 0.036930, priced 88/88, lane spent 1278/1400
+
+7F4sTCyUqN33tSRtYDkVg9ABKW8CgfFSTXrFjadqQkRr — census room 0.622445, 8 census window(s)
+    2 page(s) / 2 request(s), 181 fill(s), room 0.649, 6 competing wallet(s)
+    7 page(s) / 7 request(s), 588 fill(s), room 0.731, 9 competing wallet(s)
+    4 page(s) / 4 request(s), 294 fill(s), room 0.824, 23 competing wallet(s)
+    2 page(s) / 2 request(s), 162 fill(s), room 0.787, 7 competing wallet(s)
+    3 page(s) / 3 request(s), 206 fill(s), room 0.517, 13 competing wallet(s)
+    2 page(s) / 2 request(s), 160 fill(s), room 0.595, 12 competing wallet(s)
+    8 page(s) / 8 request(s), 546 fill(s), room 0.000, 0 competing wallet(s)
+    1 page(s) / 1 request(s), 63 fill(s), room 0.542, 9 competing wallet(s)
+  verdict entry-field-loss-making — room 0.622445 over 8, cost/SOL staked per launch n/a, priced 0/79, lane spent 1278/1400
+
+DJGm2u3ZRJJaaobyPPDQB9dvpaKTutUo5y4CdxoywRBJ — census room 0.620131, 9 census window(s)
+    3 page(s) / 3 request(s), 204 fill(s), room 0.000, 0 competing wallet(s)
+    3 page(s) / 3 request(s), 247 fill(s), room 0.544, 8 competing wallet(s)
+    4 page(s) / 4 request(s), 317 fill(s), room 0.598, 3 competing wallet(s)
+    6 page(s) / 6 request(s), 455 fill(s), room 0.620, 5 competing wallet(s)
+    3 page(s) / 3 request(s), 224 fill(s), room 0.000, 0 competing wallet(s)
+    10 page(s) / 10 request(s), 619 fill(s), room 0.717, 11 competing wallet(s)
+    2 page(s) / 2 request(s), 150 fill(s), room 0.671, 5 competing wallet(s)
+    4 page(s) / 4 request(s), 337 fill(s), room 0.663, 3 competing wallet(s)
+    7 page(s) / 7 request(s), 611 fill(s), room 0.644, 10 competing wallet(s)
+    entry cost: 145 of 177 transaction(s) priced in 105 RPC request(s), 46 from a whole-block read
+  verdict entry-cost-unmeasured (too-little-of-the-field-priced) — room 0.620131 over 9, cost/SOL staked per launch 0.026582, priced 35/45, lane spent 1383/1400
+
+4cXnf2z85UiZ5cyKsPMEULq1yufAtpkatmX4j4DBZqj2 — census room 0.610553, 8 census window(s)
+    3 page(s) / 3 request(s), 260 fill(s), room 0.593, 8 competing wallet(s)
+    2 page(s) / 2 request(s), 103 fill(s), room 0.663, 10 competing wallet(s)
+    1 page(s) / 1 request(s), 56 fill(s), room 0.585, 7 competing wallet(s)
+    1 page(s) / 1 request(s), 91 fill(s), room 0.628, 4 competing wallet(s)
+    3 page(s) / 3 request(s), 281 fill(s), room 0.669, 7 competing wallet(s)
+    3 page(s) / 3 request(s), 246 fill(s), room 0.649, 7 competing wallet(s)
+    1 page(s) / 1 request(s), 74 fill(s), room 0.570, 2 competing wallet(s)
+    1 page(s) / 1 request(s), 65 fill(s), room 0.548, 3 competing wallet(s)
+    entry cost: 16 of 156 transaction(s) priced in 9 RPC request(s), 8 from a whole-block read
+  verdict entry-cost-unmeasured (too-little-of-the-field-priced) — room 0.610553 over 8, cost/SOL staked per launch 0.048472, priced 7/48, lane spent 1392/1400
+
+4QwJ4AXMtSjnCwgM9kiDpsGtXmjEd3hAVRkDg3o3bDQs — census room 0.582555, 10 census window(s)
+    3 page(s) / 3 request(s), 263 fill(s), room 0.536, 7 competing wallet(s)
+    5 page(s) / 5 request(s), 483 fill(s), room 0.589, 11 competing wallet(s)
+    4 page(s) / 4 request(s), 316 fill(s), room 0.647, 10 competing wallet(s)
+    8 page(s) / 8 request(s), 628 fill(s), room 0.524, 7 competing wallet(s)
+    2 page(s) / 2 request(s), 115 fill(s), room 0.487, 11 competing wallet(s)
+    2 page(s) / 2 request(s), 172 fill(s), room 0.557, 8 competing wallet(s)
+    8 page(s) / 8 request(s), 672 fill(s), room 0.677, 11 competing wallet(s)
+    6 page(s) / 6 request(s), 538 fill(s), room 0.616, 11 competing wallet(s)
+    2 page(s) / 2 request(s), 151 fill(s), room 0.577, 13 competing wallet(s)
+    2 page(s) / 2 request(s), 160 fill(s), room 0.612, 7 competing wallet(s)
+  verdict entry-field-loss-making — room 0.582555 over 10, cost/SOL staked per launch n/a, priced 0/96, lane spent 1392/1400
+
+3kpjBEboLyD3K2HDQTSSWgJwmLncRHXvVt7DvtofDxL3 — census room 0.555943, 10 census window(s)
+    5 page(s) / 5 request(s), 385 fill(s), room 0.585, 7 competing wallet(s)
+    10 page(s) / 10 request(s), 837 fill(s), room 0.552, 11 competing wallet(s)
+    6 page(s) / 6 request(s), 541 fill(s), room 0.452, 3 competing wallet(s)
+    4 page(s) / 4 request(s), 308 fill(s), room 0.509, 1 competing wallet(s)
+    8 page(s) / 8 request(s), 664 fill(s), room 0.703, 7 competing wallet(s)
+    8 page(s) / 8 request(s), 664 fill(s), room 0.758, 8 competing wallet(s)
+    4 page(s) / 4 request(s), 302 fill(s), room 0.559, 6 competing wallet(s)
+    4 page(s) / 4 request(s), 323 fill(s), room 0.567, 7 competing wallet(s)
+    5 page(s) / 5 request(s), 400 fill(s), room 0.000, 0 competing wallet(s)
+    5 page(s) / 5 request(s), 472 fill(s), room 0.463, 3 competing wallet(s)
+    entry cost: 6 of 199 transaction(s) priced in 6 RPC request(s)
+  verdict entry-cost-unmeasured (too-little-of-the-field-priced) — room 0.555943 over 10, cost/SOL staked per launch 0.265452, priced 1/53, lane spent 1398/1400
+
+DONE — 15 candidate(s). swap-api 611 request(s) (0 shed); https://mainnet.helius-rpc.com 1398/1400 request(s) (0 shed).

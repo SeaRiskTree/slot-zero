@@ -114,9 +114,12 @@ import {
   COVERAGE_ATTRIBUTION_CAVEAT,
   ENTRY_VERDICTS,
   LANDING_TIP_CAVEAT,
+  POSITION_OUTCOMES,
+  REALISATION_CONSTRUCTION_CAVEAT,
   UNMEASURED_CAUSES,
   UNMEASURED_CAUSE_ATTRIBUTION,
   UNMEASURED_VERDICTS,
+  boundedHitRate,
   distribution,
   entryCostTargets,
   hitRate,
@@ -7146,6 +7149,9 @@ const ROTATION_BLOCK_KEYS_BY_SCHEMA: Record<number, string[]> = {
   // separately by ROTATION_ORDER_ROW_KEYS_BY_SCHEMA, because a block whose shape is right and whose
   // rows lost the comparator's input would leave `verifySelection` grading a rule it cannot see.
   23: [...ROTATION_BLOCK_KEYS_20, 'windowCap', 'newGroundRule'],
+  // Schema 25 (captain decision 461) touches the `entry` block alone — the realization correction
+  // is a statement about POSITIONS, and which survivors the cap was spent on is untouched by it.
+  25: [...ROTATION_BLOCK_KEYS_20, 'windowCap', 'newGroundRule'],
   // Schema 24 leaves the rotation block alone: what a run RECORDS grew, not how it allocates the cap.
   24: [...ROTATION_BLOCK_KEYS_20, 'windowCap', 'newGroundRule'],
 };
@@ -7170,6 +7176,8 @@ const ROTATION_ORDER_ROW_KEYS_BY_SCHEMA: Record<number, string[]> = {
   22: ROTATION_ORDER_ROW_KEYS_20,
   23: [...ROTATION_ORDER_ROW_KEYS_20, 'launchesPerDay', 'newGroundWindows'],
   24: [...ROTATION_ORDER_ROW_KEYS_20, 'launchesPerDay', 'newGroundWindows'],
+  // Schema 25 leaves the comparator and its inputs alone; see ROTATION_BLOCK_KEYS_BY_SCHEMA.
+  25: [...ROTATION_ORDER_ROW_KEYS_20, 'launchesPerDay', 'newGroundWindows'],
 };
 
 describe('the keyless boundary holds in both directions', () => {
@@ -7334,6 +7342,9 @@ describe('the keyless boundary holds in both directions', () => {
   // Schema 24 adds no candidate ROW field either. The entrants are kept (captain decision 459) and
   // the one new key is inside `entry` — ENTRY_KEYS_BY_SCHEMA below.
   PERSISTED_BY_SCHEMA[24] = PERSISTED_BY_SCHEMA[23]!;
+  // Schema 25 adds no candidate ROW field either. The realization correction is a statement about
+  // the POSITIONS inside `entry`, not about the deployer the row describes — ENTRY_KEYS_BY_SCHEMA.
+  PERSISTED_BY_SCHEMA[25] = PERSISTED_BY_SCHEMA[24]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -7408,6 +7419,35 @@ describe('the keyless boundary holds in both directions', () => {
   // they were computed from. It is RECORDING — nothing reads it, exactly as nothing reads
   // `roomLeftBound` (208b) — and it is over every WALKED window rather than every scored one.
   const ENTRY_KEYS_24 = [...ENTRY_KEYS_14, 'windows'];
+  // Schema 25: captain decision 461, the realization correction. EVERY field above is conditioned on
+  // the position having EXITED; these are the same statistics over every position taken, with the
+  // ones still held at the horizon resolved at ZERO RECOVERY. Both constructions are in the list
+  // because both are persisted and neither replaces the other — a record carrying only the
+  // conditioned one could not be audited for which construction produced its headline, and on the
+  // committed tape the two disagree about the SIGN. RECORDING only, exactly like `roomLeftBound`.
+  //
+  // The names carry the fee suffix the rest of this module is held to — `GrossOfFees` for anything
+  // from the fill tape alone, `NetOfMeasuredFees` for anything the on-chain cost leg corrected — and
+  // the two hit rates carry `lo`/`hi` beside `rate`, which is the shape every rate added from this
+  // version on has.
+  const ENTRY_KEYS_25 = [
+    ...ENTRY_KEYS_24,
+    'fieldRealisedSolOverAllPositionsGrossOfFees',
+    'fieldReturnPerSolOverAllPositionsGrossOfFees',
+    'fieldHitRateOverAllPositionsGrossOfFees',
+    // A DIFFERENT DENOMINATOR from the gross triple above and never pooled with it: the positions
+    // whose WHOLE window the cost leg priced. `entryCostTargets` was deliberately not widened for
+    // this correction, so `n` states the shortfall rather than the shortfall being closed.
+    'fieldRealisedSolOverAllPositionsNetOfMeasuredFees',
+    'fieldReturnPerSolOverAllPositionsNetOfMeasuredFees',
+    'fieldHitRateOverAllPositionsNetOfMeasuredFees',
+    // The BOUND on the worst case, beside it and never inside it. A mark is a price nobody paid.
+    'fieldResidualMarkedSolAtWindowLastPrice',
+    // The two halves of what `fieldOpenPositions` was one number for: a fact about the deployer's
+    // field, and a fact about OUR coverage (174b, unfilterable).
+    'positionsStillHeldAtHorizon',
+    'positionsHorizonNotObserved',
+  ];
   const ENTRY_KEYS_BY_SCHEMA: Record<number, string[]> = {
     3: ENTRY_KEYS_3_AND_4,
     4: ENTRY_KEYS_3_AND_4,
@@ -7469,6 +7509,12 @@ describe('the keyless boundary holds in both directions', () => {
     // was added to close one level up: a key added to a row of this array would otherwise pass
     // silently under an unchanged version.
     24: ENTRY_KEYS_24,
+    // Schema 25: every position taken is counted, not only the ones that exited (captain decision
+    // 461). Nine new keys here and eight on every `entrants` row below. **No key MOVES** — every
+    // `…OfFees` figure is the identical quantity it was at 24 and may be pooled across the boundary
+    // — which is what a reader must know before comparing two records: what changed is that the
+    // record now also carries the reading over the positions the older one silently dropped.
+    25: ENTRY_KEYS_25,
   };
 
   // The `windows` row, per version, and the `entrants` row inside it. Two levels, both pinned, for
@@ -7491,7 +7537,12 @@ describe('the keyless boundary holds in both directions', () => {
     'adjacencyMarks',
     'entrants',
   ];
-  const ENTRY_WINDOW_KEYS_BY_SCHEMA: Record<number, string[]> = { 24: ENTRY_WINDOW_KEYS_24 };
+  // Schema 25 adds nothing to the WINDOW row: the realization correction is per POSITION, so every
+  // key it adds is on the `entrants` row inside it.
+  const ENTRY_WINDOW_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    24: ENTRY_WINDOW_KEYS_24,
+    25: ENTRY_WINDOW_KEYS_24,
+  };
   const ENTRY_ENTRANT_KEYS_24 = [
     'wallet',
     'sid',
@@ -7514,7 +7565,27 @@ describe('the keyless boundary holds in both directions', () => {
     'unitCoAppearingWallets',
     'windowCoAppearingWallets',
   ];
-  const ENTRY_ENTRANT_KEYS_BY_SCHEMA: Record<number, string[]> = { 24: ENTRY_ENTRANT_KEYS_24 };
+  // Schema 25: the position's own OUTCOME, and its worst-case resolution. `closedInWindow` stays and
+  // is exactly `positionOutcome === 'exited'` — what it could not say is the difference between a
+  // wallet still HOLDING and one whose closure our rows cannot decide, and those are a fact about
+  // the field and a fact about our coverage respectively. `windowTxCount` is why a net figure is
+  // present or absent, and `residualMarkedSolAtWindowLastPrice` is the bound on the zero-recovery
+  // resolution rather than a substitute for it.
+  const ENTRY_ENTRANT_KEYS_25 = [
+    ...ENTRY_ENTRANT_KEYS_24,
+    'positionOutcome',
+    'windowTxCount',
+    'residualTokens',
+    'residualMarkedSolAtWindowLastPrice',
+    'realisedSolAtZeroRecoveryGrossOfFees',
+    'returnPerSolAtZeroRecoveryGrossOfFees',
+    'realisedSolAtZeroRecoveryNetOfMeasuredFees',
+    'returnPerSolAtZeroRecoveryNetOfMeasuredFees',
+  ];
+  const ENTRY_ENTRANT_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    24: ENTRY_ENTRANT_KEYS_24,
+    25: ENTRY_ENTRANT_KEYS_25,
+  };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
   // and none could see INSIDE. That is the hole schema 9 would have fallen through: the whole
@@ -7615,6 +7686,7 @@ describe('the keyless boundary holds in both directions', () => {
     22: CREATION_KEYS_15,
     23: CREATION_KEYS_15,
     24: CREATION_KEYS_15,
+    25: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -7679,6 +7751,7 @@ describe('the keyless boundary holds in both directions', () => {
     22: ENTRY_COVERAGE_KEYS_6,
     23: ENTRY_COVERAGE_KEYS_6,
     24: ENTRY_COVERAGE_KEYS_6,
+    25: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -7765,6 +7838,7 @@ describe('the keyless boundary holds in both directions', () => {
     22: SPEND_KEYS_8,
     23: SPEND_KEYS_8,
     24: SPEND_KEYS_8,
+    25: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -7828,6 +7902,7 @@ describe('the keyless boundary holds in both directions', () => {
     22: DUNE_KEYS_13,
     23: DUNE_KEYS_13,
     24: DUNE_KEYS_13,
+    25: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -7874,6 +7949,7 @@ describe('the keyless boundary holds in both directions', () => {
     22: DUNE_COVERAGE_KEYS_9,
     23: DUNE_COVERAGE_KEYS_9,
     24: DUNE_COVERAGE_KEYS_9,
+    25: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -7907,6 +7983,7 @@ describe('the keyless boundary holds in both directions', () => {
     22: DUNE_COVERAGE_TABLE_KEYS_9,
     23: DUNE_COVERAGE_TABLE_KEYS_9,
     24: DUNE_COVERAGE_TABLE_KEYS_9,
+    25: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -7957,6 +8034,7 @@ describe('the keyless boundary holds in both directions', () => {
     // `order` rows — pinned by ROTATION_BLOCK_KEYS_BY_SCHEMA and ROTATION_ORDER_ROW_KEYS_BY_SCHEMA.
     23: [],
     24: [],
+    25: [],
   };
 
   // The run-level `entrySourceAgreement` block's OWN key set, and `duneSpend` one level below it —
@@ -7987,6 +8065,7 @@ describe('the keyless boundary holds in both directions', () => {
     22: ENTRY_SOURCE_AGREEMENT_KEYS_18,
     23: ENTRY_SOURCE_AGREEMENT_KEYS_18,
     24: ENTRY_SOURCE_AGREEMENT_KEYS_18,
+    25: ENTRY_SOURCE_AGREEMENT_KEYS_18,
   };
   // This leg's own Dune meter. It is deliberately NOT folded into the run-level `dune` block: that
   // one bounds an enumeration answering a whole batch in ONE execution, this one bounds a leg
@@ -8017,6 +8096,7 @@ describe('the keyless boundary holds in both directions', () => {
     22: AGREEMENT_DUNE_SPEND_KEYS_18,
     23: AGREEMENT_DUNE_SPEND_KEYS_18,
     24: AGREEMENT_DUNE_SPEND_KEYS_18,
+    25: AGREEMENT_DUNE_SPEND_KEYS_18,
   };
   // And the per-candidate row, which is where the class that can be WRONG lives. The run level only
   // counts these, so a field vanishing here would be invisible to every pin above it.
@@ -8031,6 +8111,7 @@ describe('the keyless boundary holds in both directions', () => {
     22: ENTRY_AGREEMENT_KEYS_18,
     23: ENTRY_AGREEMENT_KEYS_18,
     24: ENTRY_AGREEMENT_KEYS_18,
+    25: ENTRY_AGREEMENT_KEYS_18,
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -8170,7 +8251,14 @@ describe('the keyless boundary holds in both directions', () => {
       // twice is a bar that can be moved once. `measure.mjs` imports nothing and reaches no vendor,
       // so the closure below is unaffected.
       'rank.mjs': ['measure.mjs'],
-      'entry.mjs': ['measure.mjs'],
+      // Captain decision 461, and this edge was added HERE on purpose, which is what this
+      // allow-list is for. Every rate the realization correction emits carries its exact
+      // (Clopper–Pearson) interval, and that arithmetic already existed once in a measurement
+      // directory — two implementations of a confidence interval is worse than none, since both
+      // look authoritative and only one is the one a committed record was published under. So it
+      // moved to `stats.mjs`, which imports nothing, reads no file, opens no socket and names no
+      // vendor, leaving the closure below unaffected.
+      'entry.mjs': ['measure.mjs', 'stats.mjs'],
       'stage0.mjs': ['entry.mjs', 'measure.mjs', 'rank.mjs'],
       // `client.mjs` for the ceiling and transport error types, `record.mjs` for redaction, and the
       // two CONTRACTS — which are importable only because they can never carry a vendor value, and
@@ -13916,6 +14004,299 @@ describe('the entrants are KEPT — captain decision 459, increment 1 of the ent
     expect(blind.identities.afterCreateSlotOutsiders).toBeNull();
     expect(blind.identities.windowOnlyOutsiders).toBeNull();
     expect(blind.identities.outsiders).toEqual(['x']);
+  });
+});
+
+describe('every position taken is counted — captain decision 461, the realization correction', () => {
+  // The defect this closes, stated once. `scoreEntry` filtered the field to `closedInWindow` and
+  // every field statistic was over that, so `fieldHitRateGrossOfFees` and
+  // `fieldHitRateNetOfMeasuredFees` are P(profit | the position EXITED) and not P(profit). Measured
+  // on the committed tape over the same 32 launches and the same 265 create-slot outsider positions,
+  // fee-inclusive: conditioned on exiting, 80/158 positive and +108.28 SOL; over every position
+  // taken, 86/265 and -8.12 SOL. A nested-subset comparison, not two pooled populations — and the
+  // 107 that never got out are worth -116.40 SOL between them. Of the 140 priced unexited entries
+  // only 7 = 0.0500 [0.0203, 0.1003] are above water even marked at the best price the chain has
+  // since shown, so the old denominator deletes LOSERS rather than unknowns.
+  // (`slot-zero-stage3-exit-design` -> `report.md` §§5.3, 5.4, held in firstmate's records.)
+
+  /**
+   * One window with all three outcomes in it, and a fourth entrant the cost leg cannot follow.
+   *
+   * - `exiter` sells out: EXITED, +3 gross.
+   * - `holder` never sells: STILL HELD, and at zero recovery that is -2.
+   * - `partial` sells 40 of its 100 tokens in a LATER transaction: STILL HELD at -1.5, and its
+   *   later transaction is outside the cost leg's scope, so it can have no NET figure.
+   * - `blind` buys for SOL the tape priced but with no readable token amount, so closure is
+   *   undecidable: HORIZON NOT OBSERVED, and it is in neither construction.
+   */
+  const window461 = () => [
+    fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 2, tokens: 700, sid: sidAt(100, 10) }),
+    fill({ slot: 100, tx: 'devtx', wallet: 'devbook', sol: 1, tokens: 300, sid: sidAt(100, 10, 1) }),
+    fill({ slot: 100, tx: 'bExit', wallet: 'exiter', sol: 2, tokens: 100, sid: sidAt(100, 4001) }),
+    fill({ slot: 100, tx: 'bHold', wallet: 'holder', sol: 2, tokens: 100, sid: sidAt(100, 4002) }),
+    fill({ slot: 100, tx: 'bPart', wallet: 'partial', sol: 2, tokens: 100, sid: sidAt(100, 4003) }),
+    fill({ slot: 100, tx: 'bBlind', wallet: 'blind', sol: 2, tokens: 0, sid: sidAt(100, 4004) }),
+    fill({ slot: 140, tx: 'sExit', wallet: 'exiter', sol: 5, tokens: 100, side: 'sell', sid: sidAt(140, 4001) }),
+    fill({ slot: 141, tx: 'sPart', wallet: 'partial', sol: 0.5, tokens: 40, side: 'sell', sid: sidAt(141, 4003) }),
+  ];
+  const entrantOf = (e: ReturnType<typeof measureLaunchEntry>, wallet: string) =>
+    e!.field.find((f) => f.wallet === wallet)!;
+  const scoreOf = (n = 8) =>
+    scoreEntry(Array.from({ length: n }, () => measureLaunchEntry(window461())!), ENTRY_T);
+
+  /** The window priced through the REAL pair, so a fixture cannot drift from the production path. */
+  const pricedWindow = () => {
+    const fills = window461();
+    const entry = measureLaunchEntry(fills)!;
+    const targets = entryCostTargets(fills, entry);
+    // 0.05 SOL of real cost above the quote on every transaction the leg was asked for.
+    const priced = new Map(
+      targets.map((t) => [
+        t.tx,
+        {
+          signature: t.tx,
+          feeSol: 0.01,
+          feePayer: t.wallets[0]!.wallet,
+          solOutByWallet: new Map(t.wallets.map((w) => [w.wallet, w.quotedSol + 0.05])),
+        },
+      ]),
+    );
+    return priceLaunchEntry(entry, targets, priced);
+  };
+
+  it('splits the closure boolean into THREE outcomes, and the two new ones are not the same fact', () => {
+    // `closedInWindow` could not tell a wallet that was still HOLDING from one whose closure our own
+    // rows cannot decide. The first is a fact about the deployer's field and is resolvable at the
+    // worst case; the second is a fact about OUR coverage and is resolvable neither way.
+    const e = measureLaunchEntry(window461());
+    expect(POSITION_OUTCOMES).toEqual(['exited', 'still-held-at-horizon', 'horizon-not-observed']);
+    expect(entrantOf(e, 'exiter').positionOutcome).toBe('exited');
+    expect(entrantOf(e, 'holder').positionOutcome).toBe('still-held-at-horizon');
+    expect(entrantOf(e, 'partial').positionOutcome).toBe('still-held-at-horizon');
+    expect(entrantOf(e, 'blind').positionOutcome).toBe('horizon-not-observed');
+    // The old boolean is KEPT and is exactly the first outcome, which is what makes every existing
+    // figure identical across the version boundary.
+    for (const f of e!.field) expect(f.closedInWindow).toBe(f.positionOutcome === 'exited');
+  });
+
+  it('the three outcomes PARTITION the field, and the last two are what `fieldOpenPositions` was', () => {
+    const s = scoreOf();
+    expect(s.fieldClosedRoundTrips + s.positionsStillHeldAtHorizon + s.positionsHorizonNotObserved).toBe(
+      s.fieldEntrants,
+    );
+    // The identity that says nothing was invented: the old lump is exactly the two new counts.
+    expect(s.fieldOpenPositions).toBe(s.positionsStillHeldAtHorizon + s.positionsHorizonNotObserved);
+    expect(s.positionsStillHeldAtHorizon).toBe(16); // 2 per window over 8
+    expect(s.positionsHorizonNotObserved).toBe(8);
+  });
+
+  it('resolves a position still held at ZERO RECOVERY, which is the worst case and not a mark', () => {
+    const e = measureLaunchEntry(window461());
+    const holder = entrantOf(e, 'holder');
+    // It paid 2 and got nothing back. Anything still held is worth NOTHING in this figure.
+    expect(holder.realisedSolAtZeroRecoveryGrossOfFees).toBeCloseTo(-2, 9);
+    expect(holder.returnPerSolAtZeroRecoveryGrossOfFees).toBeCloseTo(-1, 9);
+    // It sold two fifths of its position and is still holding the rest.
+    expect(entrantOf(e, 'partial').realisedSolAtZeroRecoveryGrossOfFees).toBeCloseTo(-1.5, 9);
+    // The conditioned figure is ABSENT on both, exactly as it always was — this adds a reading, it
+    // does not change one.
+    expect(holder.realisedSolGrossOfFees).toBeNaN();
+  });
+
+  it('an EXITED position reads the same in both constructions, which is what makes them nested', () => {
+    // The conditioned population is a strict SUBSET of the all-positions one rather than a second,
+    // differently-computed population — the residual of an exited position is within tolerance of
+    // zero by the closure rule itself, so resolving it at zero recovery changes nothing.
+    const e = measureLaunchEntry(window461());
+    const exiter = entrantOf(e, 'exiter');
+    expect(exiter.realisedSolGrossOfFees).toBeCloseTo(3, 9);
+    expect(exiter.realisedSolAtZeroRecoveryGrossOfFees).toBe(exiter.realisedSolGrossOfFees);
+    expect(exiter.returnPerSolAtZeroRecoveryGrossOfFees).toBe(exiter.returnPerSolGrossOfFees);
+    const priced = pricedWindow();
+    const pe = priced.field.find((f) => f.wallet === 'exiter')!;
+    expect(Number.isFinite(pe.realisedSolNetOfMeasuredFees)).toBe(true);
+    expect(pe.realisedSolAtZeroRecoveryNetOfMeasuredFees).toBe(pe.realisedSolNetOfMeasuredFees);
+  });
+
+  it('an UNDECIDABLE position is in NEITHER construction — never resolved as a loss', () => {
+    // The mirror of the manufactured profit this correction removes. Resolving a position we cannot
+    // read at zero recovery would manufacture a LOSS out of our own coverage gap, so it is carried,
+    // counted and surfaced instead — captain decision 174b, and a later stage may not filter on it.
+    const e = measureLaunchEntry(window461());
+    const blind = entrantOf(e, 'blind');
+    expect(blind.realisedSolAtZeroRecoveryGrossOfFees).toBeNaN();
+    expect(blind.realisedSolGrossOfFees).toBeNaN();
+    expect(blind.residualTokens).toBeNaN();
+    const s = scoreOf();
+    // 8 windows x 3 resolvable entrants; the 8 blind ones are in no denominator at all.
+    expect(s.fieldHitRateOverAllPositionsGrossOfFees.n).toBe(24);
+    expect(s.fieldRealisedSolOverAllPositionsGrossOfFees.n).toBe(24);
+    expect(s.positionsHorizonNotObserved).toBe(8);
+  });
+
+  it('THE HEADLINE: the same positions read profitable one way and loss-making the other', () => {
+    // The whole point of the correction, on a window built to show it. Conditioning on exiting sees
+    // one round trip, and it is the winner; counting every position taken sees the two that never
+    // got out, and they are losses. Same launches, same positions, one construction choice.
+    const s = scoreOf();
+    expect(s.fieldHitRateGrossOfFees).toEqual({ n: 8, hits: 8, rate: 1 });
+    expect(s.fieldRealisedSolGrossOfFees.median).toBeCloseTo(3, 9);
+    expect(s.fieldHitRateOverAllPositionsGrossOfFees.hits).toBe(8);
+    expect(s.fieldHitRateOverAllPositionsGrossOfFees.n).toBe(24);
+    expect(s.fieldHitRateOverAllPositionsGrossOfFees.rate).toBeCloseTo(1 / 3, 9);
+    // Sorted per window: -2, -1.5, +3. The median of every position taken is a LOSS.
+    expect(s.fieldRealisedSolOverAllPositionsGrossOfFees.median).toBeCloseTo(-1.5, 9);
+    // And the disagreement is visible rather than one figure having replaced the other.
+    expect(s.fieldRealisedSolGrossOfFees.median).toBeGreaterThan(0);
+    expect(s.fieldRealisedSolOverAllPositionsGrossOfFees.median).toBeLessThan(0);
+  });
+
+  it('every rate it adds carries its EXACT (Clopper-Pearson) interval, and it contains the rate', () => {
+    // Over a small, hard-won n the normal approximation is anti-conservative exactly where it
+    // matters, and the content of this correction is that two constructions of one population
+    // disagree — a reader comparing two bare rates cannot see whether the difference survives the
+    // sample. `stats.mjs` is the one implementation, shared with the measurement that first needed
+    // it, so a production figure and a published one cannot come from two different intervals.
+    const s = scoreOf();
+    const h = s.fieldHitRateOverAllPositionsGrossOfFees;
+    expect(h.lo).toBeLessThan(h.rate);
+    expect(h.hi).toBeGreaterThan(h.rate);
+    expect(h.lo).toBeGreaterThan(0);
+    expect(h.hi).toBeLessThan(1);
+    // 8 of 24, exact 95%. Pinned to four decimals so a change to the inversion cannot pass: the
+    // normal approximation for this pair is [0.1447, 0.5220], so a drift back to it would fail here.
+    expect(h.lo).toBeCloseTo(0.1563, 4);
+    expect(h.hi).toBeCloseTo(0.5532, 4);
+    // The degenerate cases are exact rather than approximated, and an EMPTY sample has no interval
+    // — 'no observations' and 'none of the observations hit' are different findings.
+    expect(boundedHitRate([1], () => true)).toEqual({ n: 1, hits: 1, rate: 1, lo: expect.any(Number), hi: 1 });
+    expect(boundedHitRate([1], () => false).lo).toBe(0);
+    const empty = boundedHitRate([], () => true);
+    expect(empty.n).toBe(0);
+    expect(Number.isNaN(empty.rate)).toBe(true);
+    expect(Number.isNaN(empty.lo)).toBe(true);
+    expect(Number.isNaN(empty.hi)).toBe(true);
+  });
+
+  it('the marked residual is a BOUND printed beside the worst case, never substituted into it', () => {
+    // A mark is a price nobody paid. On the committed tape 95% of unexited positions are losses even
+    // at the best price the chain has since shown, so the headline resolves at zero and this states
+    // how much is still there.
+    const e = measureLaunchEntry(window461());
+    // The window's last readable price is `sPart`: 0.5 SOL for 40 tokens = 0.0125 SOL/token.
+    expect(entrantOf(e, 'holder').residualTokens).toBeCloseTo(100, 9);
+    expect(entrantOf(e, 'holder').residualMarkedSolAtWindowLastPrice).toBeCloseTo(1.25, 9);
+    expect(entrantOf(e, 'partial').residualTokens).toBeCloseTo(60, 9);
+    expect(entrantOf(e, 'partial').residualMarkedSolAtWindowLastPrice).toBeCloseTo(0.75, 9);
+    const s = scoreOf();
+    // Reported over the positions it BOUNDS, and it is not in any realised figure: the holder is
+    // still -2 at zero recovery despite being marked at +1.25 of residual.
+    expect(s.fieldResidualMarkedSolAtWindowLastPrice.n).toBe(16);
+    expect(s.fieldResidualMarkedSolAtWindowLastPrice.median).toBeCloseTo(1, 9);
+    expect(s.fieldRealisedSolOverAllPositionsGrossOfFees.min).toBeCloseTo(-2, 9);
+  });
+
+  it('the NET denominator is smaller, for OUR reason, and it says so rather than closing it', () => {
+    // The cost leg targets a whole window only for wallets that CLOSED, so an unexited wallet that
+    // traded again after its create slot has transactions nobody priced. Summing the ones that
+    // happen to be in scope would be a WRONG figure rather than a missing one, in the cheap
+    // direction — so `windowTxCount` gates it and the shortfall is stated by `n`.
+    const priced = pricedWindow();
+    const by = (w: string) => priced.field.find((f) => f.wallet === w)!;
+    expect(by('holder').windowTxCount).toBe(1);
+    expect(Number.isFinite(by('holder').realisedSolAtZeroRecoveryNetOfMeasuredFees)).toBe(true);
+    // 2 quoted + 0.05 of real cost, nothing back.
+    expect(by('holder').realisedSolAtZeroRecoveryNetOfMeasuredFees).toBeCloseTo(-2.05, 9);
+    // `partial` traded outside the create slot and did not close, so its second transaction was
+    // never asked for. NO net figure, and it is absent rather than short.
+    expect(by('partial').windowTxCount).toBe(2);
+    expect(by('partial').realisedSolAtZeroRecoveryNetOfMeasuredFees).toBeNaN();
+    const s = scoreEntry(Array.from({ length: 8 }, () => pricedWindow()), ENTRY_T);
+    // Two of the three resolvable positions per window carry a complete net figure.
+    expect(s.fieldHitRateOverAllPositionsNetOfMeasuredFees.n).toBe(16);
+    expect(s.fieldHitRateOverAllPositionsGrossOfFees.n).toBe(24);
+  });
+
+  it('COSTS NOTHING: the cost leg asks for exactly the transactions it asked for before', () => {
+    // The task constraint, asserted rather than claimed. Resolving unexited positions would be
+    // better evidenced with their whole windows priced too, and that is a SPEND — so the scope is
+    // unchanged and `entryCostTargets` still names create slots plus the windows of closed wallets
+    // only. `partial`'s later sell is the transaction a widened scope would have added.
+    const fills = window461();
+    const entry = measureLaunchEntry(fills)!;
+    const asked = entryCostTargets(fills, entry).map((t) => t.tx).sort();
+    expect(asked).toEqual(['bBlind', 'bExit', 'bHold', 'bPart', 'sExit']);
+    expect(asked).not.toContain('sPart');
+    // And Stage 2's keyless ceiling is a function of the caps, not of what is recorded.
+    const t = loadThresholds()['stage2_entry'] as Record<string, number>;
+    expect(t['maxCandidatesScored']! * t['maxLaunchesPerCandidate']! * t['maxRequestsPerLaunch']!).toBe(1260);
+  });
+
+  it('GATES NOTHING — no bar, verdict, threshold or rotation reads any of it', () => {
+    // The acceptance condition, and the shape captain decision 208b established for
+    // `roomMedianBound`: record it, publish it, decide nothing with it yet. That is precisely what
+    // makes a change reversing the sign of a headline number safe to land. Asserted as an ABSENCE
+    // over the executable half, which no behavioural test can express.
+    const NAMES = [
+      'OverAllPositions',
+      'AtZeroRecovery',
+      'positionOutcome',
+      'positionsStillHeldAtHorizon',
+      'positionsHorizonNotObserved',
+      'residualMarkedSolAtWindowLastPrice',
+    ];
+    for (const file of ['rank.mjs', 'rotation.mjs', 'stage0.mjs', 'grade.mjs', 'prediction.mjs', 'outcome.mjs', 'bundling.mjs', 'feed.mjs']) {
+      const half = executableHalf(readFileSync(join(TOOL_DIR, file), 'utf8'));
+      for (const name of NAMES) {
+        expect(half, `${file} must not read ${name} — 461 records, it does not decide`).not.toContain(name);
+      }
+    }
+    // No threshold was added or moved for it, over KEYS rather than over the file's text.
+    const keysOf = (v: unknown): string[] =>
+      v !== null && typeof v === 'object' && !Array.isArray(v)
+        ? Object.entries(v as Record<string, unknown>).flatMap(([k, child]) => [k, ...keysOf(child)])
+        : [];
+    for (const key of keysOf(loadThresholds())) {
+      expect(key, `thresholds.json gained ${key} — 461 adds no bar`).not.toMatch(
+        /overAllPositions|zeroRecovery|positionOutcome|stillHeld/i,
+      );
+    }
+    // And no VERDICT was named for it: two cost terms are still unbounded, and under the captain's
+    // evidence bar an unbounded cost forbids a profit verdict. The vocabulary is untouched.
+    expect(ENTRY_VERDICTS).not.toContain('exit-realised-at-worst-case');
+    for (const v of ENTRY_VERDICTS) expect(v.startsWith('entry-')).toBe(true);
+  });
+
+  it('the two constructions are LABELLED, and the label rides on every score', () => {
+    // A caveat string rather than a doc, for the reason `LANDING_TIP_CAVEAT` is one: the requirement
+    // is that it reaches the NUMBER, so a figure cannot be lifted out of a surface and quoted as
+    // though it were the other construction.
+    expect(REALISATION_CONSTRUCTION_CAVEAT).toMatch(/OPTIMISTIC/);
+    expect(REALISATION_CONSTRUCTION_CAVEAT).toMatch(/ZERO RECOVERY/);
+    expect(REALISATION_CONSTRUCTION_CAVEAT).toMatch(/NONE of this is a profit verdict/);
+    expect(scoreOf().caveats).toContain(REALISATION_CONSTRUCTION_CAVEAT);
+    // On EVERY score, including one that reached no bar at all — silence must never be readable as
+    // "there is only one reading".
+    const tooFew = scoreEntry([measureLaunchEntry(window461())!], ENTRY_T);
+    expect(tooFew.verdict).toBe('entry-unmeasured');
+    expect(tooFew.caveats).toContain(REALISATION_CONSTRUCTION_CAVEAT);
+  });
+
+  it('no EXISTING figure moves, so a schema-24 and a schema-25 reading may be pooled', () => {
+    // The condition that makes this additive. Every `…OfFees` figure is over the same population,
+    // computed the same way, as it was before the correction — what is added sits beside it.
+    const s = scoreOf();
+    expect(s.fieldHitRateGrossOfFees).toEqual({ n: 8, hits: 8, rate: 1 });
+    expect(s.fieldClosedRoundTrips).toBe(8);
+    expect(s.fieldOpenPositions).toBe(24);
+    expect(s.fieldEntrants).toBe(32);
+    expect(s.verdict).toBe(scoreOf().verdict);
+    // The pre-existing three-key `HitRate` shape is untouched: four earlier schema versions pin it
+    // and a consumer version-detects on it, so the interval went on a NEW shape instead.
+    expect(Object.keys(s.fieldHitRateGrossOfFees).sort()).toEqual(['hits', 'n', 'rate']);
+    expect(Object.keys(s.fieldHitRateOverAllPositionsGrossOfFees).sort()).toEqual([
+      'hi', 'hits', 'lo', 'n', 'rate',
+    ]);
   });
 });
 

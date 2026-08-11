@@ -727,6 +727,15 @@ export function toEntryRecordRow(s, coverage) {
   });
   /** @param {import('./entry.mjs').HitRate} h */
   const hit = (h) => ({ n: h.n, hits: h.hits, rate: round(h.rate) });
+  /**
+   * A rate WITH its exact interval — the shape every rate added from schema 25 on carries.
+   *
+   * Separate from {@link hit} rather than a widening of it: `HitRate`'s three keys are pinned at
+   * four earlier schema versions and a consumer version-detects on that shape.
+   *
+   * @param {import('./entry.mjs').BoundedHitRate} h
+   */
+  const hitCi = (h) => ({ n: h.n, hits: h.hits, rate: round(h.rate), lo: round(h.lo), hi: round(h.hi) });
 
   return {
     verdict: s.verdict,
@@ -805,6 +814,26 @@ export function toEntryRecordRow(s, coverage) {
     fieldReturnPerSolNetOfMeasuredFees: dist(s.fieldReturnPerSolNetOfMeasuredFees),
     fieldHitRateNetOfMeasuredFees: hit(s.fieldHitRateNetOfMeasuredFees),
     fieldClosedRoundTripsPriced: s.fieldClosedRoundTripsPriced,
+    // Schema 25, captain decision 461. EVERY figure above this line is conditioned on the position
+    // having EXITED; these are the same statistics over every position taken, with the ones still
+    // held at the horizon resolved at ZERO RECOVERY. Both constructions are persisted because a
+    // record that carried only one of them could not be audited for which it was — and on the
+    // committed tape they disagree about the SIGN. `entry.mjs`'s module header owns the measurement,
+    // `REALISATION_CONSTRUCTION_CAVEAT` (in `caveats` on every score) owns the label, and nothing
+    // reads any of it: no bar, gate, threshold, predicate or verdict, exactly as with
+    // `roomLeftBound` (208b).
+    fieldRealisedSolOverAllPositionsGrossOfFees: dist(s.fieldRealisedSolOverAllPositionsGrossOfFees),
+    fieldReturnPerSolOverAllPositionsGrossOfFees: dist(s.fieldReturnPerSolOverAllPositionsGrossOfFees),
+    fieldHitRateOverAllPositionsGrossOfFees: hitCi(s.fieldHitRateOverAllPositionsGrossOfFees),
+    fieldRealisedSolOverAllPositionsNetOfMeasuredFees: dist(s.fieldRealisedSolOverAllPositionsNetOfMeasuredFees),
+    fieldReturnPerSolOverAllPositionsNetOfMeasuredFees: dist(s.fieldReturnPerSolOverAllPositionsNetOfMeasuredFees),
+    fieldHitRateOverAllPositionsNetOfMeasuredFees: hitCi(s.fieldHitRateOverAllPositionsNetOfMeasuredFees),
+    // The BOUND on that worst case, over the positions it resolves — beside it and never inside it.
+    fieldResidualMarkedSolAtWindowLastPrice: dist(s.fieldResidualMarkedSolAtWindowLastPrice),
+    // The two halves of what `fieldOpenPositions` used to be one number for: a fact about the
+    // deployer's field, and a fact about our own coverage (174b, unfilterable).
+    positionsStillHeldAtHorizon: s.positionsStillHeldAtHorizon,
+    positionsHorizonNotObserved: s.positionsHorizonNotObserved,
     fieldEntrants: s.fieldEntrants,
     fieldClosedRoundTrips: s.fieldClosedRoundTrips,
     fieldOpenPositions: s.fieldOpenPositions,
@@ -849,6 +878,23 @@ export function toEntryRecordRow(s, coverage) {
         createSlotFillSol: round(e.createSlotFillSol),
         stakeSol: round(e.stakeSol),
         closedInWindow: e.closedInWindow,
+        // Schema 25, captain decision 461. `closedInWindow` above is exactly `positionOutcome ===
+        // 'exited'` and is kept so no existing figure moves; what it could NOT say is the difference
+        // between a wallet that was still HOLDING and one whose closure our rows cannot decide — the
+        // first is resolvable at zero recovery and the second is our own coverage.
+        positionOutcome: e.positionOutcome,
+        // Why a net zero-recovery figure is present or absent, without a reader having to guess:
+        // the cost leg targets a whole window only for wallets that CLOSED, so an unexited wallet
+        // that traded again after its create slot has transactions nobody priced.
+        windowTxCount: e.windowTxCount,
+        residualTokens: round(e.residualTokens),
+        // The BOUND on the zero-recovery resolution of THIS position, at the last price the walked
+        // window itself showed. Beside the worst case, never substituted into it.
+        residualMarkedSolAtWindowLastPrice: round(e.residualMarkedSolAtWindowLastPrice),
+        realisedSolAtZeroRecoveryGrossOfFees: round(e.realisedSolAtZeroRecoveryGrossOfFees),
+        returnPerSolAtZeroRecoveryGrossOfFees: round(e.returnPerSolAtZeroRecoveryGrossOfFees),
+        realisedSolAtZeroRecoveryNetOfMeasuredFees: round(e.realisedSolAtZeroRecoveryNetOfMeasuredFees),
+        returnPerSolAtZeroRecoveryNetOfMeasuredFees: round(e.returnPerSolAtZeroRecoveryNetOfMeasuredFees),
         // `null` and not `0` on an open position: the committed dataset makes the same field absent
         // rather than zero for exactly this reason, and a marked-to-nothing zero is a fabricated P&L.
         realisedSolGrossOfFees: round(e.realisedSolGrossOfFees),

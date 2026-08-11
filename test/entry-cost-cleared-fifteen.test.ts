@@ -23,11 +23,16 @@ import { describe, expect, it } from 'vitest';
 
 import {
   LANE_RPC_CEILING,
+  assertResultPathWritable,
   censusLaunchRefs,
   costCeilingFor,
   laneUnmeasuredCauseFor,
+  resultPathFor,
 } from '../tools/deployer-screen/measurements/2026-08-10-entry-cost-cleared-fifteen/price-entry.mjs';
-import { clopperPearson } from '../tools/deployer-screen/measurements/2026-08-10-entry-cost-cleared-fifteen/summarise.mjs';
+import {
+  clopperPearson,
+  summarise,
+} from '../tools/deployer-screen/measurements/2026-08-10-entry-cost-cleared-fifteen/summarise.mjs';
 
 describe('the exact interval, against the census’s own published five', () => {
   // Published to four decimal places in `slot-zero-july-stage3-census` → `report.md` (held in
@@ -171,6 +176,72 @@ describe('a lane-caused unmeasured verdict says so, and only when the lane cause
         laneUnmeasuredCauseFor({ verdict, ceilingGranted: 8, pinnedPerCandidate: 500, cost: truncated }),
       ).toBeNull();
     }
+  });
+});
+
+describe('a partial run cannot replace the published artifact', () => {
+  it('writes a --only run beside result.json, never over it', () => {
+    expect(resultPathFor(null).endsWith('/result.json')).toBe(true);
+    expect(resultPathFor('WALLET1').endsWith('/result-only-WALLET1.json')).toBe(true);
+    expect(resultPathFor('WALLET1')).not.toBe(resultPathFor(null));
+    // Two partial runs of different wallets do not collide either.
+    expect(resultPathFor('WALLET2')).not.toBe(resultPathFor('WALLET1'));
+  });
+
+  it('refuses to replace a wider record with a narrower one', () => {
+    const fifteen = JSON.stringify({ candidates: new Array(15).fill({}) });
+    expect(() => assertResultPathWritable('/x/result.json', 1, () => fifteen)).toThrow(/15/);
+    expect(() => assertResultPathWritable('/x/result.json', 1, () => fifteen)).toThrow(
+      /Refusing to replace a wider record/,
+    );
+  });
+
+  it('allows re-running the same population, and allows a wider one', () => {
+    const fifteen = JSON.stringify({ candidates: new Array(15).fill({}) });
+    expect(() => assertResultPathWritable('/x/result.json', 15, () => fifteen)).not.toThrow();
+    expect(() => assertResultPathWritable('/x/result.json', 20, () => fifteen)).not.toThrow();
+  });
+
+  it('allows a first write, and refuses an unreadable artifact rather than clobbering it', () => {
+    expect(() => assertResultPathWritable('/x/result.json', 1, () => null)).not.toThrow();
+    expect(() => assertResultPathWritable('/x/result.json', 1, () => 'not json')).toThrow(/not readable JSON/);
+  });
+});
+
+describe('the roll-up says whether it covers the whole census', () => {
+  const partial = {
+    thresholdsMinPricedFraction: 0.8,
+    candidates: [
+      {
+        measuredToday: {
+          verdict: 'entry-open-after-costs',
+          unmeasuredCause: null,
+          entryCostPerSolStakedByLaunch: { median: 0.03, n: 3 },
+          entryCostPriced: { rate: 1, hits: 3, n: 3 },
+        },
+        coverage: {
+          cost: { ran: true, launchesPriced: 3, transactionsTargeted: 9, transactionsPriced: 9 },
+        },
+      },
+    ],
+  };
+
+  it('flags a one-candidate record as NOT the published population', () => {
+    const s = summarise(partial, { maxEntryCostPerSolStaked: 0.12, censusCandidates: 15 });
+    expect(s.attempted).toBe(1);
+    expect(s.censusCandidates).toBe(15);
+    expect(s.coversWholeCensus).toBe(false);
+  });
+
+  it('reports a whole-population record as covering the census', () => {
+    const s = summarise(partial, { maxEntryCostPerSolStaked: 0.12, censusCandidates: 1 });
+    expect(s.coversWholeCensus).toBe(true);
+  });
+
+  it('refuses a record that does not state the priced-fraction bar it applied', () => {
+    expect(() =>
+      summarise({ ...partial, thresholdsMinPricedFraction: undefined }, { censusCandidates: 1 }),
+    ).toThrow(/thresholdsMinPricedFraction/);
   });
 });
 

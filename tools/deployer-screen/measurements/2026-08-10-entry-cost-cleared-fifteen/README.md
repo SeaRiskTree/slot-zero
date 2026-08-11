@@ -156,6 +156,20 @@ and not the chain. A reader taking the recorded cause rather than this prose can
 two apart; `price-entry.mjs` → `laneUnmeasuredCauseFor` derives it from the granted ceiling and the
 leg's own budget outcome, so it cannot say "the lane" about a leg the lane did not bound.
 
+**PROVENANCE, AND IT MATTERS MORE THAN THE VALUES DO: THE THREE LANE CAUSES WERE DERIVED AFTER THE
+RUN, NOT EMITTED BY IT.** The generator that produced this record set the lane cause only when the
+granted ceiling was exactly 0, and the lane never reached 0 — it granted 122, 17 and 8 requests and
+was truncated mid-leg — so the run wrote `laneUnmeasuredCause: null` on all fifteen rows, and
+**`run.log` predates the correction and still shows that run.** The three values were computed
+afterwards by `price-entry.mjs` → `laneUnmeasuredCauseFor` over `spend.rpcCeilingGranted` and
+`coverage.cost` **as the run itself recorded them**, and nothing else in `result.json` was touched.
+So the amendment is **checkable rather than asserted**: re-running that function over the record's
+own fields reproduces all fifteen values exactly, and a reader who disagrees with the derivation can
+recover the run's original output from the same fields. This is stated because the alternative — a
+derived value sitting in an artifact that reads as measured — is exactly what this repo's
+measured-versus-inferred discipline exists to prevent. Production's `unmeasuredCause` /
+`unmeasuredCauseAttribution` were emitted by the run and are untouched.
+
 **The cause is this lane's spend ceiling and it is stated exactly.** Candidates were priced in
 room-median order, so the three that ran out are the three lowest room medians — the hole is not
 random. But **re-ordering could not have fixed it**: the 15 targeted **2,389** distinct transactions,
@@ -181,6 +195,14 @@ needs the stop raised to about **1,800**; no allocation fits it under 1,500. I s
   That validation is an assertion rather than a claim: `test/entry-cost-cleared-fifteen.test.ts`
   drives the exported `clopperPearson` over those five pairs and over the `k = 0`, `k = n` and
   `n = 0` edges, offline.
+
+**DERIVED after the run, and never to be read as measured**
+
+- `measuredToday.laneUnmeasuredCause` on all fifteen rows — `lane-rpc-ceiling` on three, `null` on
+  twelve. The run emitted `null` on all fifteen; these were computed afterwards by
+  `price-entry.mjs` → `laneUnmeasuredCauseFor` from `spend.rpcCeilingGranted` and `coverage.cost`,
+  both of which the run DID record. `run.log` predates it. See the provenance note above; every
+  other field in `result.json` is the run's own output.
 
 **Carried from the census, not re-derived**
 
@@ -252,7 +274,7 @@ upper bound that survived.
 | `census-input.json` | the 15 and their 145 census windows, copied verbatim; the pinned population |
 | `price-entry.mjs` | the harness — clients, population and lane ceiling only; it re-implements no rule |
 | `summarise.mjs` | the roll-up and the exact intervals; offline, and it reproduces the census's five published intervals |
-| `result.json` | every candidate's full score, coverage and spend |
-| `summary.json` | the machine-readable roll-up |
-| `run.log` | the run, verbatim |
+| `result.json` | every candidate's full score, coverage and spend, as the run emitted them — **except `laneUnmeasuredCause`, which was derived afterwards from the run's own recorded fields** (provenance note above) |
+| `summary.json` | the machine-readable roll-up, regenerated offline from `result.json` after that derivation |
+| `run.log` | **the run's own output, verbatim — and it PREDATES the lane-cause derivation**, so it shows `laneUnmeasuredCause: null` on all fifteen. Nothing else in it was superseded |
 | `run-abandoned-2026-08-10.log` | a first attempt stopped after 9 windows when the fill route was reconsidered; **it produced no result and spent nothing**, kept so the record is not silent about it |

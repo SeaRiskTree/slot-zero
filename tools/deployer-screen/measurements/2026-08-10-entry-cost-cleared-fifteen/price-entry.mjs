@@ -57,6 +57,10 @@
  *
  * `node price-entry.mjs [--dry-run] [--only <wallet>]`. **`--dry-run` prints the plan and opens no
  * socket**; a bare invocation walks and spends.
+ *
+ * **A `--only` run writes beside the published artifact, never over it** — see {@link resultPathFor}
+ * — and {@link assertResultPathWritable} refuses a narrower record over a wider one before the first
+ * request, so no output path can be lost to a re-run that has already been paid for.
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -194,6 +198,67 @@ export function laneUnmeasuredCauseFor({ verdict, ceilingGranted, pinnedPerCandi
   return bit ? 'lane-rpc-ceiling' : null;
 }
 
+/**
+ * Where a run writes, which is NOT one path.
+ *
+ * A `--only` run scores one candidate out of the census's fifteen, and the published artifact is the
+ * whole-population one — so a partial run writes beside it rather than over it. Naming the wallet in
+ * the file keeps two partial runs from colliding as well.
+ *
+ * @param {string | null} only The validated `--only` wallet, or `null` for a whole-population run.
+ * @returns {string} An absolute path inside this directory.
+ */
+export function resultPathFor(only) {
+  return join(HERE, only === null ? 'result.json' : `result-only-${only}.json`);
+}
+
+/**
+ * Refuse to write over a record of MORE candidates than this run will produce.
+ *
+ * **The check runs before the first request, not before the first write.** A refusal after the walk
+ * has already spent is not a refusal — this lane's other three guards (the lane ceiling, `--only`'s
+ * own validation and the mint-instant check) all refuse up front, and this is the same rule for the
+ * output side: a run that cannot legally publish its result should never have been paid for.
+ *
+ * Re-running the SAME population is still allowed, since that is an honest replacement.
+ *
+ * @param {string} path Where the run intends to write.
+ * @param {number} candidatesToScore How many candidates this run will score.
+ * @param {(p: string) => string | null} [readIfPresent] Seam for the test; reads the file or returns
+ *   `null` when it does not exist.
+ */
+export function assertResultPathWritable(path, candidatesToScore, readIfPresent = readFileIfPresent) {
+  const existing = readIfPresent(path);
+  if (existing === null) return;
+  /** @type {any} */
+  let parsed;
+  try {
+    parsed = JSON.parse(existing);
+  } catch {
+    // An unreadable artifact is not evidence that overwriting it is safe.
+    throw new Error(`${path} exists and is not readable JSON. Refusing to overwrite it.`);
+  }
+  const held = Array.isArray(parsed?.candidates) ? parsed.candidates.length : 0;
+  if (held > candidatesToScore) {
+    throw new Error(
+      `${path} already holds ${held} candidate(s) and this run scores ${candidatesToScore}. Refusing ` +
+        `to replace a wider record with a narrower one, before the first request.`,
+    );
+  }
+}
+
+/**
+ * @param {string} path
+ * @returns {string | null}
+ */
+function readFileIfPresent(path) {
+  try {
+    return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 /** @param {number | null | undefined} x */
 const fmt = (x) => (typeof x === 'number' && Number.isFinite(x) ? x.toFixed(6) : 'n/a');
 
@@ -232,6 +297,8 @@ async function main() {
     );
   }
 
+  const resultPath = resultPathFor(only);
+
   const endpoint = resolveSolanaRpcEndpoint(process.env);
   const startedAtIso = new Date().toISOString();
 
@@ -245,11 +312,14 @@ async function main() {
     `<=${costBounds.maxRpcRequestsPerCandidate} request(s)/candidate`);
   if (endpoint.rejected !== null) console.log(`  NOTE: ${endpoint.rejected}`);
   console.log(`lane ceiling ${LANE_RPC_CEILING} RPC request(s) against a ${LANE_CREDIT_HARD_STOP}-credit hard stop`);
+  console.log(`writes ${resultPath}`);
 
   if (dryRun) {
     console.log('\n--dry-run: nothing was fetched.');
     return;
   }
+
+  assertResultPathWritable(resultPath, candidates.length);
 
   const rpcPacing = endpoint.provider === 'helius' ? heliusBounds.rpcMinIntervalMs : costBounds.rpcMinIntervalMs;
   let laneSpent = 0;
@@ -378,7 +448,7 @@ async function main() {
     });
 
     writeFileSync(
-      join(HERE, 'result.json'),
+      resultPath,
       `${JSON.stringify(
         {
           lane: '2026-08-10-entry-cost-cleared-fifteen',

@@ -109,6 +109,22 @@ export function clopperPearson(k, n, alpha = 0.05) {
 }
 
 /**
+ * How many candidates the pinned population holds, from the population file itself.
+ *
+ * The denominator a partial roll-up must be read against; see {@link summarise}.
+ *
+ * @returns {number}
+ */
+function readCensusCandidates() {
+  /** @type {any} */
+  const input = JSON.parse(readFileSync(join(HERE, 'census-input.json'), 'utf8'));
+  if (!Array.isArray(input?.candidates)) {
+    throw new Error('census-input.json carries no candidates array; the pinned population is unreadable.');
+  }
+  return input.candidates.length;
+}
+
+/**
  * The pinned cost gate, from its one owner.
  *
  * Read at run time rather than copied, so a bar cannot be moved from this directory and a roll-up
@@ -139,10 +155,18 @@ function readCostBar() {
  * 174b); a local copy of the four measured verdicts agreed with it today and would drift silently the
  * moment the ladder gained one, which is the whole reason the predicate exists.
  *
+ * **It also states whether it rolled up the WHOLE census population.** A `--only` run produces a
+ * one-candidate record, and every count and interval below is over `result.candidates` — so a
+ * partial artifact summarised silently would publish `attempted 1` in the same shape as the
+ * published `attempted 15`. `censusCandidates` and `coversWholeCensus` travel on the roll-up, and
+ * the printed form says so in a banner rather than a field.
+ *
  * @param {any} result The parsed `result.json`.
  * @param {object} [pins]
  * @param {number} [pins.maxEntryCostPerSolStaked] `thresholds.json` → `stage2_entry`; read from disk
  *   when omitted.
+ * @param {number} [pins.censusCandidates] How many candidates the pinned population holds; read from
+ *   `census-input.json` when omitted.
  * @returns {any}
  */
 export function summarise(result, pins = {}) {
@@ -209,9 +233,13 @@ export function summarise(result, pins = {}) {
     (/** @type {any} */ r) => r.measuredToday.entryCostPerSolStakedByLaunch.median < costBar,
   ).length;
 
+  const censusCandidates = pins.censusCandidates ?? readCensusCandidates();
+
   return {
     thresholdsMinPricedFraction: minPriced,
     maxEntryCostPerSolStaked: costBar,
+    censusCandidates,
+    coversWholeCensus: attempted === censusCandidates,
     attempted,
     decided,
     stage3,
@@ -239,6 +267,12 @@ function main() {
   if (process.argv.includes('--json')) {
     console.log(JSON.stringify(s, null, 2));
     return;
+  }
+  if (!s.coversWholeCensus) {
+    console.log(
+      `PARTIAL — this record holds ${s.attempted} of the census's ${s.censusCandidates} candidates. ` +
+        'Every count and interval below is over what it holds and is NOT the published population.',
+    );
   }
   console.log(`attempted ${s.attempted}, measured verdict on ${s.decided}, Stage 3 ${s.stage3}`);
   console.log('verdicts:', JSON.stringify(s.byVerdict));

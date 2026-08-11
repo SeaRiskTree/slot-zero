@@ -1,6 +1,8 @@
 {
   "thresholdsMinPricedFraction": 0.8,
   "maxEntryCostPerSolStaked": 0.12,
+  "censusCandidates": 15,
+  "coversWholeCensus": true,
   "attempted": 15,
   "decided": 12,
   "stage3": 6,

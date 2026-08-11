@@ -27,6 +27,7 @@ import {
   censusLaunchRefs,
   costCeilingFor,
   laneUnmeasuredCauseFor,
+  openResultWriter,
   resultPathFor,
 } from '../tools/deployer-screen/measurements/2026-08-10-entry-cost-cleared-fifteen/price-entry.mjs';
 import {
@@ -205,6 +206,106 @@ describe('a partial run cannot replace the published artifact', () => {
   it('allows a first write, and refuses an unreadable artifact rather than clobbering it', () => {
     expect(() => assertResultPathWritable('/x/result.json', 1, () => null)).not.toThrow();
     expect(() => assertResultPathWritable('/x/result.json', 1, () => 'not json')).toThrow(/not readable JSON/);
+  });
+});
+
+describe('the INCREMENTAL write cannot destroy the published artifact', () => {
+  const PUBLISHED = '/lane/result.json';
+  const recordOf = (n: number) => ({ lane: 'x', candidates: new Array(n).fill({ deployer: 'd' }) });
+
+  /** An in-memory disk, so this exercises the write path with no filesystem and no socket. */
+  function disk(seed: Record<string, string> = {}) {
+    const files: Record<string, string> = { ...seed };
+    return {
+      files,
+      io: {
+        read: (p: string) => files[p] ?? null,
+        write: (p: string, b: string) => {
+          files[p] = b;
+        },
+        promote: (from: string, to: string) => {
+          files[to] = files[from]!;
+          delete files[from];
+        },
+      },
+    };
+  }
+
+  const publishedCount = (files: Record<string, string>) =>
+    files[PUBLISHED] === undefined ? 0 : JSON.parse(files[PUBLISHED]!).candidates.length;
+
+  /**
+   * The round-2 persistence, kept here as the counterfactual this test exists to forbid: it wrote
+   * every per-candidate snapshot straight onto the published path. It is the behaviour, not the
+   * source, that is asserted — run the same scenario through both and they disagree.
+   */
+  function roundTwoStylePersist(files: Record<string, string>, record: unknown) {
+    files[PUBLISHED] = `${JSON.stringify(record, null, 2)}\n`;
+  }
+
+  it('REGRESSION: the round-2 persistence destroys a published 15 at candidate 1; the writer does not', () => {
+    // Round 2: snapshot straight to the published path.
+    const old = disk({ [PUBLISHED]: `${JSON.stringify(recordOf(15), null, 2)}\n` });
+    roundTwoStylePersist(old.files, recordOf(1));
+    expect(publishedCount(old.files)).toBe(1);
+
+    // Now: the same first snapshot, through the writer.
+    const now = disk({ [PUBLISHED]: `${JSON.stringify(recordOf(15), null, 2)}\n` });
+    const before = now.files[PUBLISHED];
+    const writer = openResultWriter(PUBLISHED, now.io);
+    writer.snapshot(recordOf(1));
+    expect(publishedCount(now.files)).toBe(15);
+    expect(now.files[PUBLISHED]).toBe(before);
+  });
+
+  it('leaves the published record byte-identical when a run is aborted part-way', () => {
+    const d = disk({ [PUBLISHED]: `${JSON.stringify(recordOf(15), null, 2)}\n` });
+    const before = d.files[PUBLISHED];
+    const writer = openResultWriter(PUBLISHED, d.io);
+    // A walk that dies at candidate 3: three snapshots, no publish.
+    writer.snapshot(recordOf(1));
+    writer.snapshot(recordOf(2));
+    writer.snapshot(recordOf(3));
+    expect(d.files[PUBLISHED]).toBe(before);
+    // The paid-for work is not lost — it is beside the published record, not on top of it.
+    expect(JSON.parse(d.files[writer.partialPath]!).candidates).toHaveLength(3);
+  });
+
+  it('publishes a run that finished at least as wide as what is already published', () => {
+    const d = disk({ [PUBLISHED]: `${JSON.stringify(recordOf(15), null, 2)}\n` });
+    const writer = openResultWriter(PUBLISHED, d.io);
+    writer.snapshot(recordOf(1));
+    writer.publish(recordOf(15));
+    expect(publishedCount(d.files)).toBe(15);
+    // The partial is promoted, not left behind as a second copy of the truth.
+    expect(d.files[writer.partialPath]).toBeUndefined();
+  });
+
+  it('refuses to publish a narrower finished run, and says where its own output is', () => {
+    const d = disk({ [PUBLISHED]: `${JSON.stringify(recordOf(15), null, 2)}\n` });
+    const before = d.files[PUBLISHED];
+    const writer = openResultWriter(PUBLISHED, d.io);
+    writer.snapshot(recordOf(1));
+    expect(() => writer.publish(recordOf(1))).toThrow(/Refusing to publish a narrower record/);
+    expect(d.files[PUBLISHED]).toBe(before);
+    expect(JSON.parse(d.files[writer.partialPath]!).candidates).toHaveLength(1);
+  });
+
+  it('re-reads the published width at publish time, not at open time', () => {
+    const d = disk();
+    const writer = openResultWriter(PUBLISHED, d.io);
+    // Nothing published when the run opened; something wider appears while it walks.
+    d.files[PUBLISHED] = `${JSON.stringify(recordOf(15), null, 2)}\n`;
+    expect(() => writer.publish(recordOf(2))).toThrow(/Refusing to publish a narrower record/);
+    expect(publishedCount(d.files)).toBe(15);
+  });
+
+  it('publishes a first run when nothing is published yet', () => {
+    const d = disk();
+    const writer = openResultWriter(PUBLISHED, d.io);
+    writer.snapshot(recordOf(1));
+    writer.publish(recordOf(15));
+    expect(publishedCount(d.files)).toBe(15);
   });
 });
 

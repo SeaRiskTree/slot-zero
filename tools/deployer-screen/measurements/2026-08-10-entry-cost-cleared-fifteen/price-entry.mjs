@@ -59,11 +59,13 @@
  * socket**; a bare invocation walks and spends.
  *
  * **A `--only` run writes beside the published artifact, never over it** — see {@link resultPathFor}
- * — and {@link assertResultPathWritable} refuses a narrower record over a wider one before the first
- * request, so no output path can be lost to a re-run that has already been paid for.
+ * — {@link assertResultPathWritable} refuses a narrower record over a wider one before the first
+ * request, and {@link openResultWriter} keeps the per-candidate snapshots off the published path
+ * until the run finishes wide enough to earn it. The pre-flight check alone is NOT sufficient and
+ * that writer's doc says why.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -259,6 +261,88 @@ function readFileIfPresent(path) {
   }
 }
 
+/**
+ * How many candidates a record holds, or 0 when there is no readable record.
+ *
+ * @param {string | null} text
+ * @returns {number}
+ */
+function candidatesHeld(text) {
+  if (text === null) return 0;
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed?.candidates) ? parsed.candidates.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * The run's persistence, which keeps the published artifact intact until the run has earned it.
+ *
+ * **THE PRE-FLIGHT CHECK IS NOT ENOUGH, AND THE REASON IS THE INCREMENTAL WRITE.** This lane
+ * snapshots after every candidate so a walk that dies at candidate 12 does not throw away eleven
+ * candidates of paid-for work. Writing those snapshots straight to the published path — which is
+ * what this file did until this writer existed — means a run that PASSES
+ * {@link assertResultPathWritable} at 15-against-15 still replaces the published fifteen with a
+ * single row the instant candidate 1 finishes, and any abort after that (a signal, a throw out of
+ * the scorer, a client's own ceiling) leaves it replaced. The count is only whole at the very end,
+ * so a guard that runs only at the start guards only the start.
+ *
+ * So the snapshots go to a `.partial` sibling and the published path is written **once**, by
+ * {@link ResultWriter.publish}, and only when the finished record is at least as wide as whatever is
+ * already published. The published count is re-read at publish time rather than trusted from open
+ * time, so a record that grew underneath the run is not clobbered either.
+ *
+ * The property, stated so a test can hold it: **an aborted or narrower run leaves the published
+ * record byte-identical.**
+ *
+ * @param {string} publishedPath
+ * @param {object} [io] Seam so the behaviour is testable without a socket or the metered run.
+ * @param {(p: string) => string | null} [io.read]
+ * @param {(p: string, body: string) => void} [io.write]
+ * @param {(from: string, to: string) => void} [io.promote]
+ */
+export function openResultWriter(publishedPath, io = {}) {
+  const read = io.read ?? readFileIfPresent;
+  const write = io.write ?? ((/** @type {string} */ p, /** @type {string} */ b) => writeFileSync(p, b));
+  const promote = io.promote ?? ((/** @type {string} */ f, /** @type {string} */ t) => renameSync(f, t));
+  const partialPath = `${publishedPath}.partial`;
+  const heldAtOpen = candidatesHeld(read(publishedPath));
+
+  /** @param {any} record */
+  const body = (record) => `${JSON.stringify(record, null, 2)}\n`;
+
+  return {
+    partialPath,
+    /**
+     * Persist progress so far. It NEVER touches the published path.
+     *
+     * @param {any} record
+     */
+    snapshot(record) {
+      write(partialPath, body(record));
+    },
+    /**
+     * Promote the finished record onto the published path, or refuse.
+     *
+     * @param {any} record
+     */
+    publish(record) {
+      const scored = Array.isArray(record?.candidates) ? record.candidates.length : 0;
+      const heldNow = Math.max(heldAtOpen, candidatesHeld(read(publishedPath)));
+      if (scored < heldNow) {
+        throw new Error(
+          `${publishedPath} holds ${heldNow} candidate(s) and this run finished with ${scored}. ` +
+            `Refusing to publish a narrower record; the run's own output is at ${partialPath}.`,
+        );
+      }
+      write(partialPath, body(record));
+      promote(partialPath, publishedPath);
+    },
+  };
+}
+
 /** @param {number | null | undefined} x */
 const fmt = (x) => (typeof x === 'number' && Number.isFinite(x) ? x.toFixed(6) : 'n/a');
 
@@ -320,6 +404,7 @@ async function main() {
   }
 
   assertResultPathWritable(resultPath, candidates.length);
+  const writer = openResultWriter(resultPath);
 
   const rpcPacing = endpoint.provider === 'helius' ? heliusBounds.rpcMinIntervalMs : costBounds.rpcMinIntervalMs;
   let laneSpent = 0;
@@ -328,6 +413,32 @@ async function main() {
   let keylessShed = 0;
   /** @type {any[]} */
   const rows = [];
+
+  const recordOf = () => ({
+    lane: '2026-08-10-entry-cost-cleared-fifteen',
+    startedAtIso,
+    finishedAtIso: new Date().toISOString(),
+    thresholdsVersion: thresholds.version,
+    censusInput: input.source,
+    fillSourceKind: 'swap-api',
+    costEndpointLabel: endpoint.label,
+    costEndpointProvider: endpoint.provider,
+    costEndpointRejected: endpoint.rejected,
+    costPacingMs: rpcPacing,
+    laneRpcCeiling: LANE_RPC_CEILING,
+    laneCreditHardStop: LANE_CREDIT_HARD_STOP,
+    // The coverage floor the roll-up gates cost readings on, recorded rather than restated there:
+    // `summarise.mjs` refuses a record that does not carry it instead of defaulting, so a roll-up
+    // can never report against a bar this run did not apply.
+    thresholdsMinPricedFraction: entryThresholds.minPricedFraction,
+    spend: {
+      keylessRequests: keylessSpent,
+      keylessShed,
+      rpcRequests: laneSpent,
+      rpcShed: laneShed,
+    },
+    candidates: rows,
+  });
 
   for (const c of candidates) {
     const refs = censusLaunchRefs(c);
@@ -447,39 +558,10 @@ async function main() {
       },
     });
 
-    writeFileSync(
-      resultPath,
-      `${JSON.stringify(
-        {
-          lane: '2026-08-10-entry-cost-cleared-fifteen',
-          startedAtIso,
-          finishedAtIso: new Date().toISOString(),
-          thresholdsVersion: thresholds.version,
-          censusInput: input.source,
-          fillSourceKind: 'swap-api',
-          costEndpointLabel: endpoint.label,
-          costEndpointProvider: endpoint.provider,
-          costEndpointRejected: endpoint.rejected,
-          costPacingMs: rpcPacing,
-          laneRpcCeiling: LANE_RPC_CEILING,
-          laneCreditHardStop: LANE_CREDIT_HARD_STOP,
-          // The coverage floor the roll-up gates cost readings on, recorded rather than restated
-          // there: `summarise.mjs` refuses a record that does not carry it instead of defaulting,
-          // so a roll-up can never report against a bar this run did not apply.
-          thresholdsMinPricedFraction: entryThresholds.minPricedFraction,
-          spend: {
-            keylessRequests: keylessSpent,
-            keylessShed,
-            rpcRequests: laneSpent,
-            rpcShed: laneShed,
-          },
-          candidates: rows,
-        },
-        null,
-        2,
-      )}\n`,
-    );
+    writer.snapshot(recordOf());
   }
+
+  writer.publish(recordOf());
 
   console.log(
     `\nDONE — ${rows.length} candidate(s). swap-api ${keylessSpent} request(s) (${keylessShed} shed); ` +

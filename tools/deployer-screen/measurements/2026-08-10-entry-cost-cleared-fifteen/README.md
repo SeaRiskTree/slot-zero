@@ -159,20 +159,36 @@ leg's own budget outcome, so it cannot say "the lane" about a leg the lane did n
 **PROVENANCE, AND IT MATTERS MORE THAN THE VALUES DO: THE THREE LANE CAUSES WERE DERIVED AFTER THE
 RUN, NOT EMITTED BY IT.** The generator that produced this record set the lane cause only when the
 granted ceiling was exactly 0, and the lane never reached 0 — it granted 122, 17 and 8 requests and
-was truncated mid-leg — so the run wrote `laneUnmeasuredCause: null` on all fifteen rows, and
-**`run.log` predates the correction and still shows that run.** The three values were computed
-afterwards by `price-entry.mjs` → `laneUnmeasuredCauseFor` over `spend.rpcCeilingGranted` and
-`coverage.cost` **as the run itself recorded them**, and nothing else in `result.json` was touched.
-So the amendment is **checkable rather than asserted**: re-running that function over the record's
-own fields reproduces all fifteen values exactly, and a reader who disagrees with the derivation can
-recover the run's original output from the same fields. This is stated because the alternative — a
+was truncated mid-leg — so **the run wrote `laneUnmeasuredCause: null` into all fifteen rows of
+`result.json`**, and those nulls are what the three values replaced. `run.log` is the run's own
+console output and **predates the derivation**; it prints the plan header and one verdict line per
+candidate and never prints this field at all, so it neither shows nor contradicts the amendment.
+
+The three values were computed afterwards by `price-entry.mjs` → `laneUnmeasuredCauseFor` over
+`spend.rpcCeilingGranted` and `coverage.cost.stoppedForBudget` /
+`coverage.cost.launchesSkippedForBudget` **as the run itself recorded them**, and nothing else in
+`result.json` was touched. So the amendment is **checkable rather than asserted, and here is the
+check**: read those three fields off each row of `result.json` and re-derive
+`laneUnmeasuredCauseFor` over them — it returns `lane-rpc-ceiling` on exactly the three rows that
+carry it (granted 122/17/8 against the pinned 500, all three `stoppedForBudget: true`) and `null` on
+the other twelve. Every input to that derivation is in the record, so a reader who disagrees with it
+can recover the run's original nulls and re-decide. This is stated because the alternative — a
 derived value sitting in an artifact that reads as measured — is exactly what this repo's
 measured-versus-inferred discipline exists to prevent. Production's `unmeasuredCause` /
 `unmeasuredCauseAttribution` were emitted by the run and are untouched.
 
 **The cause is this lane's spend ceiling and it is stated exactly.** Candidates were priced in
-room-median order, so the three that ran out are the three lowest room medians — the hole is not
-random. But **re-ordering could not have fixed it**: the 15 targeted **2,389** distinct transactions,
+descending **census** room-median order, so the hole sits at the TAIL of that order rather than
+falling at random: the three that ran out are 12th, 13th and 15th of the fifteen priced.
+**They are NOT the three lowest room medians**, and the difference is worth stating precisely. The
+three lowest are `3kpjBEboLyD3…` (0.555943), `4QwJ4AXMtSjn…` (0.582555) and `4cXnf2z85UiZ…`
+(0.610553); the three truncated are `3kpjBEboLyD3…` (0.555943), `4cXnf2z85UiZ…` (0.610553) and
+`DJGm2u3ZRJJa…` (0.620131). `4QwJ4AXMtSjn…` escaped the ceiling only because the **gross field
+refused it before its cost leg ever ran** — `rpcRequests: 0` against a granted ceiling of 8 — so it
+is a candidate the ceiling never got to rather than one it spared. `7F4sTCyUqN33…`, 11th, escaped
+the same way (`rpcRequests: 0`, granted 122).
+
+But **re-ordering could not have fixed it**: the 15 targeted **2,389** distinct transactions,
 1,398 requests priced 2,024 of them (the whole-block route covered 713), and the remaining 365 would
 have cost up to ~365 more — **~1,760 requests against a 1,500-credit stop.** Completing all fifteen
 needs the stop raised to about **1,800**; no allocation fits it under 1,500. I stopped at 1,398 with
@@ -276,5 +292,5 @@ upper bound that survived.
 | `summarise.mjs` | the roll-up and the exact intervals; offline, and it reproduces the census's five published intervals |
 | `result.json` | every candidate's full score, coverage and spend, as the run emitted them — **except `laneUnmeasuredCause`, which was derived afterwards from the run's own recorded fields** (provenance note above) |
 | `summary.json` | the machine-readable roll-up, regenerated offline from `result.json` after that derivation |
-| `run.log` | **the run's own output, verbatim — and it PREDATES the lane-cause derivation**, so it shows `laneUnmeasuredCause: null` on all fifteen. Nothing else in it was superseded |
+| `run.log` | **the run's own console output, verbatim — and it PREDATES the lane-cause derivation.** It prints the plan header and one verdict line per candidate; it never prints `laneUnmeasuredCause`, so look to `result.json` and the provenance note above for that field's history. Nothing in it was superseded |
 | `run-abandoned-2026-08-10.log` | a first attempt stopped after 9 windows when the fill route was reconsidered; **it produced no result and spent nothing**, kept so the record is not silent about it |

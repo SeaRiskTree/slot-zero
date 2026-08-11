@@ -1474,7 +1474,12 @@ export class DuneLaneCeilingReached extends DuneRefused {
  * @property {(client: { readUsage: () => Promise<unknown> }, input: { plan: DuneSpendPlan,
  *   nowMs: number }) => Promise<{ estimate: DuneSpendEstimate, allowance: AllowanceDecision,
  *   spend: LaneSpendReading, spendableCredits: number }>} authoriseExecution Re-read the live
- *   balance and either clear ONE execution or throw {@link DuneLaneCeilingReached}.
+ *   balance and either clear ONE execution or throw {@link DuneLaneCeilingReached}. **The `plan` it
+ *   takes must describe ONE execution.** It is priced as handed in — `executions`, `resultReads` and
+ *   `rowsPerRead` are the caller's — so a lane passing its whole RUN-level plan reserves the entire
+ *   run's worst case on every authorisation and refuses after one. That direction is toward refusal,
+ *   so it is a capacity loss and never a spend hole. `spend` and `spendableCredits` both describe the
+ *   instant AFTER the cleared execution, so a lane may size its next batch from either.
  * @property {(outcome: { executionCostCredits?: number | null, resultBytes?: number | null }) => void}
  *   recordExecutionOutcome What the vendor said the execution cost and returned. **Both figures are
  *   REPORTED ONLY.** Neither reaches the enforcement arithmetic: the ceiling is enforced against the
@@ -1516,6 +1521,11 @@ export class DuneLaneCeilingReached extends DuneRefused {
  *   early is the intended direction and is not a regression to be tuned away** — retrieval was ~95%
  *   of this repository's own entry lane's bill, so an unreserved retrieval term is most of the
  *   ceiling.
+ * - **THE FIGURE AN AUTHORISATION IS CLEARED AT IS HELD FROM THE MOMENT THE DECISION BEGINS**, before
+ *   the balance read suspends the call, so two OVERLAPPING authorisations can never both be cleared
+ *   against the same total. The hold is provisional and is released on every path that does not
+ *   clear, a thrown one included. Without it the guard's "re-checked before every single one" held
+ *   only for a strictly serial lane, and Dune permits parallel executions.
  * - **Spend is `max(counter delta, local estimate)`** — {@link LANE_SPEND_IS_TWO_QUANTITIES}.
  * - **It THROWS.** A returned verdict is a warning, and a warning is what a worker iterates past.
  *
@@ -1568,6 +1578,7 @@ export function openDuneLaneBudget(config) {
   /** @type {number | null} */ let baselineUsed = null;
   let executions = 0;
   let authorisedExecutionCredits = 0;
+  let heldCredits = 0;
   let attributedExecutionCredits = 0;
   let resultBytes = 0;
   /** @type {number | null} */ let counterDeltaCredits = null;
@@ -1616,102 +1627,153 @@ export function openDuneLaneBudget(config) {
       };
       const estimate = estimatePlanCredits(plan);
 
-      /** @type {UsageReading} */
-      let usage;
+      // THE FIGURE THIS AUTHORISATION IS CLEARED AT IS HELD FROM THE MOMENT THE DECISION BEGINS —
+      // BEFORE the balance read suspends this call — so two overlapping authorisations can never both
+      // be cleared against the same total. Without the hold, both suspend at the `await` reading a
+      // pre-debit reservation, both clear, and only then does each debit: the same defect as a term
+      // cleared but never reserved, reached through interleaving. The counter cannot catch it either,
+      // since it reads low in exactly that window ({@link ALLOWANCE_LAG_CAVEAT}). The hold is
+      // PROVISIONAL: every exit that does not clear releases it, including a thrown one, because a
+      // leaked hold shrinks the lane's ceiling permanently.
+      const heldByThisCall = estimate.worstCaseCredits;
+      heldCredits = round3(heldCredits + heldByThisCall);
+      let holdReleased = false;
+      const releaseHold = () => {
+        if (holdReleased) return;
+        holdReleased = true;
+        heldCredits = round3(heldCredits - heldByThisCall);
+      };
       try {
-        usage = parseUsageResponse(await client.readUsage(), input.nowMs);
-      } catch (cause) {
-        usage = {
-          ok: false,
-          allowance: null,
-          reasons: [`POST /usage could not be read: ${cause instanceof Error ? cause.message : String(cause)}`],
-        };
-      }
-      if (usage.allowance !== null) {
-        // The FIRST successful reading is this lane's zero. Everything after it is a delta, which is
-        // what makes a lane ceiling smaller than the month enforceable at all.
-        if (baselineUsed === null) baselineUsed = usage.allowance.creditsUsed;
-        counterDeltaCredits = Math.max(0, round3(usage.allowance.creditsUsed - baselineUsed));
-        counterReadingIsStale = false;
-      } else {
-        // A READ THAT FAILED AFTER AN EARLIER ONE SUCCEEDED IS STALE, NOT NULL. The two are different
-        // states and inferring staleness from `null` cannot tell them apart, so on the
-        // `allowanceRequired: false` waiver the last good delta would keep reporting itself as the
-        // live binding quantity with nothing saying this authorisation could not read the counter.
-        counterReadingIsStale = counterDeltaCredits !== null;
-      }
+        /** @type {UsageReading} */
+        let usage;
+        try {
+          usage = parseUsageResponse(await client.readUsage(), input.nowMs);
+        } catch (cause) {
+          usage = {
+            ok: false,
+            allowance: null,
+            reasons: [`POST /usage could not be read: ${cause instanceof Error ? cause.message : String(cause)}`],
+          };
+        }
+        if (usage.allowance !== null) {
+          // The FIRST successful reading is this lane's zero. Everything after it is a delta, which is
+          // what makes a lane ceiling smaller than the month enforceable at all.
+          if (baselineUsed === null) baselineUsed = usage.allowance.creditsUsed;
+          counterDeltaCredits = Math.max(0, round3(usage.allowance.creditsUsed - baselineUsed));
+          counterReadingIsStale = false;
+        } else {
+          // A READ THAT FAILED AFTER AN EARLIER ONE SUCCEEDED IS STALE, NOT NULL. The two are different
+          // states and inferring staleness from `null` cannot tell them apart, so on the
+          // `allowanceRequired: false` waiver the last good delta would keep reporting itself as the
+          // live binding quantity with nothing saying this authorisation could not read the counter.
+          counterReadingIsStale = counterDeltaCredits !== null;
+        }
 
-      // ONE MECHANISM, NOT TWO: the monthly ceiling is ruled on by the same `decideAllowance` every
-      // other guarded spend path in this repository uses, on this execution's own worst case.
-      const allowance = decideAllowance({
-        plan,
-        estimate,
-        allowance: usage.allowance,
-        unreadableReasons: usage.reasons,
-        reserveCredits: config.reserveCredits,
-        monthlyCapCredits: config.monthlyCapCredits,
-        tightMultiple: config.tightMultiple,
-        allowanceRequired: config.allowanceRequired,
-      });
-
-      const spend = reading();
-      const spendable = Math.max(
-        0,
-        round3(config.ceilingCredits - spend.bindingSpendCredits - Math.max(0, config.reserveCredits)),
-      );
-      /** @type {string[]} */
-      const detail = [];
-      if (spend.counterDeltaCredits === null) {
-        detail.push(
-          config.allowanceRequired
-            ? 'The account counter could not be read at all, so the binding quantity is unavailable ' +
-              'and this lane is running on its local estimate alone — which is not headroom.'
-            : 'The account counter could not be read; this lane was configured not to require it, so ' +
-              'the local estimate is the only thing bounding it.',
-        );
-      } else if (spend.counterReadingIsStale) {
-        detail.push(
-          `The account counter could not be read for THIS authorisation, so the ` +
-            `${spend.counterDeltaCredits}-credit delta above is a PREVIOUS reading and not this ` +
-            `moment's — it is a floor under the counter and cannot have fallen since.`,
-        );
-      }
-      if (!allowance.ok) {
-        detail.push(
-          `The MONTHLY ceiling refused independently of this lane's own: ${allowance.reasons.join(' ')}`,
-        );
-      }
-
-      const laneShort = spendable < estimate.worstCaseCredits;
-      if (!allowance.ok || laneShort) {
-        throw new DuneLaneCeilingReached({
-          // THE LANE'S OWN CEILING IS REPORTED FIRST when both refuse: it is the tighter budget and
-          // the one the operator can act on, and a lane over its own stop is over it whatever the
-          // month has left.
-          refusedBy: laneShort ? 'lane-ceiling' : 'monthly-ceiling',
-          lane: config.lane,
-          ceilingCredits: config.ceilingCredits,
-          counterDeltaCredits: spend.counterDeltaCredits,
-          localEstimateCredits: spend.localEstimateCredits,
-          bindingSpendCredits: spend.bindingSpendCredits,
-          bindingQuantity: spend.bindingQuantity,
-          reserveCredits: Math.max(0, config.reserveCredits),
-          spendableCredits: spendable,
-          worstCaseCredits: estimate.worstCaseCredits,
-          shortfallCredits: Math.max(0, round3(estimate.worstCaseCredits - spendable)),
-          executionsAuthorised: executions,
-          detail,
+        // ONE MECHANISM, NOT TWO: the monthly ceiling is ruled on by the same `decideAllowance` every
+        // other guarded spend path in this repository uses, on this execution's own worst case.
+        const allowance = decideAllowance({
+          plan,
+          estimate,
+          allowance: usage.allowance,
+          unreadableReasons: usage.reasons,
+          reserveCredits: config.reserveCredits,
+          monthlyCapCredits: config.monthlyCapCredits,
+          tightMultiple: config.tightMultiple,
+          allowanceRequired: config.allowanceRequired,
         });
-      }
 
-      // AUTHORISED MEANS SPENT, immediately. A cleared execution is an execution that will run, and
-      // the counter will not show it for minutes — so the local half moves here rather than on the
-      // way back, where a transport failure would lose it. It moves by the WHOLE figure this
-      // execution was CLEARED at — retrieval included — so authorisation and spend price the same
-      // execution the same way and there is no term the ceiling clears but never reserves.
-      executions += 1;
-      authorisedExecutionCredits = round3(authorisedExecutionCredits + estimate.worstCaseCredits);
-      return { estimate, allowance, spend: reading(), spendableCredits: spendable };
+        const spend = reading();
+        // What OTHER authorisations are holding right now, and never this call's own hold — which is
+        // what keeps a serial lane's arithmetic byte-identical to what it was before holds existed,
+        // while an overlapping one is priced against room its sibling has already taken.
+        const heldElsewhere = round3(heldCredits - (holdReleased ? 0 : heldByThisCall));
+        const spendable = Math.max(
+          0,
+          round3(
+            config.ceilingCredits - spend.bindingSpendCredits - Math.max(0, config.reserveCredits) - heldElsewhere,
+          ),
+        );
+        /** @type {string[]} */
+        const detail = [];
+        if (spend.counterDeltaCredits === null) {
+          detail.push(
+            config.allowanceRequired
+              ? 'The account counter could not be read at all, so the binding quantity is unavailable ' +
+                'and this lane is running on its local estimate alone — which is not headroom.'
+              : 'The account counter could not be read; this lane was configured not to require it, so ' +
+                'the local estimate is the only thing bounding it.',
+          );
+        } else if (spend.counterReadingIsStale) {
+          detail.push(
+            `The account counter could not be read for THIS authorisation, so the ` +
+              `${spend.counterDeltaCredits}-credit delta above is a PREVIOUS reading and not this ` +
+              `moment's — it is a floor under the counter and cannot have fallen since.`,
+          );
+        }
+        if (heldElsewhere > 0) {
+          detail.push(
+            `${heldElsewhere} credit(s) are HELD by authorisation(s) still in flight and were subtracted ` +
+              `from what this one could spend: a cleared execution is spent whether or not its sibling ` +
+              `has returned yet.`,
+          );
+        }
+        if (!allowance.ok) {
+          detail.push(
+            `The MONTHLY ceiling refused independently of this lane's own: ${allowance.reasons.join(' ')}`,
+          );
+        }
+
+        const laneShort = spendable < estimate.worstCaseCredits;
+        if (!allowance.ok || laneShort) {
+          releaseHold();
+          throw new DuneLaneCeilingReached({
+            // THE LANE'S OWN CEILING IS REPORTED FIRST when both refuse: it is the tighter budget and
+            // the one the operator can act on, and a lane over its own stop is over it whatever the
+            // month has left.
+            refusedBy: laneShort ? 'lane-ceiling' : 'monthly-ceiling',
+            lane: config.lane,
+            ceilingCredits: config.ceilingCredits,
+            counterDeltaCredits: spend.counterDeltaCredits,
+            localEstimateCredits: spend.localEstimateCredits,
+            bindingSpendCredits: spend.bindingSpendCredits,
+            bindingQuantity: spend.bindingQuantity,
+            reserveCredits: Math.max(0, config.reserveCredits),
+            spendableCredits: spendable,
+            worstCaseCredits: estimate.worstCaseCredits,
+            shortfallCredits: Math.max(0, round3(estimate.worstCaseCredits - spendable)),
+            executionsAuthorised: executions,
+            detail,
+          });
+        }
+
+        // AUTHORISED MEANS SPENT, immediately. A cleared execution is an execution that will run, and
+        // the counter will not show it for minutes — so the local half moves here rather than on the
+        // way back, where a transport failure would lose it. It moves by the WHOLE figure this
+        // execution was CLEARED at — retrieval included — so authorisation and spend price the same
+        // execution the same way and there is no term the ceiling clears but never reserves. The
+        // provisional hold becomes that permanent debit in one step, with nothing awaited between.
+        releaseHold();
+        executions += 1;
+        authorisedExecutionCredits = round3(authorisedExecutionCredits + estimate.worstCaseCredits);
+        // BOTH FIELDS DESCRIBE THE SAME INSTANT — after this execution. Returning the pre-debit
+        // spendable overstates the lane's remaining room by exactly one worst case, which is the
+        // planning error this guard exists to remove: a lane sizing its next batch from it plans one
+        // execution too many.
+        const after = reading();
+        return {
+          estimate,
+          allowance,
+          spend: after,
+          spendableCredits: Math.max(
+            0,
+            round3(
+              config.ceilingCredits - after.bindingSpendCredits - Math.max(0, config.reserveCredits) - heldCredits,
+            ),
+          ),
+        };
+      } finally {
+        releaseHold();
+      }
     },
   };
 }

@@ -2721,6 +2721,61 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
     expect(b.executionsAuthorised()).toBe(2);
   });
 
+  it('holds what it is clearing from the moment the decision begins, so OVERLAPPING calls cannot both pass', async () => {
+    // A 300-credit lane fits ONE 181-credit execution: the second is 119 short. Issued without
+    // awaiting the first, both authorisations suspend at the balance read — and if the reservation is
+    // only taken on the way back, both observe a spend of 0, both clear, and the lane authorises 362
+    // against a 300-credit ceiling. The counter cannot catch it: neither execution has billed yet.
+    const sequential = usageClient([100]);
+    const s = budget({ ceilingCredits: 300 });
+    await s.authoriseExecution(sequential.client, { plan: oneExecution(13), nowMs: NOW_MS });
+    const sequentialSecond = await s
+      .authoriseExecution(sequential.client, { plan: oneExecution(13), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect(sequentialSecond?.name).toBe('DuneLaneCeilingReached');
+    expect(s.executionsAuthorised()).toBe(1);
+
+    // The same lane, the same two authorisations, issued concurrently: the answer must not change.
+    const { client } = usageClient([100]);
+    const b = budget({ ceilingCredits: 300 });
+    const settled = await Promise.allSettled([
+      b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS }),
+      b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS }),
+    ]);
+    expect(settled.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const rejected = settled.filter((r) => r.status === 'rejected') as PromiseRejectedResult[];
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0]?.reason as Error).name).toBe('DuneLaneCeilingReached');
+    expect(b.executionsAuthorised()).toBe(1);
+    expect(b.spentSoFar().localEstimateCredits).toBe(181);
+
+    // A REFUSED authorisation releases its hold rather than leaking it: the lane still has the room
+    // the refusal did not take, so the next call is decided on the ceiling it really has.
+    expect(b.spentSoFar().localEstimateCredits).toBe(181);
+    const third = await b
+      .authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect((third as unknown as { shortfallCredits: number }).shortfallCredits).toBe(62);
+  });
+
+  it('returns a spendable figure for the SAME instant as the spend beside it', async () => {
+    // Both fields describe the lane after this execution. Returning the pre-debit spendable
+    // overstates remaining room by exactly one worst case, and a lane sizing its next batch from it
+    // plans one execution too many — the planning error this guard exists to remove.
+    const { client } = usageClient([100]);
+    const b = budget({ ceilingCredits: 1_000 });
+    const first = await b.authoriseExecution(client, { plan: oneExecutionWithRead(13), nowMs: NOW_MS });
+    expect(first.estimate.worstCaseCredits).toBe(423);
+    expect(first.spend.localEstimateCredits).toBe(423);
+    expect(first.spendableCredits).toBe(577);
+    expect(first.spendableCredits + first.estimate.worstCaseCredits).toBe(1_000);
+
+    // And a reserve is still held back out of it, on the same instant.
+    const withReserve = budget({ ceilingCredits: 1_000, reserveCredits: 100 });
+    const one = await withReserve.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
+    expect(one.spendableCredits).toBe(719);
+  });
+
   it('reserves the RETRIEVAL half of what it cleared, not the compute half alone', async () => {
     // A plan whose worst case is 181 of compute and 242 of retrieval prices at 423. Debiting the
     // compute term alone clears four of these inside a 1,000-credit ceiling — 1,692 credits of

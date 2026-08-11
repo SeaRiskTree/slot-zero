@@ -698,14 +698,23 @@ Captain decision 156a, 2026-08-03. Long form and every figure in
   second from the first still overran a 50-credit stop (50.334). Per-execution price is not
   predictable from date range, result size, or an identically-shaped prior batch; it is dominated by
   wide repeated array columns (46.6 credits for a SINGLE DAY in the 40-credit/70.467-spent overrun).
-  **(2) THE CEILING IS ENFORCED AGAINST THE ACCOUNT COUNTER DELTA**, with the local estimate as the
-  other half and the LARGER binding — `LANE_SPEND_IS_TWO_QUANTITIES` owns it. Summed
-  `execution_cost_credits` under-reads the settled counter (measured **+8.000 credits over 1.085 MB**
-  of reads, on top of retrieval not being in that field at all), and the counter itself lags in
-  whole-credit jumps so it under-reads just after an execution. **(3) `EXPORT_CREDITS_PER_MB` (20) is
+  **(2) THE CEILING IS ENFORCED AGAINST THE ACCOUNT COUNTER DELTA**, with a local WORST-CASE
+  RESERVATION as the other half and the LARGER binding — `LANE_SPEND_IS_TWO_QUANTITIES` owns it.
+  Summed `execution_cost_credits` under-reads the settled counter (measured **+8.000 credits over
+  1.085 MB** of reads, on top of retrieval not being in that field at all), and the counter itself
+  lags in whole-credit jumps so it under-reads just after an execution. **The local half is NOT a
+  measured figure**: it is the sum of what each authorised execution was CLEARED at — compute AND
+  retrieval, `estimate.worstCaseCredits` whole — and the vendor's reported cost and result bytes are
+  carried for an operator to read while reaching no enforcement arithmetic. Reserving only the
+  compute term let a lane take 1,692 credits of authorised worst case out of a 1,000-credit ceiling.
+  **A large-read lane therefore exhausts its ceiling in FEWER executions than its real bytes justify,
+  and refusing early is the intended direction rather than a regression to tune away.** A counter
+  read that fails after an earlier one succeeded is reported STALE rather than passing as live.
+  **(3) `EXPORT_CREDITS_PER_MB` (20) is
   used at its EXPENSIVE published value and is NOT re-pinned** — two readings now put the real rate
   at ~7.4 and ~4.9/MB, both cheap, which is the unsafe direction to assume persists; captain decision
-  248c owns Dune pricing.
+  248c owns Dune pricing, and the reserved retrieval term makes this guard depend on that pin more
+  than a measured one would.
 - **Budget from *billed* credits, not
   `execution_cost_credits`, which understates by ~3.5×** — retrieving results is ~71% of the bill at
   ~20 credits/MB. Hence: aggregate server-side, select only the columns the tool reads (dropping the

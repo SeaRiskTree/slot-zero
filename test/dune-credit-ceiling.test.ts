@@ -2603,6 +2603,22 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
     };
   }
 
+  /**
+   * A plan for one execution that also RETRIEVES: 100,000 rows at 121 bytes is the shape the
+   * enumeration and entry statements build, and at the pinned export rate it prices 242 credits of
+   * retrieval on top of the 181-credit engine floor.
+   */
+  function oneExecutionWithRead(creditsPerExecution: number) {
+    return {
+      lane: 'scout',
+      executions: 1,
+      creditsPerExecution,
+      resultReads: 1,
+      rowsPerRead: 100_000,
+      bytesPerRow: 121,
+    };
+  }
+
   function budget(over: Partial<Parameters<typeof openDuneLaneBudget>[0]> = {}) {
     return openDuneLaneBudget({
       lane: 'scout',
@@ -2703,6 +2719,83 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
     expect((err as unknown as { shortfallCredits: number }).shortfallCredits).toBe(200);
     expect((err as unknown as { localEstimateCredits: number }).localEstimateCredits).toBe(800);
     expect(b.executionsAuthorised()).toBe(2);
+  });
+
+  it('reserves the RETRIEVAL half of what it cleared, not the compute half alone', async () => {
+    // A plan whose worst case is 181 of compute and 242 of retrieval prices at 423. Debiting the
+    // compute term alone clears four of these inside a 1,000-credit ceiling — 1,692 credits of
+    // authorised worst case — because the retrieval term is only ever spent down by an OPTIONAL
+    // report of ACTUAL bytes. Two clear here, and the third cannot.
+    const { client } = usageClient([100]);
+    const b = budget({ ceilingCredits: 1_000 });
+    const first = await b.authoriseExecution(client, { plan: oneExecutionWithRead(13), nowMs: NOW_MS });
+    expect(first.estimate.worstCaseCredits).toBe(423);
+    expect(first.spend.localEstimateCredits).toBe(423);
+    const second = await b.authoriseExecution(client, { plan: oneExecutionWithRead(13), nowMs: NOW_MS });
+    expect(second.spend.localEstimateCredits).toBe(846);
+
+    const err = await b
+      .authoriseExecution(client, { plan: oneExecutionWithRead(13), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect(err?.name).toBe('DuneLaneCeilingReached');
+    expect(b.executionsAuthorised()).toBe(2);
+    const thrown = err as unknown as { shortfallCredits: number; localEstimateCredits: number };
+    expect(thrown.localEstimateCredits).toBe(846);
+    expect(thrown.shortfallCredits).toBe(269);
+  });
+
+  it('cannot have its enforcement figure moved by REPORTED result bytes', async () => {
+    // The mirror of the cheap-cost case, one term over: measured bytes are carried for an operator
+    // and reach no enforcement arithmetic, so a lane reporting 50 MB of reads refuses at exactly the
+    // execution it would have refused at having reported nothing.
+    const { client } = usageClient([100]);
+    const b = budget();
+    await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
+    b.recordExecutionOutcome({ executionCostCredits: 3, resultBytes: 50_000_000 });
+    await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
+    await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
+    expect(b.spentSoFar().localEstimateCredits).toBe(543);
+    // Reported and readable, and never enforced against — 50 MB at the pinned rate would be 1,000
+    // credits and would have refused the second execution.
+    expect(b.spentSoFar().resultBytes).toBe(50_000_000);
+
+    const err = await b
+      .authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect(err?.name).toBe('DuneLaneCeilingReached');
+    expect(b.executionsAuthorised()).toBe(3);
+    expect((err as unknown as { shortfallCredits: number }).shortfallCredits).toBe(2);
+  });
+
+  it('marks a counter reading STALE when a later read fails, rather than passing it off as live', async () => {
+    // The waiver path: `allowanceRequired: false` lets the lane proceed on its own reservation when
+    // the balance cannot be read, so nothing else would say that this authorisation's read failed
+    // and the last good delta would keep reporting itself as the live binding quantity.
+    let call = 0;
+    const client = {
+      readUsage: async () => {
+        call += 1;
+        if (call === 1) return usageBody([period(400)]);
+        throw new Error('transport failed');
+      },
+    };
+    const b = budget({ ceilingCredits: 10_000, allowanceRequired: false });
+    const first = await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
+    expect(first.spend.counterReadingIsStale).toBe(false);
+    expect(first.spend.counterDeltaCredits).toBe(0);
+
+    const second = await b.authoriseExecution(client, { plan: oneExecution(13), nowMs: NOW_MS });
+    expect(second.spend.counterReadingIsStale).toBe(true);
+    expect(second.spend.counterDeltaCredits).toBe(0);
+    expect(b.spentSoFar().counterReadingIsStale).toBe(true);
+
+    // And the refusal says so in words, distinctly from "could not be read at all".
+    const err = await b
+      .authoriseExecution(client, { plan: oneExecution(20_000), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect(err?.name).toBe('DuneLaneCeilingReached');
+    expect(err?.message).toContain('could not be read for THIS authorisation');
+    expect(err?.message).toContain('is a PREVIOUS reading');
   });
 
   it('enforces against the ACCOUNT COUNTER DELTA once it exceeds the local estimate', async () => {

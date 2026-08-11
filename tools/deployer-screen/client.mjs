@@ -1787,22 +1787,27 @@ export const LANE_CEILING_IS_NOT_A_PROJECTION =
  * would authorise the whole lane inside one lag window.
  *
  * So this budget holds BOTH and enforces against `max()` of them: the counter delta, and the local
- * estimate ({@link localCreditEstimate}) built from the executions issued and the bytes read. Each
- * covers the other's blind spot and the larger is the honest reading at any instant. Which one bound
- * is reported rather than hidden, because they answer different questions about the same run.
+ * half — which is a WORST-CASE RESERVATION, the sum of what each authorised execution was CLEARED
+ * at, and NOT a figure built from executions issued and bytes measured. Each covers the other's
+ * blind spot and the larger is the honest reading at any instant. Which one bound is reported rather
+ * than hidden, because they answer different questions about the same run.
  *
- * **The local half depends on {@link EXPORT_CREDITS_PER_MB}, which two readings now put at ~7.4 and
- * ~4.9 credits/MB against the pinned 20 — both in the CHEAP direction, which is the unsafe one to
- * assume persists.** That pin is captain decision 248c's and is deliberately not touched here; this
- * budget uses it at its EXPENSIVE published value, so a cheaper real rate makes the local half
- * over-read, which refuses early rather than late. The counter delta is unaffected by any of it.
+ * **The local half depends on {@link EXPORT_CREDITS_PER_MB} MORE than a measured one would**, the
+ * retrieval term being reserved at authorisation rather than read back afterwards. Two readings now
+ * put that rate at ~7.4 and ~4.9 credits/MB against the pinned 20 — both in the CHEAP direction,
+ * which is the unsafe one to assume persists. That pin is captain decision 248c's and is
+ * deliberately not touched here; this budget uses it at its EXPENSIVE published value, so a cheaper
+ * real rate makes the reservation over-read, which refuses early rather than late. The counter delta
+ * is unaffected by any of it.
  */
 export const LANE_SPEND_IS_TWO_QUANTITIES =
   'The ACCOUNT COUNTER DELTA is what this ceiling is enforced against — it is what the month is ' +
   'billed on. Summed `execution_cost_credits` under-reads it (retrieval is ~71% of the bill and is ' +
   'not in that field; the settled counter was measured 8.000 credits above the attributed sum over ' +
   '1.085 MB of reads), and the counter itself LAGS in whole-credit jumps so it under-reads just ' +
-  'after an execution. Both are tracked and the LARGER binds at every check.';
+  'after an execution. So it is held against a local WORST-CASE RESERVATION — the sum of what each ' +
+  'authorised execution was CLEARED at, compute and retrieval together, never a measured figure — ' +
+  'and the LARGER of the two binds at every check.';
 
 /**
  * **THIS LANE HAS SPENT ITS CEILING — refused at the execution boundary, not warned about in a
@@ -1863,13 +1868,21 @@ export class DuneLaneCeilingReached extends DuneRefused {
 /**
  * @typedef {object} LaneSpendReading
  * @property {number | null} counterDeltaCredits  `credits_used` now, less the baseline this budget
- *   took before its first execution. `null` when the reading could not be taken.
- * @property {number} localEstimateCredits        The summed worst case this budget AUTHORISED — every
- *   execution at the price it was actually cleared at, never at the floor when the caller priced
- *   above it — plus bytes read at {@link EXPORT_CREDITS_PER_MB}.
+ *   took before its first execution. `null` when no reading has EVER been taken.
+ * @property {boolean} counterReadingIsStale      The last authorisation could not read the counter
+ *   while an EARLIER one had, so `counterDeltaCredits` is a previous reading and not this moment's.
+ *   `null` and stale are different states and are kept apart: a lane on the `allowanceRequired:
+ *   false` waiver would otherwise report a stale delta as a live binding quantity.
+ * @property {number} localEstimateCredits        **A WORST-CASE RESERVATION, and no longer a
+ *   measured-bytes figure.** It is the sum of what each authorised execution was CLEARED at —
+ *   `estimate.worstCaseCredits`, compute AND retrieval — so authorisation and spend price the same
+ *   execution the same way. Nothing the vendor later reports about what an execution cost or
+ *   returned moves it.
  * @property {number} attributedExecutionCredits  Summed `execution_cost_credits` as the vendor
  *   reported it. **Reported only — it is not what the ceiling is enforced against.**
  * @property {number} resultBytes                 Result bytes the vendor's metadata declared.
+ *   **Reported only, beside `attributedExecutionCredits`** — the retrieval worst case is reserved at
+ *   authorisation, so measured bytes reach no enforcement arithmetic.
  * @property {number} bindingSpendCredits         `max()` of the two enforceable readings.
  * @property {'account-counter-delta' | 'local-estimate'} bindingQuantity Which one that was.
  */
@@ -1881,8 +1894,9 @@ export class DuneLaneCeilingReached extends DuneRefused {
  *   spend: LaneSpendReading, spendableCredits: number }>} authoriseExecution Re-read the live
  *   balance and either clear ONE execution or throw {@link DuneLaneCeilingReached}.
  * @property {(outcome: { executionCostCredits?: number | null, resultBytes?: number | null }) => void}
- *   recordExecutionOutcome What the vendor said the execution cost and returned. It moves the SPEND
- *   side only and can never lower a later worst case.
+ *   recordExecutionOutcome What the vendor said the execution cost and returned. **Both figures are
+ *   REPORTED ONLY.** Neither reaches the enforcement arithmetic: the ceiling is enforced against the
+ *   authorised worst case and the account counter delta, and nothing else.
  * @property {() => LaneSpendReading} spentSoFar The two quantities, as last read.
  * @property {() => number} executionsAuthorised
  */
@@ -1910,16 +1924,26 @@ export class DuneLaneCeilingReached extends DuneRefused {
  *   number chosen too low, so the knob is removed rather than re-tuned, and a lane wanting a 40- or
  *   50-credit stop cannot have one here — see {@link LANE_CEILING_IS_NOT_A_PROJECTION}. A lane that
  *   knows its statement is worse than the floor may still pin HIGHER.
- * - **What was authorised is what is spent down.** Each cleared execution debits the price it was
- *   cleared at, so a lane pricing above the floor cannot clear 200 credits of worst case and be
- *   charged 13 against its own ceiling — which would be a projection re-entering by the back door.
+ * - **What was authorised is what is spent down, WHOLE.** Each cleared execution debits
+ *   `estimate.worstCaseCredits` — compute AND retrieval, the entire figure it was cleared against —
+ *   so there is ONE rule and no second path. Debiting the compute term alone left the retrieval
+ *   worst case unreserved and a lane clearing 423-credit executions could take 1,692 credits of
+ *   authorised worst case out of a 1,000-credit ceiling, which is the same defect as a lane pricing
+ *   above the floor and being charged the floor. **The consequence is accepted deliberately: a
+ *   large-read lane exhausts its ceiling in FEWER executions than its real bytes justify. Refusing
+ *   early is the intended direction and is not a regression to be tuned away** — retrieval was ~95%
+ *   of this repository's own entry lane's bill, so an unreserved retrieval term is most of the
+ *   ceiling.
  * - **Spend is `max(counter delta, local estimate)`** — {@link LANE_SPEND_IS_TWO_QUANTITIES}.
  * - **It THROWS.** A returned verdict is a warning, and a warning is what a worker iterates past.
  *
  * **A reading it cannot take refuses**, on the same rule as everything else here: an unreadable
- * balance is not headroom. A lane may pass `allowanceRequired: false` to proceed on the local
- * estimate alone, and then the local half — which uses {@link EXPORT_CREDITS_PER_MB} at its
- * expensive published value — is the only thing standing between the lane and the month.
+ * balance is not headroom, and a counter reading that has gone STALE says so on the reading rather
+ * than passing as live. A lane may pass `allowanceRequired: false` to proceed on the local
+ * reservation alone, and then that half is the only thing standing between the lane and the month.
+ * **It depends MORE on {@link EXPORT_CREDITS_PER_MB} than it did**, the retrieval term now being
+ * reserved rather than measured; that pin is captain decision 248c's and is deliberately used at its
+ * EXPENSIVE published value here, which makes the reservation over-read and refuse early.
  *
  * @param {object} config
  * @param {string} config.lane                 Named in every refusal.
@@ -1965,21 +1989,22 @@ export function openDuneLaneBudget(config) {
   let attributedExecutionCredits = 0;
   let resultBytes = 0;
   /** @type {number | null} */ let counterDeltaCredits = null;
+  let counterReadingIsStale = false;
 
   /** @returns {LaneSpendReading} */
   const reading = () => {
-    // The local half is built from what was AUTHORISED — each execution at the worst case it was
-    // cleared against, which is at least the engine floor — never from what any of them was reported
-    // to cost. Debiting the floor while clearing a larger figure would let a lane pricing above it
-    // authorise many multiples of its own ceiling inside the counter's lag window.
-    // `attributedExecutionCredits` is carried beside it for an operator to read and is deliberately
-    // absent from this arithmetic.
-    const bytesHalf = localCreditEstimate({ executions: 0, creditsPerExecution: 0, resultBytes });
-    const localEstimateCredits = round3(authorisedExecutionCredits + bytesHalf.exportCredits);
+    // The local half is a RESERVATION of what was AUTHORISED — each execution at the WHOLE worst
+    // case it was cleared against, compute and retrieval together — and never a figure built from
+    // what any execution was reported to have cost or returned. Reserving less than was cleared, in
+    // either term, lets a lane authorise many multiples of its own ceiling inside the counter's lag
+    // window. `attributedExecutionCredits` and `resultBytes` are carried beside it for an operator
+    // to read and are deliberately absent from this arithmetic.
+    const localEstimateCredits = round3(authorisedExecutionCredits);
     const counter = counterDeltaCredits;
     const counterBinds = counter !== null && counter > localEstimateCredits;
     return {
       counterDeltaCredits: counter,
+      counterReadingIsStale,
       localEstimateCredits,
       attributedExecutionCredits: round3(attributedExecutionCredits),
       resultBytes,
@@ -2025,6 +2050,13 @@ export function openDuneLaneBudget(config) {
         // what makes a lane ceiling smaller than the month enforceable at all.
         if (baselineUsed === null) baselineUsed = usage.allowance.creditsUsed;
         counterDeltaCredits = Math.max(0, round3(usage.allowance.creditsUsed - baselineUsed));
+        counterReadingIsStale = false;
+      } else {
+        // A READ THAT FAILED AFTER AN EARLIER ONE SUCCEEDED IS STALE, NOT NULL. The two are different
+        // states and inferring staleness from `null` cannot tell them apart, so on the
+        // `allowanceRequired: false` waiver the last good delta would keep reporting itself as the
+        // live binding quantity with nothing saying this authorisation could not read the counter.
+        counterReadingIsStale = counterDeltaCredits !== null;
       }
 
       // ONE MECHANISM, NOT TWO: the monthly ceiling is ruled on by the same `decideAllowance` every
@@ -2054,6 +2086,12 @@ export function openDuneLaneBudget(config) {
               'and this lane is running on its local estimate alone — which is not headroom.'
             : 'The account counter could not be read; this lane was configured not to require it, so ' +
               'the local estimate is the only thing bounding it.',
+        );
+      } else if (spend.counterReadingIsStale) {
+        detail.push(
+          `The account counter could not be read for THIS authorisation, so the ` +
+            `${spend.counterDeltaCredits}-credit delta above is a PREVIOUS reading and not this ` +
+            `moment's — it is a floor under the counter and cannot have fallen since.`,
         );
       }
       if (!allowance.ok) {
@@ -2086,10 +2124,11 @@ export function openDuneLaneBudget(config) {
 
       // AUTHORISED MEANS SPENT, immediately. A cleared execution is an execution that will run, and
       // the counter will not show it for minutes — so the local half moves here rather than on the
-      // way back, where a transport failure would lose it. It moves by the figure this execution was
-      // CLEARED at, so authorisation and spend price the same execution the same way.
+      // way back, where a transport failure would lose it. It moves by the WHOLE figure this
+      // execution was CLEARED at — retrieval included — so authorisation and spend price the same
+      // execution the same way and there is no term the ceiling clears but never reserves.
       executions += 1;
-      authorisedExecutionCredits = round3(authorisedExecutionCredits + plan.creditsPerExecution);
+      authorisedExecutionCredits = round3(authorisedExecutionCredits + estimate.worstCaseCredits);
       return { estimate, allowance, spend: reading(), spendableCredits: spendable };
     },
   };

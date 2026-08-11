@@ -13,6 +13,8 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
+
+import { budgetedBounds, clearedAllowance, isUsagePath, usageResponseBody } from './dune-lane-budget-fixture.js';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
@@ -3727,30 +3729,26 @@ const HEALTHY_PROBE = () =>
   ]);
 
 const NOW_MS = Date.parse('2026-08-03T10:00:00Z');
-const DUNE_BOUNDS = { pollIntervalMs: 0, maxPollAttempts: 5, maxResultRows: 20_000, maxCoverageLagMs: 21_600_000 };
+const DUNE_BOUNDS = {
+  pollIntervalMs: 0,
+  maxPollAttempts: 5,
+  maxResultRows: 20_000,
+  maxCoverageLagMs: 21_600_000,
+  // Required by `enumerateCreations`, and the real pins: the lane budget's ceiling is taken from the
+  // cleared plan's own figures, so an authorisation priced without them is cheaper than the plan
+  // reserved for it and more executions fit under one stop than a live run ever gets.
+  worstCaseCreditsPerExecution: 200,
+  resultBytesPerRowCeiling: 121,
+};
 
 // A cleared monthly credit allowance, so these fixtures exercise the enumeration rather than the
 // guard in front of it. `enumerateCreations` refuses outright without one — see
 // test/dune-credit-ceiling.test.ts, which owns the guard's own behaviour.
-const DUNE_ALLOWANCE_CLEARED = {
-  verdict: 'sufficient' as const,
-  ok: true,
-  worstCaseCredits: 1,
-  creditsUsed: 0,
-  creditsIncluded: 2500,
-  monthlyCapCredits: 4000,
-  creditsIncludedVendor: 2500,
-  bindingCeiling: 'vendor-plan' as const,
-  creditsRemaining: 2500,
-  reserveCredits: 25,
-  spendableCredits: 2475,
-  shortfallCredits: 0,
-  periodStart: '2026-07-29',
-  periodEnd: '2026-08-29',
-  readAtUtc: '2026-08-04T00:00:00.000Z',
-  reasons: [],
-  caveats: ['test fixture'],
-};
+// Its `worstCaseCredits` is also what the LANE BUDGET's stop is taken from (captain decision
+// 437(a)), so it is sized for the executions these fixtures make rather than left at a token 1 — a
+// stop under one engine-floored execution refuses the enumeration, which is the budget working and
+// not what these tests are about.
+const DUNE_ALLOWANCE_CLEARED = clearedAllowance({ creditsIncluded: 2500, creditsIncludedVendor: 2500 });
 
 describe('the Dune credential, and why its absence is a configuration', () => {
   it('treats an unset or blank key as "not configured", never as a fault', () => {
@@ -5865,6 +5863,8 @@ describe('the enumeration spends nothing it does not have to', () => {
   const stub = (handlers: Record<string, () => Response>) =>
     vi.fn(async (url: unknown) => {
       const path = String(url).replace(DUNE_API_BASE, '');
+      // The lane budget re-reads the live balance before EVERY execution — captain decision 437(a).
+      if (isUsagePath(path)) return new Response(JSON.stringify(usageResponseBody()), { status: 200 });
       for (const [prefix, make] of Object.entries(handlers)) if (path.startsWith(prefix)) return make();
       throw new Error(`unstubbed ${path}`);
     });
@@ -6290,6 +6290,8 @@ describe('the enumeration spends nothing it does not have to', () => {
     let executeBody: string | null = null;
     const fetchImpl = vi.fn(async (url: unknown, init?: unknown) => {
       const path = String(url).replace(DUNE_API_BASE, '');
+      // The lane budget re-reads the live balance before EVERY execution — captain decision 437(a).
+      if (isUsagePath(path)) return new Response(JSON.stringify(usageResponseBody()), { status: 200 });
       if (path.startsWith('/query/2/results')) return resultOf(HEALTHY_PROBE())();
       if (path.startsWith('/query/2')) return okJson({ query_sql: COVERAGE_SQL })();
       if (path.startsWith('/query/1/execute')) {
@@ -6548,6 +6550,8 @@ describe('a whole-leg Dune failure is recorded per candidate, and priced before 
     const stub = (handlers: Record<string, () => Response>) =>
       vi.fn(async (url: unknown) => {
         const path = String(url).replace(DUNE_API_BASE, '');
+        // The lane budget re-reads the live balance before EVERY execution — captain decision 437(a).
+        if (isUsagePath(path)) return new Response(JSON.stringify(usageResponseBody()), { status: 200 });
         for (const [prefix, make] of Object.entries(handlers)) if (path.startsWith(prefix)) return make();
         throw new Error(`unstubbed ${path}`);
       });
@@ -6893,6 +6897,8 @@ describe('a failed coverage-probe EXECUTION does not take the whole Dune leg dow
   const stub = (handlers: Record<string, () => Response>) =>
     vi.fn(async (url: unknown) => {
       const path = String(url).replace(DUNE_API_BASE, '');
+      // The lane budget re-reads the live balance before EVERY execution — captain decision 437(a).
+      if (isUsagePath(path)) return new Response(JSON.stringify(usageResponseBody()), { status: 200 });
       for (const [prefix, make] of Object.entries(handlers)) if (path.startsWith(prefix)) return make();
       throw new Error(`unstubbed ${path}`);
     });
@@ -15737,6 +15743,10 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
     ];
     const fetchImpl = vi.fn(async (input: unknown, init: RequestInit) => {
       const url = String(input);
+      // BEFORE the POST branch: `/usage` is a POST too, and the lane budget reads it before every
+      // execution (captain decision 437(a)). Answering it with an execution id makes the balance
+      // unreadable, and an unreadable balance is a refusal rather than headroom.
+      if (isUsagePath(url)) return new Response(JSON.stringify(usageResponseBody()), { status: 200 });
       if (init.method === 'POST') return new Response(JSON.stringify({ execution_id: 'e1' }), { status: 200 });
       if (url.includes('/query/4242') && !url.includes('results')) {
         return new Response(JSON.stringify({ query_sql: SQL }), { status: 200 });
@@ -15761,7 +15771,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       sleepImpl: async () => {},
     });
     const source = duneFillSource(client, {
-      bounds: { pollIntervalMs: 0, maxPollAttempts: 3, maxResultRows: 100 },
+      bounds: budgetedBounds({ pollIntervalMs: 0, maxPollAttempts: 3, maxResultRows: 100 }),
       coverage: { ok: true, toMs: BOUNDS.nowMs } as never,
       query: { id: 4242, sql: SQL, parameters: () => ({ mint: MINT }) },
       maxRequests: 20,
@@ -15806,6 +15816,8 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       minIntervalMs: 0,
       fetchImpl: (async (input: unknown, init: RequestInit) => {
         const url = String(input);
+        // BEFORE the POST branch — `/usage` is a POST too. Captain decision 437(a).
+        if (isUsagePath(url)) return new Response(JSON.stringify(usageResponseBody()), { status: 200 });
         if (init.method === 'POST') return new Response(JSON.stringify({ execution_id: 'e1' }), { status: 200 });
         if (url.includes('/query/4242') && !url.includes('results')) {
           return new Response(JSON.stringify({ query_sql: SQL }), { status: 200 });
@@ -15824,7 +15836,7 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       sleepImpl: async () => {},
     });
     const source = duneFillSource(client, {
-      bounds: { pollIntervalMs: 0, maxPollAttempts: 3, maxResultRows: 100 },
+      bounds: budgetedBounds({ pollIntervalMs: 0, maxPollAttempts: 3, maxResultRows: 100 }),
       coverage: { ok: true, toMs: BOUNDS.nowMs } as never,
       query: { id: 4242, sql: SQL, parameters: () => ({ mint: MINT }) },
       maxRequests: 20,

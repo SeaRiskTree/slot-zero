@@ -54,7 +54,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
 import { POPULATION_TAPE_DIR } from '../../config/data-root.mjs';
@@ -65,10 +66,11 @@ import {
   DuneClient,
   EXPORT_CREDITS_PER_MB,
   decideAllowance,
+  estimatePlanCredits,
   parseUsageResponse,
 } from './client.mjs';
 import { resolveDuneCredential } from './credential.mjs';
-import { assertSavedQueryMatches, executeAndRead, normaliseSql } from './dune.mjs';
+import { assertSavedQueryMatches, executeAndRead, normaliseSql, openLaneBudget } from './dune.mjs';
 import { ENTRY_QUERY_ID, ENTRY_SQL, duneRowsToWindow, entryQueryParameters } from './dune-fills.mjs';
 import { measureLaunchEntry } from './entry.mjs';
 import { createSlotGroups } from './measure.mjs';
@@ -179,12 +181,29 @@ export const ESTIMATED_BYTES_PER_ROW = 250;
  * dominant (~495 credits of bytes over the full tape); the guard refuses more and refuses earlier,
  * which is the safe direction for a lane whose executions cannot be taken back.
  *
- * **WHY THIS LANE'S PIN IS NOT THE 200 THE TWO KEYED `dune` BLOCKS TOOK.** Those price at most two
- * executions and can afford the vendor's own 30-minute floor outright; this one prices one execution
- * per batch, so it is pinned at the floor its DEADLINE buys instead. That is honest only because the
- * deadline exists and is enforced — and only conditionally, since cancelling bounds the wait for
- * certain and the bill only if Dune stops the engine on cancel, which the vendor does not document.
- * A batch that ever needs longer than 600 s must move this number with the deadline.
+ * **AND 61 WAS STILL A PER-LANE NUMBER CHOSEN TOO LOW, WHICH IS CAPTAIN DECISION 429a AND ITS
+ * ADOPTION 437(a). IT IS 181 NOW.** 61 was `executionDeadlineCredits` of this lane's own 600 s
+ * deadline, and the reasoning above for preferring the deadline to the engine limit — "honest only
+ * because the deadline exists and is enforced" — is exactly the reasoning 429a removed. What a
+ * cancel bounds for certain is the WAIT; whether it stops the BILL is undocumented
+ * ({@link EXECUTION_DEADLINE_CAVEAT}), so pricing off the deadline assumes the unsettled answer in
+ * the expensive direction's favour. `client.mjs` → `openDuneLaneBudget` therefore floors every
+ * per-execution price at `executionDeadlineCredits(ENGINE_TIMEOUT_MS)` = **181** and cannot be
+ * talked below it, and this pin is raised to meet it so that this lane's PRE-FLIGHT and its lane
+ * budget price an execution the same way. Two numbers for one bound is captain decision 144a's
+ * defect, and here it would have shown as a plan cleared at `batches × 61` that the budget then
+ * refused at `batches × 181` — a lane dying partway with the month partly gone.
+ *
+ * **What the raise costs:** the full-tape plan's compute term goes `batches × 61` → `batches × 181`
+ * against a retrieval half that is unchanged and still dominant (~495 credits of bytes over the full
+ * tape, ~95% of this lane's real bill). The guard refuses more and refuses earlier, which is the safe
+ * direction for a lane whose executions cannot be taken back. No committed measurement moves: this
+ * lane's record is already written and this figure prices FUTURE runs only.
+ *
+ * **WHY THIS IS NOW THE SAME SHAPE AS THE 200 THE TWO KEYED `dune` BLOCKS TOOK.** Those price at most
+ * two executions and took the vendor's own 30-minute floor plus ~10% of headroom outright; this one
+ * prices one execution per batch and takes the floor itself. A lane may still pin HIGHER — it may
+ * know its statement is worse than average and may never claim it is better.
  *
  * **THE COST OF THIS LANE IS RETRIEVAL, NOT COMPUTE** — ~495 credits of bytes against ~24 of
  * compute over the full tape — which inverts the assumption `thresholds.json` → `stage2_entry_dune`
@@ -193,7 +212,7 @@ export const ESTIMATED_BYTES_PER_ROW = 250;
  * fill. It is stated here because a reader arriving from that block will otherwise size this one
  * wrongly.
  */
-export const WORST_CASE_CREDITS_PER_EXECUTION = 61;
+export const WORST_CASE_CREDITS_PER_EXECUTION = 181;
 
 /**
  * Credits held back for the usage counter's lag. Same reserve the screen's Dune leg pins, and for
@@ -348,28 +367,58 @@ export function scanWindowFor(launch) {
 }
 
 /**
+ * This lane's plan, in the shape both its pre-flight and its lane budget price. **It is the SINGLE
+ * OWNER of that shape**, and {@link estimateReproductionCredits} is a thin caller of it rather than
+ * a second arithmetic beside it.
+ *
+ * **It is ONE builder because it is one plan.** `checkReproductionAllowance` rules on it before the
+ * run and `runReproduction`'s lane budget sizes its stop from it; two literals that merely agree is
+ * captain decision 144a's defect, and here the disagreement would have shown as a run cleared at one
+ * price and refused partway at another.
+ *
+ * @param {readonly ReproductionBatch[]} batches
+ * @returns {import('./client.mjs').DuneSpendPlan}
+ */
+export function reproductionSpendPlan(batches) {
+  return {
+    lane: 'tools/deployer-screen (Dune entry reproduction)',
+    executions: batches.length,
+    creditsPerExecution: WORST_CASE_CREDITS_PER_EXECUTION,
+    resultReads: batches.length,
+    rowsPerRead: MAX_PLANNED_ROWS_PER_EXECUTION,
+    bytesPerRow: ESTIMATED_BYTES_PER_ROW,
+  };
+}
+
+/**
  * Price a plan in credits, before anything is spent.
  *
- * Executions are priced at the ceiling ({@link WORST_CASE_CREDITS_PER_EXECUTION} each) because a
- * plan is admissible only when its WORST case fits. Bytes are priced from the tape's own row counts
- * rather than from the row cap, because the tape is a measurement of how many rows these windows
- * hold and the cap is only a bound on how they are grouped — pricing 12 reads at the cap would
- * refuse a run over rows that provably do not exist.
+ * **THE CLEARED PLAN AND EVERY PER-EXECUTION AUTHORISATION ARE ONE DERIVATION — this function is
+ * `estimatePlanCredits(`{@link reproductionSpendPlan}`(batches))` and nothing else.** It used to
+ * price retrieval from each batch's ACTUAL `plannedRows` while the lane budget priced every
+ * authorisation from that same plan's `rowsPerRead`, which is
+ * {@link MAX_PLANNED_ROWS_PER_EXECUTION}. Since `planReproduction` breaks batches on MONTH
+ * boundaries as well as on the row cap, real batches sit well under the cap — so the cleared figure
+ * was SMALLER than the sum of the authorisations it had to cover, and an 8-batch tape-shaped plan
+ * cleared 1,985.6 against 8 × 281 of authorisations: batches 1–7 ran and batch 8 threw
+ * `DuneLaneCeilingReached` with seven executions already billed. That is captain decision 144a's
+ * defect — one bound written as two numbers free to drift — and the same shape as the reserve the
+ * ceiling rule omitted, one term over.
+ *
+ * **Pricing retrieval at the CAP rather than at the tape's own counts is deliberate and it is the
+ * conservative direction.** It over-states the plan, so the pre-flight refuses EARLIER; a lane whose
+ * executions cannot be taken back may refuse a run it could have afforded, and may never admit one
+ * it cannot finish. The tighter estimate is not available at this price, because a per-batch
+ * retrieval figure cannot bound an authorisation that is priced per execution.
+ *
+ * Executions stay priced at the ceiling ({@link WORST_CASE_CREDITS_PER_EXECUTION} each) because a
+ * plan is admissible only when its WORST case fits.
  *
  * @param {readonly ReproductionBatch[]} batches
  * @returns {import('./client.mjs').DuneSpendEstimate}
  */
 export function estimateReproductionCredits(batches) {
-  const executionCredits = batches.length * WORST_CASE_CREDITS_PER_EXECUTION;
-  const exportBytes = batches.reduce((n, b) => n + b.plannedRows, 0) * ESTIMATED_BYTES_PER_ROW;
-  const exportCredits = (exportBytes / 1_000_000) * EXPORT_CREDITS_PER_MB;
-  const round = (/** @type {number} */ n) => Number(n.toFixed(3));
-  return {
-    executionCredits: round(executionCredits),
-    exportBytes,
-    exportCredits: round(exportCredits),
-    worstCaseCredits: round(executionCredits + exportCredits),
-  };
+  return estimatePlanCredits(reproductionSpendPlan(batches));
 }
 
 /**
@@ -958,14 +1007,7 @@ export async function checkReproductionAllowance(client, batches, nowMs, thresho
     };
   }
   const decision = decideAllowance({
-    plan: {
-      lane: 'tools/deployer-screen (Dune entry reproduction)',
-      executions: batches.length,
-      creditsPerExecution: WORST_CASE_CREDITS_PER_EXECUTION,
-      resultReads: batches.length,
-      rowsPerRead: MAX_PLANNED_ROWS_PER_EXECUTION,
-      bytesPerRow: ESTIMATED_BYTES_PER_ROW,
-    },
+    plan: reproductionSpendPlan(batches),
     estimate,
     allowance: reading.allowance,
     unreadableReasons: reading.reasons,
@@ -989,9 +1031,22 @@ export async function checkReproductionAllowance(client, batches, nowMs, thresho
  *   maxResultRows: number }} opts.bounds `executionDeadlineMs` is the give-up point an execution is
  *   cancelled at; absent, it defaults to the poll budget's own product. See `dune.mjs` ->
  *   `executeAndRead` and captain decision 381.
+ * @param {import('./client.mjs').AllowanceDecision} opts.allowance The verdict
+ *   {@link checkReproductionAllowance} reached before this run was admitted. **It is the lane
+ *   budget's ceiling and its policy** (captain decision 437(a)), so a run cannot be admitted on one
+ *   set of terms and then spend against another.
  * @param {number} [opts.queryId]
  * @param {string} [opts.sql]
  * @param {(line: string) => void} [opts.say]
+ * @param {(cache: RowCache) => void} [opts.persistRows] **Called in a `finally` around the batch
+ *   loop, so what was already fetched AND BILLED survives a stop partway through.** Every batch's
+ *   rows cost an execution that cannot be taken back, and until captain decision 437(a) the only way
+ *   out of this loop was a completed run; the lane budget adds a second — the account counter can
+ *   bind mid-run when another lane spends against the same account between batches — so a refusal at
+ *   batch 6 of 8 used to discard five executions' worth of rows on the way past. It is handed
+ *   `batchesCompleted` against `batchesPlanned` and must record a short run AS a short one; see
+ *   {@link serialiseRowCache}, which writes that in the file rather than leaving a later reader to
+ *   mistake a part-fetch for the whole tape.
  * @returns {Promise<{ rowsByMint: Map<string, unknown[]>, executions: number, resultBytes: number,
  *   unplacedRows: number }>} `unplacedRows` counts rows the vendor returned for a mint this run did
  *   not ask about, or with no readable mint at all. It is a property of the FETCH, so only a live
@@ -1012,6 +1067,26 @@ export async function runReproduction(client, opts) {
   await assertSavedQueryMatches(client, queryId, sql);
   say(`  saved query ${queryId} matches the committed ENTRY_SQL byte for byte; executing.`);
 
+  // ---- THE LANE BUDGET, RE-CHECKED BEFORE EVERY BATCH. ----------------------------------------
+  //
+  // Captain decision 437(a). `checkReproductionAllowance` is this lane's pre-flight and it runs
+  // ONCE, before the loop below issues one execution PER BATCH. That is the exact shape of the three
+  // recorded overruns — and of overrun 2 in particular, where a lane sized its final batch from a
+  // measured, identically-shaped prior batch and that batch still cost 41% more. Nothing measured
+  // reaches this budget: its stop is `estimateReproductionCredits`, the same plan the pre-flight
+  // priced, at the same raised {@link WORST_CASE_CREDITS_PER_EXECUTION}, floored again at the engine
+  // bound by `laneCeilingCredits` so the two can never disagree about one execution's price.
+  /** One BATCH's worth: one execution, one result read at this lane's own planned-row cap. */
+  const executionPlan = { ...reproductionSpendPlan(opts.batches), executions: 1, resultReads: 1 };
+  const laneBudget = openLaneBudget({
+    lane: 'tools/deployer-screen (Dune entry reproduction)',
+    allowance: opts.allowance,
+    executionPlan,
+    executionDeadlineMs:
+      opts.bounds.executionDeadlineMs ?? opts.bounds.maxPollAttempts * opts.bounds.pollIntervalMs,
+  });
+  const bounds = { ...opts.bounds, laneBudget, executionPlan };
+
   /** @type {Map<string, unknown[]>} */
   const rowsByMint = new Map();
   let unplacedRows = 0;
@@ -1019,10 +1094,14 @@ export async function runReproduction(client, opts) {
     for (const launch of batch.launches) rowsByMint.set(launch.mint, []);
   }
 
+  let batchesCompleted = 0;
+  /** @type {unknown} */
+  let stoppedBy = null;
+  try {
   for (const [index, batch] of opts.batches.entries()) {
     const parameters = entryQueryParameters(batch.launches.map(scanWindowFor));
     const before = client.resultBytes();
-    const result = await executeAndRead(client, queryId, parameters, opts.bounds);
+    const result = await executeAndRead(client, queryId, parameters, bounds);
     for (const row of result.rows) {
       // A row for a mint this RUN did not ask about — or one carrying no readable mint at all — is
       // a statement that ignored its own predicate, and it is COUNTED rather than dropped quietly.
@@ -1045,11 +1124,43 @@ export async function runReproduction(client, opts) {
       if (bucket === undefined) unplacedRows += 1;
       else bucket.push(row);
     }
+    batchesCompleted += 1;
     say(
       `  batch ${index + 1}/${opts.batches.length} (${batch.month}, ${batch.launches.length} launch(es)): ` +
         `${result.rows.length} row(s) planned ${batch.plannedRows}, ` +
         `${(client.resultBytes() - before).toLocaleString('en-US')} byte(s).`,
     );
+  }
+  } catch (cause) {
+    stoppedBy = cause;
+    throw cause;
+  } finally {
+    // WHAT WAS BILLED IS KEPT, on every way out of that loop. A `finally` and not a success path:
+    // the ways out that matter are the ones that throw, and the rows they leave behind have already
+    // been paid for.
+    //
+    // AND A RUN THAT BOUGHT NOTHING WRITES NOTHING. Unconditional, this `finally` was itself a way
+    // to lose the rows it exists to keep: a run refused at its FIRST batch has an empty map, and
+    // writing that over an operator's complete cache from an earlier full-tape fetch destroys ~530
+    // credits of rows to record that this run got none. There is no paid-for data to keep, so there
+    // is nothing to write. **This guard does not make the write safe on its own** — see
+    // {@link writeRowCache}, whose temp-and-rename covers the case this one cannot see, a run that
+    // DID buy rows and then dies part way through writing them. Neither substitutes for the other.
+    if (batchesCompleted > 0 && opts.persistRows !== undefined) {
+      try {
+        opts.persistRows({ rowsByMint, batchesCompleted, batchesPlanned: opts.batches.length });
+      } catch (cause) {
+        // A FAILED WRITE MAY NOT REPLACE THE REASON THE RUN STOPPED. Thrown from a `finally`, it
+        // would: the operator would be told their disk was full while the actual cause was a credit
+        // ceiling they could raise or wait out, and `DuneLaneCeilingReached` — which names the lane
+        // and the shortfall — would never be seen. So it is REPORTED beside the refusal and the
+        // refusal is what propagates. With nothing in flight it still throws, because a run that
+        // says it cached and did not is the same lie one level down.
+        const why = cause instanceof Error ? cause.message : String(cause);
+        if (stoppedBy === null) throw cause;
+        say(`  the --rows cache could NOT be written: ${why}. The run stopped for the reason below.`);
+      }
+    }
   }
 
   return { rowsByMint, executions: client.executions(), resultBytes: client.resultBytes(), unplacedRows };
@@ -1184,12 +1295,168 @@ export function readRowCache(path, read, gunzip) {
   const byMint = new Map();
   for (const line of gunzip(read(path)).toString('utf8').split('\n')) {
     if (line === '') continue;
-    const entry = /** @type {{ mint: string, row: unknown }} */ (JSON.parse(line));
+    const entry = /** @type {{ mint?: unknown, row?: unknown }} */ (JSON.parse(line));
+    // The trailer is not a row. It is skipped here and read by {@link readRowCacheCompleteness},
+    // so a cache written by a run that stopped part way still recomputes over what it does hold.
+    if (typeof entry.mint !== 'string') continue;
     const bucket = byMint.get(entry.mint);
     if (bucket === undefined) byMint.set(entry.mint, [entry.row]);
     else bucket.push(entry.row);
   }
   return byMint;
+}
+
+/**
+ * @typedef {object} RowCache
+ * @property {Map<string, unknown[]>} rowsByMint
+ * @property {number} batchesCompleted
+ * @property {number} batchesPlanned
+ */
+
+/**
+ * Serialise a `--rows` cache: one JSON line per row, then ONE TRAILER stating how much of the plan
+ * it holds.
+ *
+ * **The file has to be able to say it is short, because a cache that cannot is a cache a later
+ * `--from-rows` recompute reads as the whole tape** — and this lane's whole point is a comparison
+ * over all 235 launches, so a silently-short recompute reports agreement over a population chosen by
+ * where the money ran out. That is the same complete-looking-but-short failure the reader refuses a
+ * paged result for, arriving through our own cache instead of the vendor's paging.
+ *
+ * The trailer is a line rather than a header so the rows stream out unchanged and an older cache,
+ * written before this existed, still reads: it simply reports completeness UNKNOWN rather than
+ * claiming whole.
+ *
+ * @param {RowCache} cache
+ * @returns {string}
+ */
+export function serialiseRowCache(cache) {
+  const lines = [...cache.rowsByMint.entries()].flatMap(([mint, rows]) =>
+    rows.map((r) => JSON.stringify({ mint, row: r })),
+  );
+  lines.push(
+    JSON.stringify({
+      cache: ROW_CACHE_KIND,
+      complete: cache.batchesCompleted === cache.batchesPlanned,
+      batchesCompleted: cache.batchesCompleted,
+      batchesPlanned: cache.batchesPlanned,
+    }),
+  );
+  return `${lines.join('\n')}\n`;
+}
+
+/** Names the file this trailer belongs to, so another JSONL cache cannot be read as one of these. */
+export const ROW_CACHE_KIND = 'dune-entry-reproduction-rows';
+
+/**
+ * @typedef {object} RowCacheIo The filesystem seam, so a test can drive a write that fails part way.
+ * @property {(p: string, data: Buffer) => void} writeFileSync
+ * @property {(from: string, to: string) => void} renameSync
+ * @property {(p: string) => void} unlinkSync
+ * @property {(p: string) => Buffer} readFileSync
+ * @property {(p: string) => boolean} existsSync
+ */
+
+/** The default seam: `node:fs`. */
+const ROW_CACHE_IO = { writeFileSync, renameSync, unlinkSync, readFileSync, existsSync };
+
+/**
+ * Write a `--rows` cache without ever destroying rows already paid for.
+ *
+ * **THREE CONDITIONS GUARD THIS, THEY FAIL DIFFERENTLY, AND NONE REPLACES ANOTHER.** The same loss —
+ * an operator's complete cache from an earlier full-tape fetch of ~530 credits gone, and the rows to
+ * be bought again — has arrived by three separate routes, so it is closed at three separate points
+ * and a later reader tempted to simplify one away should read all three:
+ *
+ * 1. **Nothing bought, nothing written** — `runReproduction` does not call the persist at all when
+ *    no batch completed. This one cannot see a write that succeeds at writing LESS, nor one that
+ *    dies half way.
+ * 2. **A PARTIAL RESULT NEVER REPLACES A COMPLETE CACHE**, below. A run stopped at batch 2 of 8 has
+ *    genuinely paid for batch 1 and clause 1 lets it through, but writing it over an 8-batch cache
+ *    still trades seven batches for one. The existing file's own trailer is read first; if it says
+ *    `complete: true` and this result is short, that file is left byte for byte alone and the
+ *    partial goes to a SIBLING `.partial` path. The caller is told where, because a silent divert
+ *    is nearly as bad as the overwrite — an operator who does not know which file to hand
+ *    `--from-rows` has lost the new rows instead of the old ones.
+ * 3. **Temp file, then RENAME** — a rename within a directory is atomic, so the target is either the
+ *    old bytes or the new ones and never a truncated middle. A direct `writeFileSync` opens the only
+ *    copy for truncation before it has a byte to put back. Clauses 1 and 2 both write, so neither
+ *    sees this; a failed write also unlinks its own temp so a directory is left as it was found.
+ *
+ * A cache that does not say (no trailer, unreadable, absent) is UNKNOWN, and only an explicit
+ * `complete: true` diverts — clause 2 protects what can prove it is whole and claims nothing more.
+ *
+ * @param {string} path
+ * @param {RowCache} cache
+ * @param {RowCacheIo} [io]
+ * @returns {{ path: string, rows: number, preservedCompleteCacheAt: string | null }} `path` is where
+ *   the rows actually went, and `preservedCompleteCacheAt` names the complete cache that was left
+ *   alone when they were diverted — `null` when nothing was diverted.
+ */
+export function writeRowCache(path, cache, io = ROW_CACHE_IO) {
+  const text = serialiseRowCache(cache);
+  const short = cache.batchesCompleted < cache.batchesPlanned;
+  const diverted = short && holdsACompleteRowCache(path, io);
+  const target = diverted ? `${path}.partial` : path;
+  // A SIBLING, not the system temp directory: rename is only atomic within one filesystem, and a
+  // cross-device rename fails outright — which would turn this guard into a lane that never caches.
+  const temp = `${target}.tmp-${process.pid}`;
+  try {
+    io.writeFileSync(temp, gzipSync(Buffer.from(text, 'utf8')));
+    io.renameSync(temp, target);
+  } catch (cause) {
+    try {
+      io.unlinkSync(temp);
+    } catch {
+      // The WRITE's error is what an operator needs; a failure to tidy up after it is not allowed to
+      // mask it, and there is nothing useful to do about a temp file that will not delete.
+    }
+    throw cause;
+  }
+  return { path: target, rows: text.split('\n').length - 2, preservedCompleteCacheAt: diverted ? path : null };
+}
+
+/**
+ * Does `path` already hold a cache whose own trailer says it is whole?
+ *
+ * @param {string} path
+ * @param {RowCacheIo} io
+ * @returns {boolean}
+ */
+function holdsACompleteRowCache(path, io) {
+  try {
+    if (!io.existsSync(path)) return false;
+    return readRowCacheCompleteness(path, io.readFileSync, gunzipSync)?.complete === true;
+  } catch {
+    // Unreadable is UNKNOWN, and only a cache that can prove it is whole is protected here. It is
+    // the one direction this clause deliberately does not cover, rather than a silent assumption.
+    return false;
+  }
+}
+
+/**
+ * What a `--rows` cache says about its own completeness, or `null` when it does not say.
+ *
+ * `null` is UNKNOWN and is never read as complete: a cache written before the trailer existed cannot
+ * vouch for itself, which is the same rule every other reading in this repository follows.
+ *
+ * @param {string} path
+ * @param {(p: string) => Buffer} read
+ * @param {(b: Buffer) => Buffer} gunzip
+ * @returns {{ complete: boolean, batchesCompleted: number, batchesPlanned: number } | null}
+ */
+export function readRowCacheCompleteness(path, read, gunzip) {
+  for (const line of gunzip(read(path)).toString('utf8').split('\n')) {
+    if (line === '') continue;
+    const entry = /** @type {Record<string, unknown>} */ (JSON.parse(line));
+    if (entry['cache'] !== ROW_CACHE_KIND) continue;
+    return {
+      complete: entry['complete'] === true,
+      batchesCompleted: Number(entry['batchesCompleted']),
+      batchesPlanned: Number(entry['batchesPlanned']),
+    };
+  }
+  return null;
 }
 
 /* c8 ignore start */
@@ -1216,6 +1483,12 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     `  ESTIMATE       ${estimate.worstCaseCredits} credits = ${batches.length} x ` +
       `${WORST_CASE_CREDITS_PER_EXECUTION} compute + ${estimate.exportCredits} export ` +
       `(${(estimate.exportBytes / 1_000_000).toFixed(1)} MB at ${EXPORT_CREDITS_PER_MB} credits/MB)`,
+  );
+  say(
+    `                 retrieval is priced at ${MAX_PLANNED_ROWS_PER_EXECUTION.toLocaleString('en-US')} rows a read — ` +
+      `the PER-EXECUTION CAP, not the rows planned above — because the lane budget authorises each ` +
+      `execution at that same figure, and a plan cleared on a smaller basis than its own ` +
+      `authorisations dies partway with the earlier ones billed`,
   );
   say(`  saved query    ${ENTRY_QUERY_ID}, compared against the committed text BEFORE any execution`);
   say(`  statement      sha256 ${entrySqlFingerprint()} of the normalised ENTRY_SQL`);
@@ -1340,6 +1613,19 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         : {};
     say('');
     say(`  RECOMPUTED from ${args.fromRows} — no socket was opened and nothing was spent.`);
+    // A CACHE THAT CANNOT VOUCH FOR ITSELF DOES NOT PASS AS WHOLE. A run stopped part way — by its
+    // own lane ceiling, say — writes what it had already paid for, and a recompute over that is a
+    // comparison over the launches the money reached rather than over the tape.
+    const held = readRowCacheCompleteness(args.fromRows, read, gunzipSync);
+    if (held === null) {
+      say(`  the cache states no completeness (written before the trailer existed) — UNKNOWN, never whole.`);
+    } else if (!held.complete) {
+      say(
+        `  PARTIAL CACHE: it holds ${held.batchesCompleted} of ${held.batchesPlanned} planned ` +
+          `batch(es), so every launch in the rest is missing rather than empty. Read the comparison ` +
+          `below as covering what was fetched, not the tape.`,
+      );
+    }
     report(
       compareReproduction(args.dataDir, selected, readRowCache(args.fromRows, read, gunzipSync)),
       prior.custody ?? { ok: false, reasons: ['no fetching run to carry a custody verdict from'] },
@@ -1391,10 +1677,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const client = new DuneClient({
     key: credential.key,
     maxExecutions: batches.length,
-    // Each batch costs one execute, up to `maxPollAttempts` status polls and one result read, plus
-    // the single saved-query read and the usage read at the top. Sized so the ceiling cannot stop a
-    // planned run half way, which is the one failure mode worse than refusing it.
-    maxRequests: batches.length * (bounds.maxPollAttempts + 2) + 4,
+    // Each batch costs one execute, up to `maxPollAttempts` status polls and one result read — and
+    // since captain decision 437(a) the lane budget's OWN `POST /usage` read before every execution,
+    // which retries once, so two more per batch. Plus the single saved-query read and the pre-flight
+    // usage read at the top, with retry headroom. Sized so the ceiling cannot stop a planned run
+    // half way, which is the one failure mode worse than refusing it: a `CeilingReached` in the
+    // final batch leaves every earlier execution billed and unanswerable.
+    maxRequests: batches.length * (bounds.maxPollAttempts + 4) + 4,
     minIntervalMs: 250,
   });
 
@@ -1414,26 +1703,51 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   const { client: recorded, log } = recordCustody(client);
-  const { rowsByMint, unplacedRows } = await runReproduction(recorded, { batches, bounds, say });
+  // The verdict this run was ADMITTED on is what its lane budget then enforces, execution by
+  // execution — captain decision 437(a). Passing the decision rather than re-deriving a ceiling here
+  // is what stops a run being cleared on one set of terms and spending against another.
+  const { rowsByMint, unplacedRows } = await runReproduction(recorded, {
+    batches,
+    bounds,
+    allowance: decision,
+    say,
+    // KEEP WHAT WAS PAID FOR, when asked to — and on EVERY way out of the batch loop, not only the
+    // one that finishes. The first full run of this lane spent ~530 credits, threw the rows away and
+    // kept only the comparison, so correcting the statement's AMM half meant buying all 107,439 rows
+    // a second time including the 97,000 the correction did not touch. `--rows` writes them so the
+    // next change to the COMPARISON costs nothing, and since captain decision 437(a) the lane budget
+    // gives this loop a second exit — the account counter can bind mid-run when another lane spends
+    // against the same account between batches — which would otherwise discard every batch already
+    // billed on its way past.
+    //
+    // It is opt-in and the file is a working artefact, not a committed one: Dune's terms are "derive
+    // and discard", which this repo reads as deriving what it needs and not accumulating a vendor's
+    // data. A local cache for one session is the deriving; committing 24 MB of vendor rows would be
+    // the accumulating.
+    persistRows:
+      args.rows === null
+        ? undefined
+        : (cache) => {
+            const written = writeRowCache(/** @type {string} */ (args.rows), cache);
+            const whole = cache.batchesCompleted === cache.batchesPlanned;
+            say(
+              `  cached         ${written.rows} row(s) to ${written.path} ` +
+                `(a working file; not for committing) — ` +
+                (whole
+                  ? `all ${cache.batchesPlanned} batch(es)`
+                  : `PARTIAL: ${cache.batchesCompleted} of ${cache.batchesPlanned} batch(es), which is ` +
+                    `what this run paid for before it stopped; the file records that it is short`),
+            );
+            if (written.preservedCompleteCacheAt !== null) {
+              say(
+                `                 the COMPLETE cache already at ${written.preservedCompleteCacheAt} was ` +
+                  `left untouched — a partial result never replaces one that proved it was whole. Hand ` +
+                  `--from-rows the complete one unless you specifically want this run's rows.`,
+              );
+            }
+          },
+  });
   const custody = custodyOrderVerdict(log);
-
-  // KEEP WHAT WAS PAID FOR, when asked to. The first full run of this lane spent ~530 credits, threw
-  // the rows away and kept only the comparison — so correcting the statement's AMM half meant buying
-  // all 107,439 rows a second time, including the 97,000 the correction did not touch. `--rows`
-  // writes them so the next change to the COMPARISON costs nothing.
-  //
-  // It is opt-in and the file is a working artefact, not a committed one: Dune's terms are "derive
-  // and discard", which this repo reads as deriving what it needs and not accumulating a vendor's
-  // data. A local cache for one session is the deriving; committing 24 MB of vendor rows would be
-  // the accumulating.
-  if (args.rows !== null) {
-    const { gzipSync } = await import('node:zlib');
-    const lines = [...rowsByMint.entries()].flatMap(([mint, rows]) =>
-      rows.map((r) => JSON.stringify({ mint, row: r })),
-    );
-    writeFileSync(args.rows, gzipSync(Buffer.from(`${lines.join('\n')}\n`, 'utf8')));
-    say(`  cached         ${lines.length} row(s) to ${args.rows} (a working file; not for committing)`);
-  }
 
   report(compareReproduction(args.dataDir, selected, rowsByMint), custody, client.stats(), 'observed', unplacedRows);
 }

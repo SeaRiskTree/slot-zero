@@ -31,9 +31,9 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -59,6 +59,7 @@ import {
   executionDeadlineCredits,
   LANE_CEILING_IS_NOT_A_PROJECTION,
   LANE_SPEND_IS_TWO_QUANTITIES,
+  laneCeilingCredits as screenLaneCeilingCredits,
   openDuneLaneBudget,
 } from '../tools/deployer-screen/client.mjs';
 import {
@@ -69,15 +70,19 @@ import {
   estimatePlanCredits as censusEstimatePlanCredits,
   executionDeadlineCredits as censusExecutionDeadlineCredits,
   EXECUTION_DEADLINE_CAVEAT as CENSUS_DEADLINE_CAVEAT,
+  laneCeilingCredits as censusLaneCeilingCredits,
   openDuneLaneBudget as censusOpenDuneLaneBudget,
 } from '../tools/creation-census/client.mjs';
 import {
+  COVERAGE_SQL as SCREEN_COVERAGE_SQL,
+  CREATION_SQL as SCREEN_CREATION_SQL,
   DUNE_LEG_ORDER,
   checkDuneAllowance,
   duneSpendPlan,
   enumerateCreations,
   executeAndRead as screenExecuteAndRead,
   openDuneCreditLedger,
+  openLaneBudget as screenOpenLaneBudget,
 } from '../tools/deployer-screen/dune.mjs';
 import type { DuneCreditLedger } from '../tools/deployer-screen/dune.mjs';
 import { ENTRY_QUERY_ID, agreementExecutionsFor, tradeFillSpendPlan } from '../tools/deployer-screen/dune-fills.mjs';
@@ -108,6 +113,7 @@ import {
   recordCustody,
 } from '../tools/deployer-screen/dune-reproduction.mjs';
 import { CENSUS_SQL } from '../tools/creation-census/census.mjs';
+import { budgetedBounds, clearedAllowance } from './dune-lane-budget-fixture.js';
 
 const SCREEN_CLIENT = fileURLToPath(new URL('../tools/deployer-screen/client.mjs', import.meta.url));
 const CENSUS_CLIENT = fileURLToPath(new URL('../tools/creation-census/client.mjs', import.meta.url));
@@ -1294,6 +1300,37 @@ describe('THE SCREEN REFUSES BEFORE ITS FIRST BILLED READ', () => {
     expect(e.byWallet.get(WALLET)!.reasons.join(' ')).toMatch(/never checked for this run/);
   });
 
+  for (const pin of ['worstCaseCreditsPerExecution', 'resultBytesPerRowCeiling'] as const) {
+    it(`refuses by name when bounds.${pin} is missing, rather than pricing an execution without it`, async () => {
+      // A GUARD MAY NOT GET WEAKER WHEN ITS INPUTS GO MISSING. These two price ONE execution for the
+      // lane budget, while the budget's CEILING is taken from the plan this run was already cleared
+      // on — so an authorisation priced without them is cheaper than the plan reserved for it and
+      // MORE executions fit under the same stop. They used to default to 0, which dropped an
+      // authorisation from 248.4 to 181 while the ceiling did not move.
+      const { c, paths } = client(() => new Response(JSON.stringify({}), { status: 200 }));
+      const { [pin]: _dropped, ...withoutThePin } = BOUNDS;
+      const e = await enumerateCreations(c, {
+        wallets: [WALLET],
+        creationQueryId: 1,
+        coverageQueryId: 2,
+        refreshProbe: false,
+        nowMs: NOW_MS,
+        bounds: withoutThePin as never,
+        allowance: clearedAllowance(),
+      });
+      // Before the probe, which is itself a billed read: nothing at all left the client.
+      expect(paths).toEqual([]);
+      expect(c.executions()).toBe(0);
+      expect(e.byWallet.get(WALLET)!.reasons.join(' ')).toMatch(
+        new RegExp(`bounds\\.${pin} read as undefined`),
+      );
+      // And it falls back per wallet exactly like every other refusal here, rather than reporting
+      // the wallet as having created nothing.
+      expect(e.byWallet.get(WALLET)!.usable).toBe(false);
+      expect(e.coverage.ok).toBe(false);
+    });
+  }
+
   it('treats a transport failure on the free read as an unknown balance, not as headroom', async () => {
     const { c } = client(() => {
       throw new Error('socket hang up');
@@ -2300,6 +2337,8 @@ describe('AN EXECUTION WE ARE NO LONGER WILLING TO PAY FOR IS CANCELLED, AND IT 
     const fetchImpl = vi.fn(async (url: unknown) => {
       const path = String(url).slice(DUNE_API_BASE.length);
       paths.push(path);
+      // The lane budget re-reads the live balance before EVERY execution — captain decision 437(a).
+      if (path === USAGE_PATH) return new Response(JSON.stringify(usageBody([period(0, 100_000)])), { status: 200 });
       if (path.endsWith('/execute')) return new Response(JSON.stringify({ execution_id: 'exec-1' }), { status: 200 });
       if (path.endsWith('/cancel')) return (opts.cancelResponds ?? (() => new Response('{}', { status: 200 })))();
       if (path.endsWith('/status')) return new Response(JSON.stringify(opts.status(polls++)), { status: 200 });
@@ -2322,8 +2361,8 @@ describe('AN EXECUTION WE ARE NO LONGER WILLING TO PAY FOR IS CANCELLED, AND IT 
     const bounds = { pollIntervalMs: 0, maxPollAttempts: 5, executionDeadlineMs: 120_000, ...(opts.bounds ?? {}) };
     const go =
       which === 'screen'
-        ? screenExecuteAndRead(client as never, 7, {}, { ...bounds, maxResultRows: 100, clock })
-        : censusExecuteAndRead(client as never, 7, {}, { ...bounds, resultLimit: 100, clock });
+        ? screenExecuteAndRead(client as never, 7, {}, budgetedBounds({ ...bounds, maxResultRows: 100, clock }))
+        : censusExecuteAndRead(client as never, 7, {}, budgetedBounds({ ...bounds, resultLimit: 100, clock }));
     return { go, paths, client };
   }
 
@@ -2499,6 +2538,7 @@ describe('AN EXECUTION WE ARE NO LONGER WILLING TO PAY FOR IS CANCELLED, AND IT 
     const fetchImpl = vi.fn(async (url: unknown) => {
       const path = String(url).slice(DUNE_API_BASE.length);
       paths.push(path);
+      if (path === USAGE_PATH) return new Response(JSON.stringify(usageBody([period(0, 100_000)])), { status: 200 });
       if (path.endsWith('/execute')) return new Response(JSON.stringify({ execution_id: 'exec-1' }), { status: 200 });
       if (path.endsWith('/cancel')) return new Response('{}', { status: 200 });
       return new Response(JSON.stringify({ state: 'QUERY_STATE_PENDING' }), { status: 200 });
@@ -2517,7 +2557,7 @@ describe('AN EXECUTION WE ARE NO LONGER WILLING TO PAY FOR IS CANCELLED, AND IT 
       wrapped as never,
       7,
       {},
-      {
+      budgetedBounds({
         pollIntervalMs: 0,
         maxPollAttempts: 5,
         executionDeadlineMs: 120_000,
@@ -2527,7 +2567,7 @@ describe('AN EXECUTION WE ARE NO LONGER WILLING TO PAY FOR IS CANCELLED, AND IT 
           elapsed += 100_000;
           return now;
         },
-      },
+      }),
     ).then(
       () => null,
       (e: Error) => e,
@@ -2955,4 +2995,289 @@ describe('a lane credit ceiling is enforced at the execution boundary', () => {
       expect((err as unknown as { shortfallCredits: number }).shortfallCredits).toBe(6);
     }
   });
+});
+
+/**
+ * CAPTAIN DECISION 437(a) — THE ADOPTION. The guard above is merged and, until this, nothing was
+ * bound to it; a guard no lane adopts prevents nothing.
+ *
+ * Four properties, and each is written so it FAILS on the code as it stood before the wiring:
+ *
+ * 1. Every path that issues a Dune execution refuses without a budget. `executeAndRead` is the ONE
+ *    place `DuneClient.execute` is called in each tool, which is asserted here as a source fact
+ *    rather than assumed — a second call site would be a second unguarded lane.
+ * 2. A lane AT its ceiling is actually refused, driven through production code rather than through
+ *    the budget in isolation.
+ * 3. A lane whose own pin sits under the engine floor gets a ceiling that still clears one
+ *    execution — the "raise it so it fits" rule, applied by construction.
+ * 4. Nothing a completed execution reported can widen what follows.
+ */
+describe('437(a): every Dune-spending lane is WIRED to the budget, not merely offered it', () => {
+  const TOOLS = fileURLToPath(new URL('../tools', import.meta.url));
+  const LANE_WALLET = '7ufmve7ZqPYqZqPYqZqPYqZqPYqZqPYqZqPYqZqPYqPY';
+  /** The vendor's own 30-minute engine limit in credits, restated where these cases read it. */
+  const ENGINE_FLOOR = 181;
+  const DEADLINE_MS = 120_000;
+
+  function usageClient(used: number) {
+    return {
+      client: { readUsage: async () => usageBody([period(used, 100_000)]) },
+    };
+  }
+
+  function oneExecution(creditsPerExecution: number) {
+    return { lane: 'wired', executions: 1, creditsPerExecution, resultReads: 0, rowsPerRead: 0, bytesPerRow: 0 };
+  }
+
+  function client(onFetch: (path: string) => Response) {
+    const paths: string[] = [];
+    const fetchImpl = vi.fn(async (url: unknown) => {
+      const path = String(url).slice(DUNE_API_BASE.length);
+      paths.push(path);
+      return onFetch(path);
+    });
+    const c = new ScreenDuneClient({
+      key: SENTINEL_KEY,
+      maxExecutions: 4,
+      maxRequests: 60,
+      minIntervalMs: 0,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleepImpl: async () => undefined,
+    });
+    return { c, paths };
+  }
+
+  it('has exactly ONE place per tool that issues an execution, and both demand a budget', () => {
+    // THE ENUMERATION OF SPEND PATHS, AS A SOURCE FACT. Wiring `executeAndRead` guards every lane
+    // only while it is the sole caller of `DuneClient.execute`; a new module calling it directly
+    // would be a lane outside the budget, and that is precisely the failure this decision names.
+    // `recordCustody`'s forwarding decorator is the one licensed exception and is listed by name.
+    //
+    // THE PATTERN IS ANY RECEIVER, NOT A RECEIVER NAMED `client`. It used to be
+    // `/(?<!#)\bclient\.execute\(/`, which a spend path written `duneClient.execute(...)` — a
+    // receiver name `screen.mjs` already uses — or `this.dune.execute(...)` walks straight past,
+    // so the pin did not enforce what this comment claims. `DuneClient`'s own method DEFINITION is
+    // `async execute(`, with no receiver, so it does not match and the set stays the call sites.
+    const sites: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.mjs')) {
+          for (const line of readFileSync(full, 'utf8').split('\n')) {
+            if (/\.execute\(/.test(line)) sites.push(relative(TOOLS, full));
+          }
+        }
+      }
+    };
+    walk(TOOLS);
+    // By FILE, not by line: a line number would fail on any edit above it and prove nothing about
+    // the property. What must not change is WHICH files issue an execution.
+    expect([...new Set(sites)].sort()).toEqual([
+      'creation-census/run.mjs',
+      // The custody decorator, which FORWARDS to the client it wraps and issues nothing of its own.
+      'deployer-screen/dune-reproduction.mjs',
+      'deployer-screen/dune.mjs',
+    ]);
+
+    // WHAT IS DELIBERATELY *NOT* ASSERTED HERE: that the authorisation appears above the execute in
+    // each file's source text. That ordering is already carried BEHAVIOURALLY by the two
+    // `an UNBUDGETED execution is refused, and nothing is requested` cases below, which drive both
+    // `executeAndRead` entry points and assert nothing left the client; a source-order check would
+    // additionally fail on a rename, an inline, or a move into a helper, none of which are bugs.
+    // The ENUMERATION above is the half that is the acceptance criterion — a spend path nobody
+    // found is the failure this decision names — so a third file gaining a call site fails here.
+  });
+
+  for (const [which, run] of [
+    [
+      'screen',
+      (bounds: Record<string, unknown>) =>
+        screenExecuteAndRead(unguardedClient() as never, 7, {}, bounds as never),
+    ],
+    [
+      'census',
+      (bounds: Record<string, unknown>) =>
+        censusExecuteAndRead(unguardedClient() as never, 7, {}, bounds as never),
+    ],
+  ] as const) {
+    it(`${which}: an UNBUDGETED execution is refused, and nothing is requested`, async () => {
+      // THE MUTATION PROOF for the wiring. Before 437(a) this call executed happily; a future edit
+      // that drops the budget from a bounds object fails here rather than spending.
+      const issued: string[] = [];
+      const err = await run({ pollIntervalMs: 0, maxPollAttempts: 5, maxResultRows: 100, resultLimit: 100, issued })
+        .then(() => null, (e: Error) => e);
+      expect(err?.name).toBe('DuneRefused');
+      expect(err?.message).toMatch(/no lane budget/);
+      expect(err?.message).toMatch(/Nothing was requested and nothing was billed/);
+      // Not merely reported: the execution never left.
+      expect(issued).toHaveLength(0);
+    });
+  }
+
+  /** A client that records rather than fetches, so a spend that slipped past the budget is visible. */
+  function unguardedClient() {
+    return {
+      execute: async () => {
+        throw new Error('an execution was issued without passing the lane budget');
+      },
+      getJson: async () => ({ state: 'QUERY_STATE_COMPLETED' }),
+      wait: async () => {},
+      readUsage: async () => usageBody([period(0, 100_000)]),
+      noteResultBytes: () => {},
+      cancelExecution: async () => true,
+      issued: () => 0,
+      executions: () => 0,
+      resultBytes: () => 0,
+    };
+  }
+
+  it('REFUSES the enumeration at its ceiling, through production code, and spends no second execution', async () => {
+    // A LANE AT ITS STOP, driven through `enumerateCreations` rather than through the budget in
+    // isolation. `--dune-refresh-probe` makes this leg a TWO-execution one: the probe refresh, then
+    // the enumeration itself. The pre-flight cleared 206 credits — exactly one engine-floored
+    // execution plus the reserve — so the probe clears and the enumeration cannot.
+    //
+    // Before 437(a) both executions ran: the only thing counting was the client's
+    // `maxExecutionsPerRun`, which counts executions and knows nothing about credits, and the
+    // run-level allowance check had been taken once and never looked at again.
+    let executes = 0;
+    // A HEALTHY probe, so coverage passes and the enumeration genuinely reaches its own execution —
+    // a refused coverage would make this test pass for the wrong reason.
+    const months = (fromIso: string, toIso: string) => {
+      const out: string[] = [];
+      const [fy, fm] = fromIso.split('-').map(Number) as [number, number];
+      const [ty, tm] = toIso.split('-').map(Number) as [number, number];
+      for (let y = fy, m = fm; y < ty || (y === ty && m <= tm); m === 12 ? ((y += 1), (m = 1)) : (m += 1)) {
+        out.push(`${y}-${String(m).padStart(2, '0')}-01 00:00:00.000 UTC`);
+      }
+      return out;
+    };
+    const probe: unknown[] = [];
+    for (const [tbl, from] of [['evt_createevent', '2024-04'], ['call_create', '2024-01']] as const) {
+      probe.push({ tbl, metric: 'first_row', at: `${from}-01 00:00:00.000 UTC`, n: 20_000_000 });
+      probe.push({ tbl, metric: 'last_row', at: '2026-08-04 00:00:00.000 UTC', n: 20_000_000 });
+      for (const m of months(from, '2026-08')) probe.push({ tbl, metric: 'month', at: m, n: 1_000 });
+    }
+    const result = (rows: unknown[]) =>
+      new Response(
+        JSON.stringify({
+          execution_ended_at: '2026-08-04T00:00:00.000000Z',
+          result: { rows, metadata: { total_row_count: rows.length, total_result_set_bytes: 100 } },
+        }),
+        { status: 200 },
+      );
+    const { c, paths } = client((path) => {
+      if (path === USAGE_PATH) return new Response(JSON.stringify(usageBody([period(0, 100_000)])), { status: 200 });
+      if (path.startsWith('/query/2')) {
+        if (path.includes('/execute')) {
+          executes += 1;
+          return new Response(JSON.stringify({ execution_id: 'probe' }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ query_sql: SCREEN_COVERAGE_SQL }), { status: 200 });
+      }
+      if (path.startsWith('/query/1')) {
+        if (path.includes('/execute')) {
+          executes += 1;
+          return new Response(JSON.stringify({ execution_id: 'enum' }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ query_sql: SCREEN_CREATION_SQL }), { status: 200 });
+      }
+      if (path.includes('/status')) return new Response(JSON.stringify({ state: 'QUERY_STATE_COMPLETED' }), { status: 200 });
+      return result(probe);
+    });
+    const err = await enumerateCreations(c, {
+      wallets: [LANE_WALLET],
+      creationQueryId: 1,
+      coverageQueryId: 2,
+      refreshProbe: true,
+      nowMs: Date.parse('2026-08-04T01:00:00Z'),
+      bounds: {
+        pollIntervalMs: 0,
+        maxPollAttempts: 5,
+        maxResultRows: 20_000,
+        maxCoverageLagMs: 21_600_000,
+        worstCaseCreditsPerExecution: 1,
+        resultBytesPerRowCeiling: 0,
+      },
+      allowance: laneAllowance(ENGINE_FLOOR + 25),
+    }).then(() => null, (e: Error) => e);
+
+    // ONE execution cleared; the second was refused BEFORE it was issued.
+    expect(err?.name).toBe('DuneLaneCeilingReached');
+    expect(executes).toBe(1);
+    expect(paths.filter((p) => p.includes('/query/1/execute'))).toHaveLength(0);
+    // TERMINAL and a `DuneRefused`, so `screen.mjs`'s existing fallback to the RPC walk handles it
+    // unchanged and no candidate is read as having created nothing — 156a's rule, which enforcing a
+    // ceiling must not breach on its way past.
+    expect((err as unknown as { terminal: boolean }).terminal).toBe(true);
+    expect(err?.message).toMatch(/credit ceiling of 231 credit\(s\)/);
+  });
+
+  it('RAISES a lane whose own pin is under the engine floor, rather than letting it clear nothing', () => {
+    // The reproduction lane's pin was 61 — `executionDeadlineCredits` of its own 600 s deadline —
+    // which is the per-lane-number-chosen-too-low failure 429a removed the knob for. It is 181 now,
+    // and the ceiling rule floors it again so the two cannot drift apart.
+    expect(REPRODUCTION_CREDITS_PER_EXECUTION).toBe(ENGINE_FLOOR);
+
+    // And the rule itself: a lane handing in a sub-floor pin and a stop under one execution gets a
+    // ceiling that still clears one — floor PLUS the reserve, which is never spendable.
+    const plan = { lane: 'l', executions: 1, creditsPerExecution: 1, resultReads: 1, rowsPerRead: 0, bytesPerRow: 0 };
+    expect(screenLaneCeilingCredits(40, plan, 25)).toBe(ENGINE_FLOOR + 25);
+    expect(censusLaneCeilingCredits(50, plan, 25)).toBe(ENGINE_FLOOR + 25);
+    // A lane pricing ABOVE the floor keeps its own figure, and a cleared plan larger than the floor
+    // is not shrunk to it — but the reserve rides on TOP of whichever term binds, because
+    // `authoriseExecution` subtracts it from what the ceiling makes spendable. A ceiling of exactly
+    // the cleared plan leaves that plan's LAST execution short by the reserve; the multi-batch case
+    // in `test/dune-entry-reproduction.test.ts` is that failure driven end to end.
+    expect(screenLaneCeilingCredits(5_000, plan, 25)).toBe(5_025);
+    expect(censusLaneCeilingCredits(5_000, plan, 25)).toBe(5_025);
+    expect(screenLaneCeilingCredits(0, { ...plan, creditsPerExecution: 400 }, 0)).toBe(400);
+  });
+
+  it('lets NO measured outcome widen what a wired lane may do next', async () => {
+    // Overrun 2, at the wiring level. A lane that reports a cheap execution must not thereby buy
+    // itself another: `recordExecutionOutcome` is reported-only, and the local half is the sum of
+    // what was CLEARED.
+    const { client } = usageClient(0);
+    const b = screenOpenLaneBudget({
+      lane: 'wired',
+      allowance: laneAllowance(300),
+      executionPlan: { lane: 'wired', executions: 1, creditsPerExecution: 1, resultReads: 1, rowsPerRead: 0, bytesPerRow: 0 },
+      executionDeadlineMs: DEADLINE_MS,
+    });
+    await b.authoriseExecution(client, { plan: oneExecution(1), nowMs: NOW_MS });
+    b.recordExecutionOutcome({ executionCostCredits: 0.25, resultBytes: 0 });
+    expect(b.spentSoFar().localEstimateCredits).toBe(ENGINE_FLOOR);
+    expect(b.spentSoFar().attributedExecutionCredits).toBe(0.25);
+    // Ceiling 325 (the cleared 300 plus the reserve) - 181 cleared - 25 reserve = 119, which is
+    // under one more floor-priced execution.
+    const err = await b
+      .authoriseExecution(client, { plan: oneExecution(0.25), nowMs: NOW_MS })
+      .then(() => null, (e: Error) => e);
+    expect(err?.name).toBe('DuneLaneCeilingReached');
+  });
+
+  /** A cleared pre-flight verdict whose worst case is `worstCaseCredits` — the lane's stop. */
+  function laneAllowance(worstCaseCredits: number) {
+    return {
+      verdict: 'sufficient' as const,
+      ok: true,
+      worstCaseCredits,
+      creditsUsed: 0,
+      creditsIncluded: 100_000,
+      monthlyCapCredits: 100_000,
+      creditsIncludedVendor: 100_000,
+      bindingCeiling: 'operator-cap' as const,
+      creditsRemaining: 100_000,
+      reserveCredits: 25,
+      spendableCredits: 99_975,
+      shortfallCredits: 0,
+      periodStart: '2026-07-29',
+      periodEnd: '2026-08-29',
+      readAtUtc: '2026-08-10T00:00:00.000Z',
+      reasons: [],
+      caveats: ['synthetic test fixture'],
+    };
+  }
 });

@@ -820,7 +820,11 @@ export function assessTradeCoverage(input) {
  * @param {object} opts
  * @param {boolean} opts.refresh
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, executionDeadlineMs?: number | undefined,
- *   maxResultRows: number }} opts.bounds `executionDeadlineMs` is the give-up point an execution is
+ *   maxResultRows: number, laneBudget?: import('./client.mjs').DuneLaneBudget | undefined,
+ *   executionPlan?: import('./client.mjs').DuneSpendPlan | undefined }} opts.bounds The lane budget
+ *   and its one-execution plan are REQUIRED wherever an execution is issued — captain decision
+ *   437(a); `dune.mjs` -> `executeAndRead` is the one place that refuses without them.
+ *   `executionDeadlineMs` is the give-up point an execution is
  *   cancelled at; absent, it defaults to the poll budget's own product. See `dune.mjs` ->
  *   `executeAndRead` and captain decision 381.
  * @param {(note: string) => void} [opts.onRefreshFailure]
@@ -892,7 +896,11 @@ export function committedEntryQuery() {
  * @param {import('./client.mjs').DuneClient} client
  * @param {object} opts
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, executionDeadlineMs?: number | undefined,
- *   maxResultRows: number }} opts.bounds `executionDeadlineMs` is the give-up point an execution is
+ *   maxResultRows: number, laneBudget?: import('./client.mjs').DuneLaneBudget | undefined,
+ *   executionPlan?: import('./client.mjs').DuneSpendPlan | undefined }} opts.bounds The lane budget
+ *   and its one-execution plan are REQUIRED wherever an execution is issued — captain decision
+ *   437(a); `dune.mjs` -> `executeAndRead` is the one place that refuses without them.
+ *   `executionDeadlineMs` is the give-up point an execution is
  *   cancelled at; absent, it defaults to the poll budget's own product. See `dune.mjs` ->
  *   `executeAndRead` and captain decision 381.
  * @param {import('./dune.mjs').CoverageAssessment | null} opts.coverage The trade tables' own

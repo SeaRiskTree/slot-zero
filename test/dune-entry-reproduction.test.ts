@@ -19,13 +19,17 @@
  *    from the tape-sourced leg and is deliberately not used as a threshold here.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync, gzipSync } from 'node:zlib';
 
 import { describe, expect, it } from 'vitest';
 
+import { budgetedBounds, clearedAllowance, isUsagePath, usageResponseBody } from './dune-lane-budget-fixture.js';
+
 import { POPULATION_TAPE_DIR } from '../config/data-root.mjs';
-import { DuneClient } from '../tools/deployer-screen/client.mjs';
+import { DuneClient, estimatePlanCredits } from '../tools/deployer-screen/client.mjs';
 import { assertSavedQueryMatches, describeExecutionError, executeAndRead } from '../tools/deployer-screen/dune.mjs';
 import {
   ENTRY_QUERY_ID,
@@ -51,8 +55,13 @@ import {
   parseArgs,
   oversizedBatches,
   planReproduction,
+  readRowCache,
+  readRowCacheCompleteness,
+  writeRowCache,
   readTapeLaunches,
   recordCustody,
+  reproductionSpendPlan,
+  serialiseRowCache,
   runReproduction,
   scanWindowFor,
 } from '../tools/deployer-screen/dune-reproduction.mjs';
@@ -121,6 +130,12 @@ function stub(opts: { savedSql?: () => string; rows?: unknown[] } = {}) {
   let executions = 0;
   const impl = async (url: unknown) => {
     const path = String(url);
+    // The lane budget re-reads the live balance before EVERY execution — captain decision 437(a).
+    // Answered ABOVE `paths.push`, deliberately: this stub's `paths` is what the CUSTODY assertions
+    // below read, and custody is a statement about the saved-query read and the execution. A free
+    // balance read is neither, and letting it take slot 0 would break an ordering claim it is not
+    // part of.
+    if (isUsagePath(path)) return new Response(JSON.stringify(usageResponseBody()), { status: 200 });
     paths.push(path);
     if (path.endsWith(`/query/${ENTRY_QUERY_ID}`)) {
       return new Response(JSON.stringify({ query_sql: savedSql() }), { status: 200 });
@@ -332,7 +347,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
   it('the production runner reads the saved query BEFORE its first execution', async () => {
     const { impl, paths } = stub();
     const { client: recorded, log } = recordCustody(client(impl));
-    await runReproduction(recorded, { batches: batchOf([MINT]), bounds: BOUNDS });
+    await runReproduction(recorded, { batches: batchOf([MINT]), bounds: BOUNDS, allowance: clearedAllowance() });
     expect(custodyOrderVerdict(log).ok).toBe(true);
     // Belt and braces on the wire itself: the saved-query read is the first request of the run.
     expect(paths[0]).toBe(`https://api.dune.com/api/v1/query/${ENTRY_QUERY_ID}`);
@@ -349,7 +364,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     const { client: recorded, log } = recordCustody(client(impl));
     const executeFirst = async () => {
       const parameters = entryQueryParameters(batchOf([MINT])[0]!.launches.map(scanWindowFor));
-      await executeAndRead(recorded, ENTRY_QUERY_ID, parameters, BOUNDS);
+      await executeAndRead(recorded, ENTRY_QUERY_ID, parameters, budgetedBounds(BOUNDS));
       await assertSavedQueryMatches(recorded, ENTRY_QUERY_ID, ENTRY_SQL);
     };
     await executeFirst();
@@ -365,7 +380,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     const { impl } = stub({ savedSql: () => `${ENTRY_SQL}\n-- edited from a browser` });
     const c = client(impl);
     const { client: recorded, log } = recordCustody(c);
-    await expect(runReproduction(recorded, { batches: batchOf([MINT]), bounds: BOUNDS })).rejects.toThrow(
+    await expect(runReproduction(recorded, { batches: batchOf([MINT]), bounds: BOUNDS, allowance: clearedAllowance() })).rejects.toThrow(
       /no longer matches the SQL committed/,
     );
     // The deliverable: zero executions. An execution is billed whether or not its answer is used.
@@ -388,6 +403,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     const { unplacedRows, rowsByMint } = await runReproduction(client(impl), {
       batches: batchOf([MINT]),
       bounds: BOUNDS,
+      allowance: clearedAllowance(),
     });
     // Two unplaceable rows and one unreadable one; only the asked-for mint was kept.
     expect(unplacedRows).toBe(3);
@@ -402,9 +418,297 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     const { unplacedRows, rowsByMint } = await runReproduction(client(impl), {
       batches: batchOf([MINT]),
       bounds: BOUNDS,
+      allowance: clearedAllowance(),
     });
     expect(unplacedRows).toBe(0);
     expect(rowsByMint.get(MINT)).toHaveLength(2);
+  });
+
+  it('a MULTI-BATCH run clears EVERY batch it was admitted on, the last one included', async () => {
+    // THE REGRESSION, driven end to end. `laneCeilingCredits` used to add the never-spendable
+    // reserve to the ENGINE-FLOOR term only, so a lane whose cleared plan was the larger term got a
+    // ceiling equal to that plan exactly — and `authoriseExecution` subtracts the reserve from what
+    // a ceiling makes spendable. Batches 1 and 2 cleared and batch 3 threw `DuneLaneCeilingReached`
+    // ~25 credits short, with the first two executions already billed: the lane dying partway with
+    // the month partly gone, which is the failure this guard exists to prevent.
+    //
+    // Every other reproduction test here runs ONE batch, which takes the floor branch and cannot see
+    // it. Three batches sized at the planner's own row cap are the shape that isolates the reserve:
+    // the cleared plan is three per-execution worst cases on EITHER row basis, so nothing but the
+    // reserve clause can decide the last batch. The row-basis defect gets its own case below.
+    const { rowsByMint, executions } = await threeBatchRun([
+      MAX_PLANNED_ROWS_PER_EXECUTION,
+      MAX_PLANNED_ROWS_PER_EXECUTION,
+      MAX_PLANNED_ROWS_PER_EXECUTION,
+    ]);
+    expect(executions).toBe(3);
+    // Every batch's result was read, not merely authorised — the stub answers each with one row.
+    expect(rowsByMint.get(MINT)).toHaveLength(3);
+  });
+
+  it('a multi-batch run of PARTIAL batches clears too — the cleared plan and the authorisations price one row basis', async () => {
+    // THE SECOND REGRESSION, and it is a different failure from the reserve one above. The
+    // pre-flight used to price retrieval from each batch's ACTUAL `plannedRows` while every
+    // authorisation was priced from `reproductionSpendPlan`'s `rowsPerRead`, which is the row CAP.
+    // `planReproduction` breaks batches on MONTH boundaries as well as on that cap, so every real
+    // batch is well under it — and the cleared figure was then SMALLER than the sum of the
+    // authorisations it had to cover, so the lane died partway with the earlier executions billed.
+    //
+    // These are the partial counts a month boundary actually produces, which is exactly the shape
+    // the at-cap case above cannot see: there the two bases coincide.
+    const rows = [448, 1_200, 300];
+    const { rowsByMint, executions } = await threeBatchRun(rows);
+    expect(executions).toBe(3);
+    expect(rowsByMint.get(MINT)).toHaveLength(3);
+
+    // And the property underneath it, rather than the arithmetic: the plan a run is admitted on does
+    // not depend on how the rows fall across its batches, because it is the same derivation every
+    // authorisation uses.
+    expect(estimateReproductionCredits(threeBatches(rows)).worstCaseCredits).toBe(
+      estimateReproductionCredits(threeBatches([1, 1, 1])).worstCaseCredits,
+    );
+  });
+
+  /** Three month-separated batches carrying the given planned row counts. */
+  function threeBatches(plannedRows: number[]) {
+    return ['2026-04', '2026-05', '2026-06'].map((month, i) => ({
+      month,
+      launches: [
+        {
+          mint: i === 0 ? MINT : OTHER_MINT,
+          symbol: `s${i}`,
+          createdAtMs: Date.parse(`${month}-07T13:27:14.000Z`),
+          windowMs: 60_000,
+          tapeFills: plannedRows[i]!,
+        },
+      ],
+      plannedRows: plannedRows[i]!,
+    }));
+  }
+
+  /**
+   * Run those three batches against the verdict the pre-flight would have cleared them on.
+   *
+   * The allowance is the run's OWN estimate rather than a comfortable one: a generous ceiling would
+   * pass whatever the arithmetic did, and prove nothing about either defect.
+   */
+  async function threeBatchRun(plannedRows: number[]) {
+    const batches = threeBatches(plannedRows);
+    const { impl } = stub();
+    const c = client(impl);
+    const { rowsByMint } = await runReproduction(c, {
+      batches,
+      bounds: BOUNDS,
+      allowance: clearedAllowance({ worstCaseCredits: estimateReproductionCredits(batches).worstCaseCredits }),
+    });
+    return { rowsByMint, executions: c.executions() };
+  }
+
+  it('KEEPS the batches it already paid for when the budget stops it part way, and says the cache is short', async () => {
+    // WHAT WAS BILLED IS KEPT. `--rows` exists because this lane once spent ~530 credits and threw
+    // the rows away, and captain decision 437(a) gave the batch loop a second way out: the lane
+    // budget can refuse mid-run when the account counter moves between batches. Written only after
+    // the loop returned, the cache lost every execution already billed on the way past — so it is
+    // written from a `finally` now, and this is that behaviour driven end to end.
+    //
+    // The stop is arranged by the ceiling itself: at 281 credits an execution, a cleared plan of 600
+    // (ceiling 625, reserve 25) clears two and cannot clear the third.
+    const dir = mkdtempSync(join(tmpdir(), 'slot-zero-rows-'));
+    const path = join(dir, 'rows.jsonl.gz');
+    try {
+      const { impl } = stub();
+      const c = client(impl);
+      const err = await runReproduction(c, {
+        batches: threeBatches([448, 1_200, 300]),
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 600 }),
+        persistRows: (cache) => writeRowCache(path, cache),
+      }).then(() => null, (e: Error) => e);
+
+      expect(err?.name).toBe('DuneLaneCeilingReached');
+      expect(c.executions()).toBe(2);
+      // The deliverable: both billed batches are on disk rather than discarded with the throw.
+      const read = (p: string) => readFileSync(p);
+      expect(readRowCache(path, read, gunzipSync).get(MINT)).toHaveLength(2);
+      // And it cannot be mistaken for the whole tape by a later `--from-rows` recompute, which would
+      // otherwise report agreement over the launches the money happened to reach.
+      expect(readRowCacheCompleteness(path, read, gunzipSync)).toEqual({
+        complete: false,
+        batchesCompleted: 2,
+        batchesPlanned: 3,
+      });
+
+      // The other side, so "short" is not what this cache always says: a run that finishes writes a
+      // cache that states it is whole.
+      const done = client(stub().impl);
+      await runReproduction(done, {
+        batches: threeBatches([448, 1_200, 300]),
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 5_000 }),
+        persistRows: (cache) => writeRowCache(path, cache),
+      });
+      expect(readRowCacheCompleteness(path, read, gunzipSync)?.complete).toBe(true);
+      expect(readRowCache(path, read, gunzipSync).get(MINT)).toHaveLength(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a run that bought NOTHING leaves an existing complete cache byte-identical', async () => {
+    // THE LOSS THE `finally` ITSELF INTRODUCED. An operator holds a complete cache from an earlier
+    // full-tape fetch (~530 credits). This run is refused at its FIRST batch — the account counter
+    // moved between runs — so `rowsByMint` is empty, and an unconditional persist writes a valid,
+    // 0-row, `complete: false` file over the only copy. Nothing was bought, so there is nothing to
+    // keep, and writing is pure loss.
+    //
+    // The assertion is on the BYTES, deliberately: a 0-row `complete: false` cache has a perfectly
+    // plausible shape, so a row-count or completeness check would pass on the broken code.
+    const dir = mkdtempSync(join(tmpdir(), 'slot-zero-rows-'));
+    const path = join(dir, 'rows.jsonl.gz');
+    try {
+      const batches = threeBatches([448, 1_200, 300]);
+      const done = client(stub().impl);
+      await runReproduction(done, {
+        batches,
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 5_000 }),
+        persistRows: (cache) => writeRowCache(path, cache),
+      });
+      const before = readFileSync(path);
+
+      // The month itself cannot cover one execution, so batch 1 is refused and nothing is bought.
+      const c = client(stub().impl);
+      const err = await runReproduction(c, {
+        batches,
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 5_000, monthlyCapCredits: 10 }),
+        persistRows: (cache) => writeRowCache(path, cache),
+      }).then(() => null, (e: Error) => e);
+
+      expect(err?.name).toBe('DuneLaneCeilingReached');
+      expect(c.executions()).toBe(0);
+      expect(readFileSync(path).equals(before)).toBe(true);
+      // And nothing was written ANYWHERE: a run that bought nothing does not leave a sibling either,
+      // which would be an empty file an operator has to work out the meaning of.
+      expect(readdirSync(dir)).toEqual(['rows.jsonl.gz']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a PARTIAL result never replaces a COMPLETE cache — it lands beside it, and the run says where', async () => {
+    // THE THIRD ROUTE TO THE SAME LOSS, and the one the other two guards cannot see. This run DID
+    // buy batch 1, so the nothing-was-bought guard lets it through, and the write SUCCEEDS, so the
+    // temp-and-rename has nothing to catch — it simply writes strictly less than what was there.
+    // An operator holding an 8-batch cache who is refused at batch 2 would trade seven batches for
+    // one, which is the ~530-credit loss `--rows` exists to prevent.
+    //
+    // The assertion is on the BYTES: a 1-batch `complete: false` file has a plausible shape, so a
+    // row-count or trailer check would pass on the broken code.
+    const dir = mkdtempSync(join(tmpdir(), 'slot-zero-rows-'));
+    const path = join(dir, 'rows.jsonl.gz');
+    const read = (p: string) => readFileSync(p);
+    try {
+      const batches = threeBatches([448, 1_200, 300]);
+      await runReproduction(client(stub().impl), {
+        batches,
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 5_000 }),
+        persistRows: (cache) => writeRowCache(path, cache),
+      });
+      const before = readFileSync(path);
+      expect(readRowCacheCompleteness(path, read, gunzipSync)?.complete).toBe(true);
+
+      // 281 credits an execution against a cleared 300 (ceiling 325, reserve 25): batch 1 clears and
+      // batch 2 cannot, so this run has genuinely paid for one batch of three.
+      const lines: string[] = [];
+      const c = client(stub().impl);
+      const err = await runReproduction(c, {
+        batches,
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 300 }),
+        say: (l) => lines.push(l),
+        persistRows: (cache) => {
+          const written = writeRowCache(path, cache);
+          lines.push(`cached to ${written.path}; preserved ${String(written.preservedCompleteCacheAt)}`);
+        },
+      }).then(() => null, (e: Error) => e);
+
+      expect(err?.name).toBe('DuneLaneCeilingReached');
+      expect(c.executions()).toBe(1);
+      // The complete cache is untouched, byte for byte.
+      expect(readFileSync(path).equals(before)).toBe(true);
+      // And the batch this run DID pay for is beside it rather than thrown away.
+      const partial = `${path}.partial`;
+      expect(readRowCache(partial, read, gunzipSync).get(MINT)).toHaveLength(1);
+      expect(readRowCacheCompleteness(partial, read, gunzipSync)).toEqual({
+        complete: false,
+        batchesCompleted: 1,
+        batchesPlanned: 3,
+      });
+      // A silent divert is nearly as bad as the overwrite: the operator has to be told which file
+      // holds what, or they cannot know what to hand `--from-rows`.
+      expect(lines.join('\n')).toContain(`cached to ${partial}; preserved ${path}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a WRITE that dies part way leaves the existing cache byte-identical, and the run still reports the ceiling', async () => {
+    // The second guard, which the first cannot see: this run DID buy rows, so it passes the
+    // nothing-was-bought check and reaches the write — and the write fails half way. A direct
+    // `writeFileSync` over the target truncates the operator's only copy before it has the bytes to
+    // put back; a temp file plus a rename leaves it whole.
+    const dir = mkdtempSync(join(tmpdir(), 'slot-zero-rows-'));
+    const path = join(dir, 'rows.jsonl.gz');
+    try {
+      const batches = threeBatches([448, 1_200, 300]);
+      await runReproduction(client(stub().impl), {
+        batches,
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 5_000 }),
+        persistRows: (cache) => writeRowCache(path, cache),
+      });
+      const before = readFileSync(path);
+
+      // A filesystem that truncates and then dies, which is what a full disk or a killed process
+      // does to a direct write. The seam is the same one production uses; only the failure is faked.
+      const dyingIo = {
+        writeFileSync: (p: string, data: Buffer) => {
+          writeFileSync(p, data.subarray(0, Math.floor(data.length / 2)));
+          throw new Error('ENOSPC: no space left on device');
+        },
+        renameSync: () => {
+          throw new Error('rename must not be reached once the write has failed');
+        },
+        unlinkSync,
+        readFileSync,
+        existsSync,
+      };
+      const lines: string[] = [];
+      const c = client(stub().impl);
+      const err = await runReproduction(c, {
+        batches,
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 600 }),
+        say: (l) => lines.push(l),
+        persistRows: (cache) => writeRowCache(path, cache, dyingIo),
+      }).then(() => null, (e: Error) => e);
+
+      // The cache the operator already paid for is untouched by the failed write.
+      expect(readFileSync(path).equals(before)).toBe(true);
+      // AND THE REASON THE RUN STOPPED SURVIVES THE WRITE FAILURE. Thrown from the `finally`, the
+      // write error would replace it and send the operator to look at their disk while the actual
+      // cause is a credit ceiling they could raise or wait out.
+      expect(err?.name).toBe('DuneLaneCeilingReached');
+      expect(err?.message).toMatch(/credit ceiling/);
+      // Reported ALONGSIDE, never instead of — the failed write is not silently swallowed either.
+      expect(lines.join('\n')).toMatch(/--rows cache could NOT be written: ENOSPC/);
+      // And the half-written temp file is gone: a failed write leaves the directory as it found it.
+      expect(readdirSync(dir)).toEqual(['rows.jsonl.gz']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('and that refusal is not an artefact of the fixture — the same stub executes when it matches', async () => {
@@ -412,7 +716,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     // and the test would pass against a broken harness. Same stub, same runner, matching text.
     const { impl } = stub();
     const c = client(impl);
-    await runReproduction(c, { batches: batchOf([MINT]), bounds: BOUNDS });
+    await runReproduction(c, { batches: batchOf([MINT]), bounds: BOUNDS, allowance: clearedAllowance() });
     expect(c.executions()).toBe(1);
   });
 });
@@ -463,11 +767,21 @@ describe('the plan, and the ceiling that refuses before the first request', () =
     expect(oversizedBatches(planReproduction([small]))).toEqual([]);
   });
 
-  it('prices executions at the ceiling and bytes at the tape\'s own row counts', () => {
-    const estimate = estimateReproductionCredits(batchOf([MINT, OTHER_MINT]));
+  it('prices executions at the ceiling and bytes at the row CAP the authorisations are priced at', () => {
+    // The cleared plan is `estimatePlanCredits(reproductionSpendPlan(batches))` and nothing else, so
+    // retrieval is priced at `MAX_PLANNED_ROWS_PER_EXECUTION` per read rather than at the tape's own
+    // counts. That over-states the plan and refuses EARLIER, which is the direction a lane whose
+    // executions cannot be taken back must fail in; pricing the tape's counts here made the cleared
+    // figure smaller than the authorisations it had to cover.
+    const batches = batchOf([MINT, OTHER_MINT]);
+    const estimate = estimateReproductionCredits(batches);
+    expect(estimate).toEqual(estimatePlanCredits(reproductionSpendPlan(batches)));
     expect(estimate.executionCredits).toBe(WORST_CASE_CREDITS_PER_EXECUTION);
-    expect(estimate.exportBytes).toBe(20 * ESTIMATED_BYTES_PER_ROW);
-    expect(estimate.worstCaseCredits).toBeCloseTo(WORST_CASE_CREDITS_PER_EXECUTION + (20 * ESTIMATED_BYTES_PER_ROW * 20) / 1e6, 6);
+    expect(estimate.exportBytes).toBe(MAX_PLANNED_ROWS_PER_EXECUTION * ESTIMATED_BYTES_PER_ROW);
+    expect(estimate.worstCaseCredits).toBeCloseTo(
+      WORST_CASE_CREDITS_PER_EXECUTION + (MAX_PLANNED_ROWS_PER_EXECUTION * ESTIMATED_BYTES_PER_ROW * 20) / 1e6,
+      6,
+    );
   });
 
   it('defaults to a dry run, so spending is something you ask for', () => {
@@ -734,6 +1048,8 @@ describe('a failed execution is billed, so its reason must reach the operator', 
     // statement's first execution came back with.
     const impl = async (url: unknown) => {
       const path = String(url);
+      // The lane budget re-reads the live balance before EVERY execution — captain decision 437(a).
+      if (isUsagePath(path)) return new Response(JSON.stringify(usageResponseBody()), { status: 200 });
       if (path.endsWith(`/query/${ENTRY_QUERY_ID}`)) return new Response(JSON.stringify({ query_sql: ENTRY_SQL }), { status: 200 });
       if (path.includes('/execute')) return new Response(JSON.stringify({ execution_id: 'e1' }), { status: 200 });
       return new Response(
@@ -745,7 +1061,7 @@ describe('a failed execution is billed, so its reason must reach the operator', 
       );
     };
     await expect(
-      executeAndRead(client(impl), ENTRY_QUERY_ID, { launches: 'x' }, BOUNDS),
+      executeAndRead(client(impl), ENTRY_QUERY_ID, { launches: 'x' }, budgetedBounds(BOUNDS)),
     ).rejects.toThrow(/integer overflow/);
   });
 

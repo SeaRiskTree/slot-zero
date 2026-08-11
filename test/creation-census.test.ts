@@ -29,9 +29,12 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { budgetedBounds, isUsagePath, usageResponseBody } from './dune-lane-budget-fixture.js';
 
 import {
   CENSUS_SQL,
@@ -132,6 +135,8 @@ function client(script: (path: string, init: RequestInit) => Response, over: Rec
   const fetchImpl = vi.fn(async (url: unknown, init: RequestInit) => {
     const path = String(url).slice(DUNE_API_BASE.length);
     calls.push(path);
+    // The lane budget re-reads the live balance before EVERY execution — captain decision 437(a).
+    if (isUsagePath(path)) return json(usageResponseBody());
     return script(path, init);
   });
   const c = new DuneClient({
@@ -417,7 +422,7 @@ describe('spending is bounded, and an execution is never bought twice', () => {
       return json({});
     });
     await expect(
-      executeAndRead(c, 1, {}, { pollIntervalMs: 0, maxPollAttempts: 3, resultLimit: 100 }),
+      executeAndRead(c, 1, {}, budgetedBounds({ pollIntervalMs: 0, maxPollAttempts: 3, resultLimit: 100 })),
     ).rejects.toThrow(/ended QUERY_STATE_FAILED/);
     expect(executes).toBe(1);
     expect(c.executions()).toBe(1);
@@ -660,6 +665,84 @@ describe('the CLI plans before it spends', () => {
     expect(code).toBe(EXIT.credential);
     expect(lines.join('\n')).toMatch(/is not set/);
   });
+});
+
+describe('the census lane budget, driven through THIS tool\'s own chokepoint', () => {
+  /**
+   * Drive `main --live` over a scripted transport.
+   *
+   * **The budget under test is the census's own** — `main` opens it with this directory's
+   * `openDuneLaneBudget` and its own `laneCeilingCredits` stop, from the verdict its own pre-flight
+   * reached. Nothing here supplies a fixture budget, which is the point: the screen's fixture
+   * builder would prove the screen's wiring twice and this lane's not at all.
+   *
+   * `main` builds its client itself, with no seam, so the transport is stubbed at `globalThis.fetch`
+   * — the same "nothing here reaches the network" property this file opens with, one layer out.
+   */
+  async function liveRun(usage: (call: number) => unknown) {
+    const paths: string[] = [];
+    let usageCalls = 0;
+    const out = mkdtempSync(join(tmpdir(), 'slot-zero-census-'));
+    const fetchImpl = vi.fn(async (url: unknown) => {
+      const path = String(url).slice(DUNE_API_BASE.length);
+      if (isUsagePath(path)) {
+        usageCalls += 1;
+        return json(usage(usageCalls));
+      }
+      paths.push(path);
+      if (path.endsWith('/execute')) return json({ execution_id: 'e1' });
+      if (path.includes('/status')) return json({ state: 'QUERY_STATE_COMPLETED' });
+      if (path.includes('/results')) return json(results(healthyRows()));
+      return json({ query_sql: CENSUS_SQL });
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+    const lines: string[] = [];
+    try {
+      const code = await main(
+        ['--live', '--month', '2026-07', '--out', out],
+        { [KEY_ENV_VAR]: SENTINEL_KEY },
+        (l) => lines.push(l),
+      );
+      return { code, paths, lines: lines.join('\n'), out };
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(out, { recursive: true, force: true });
+    }
+  }
+
+  it('CLEARS its single execution and writes the census', async () => {
+    // The cleared side of the boundary. This lane's pre-flight prices two result reads against one
+    // execution, so its cleared plan (224.51) is the larger term and the ceiling is that plus the
+    // never-spendable reserve — 249.51 — against one execution's own 212.255. A ceiling of exactly
+    // the cleared plan would leave this run's only execution 12.745 credits short, which is the
+    // reserve clause of `laneCeilingCredits` doing the work here rather than the engine floor.
+    const { code, paths, lines } = await liveRun(() => usageResponseBody(0, 4_000));
+    expect(code).toBe(EXIT.ok);
+    expect(paths.filter((p) => p.endsWith('/execute'))).toHaveLength(1);
+    expect(lines).toContain('1 execution(s)');
+  }, 20_000);
+
+  it('REFUSES at the boundary when the balance moved between the pre-flight and the execution, and issues nothing', async () => {
+    // THE OTHER SIDE, and it is the whole reason the budget re-reads rather than trusting the
+    // pre-flight: the account is one account and every lane of this fleet draws on it, so credits
+    // can be gone by the time this run reaches its own execution. The pre-flight sees a fresh period
+    // and clears; the budget's own re-read — the SECOND `POST /usage` of the run — sees the period
+    // nearly spent and refuses.
+    const { code, paths, lines } = await liveRun((call) =>
+      call === 1 ? usageResponseBody(0, 4_000) : usageResponseBody(3_990, 4_000),
+    );
+    // REFUSED (2), NOT VENDOR (4) — the same code the pre-flight returns for this same condition.
+    // We declined to spend: nothing was billed and nothing broke, and an operator reading a vendor
+    // exit would go and check Dune's status page instead of their own ceiling or the period
+    // boundary. `DuneLaneCeilingReached` IS a `DuneRefused` (so `screen.mjs`'s walk fallback still
+    // catches it), so what carries the distinction is the ORDER of the two catches — this case is
+    // what fails if a future edit reorders them.
+    expect(code).toBe(EXIT.refused);
+    // Not merely reported: the execution never left, so nothing was billed for it.
+    expect(paths.filter((p) => p.endsWith('/execute'))).toHaveLength(0);
+    expect(lines).toMatch(/executions spent this run: 0/);
+    expect(lines).toMatch(/tools\/creation-census/);
+  }, 20_000);
 });
 
 describe('the caveat travels with the number', () => {

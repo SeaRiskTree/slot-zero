@@ -117,8 +117,13 @@ import {
   decideAllowance,
   estimatePlanCredits,
   executionDeadlineCredits,
+  openLaneBudgetForDecision as openLaneBudget,
   parseUsageResponse,
+  requireLaneBudget,
+  vendorNumberOrNull,
 } from './client.mjs';
+
+export { openLaneBudget };
 
 /**
  * The row ceiling {@link CREATION_SQL} divides between the batch's deployers, written as a literal
@@ -1515,17 +1520,36 @@ export function describeExecutionError(status) {
  * `maxPollAttempts × pollIntervalMs >= executionDeadlineMs`. It defaults to exactly that product, so
  * a caller that pins nothing keeps the give-up point it already had and gains only the cancel.
  *
+ * **AND THE LANE BUDGET CLEARS IT FIRST.** See `client.mjs` → `EXECUTION_MUST_BE_BUDGETED`: `laneBudget`
+ * and `executionPlan` are REQUIRED, the budget re-reads the live balance and either clears this one
+ * execution or throws `DuneLaneCeilingReached`, and what it clears is debited whole — so the refusal
+ * lands before `client.execute` rather than after the bill. The vendor's own reported cost and
+ * result bytes are handed back afterwards through `recordExecutionOutcome`, which the budget carries
+ * for an operator to read and keeps out of its enforcement arithmetic.
+ *
  * @param {import('./client.mjs').DuneClient} client
  * @param {number} queryId
  * @param {Record<string, string>} parameters
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, maxResultRows: number,
- *   executionDeadlineMs?: number | undefined, clock?: () => number }} bounds `clock` is injected
+ *   executionDeadlineMs?: number | undefined, clock?: () => number,
+ *   laneBudget?: import('./client.mjs').DuneLaneBudget | undefined,
+ *   executionPlan?: import('./client.mjs').DuneSpendPlan | undefined }} bounds `clock` is injected
  *   only so a test can reach the deadline without waiting for it; a run reads the wall clock.
+ *   `laneBudget`/`executionPlan` are optional in the TYPE and required at runtime, so the refusal is
+ *   one sentence naming what is missing rather than a `TypeError` from inside the budget.
  * @returns {Promise<DuneResultSet>}
  */
 export async function executeAndRead(client, queryId, parameters, bounds) {
   const clock = bounds.clock ?? Date.now;
   const deadlineMs = bounds.executionDeadlineMs ?? bounds.maxPollAttempts * bounds.pollIntervalMs;
+  // BEFORE THE EXECUTION IS ISSUED. A `DuneLaneCeilingReached` from here is terminal and reaches the
+  // caller unchanged, so every fallback that already handles a Dune refusal handles this one.
+  const { budget, plan } = requireLaneBudget(bounds, 'dune.mjs -> executeAndRead');
+  // WALL TIME, NOT `bounds.clock`. That clock is an ELAPSED-time seam a test injects to reach the
+  // deadline without waiting for it, and it starts wherever the test starts it; the budget compares
+  // its reading against the billing period the vendor declares, so handing it an elapsed count would
+  // put every authorisation outside the period and refuse the lane for the wrong reason.
+  await budget.authoriseExecution(client, { plan, nowMs: Date.now() });
   const executionId = await client.execute(queryId, parameters);
   const startedAtMs = clock();
   // A LIVE EXECUTION IS NEVER LEFT RUNNING, WHATEVER TOOK US OUT OF THIS LOOP. The deadline and
@@ -1546,7 +1570,20 @@ export async function executeAndRead(client, queryId, parameters, bounds) {
         // refusal about the ANSWER, and cancelling a finished execution would neither save money
         // nor be true.
         settled = true;
-        return readResult(client, `/execution/${executionId}/results?limit=${bounds.maxResultRows}`, bounds);
+        const read = await readResult(
+          client,
+          `/execution/${executionId}/results?limit=${bounds.maxResultRows}`,
+          bounds,
+        );
+        // REPORTED ONLY, and the budget says so on its own field: the ceiling was enforced against
+        // the worst case this execution was CLEARED at, and nothing the vendor says afterwards may
+        // narrow the next one (`LANE_CEILING_IS_NOT_A_PROJECTION`). It is handed over so an operator
+        // can read attributed cost and bytes beside the reservation and see the gap for themselves.
+        budget.recordExecutionOutcome({
+          executionCostCredits: vendorNumberOrNull(field(status, 'execution_cost_credits')),
+          resultBytes: read.resultBytes,
+        });
+        return read;
       }
       if (state === 'QUERY_STATE_FAILED' || state === 'QUERY_STATE_CANCELLED' || state === 'QUERY_STATE_EXPIRED') {
         // SETTLED the other way: the vendor stopped it. Nothing to cancel, and a cancel here would
@@ -1640,9 +1677,13 @@ export async function executeAndRead(client, queryId, parameters, bounds) {
  *   captain decision 298a — because two copies of that is two answers to "may this surface be read".
  * @param {boolean} opts.refresh Execute instead of reading the cache.
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, executionDeadlineMs?: number | undefined,
- *   maxResultRows: number }} opts.bounds `executionDeadlineMs` is the give-up point an execution is
- *   cancelled at; absent, it defaults to the poll budget's own product. See `dune.mjs` ->
- *   `executeAndRead` and captain decision 381.
+ *   maxResultRows: number, laneBudget?: import('./client.mjs').DuneLaneBudget | undefined,
+ *   executionPlan?: import('./client.mjs').DuneSpendPlan | undefined }} opts.bounds
+ *   `executionDeadlineMs` is the give-up point an execution is cancelled at; absent, it defaults to
+ *   the poll budget's own product. See `dune.mjs` -> `executeAndRead` and captain decision 381.
+ *   `laneBudget`/`executionPlan` are required only on the REFRESH path, which executes — the cached
+ *   read below issues no execution — and `executeAndRead` is the one place that refuses without
+ *   them (captain decision 437(a)), so a probe read for the cache alone still needs no budget.
  * @param {CoverageProbe | null} [opts.fallbackProbe] A cached probe the caller ALREADY holds. Supplied
  *   on the staleness path, where re-reading the cache would spend a billed read to be handed back the
  *   very probe that was judged stale a moment ago. One rule, one code path: a refresh that fails
@@ -2140,7 +2181,15 @@ export async function checkDuneAllowance(client, input) {
  *   execution, coverage refused, and every candidate carrying its own fallback reason.
  * @param {{ pollIntervalMs: number, maxPollAttempts: number, executionDeadlineMs?: number | undefined,
  *   maxResultRows: number,
- *   maxCoverageLagMs: number, maxOversizedExecutions?: number, maxOversizedRowsPerExecution?: number }} opts.bounds
+ *   maxCoverageLagMs: number, maxOversizedExecutions?: number, maxOversizedRowsPerExecution?: number,
+ *   worstCaseCreditsPerExecution: number, resultBytesPerRowCeiling: number }} opts.bounds
+ *   The last two price ONE execution for the lane budget (captain decision 437(a)) and are
+ *   **REQUIRED**: an absent one refuses this leg by name, before any request. They may not default,
+ *   because the CEILING is priced from the cleared plan's own real pins while an AUTHORISATION would
+ *   be priced without them — 181 + 0 retrieval against the 296.8 a real run gets — so more
+ *   executions would fit under the same stop. A guard that grows weaker when its inputs go missing
+ *   is the failure direction this decision closes, and it is the same rule
+ *   `openDuneLaneBudget` already applies to a non-finite ceiling at construction.
  * @param {boolean} [opts.splitOversized] **Opt-IN, and deliberately so.** Captain decision 196a
  *   authorises the split; wiring it into `screen.mjs` also moves `thresholds.json` →
  *   `dune.maxExecutionsPerRun`, whose justification currently reads "one execution for the
@@ -2168,6 +2217,19 @@ export async function enumerateCreations(client, opts) {
     return refusedEnumeration(opts.wallets, reasons);
   }
 
+  for (const pin of /** @type {const} */ (['worstCaseCreditsPerExecution', 'resultBytesPerRowCeiling'])) {
+    const value = opts.bounds[pin];
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      return refusedEnumeration(opts.wallets, [
+        `this leg refused to spend: bounds.${pin} read as ${String(value)}, which is not a finite ` +
+          `non-negative number. It prices ONE execution for the lane budget, and the budget's ` +
+          `CEILING is taken from the plan this run was already cleared on — so an authorisation ` +
+          `priced without it is cheaper than the plan reserved for it and MORE executions fit under ` +
+          `the same stop. Nothing was requested and nothing was billed.`,
+      ]);
+    }
+  }
+
   // The probe FIRST, and its cost is a cached read. An enumeration executed against surfaces nobody
   // has bounded is the thing this module exists to refuse, so it is not spent before the bound is in
   // hand — and if the probe refuses, the execution is never issued at all.
@@ -2182,10 +2244,39 @@ export async function enumerateCreations(client, opts) {
     opts.onProbeRefreshFailure?.(note);
   };
 
+  // ---- THE LANE BUDGET, RE-CHECKED BEFORE EVERY EXECUTION THIS LEG ISSUES. --------------------
+  // Captain decision 437(a). `opts.allowance` above is the run's ONE pre-flight verdict and it is
+  // taken once; this leg then issues up to `maxExecutionsPerRun` executions AND up to two probe
+  // refreshes, and the oversized split iterates. A once-checked verdict is exactly what the three
+  // recorded overruns had. The budget is opened from the same `duneSpendPlan` the pre-flight priced,
+  // so the stop is this leg's own plan and not a second number; it is threaded into `bounds` because
+  // `executeAndRead` refuses without it.
+  //
+  // ONE EXECUTION's worth: one result read at the `?limit=` this leg reads at, priced per row at the
+  // pinned byte ceiling. `executeAndRead` pins `executions: 1` on it whatever is written here.
+  const executionPlan = {
+    ...duneSpendPlan({
+      maxExecutionsPerRun: 1,
+      maxResultRows: opts.bounds.maxResultRows,
+      worstCaseCreditsPerExecution: opts.bounds.worstCaseCreditsPerExecution,
+      resultBytesPerRowCeiling: opts.bounds.resultBytesPerRowCeiling,
+    }),
+    executions: 1,
+    resultReads: 1,
+  };
+  const laneBudget = openLaneBudget({
+    lane: 'tools/deployer-screen (creation enumeration)',
+    allowance: opts.allowance,
+    executionPlan,
+    executionDeadlineMs:
+      opts.bounds.executionDeadlineMs ?? opts.bounds.maxPollAttempts * opts.bounds.pollIntervalMs,
+  });
+  const bounds = { ...opts.bounds, laneBudget, executionPlan };
+
   let probe = await readCoverageProbe(client, {
     queryId: opts.coverageQueryId,
     refresh: opts.refreshProbe,
-    bounds: opts.bounds,
+    bounds,
     onRefreshFailure,
   });
   let coverage = assessCoverage({ probe, nowMs: opts.nowMs, bounds: opts.bounds });
@@ -2208,7 +2299,7 @@ export async function enumerateCreations(client, opts) {
     probe = await readCoverageProbe(client, {
       queryId: opts.coverageQueryId,
       refresh: true,
-      bounds: opts.bounds,
+      bounds,
       // The probe already in hand, so a FAILED re-execution does not spend a second billed read to
       // be handed back the very result that was judged stale a moment ago. It stays stale, the
       // coverage stays refused, and every candidate gets that refusal as its own reason.
@@ -2299,7 +2390,7 @@ export async function enumerateCreations(client, opts) {
     client,
     opts.creationQueryId,
     { [DEPLOYERS_PARAM]: askable.join(',') },
-    opts.bounds,
+    bounds,
   );
   const { byWallet: rowsByWallet, declaredByWallet, unreadableRows } = parseCreationRows(result.rows);
 
@@ -2376,7 +2467,7 @@ export async function enumerateCreations(client, opts) {
           client,
           opts.creationQueryId,
           { [DEPLOYERS_PARAM]: group.wallets.join(',') },
-          opts.bounds,
+          bounds,
         );
       } catch (cause) {
         // A follow-up execution is billed whether or not it succeeds and is NOT retried, exactly

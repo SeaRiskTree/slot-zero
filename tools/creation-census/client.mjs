@@ -1779,6 +1779,166 @@ export function openDuneLaneBudget(config) {
   };
 }
 
+/**
+ * **A LANE'S CEILING IS WHAT ITS PRE-FLIGHT CLEARED, FLOORED AT ONE ENGINE-PRICED EXECUTION, WITH
+ * THE RESERVE ADDED ON TOP OF WHICHEVER OF THE TWO BINDS — never a number a brief chose.** Captain
+ * decision 437(a), which is the ADOPTION of {@link openDuneLaneBudget}: a guard nothing is bound to
+ * prevents nothing.
+ *
+ * It lives in the SHARED REGION rather than once per tool because it is one rule and the two keyed
+ * tools may not import each other: a copy per lane is a rule free to be fixed in one place and
+ * forgotten in the other, which is exactly how the reserve clause below came to be wrong in both.
+ *
+ * Two inputs, and the LARGER binds:
+ *
+ * - **What the pre-flight cleared.** Every lane is already ruled on once by {@link decideAllowance}
+ *   before it spends, and that verdict's `worstCaseCredits` is precisely "what this lane was
+ *   authorised to spend this run". Taking it as the stop means the budget enforces the plan the run
+ *   was admitted on, execution by execution, rather than introducing a second number free to
+ *   disagree with it — captain decision 144a's rule, one currency over.
+ * - **One execution at the ENGINE floor.** {@link openDuneLaneBudget} floors every per-execution
+ *   price at `executionDeadlineCredits(ENGINE_TIMEOUT_MS)` and cannot be talked below it (captain
+ *   decision 429a), so a stop taken from the cleared figure ALONE could be a budget that clears
+ *   nothing: a lane whose own pin is sub-181 would refuse its first execution while reporting a
+ *   healthy plan. Flooring here is the "raise the ceiling so it fits" rule applied by CONSTRUCTION,
+ *   so it cannot be forgotten for one lane, and it is the only reason a lane pricing below the floor
+ *   is representable at all.
+ *
+ * **AND THE RESERVE IS ADDED TO WHICHEVER TERM BINDS, WHICH IS NOT A ROUNDING DETAIL.**
+ * `authoriseExecution` subtracts `reserveCredits` from what the ceiling makes spendable — it is held
+ * back against the counter's lag and is never spendable — so a ceiling of EXACTLY the cleared plan
+ * leaves the lane's LAST execution short by the reserve. Carrying it on the floor term alone hid
+ * that: a single-execution lane took the floor branch and cleared, while a multi-execution lane
+ * whose cleared plan was the larger term ran every batch but its last and then threw
+ * {@link DuneLaneCeilingReached} with the earlier executions already billed — the "lane dying
+ * partway with the month partly gone" failure this whole guard exists to prevent, reintroduced by
+ * the guard itself.
+ *
+ * **No measured cost is an input to any of it.** The pre-flight prices pins and the floor is the
+ * vendor's own limit; nothing a completed execution reported reaches this number
+ * ({@link LANE_CEILING_IS_NOT_A_PROJECTION}).
+ *
+ * @param {number} clearedWorstCaseCredits The pre-flight verdict's own `worstCaseCredits`.
+ * @param {DuneSpendPlan} executionPlan ONE execution's shape.
+ * @param {number} reserveCredits Held back against the counter's lag; never spendable.
+ * @returns {number} Credits.
+ */
+export function laneCeilingCredits(clearedWorstCaseCredits, executionPlan, reserveCredits) {
+  const oneAtTheFloor = estimatePlanCredits({
+    ...executionPlan,
+    executions: 1,
+    resultReads: Math.max(1, executionPlan.resultReads),
+    creditsPerExecution: Math.max(
+      executionDeadlineCredits(ENGINE_TIMEOUT_MS),
+      executionPlan.creditsPerExecution,
+    ),
+  }).worstCaseCredits;
+  const reserve = Math.max(0, Number.isFinite(reserveCredits) ? reserveCredits : 0);
+  const binding = Math.max(
+    Number.isFinite(clearedWorstCaseCredits) ? clearedWorstCaseCredits : 0,
+    oneAtTheFloor,
+  );
+  return round3(binding + reserve);
+}
+
+/**
+ * Open a lane's credit budget against the verdict that cleared it. Captain decision 437(a).
+ *
+ * **ONE OPENER FOR EVERY LANE IN THE FLEET, and it is in the shared region for the same reason
+ * {@link laneCeilingCredits} is**: the two keyed tools may not import each other, so an opener per
+ * tool is one policy written twice and free to drift. The census used to carry its own copy —
+ * `tightMultiple: 1`, `allowanceRequired: true`, reserve and cap re-read from its own bounds file —
+ * which happened to agree with this one and had nothing keeping it that way.
+ *
+ * **THE POLICY IS READ OFF THE CLEARED DECISION, never re-read from configuration**, for the same
+ * reason the ceiling is: the budget must enforce the terms the run was ADMITTED on, and a second
+ * read of the same pins is a second answer waiting to differ from the first. A decision carrying no
+ * cap refuses at the first authorisation, which is {@link decideAllowance}'s own rule under captain
+ * decision 322a and not a new one.
+ *
+ * @param {object} input
+ * @param {string} input.lane
+ * @param {AllowanceDecision} input.allowance The pre-flight verdict.
+ * @param {DuneSpendPlan} input.executionPlan ONE execution's shape.
+ * @param {number} input.executionDeadlineMs The give-up point this lane cancels an execution at.
+ *   **Required and it prices nothing** (captain decision 429a); it is stated because a lane that
+ *   cannot say how long it lets an execution run has not bounded its wait.
+ * @returns {DuneLaneBudget}
+ */
+export function openLaneBudgetForDecision(input) {
+  return openDuneLaneBudget({
+    lane: input.lane,
+    ceilingCredits: laneCeilingCredits(
+      input.allowance.worstCaseCredits,
+      input.executionPlan,
+      input.allowance.reserveCredits,
+    ),
+    reserveCredits: input.allowance.reserveCredits,
+    executionDeadlineMs: input.executionDeadlineMs,
+    monthlyCapCredits: /** @type {number} */ (input.allowance.monthlyCapCredits),
+    // ONE worst case has to fit, because this authorises ONE execution at a time. The pre-flight's
+    // own `allowanceTightMultiple` asks "could this run be made again this period", which is a
+    // question about the RUN and is already answered before the lane opens; asking it again per
+    // execution would refuse a lane on how many more times it could repeat its next single step.
+    tightMultiple: 1,
+    allowanceRequired: true,
+  });
+}
+
+/**
+ * **EVERY DUNE EXECUTION A TOOL ISSUES PASSES THROUGH A LANE BUDGET, AND ONE THAT CANNOT IS REFUSED
+ * BEFORE IT IS BILLED.** Captain decision 437(a).
+ *
+ * Each keyed tool has exactly ONE caller of `DuneClient.execute` — its own `executeAndRead` — so
+ * requiring the budget there guards every lane behind it and any path added later. A caller that
+ * supplies no budget does not spend unguarded: it throws, having issued nothing, which is what makes
+ * an unwired spend path a test failure rather than an invisible hole.
+ */
+export const EXECUTION_MUST_BE_BUDGETED =
+  'A Dune execution may only be issued through a lane budget (client.mjs -> openDuneLaneBudget). ' +
+  'A pre-flight check that runs once is what three overrunning lanes already had; the ceiling has ' +
+  'to be re-checked before every single execution, because iteration happens after the check. ' +
+  'Nothing was requested and nothing was billed.';
+
+/**
+ * Take the budget and the one-execution plan an `executeAndRead` may only spend through, or refuse.
+ *
+ * @param {{ laneBudget?: DuneLaneBudget | undefined, executionPlan?: DuneSpendPlan | undefined }} bounds
+ * @param {string} callSite Named in the refusal, so an operator reads which tool's chokepoint it was.
+ * @returns {{ budget: DuneLaneBudget, plan: DuneSpendPlan }}
+ */
+export function requireLaneBudget(bounds, callSite) {
+  const budget = bounds.laneBudget;
+  const plan = bounds.executionPlan;
+  if (budget == null || typeof budget.authoriseExecution !== 'function' || plan == null) {
+    throw new DuneRefused(
+      `REFUSED before the execution: this call reached ${callSite} with ` +
+        `${budget == null || typeof budget.authoriseExecution !== 'function' ? 'no lane budget' : 'no one-execution plan'}. ` +
+        EXECUTION_MUST_BE_BUDGETED,
+      { status: null, terminal: true },
+    );
+  }
+  // ONE EXECUTION, WHATEVER THE CALLER'S PLAN SAYS. `authoriseExecution` prices the plan as handed
+  // in, so a lane passing its whole RUN-level plan would reserve the entire run on every single
+  // authorisation and refuse after one. The lane's run-level shape is the CEILING's input, not the
+  // per-authorisation one, and pinning it here means a caller cannot conflate the two.
+  return { budget, plan: { ...plan, executions: 1, resultReads: Math.max(1, plan.resultReads) } };
+}
+
+/**
+ * A vendor-reported number, or `null` when it is absent or unreadable.
+ *
+ * Nothing this returns reaches an enforcement decision — it feeds the lane budget's REPORTED-ONLY
+ * counters — so an unreadable figure folds to `null` rather than refusing anything. Reading a
+ * missing cost as `0` would understate the very gap those counters exist to show.
+ *
+ * @param {unknown} value
+ * @returns {number | null}
+ */
+export function vendorNumberOrNull(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 /** @param {number} n @returns {number} */
 function round3(n) {
   return Number(n.toFixed(3));

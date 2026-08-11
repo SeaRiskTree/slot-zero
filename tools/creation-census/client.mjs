@@ -1314,6 +1314,471 @@ export function localCreditEstimate(input) {
   };
 }
 
+/**
+ * **A LANE'S CEILING IS A REFUSAL AGAINST A WORST CASE, NEVER A PROJECTION FROM WHAT THE LAST
+ * EXECUTION COST — and this repository has now overrun three times believing otherwise.**
+ *
+ * The three readings, all from lanes held to a hard credit stop written in a brief:
+ *
+ * 1. A 40-credit stop, 70.467 spent — 76% over. One execution of four cost 46.6 credits for a
+ *    SINGLE DAY of data, because cost is dominated by wide repeated array columns rather than by
+ *    date range or result size.
+ * 2. A 50-credit stop, 50.334 spent. Small in absolute terms and by far the more instructive: two
+ *    batches were IDENTICAL IN SHAPE — same generator, same 350 launches, same two-month
+ *    `block_month` list, 138.4 KB of SQL each. One cost 14.226 and the next cost 20.028, 41% more
+ *    for 25 more result rows. The lane had sized the second from the first's MEASURED cost and
+ *    projected ~44 of 50.
+ * 3. The settled account counter exceeded the summed `execution_cost_credits` by 8.000 credits over
+ *    1.085 MB of result reads.
+ *
+ * Reading 2 is the one that decides this design. **A pre-flight estimate taken from a measured,
+ * identically-shaped prior batch was still not a bound**, so no measured cost may ever narrow the
+ * next execution's worst case. {@link openDuneLaneBudget} therefore floors every per-execution price
+ * at the ENGINE FLOOR — `executionDeadlineCredits(ENGINE_TIMEOUT_MS)`, 181 credits, what the vendor's
+ * own 30-minute limit can bill — and a caller handing in a smaller figure gets that floor rather than
+ * its own number.
+ *
+ * **The floor is the engine's and not the lane's deadline, because the failure class here is A
+ * PER-LANE NUMBER CHOSEN TOO LOW and there are three recorded instances of it. The knob is REMOVED
+ * rather than re-tuned**: a lane may still pin HIGHER, and a sub-181 lane stop being unrepresentable
+ * under this guard is the intended message rather than a regression — evidence 1 measured a SINGLE
+ * execution at 46.6 credits, so a 40- or 50-credit stop was never a stop. A deadline bounds the WAIT
+ * for certain and the BILL only if Dune stops the engine on cancel, which is undocumented (see
+ * {@link EXECUTION_DEADLINE_CAVEAT}), so pricing a lane's worst case off it assumes the unsettled
+ * answer in the expensive direction's favour.
+ */
+export const LANE_CEILING_IS_NOT_A_PROJECTION =
+  'A lane ceiling is enforced against a WORST CASE and never against a projection from a prior ' +
+  'execution. Two Dune executions identical in shape — same generator, same 350 launches, same ' +
+  'two-month block list, 138.4 KB of SQL each — cost 14.226 and 20.028 credits, 41% apart for 25 ' +
+  'more result rows, and the lane that sized the second from the first still overran its stop. Per ' +
+  'this budget, no measured cost may lower the next execution\'s bound.';
+
+/**
+ * **THE COUNTER DELTA BINDS; `execution_cost_credits` IS A FLOOR UNDER IT AND NEVER THE CEILING'S
+ * BASIS.**
+ *
+ * The account counter is what the operator is billed against and the only quantity that closes the
+ * month. Attributable execution cost under-reads it in two independent ways: retrieval is ~71% of
+ * the bill and is not in that field at all, and the settled counter was measured 8.000 credits above
+ * the summed attributed cost over 1.085 MB of reads even after retrieval was allowed for.
+ *
+ * But the counter also LAGS (see {@link ALLOWANCE_LAG_CAVEAT}) — it lands in whole-credit jumps and
+ * was measured rising while the account was idle — so immediately after an execution the delta can
+ * still read ZERO for spend that has certainly happened. A budget that trusted only the counter
+ * would authorise the whole lane inside one lag window.
+ *
+ * So this budget holds BOTH and enforces against `max()` of them: the counter delta, and the local
+ * half — which is a WORST-CASE RESERVATION, the sum of what each authorised execution was CLEARED
+ * at, and NOT a figure built from executions issued and bytes measured. Each covers the other's
+ * blind spot and the larger is the honest reading at any instant. Which one bound is reported rather
+ * than hidden, because they answer different questions about the same run.
+ *
+ * **The local half depends on {@link EXPORT_CREDITS_PER_MB} MORE than a measured one would**, the
+ * retrieval term being reserved at authorisation rather than read back afterwards. Two readings now
+ * put that rate at ~7.4 and ~4.9 credits/MB against the pinned 20 — both in the CHEAP direction,
+ * which is the unsafe one to assume persists. That pin is captain decision 248c's and is
+ * deliberately not touched here; this budget uses it at its EXPENSIVE published value, so a cheaper
+ * real rate makes the reservation over-read, which refuses early rather than late. The counter delta
+ * is unaffected by any of it.
+ */
+export const LANE_SPEND_IS_TWO_QUANTITIES =
+  'The ACCOUNT COUNTER DELTA is what this ceiling is enforced against — it is what the month is ' +
+  'billed on. Summed `execution_cost_credits` under-reads it (retrieval is ~71% of the bill and is ' +
+  'not in that field; the settled counter was measured 8.000 credits above the attributed sum over ' +
+  '1.085 MB of reads), and the counter itself LAGS in whole-credit jumps so it under-reads just ' +
+  'after an execution. So it is held against a local WORST-CASE RESERVATION — the sum of what each ' +
+  'authorised execution was CLEARED at, compute and retrieval together, never a measured figure — ' +
+  'and the LARGER of the two binds at every check.';
+
+/**
+ * **THIS LANE HAS SPENT ITS CEILING — refused at the execution boundary, not warned about in a
+ * brief.**
+ *
+ * A `DuneRefused` and `terminal`, so no retry loop can walk past it and no `catch` that already
+ * falls back on a Dune refusal has to learn a new type. It carries the numbers a refusal is
+ * worthless without: the ceiling, what has been spent under both readings, what was held back, and
+ * what the execution it refused could have cost.
+ */
+export class DuneLaneCeilingReached extends DuneRefused {
+  /**
+   * @param {{ lane: string, ceilingCredits: number, counterDeltaCredits: number | null,
+   *   localEstimateCredits: number, bindingSpendCredits: number,
+   *   bindingQuantity: 'account-counter-delta' | 'local-estimate', reserveCredits: number,
+   *   spendableCredits: number, worstCaseCredits: number, shortfallCredits: number,
+   *   executionsAuthorised: number, refusedBy: 'lane-ceiling' | 'monthly-ceiling',
+   *   detail: string[] }} what
+   */
+  constructor(what) {
+    // WHICH CEILING REFUSED, said in the first clause. The two call for different responses — a lane
+    // ceiling is raised in the lane's own brief, the monthly one is the account's and is not — and a
+    // headline that always blamed the lane would report a 0-credit shortfall as the reason.
+    const head =
+      what.refusedBy === 'lane-ceiling'
+        ? `the "${what.lane}" lane's credit ceiling of ${what.ceilingCredits} credit(s) cannot cover ` +
+          `the next execution's worst case of ${what.worstCaseCredits} credit(s) — it is ` +
+          `${what.shortfallCredits} credit(s) short.`
+        : `the ACCOUNT's monthly ceiling refused the next execution of the "${what.lane}" lane, whose ` +
+          `worst case is ${what.worstCaseCredits} credit(s). The lane's own ceiling of ` +
+          `${what.ceilingCredits} credit(s) still had room; raising it would change nothing.`;
+    super(
+      `REFUSED at the execution boundary: ${head} ` +
+        `${what.executionsAuthorised} execution(s) have been authorised so far; spend reads ` +
+        `${what.bindingSpendCredits} credit(s) on the ${what.bindingQuantity} (account counter delta ` +
+        `${what.counterDeltaCredits === null ? 'UNREADABLE' : what.counterDeltaCredits}, local ` +
+        `estimate ${what.localEstimateCredits}), leaving ${what.spendableCredits} spendable after the ` +
+        `${what.reserveCredits}-credit reserve. ` +
+        `${what.detail.join(' ')} ${LANE_CEILING_IS_NOT_A_PROJECTION} ${LANE_SPEND_IS_TWO_QUANTITIES}`,
+      { status: null, terminal: true },
+    );
+    this.name = 'DuneLaneCeilingReached';
+    /** @type {'lane-ceiling' | 'monthly-ceiling'} */ this.refusedBy = what.refusedBy;
+    /** @type {string} */ this.lane = what.lane;
+    /** @type {number} */ this.ceilingCredits = what.ceilingCredits;
+    /** @type {number | null} */ this.counterDeltaCredits = what.counterDeltaCredits;
+    /** @type {number} */ this.localEstimateCredits = what.localEstimateCredits;
+    /** @type {number} */ this.bindingSpendCredits = what.bindingSpendCredits;
+    /** @type {'account-counter-delta' | 'local-estimate'} */ this.bindingQuantity = what.bindingQuantity;
+    /** @type {number} */ this.reserveCredits = what.reserveCredits;
+    /** @type {number} */ this.spendableCredits = what.spendableCredits;
+    /** @type {number} */ this.worstCaseCredits = what.worstCaseCredits;
+    /** @type {number} */ this.shortfallCredits = what.shortfallCredits;
+    /** @type {number} */ this.executionsAuthorised = what.executionsAuthorised;
+  }
+}
+
+/**
+ * @typedef {object} LaneSpendReading
+ * @property {number | null} counterDeltaCredits  `credits_used` now, less the baseline this budget
+ *   took before its first execution. `null` when no reading has EVER been taken.
+ * @property {boolean} counterReadingIsStale      The last authorisation could not read the counter
+ *   while an EARLIER one had, so `counterDeltaCredits` is a previous reading and not this moment's.
+ *   `null` and stale are different states and are kept apart: a lane on the `allowanceRequired:
+ *   false` waiver would otherwise report a stale delta as a live binding quantity.
+ * @property {number} localEstimateCredits        **A WORST-CASE RESERVATION, and no longer a
+ *   measured-bytes figure.** It is the sum of what each authorised execution was CLEARED at —
+ *   `estimate.worstCaseCredits`, compute AND retrieval — so authorisation and spend price the same
+ *   execution the same way. Nothing the vendor later reports about what an execution cost or
+ *   returned moves it.
+ * @property {number} attributedExecutionCredits  Summed `execution_cost_credits` as the vendor
+ *   reported it. **Reported only — it is not what the ceiling is enforced against.**
+ * @property {number} resultBytes                 Result bytes the vendor's metadata declared.
+ *   **Reported only, beside `attributedExecutionCredits`** — the retrieval worst case is reserved at
+ *   authorisation, so measured bytes reach no enforcement arithmetic.
+ * @property {number} bindingSpendCredits         `max()` of the two enforceable readings.
+ * @property {'account-counter-delta' | 'local-estimate'} bindingQuantity Which one that was.
+ */
+
+/**
+ * @typedef {object} DuneLaneBudget
+ * @property {(client: { readUsage: () => Promise<unknown> }, input: { plan: DuneSpendPlan,
+ *   nowMs: number }) => Promise<{ estimate: DuneSpendEstimate, allowance: AllowanceDecision,
+ *   spend: LaneSpendReading, spendableCredits: number }>} authoriseExecution Re-read the live
+ *   balance and either clear ONE execution or throw {@link DuneLaneCeilingReached}. **The `plan` it
+ *   takes must describe ONE execution.** It is priced as handed in — `executions`, `resultReads` and
+ *   `rowsPerRead` are the caller's — so a lane passing its whole RUN-level plan reserves the entire
+ *   run's worst case on every authorisation and refuses after one. That direction is toward refusal,
+ *   so it is a capacity loss and never a spend hole. `spend` and `spendableCredits` both describe the
+ *   instant AFTER the cleared execution, so a lane may size its next batch from either.
+ * @property {(outcome: { executionCostCredits?: number | null, resultBytes?: number | null }) => void}
+ *   recordExecutionOutcome What the vendor said the execution cost and returned. **Both figures are
+ *   REPORTED ONLY.** Neither reaches the enforcement arithmetic: the ceiling is enforced against the
+ *   authorised worst case and the account counter delta, and nothing else.
+ * @property {() => LaneSpendReading} spentSoFar The two quantities, as last read.
+ * @property {() => number} executionsAuthorised
+ */
+
+/**
+ * **A LANE'S CREDIT CEILING, ENFORCED AT THE EXECUTION BOUNDARY.**
+ *
+ * The thing this replaces is a sentence in a brief that a worker has to keep obeying while it
+ * iterates, and which has now failed three times (see {@link LANE_CEILING_IS_NOT_A_PROJECTION}). It
+ * is deliberately the SAME shape as the run-level guard beside it rather than a second mechanism:
+ * {@link estimatePlanCredits} prices the plan, {@link decideAllowance} rules on the monthly ceiling
+ * exactly as it does for the screen and the census, and this adds the one thing that guard cannot
+ * express — a budget SMALLER than the month, spent down across many executions, re-checked before
+ * every single one.
+ *
+ * Six properties — the three overruns above are why the first three exist, and the rest close
+ * defects found while closing them:
+ *
+ * - **It re-reads live usage before EVERY execution.** A pre-flight check that runs once is exactly
+ *   what the overrunning lanes had; the whole failure is that iteration happens after it.
+ * - **The worst case is floored at the ENGINE FLOOR — `executionDeadlineCredits(ENGINE_TIMEOUT_MS)`,
+ *   181 credits — and a caller cannot lower it.** A lane sizing the next execution from the last
+ *   one's measured cost hands in a small `creditsPerExecution`; it gets the engine floor. Nothing a
+ *   vendor has reported about a completed execution reaches this number, by construction. The floor
+ *   is NOT derived from `executionDeadlineMs`: the failure this guard exists to close is a per-lane
+ *   number chosen too low, so the knob is removed rather than re-tuned, and a lane wanting a 40- or
+ *   50-credit stop cannot have one here — see {@link LANE_CEILING_IS_NOT_A_PROJECTION}. A lane that
+ *   knows its statement is worse than the floor may still pin HIGHER.
+ * - **What was authorised is what is spent down, WHOLE.** Each cleared execution debits
+ *   `estimate.worstCaseCredits` — compute AND retrieval, the entire figure it was cleared against —
+ *   so there is ONE rule and no second path. Debiting the compute term alone left the retrieval
+ *   worst case unreserved and a lane clearing 423-credit executions could take 1,692 credits of
+ *   authorised worst case out of a 1,000-credit ceiling, which is the same defect as a lane pricing
+ *   above the floor and being charged the floor. **The consequence is accepted deliberately: a
+ *   large-read lane exhausts its ceiling in FEWER executions than its real bytes justify. Refusing
+ *   early is the intended direction and is not a regression to be tuned away** — retrieval was ~95%
+ *   of this repository's own entry lane's bill, so an unreserved retrieval term is most of the
+ *   ceiling.
+ * - **THE FIGURE AN AUTHORISATION IS CLEARED AT IS HELD FROM THE MOMENT THE DECISION BEGINS**, before
+ *   the balance read suspends the call, so two OVERLAPPING authorisations can never both be cleared
+ *   against the same total. The hold is provisional and is released on every path that does not
+ *   clear, a thrown one included. Without it the guard's "re-checked before every single one" held
+ *   only for a strictly serial lane, and Dune permits parallel executions.
+ * - **Spend is `max(counter delta, local estimate)`** — {@link LANE_SPEND_IS_TWO_QUANTITIES}.
+ * - **It THROWS.** A returned verdict is a warning, and a warning is what a worker iterates past.
+ *
+ * **A reading it cannot take refuses**, on the same rule as everything else here: an unreadable
+ * balance is not headroom, and a counter reading that has gone STALE says so on the reading rather
+ * than passing as live. A lane may pass `allowanceRequired: false` to proceed on the local
+ * reservation alone, and then that half is the only thing standing between the lane and the month.
+ * **It depends MORE on {@link EXPORT_CREDITS_PER_MB} than it did**, the retrieval term now being
+ * reserved rather than measured; that pin is captain decision 248c's and is deliberately used at its
+ * EXPENSIVE published value here, which makes the reservation over-read and refuse early.
+ *
+ * @param {object} config
+ * @param {string} config.lane                 Named in every refusal.
+ * @param {number} config.ceilingCredits       THIS LANE's budget, in credits. Smaller than the month.
+ * @param {number} config.reserveCredits       Held back against the counter's lag; never spendable.
+ * @param {number} config.executionDeadlineMs  How long one execution may run before this client
+ *   cancels it. **It is required and validated, and it does NOT set the per-execution worst case** —
+ *   that is the engine floor above, unconditionally. It is stated because a lane that cannot say how
+ *   long it lets an execution run has not bounded its wait, and silently ignoring a supplied deadline
+ *   would be worse than not taking one; the budget itself makes no other use of it.
+ * @param {number} config.monthlyCapCredits    The operator's fleet-wide cap, for {@link decideAllowance}.
+ * @param {number} config.tightMultiple
+ * @param {boolean} config.allowanceRequired
+ * @returns {DuneLaneBudget}
+ */
+export function openDuneLaneBudget(config) {
+  // A NON-FINITE CEILING CLEARS EVERY COMPARISON, WHICH IS THE GUARD INVERTED — `NaN < worst` is
+  // false, so a lane whose ceiling pin was missing or misspelt would be authorised without limit
+  // while reporting a budget. It is the same defect `decideAllowance` refuses a `NaN` worst case
+  // for, and it is caught HERE, at construction, so a lane cannot reach its first execution holding
+  // a budget that means nothing.
+  for (const [name, value] of [
+    ['ceilingCredits', config.ceilingCredits],
+    ['reserveCredits', config.reserveCredits],
+    ['executionDeadlineMs', config.executionDeadlineMs],
+  ]) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+      throw new Error(
+        `the "${config.lane}" lane opened a Dune credit budget whose ${name} read as ${String(value)}, ` +
+          `which is not a finite non-negative number. A ceiling that does not price cannot refuse ` +
+          `anything: every comparison against it is false and the lane would spend unbounded while ` +
+          `reporting a budget. Nothing was requested and nothing was billed.`,
+      );
+    }
+  }
+  // THE ENGINE FLOOR, NOT THIS LANE'S DEADLINE. `config.executionDeadlineMs` is validated above and
+  // deliberately does not price anything: the failure class is a per-lane number chosen too low, so
+  // the knob is removed rather than re-tuned.
+  const floorPerExecution = executionDeadlineCredits(ENGINE_TIMEOUT_MS);
+  /** @type {number | null} */ let baselineUsed = null;
+  let executions = 0;
+  let authorisedExecutionCredits = 0;
+  let heldCredits = 0;
+  let attributedExecutionCredits = 0;
+  let resultBytes = 0;
+  /** @type {number | null} */ let counterDeltaCredits = null;
+  let counterReadingIsStale = false;
+
+  /** @returns {LaneSpendReading} */
+  const reading = () => {
+    // The local half is a RESERVATION of what was AUTHORISED — each execution at the WHOLE worst
+    // case it was cleared against, compute and retrieval together — and never a figure built from
+    // what any execution was reported to have cost or returned. Reserving less than was cleared, in
+    // either term, lets a lane authorise many multiples of its own ceiling inside the counter's lag
+    // window. `attributedExecutionCredits` and `resultBytes` are carried beside it for an operator
+    // to read and are deliberately absent from this arithmetic.
+    const localEstimateCredits = round3(authorisedExecutionCredits);
+    const counter = counterDeltaCredits;
+    const counterBinds = counter !== null && counter > localEstimateCredits;
+    return {
+      counterDeltaCredits: counter,
+      counterReadingIsStale,
+      localEstimateCredits,
+      attributedExecutionCredits: round3(attributedExecutionCredits),
+      resultBytes,
+      bindingSpendCredits: counterBinds ? counter : localEstimateCredits,
+      bindingQuantity: counterBinds ? 'account-counter-delta' : 'local-estimate',
+    };
+  };
+
+  return {
+    executionsAuthorised: () => executions,
+    spentSoFar: reading,
+    recordExecutionOutcome(outcome) {
+      const cost = outcome.executionCostCredits;
+      if (typeof cost === 'number' && Number.isFinite(cost) && cost > 0) attributedExecutionCredits += cost;
+      const bytes = outcome.resultBytes;
+      if (typeof bytes === 'number' && Number.isFinite(bytes) && bytes > 0) resultBytes += bytes;
+    },
+    async authoriseExecution(client, input) {
+      // THE PER-EXECUTION WORST CASE, AND THE FLOOR IS THE POINT. A caller that sized this from a
+      // measured prior execution gets the engine floor instead of its own number; a caller pricing
+      // above the floor keeps its own, because a lane may know its statement is worse than average
+      // and may never claim it is better.
+      const plan = {
+        ...input.plan,
+        executions: Math.max(1, input.plan.executions),
+        creditsPerExecution: Math.max(floorPerExecution, input.plan.creditsPerExecution),
+      };
+      const estimate = estimatePlanCredits(plan);
+
+      // THE FIGURE THIS AUTHORISATION IS CLEARED AT IS HELD FROM THE MOMENT THE DECISION BEGINS —
+      // BEFORE the balance read suspends this call — so two overlapping authorisations can never both
+      // be cleared against the same total. Without the hold, both suspend at the `await` reading a
+      // pre-debit reservation, both clear, and only then does each debit: the same defect as a term
+      // cleared but never reserved, reached through interleaving. The counter cannot catch it either,
+      // since it reads low in exactly that window ({@link ALLOWANCE_LAG_CAVEAT}). The hold is
+      // PROVISIONAL: every exit that does not clear releases it, including a thrown one, because a
+      // leaked hold shrinks the lane's ceiling permanently.
+      const heldByThisCall = estimate.worstCaseCredits;
+      heldCredits = round3(heldCredits + heldByThisCall);
+      let holdReleased = false;
+      const releaseHold = () => {
+        if (holdReleased) return;
+        holdReleased = true;
+        heldCredits = round3(heldCredits - heldByThisCall);
+      };
+      try {
+        /** @type {UsageReading} */
+        let usage;
+        try {
+          usage = parseUsageResponse(await client.readUsage(), input.nowMs);
+        } catch (cause) {
+          usage = {
+            ok: false,
+            allowance: null,
+            reasons: [`POST /usage could not be read: ${cause instanceof Error ? cause.message : String(cause)}`],
+          };
+        }
+        if (usage.allowance !== null) {
+          // The FIRST successful reading is this lane's zero. Everything after it is a delta, which is
+          // what makes a lane ceiling smaller than the month enforceable at all.
+          if (baselineUsed === null) baselineUsed = usage.allowance.creditsUsed;
+          counterDeltaCredits = Math.max(0, round3(usage.allowance.creditsUsed - baselineUsed));
+          counterReadingIsStale = false;
+        } else {
+          // A READ THAT FAILED AFTER AN EARLIER ONE SUCCEEDED IS STALE, NOT NULL. The two are different
+          // states and inferring staleness from `null` cannot tell them apart, so on the
+          // `allowanceRequired: false` waiver the last good delta would keep reporting itself as the
+          // live binding quantity with nothing saying this authorisation could not read the counter.
+          counterReadingIsStale = counterDeltaCredits !== null;
+        }
+
+        // ONE MECHANISM, NOT TWO: the monthly ceiling is ruled on by the same `decideAllowance` every
+        // other guarded spend path in this repository uses, on this execution's own worst case.
+        const allowance = decideAllowance({
+          plan,
+          estimate,
+          allowance: usage.allowance,
+          unreadableReasons: usage.reasons,
+          reserveCredits: config.reserveCredits,
+          monthlyCapCredits: config.monthlyCapCredits,
+          tightMultiple: config.tightMultiple,
+          allowanceRequired: config.allowanceRequired,
+        });
+
+        const spend = reading();
+        // What OTHER authorisations are holding right now, and never this call's own hold — which is
+        // what keeps a serial lane's arithmetic byte-identical to what it was before holds existed,
+        // while an overlapping one is priced against room its sibling has already taken.
+        const heldElsewhere = round3(heldCredits - (holdReleased ? 0 : heldByThisCall));
+        const spendable = Math.max(
+          0,
+          round3(
+            config.ceilingCredits - spend.bindingSpendCredits - Math.max(0, config.reserveCredits) - heldElsewhere,
+          ),
+        );
+        /** @type {string[]} */
+        const detail = [];
+        if (spend.counterDeltaCredits === null) {
+          detail.push(
+            config.allowanceRequired
+              ? 'The account counter could not be read at all, so the binding quantity is unavailable ' +
+                'and this lane is running on its local estimate alone — which is not headroom.'
+              : 'The account counter could not be read; this lane was configured not to require it, so ' +
+                'the local estimate is the only thing bounding it.',
+          );
+        } else if (spend.counterReadingIsStale) {
+          detail.push(
+            `The account counter could not be read for THIS authorisation, so the ` +
+              `${spend.counterDeltaCredits}-credit delta above is a PREVIOUS reading and not this ` +
+              `moment's — it is a floor under the counter and cannot have fallen since.`,
+          );
+        }
+        if (heldElsewhere > 0) {
+          detail.push(
+            `${heldElsewhere} credit(s) are HELD by authorisation(s) still in flight and were subtracted ` +
+              `from what this one could spend: a cleared execution is spent whether or not its sibling ` +
+              `has returned yet.`,
+          );
+        }
+        if (!allowance.ok) {
+          detail.push(
+            `The MONTHLY ceiling refused independently of this lane's own: ${allowance.reasons.join(' ')}`,
+          );
+        }
+
+        const laneShort = spendable < estimate.worstCaseCredits;
+        if (!allowance.ok || laneShort) {
+          releaseHold();
+          throw new DuneLaneCeilingReached({
+            // THE LANE'S OWN CEILING IS REPORTED FIRST when both refuse: it is the tighter budget and
+            // the one the operator can act on, and a lane over its own stop is over it whatever the
+            // month has left.
+            refusedBy: laneShort ? 'lane-ceiling' : 'monthly-ceiling',
+            lane: config.lane,
+            ceilingCredits: config.ceilingCredits,
+            counterDeltaCredits: spend.counterDeltaCredits,
+            localEstimateCredits: spend.localEstimateCredits,
+            bindingSpendCredits: spend.bindingSpendCredits,
+            bindingQuantity: spend.bindingQuantity,
+            reserveCredits: Math.max(0, config.reserveCredits),
+            spendableCredits: spendable,
+            worstCaseCredits: estimate.worstCaseCredits,
+            shortfallCredits: Math.max(0, round3(estimate.worstCaseCredits - spendable)),
+            executionsAuthorised: executions,
+            detail,
+          });
+        }
+
+        // AUTHORISED MEANS SPENT, immediately. A cleared execution is an execution that will run, and
+        // the counter will not show it for minutes — so the local half moves here rather than on the
+        // way back, where a transport failure would lose it. It moves by the WHOLE figure this
+        // execution was CLEARED at — retrieval included — so authorisation and spend price the same
+        // execution the same way and there is no term the ceiling clears but never reserves. The
+        // provisional hold becomes that permanent debit in one step, with nothing awaited between.
+        releaseHold();
+        executions += 1;
+        authorisedExecutionCredits = round3(authorisedExecutionCredits + estimate.worstCaseCredits);
+        // BOTH FIELDS DESCRIBE THE SAME INSTANT — after this execution. Returning the pre-debit
+        // spendable overstates the lane's remaining room by exactly one worst case, which is the
+        // planning error this guard exists to remove: a lane sizing its next batch from it plans one
+        // execution too many.
+        const after = reading();
+        return {
+          estimate,
+          allowance,
+          spend: after,
+          spendableCredits: Math.max(
+            0,
+            round3(
+              config.ceilingCredits - after.bindingSpendCredits - Math.max(0, config.reserveCredits) - heldCredits,
+            ),
+          ),
+        };
+      } finally {
+        releaseHold();
+      }
+    },
+  };
+}
+
 /** @param {number} n @returns {number} */
 function round3(n) {
   return Number(n.toFixed(3));

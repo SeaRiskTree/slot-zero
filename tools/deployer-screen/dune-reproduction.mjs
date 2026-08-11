@@ -1037,6 +1037,15 @@ export async function checkReproductionAllowance(client, batches, nowMs, thresho
  * @param {number} [opts.queryId]
  * @param {string} [opts.sql]
  * @param {(line: string) => void} [opts.say]
+ * @param {(cache: RowCache) => void} [opts.persistRows] **Called in a `finally` around the batch
+ *   loop, so what was already fetched AND BILLED survives a stop partway through.** Every batch's
+ *   rows cost an execution that cannot be taken back, and until captain decision 437(a) the only way
+ *   out of this loop was a completed run; the lane budget adds a second — the account counter can
+ *   bind mid-run when another lane spends against the same account between batches — so a refusal at
+ *   batch 6 of 8 used to discard five executions' worth of rows on the way past. It is handed
+ *   `batchesCompleted` against `batchesPlanned` and must record a short run AS a short one; see
+ *   {@link serialiseRowCache}, which writes that in the file rather than leaving a later reader to
+ *   mistake a part-fetch for the whole tape.
  * @returns {Promise<{ rowsByMint: Map<string, unknown[]>, executions: number, resultBytes: number,
  *   unplacedRows: number }>} `unplacedRows` counts rows the vendor returned for a mint this run did
  *   not ask about, or with no readable mint at all. It is a property of the FETCH, so only a live
@@ -1084,6 +1093,8 @@ export async function runReproduction(client, opts) {
     for (const launch of batch.launches) rowsByMint.set(launch.mint, []);
   }
 
+  let batchesCompleted = 0;
+  try {
   for (const [index, batch] of opts.batches.entries()) {
     const parameters = entryQueryParameters(batch.launches.map(scanWindowFor));
     const before = client.resultBytes();
@@ -1110,11 +1121,18 @@ export async function runReproduction(client, opts) {
       if (bucket === undefined) unplacedRows += 1;
       else bucket.push(row);
     }
+    batchesCompleted += 1;
     say(
       `  batch ${index + 1}/${opts.batches.length} (${batch.month}, ${batch.launches.length} launch(es)): ` +
         `${result.rows.length} row(s) planned ${batch.plannedRows}, ` +
         `${(client.resultBytes() - before).toLocaleString('en-US')} byte(s).`,
     );
+  }
+  } finally {
+    // WHAT WAS BILLED IS KEPT, on every way out of that loop. A `finally` and not a success path:
+    // the ways out that matter are the ones that throw, and the rows they leave behind have already
+    // been paid for.
+    opts.persistRows?.({ rowsByMint, batchesCompleted, batchesPlanned: opts.batches.length });
   }
 
   return { rowsByMint, executions: client.executions(), resultBytes: client.resultBytes(), unplacedRows };
@@ -1249,12 +1267,82 @@ export function readRowCache(path, read, gunzip) {
   const byMint = new Map();
   for (const line of gunzip(read(path)).toString('utf8').split('\n')) {
     if (line === '') continue;
-    const entry = /** @type {{ mint: string, row: unknown }} */ (JSON.parse(line));
+    const entry = /** @type {{ mint?: unknown, row?: unknown }} */ (JSON.parse(line));
+    // The trailer is not a row. It is skipped here and read by {@link readRowCacheCompleteness},
+    // so a cache written by a run that stopped part way still recomputes over what it does hold.
+    if (typeof entry.mint !== 'string') continue;
     const bucket = byMint.get(entry.mint);
     if (bucket === undefined) byMint.set(entry.mint, [entry.row]);
     else bucket.push(entry.row);
   }
   return byMint;
+}
+
+/**
+ * @typedef {object} RowCache
+ * @property {Map<string, unknown[]>} rowsByMint
+ * @property {number} batchesCompleted
+ * @property {number} batchesPlanned
+ */
+
+/**
+ * Serialise a `--rows` cache: one JSON line per row, then ONE TRAILER stating how much of the plan
+ * it holds.
+ *
+ * **The file has to be able to say it is short, because a cache that cannot is a cache a later
+ * `--from-rows` recompute reads as the whole tape** — and this lane's whole point is a comparison
+ * over all 235 launches, so a silently-short recompute reports agreement over a population chosen by
+ * where the money ran out. That is the same complete-looking-but-short failure the reader refuses a
+ * paged result for, arriving through our own cache instead of the vendor's paging.
+ *
+ * The trailer is a line rather than a header so the rows stream out unchanged and an older cache,
+ * written before this existed, still reads: it simply reports completeness UNKNOWN rather than
+ * claiming whole.
+ *
+ * @param {RowCache} cache
+ * @returns {string}
+ */
+export function serialiseRowCache(cache) {
+  const lines = [...cache.rowsByMint.entries()].flatMap(([mint, rows]) =>
+    rows.map((r) => JSON.stringify({ mint, row: r })),
+  );
+  lines.push(
+    JSON.stringify({
+      cache: ROW_CACHE_KIND,
+      complete: cache.batchesCompleted === cache.batchesPlanned,
+      batchesCompleted: cache.batchesCompleted,
+      batchesPlanned: cache.batchesPlanned,
+    }),
+  );
+  return `${lines.join('\n')}\n`;
+}
+
+/** Names the file this trailer belongs to, so another JSONL cache cannot be read as one of these. */
+export const ROW_CACHE_KIND = 'dune-entry-reproduction-rows';
+
+/**
+ * What a `--rows` cache says about its own completeness, or `null` when it does not say.
+ *
+ * `null` is UNKNOWN and is never read as complete: a cache written before the trailer existed cannot
+ * vouch for itself, which is the same rule every other reading in this repository follows.
+ *
+ * @param {string} path
+ * @param {(p: string) => Buffer} read
+ * @param {(b: Buffer) => Buffer} gunzip
+ * @returns {{ complete: boolean, batchesCompleted: number, batchesPlanned: number } | null}
+ */
+export function readRowCacheCompleteness(path, read, gunzip) {
+  for (const line of gunzip(read(path)).toString('utf8').split('\n')) {
+    if (line === '') continue;
+    const entry = /** @type {Record<string, unknown>} */ (JSON.parse(line));
+    if (entry['cache'] !== ROW_CACHE_KIND) continue;
+    return {
+      complete: entry['complete'] === true,
+      batchesCompleted: Number(entry['batchesCompleted']),
+      batchesPlanned: Number(entry['batchesPlanned']),
+    };
+  }
+  return null;
 }
 
 /* c8 ignore start */
@@ -1411,6 +1499,19 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         : {};
     say('');
     say(`  RECOMPUTED from ${args.fromRows} — no socket was opened and nothing was spent.`);
+    // A CACHE THAT CANNOT VOUCH FOR ITSELF DOES NOT PASS AS WHOLE. A run stopped part way — by its
+    // own lane ceiling, say — writes what it had already paid for, and a recompute over that is a
+    // comparison over the launches the money reached rather than over the tape.
+    const held = readRowCacheCompleteness(args.fromRows, read, gunzipSync);
+    if (held === null) {
+      say(`  the cache states no completeness (written before the trailer existed) — UNKNOWN, never whole.`);
+    } else if (!held.complete) {
+      say(
+        `  PARTIAL CACHE: it holds ${held.batchesCompleted} of ${held.batchesPlanned} planned ` +
+          `batch(es), so every launch in the rest is missing rather than empty. Read the comparison ` +
+          `below as covering what was fetched, not the tape.`,
+      );
+    }
     report(
       compareReproduction(args.dataDir, selected, readRowCache(args.fromRows, read, gunzipSync)),
       prior.custody ?? { ok: false, reasons: ['no fetching run to carry a custody verdict from'] },
@@ -1491,31 +1592,43 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // The verdict this run was ADMITTED on is what its lane budget then enforces, execution by
   // execution — captain decision 437(a). Passing the decision rather than re-deriving a ceiling here
   // is what stops a run being cleared on one set of terms and spending against another.
+  const { gzipSync } = await import('node:zlib');
   const { rowsByMint, unplacedRows } = await runReproduction(recorded, {
     batches,
     bounds,
     allowance: decision,
     say,
+    // KEEP WHAT WAS PAID FOR, when asked to — and on EVERY way out of the batch loop, not only the
+    // one that finishes. The first full run of this lane spent ~530 credits, threw the rows away and
+    // kept only the comparison, so correcting the statement's AMM half meant buying all 107,439 rows
+    // a second time including the 97,000 the correction did not touch. `--rows` writes them so the
+    // next change to the COMPARISON costs nothing, and since captain decision 437(a) the lane budget
+    // gives this loop a second exit — the account counter can bind mid-run when another lane spends
+    // against the same account between batches — which would otherwise discard every batch already
+    // billed on its way past.
+    //
+    // It is opt-in and the file is a working artefact, not a committed one: Dune's terms are "derive
+    // and discard", which this repo reads as deriving what it needs and not accumulating a vendor's
+    // data. A local cache for one session is the deriving; committing 24 MB of vendor rows would be
+    // the accumulating.
+    persistRows:
+      args.rows === null
+        ? undefined
+        : (cache) => {
+            const text = serialiseRowCache(cache);
+            writeFileSync(/** @type {string} */ (args.rows), gzipSync(Buffer.from(text, 'utf8')));
+            const whole = cache.batchesCompleted === cache.batchesPlanned;
+            say(
+              `  cached         ${text.split('\n').length - 2} row(s) to ${args.rows} ` +
+                `(a working file; not for committing) — ` +
+                (whole
+                  ? `all ${cache.batchesPlanned} batch(es)`
+                  : `PARTIAL: ${cache.batchesCompleted} of ${cache.batchesPlanned} batch(es), which is ` +
+                    `what this run paid for before it stopped; the file records that it is short`),
+            );
+          },
   });
   const custody = custodyOrderVerdict(log);
-
-  // KEEP WHAT WAS PAID FOR, when asked to. The first full run of this lane spent ~530 credits, threw
-  // the rows away and kept only the comparison — so correcting the statement's AMM half meant buying
-  // all 107,439 rows a second time, including the 97,000 the correction did not touch. `--rows`
-  // writes them so the next change to the COMPARISON costs nothing.
-  //
-  // It is opt-in and the file is a working artefact, not a committed one: Dune's terms are "derive
-  // and discard", which this repo reads as deriving what it needs and not accumulating a vendor's
-  // data. A local cache for one session is the deriving; committing 24 MB of vendor rows would be
-  // the accumulating.
-  if (args.rows !== null) {
-    const { gzipSync } = await import('node:zlib');
-    const lines = [...rowsByMint.entries()].flatMap(([mint, rows]) =>
-      rows.map((r) => JSON.stringify({ mint, row: r })),
-    );
-    writeFileSync(args.rows, gzipSync(Buffer.from(`${lines.join('\n')}\n`, 'utf8')));
-    say(`  cached         ${lines.length} row(s) to ${args.rows} (a working file; not for committing)`);
-  }
 
   report(compareReproduction(args.dataDir, selected, rowsByMint), custody, client.stats(), 'observed', unplacedRows);
 }

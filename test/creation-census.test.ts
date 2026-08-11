@@ -731,7 +731,13 @@ describe('the census lane budget, driven through THIS tool\'s own chokepoint', (
     const { code, paths, lines } = await liveRun((call) =>
       call === 1 ? usageResponseBody(0, 4_000) : usageResponseBody(3_990, 4_000),
     );
-    expect(code).toBe(EXIT.vendor);
+    // REFUSED (2), NOT VENDOR (4) — the same code the pre-flight returns for this same condition.
+    // We declined to spend: nothing was billed and nothing broke, and an operator reading a vendor
+    // exit would go and check Dune's status page instead of their own ceiling or the period
+    // boundary. `DuneLaneCeilingReached` IS a `DuneRefused` (so `screen.mjs`'s walk fallback still
+    // catches it), so what carries the distinction is the ORDER of the two catches — this case is
+    // what fails if a future edit reorders them.
+    expect(code).toBe(EXIT.refused);
     // Not merely reported: the execution never left, so nothing was billed for it.
     expect(paths.filter((p) => p.endsWith('/execute'))).toHaveLength(0);
     expect(lines).toMatch(/executions spent this run: 0/);

@@ -38,6 +38,7 @@ import { resolveDuneCredential } from './credential.mjs';
 import {
   DuneClient,
   DuneExecutionAbandoned,
+  DuneLaneCeilingReached,
   DuneRefused,
   CeilingReached,
   abandonExecution,
@@ -926,6 +927,22 @@ export async function main(argv, env, say) {
           `bounds.json dune.worstCaseCreditsPerExecution if it does not.`,
       );
       return EXIT.deadline;
+    }
+    // WE DECLINED TO SPEND — nothing was billed and nothing broke. Same code the PRE-FLIGHT already
+    // returns for the identical condition (`allowanceDecision.ok` false, above): one outcome reads
+    // one way however it was detected, so an operator learns the outcome rather than the detection
+    // point. 381's precedent is that "we stopped this" must be readable apart from "this broke", and
+    // an unattended run over its OWN budget must not look like the vendor fell over — exit 4 sends a
+    // reader to Dune's status page instead of to their ceiling or the period boundary.
+    //
+    // THE ORDER IS THE GUARD, not the type. `DuneLaneCeilingReached` IS a `DuneRefused` and stays
+    // one, terminal, because `screen.mjs`'s fallback to the RPC walk catches that class and
+    // narrowing it would break the fallback silently. So this catch has to sit ABOVE the generic one
+    // — a future reorder loses the distinction with nothing failing.
+    if (cause instanceof DuneLaneCeilingReached) {
+      say(`refused: ${cause.message}`);
+      say(`  executions spent this run: ${client.executions()} (billed whether or not they succeeded)`);
+      return EXIT.refused;
     }
     if (cause instanceof DuneRefused) {
       say(`refused: ${cause.message}`);

@@ -19,8 +19,10 @@
  *    from the tape-sourced leg and is deliberately not used as a threshold here.
  */
 
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { gunzipSync, gzipSync } from 'node:zlib';
 
 import { describe, expect, it } from 'vitest';
 
@@ -53,9 +55,12 @@ import {
   parseArgs,
   oversizedBatches,
   planReproduction,
+  readRowCache,
+  readRowCacheCompleteness,
   readTapeLaunches,
   recordCustody,
   reproductionSpendPlan,
+  serialiseRowCache,
   runReproduction,
   scanWindowFor,
 } from '../tools/deployer-screen/dune-reproduction.mjs';
@@ -497,6 +502,56 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
     });
     return { rowsByMint, executions: c.executions() };
   }
+
+  it('KEEPS the batches it already paid for when the budget stops it part way, and says the cache is short', async () => {
+    // WHAT WAS BILLED IS KEPT. `--rows` exists because this lane once spent ~530 credits and threw
+    // the rows away, and captain decision 437(a) gave the batch loop a second way out: the lane
+    // budget can refuse mid-run when the account counter moves between batches. Written only after
+    // the loop returned, the cache lost every execution already billed on the way past — so it is
+    // written from a `finally` now, and this is that behaviour driven end to end.
+    //
+    // The stop is arranged by the ceiling itself: at 281 credits an execution, a cleared plan of 600
+    // (ceiling 625, reserve 25) clears two and cannot clear the third.
+    const dir = mkdtempSync(join(tmpdir(), 'slot-zero-rows-'));
+    const path = join(dir, 'rows.jsonl.gz');
+    try {
+      const { impl } = stub();
+      const c = client(impl);
+      const err = await runReproduction(c, {
+        batches: threeBatches([448, 1_200, 300]),
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 600 }),
+        persistRows: (cache) => writeFileSync(path, gzipSync(Buffer.from(serialiseRowCache(cache), 'utf8'))),
+      }).then(() => null, (e: Error) => e);
+
+      expect(err?.name).toBe('DuneLaneCeilingReached');
+      expect(c.executions()).toBe(2);
+      // The deliverable: both billed batches are on disk rather than discarded with the throw.
+      const read = (p: string) => readFileSync(p);
+      expect(readRowCache(path, read, gunzipSync).get(MINT)).toHaveLength(2);
+      // And it cannot be mistaken for the whole tape by a later `--from-rows` recompute, which would
+      // otherwise report agreement over the launches the money happened to reach.
+      expect(readRowCacheCompleteness(path, read, gunzipSync)).toEqual({
+        complete: false,
+        batchesCompleted: 2,
+        batchesPlanned: 3,
+      });
+
+      // The other side, so "short" is not what this cache always says: a run that finishes writes a
+      // cache that states it is whole.
+      const done = client(stub().impl);
+      await runReproduction(done, {
+        batches: threeBatches([448, 1_200, 300]),
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 5_000 }),
+        persistRows: (cache) => writeFileSync(path, gzipSync(Buffer.from(serialiseRowCache(cache), 'utf8'))),
+      });
+      expect(readRowCacheCompleteness(path, read, gunzipSync)?.complete).toBe(true);
+      expect(readRowCache(path, read, gunzipSync).get(MINT)).toHaveLength(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
   it('and that refusal is not an artefact of the fixture — the same stub executes when it matches', async () => {
     // Without this, "zero executions" above would also hold for a stub that simply cannot execute,

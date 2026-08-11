@@ -438,8 +438,10 @@ Learned at real cost; the citations are to
   boundary can satisfy both while the six digits read are not a block index, and the run built on
   them marks outsiders as the operation, the one direction 134a forbids. A mismatch degrades to
   half (a) alone, exactly like the other two conditions. That function's doc owns what the
-  comparison can see on each fill source (a genuine cross-check on the tape and the Dune source, a
-  field-WIDTH check on swap-api, where `slot` is itself derived from the key).
+  comparison can see on each fill source (a genuine cross-check on the committed tape ALONE, where
+  `sid` and `slot` are separate columns; a field-WIDTH check on BOTH live-capable sources — swap-api,
+  where `slot` is derived from the key, and Dune, where the key is rebuilt from the same row that
+  supplies `slot`, so equality holds by construction).
 - **THE TWO PUMP.FUN SURFACES DO NOT AGREE ON A MINT INSTANT, and the disagreement runs in exactly
   the direction that deletes a create slot.** `frontend-api-v3`'s `coins?creator=` rows carry
   **millisecond-precision** `created_timestamp` on older launches while `swap-api`'s fill `ts` is

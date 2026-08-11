@@ -406,13 +406,15 @@ export function blockTxIndex(sid) {
  * that class, and it costs nothing: both fields are already on every fill.
  *
  * **What it can and cannot see depends on where `slot` came from, and this must not be overstated.**
- * On the committed tape and on the Dune fill source, `slot` is an independent column and the
- * comparison is a genuine cross-check. On the live `swap-api` source there is no `slot` field at
- * all — `pumpfun.mjs` → `slotFromSlotIndexId` derives it from the key's first twelve digits — so
- * there the check proves the key is still ten digits wider than its slot field, i.e. it catches a
- * field WIDTH move and not a boundary shift inside a still-22-digit key. That is a floor on the
- * evidence, in the same shape as {@link roomIsProven}'s, and it is strictly more than the
- * uniqueness test alone provides.
+ * Only on the committed tape is this a genuine cross-check: there `sid` and `slot` are separate
+ * columns of the same row, read independently. On BOTH live-capable fill sources the two are the
+ * same number twice over, so equality holds by construction and the check proves only that the key
+ * is still ten digits wider than its slot field — a field WIDTH move, not a boundary shift inside a
+ * still-22-digit key. On `swap-api` there is no `slot` field at all and `pumpfun.mjs` →
+ * `slotFromSlotIndexId` derives it from the key's first twelve digits; on the Dune source
+ * `dune-fills.mjs` → `rebuildSid` builds the key from the same parsed row that supplies `slot`.
+ * That is a floor on the evidence, in the same shape as {@link roomIsProven}'s, and it is strictly
+ * more than the uniqueness test alone provides.
  *
  * @param {string} sid
  * @returns {number} `NaN` when the leading field is not a run of decimal digits.

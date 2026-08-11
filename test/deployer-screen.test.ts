@@ -355,8 +355,11 @@ const emptyEntryCoverage = (): Stage2Coverage => ({
  * zero-prefixed default would silently disable the adjacency half in every fixture that does not
  * spell its keys out. The block indices are spaced 1,000 apart for the mirror-image reason — a
  * default that ran 1, 2, 3 would make every fixture's fills ADJACENT and hand the co-ordination
- * rule's half (b) marks nobody wrote. A fixture that means to test adjacency spells its keys out
- * with `sidAt`. The counter wraps at 999 so the index stays six digits — a wider one would push the
+ * rule's half (b) marks nobody wrote. The spacing is per FILL rather than per transaction, so two
+ * default fills sharing one `tx` disagree about their block index, which clears
+ * `decompositionIsConsistent` and disables the adjacency half for that whole fixture — a fixture
+ * that means to test adjacency, or that puts two fills in one transaction, spells its keys out with
+ * `sidAt`. The counter wraps at 999 so the index stays six digits — a wider one would push the
  * key to 23 characters and read as a moved layout; a wrap merely collides two indices, which is the
  * same safe fallback and cannot manufacture a mark.
  */

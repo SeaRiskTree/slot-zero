@@ -728,8 +728,60 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   currency: no vendor is reached, the tempo is a field the gate already measured, and the ranking
  *   is arithmetic over one local file. Every clause of schema 20's reproducibility contract holds
  *   unchanged, including that `enabled: false` is a state rather than the block's absence.
+ *
+ * - **24 — THE ENTRANTS ARE KEPT.** Captain decision 459 (2026-08-11), increment 1 of the pivot to
+ *   scoring entrants. ONE new key inside `entry`: `windows`, an array with one row per WALKED window
+ *   — refused windows INCLUDED — each carrying that window's create-slot summary, `roomIsProven`,
+ *   and an `entrants` array of one row per create-slot outsider wallet. No candidate ROW field and
+ *   no run-level block; `PERSISTED_BY_SCHEMA[24]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[24]`,
+ *   `SPEND_KEYS_BY_SCHEMA[24]`, `DUNE_KEYS_BY_SCHEMA[24]`, `CREATION_KEYS_BY_SCHEMA[24]` and
+ *   `ROTATION_BLOCK_KEYS_BY_SCHEMA[24]` all equal `[23]`. **No measured quantity moves and no
+ *   threshold moves**, so a schema-23 `completionRate`, `entry` aggregate or `spend` figure and a
+ *   schema-24 one are the same quantities and may be pooled.
+ *
+ *   **Why it needs a version.** Every `entry` field before this one is an AGGREGATE. Two committed
+ *   measurements walked **353 stranger windows across 36 scored deployers** and counted **1,058
+ *   field entrants**, and persisted not one address and not one `sid` — the evidence was computed
+ *   and discarded, and it is unrecoverable without re-walking. A consumer must be able to tell a
+ *   record that holds the evidence from one that holds only its summary, and no aggregate says
+ *   which.
+ *
+ *   **What it costs: nothing, in every currency.** Every byte was already in the fill walk's own
+ *   response. No vendor request, no credit, no wall clock, and Stage 2's keyless ceiling
+ *   (`maxCandidatesScored` × `maxLaunchesPerCandidate` × `maxRequestsPerLaunch`) cannot move,
+ *   because none of the three is a function of what is recorded.
+ *
+ *   **The population is every WALKED window, not every SCORED one, and that is deliberate.**
+ *   Observing who filled a create slot needs no proof of co-ordination; only claiming they were
+ *   independent does. On the widened measurement 209 of 210 windows walked cleanly while 38 produced
+ *   a room reading, so the scored half is roughly a fifth of what the walk paid for. `roomIsProven`
+ *   is on every window row, so the two claims can never be conflated: on a `false` row the entrant
+ *   list says truthfully WHO filled, while `roomLeft` and `operationShare` beside it are the
+ *   unproven readings captain decision 134a refuses to score.
+ *
+ *   **It decides NOTHING.** No bar, gate, threshold, predicate or verdict reads it, and a test pins
+ *   that — the shape captain decision 208b established for `entry.roomLeftBound`. A schema-23 run
+ *   and a schema-24 run over the same inputs reach byte-identical verdicts.
+ *
+ *   **Two things a reader must not get wrong.** `sid` is a STRING and never a number — 22 decimal
+ *   digits is past `Number.MAX_SAFE_INTEGER` and arithmetic on it rounds a fill into the previous
+ *   slot (`measure.mjs` → `blockTxIndex`). And `entrantUnitIsProven` reads `false` on every row this
+ *   version can write, **by construction rather than by measurement**: the co-ordination rule's
+ *   half (a) reclassifies any two wallets sharing a create-slot transaction as the operation's own
+ *   before the entrant set exists, so the collapse rule has nothing left to collapse. It therefore
+ *   says the question was asked and found no evidence — never that the wallet is an independent
+ *   trader, which captain decision 114a made permanently unprovable.
+ *
+ *   **The retention posture moved with it and the ToS argument did not.** Counterparty addresses
+ *   were dropped before this version because *"a list of who was in it would be an accumulation with
+ *   no question attached to it"*; 459 supplies the question. An entrant address, its `sid` and its
+ *   transaction come from pump.fun's keyless public endpoint and from the chain, not from MadeOnSol,
+ *   exactly as the creation walk's mints do, and no vendor per-token record is persisted at any
+ *   version. What genuinely changes is that a screened LAUNCH becomes identifiable from a record,
+ *   since a create slot plus an entrant address recovers the mint from the chain.
+ *   `tools/deployer-screen/README.md` → "Retention" owns the whole claim.
  */
-export const RECORD_SCHEMA_VERSION = 23;
+export const RECORD_SCHEMA_VERSION = 24;
 
 /**
  * The predictions-document contract version, carried inside the document itself.

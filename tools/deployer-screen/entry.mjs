@@ -69,8 +69,11 @@
  */
 
 import {
+  ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER,
   ROOM_LEFT_RANGE,
+  blockTxIndex,
   createSlotGroups,
+  entrantUnitIsProven,
   median,
   percentile,
   roomIsProven,
@@ -187,11 +190,36 @@ export function hitRate(values, predicate) {
  * deployer and not marked as the operation's own by the bundle rule.
  *
  * @property {string} wallet
+ * @property {string} sid  pump.fun's own within-slot ordering key for this wallet's FIRST
+ *   create-slot fill — `slot(12) + blockTxIndex(6) + innerInstructionIndex(4)`, verbatim and as a
+ *   STRING, never parsed to a number (`measure.mjs` → `blockTxIndex` owns why: 22 digits is past
+ *   `Number.MAX_SAFE_INTEGER`). It is the byte that makes an entrant row auditable against the chain
+ *   and re-orderable after the fact, it is free in rows the walk has already fetched, and it is the
+ *   one thing here that is **unrecoverable without re-walking the window**.
+ * @property {string} createSlotTx  The signature of the transaction that fill landed in. Free in the
+ *   same row, and the key a human hand-checks a claim with.
+ * @property {number} blockTxIndex  {@link import('./measure.mjs').blockTxIndex} of `sid` — where in
+ *   the block that transaction sat. `NaN` when the key is not that shape, never a guess.
  * @property {number} createSlotFillSol  What it was filled for in the create slot itself.
  * @property {number} solQueuedAheadSol  SOL already committed to the create slot ahead of this
  *   wallet's first fill, by pump.fun's own within-slot ordering key. The June report's §5.2
  *   measure of how far back in the queue an outsider now sits.
  * @property {number} queuePosition      1-based rank of that first fill among all create-slot fills.
+ * @property {number} outsiderQueuePosition 1-based rank among the create-slot fills of OUTSIDERS
+ *   alone — the queue with the operation's own fills removed. Reported beside `queuePosition`
+ *   rather than instead of it because the two answer different questions ("how far into the block
+ *   did this land" against "how many rivals were served first") and neither is recoverable from the
+ *   other once the window is gone.
+ * @property {boolean} entrantUnitIsProven Whether the one available collapse rule evidenced this row
+ *   as ONE submitter — `measure.mjs` → `entrantUnitIsProven`, which owns the rule, its
+ *   counterexample, and the fact that it reads `false` on every create-slot outsider **by
+ *   construction** under the shipped co-ordination rule. `false` means nothing was established
+ *   either way; it never means the wallet is an independent trader.
+ * @property {string[]} unitCoAppearingWallets The evidence that flag reads: other distinct swapping
+ *   wallets sharing one of this wallet's create-slot transactions. Empty by the construction above.
+ * @property {string[]} windowCoAppearingWallets The same co-appearance over the WHOLE walked window,
+ *   where half (a) does not reclassify anybody and the set is therefore not empty by construction.
+ *   Recorded and read by nothing: widening the collapse scope is a decision, not a diff.
  * @property {number} stakeSol           Total buy SOL across the whole opening window.
  * @property {boolean} closedInWindow    Whether the position was flat by the window's end.
  * @property {number} realisedSolGrossOfFees   `sol out − sol in`. **`NaN` unless closed** — an open
@@ -243,17 +271,61 @@ export function measureLaunchEntry(fills) {
   const { measurement: createSlot, outsiders } = tallyCreateSlot(groups);
 
   // Queue position and the SOL already ahead, walked in the venue's own within-slot order.
-  /** @type {Map<string, { aheadSol: number, position: number, fillSol: number }>} */
+  //
+  // `sid`, `createSlotTx` and the outsider-only rank are captured in the SAME pass and from the same
+  // fill the position is read off, so the ordering key a record carries is always the key that
+  // produced the position rather than a second lookup that could pick a different one of the
+  // wallet's fills. They are free — every field is already on the parsed fill — and `sid` is the one
+  // thing here that cannot be recovered from anything else once the window is gone.
+  /** @type {Map<string, { aheadSol: number, position: number, outsiderPosition: number, fillSol: number, sid: string, tx: string }>} */
   const queue = new Map();
   let cumulativeSol = 0;
+  let outsiderRank = 0;
   for (let i = 0; i < inSlot.length; i++) {
     const f = /** @type {import('./measure.mjs').Fill} */ (inSlot[i]);
     if (outsiders.has(f.wallet)) {
+      outsiderRank += 1;
       const seen = queue.get(f.wallet);
-      if (seen === undefined) queue.set(f.wallet, { aheadSol: cumulativeSol, position: i + 1, fillSol: f.sol });
-      else seen.fillSol += f.sol;
+      if (seen === undefined) {
+        queue.set(f.wallet, {
+          aheadSol: cumulativeSol,
+          position: i + 1,
+          outsiderPosition: outsiderRank,
+          fillSol: f.sol,
+          sid: f.sid,
+          tx: f.tx,
+        });
+      } else seen.fillSol += f.sol;
     }
     cumulativeSol += f.sol;
+  }
+
+  // The one collapse rule there is, computed from `createSlotGroups`' OWN transaction map rather
+  // than from a second grouping of the same fills — `measure.mjs` → `entrantUnitIsProven` owns the
+  // rule and the reason it reads false on every row this loop can produce. The window-wide cousin is
+  // built beside it because the fills are already here and nothing else will ever pay for them.
+  /** @param {ReadonlyMap<string, ReadonlySet<string>>} byTx @param {string} wallet */
+  const coAppearing = (byTx, wallet) => {
+    /** @type {Set<string>} */
+    const peers = new Set();
+    for (const wallets of byTx.values()) {
+      if (!wallets.has(wallet)) continue;
+      for (const w of wallets) if (w !== wallet) peers.add(w);
+    }
+    return [...peers];
+  };
+  /** @type {Map<string, Set<string>>} */
+  const createSlotByTx = new Map();
+  for (const [tx, t] of groups.transactions) createSlotByTx.set(tx, new Set(t.wallets));
+  /** @type {Map<string, Set<string>>} */
+  const windowByTx = new Map();
+  for (const f of fills) {
+    let w = windowByTx.get(f.tx);
+    if (w === undefined) {
+      w = new Set();
+      windowByTx.set(f.tx, w);
+    }
+    w.add(f.wallet);
   }
 
   // Whole-window totals, needed for the closure test. Sells matter as much as buys: a wallet that
@@ -287,11 +359,22 @@ export function measureLaunchEntry(fills) {
     const closedInWindow =
       decidable && t.tokensBought > 0 && t.tokensBought - t.tokensSold <= RESIDUAL_TOLERANCE * t.tokensBought;
     const realised = closedInWindow ? t.solOut - t.solIn : Number.NaN;
+    const unit = {
+      createSlotCoAppearingWallets: coAppearing(createSlotByTx, wallet),
+      windowCoAppearingWallets: coAppearing(windowByTx, wallet),
+    };
     field.push({
       wallet,
+      sid: q.sid,
+      createSlotTx: q.tx,
+      blockTxIndex: blockTxIndex(q.sid),
       createSlotFillSol: q.fillSol,
       solQueuedAheadSol: q.aheadSol,
       queuePosition: q.position,
+      outsiderQueuePosition: q.outsiderPosition,
+      entrantUnitIsProven: entrantUnitIsProven(unit),
+      unitCoAppearingWallets: unit.createSlotCoAppearingWallets,
+      windowCoAppearingWallets: unit.windowCoAppearingWallets,
       stakeSol: t.solIn,
       closedInWindow,
       realisedSolGrossOfFees: realised,
@@ -943,6 +1026,21 @@ export function describeRoomMedianBound(b) {
  */
 
 /**
+ * @typedef {object} EntryWindow
+ * One walked window, with the wallets that were in it — a {@link LaunchEntry} plus the one bit that
+ * says how its room figure may be read.
+ *
+ * @property {import('./measure.mjs').CreateSlotMeasurement} createSlot
+ * @property {boolean} roomIsProven `measure.mjs` → `roomIsProven` over that measurement, carried
+ *   rather than left to a consumer to recompute. **It is what keeps the two claims apart**: on a
+ *   window reading `false` the entrant list still says truthfully WHO filled, and `createSlot`'s
+ *   `roomLeft` and `operationShare` are the unproven readings captain decision 134a refuses to
+ *   score — present here for the same reason `roomMedianBound.refusedRoomLeft` is present, and
+ *   gating nothing.
+ * @property {readonly FieldEntrant[]} entrants The create-slot outsiders, in queue order.
+ */
+
+/**
  * @typedef {object} EntryScore
  * @property {EntryVerdict} verdict
  * @property {UnmeasuredCause | null} unmeasuredCause  Which producer reached this verdict, when it
@@ -1027,6 +1125,23 @@ export function describeRoomMedianBound(b) {
  * @property {number} fieldOpenPositions     Entries with no complete P&L. Reported, never imputed.
  * @property {number} deployerMismatches     Launches whose first create-slot buyer was not the
  *   candidate wallet. See {@link scoreEntry}.
+ * @property {readonly EntryWindow[]} windows **EVERY window the walk delivered, refused ones
+ *   INCLUDED, each with the wallets that were in it.** Every other field on this score is an
+ *   aggregate; this is the evidence they were computed from, kept rather than discarded.
+ *
+ *   Three things about the population, because they are the whole point of the field. It is over
+ *   `launches` and not over `scored`: observing *who filled a create slot* needs no proof of
+ *   co-ordination — only *claiming they were independent* does — and on the widened measurement
+ *   **209 of 210 windows walked cleanly while 38 produced a room reading**, so restricting this to
+ *   the proven half would throw away roughly four fifths of what the same walk already paid for.
+ *   Every row carries {@link EntryWindow.roomIsProven}, so the two claims can never be conflated by
+ *   a reader. And it decides NOTHING — no bar, gate, threshold, predicate or verdict reads it, and a
+ *   test pins that — which is the shape captain decision 208b established for
+ *   {@link EntryScore.roomLeftBound}: record it, publish it, decide nothing with it yet.
+ *
+ *   {@link ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER} governs what a list of these addresses may be
+ *   said to be, and it is in {@link EntryScore.caveats} on every score so the limit travels with the
+ *   data rather than with this comment.
  * @property {string[]} caveats
  */
 
@@ -1257,6 +1372,14 @@ export function scoreEntry(launches, t, context = {}) {
     fieldClosedRoundTrips: closed.length,
     fieldOpenPositions: field.length - closed.length,
     deployerMismatches,
+    // THE EVIDENCE, not another aggregate — over every launch handed in, refused ones included.
+    // See the typedef: the refused half is four fifths of what the walk paid for, and `roomIsProven`
+    // travels on each row so the entrant reading and the room reading can never be conflated.
+    windows: launches.map((l) => ({
+      createSlot: l.createSlot,
+      roomIsProven: roomIsProven(l.createSlot),
+      entrants: l.field,
+    })),
     caveats: [],
   };
 
@@ -1265,6 +1388,10 @@ export function scoreEntry(launches, t, context = {}) {
   // incompleteness at the point of use, so a complete sample says so here too rather than leaving
   // silence to be read as completeness.
   score.caveats.push(roomLeftBound.caveat);
+  // The entrant list is on every score, so its limit is on every score too — travelling with the
+  // data rather than living in a document, which is the same requirement `LANDING_TIP_CAVEAT` and
+  // `WINNERS_ONLY_CAVEAT` are constants for.
+  score.caveats.push(ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER);
   if (roomUnproven > 0) {
     score.caveats.push(
       `${roomUnproven} of ${launches.length} measured launch(es) had NO co-ordination evidence in ` +

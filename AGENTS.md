@@ -1212,9 +1212,12 @@ Measured 2026-07-29 against our own ground truth. Long form and reproduction in
   lane's alone, so budget against the whole allowance (see the Helius section below).
   `tools/deployer-screen/README.md` → "Bounds" owns the numbers and the endpoint list.
 - **ToS §5a(b)/(d) bind us**: internal research only, and no accumulation beyond what is necessary.
-  The screen derives and discards — per-token records live in memory for one run, and only derived
-  counts are ever written. `tools/deployer-screen/README.md` → "Retention" owns which files a run
-  writes and when. Test fixtures are synthetic, never captured payloads.
+  The screen derives and discards — **no vendor per-token record is ever written**, they live in
+  memory for one run. What a record holds beyond derived counts is this repo's own reading of
+  pump.fun's keyless fills and of the chain, entrant addresses included since schema 24 (see "The
+  screen PERSISTS its entrants now" below). `tools/deployer-screen/README.md` → "Retention" owns
+  which files a run writes and what survives them. Test fixtures are synthetic, never captured
+  payloads.
 
 ## The deployer screen's stages, and the two wallets that keep it honest
 
@@ -1810,6 +1813,60 @@ dev currently?"*, and the shape of the answer is the point:
   shape-checked and **not** content-checked, so what makes these predictions rather than
   postdictions is that the document is committed in its own commit ahead of the run, exactly as
   `thresholds.json` is — the record cannot prove that and does not claim to.
+
+## The screen PERSISTS its entrants now, and it decides nothing with them
+
+`entry.mjs` → `EntryScore.windows`, projected by `stage2.mjs` → `toEntryRecordRow`, record **schema
+24**. Captain decision 459, 2026-08-11 — increment 1 of the pivot to scoring entrants; the design is
+`slot-zero-entrant-scoring-pivot` → `report.md` §7 (held in firstmate's records, not in this repo).
+`tools/deployer-screen/README.md`'s schema-24 row and `record.mjs`'s version comment own the long
+form; cite them rather than restating the field list. Seven things bind:
+
+- **THE GAP IT CLOSES IS THE REASON TO KEEP IT RUNNING.** Two committed measurements walked **353
+  stranger windows across 36 scored deployers** and counted **1,058 field entrants**, and persisted
+  **not one address and not one `sid`** — every `entry` field before this version is an aggregate.
+  The evidence was computed and discarded at zero cost to keep, and it is unrecoverable without
+  re-walking. What accumulates now is the **first cross-deployer entrant dataset this project has
+  had**, as a by-product of ordinary screening rather than of an authorised measurement.
+- **IT COSTS NOTHING IN EVERY CURRENCY, AND THAT IS STRUCTURAL RATHER THAN CAREFUL.** Every byte was
+  already in `readLaunchWindow`'s response. No vendor request, no credit, no wall clock, and Stage
+  2's keyless ceiling (`maxCandidatesScored` × `maxLaunchesPerCandidate` × `maxRequestsPerLaunch` =
+  1,260) **cannot** move, because none of the three is a function of what is recorded.
+- **THE POPULATION IS EVERY WALKED WINDOW, REFUSED ONES INCLUDED, AND THAT IS THE POINT.** Observing
+  *who filled* a create slot needs no proof of co-ordination; only claiming they were *independent*
+  does. On the widened measurement **209 of 210 windows walked cleanly while 38 produced a room
+  reading**, so the scored half is about a fifth of what the walk paid for. `roomIsProven` rides on
+  every window row, so on a `false` row the entrant list still says truthfully who filled while the
+  `roomLeft`/`operationShare` beside it are the unproven readings captain decision 134a refuses to
+  score. **Nothing here relaxes 134a** — no aggregate, bar or verdict sees the refused half.
+- **IT GATES NOTHING, in 208b's shape** — record it, publish it, decide nothing with it yet. No bar,
+  gate, threshold, predicate, verdict or rotation comparator reads it, no threshold moved, and a
+  test scans the deciding modules' executable half for the field names. A schema-23 and a schema-24
+  run over the same inputs reach byte-identical verdicts.
+- **TWO TRAPS.** `sid` is a **string** and stays one — 22 decimal digits is past
+  `Number.MAX_SAFE_INTEGER` and arithmetic on it rounds a fill into the previous slot. And
+  `measure.mjs` → `entrantUnitIsProven` — the design's one collapse rule, *two entrant wallets in one
+  create-slot transaction are one submitter* — reads **`false` on every row this version can write,
+  by CONSTRUCTION rather than by measurement**: the co-ordination rule's half (a) reclassifies any
+  two wallets sharing a create-slot transaction as the operation's own *before* the outsider set
+  exists, so there is nothing left to collapse. It records that the question was asked and found no
+  evidence; it never means the wallet is an independent trader, which 114a made permanently
+  unprovable. `ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER` is the sentence and is in `caveats` on
+  every score — a distinct-wallet count is an UPPER BOUND on distinct performers.
+  `EntrantUnitEvidence.windowCoAppearingWallets` carries the whole-window cousin, which is *not*
+  vacuous, unread: widening the collapse scope is a decision, not a diff.
+- **THE RETENTION POSTURE MOVED AND THE ToS ARGUMENT DID NOT.** Counterparty addresses were dropped
+  because *"a list of who was in it would be an accumulation with no question attached to it"*; 459
+  supplies the question. An entrant address, its `sid` and its transaction come from pump.fun's
+  keyless public endpoint and from the chain — not from MadeOnSol, exactly as the creation walk's
+  mints do — and no vendor per-token record is written at any schema version. **What genuinely
+  changes is that a screened LAUNCH becomes identifiable from a committed record**, since a create
+  slot plus an entrant address recovers the mint from the chain. `tools/deployer-screen/README.md` →
+  "Retention" owns the claim; the test that used to assert those addresses ABSENT now asserts them
+  PRESENT, deliberately.
+- **`measureWindowParticipation` NAMES as well as counts now** (`WindowParticipation.identities`),
+  and it is still **unwired** — 408a's pin stands and nothing in the tool calls it. Naming widened
+  no claim: the reading is still contested participation rather than co-ordination.
 
 ## There are TWO provability predicates now, and the second is not a looser first
 

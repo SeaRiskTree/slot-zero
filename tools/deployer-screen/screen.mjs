@@ -3825,8 +3825,9 @@ function toRecordRow(c, run) {
         ? null
         : { ...c.consistency, note: redactVendorIdentifiers(c.consistency.note) },
     // Stage 2's own projection, which is subject to the same containment: quantiles, counts and a
-    // hit rate over pump.fun's public fills. No mint — Stage 2 held a list of them in memory to do
-    // the walk and dropped it — and no counterparty wallet address.
+    // hit rate over pump.fun's public fills, plus the schema-24 entrant rows. No mint — Stage 2 held
+    // a list of them in memory to do the walk and dropped it. Entrant WALLET addresses are kept
+    // since captain decision 459 and are not vendor data; `toEntryRecordRow` owns that claim.
     entry: c.entry === null || c.entryCoverage === null ? null : toEntryRecordRow(c.entry, c.entryCoverage),
     // Schema 18. WHICH FILL SOURCE ANSWERED THIS CANDIDATE — `enumerationSource`'s shape one stage
     // over (captain decisions 156a and 191a), and per candidate for the same reason: a primary

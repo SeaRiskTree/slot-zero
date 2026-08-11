@@ -690,9 +690,19 @@ export function emptyCostCoverage() {
  * arithmetic over pump.fun's public fills, and never a vendor per-token record. In particular **no
  * mint appears here**, although Stage 2 held a list of them in memory to do the walk at all.
  *
- * Wallet addresses are also dropped. The field is reported as a distribution and a hit rate — which
- * is the whole point of the leg — and a list of who was in it would be an accumulation with no
- * question attached to it.
+ * **Counterparty wallet addresses used to be dropped too, and since captain decision 459 they are
+ * not.** The reason they were dropped was stated as *"a list of who was in it would be an
+ * accumulation with no question attached to it"* — the question, and not the data, was what was
+ * missing, and 459's pivot to scoring entrants supplies it. Nothing about the ToS §5a(d) argument
+ * moves with it: an entrant address, its `sid`, its transaction and its fills come from **pump.fun's
+ * keyless public trade endpoint and from the chain**, not from MadeOnSol, exactly as the mints the
+ * creation walk reads do. What is still dropped is every vendor per-token record — no mint, no token
+ * name, no bond timestamp, no market cap — and `README.md` → "Retention" owns the whole claim.
+ *
+ * **The one thing this genuinely changes is that a screened launch becomes identifiable**, since a
+ * create slot plus an entrant address recovers the mint from the chain. It is on-chain public data
+ * either way and no vendor record is republished by it, but it is a real change of posture rather
+ * than a neutral one, and it is recorded here rather than left for a reader to notice.
  *
  * Every FREE-TEXT field is passed through `record.mjs` → `redactVendorIdentifiers` on the way out.
  * The structured fields cannot leak — they are numbers — but a sentence can, and one did: a
@@ -799,6 +809,61 @@ export function toEntryRecordRow(s, coverage) {
     fieldClosedRoundTrips: s.fieldClosedRoundTrips,
     fieldOpenPositions: s.fieldOpenPositions,
     deployerMismatches: s.deployerMismatches,
+    // Schema 24, captain decision 459. THE EVIDENCE EVERY FIGURE ABOVE IS AN AGGREGATE OF, and the
+    // first entrant-level rows this project has ever persisted: 353 stranger windows across 36
+    // scored deployers were walked in two committed measurements, 1,058 field entrants were counted,
+    // and not one address and not one `sid` survived any of it. Every byte here was already in the
+    // fill walk's response and was being discarded, so this costs no request, no credit and no wall
+    // clock — `entry.mjs` → `EntryScore.windows` owns the population (refused windows INCLUDED) and
+    // the rule that nothing may gate on it.
+    //
+    // `sid` is a STRING and stays one: 22 decimal digits is past `Number.MAX_SAFE_INTEGER`, so a
+    // round trip through a number would quietly move a fill into the previous slot
+    // (`measure.mjs` → `blockTxIndex`).
+    windows: s.windows.map((w) => ({
+      createSlot: w.createSlot.slot,
+      deployer: w.createSlot.deployer,
+      // The one bit that keeps the two claims apart. On `false` the entrant list still says who
+      // filled, and `roomLeft`/`operationShare` beside it are the UNPROVEN readings captain decision
+      // 134a refuses to score — carried for the same reason `roomLeftBound.refusedRoomLeft` is.
+      roomIsProven: w.roomIsProven,
+      roomLeft: round(w.createSlot.roomLeft),
+      operationShare: round(w.createSlot.operationShare),
+      devSol: round(w.createSlot.devSol),
+      coordinatedSol: round(w.createSlot.coordinatedSol),
+      independentSol: round(w.createSlot.independentSol),
+      coordinatedWallets: w.createSlot.coordinatedWallets,
+      independentWallets: w.createSlot.independentWallets,
+      bundledTx: w.createSlot.bundledTx,
+      maxWalletsInOneTx: w.createSlot.maxWalletsInOneTx,
+      runTx: w.createSlot.runTx,
+      adjacencyMarks: w.createSlot.adjacencyMarks,
+      entrants: w.entrants.map((e) => ({
+        wallet: e.wallet,
+        sid: e.sid,
+        createSlotTx: e.createSlotTx,
+        blockTxIndex: round(e.blockTxIndex),
+        queuePosition: e.queuePosition,
+        outsiderQueuePosition: e.outsiderQueuePosition,
+        solQueuedAheadSol: round(e.solQueuedAheadSol),
+        createSlotFillSol: round(e.createSlotFillSol),
+        stakeSol: round(e.stakeSol),
+        closedInWindow: e.closedInWindow,
+        // `null` and not `0` on an open position: the committed dataset makes the same field absent
+        // rather than zero for exactly this reason, and a marked-to-nothing zero is a fabricated P&L.
+        realisedSolGrossOfFees: round(e.realisedSolGrossOfFees),
+        returnPerSolGrossOfFees: round(e.returnPerSolGrossOfFees),
+        // `null` wherever the cost leg did not price this wallet — never a free seat.
+        entryCostSol: round(e.entryCostSol),
+        entryCostPerSolStaked: round(e.entryCostPerSolStaked),
+        entryTxFeeSol: round(e.entryTxFeeSol),
+        realisedSolNetOfMeasuredFees: round(e.realisedSolNetOfMeasuredFees),
+        returnPerSolNetOfMeasuredFees: round(e.returnPerSolNetOfMeasuredFees),
+        entrantUnitIsProven: e.entrantUnitIsProven,
+        unitCoAppearingWallets: [...e.unitCoAppearingWallets],
+        windowCoAppearingWallets: [...e.windowCoAppearingWallets],
+      })),
+    })),
     caveats: redactAll(s.caveats),
     coverage: {
       launchRefsAvailable: coverage.launchRefsAvailable,

@@ -388,6 +388,45 @@ export function blockTxIndex(sid) {
 }
 
 /**
+ * The SLOT field of the same key — the other half of the decomposition {@link blockTxIndex} reads.
+ *
+ * `sid` is `slot(12) + blockTxIndex(6) + innerInstructionIndex(4)`, so the leading field is
+ * everything before the low ten digits. Reading it is what lets a caller CHECK the decomposition
+ * rather than assume it: the leading field must equal the fill's own slot, which over the committed
+ * tape's 2,699 create-slot fills it does on every row
+ * (`slot-zero-bundling-predicate-question/report.md` §3.1, held in firstmate's records, not in this
+ * repo).
+ *
+ * **Why the check is worth making at every read rather than once offline.** The uniqueness and
+ * per-transaction consistency of the six-digit index is a WEAK test of the layout: a format that
+ * shifted the field boundaries can still hand back indices that are unique per transaction and
+ * constant within one, and {@link createSlotGroups} would then build a contiguous run out of digits
+ * that are not a block index at all — the one direction decision 134a forbids, since it sweeps
+ * outsiders into the operation and RAISES a room reading. The prefix comparison catches exactly
+ * that class, and it costs nothing: both fields are already on every fill.
+ *
+ * **What it can and cannot see depends on where `slot` came from, and this must not be overstated.**
+ * Only on the committed tape is this a genuine cross-check: there `sid` and `slot` are separate
+ * columns of the same row, read independently. On BOTH live-capable fill sources the two are the
+ * same number twice over, so equality holds by construction and the check proves only that the key
+ * is still ten digits wider than its slot field — a field WIDTH move, not a boundary shift inside a
+ * still-22-digit key. On `swap-api` there is no `slot` field at all and `pumpfun.mjs` →
+ * `slotFromSlotIndexId` derives it from the key's first twelve digits; on the Dune source
+ * `dune-fills.mjs` → `rebuildSid` builds the key from the same parsed row that supplies `slot`.
+ * That is a floor on the evidence, in the same shape as {@link roomIsProven}'s, and it is strictly
+ * more than the uniqueness test alone provides.
+ *
+ * @param {string} sid
+ * @returns {number} `NaN` when the leading field is not a run of decimal digits.
+ */
+export function sidSlotField(sid) {
+  if (sid.length < 11) return Number.NaN;
+  const digits = sid.slice(0, -10);
+  if (!/^[0-9]+$/.test(digits)) return Number.NaN;
+  return Number(digits);
+}
+
+/**
  * @typedef {object} CreateSlotGroups
  * @property {number} slot                 The create slot.
  * @property {string} deployer             Wallet credited with the launch (first curve buyer).
@@ -479,30 +518,41 @@ export function createSlotGroups(fills) {
   // Group by transaction, keeping each one's block index alongside its wallets. `inSlot` is already
   // in `sid` order, so the first fill of a transaction carries that transaction's index.
   //
-  // `indexesAreConsistent` is the guard on half (b)'s premise, and it is deliberately strict. A
-  // block transaction index identifies a transaction WITHIN one block, so within one create slot it
-  // must be unique per transaction and constant across that transaction's fills. Both were verified
-  // over the committed tape's 2,699 create-slot fills. If either stops holding, the decomposition is
-  // reading something other than a block index — and the resulting run would not be short, it would
-  // be WRONG: a whole create slot at one apparent index would be swallowed whole, marking every
-  // outsider as the operation. That is the one direction this rule's errors must never run in
-  // (see {@link measureCreateSlot}), so an inconsistent slot gets no adjacency at all and falls back
-  // to half (a) alone — the reading the screen had before decision 182a.
+  // `decompositionIsConsistent` is the guard on half (b)'s premise, and it is deliberately strict.
+  // A block transaction index identifies a transaction WITHIN one block, so within one create slot
+  // it must be unique per transaction and constant across that transaction's fills. Both were
+  // verified over the committed tape's 2,699 create-slot fills. If either stops holding, the
+  // decomposition is reading something other than a block index — and the resulting run would not be
+  // short, it would be WRONG: a whole create slot at one apparent index would be swallowed whole,
+  // marking every outsider as the operation. That is the one direction this rule's errors must never
+  // run in (see {@link measureCreateSlot}), so an inconsistent slot gets no adjacency at all and
+  // falls back to half (a) alone — the reading the screen had before decision 182a.
+  //
+  // **The THIRD condition is the `sid`'s own leading field, and it is checked here rather than only
+  // offline.** Uniqueness and per-transaction constancy are a weak test of the LAYOUT: a moved field
+  // boundary can leave both intact while the six digits being read are no longer a block index, and
+  // that is precisely the case the two conditions above cannot catch. {@link sidSlotField} compares
+  // the key's leading field against the fill's own slot — the check `stage0.mjs` →
+  // `verifyAdjacencyRuns` makes offline over the subject tape, which no live run against a stranger
+  // reached. It is free: both values are already on the fill. A mismatch degrades to half (a) by the
+  // same route as the other two, so the failure direction is unchanged (that function's doc owns
+  // what the comparison can and cannot see on each fill source).
   /** @type {Map<string, { index: number, wallets: Set<string> }>} */
   const byTx = new Map();
   /** @type {Set<number>} */
   const indexesSeen = new Set();
-  let indexesAreConsistent = true;
+  let decompositionIsConsistent = true;
   for (const f of inSlot) {
     const index = blockTxIndex(f.sid);
+    if (sidSlotField(f.sid) !== f.slot) decompositionIsConsistent = false;
     let entry = byTx.get(f.tx);
     if (entry === undefined) {
       entry = { index, wallets: new Set() };
       byTx.set(f.tx, entry);
-      if (!Number.isFinite(index) || indexesSeen.has(index)) indexesAreConsistent = false;
+      if (!Number.isFinite(index) || indexesSeen.has(index)) decompositionIsConsistent = false;
       indexesSeen.add(index);
     } else if (entry.index !== index) {
-      indexesAreConsistent = false;
+      decompositionIsConsistent = false;
     }
     entry.wallets.add(f.wallet);
   }
@@ -524,7 +574,7 @@ export function createSlotGroups(fills) {
   // --- (b) the deployer-anchored contiguous block-index run. The step must be EXACTLY 1 in each
   // direction; anything else ends the run there. Widening it was measured and rejected (see the
   // block comment above), and narrowing is not possible.
-  const ordered = indexesAreConsistent
+  const ordered = decompositionIsConsistent
     ? [...byTx.values()].sort((a, b) => a.index - b.index)
     : [];
   const anchor = ordered.findIndex((e) => e.wallets.has(deployer));

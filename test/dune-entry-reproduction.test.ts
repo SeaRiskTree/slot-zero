@@ -19,7 +19,7 @@
  *    from the tape-sourced leg and is deliberately not used as a threshold here.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
@@ -588,6 +588,67 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
       expect(err?.name).toBe('DuneLaneCeilingReached');
       expect(c.executions()).toBe(0);
       expect(readFileSync(path).equals(before)).toBe(true);
+      // And nothing was written ANYWHERE: a run that bought nothing does not leave a sibling either,
+      // which would be an empty file an operator has to work out the meaning of.
+      expect(readdirSync(dir)).toEqual(['rows.jsonl.gz']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a PARTIAL result never replaces a COMPLETE cache — it lands beside it, and the run says where', async () => {
+    // THE THIRD ROUTE TO THE SAME LOSS, and the one the other two guards cannot see. This run DID
+    // buy batch 1, so the nothing-was-bought guard lets it through, and the write SUCCEEDS, so the
+    // temp-and-rename has nothing to catch — it simply writes strictly less than what was there.
+    // An operator holding an 8-batch cache who is refused at batch 2 would trade seven batches for
+    // one, which is the ~530-credit loss `--rows` exists to prevent.
+    //
+    // The assertion is on the BYTES: a 1-batch `complete: false` file has a plausible shape, so a
+    // row-count or trailer check would pass on the broken code.
+    const dir = mkdtempSync(join(tmpdir(), 'slot-zero-rows-'));
+    const path = join(dir, 'rows.jsonl.gz');
+    const read = (p: string) => readFileSync(p);
+    try {
+      const batches = threeBatches([448, 1_200, 300]);
+      await runReproduction(client(stub().impl), {
+        batches,
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 5_000 }),
+        persistRows: (cache) => writeRowCache(path, cache),
+      });
+      const before = readFileSync(path);
+      expect(readRowCacheCompleteness(path, read, gunzipSync)?.complete).toBe(true);
+
+      // 281 credits an execution against a cleared 300 (ceiling 325, reserve 25): batch 1 clears and
+      // batch 2 cannot, so this run has genuinely paid for one batch of three.
+      const lines: string[] = [];
+      const c = client(stub().impl);
+      const err = await runReproduction(c, {
+        batches,
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 300 }),
+        say: (l) => lines.push(l),
+        persistRows: (cache) => {
+          const written = writeRowCache(path, cache);
+          lines.push(`cached to ${written.path}; preserved ${String(written.preservedCompleteCacheAt)}`);
+        },
+      }).then(() => null, (e: Error) => e);
+
+      expect(err?.name).toBe('DuneLaneCeilingReached');
+      expect(c.executions()).toBe(1);
+      // The complete cache is untouched, byte for byte.
+      expect(readFileSync(path).equals(before)).toBe(true);
+      // And the batch this run DID pay for is beside it rather than thrown away.
+      const partial = `${path}.partial`;
+      expect(readRowCache(partial, read, gunzipSync).get(MINT)).toHaveLength(1);
+      expect(readRowCacheCompleteness(partial, read, gunzipSync)).toEqual({
+        complete: false,
+        batchesCompleted: 1,
+        batchesPlanned: 3,
+      });
+      // A silent divert is nearly as bad as the overwrite: the operator has to be told which file
+      // holds what, or they cannot know what to hand `--from-rows`.
+      expect(lines.join('\n')).toContain(`cached to ${partial}; preserved ${path}`);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -620,6 +681,9 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
         renameSync: () => {
           throw new Error('rename must not be reached once the write has failed');
         },
+        unlinkSync,
+        readFileSync,
+        existsSync,
       };
       const lines: string[] = [];
       const c = client(stub().impl);
@@ -640,6 +704,8 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
       expect(err?.message).toMatch(/credit ceiling/);
       // Reported ALONGSIDE, never instead of — the failed write is not silently swallowed either.
       expect(lines.join('\n')).toMatch(/--rows cache could NOT be written: ENOSPC/);
+      // And the half-written temp file is gone: a failed write leaves the directory as it found it.
+      expect(readdirSync(dir)).toEqual(['rows.jsonl.gz']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

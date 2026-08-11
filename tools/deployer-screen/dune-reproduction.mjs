@@ -54,8 +54,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
-import { gzipSync } from 'node:zlib';
+import { existsSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
 import { POPULATION_TAPE_DIR } from '../../config/data-root.mjs';
@@ -1349,33 +1349,89 @@ export function serialiseRowCache(cache) {
 export const ROW_CACHE_KIND = 'dune-entry-reproduction-rows';
 
 /**
- * Write a `--rows` cache so a FAILED write cannot destroy the one already there.
+ * @typedef {object} RowCacheIo The filesystem seam, so a test can drive a write that fails part way.
+ * @property {(p: string, data: Buffer) => void} writeFileSync
+ * @property {(from: string, to: string) => void} renameSync
+ * @property {(p: string) => void} unlinkSync
+ * @property {(p: string) => Buffer} readFileSync
+ * @property {(p: string) => boolean} existsSync
+ */
+
+/** The default seam: `node:fs`. */
+const ROW_CACHE_IO = { writeFileSync, renameSync, unlinkSync, readFileSync, existsSync };
+
+/**
+ * Write a `--rows` cache without ever destroying rows already paid for.
  *
- * **Serialise and compress into a sibling temp file, then RENAME over the target.** A rename within
- * a directory is atomic, so the cache is either the old bytes or the new ones and never a truncated
- * middle — where a direct `writeFileSync` opens the operator's only copy for truncation before it
- * has a single byte to put back, and a run that dies mid-write has destroyed rows that cost real
- * credits and cannot be re-fetched for free.
+ * **THREE CONDITIONS GUARD THIS, THEY FAIL DIFFERENTLY, AND NONE REPLACES ANOTHER.** The same loss —
+ * an operator's complete cache from an earlier full-tape fetch (~530 credits) gone, and the rows to
+ * be bought again — has arrived by three separate routes, so it is closed at three separate points
+ * and a later reader tempted to simplify one away should read all three:
  *
- * **This is the SECOND of two guards and neither replaces the other.** `runReproduction` will not
- * call a persist at all when nothing was bought, which stops a valid-but-empty cache replacing a
- * complete one; that guard cannot see a write that fails half way, and this one cannot see a write
- * that succeeds at writing nothing. A later reader tempted to simplify one away should read both.
+ * 1. **Nothing bought, nothing written** — `runReproduction` does not call the persist at all when
+ *    no batch completed. This one cannot see a write that succeeds at writing LESS, nor one that
+ *    dies half way.
+ * 2. **A PARTIAL RESULT NEVER REPLACES A COMPLETE CACHE**, below. A run stopped at batch 2 of 8 has
+ *    genuinely paid for batch 1 and clause 1 lets it through, but writing it over an 8-batch cache
+ *    still trades seven batches for one. The existing file's own trailer is read first; if it says
+ *    `complete: true` and this result is short, that file is left byte for byte alone and the
+ *    partial goes to a SIBLING `.partial` path. The caller is told where, because a silent divert
+ *    is nearly as bad as the overwrite — an operator who does not know which file to hand
+ *    `--from-rows` has lost the new rows instead of the old ones.
+ * 3. **Temp file, then RENAME** — a rename within a directory is atomic, so the target is either the
+ *    old bytes or the new ones and never a truncated middle. A direct `writeFileSync` opens the only
+ *    copy for truncation before it has a byte to put back. Clauses 1 and 2 both write, so neither
+ *    sees this; a failed write also unlinks its own temp so a directory is left as it was found.
+ *
+ * A cache that does not say (no trailer, unreadable, absent) is UNKNOWN, and only an explicit
+ * `complete: true` diverts — clause 2 protects what can prove it is whole and claims nothing more.
  *
  * @param {string} path
  * @param {RowCache} cache
- * @param {{ writeFileSync: (p: string, data: Buffer) => void, renameSync: (from: string, to: string) => void }} [io]
- *   The filesystem seam, so a test can drive a write that fails part way. Defaults to `node:fs`.
- * @returns {number} Rows written.
+ * @param {RowCacheIo} [io]
+ * @returns {{ path: string, rows: number, preservedCompleteCacheAt: string | null }} `path` is where
+ *   the rows actually went, and `preservedCompleteCacheAt` names the complete cache that was left
+ *   alone when they were diverted — `null` when nothing was diverted.
  */
-export function writeRowCache(path, cache, io = { writeFileSync, renameSync }) {
+export function writeRowCache(path, cache, io = ROW_CACHE_IO) {
   const text = serialiseRowCache(cache);
+  const short = cache.batchesCompleted < cache.batchesPlanned;
+  const diverted = short && holdsACompleteRowCache(path, io);
+  const target = diverted ? `${path}.partial` : path;
   // A SIBLING, not the system temp directory: rename is only atomic within one filesystem, and a
   // cross-device rename fails outright — which would turn this guard into a lane that never caches.
-  const temp = `${path}.partial-${process.pid}`;
-  io.writeFileSync(temp, gzipSync(Buffer.from(text, 'utf8')));
-  io.renameSync(temp, path);
-  return text.split('\n').length - 2;
+  const temp = `${target}.tmp-${process.pid}`;
+  try {
+    io.writeFileSync(temp, gzipSync(Buffer.from(text, 'utf8')));
+    io.renameSync(temp, target);
+  } catch (cause) {
+    try {
+      io.unlinkSync(temp);
+    } catch {
+      // The WRITE's error is what an operator needs; a failure to tidy up after it is not allowed to
+      // mask it, and there is nothing useful to do about a temp file that will not delete.
+    }
+    throw cause;
+  }
+  return { path: target, rows: text.split('\n').length - 2, preservedCompleteCacheAt: diverted ? path : null };
+}
+
+/**
+ * Does `path` already hold a cache whose own trailer says it is whole?
+ *
+ * @param {string} path
+ * @param {RowCacheIo} io
+ * @returns {boolean}
+ */
+function holdsACompleteRowCache(path, io) {
+  try {
+    if (!io.existsSync(path)) return false;
+    return readRowCacheCompleteness(path, io.readFileSync, gunzipSync)?.complete === true;
+  } catch {
+    // Unreadable is UNKNOWN, and only a cache that can prove it is whole is protected here. It is
+    // the one direction this clause deliberately does not cover, rather than a silent assumption.
+    return false;
+  }
 }
 
 /**
@@ -1672,16 +1728,23 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       args.rows === null
         ? undefined
         : (cache) => {
-            const rows = writeRowCache(/** @type {string} */ (args.rows), cache);
+            const written = writeRowCache(/** @type {string} */ (args.rows), cache);
             const whole = cache.batchesCompleted === cache.batchesPlanned;
             say(
-              `  cached         ${rows} row(s) to ${args.rows} ` +
+              `  cached         ${written.rows} row(s) to ${written.path} ` +
                 `(a working file; not for committing) — ` +
                 (whole
                   ? `all ${cache.batchesPlanned} batch(es)`
                   : `PARTIAL: ${cache.batchesCompleted} of ${cache.batchesPlanned} batch(es), which is ` +
                     `what this run paid for before it stopped; the file records that it is short`),
             );
+            if (written.preservedCompleteCacheAt !== null) {
+              say(
+                `                 the COMPLETE cache already at ${written.preservedCompleteCacheAt} was ` +
+                  `left untouched — a partial result never replaces one that proved it was whole. Hand ` +
+                  `--from-rows the complete one unless you specifically want this run's rows.`,
+              );
+            }
           },
   });
   const custody = custodyOrderVerdict(log);

@@ -321,6 +321,80 @@ export function planFits(priced, bounds) {
 }
 
 /**
+ * The run's keyless fill-walk clients: ONE PER CLAIM, each built with only what is left.
+ *
+ * The ceiling is exact BY CONSTRUCTION, which is the property every other ceiling in this lane
+ * already has and the reason this is a pool rather than a per-schedule cache. A cache keyed on the
+ * retry schedule cannot hold the property: with claims A(X), B(Y), C(X) the client for X is built
+ * at spend 0 with the whole budget and then REUSED for C after B has already spent, so the sum of
+ * what the live clients are permitted to issue exceeds `maxKeylessRequests`. Nothing reachable
+ * today overruns — per-claim spend is capped by the recipe's own
+ * `maxLaunchesPerCandidate × maxRequestsPerLaunch` and {@link planFits} caps the batch sum before
+ * the first request — so this is defence in depth restoring an exact bound, not a live budget hole
+ * being closed.
+ *
+ * **The retry schedule is still per claim.** A claim is walked at the schedule its own run
+ * recorded, because the schedule's length is what each request reserves against
+ * `maxRequestsPerLaunch` — a claim measured under a different one is measured over a different
+ * sample of launches. One client per claim serves that directly instead of through a cache.
+ *
+ * **PACING IS CARRIED ACROSS THE CLIENT BOUNDARY and is therefore not loosened by the change.**
+ * A {@link KeylessClient} starts its own interval clock at zero, so a fresh client per claim would
+ * let the first request of claim N+1 follow the last of claim N with no gap. The pool holds the
+ * instant of the last request issued through ANY of its clients — `onRequest` fires immediately
+ * after the client stamps its own clock — and waits out the remainder of `minIntervalMs` before
+ * handing over the next client. The courtesy owed a shared public endpoint is a property of the
+ * RUN, not of a client object's lifetime.
+ *
+ * An exhausted budget refuses with {@link CeilingReached} rather than building a client that cannot
+ * issue anything: the run stops with the ceiling exit code and every grade already paid for is
+ * kept, which is what the caller's catch already does with that exception.
+ *
+ * @param {object} options
+ * @param {number} options.maxKeylessRequests The run-level ceiling. Never exceeded in total.
+ * @param {number} options.minIntervalMs
+ * @param {typeof fetch} [options.fetchImpl]
+ * @param {(ms: number) => Promise<void>} [options.sleepImpl]
+ * @param {() => number} [options.nowImpl] Injected for the pacing test; defaults to `Date.now`.
+ * @returns {{ acquire: (retryBackoffMs: readonly number[]) => Promise<KeylessClient>,
+ *   spent: () => number, clients: readonly KeylessClient[] }}
+ */
+export function createKeylessClientPool(options) {
+  /** @type {KeylessClient[]} */
+  const clients = [];
+  const now = options.nowImpl ?? (() => Date.now());
+  const sleep = options.sleepImpl ?? ((/** @type {number} */ ms) => new Promise((r) => setTimeout(r, ms)));
+  let lastRequestAtMs = 0;
+  const spent = () => clients.reduce((n, c) => n + c.issued(), 0);
+  /** @param {readonly number[]} retryBackoffMs @returns {Promise<KeylessClient>} */
+  const acquire = async (retryBackoffMs) => {
+    const remaining = options.maxKeylessRequests - spent();
+    if (remaining < 1) {
+      throw new CeilingReached(
+        options.maxKeylessRequests,
+        "this claim's keyless fill walk",
+        'Raise feedback_loop.maxKeylessRequests, or grade fewer claims per run.',
+      );
+    }
+    const wait = options.minIntervalMs - (now() - lastRequestAtMs);
+    if (lastRequestAtMs !== 0 && wait > 0) await sleep(wait);
+    const client = new KeylessClient({
+      maxRequests: remaining,
+      minIntervalMs: options.minIntervalMs,
+      retryBackoffMs,
+      onRequest: () => {
+        lastRequestAtMs = now();
+      },
+      ...(options.fetchImpl === undefined ? {} : { fetchImpl: options.fetchImpl }),
+      ...(options.sleepImpl === undefined ? {} : { sleepImpl: options.sleepImpl }),
+    });
+    clients.push(client);
+    return client;
+  };
+  return { acquire, spent, clients };
+}
+
+/**
  * Measure one claim's outcome: what this deployer's POST-PREDICTION launches actually did.
  *
  * The out-of-sample filter is the one line that makes the whole lane worth anything, and it is a
@@ -330,10 +404,12 @@ export function planFits(priced, bounds) {
  *
  * @param {object} clients
  * @param {BoundedClient} clients.keyed
- * @param {(retryBackoffMs: readonly number[]) => KeylessClient} clients.keylessFor
- *   The fill walk's client for THIS claim's recorded retry schedule. The schedule is part of the
- *   walk's arithmetic — its length is what each request reserves against `maxRequestsPerLaunch` —
- *   so a claim measured under a different one is measured over a different sample of launches.
+ * @param {(retryBackoffMs: readonly number[]) => KeylessClient | Promise<KeylessClient>} clients.keylessFor
+ *   The fill walk's client for THIS claim, built at THIS claim's recorded retry schedule. The
+ *   schedule is part of the walk's arithmetic — its length is what each request reserves against
+ *   `maxRequestsPerLaunch` — so a claim measured under a different one is measured over a different
+ *   sample of launches. It is awaited because the run's pool paces the handover; see
+ *   {@link createKeylessClientPool}.
  * @param {(rpcCeiling: number, minIntervalMs: number) => SolanaRpcClient | null} clients.rpcFor
  *   `null` when the run-level RPC ceiling is already spent. The cost leg is then disabled and the
  *   verdict cannot be better than `entry-cost-unmeasured`, so the claim goes ungraded — which is the
@@ -385,7 +461,7 @@ export async function measureOutcome(clients, p, recipe, nowMs, log) {
   }
 
   const rpc = clients.rpcFor(recipe.cost['maxRpcRequestsPerCandidate'], recipe.cost['rpcMinIntervalMs']);
-  const keyless = clients.keylessFor(recipe.keylessRetryBackoffMs);
+  const keyless = await clients.keylessFor(recipe.keylessRetryBackoffMs);
   // The SOURCES the predicting run measured on, not today's. This lane is pinned to issue no Dune
   // execution and no Helius credit, so both are the keyless/RPC pair unconditionally — and they are
   // constructed here rather than inside Stage 2 for captain decision 260a's reason: one Stage 2,
@@ -614,28 +690,18 @@ export async function main(opts, env, out, err, deps = {}) {
       F.keylessMinIntervalMs,
       ...priced.filter((x) => x.usable).map((x) => /** @type {any} */ (x).keylessMinIntervalMs),
     );
-    // One keyless client PER RETRY SCHEDULE — normally one for the whole run, because every claim in
-    // a batch usually records the same pin. A claim is walked at the schedule its own run recorded,
-    // and the run-level ceiling still binds across all of them: each client is created with only
-    // what is left, so the total cannot exceed `maxKeylessRequests` however the batch is composed.
-    /** @type {Map<string, KeylessClient>} */
-    const keylessClients = new Map();
-    const keylessSpent = () => [...keylessClients.values()].reduce((n, c) => n + c.issued(), 0);
-    /** @param {readonly number[]} retryBackoffMs @returns {KeylessClient} */
-    const keylessFor = (retryBackoffMs) => {
-      const key = JSON.stringify(retryBackoffMs);
-      const existing = keylessClients.get(key);
-      if (existing !== undefined) return existing;
-      const client = new KeylessClient({
-        maxRequests: Math.max(0, F.maxKeylessRequests - keylessSpent()),
-        minIntervalMs: keylessMinIntervalMs,
-        retryBackoffMs,
-        ...(deps.keylessFetchImpl === undefined ? {} : { fetchImpl: deps.keylessFetchImpl }),
-        ...(deps.sleepImpl === undefined ? {} : { sleepImpl: deps.sleepImpl }),
-      });
-      keylessClients.set(key, client);
-      return client;
-    };
+    // One keyless client PER CLAIM, each built with only what is left, so the run-level ceiling is
+    // exact by construction however the batch is composed — the property every other ceiling in
+    // this lane has. {@link createKeylessClientPool} owns the argument, including why a cache keyed
+    // on the retry schedule could not hold it and how the pacing survives the client boundary.
+    const keylessPool = createKeylessClientPool({
+      maxKeylessRequests: F.maxKeylessRequests,
+      minIntervalMs: keylessMinIntervalMs,
+      ...(deps.keylessFetchImpl === undefined ? {} : { fetchImpl: deps.keylessFetchImpl }),
+      ...(deps.sleepImpl === undefined ? {} : { sleepImpl: deps.sleepImpl }),
+    });
+    const keylessFor = keylessPool.acquire;
+    const keylessSpent = keylessPool.spent;
     // Every cost-leg client this run creates, so the run-level RPC spend is read off the CLIENTS
     // rather than off the outcomes. A claim that threw mid-walk still spent, and counting only what
     // reached a result would let an abandoned walk's requests fall outside the ceiling.

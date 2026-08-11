@@ -31,6 +31,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ENTRY_VERDICTS, UNMEASURED_VERDICTS } from '../tools/deployer-screen/entry.mjs';
 import {
   loadGradeLedger,
+  createKeylessClientPool,
   main as gradeMain,
   measureOutcome,
   parseArgs,
@@ -1225,5 +1226,127 @@ describe('this lane grades the screen and never re-tunes it', () => {
     for (const k of readBack) {
       expect(dune[k], `stage2_entry_dune.${k} must differ from the block the recorder files`).not.toBe(swap[k]);
     }
+  });
+});
+
+describe('the keyless ceiling is EXACT BY CONSTRUCTION, however the batch is composed', () => {
+  /**
+   * A per-schedule client CACHE cannot hold that property, and the composition that breaks it is
+   * A(schedule X), B(schedule Y), C(schedule X): the client for X is built at spend 0 with the whole
+   * budget and then REUSED for C after B has already spent, so the live clients are between them
+   * permitted to issue more than `maxKeylessRequests`.
+   *
+   * **This is defence in depth, not a live budget hole.** Per-claim spend is independently capped by
+   * the recipe's own `maxLaunchesPerCandidate x maxRequestsPerLaunch`, and `planFits` caps the batch
+   * sum before the first request — so no reachable run overruns either way. What was wrong was that
+   * the ceiling was enforced by two collaborating bounds instead of by construction, while the
+   * comment beside it claimed the construction property outright. Every other ceiling in this lane
+   * is exact; this one is now too.
+   */
+  const okResponse = () =>
+    ({ ok: true, status: 200, json: async () => ({ trades: [] }) }) as unknown as Response;
+
+  const poolFor = (max: number, over: Record<string, unknown> = {}) =>
+    createKeylessClientPool({
+      maxKeylessRequests: max,
+      minIntervalMs: 0,
+      fetchImpl: (async () => okResponse()) as unknown as typeof fetch,
+      sleepImpl: async () => {},
+      ...over,
+    });
+
+  const X = [1] as const;
+  const Y = [2] as const;
+
+  it('A(X) B(Y) C(X): the third claim gets a NEW client bounded by what is LEFT', async () => {
+    // Against the superseded cache this fails twice over: two clients are created rather than three,
+    // and the third acquire returns X's original client, whose ceiling was the whole 6.
+    const pool = poolFor(6);
+    const a = await pool.acquire(X);
+    await a.getJson('https://swap-api.pump.fun/a1');
+    await a.getJson('https://swap-api.pump.fun/a2');
+    const b = await pool.acquire(Y);
+    await b.getJson('https://swap-api.pump.fun/b1');
+    await b.getJson('https://swap-api.pump.fun/b2');
+    const c = await pool.acquire(X);
+
+    expect(pool.clients).toHaveLength(3);
+    expect(c).not.toBe(a);
+    expect(pool.spent()).toBe(4);
+    // Ceiling === issued + remaining. C was built with exactly the 2 left, not with the 6 A was
+    // built with.
+    expect(c.issued() + c.remaining()).toBe(2);
+    // And the schedule is still honoured per claim: C is walked at X's, not at Y's.
+    expect(c.attemptsPerRequest()).toBe(X.length + 1);
+    expect(b.attemptsPerRequest()).toBe(Y.length + 1);
+  });
+
+  it('the RUN cannot issue more than the ceiling, whatever the schedules do', async () => {
+    // The behavioural half of the same property, driven to exhaustion. Under the cache the run
+    // reaches 8 issued requests against a ceiling of 6.
+    const pool = poolFor(6);
+    const a = await pool.acquire(X);
+    await a.getJson('https://swap-api.pump.fun/a1');
+    await a.getJson('https://swap-api.pump.fun/a2');
+    const b = await pool.acquire(Y);
+    await b.getJson('https://swap-api.pump.fun/b1');
+    await b.getJson('https://swap-api.pump.fun/b2');
+    const c = await pool.acquire(X);
+    await c.getJson('https://swap-api.pump.fun/c1');
+    await c.getJson('https://swap-api.pump.fun/c2');
+
+    expect(pool.spent()).toBe(6);
+    await expect(c.getJson('https://swap-api.pump.fun/c3')).rejects.toThrow(/Request ceiling of 2 reached/);
+    expect(pool.spent()).toBe(6);
+  });
+
+  it('an exhausted budget REFUSES the next claim rather than handing back a client that cannot spend', async () => {
+    // A hard floor of zero, exactly as `rpcFor` has: a client built with "at least one" request
+    // would let a run overrun by one per remaining claim. `CeilingReached` is what `main` already
+    // catches — the run stops at EXIT.ceiling and every grade already paid for is kept.
+    const pool = poolFor(2);
+    const a = await pool.acquire(X);
+    await a.getJson('https://swap-api.pump.fun/a1');
+    await a.getJson('https://swap-api.pump.fun/a2');
+    await expect(pool.acquire(Y)).rejects.toThrow(/Request ceiling of 2 reached/);
+    expect(pool.clients).toHaveLength(1);
+  });
+
+  it('PACING SURVIVES THE CLIENT BOUNDARY — one client per claim does not buy a free request', async () => {
+    // The one thing a fresh client per claim could have cost. `KeylessClient` starts its own
+    // interval clock at zero, so without this the first request of claim N+1 would follow the last
+    // of claim N with no gap at all — a loosening of the courtesy owed a shared keyless endpoint,
+    // smuggled in as a refactor. The pool holds the instant of the last request issued through ANY
+    // of its clients and waits out the remainder before handing over the next one.
+    const slept: number[] = [];
+    let clock = 1_000_000;
+    const pool = createKeylessClientPool({
+      maxKeylessRequests: 10,
+      minIntervalMs: 7_000,
+      fetchImpl: (async () => okResponse()) as unknown as typeof fetch,
+      sleepImpl: async (ms: number) => {
+        slept.push(ms);
+        clock += ms;
+      },
+      nowImpl: () => clock,
+    });
+
+    const a = await pool.acquire(X);
+    // The FIRST client waits for nothing — there is no earlier request to be paced against.
+    expect(slept).toEqual([]);
+    await a.getJson('https://swap-api.pump.fun/a1');
+    expect(slept).toEqual([]);
+
+    clock += 1_000;
+    const b = await pool.acquire(Y);
+    // 7,000 owed, 1,000 elapsed: the handover pays the remaining 6,000 before b issues anything.
+    expect(slept).toEqual([6_000]);
+    await b.getJson('https://swap-api.pump.fun/b1');
+    expect(slept).toEqual([6_000]);
+
+    // And a claim that arrives after the interval has already elapsed waits for nothing.
+    clock += 20_000;
+    await pool.acquire(X);
+    expect(slept).toEqual([6_000]);
   });
 });

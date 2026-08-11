@@ -49,9 +49,8 @@ import {
   describeMonthlyCapCredits,
   estimatePlanCredits,
   executionDeadlineCredits,
-  laneCeilingCredits,
   localCreditEstimate,
-  openDuneLaneBudget,
+  openLaneBudgetForDecision,
   parseUsageResponse,
   requireLaneBudget,
   vendorNumberOrNull,
@@ -802,22 +801,19 @@ export async function main(argv, env, say) {
     // cleared plan leaves that plan's last execution short by the 25 the reserve holds back, and
     // this lane's only execution is also its last.
     // ONE execution's worth: one result read at the `?limit=` this run reads at.
+    //
+    // THE OPENER IS THE SHARED ONE, and the ceiling and the POLICY come with it. This lane used to
+    // spell `tightMultiple`, `allowanceRequired`, the reserve and the cap out here, re-read from its
+    // own bounds file — values that agreed with the screen's by coincidence and had nothing keeping
+    // them in step, in two directories that may not import each other. It reads them off the CLEARED
+    // DECISION now, which is the same rule the ceiling already follows: a run enforces the terms it
+    // was admitted on rather than a second read of the same pins.
     const executionPlan = { ...spendPlan, executions: 1, resultReads: 1 };
-    const laneBudget = openDuneLaneBudget({
+    const laneBudget = openLaneBudgetForDecision({
       lane: spendPlan.lane,
-      ceilingCredits: laneCeilingCredits(
-        /** @type {import('./client.mjs').AllowanceDecision} */ (allowanceDecision).worstCaseCredits,
-        executionPlan,
-        bounds.dune.allowanceReserveCredits,
-      ),
-      reserveCredits: bounds.dune.allowanceReserveCredits,
+      allowance: /** @type {import('./client.mjs').AllowanceDecision} */ (allowanceDecision),
+      executionPlan,
       executionDeadlineMs: bounds.dune.executionDeadlineMs,
-      monthlyCapCredits: bounds.dune.monthlyCreditCapCredits,
-      // ONE worst case has to fit, because this authorises ONE execution at a time. The pre-flight's
-      // own `allowanceTightMultiple` asks whether the RUN could be made again this period, and that
-      // question is already answered above.
-      tightMultiple: 1,
-      allowanceRequired: true,
     });
     const result = await executeAndRead(client, plan.queryId, plan.parameters, {
       pollIntervalMs: bounds.dune.pollIntervalMs,

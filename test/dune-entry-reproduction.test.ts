@@ -57,6 +57,7 @@ import {
   planReproduction,
   readRowCache,
   readRowCacheCompleteness,
+  writeRowCache,
   readTapeLaunches,
   recordCustody,
   reproductionSpendPlan,
@@ -521,7 +522,7 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
         batches: threeBatches([448, 1_200, 300]),
         bounds: BOUNDS,
         allowance: clearedAllowance({ worstCaseCredits: 600 }),
-        persistRows: (cache) => writeFileSync(path, gzipSync(Buffer.from(serialiseRowCache(cache), 'utf8'))),
+        persistRows: (cache) => writeRowCache(path, cache),
       }).then(() => null, (e: Error) => e);
 
       expect(err?.name).toBe('DuneLaneCeilingReached');
@@ -544,10 +545,101 @@ describe('CUSTODY — the comparison precedes the spend, and this assertion can 
         batches: threeBatches([448, 1_200, 300]),
         bounds: BOUNDS,
         allowance: clearedAllowance({ worstCaseCredits: 5_000 }),
-        persistRows: (cache) => writeFileSync(path, gzipSync(Buffer.from(serialiseRowCache(cache), 'utf8'))),
+        persistRows: (cache) => writeRowCache(path, cache),
       });
       expect(readRowCacheCompleteness(path, read, gunzipSync)?.complete).toBe(true);
       expect(readRowCache(path, read, gunzipSync).get(MINT)).toHaveLength(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a run that bought NOTHING leaves an existing complete cache byte-identical', async () => {
+    // THE LOSS THE `finally` ITSELF INTRODUCED. An operator holds a complete cache from an earlier
+    // full-tape fetch (~530 credits). This run is refused at its FIRST batch — the account counter
+    // moved between runs — so `rowsByMint` is empty, and an unconditional persist writes a valid,
+    // 0-row, `complete: false` file over the only copy. Nothing was bought, so there is nothing to
+    // keep, and writing is pure loss.
+    //
+    // The assertion is on the BYTES, deliberately: a 0-row `complete: false` cache has a perfectly
+    // plausible shape, so a row-count or completeness check would pass on the broken code.
+    const dir = mkdtempSync(join(tmpdir(), 'slot-zero-rows-'));
+    const path = join(dir, 'rows.jsonl.gz');
+    try {
+      const batches = threeBatches([448, 1_200, 300]);
+      const done = client(stub().impl);
+      await runReproduction(done, {
+        batches,
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 5_000 }),
+        persistRows: (cache) => writeRowCache(path, cache),
+      });
+      const before = readFileSync(path);
+
+      // The month itself cannot cover one execution, so batch 1 is refused and nothing is bought.
+      const c = client(stub().impl);
+      const err = await runReproduction(c, {
+        batches,
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 5_000, monthlyCapCredits: 10 }),
+        persistRows: (cache) => writeRowCache(path, cache),
+      }).then(() => null, (e: Error) => e);
+
+      expect(err?.name).toBe('DuneLaneCeilingReached');
+      expect(c.executions()).toBe(0);
+      expect(readFileSync(path).equals(before)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a WRITE that dies part way leaves the existing cache byte-identical, and the run still reports the ceiling', async () => {
+    // The second guard, which the first cannot see: this run DID buy rows, so it passes the
+    // nothing-was-bought check and reaches the write — and the write fails half way. A direct
+    // `writeFileSync` over the target truncates the operator's only copy before it has the bytes to
+    // put back; a temp file plus a rename leaves it whole.
+    const dir = mkdtempSync(join(tmpdir(), 'slot-zero-rows-'));
+    const path = join(dir, 'rows.jsonl.gz');
+    try {
+      const batches = threeBatches([448, 1_200, 300]);
+      await runReproduction(client(stub().impl), {
+        batches,
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 5_000 }),
+        persistRows: (cache) => writeRowCache(path, cache),
+      });
+      const before = readFileSync(path);
+
+      // A filesystem that truncates and then dies, which is what a full disk or a killed process
+      // does to a direct write. The seam is the same one production uses; only the failure is faked.
+      const dyingIo = {
+        writeFileSync: (p: string, data: Buffer) => {
+          writeFileSync(p, data.subarray(0, Math.floor(data.length / 2)));
+          throw new Error('ENOSPC: no space left on device');
+        },
+        renameSync: () => {
+          throw new Error('rename must not be reached once the write has failed');
+        },
+      };
+      const lines: string[] = [];
+      const c = client(stub().impl);
+      const err = await runReproduction(c, {
+        batches,
+        bounds: BOUNDS,
+        allowance: clearedAllowance({ worstCaseCredits: 600 }),
+        say: (l) => lines.push(l),
+        persistRows: (cache) => writeRowCache(path, cache, dyingIo),
+      }).then(() => null, (e: Error) => e);
+
+      // The cache the operator already paid for is untouched by the failed write.
+      expect(readFileSync(path).equals(before)).toBe(true);
+      // AND THE REASON THE RUN STOPPED SURVIVES THE WRITE FAILURE. Thrown from the `finally`, the
+      // write error would replace it and send the operator to look at their disk while the actual
+      // cause is a credit ceiling they could raise or wait out.
+      expect(err?.name).toBe('DuneLaneCeilingReached');
+      expect(err?.message).toMatch(/credit ceiling/);
+      // Reported ALONGSIDE, never instead of — the failed write is not silently swallowed either.
+      expect(lines.join('\n')).toMatch(/--rows cache could NOT be written: ENOSPC/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

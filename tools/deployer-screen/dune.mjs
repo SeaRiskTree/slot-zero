@@ -117,12 +117,13 @@ import {
   decideAllowance,
   estimatePlanCredits,
   executionDeadlineCredits,
-  laneCeilingCredits,
-  openDuneLaneBudget,
+  openLaneBudgetForDecision as openLaneBudget,
   parseUsageResponse,
   requireLaneBudget,
   vendorNumberOrNull,
 } from './client.mjs';
+
+export { openLaneBudget };
 
 /**
  * The row ceiling {@link CREATION_SQL} divides between the batch's deployers, written as a literal
@@ -1483,46 +1484,6 @@ export function describeExecutionError(status) {
   if (typeof message === 'string' && message !== '') parts.push(message);
   if (parts.length === 0) return 'Dune returned no reason for the failure.';
   return `${parts.join(' — ')}.`;
-}
-
-/**
- * Open a lane's credit budget against the verdict that cleared it. Captain decision 437(a).
- *
- * **One opener for every lane in this tool**, so the ceiling rule ({@link laneCeilingCredits}) and
- * the allowance policy cannot be spelt three ways. The POLICY is read off the cleared decision
- * itself — its own reserve and its own monthly cap — rather than re-read from configuration, for the
- * same reason the ceiling is: the budget must enforce the terms the run was admitted on, and a
- * second read of the same pins is a second answer waiting to differ from the first. A decision
- * carrying no cap refuses at the first authorisation, which is `decideAllowance`'s own rule under
- * captain decision 322a and not a new one.
- *
- * @param {object} input
- * @param {string} input.lane
- * @param {import('./client.mjs').AllowanceDecision} input.allowance The pre-flight verdict.
- * @param {import('./client.mjs').DuneSpendPlan} input.executionPlan ONE execution's shape.
- * @param {number} input.executionDeadlineMs The give-up point this lane cancels an execution at.
- *   **Required and it prices nothing** (captain decision 429a); it is stated because a lane that
- *   cannot say how long it lets an execution run has not bounded its wait.
- * @returns {import('./client.mjs').DuneLaneBudget}
- */
-export function openLaneBudget(input) {
-  return openDuneLaneBudget({
-    lane: input.lane,
-    ceilingCredits: laneCeilingCredits(
-      input.allowance.worstCaseCredits,
-      input.executionPlan,
-      input.allowance.reserveCredits,
-    ),
-    reserveCredits: input.allowance.reserveCredits,
-    executionDeadlineMs: input.executionDeadlineMs,
-    monthlyCapCredits: /** @type {number} */ (input.allowance.monthlyCapCredits),
-    // ONE worst case has to fit, because this authorises ONE execution at a time. The pre-flight's
-    // own `allowanceTightMultiple` asks "could this run be made again this period", which is a
-    // question about the RUN and is already answered before the lane opens; asking it again per
-    // execution would refuse a lane on how many more times it could repeat its next single step.
-    tightMultiple: 1,
-    allowanceRequired: true,
-  });
 }
 
 /**

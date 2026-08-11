@@ -54,7 +54,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { gzipSync } from 'node:zlib';
 import { join } from 'node:path';
 
 import { POPULATION_TAPE_DIR } from '../../config/data-root.mjs';
@@ -1094,6 +1095,8 @@ export async function runReproduction(client, opts) {
   }
 
   let batchesCompleted = 0;
+  /** @type {unknown} */
+  let stoppedBy = null;
   try {
   for (const [index, batch] of opts.batches.entries()) {
     const parameters = entryQueryParameters(batch.launches.map(scanWindowFor));
@@ -1128,11 +1131,36 @@ export async function runReproduction(client, opts) {
         `${(client.resultBytes() - before).toLocaleString('en-US')} byte(s).`,
     );
   }
+  } catch (cause) {
+    stoppedBy = cause;
+    throw cause;
   } finally {
     // WHAT WAS BILLED IS KEPT, on every way out of that loop. A `finally` and not a success path:
     // the ways out that matter are the ones that throw, and the rows they leave behind have already
     // been paid for.
-    opts.persistRows?.({ rowsByMint, batchesCompleted, batchesPlanned: opts.batches.length });
+    //
+    // AND A RUN THAT BOUGHT NOTHING WRITES NOTHING. Unconditional, this `finally` was itself a way
+    // to lose the rows it exists to keep: a run refused at its FIRST batch has an empty map, and
+    // writing that over an operator's complete cache from an earlier full-tape fetch destroys ~530
+    // credits of rows to record that this run got none. There is no paid-for data to keep, so there
+    // is nothing to write. **This guard does not make the write safe on its own** — see
+    // {@link writeRowCache}, whose temp-and-rename covers the case this one cannot see, a run that
+    // DID buy rows and then dies part way through writing them. Neither substitutes for the other.
+    if (batchesCompleted > 0 && opts.persistRows !== undefined) {
+      try {
+        opts.persistRows({ rowsByMint, batchesCompleted, batchesPlanned: opts.batches.length });
+      } catch (cause) {
+        // A FAILED WRITE MAY NOT REPLACE THE REASON THE RUN STOPPED. Thrown from a `finally`, it
+        // would: the operator would be told their disk was full while the actual cause was a credit
+        // ceiling they could raise or wait out, and `DuneLaneCeilingReached` — which names the lane
+        // and the shortfall — would never be seen. So it is REPORTED beside the refusal and the
+        // refusal is what propagates. With nothing in flight it still throws, because a run that
+        // says it cached and did not is the same lie one level down.
+        const why = cause instanceof Error ? cause.message : String(cause);
+        if (stoppedBy === null) throw cause;
+        say(`  the --rows cache could NOT be written: ${why}. The run stopped for the reason below.`);
+      }
+    }
   }
 
   return { rowsByMint, executions: client.executions(), resultBytes: client.resultBytes(), unplacedRows };
@@ -1319,6 +1347,36 @@ export function serialiseRowCache(cache) {
 
 /** Names the file this trailer belongs to, so another JSONL cache cannot be read as one of these. */
 export const ROW_CACHE_KIND = 'dune-entry-reproduction-rows';
+
+/**
+ * Write a `--rows` cache so a FAILED write cannot destroy the one already there.
+ *
+ * **Serialise and compress into a sibling temp file, then RENAME over the target.** A rename within
+ * a directory is atomic, so the cache is either the old bytes or the new ones and never a truncated
+ * middle — where a direct `writeFileSync` opens the operator's only copy for truncation before it
+ * has a single byte to put back, and a run that dies mid-write has destroyed rows that cost real
+ * credits and cannot be re-fetched for free.
+ *
+ * **This is the SECOND of two guards and neither replaces the other.** `runReproduction` will not
+ * call a persist at all when nothing was bought, which stops a valid-but-empty cache replacing a
+ * complete one; that guard cannot see a write that fails half way, and this one cannot see a write
+ * that succeeds at writing nothing. A later reader tempted to simplify one away should read both.
+ *
+ * @param {string} path
+ * @param {RowCache} cache
+ * @param {{ writeFileSync: (p: string, data: Buffer) => void, renameSync: (from: string, to: string) => void }} [io]
+ *   The filesystem seam, so a test can drive a write that fails part way. Defaults to `node:fs`.
+ * @returns {number} Rows written.
+ */
+export function writeRowCache(path, cache, io = { writeFileSync, renameSync }) {
+  const text = serialiseRowCache(cache);
+  // A SIBLING, not the system temp directory: rename is only atomic within one filesystem, and a
+  // cross-device rename fails outright — which would turn this guard into a lane that never caches.
+  const temp = `${path}.partial-${process.pid}`;
+  io.writeFileSync(temp, gzipSync(Buffer.from(text, 'utf8')));
+  io.renameSync(temp, path);
+  return text.split('\n').length - 2;
+}
 
 /**
  * What a `--rows` cache says about its own completeness, or `null` when it does not say.
@@ -1592,7 +1650,6 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // The verdict this run was ADMITTED on is what its lane budget then enforces, execution by
   // execution — captain decision 437(a). Passing the decision rather than re-deriving a ceiling here
   // is what stops a run being cleared on one set of terms and spending against another.
-  const { gzipSync } = await import('node:zlib');
   const { rowsByMint, unplacedRows } = await runReproduction(recorded, {
     batches,
     bounds,
@@ -1615,11 +1672,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       args.rows === null
         ? undefined
         : (cache) => {
-            const text = serialiseRowCache(cache);
-            writeFileSync(/** @type {string} */ (args.rows), gzipSync(Buffer.from(text, 'utf8')));
+            const rows = writeRowCache(/** @type {string} */ (args.rows), cache);
             const whole = cache.batchesCompleted === cache.batchesPlanned;
             say(
-              `  cached         ${text.split('\n').length - 2} row(s) to ${args.rows} ` +
+              `  cached         ${rows} row(s) to ${args.rows} ` +
                 `(a working file; not for committing) — ` +
                 (whole
                   ? `all ${cache.batchesPlanned} batch(es)`

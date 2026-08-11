@@ -2260,6 +2260,50 @@ export function laneCeilingCredits(clearedWorstCaseCredits, executionPlan, reser
 }
 
 /**
+ * Open a lane's credit budget against the verdict that cleared it. Captain decision 437(a).
+ *
+ * **ONE OPENER FOR EVERY LANE IN THE FLEET, and it is in the shared region for the same reason
+ * {@link laneCeilingCredits} is**: the two keyed tools may not import each other, so an opener per
+ * tool is one policy written twice and free to drift. The census used to carry its own copy —
+ * `tightMultiple: 1`, `allowanceRequired: true`, reserve and cap re-read from its own bounds file —
+ * which happened to agree with this one and had nothing keeping it that way.
+ *
+ * **THE POLICY IS READ OFF THE CLEARED DECISION, never re-read from configuration**, for the same
+ * reason the ceiling is: the budget must enforce the terms the run was ADMITTED on, and a second
+ * read of the same pins is a second answer waiting to differ from the first. A decision carrying no
+ * cap refuses at the first authorisation, which is {@link decideAllowance}'s own rule under captain
+ * decision 322a and not a new one.
+ *
+ * @param {object} input
+ * @param {string} input.lane
+ * @param {AllowanceDecision} input.allowance The pre-flight verdict.
+ * @param {DuneSpendPlan} input.executionPlan ONE execution's shape.
+ * @param {number} input.executionDeadlineMs The give-up point this lane cancels an execution at.
+ *   **Required and it prices nothing** (captain decision 429a); it is stated because a lane that
+ *   cannot say how long it lets an execution run has not bounded its wait.
+ * @returns {DuneLaneBudget}
+ */
+export function openLaneBudgetForDecision(input) {
+  return openDuneLaneBudget({
+    lane: input.lane,
+    ceilingCredits: laneCeilingCredits(
+      input.allowance.worstCaseCredits,
+      input.executionPlan,
+      input.allowance.reserveCredits,
+    ),
+    reserveCredits: input.allowance.reserveCredits,
+    executionDeadlineMs: input.executionDeadlineMs,
+    monthlyCapCredits: /** @type {number} */ (input.allowance.monthlyCapCredits),
+    // ONE worst case has to fit, because this authorises ONE execution at a time. The pre-flight's
+    // own `allowanceTightMultiple` asks "could this run be made again this period", which is a
+    // question about the RUN and is already answered before the lane opens; asking it again per
+    // execution would refuse a lane on how many more times it could repeat its next single step.
+    tightMultiple: 1,
+    allowanceRequired: true,
+  });
+}
+
+/**
  * **EVERY DUNE EXECUTION A TOOL ISSUES PASSES THROUGH A LANE BUDGET, AND ONE THAT CANNOT IS REFUSED
  * BEFORE IT IS BILLED.** Captain decision 437(a).
  *

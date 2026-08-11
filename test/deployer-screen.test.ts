@@ -91,6 +91,8 @@ import {
   measureCompletion,
   measureCreateSlot,
   measureWindowParticipation,
+  entrantUnitIsProven,
+  ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER,
   windowParticipationIsProven,
   ROOM_LEFT_RANGE,
   median,
@@ -7144,6 +7146,8 @@ const ROTATION_BLOCK_KEYS_BY_SCHEMA: Record<number, string[]> = {
   // separately by ROTATION_ORDER_ROW_KEYS_BY_SCHEMA, because a block whose shape is right and whose
   // rows lost the comparator's input would leave `verifySelection` grading a rule it cannot see.
   23: [...ROTATION_BLOCK_KEYS_20, 'windowCap', 'newGroundRule'],
+  // Schema 24 leaves the rotation block alone: what a run RECORDS grew, not how it allocates the cap.
+  24: [...ROTATION_BLOCK_KEYS_20, 'windowCap', 'newGroundRule'],
 };
 
 // One row of `scoringRotation.order`. Schema 20 carried the three fields 336a's recency rule reads;
@@ -7165,6 +7169,7 @@ const ROTATION_ORDER_ROW_KEYS_BY_SCHEMA: Record<number, string[]> = {
   21: ROTATION_ORDER_ROW_KEYS_20,
   22: ROTATION_ORDER_ROW_KEYS_20,
   23: [...ROTATION_ORDER_ROW_KEYS_20, 'launchesPerDay', 'newGroundWindows'],
+  24: [...ROTATION_ORDER_ROW_KEYS_20, 'launchesPerDay', 'newGroundWindows'],
 };
 
 describe('the keyless boundary holds in both directions', () => {
@@ -7326,6 +7331,9 @@ describe('the keyless boundary holds in both directions', () => {
   // and `spanDays`, which the row already carried. Every measured field is the same quantity at 22
   // and 23 and may be pooled.
   PERSISTED_BY_SCHEMA[23] = PERSISTED_BY_SCHEMA[22]!;
+  // Schema 24 adds no candidate ROW field either. The entrants are kept (captain decision 459) and
+  // the one new key is inside `entry` — ENTRY_KEYS_BY_SCHEMA below.
+  PERSISTED_BY_SCHEMA[24] = PERSISTED_BY_SCHEMA[23]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -7396,6 +7404,10 @@ describe('the keyless boundary holds in both directions', () => {
   // did not go missing at random, so the figure now carries how far completing them could move it.
   // REPORTING only — no verdict, bar or guard reads it, and `roomIsProven` is untouched.
   const ENTRY_KEYS_14 = [...ENTRY_KEYS_11, 'roomLeftBound'];
+  // Schema 24: captain decision 459. Every field above is an aggregate; this one is the evidence
+  // they were computed from. It is RECORDING — nothing reads it, exactly as nothing reads
+  // `roomLeftBound` (208b) — and it is over every WALKED window rather than every scored one.
+  const ENTRY_KEYS_24 = [...ENTRY_KEYS_14, 'windows'];
   const ENTRY_KEYS_BY_SCHEMA: Record<number, string[]> = {
     3: ENTRY_KEYS_3_AND_4,
     4: ENTRY_KEYS_3_AND_4,
@@ -7450,7 +7462,59 @@ describe('the keyless boundary holds in both directions', () => {
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: ENTRY_KEYS_14,
     23: ENTRY_KEYS_14,
+    // Schema 24: the entrants are kept (captain decision 459). ONE key, and it is the first thing
+    // in this block that is not an aggregate — `windows` holds one row per WALKED window, refused
+    // ones included, each with the create-slot outsiders that were in it. `ENTRY_WINDOW_KEYS_BY_SCHEMA`
+    // and `ENTRY_ENTRANT_KEYS_BY_SCHEMA` below pin inside it, the same hole `ENTRY_COVERAGE_KEYS_BY_SCHEMA`
+    // was added to close one level up: a key added to a row of this array would otherwise pass
+    // silently under an unchanged version.
+    24: ENTRY_KEYS_24,
   };
+
+  // The `windows` row, per version, and the `entrants` row inside it. Two levels, both pinned, for
+  // the reason `dune.coverage.tables` is pinned at both of its: an assertion that can see the NAME
+  // of an array and not INSIDE its rows is not a contract.
+  const ENTRY_WINDOW_KEYS_24 = [
+    'createSlot',
+    'deployer',
+    'roomIsProven',
+    'roomLeft',
+    'operationShare',
+    'devSol',
+    'coordinatedSol',
+    'independentSol',
+    'coordinatedWallets',
+    'independentWallets',
+    'bundledTx',
+    'maxWalletsInOneTx',
+    'runTx',
+    'adjacencyMarks',
+    'entrants',
+  ];
+  const ENTRY_WINDOW_KEYS_BY_SCHEMA: Record<number, string[]> = { 24: ENTRY_WINDOW_KEYS_24 };
+  const ENTRY_ENTRANT_KEYS_24 = [
+    'wallet',
+    'sid',
+    'createSlotTx',
+    'blockTxIndex',
+    'queuePosition',
+    'outsiderQueuePosition',
+    'solQueuedAheadSol',
+    'createSlotFillSol',
+    'stakeSol',
+    'closedInWindow',
+    'realisedSolGrossOfFees',
+    'returnPerSolGrossOfFees',
+    'entryCostSol',
+    'entryCostPerSolStaked',
+    'entryTxFeeSol',
+    'realisedSolNetOfMeasuredFees',
+    'returnPerSolNetOfMeasuredFees',
+    'entrantUnitIsProven',
+    'unitCoAppearingWallets',
+    'windowCoAppearingWallets',
+  ];
+  const ENTRY_ENTRANT_KEYS_BY_SCHEMA: Record<number, string[]> = { 24: ENTRY_ENTRANT_KEYS_24 };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
   // and none could see INSIDE. That is the hole schema 9 would have fallen through: the whole
@@ -7550,6 +7614,7 @@ describe('the keyless boundary holds in both directions', () => {
     // either way — same Dune statement, same walk, same coverage probe.
     22: CREATION_KEYS_15,
     23: CREATION_KEYS_15,
+    24: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -7613,6 +7678,7 @@ describe('the keyless boundary holds in both directions', () => {
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: ENTRY_COVERAGE_KEYS_6,
     23: ENTRY_COVERAGE_KEYS_6,
+    24: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -7698,6 +7764,7 @@ describe('the keyless boundary holds in both directions', () => {
     // spends no Dune execution and no Helius credit a seeded one would not.
     22: SPEND_KEYS_8,
     23: SPEND_KEYS_8,
+    24: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -7760,6 +7827,7 @@ describe('the keyless boundary holds in both directions', () => {
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: DUNE_KEYS_13,
     23: DUNE_KEYS_13,
+    24: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -7805,6 +7873,7 @@ describe('the keyless boundary holds in both directions', () => {
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: DUNE_COVERAGE_KEYS_9,
     23: DUNE_COVERAGE_KEYS_9,
+    24: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -7837,6 +7906,7 @@ describe('the keyless boundary holds in both directions', () => {
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: DUNE_COVERAGE_TABLE_KEYS_9,
     23: DUNE_COVERAGE_TABLE_KEYS_9,
+    24: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -7886,6 +7956,7 @@ describe('the keyless boundary holds in both directions', () => {
     // schema 20 already added, so what moves is that block's own key set and the shape of its
     // `order` rows — pinned by ROTATION_BLOCK_KEYS_BY_SCHEMA and ROTATION_ORDER_ROW_KEYS_BY_SCHEMA.
     23: [],
+    24: [],
   };
 
   // The run-level `entrySourceAgreement` block's OWN key set, and `duneSpend` one level below it —
@@ -7915,6 +7986,7 @@ describe('the keyless boundary holds in both directions', () => {
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: ENTRY_SOURCE_AGREEMENT_KEYS_18,
     23: ENTRY_SOURCE_AGREEMENT_KEYS_18,
+    24: ENTRY_SOURCE_AGREEMENT_KEYS_18,
   };
   // This leg's own Dune meter. It is deliberately NOT folded into the run-level `dune` block: that
   // one bounds an enumeration answering a whole batch in ONE execution, this one bounds a leg
@@ -7944,6 +8016,7 @@ describe('the keyless boundary holds in both directions', () => {
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: AGREEMENT_DUNE_SPEND_KEYS_18,
     23: AGREEMENT_DUNE_SPEND_KEYS_18,
+    24: AGREEMENT_DUNE_SPEND_KEYS_18,
   };
   // And the per-candidate row, which is where the class that can be WRONG lives. The run level only
   // counts these, so a field vanishing here would be invisible to every pin above it.
@@ -7957,6 +8030,7 @@ describe('the keyless boundary holds in both directions', () => {
     // one run-level block. Nothing Stage 2 measures depends on where an address came from.
     22: ENTRY_AGREEMENT_KEYS_18,
     23: ENTRY_AGREEMENT_KEYS_18,
+    24: ENTRY_AGREEMENT_KEYS_18,
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -8864,6 +8938,37 @@ describe('the keyless boundary holds in both directions', () => {
     expect(Object.keys(row).sort()).toEqual([...ENTRY_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
     expect(Object.keys(row.coverage).sort()).toEqual(
       [...ENTRY_COVERAGE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
+
+    // And INSIDE `entry.windows` — at both levels, against a score built from real fills, because
+    // the empty score above produces an empty array and would pin the key's NAME while a field
+    // added to a window row or to an entrant row passed silently. That is the same hole
+    // `dune.coverage.tables` is pinned at both of its levels to close. The fixture deliberately
+    // carries co-ordination evidence (two wallets in one transaction) so the window is PROVEN and
+    // has an outsider left over, which is the shape that produces a non-empty `entrants`.
+    const windowed = toEntryRecordRow(
+      scoreEntry(
+        [
+          measureLaunchEntry([
+            fill({ slot: 500, wallet: 'dev', tx: 'devtx', sol: 5, sid: sidAt(500, 10) }),
+            fill({ slot: 500, wallet: 'cohortA', tx: 'pair', sol: 1, sid: sidAt(500, 40) }),
+            fill({ slot: 500, wallet: 'cohortB', tx: 'pair', sol: 1, sid: sidAt(500, 40) }),
+            fill({ slot: 500, wallet: 'outsider', tx: 'outtx', sol: 2, sid: sidAt(500, 90) }),
+          ])!,
+        ],
+        ENTRY_T,
+      ),
+      emptyEntryCoverage(),
+    );
+    const windowRow = windowed.windows[0];
+    expect(windowRow, 'the fixture produced no window row').toBeDefined();
+    expect(Object.keys(windowRow!).sort()).toEqual(
+      [...ENTRY_WINDOW_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
+    const entrantRow = windowRow!.entrants[0];
+    expect(entrantRow, 'the fixture produced no entrant row').toBeDefined();
+    expect(Object.keys(entrantRow!).sort()).toEqual(
+      [...ENTRY_ENTRANT_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
     );
 
     // The run-level `spend` block too, read out of `buildRecord`'s own object literal. There is no
@@ -13617,6 +13722,203 @@ describe('attaching a measured cost to a launch\'s field', () => {
   });
 });
 
+describe('the entrants are KEPT — captain decision 459, increment 1 of the entrant pivot', () => {
+  // The gap this closes, stated once: two committed measurements walked 353 stranger windows across
+  // 36 scored deployers and counted 1,058 field entrants, and persisted not one address and not one
+  // `sid`. Every byte was already in `readLaunchWindow`'s response and was being discarded.
+
+  /** One window: a bundled dev pair, then two outsiders, then one of them selling out. */
+  const window459 = () => [
+    fill({ slot: 100, tx: 'devtx', wallet: 'dev', sol: 2, tokens: 700, sid: sidAt(100, 10) }),
+    fill({ slot: 100, tx: 'devtx', wallet: 'devbook', sol: 1, tokens: 300, sid: sidAt(100, 10, 1) }),
+    fill({ slot: 100, tx: 'o1', wallet: 'outsiderA', sol: 3.5, tokens: 250, sid: sidAt(100, 4242) }),
+    fill({ slot: 100, tx: 'o2', wallet: 'outsiderB', sol: 3.5, tokens: 250, sid: sidAt(100, 4243) }),
+    fill({ slot: 140, tx: 's1', wallet: 'outsiderA', sol: 4.5, tokens: 250, side: 'sell' }),
+  ];
+
+  /** The same window with the dev pair SPLIT, so no half of the co-ordination rule marks anything. */
+  const unbundled459 = () =>
+    window459().map((f, i) => (i === 1 ? { ...f, tx: 'devtx2', sid: sidAt(100, 5000) } : f));
+  const scoreOf = (make: () => ReturnType<typeof window459>, n = 8) =>
+    scoreEntry(Array.from({ length: n }, () => measureLaunchEntry(make())!), ENTRY_T);
+
+  it('names every create-slot outsider, in queue order, with the sid that produced the position', () => {
+    const e = measureLaunchEntry(window459())!;
+    expect(e.field.map((f) => f.wallet)).toEqual(['outsiderA', 'outsiderB']);
+    const [a, b] = e.field;
+    // `sid` is the byte that is unrecoverable once the window is gone, and it is the SAME key the
+    // queue position was read off rather than a second lookup that could pick another of the
+    // wallet's fills.
+    expect(a!.sid).toBe(sidAt(100, 4242));
+    expect(typeof a!.sid).toBe('string');
+    expect(a!.createSlotTx).toBe('o1');
+    expect(a!.blockTxIndex).toBe(4242);
+    // Two queues, and neither is recoverable from the other: `queuePosition` counts every
+    // create-slot fill (the dev pair is ahead of both), `outsiderQueuePosition` counts rivals only.
+    expect(a!.queuePosition).toBe(3);
+    expect(a!.outsiderQueuePosition).toBe(1);
+    expect(b!.queuePosition).toBe(4);
+    expect(b!.outsiderQueuePosition).toBe(2);
+    // Closure and the realised figure travel with the row, and an OPEN position carries NaN rather
+    // than a zero — a marked-to-nothing zero is a fabricated P&L.
+    expect(a!.closedInWindow).toBe(true);
+    expect(a!.realisedSolGrossOfFees).toBeCloseTo(1, 9);
+    expect(b!.closedInWindow).toBe(false);
+    expect(b!.realisedSolGrossOfFees).toBeNaN();
+  });
+
+  it('the sid is read as a STRING SLICE and never as a number', () => {
+    // 22 decimal digits is past Number.MAX_SAFE_INTEGER, so a round trip through a number rounds a
+    // fill into the previous slot. The row must therefore carry the key itself, and the index must
+    // agree with the slice rather than with any arithmetic on it.
+    const e = measureLaunchEntry(window459())!;
+    const row = e.field[0]!;
+    expect(row.sid).toHaveLength(22);
+    expect(Number(row.sid)).not.toBe(Number(row.sid) + 1 - 1 + 0.5 - 0.5 + 1);
+    expect(row.blockTxIndex).toBe(Number(row.sid.slice(-10, -4)));
+    expect(Number(row.sid.slice(0, 12))).toBe(100);
+  });
+
+  it('carries the REFUSED windows too — that is four fifths of what the walk paid for', () => {
+    // The population is every WALKED window, not every SCORED one. Observing who filled a create
+    // slot needs no proof of co-ordination; only claiming they were independent does. On the
+    // widened measurement 209 of 210 windows walked cleanly while 38 produced a room reading.
+    const s = scoreOf(unbundled459);
+    // The aggregates are untouched by the refused half — decision 134a is not being relaxed.
+    expect(s.launchesSampled).toBe(0);
+    expect(s.launchesRoomUnproven).toBe(8);
+    expect(s.fieldEntrants).toBe(0);
+    // And the evidence is kept anyway, with the one bit that says how it may be read.
+    expect(s.windows).toHaveLength(8);
+    expect(s.windows.every((w) => w.roomIsProven === false)).toBe(true);
+    expect(s.windows.every((w) => w.entrants.length > 0)).toBe(true);
+    // A PROVEN run's windows say so, so the two can never be conflated by a consumer.
+    expect(scoreOf(window459).windows.every((w) => w.roomIsProven)).toBe(true);
+  });
+
+  it('the unit flag is a floor on the evidence, and it is VACUOUS on a create-slot outsider', () => {
+    // Not a bug and not a placeholder. `createSlotGroups` half (a) marks EVERY wallet in a
+    // create-slot transaction carrying 2+ distinct wallets as the operation's own, and the outsider
+    // set is what is left over — so an entrant cannot share a create-slot transaction with anybody
+    // and the collapse rule has nothing left to collapse. It records that the question was asked.
+    const e = measureLaunchEntry(window459())!;
+    for (const row of e.field) {
+      expect(row.entrantUnitIsProven).toBe(false);
+      expect(row.unitCoAppearingWallets).toEqual([]);
+    }
+    // The predicate itself is not vacuous — hand it evidence and it says so. That is what makes it
+    // reusable on a population where half (a) does not fire.
+    expect(
+      entrantUnitIsProven({ createSlotCoAppearingWallets: ['other'], windowCoAppearingWallets: [] }),
+    ).toBe(true);
+    expect(
+      entrantUnitIsProven({ createSlotCoAppearingWallets: [], windowCoAppearingWallets: ['other'] }),
+    ).toBe(false);
+    // And `false` never licenses the opposite claim — the constant says so on every score.
+    expect(ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER).toMatch(/NEVER A TRADER/);
+    expect(ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER).toMatch(/UPPER BOUND/);
+    expect(scoreOf(window459).caveats).toContain(ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER);
+  });
+
+  it('the WINDOW-wide co-appearance is recorded and is not empty by construction', () => {
+    // The wider observation half (a) cannot make, kept because it is free in rows already fetched
+    // and because widening the collapse scope is a decision rather than a diff. Outside the create
+    // slot nothing reclassifies a co-appearing wallet, so this set can be non-empty where the
+    // create-slot one cannot.
+    const e = measureLaunchEntry([
+      ...window459(),
+      fill({ slot: 141, tx: 'shared', wallet: 'outsiderA', sol: 0.1, tokens: 5 }),
+      fill({ slot: 141, tx: 'shared', wallet: 'outsiderB', sol: 0.1, tokens: 5 }),
+    ])!;
+    const a = e.field.find((f) => f.wallet === 'outsiderA')!;
+    expect(a.unitCoAppearingWallets).toEqual([]);
+    expect(a.windowCoAppearingWallets).toEqual(['outsiderB']);
+    // Still not a unit: the flag reads the create-slot evidence and only that.
+    expect(a.entrantUnitIsProven).toBe(false);
+  });
+
+  it('GATES NOTHING — no bar, verdict, threshold or rotation reads any of it', () => {
+    // The acceptance condition of this increment, and the shape captain decision 208b established
+    // for `roomMedianBound`: record it, publish it, decide nothing with it yet. Asserted as an
+    // ABSENCE over the executable half, which no behavioural test can express — the typedefs that
+    // document these fields are not mistaken for uses of them.
+    for (const file of ['rank.mjs', 'rotation.mjs', 'stage0.mjs', 'grade.mjs', 'prediction.mjs', 'outcome.mjs', 'bundling.mjs', 'feed.mjs']) {
+      const half = executableHalf(readFileSync(join(TOOL_DIR, file), 'utf8'));
+      for (const name of ['entrantUnitIsProven', 'outsiderQueuePosition', 'unitCoAppearingWallets', 'windowCoAppearingWallets']) {
+        expect(half, `${file} must not read ${name} — 459 records, it does not decide`).not.toContain(name);
+      }
+    }
+    // And no threshold was added or moved for it: the recipe a run applies is untouched, which is
+    // what makes a schema-23 and a schema-24 run over the same inputs reach the same verdict.
+    const keysOf = (v: unknown): string[] =>
+      v !== null && typeof v === 'object' && !Array.isArray(v)
+        ? Object.entries(v as Record<string, unknown>).flatMap(([k, child]) => [k, ...keysOf(child)])
+        : [];
+    // Over KEYS rather than over the file's text: the justifications legitimately discuss entrants
+    // in prose (`minPricedFraction` is a hit rate over field entrants), and a text scan would be
+    // asserting that nobody may write the word.
+    for (const key of keysOf(loadThresholds())) {
+      expect(key, `thresholds.json gained ${key} — 459 adds no bar`).not.toMatch(
+        /entrant|unitIsProven|queuePosition/i,
+      );
+    }
+    // And the rows are genuinely there to be ignored: the score carries them beside a verdict
+    // reached without them.
+    const scored = scoreOf(window459);
+    expect(scored.windows).toHaveLength(8);
+    expect(scored.windows[0]!.entrants).toHaveLength(2);
+  });
+
+  it('costs NO request: Stage 2 keyless ceiling is a function of the caps and not of the record', () => {
+    // The task constraint, asserted rather than claimed. None of the three factors is a function of
+    // what is persisted, so recording the entrants cannot move swap-api traffic.
+    const t = loadThresholds()['stage2_entry'] as Record<string, number>;
+    const worstCase = t['maxCandidatesScored']! * t['maxLaunchesPerCandidate']! * t['maxRequestsPerLaunch']!;
+    expect(worstCase).toBe(1260);
+    expect(worstCase).toBeLessThanOrEqual(
+      (loadThresholds()['budget'] as Record<string, number>)['maxKeylessRequests']!,
+    );
+  });
+
+  it('measureWindowParticipation NAMES what it counts, and the claim is unchanged', () => {
+    // 408a's instrument counted and did not name. Naming is free — the sets already existed to
+    // produce the counts — and it widens no claim: still contested participation, still a wallet
+    // rather than a trader, still unwired.
+    const slot = 900;
+    const p = measureWindowParticipation({
+      fills: [
+        { slot, wallet: 'creator', side: 'buy', sol: 1 },
+        { slot, wallet: 'book', side: 'buy', sol: 1 },
+        { slot, wallet: 'earlyOutsider', side: 'buy', sol: 2 },
+        { slot: slot + 3, wallet: 'earlyOutsider', side: 'sell', sol: 3 },
+        { slot: slot + 4, wallet: 'lateOutsider', side: 'buy', sol: 5 },
+      ],
+      deployer: 'creator',
+      operationWallets: ['book'],
+      createSlot: slot,
+    });
+    expect(p.identities.outsiders).toEqual(['earlyOutsider', 'lateOutsider']);
+    expect(p.identities.outsiders).toHaveLength(p.outsiderWallets);
+    // The deployer is part of the operation set by construction — the count says so too — so it is
+    // listed rather than quietly excluded from its own side.
+    expect(p.identities.operation).toEqual(['creator', 'book']);
+    expect(p.identities.operation).toHaveLength(p.operationWallets);
+    expect(p.identities.createSlotOutsiders).toEqual(['earlyOutsider']);
+    expect(p.identities.afterCreateSlotOutsiders).toEqual(['earlyOutsider', 'lateOutsider']);
+    // The halves do not partition — a wallet in both is in both — and the difference is the size of
+    // what the whole-window framing adds.
+    expect(p.identities.windowOnlyOutsiders).toEqual(['lateOutsider']);
+    expect(p.identities.windowOnlyOutsiders).toHaveLength(p.windowOnlyOutsiderWallets!);
+    // With no create slot established the three create-slot-scoped lists are `null` on exactly the
+    // terms their counts are — never an empty array, which would read as "nobody".
+    const blind = measureWindowParticipation({ fills: [{ slot, wallet: 'x', side: 'buy', sol: 1 }] });
+    expect(blind.identities.createSlotOutsiders).toBeNull();
+    expect(blind.identities.afterCreateSlotOutsiders).toBeNull();
+    expect(blind.identities.windowOnlyOutsiders).toBeNull();
+    expect(blind.identities.outsiders).toEqual(['x']);
+  });
+});
+
 describe('what a Stage 2 run record may persist', () => {
   const score = (): EntryScore => {
     const fills = [
@@ -13632,7 +13934,7 @@ describe('what a Stage 2 run record may persist', () => {
     return scoreEntry(Array.from({ length: 8 }, () => measureLaunchEntry(fills)!), ENTRY_T);
   };
 
-  it('persists quantiles and counts — never a mint, never a counterparty address', () => {
+  it('persists quantiles and counts, and — since 459 — the entrants; never a mint', () => {
     const row = toEntryRecordRow(score(), {
       ...emptyEntryCoverage(),
       launchRefsAvailable: 20,
@@ -13647,9 +13949,17 @@ describe('what a Stage 2 run record may persist', () => {
     // Stage 2 held a mint list in memory to do the walk at all. None of it survives — MadeOnSol
     // terms §5a(d), implemented rather than promised.
     expect(json).not.toMatch(/MINT[0-9a-zA-Z]*pump/);
-    expect(json).not.toContain('SoMeCounterpartyWalletAddress1111111111111');
-    expect(json).not.toContain('SoMeCounterpartyWalletAddress2222222222222');
     expect(json).not.toMatch(/"(mint|symbol|token_name|ath_market_cap|bonded_at)"/);
+    // THE TWO COUNTERPARTY ADDRESSES USED TO BE ASSERTED ABSENT HERE, AND SINCE CAPTAIN DECISION
+    // 459 THEY ARE ASSERTED PRESENT. Read the inversion as the decision, not as a relaxation. The
+    // stated reason for dropping them was that "a list of who was in it would be an accumulation
+    // with no question attached to it" — the missing thing was the QUESTION, and 459's pivot to
+    // scoring entrants supplies it. What the ToS argument rested on is untouched and is asserted
+    // one line up: an entrant address, its `sid` and its transaction come from pump.fun's keyless
+    // public trade endpoint and from the chain, exactly as the creation walk's mints do, while
+    // every MadeOnSol per-token record still dies with the process.
+    expect(json).toContain('SoMeCounterpartyWalletAddress1111111111111');
+    expect(json).toContain('SoMeCounterpartyWalletAddress2222222222222');
     // And no mean, at the record layer too.
     expect(json).not.toMatch(/"(mean|average|avg)"/i);
     expect(row.roomLeft.median).toBeCloseTo(0.7, 6);

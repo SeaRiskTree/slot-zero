@@ -443,6 +443,13 @@ export function sidSlotField(sid) {
  * @property {number} runTx                Transactions in the deployer-anchored contiguous run,
  *   anchor included. `0` when no run could be read.
  * @property {number} adjacencyMarks       Wallets half (b) marked that half (a) did not.
+ * @property {ReadonlyMap<string, { index: number, wallets: ReadonlySet<string> }>} transactions
+ *   The create slot's own transactions, keyed by signature, each with the block transaction index
+ *   {@link blockTxIndex} read off its fills' `sid` and the distinct swapping wallets in it.
+ *   **Both halves of the co-ordination rule are computed from exactly this map**, so exposing it
+ *   lets a caller read the same grouping rather than rebuild one that could drift from it — the
+ *   discipline `bundling.mjs` already follows for {@link roomIsProven}. `index` is `NaN` where the
+ *   key was not readable, which is also one of the three conditions that degrades half (b).
  */
 
 /**
@@ -616,8 +623,90 @@ export function createSlotGroups(fills) {
     maxWalletsInOneTx,
     runTx,
     adjacencyMarks,
+    transactions: byTx,
   };
 }
+
+/**
+ * @typedef {object} EntrantUnitEvidence
+ * What the one available collapse rule saw about a single create-slot entrant.
+ *
+ * @property {readonly string[]} createSlotCoAppearingWallets Other distinct swapping wallets that
+ *   shared one of THIS wallet's create-slot transactions. The evidence
+ *   {@link entrantUnitIsProven} reads, and nothing else.
+ * @property {readonly string[]} windowCoAppearingWallets The same co-appearance over the whole
+ *   walked window rather than the create slot alone. **Recorded and read by nothing** — it is the
+ *   wider observation the create-slot rule cannot make, kept because it is free in rows already
+ *   fetched and because widening the scope is a decision rather than an implementation step.
+ */
+
+/**
+ * Whether an entrant row is evidenced to be ONE submitter rather than merely one address.
+ *
+ * ## The claim, and the shape it borrows
+ *
+ * Scoring an entrant means scoring a WALLET. A wallet is not a trader:
+ * `src/cohort.ts` → `SETTLED_OUTSIDERS` records `EgQX9R3Q…` (+47.1 SOL) and `2CQgjcdN…` (−12.2 SOL)
+ * as two legs of ONE sniping book run off a single bankroll, and **they never share a launch**, so
+ * no on-chain rule available here recovers them. The direction of that miss is the dangerous one:
+ * an unidentified book reads as *N* independent performers, which **overstates** how many distinct
+ * traders a window held and **understates** each leg's record — persistence then looks less
+ * concentrated and more harvestable than it is, which is the manufacture-an-edge direction
+ * {@link roomIsProven} guards one side over.
+ *
+ * So this is a **floor on the evidence** in exactly {@link roomIsProven}'s shape, and it carries its
+ * counterexample the way that predicate carries captain decision 139a's: the rule is *two entrant
+ * wallets filling inside one create-slot transaction are one submitter*, it is structural, on-chain,
+ * per-launch and free, and it is the only such rule this repo has. A row it does not prove is a row
+ * about which nothing is established either way — never a row proven to be an independent trader.
+ * Independence is the direction captain decision 114a made permanently unbuyable (shared custodial
+ * venues are invisible to on-chain evidence) and `slot-zero-proving-rule-generalisation` measured to
+ * exhaustion (held in firstmate's records, not in this repo).
+ *
+ * ## AND IT IS VACUOUS ON EVERY CREATE-SLOT OUTSIDER TODAY, BY CONSTRUCTION
+ *
+ * Read this before quoting the field. {@link createSlotGroups} half (a) marks **every** wallet in a
+ * create-slot transaction carrying 2+ distinct wallets as the operation's own, and
+ * {@link tallyCreateSlot} builds the outsider set as the wallets that are neither the deployer nor
+ * marked. So a create-slot outsider **cannot** share a create-slot transaction with anybody: the
+ * two wallets that would collapse were both reclassified before the entrant set existed, and this
+ * predicate reads `false` on every entrant row the screen writes. That is a fact about the shipped
+ * co-ordination rule, not about the entrants, and it is the honest reading rather than a bug: the
+ * collapse rule found nothing to collapse, so a distinct-wallet count stays an UPPER BOUND on the
+ * distinct traders and may never be published as a trader count.
+ *
+ * It is recorded anyway, and for two reasons rather than for symmetry. The flag is what a later
+ * reading has to consult to be allowed to say "unit" instead of "wallet", and a reader who finds no
+ * such field will assume the question was never asked. And it stops being vacuous the moment the
+ * population changes: an entrant reading taken on a window scored under a narrower co-ordination
+ * rule, on a venue where half (a) does not fire (Meteora DBC's create slot holds a maximum of one
+ * wallet per transaction all month), or over the whole window rather than the create slot, all
+ * produce rows where the evidence exists. `EntrantUnitEvidence.windowCoAppearingWallets` carries
+ * that third case already, unread.
+ *
+ * @param {EntrantUnitEvidence} e
+ * @returns {boolean}
+ */
+export function entrantUnitIsProven(e) {
+  return e.createSlotCoAppearingWallets.length >= 1;
+}
+
+/**
+ * What an entrant identity is and is not, as one sentence a record can carry.
+ *
+ * A constant rather than a paragraph for the reason {@link WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM}
+ * and {@link RAISE_85_IS_THE_COMPLETION_MEASURE} are constants: the surface that prints an entrant
+ * list is where the misreading happens, and a limit that lives only in a document does not travel.
+ */
+export const ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER =
+  'AN ENTRANT ROW IS A WALLET, NEVER A TRADER. The number of distinct traders in a window is AT ' +
+  'MOST the number of distinct wallets, and no rule available to this repository closes that gap: ' +
+  'a book run off one bankroll from several addresses that never share a launch is invisible ' +
+  '(src/cohort.ts -> SETTLED_OUTSIDERS), and proving two wallets INDEPENDENT is the direction ' +
+  'captain decision 114a made permanently unbuyable. measure.mjs -> entrantUnitIsProven is the one ' +
+  'collapse rule there is, it is a floor on the evidence, and it reads false on every create-slot ' +
+  'outsider by construction. So a distinct-wallet count is an UPPER BOUND on distinct performers ' +
+  'and must never be published as a count of traders.';
 
 /**
  * @typedef {object} WindowFill
@@ -639,6 +728,25 @@ export function createSlotGroups(fills) {
  * @property {'buy' | 'sell'} side
  * @property {number} sol    Swap-quote SOL, **gross of the venue fee and of priority fees**, exactly
  *   as {@link Fill.sol} is.
+ */
+
+/**
+ * @typedef {object} WindowParticipants
+ * The wallets behind {@link WindowParticipation}'s counts, in the order the window first showed
+ * each of them.
+ *
+ * **The halves do not partition and are not meant to**: a wallet that filled in the create slot and
+ * again after it appears in both `createSlotOutsiders` and `afterCreateSlotOutsiders`, exactly as
+ * the counts double-count it, and `windowOnlyOutsiders` is the set difference that says how much the
+ * whole-window framing adds.
+ *
+ * @property {string[]} outsiders   Every wallet neither the deployer nor a supplied operation
+ *   wallet. `WindowParticipation.outsiderWallets` is its size.
+ * @property {string[]} operation   Supplied operation wallets that actually filled — never the
+ *   supplied set, for the same reason the count is not its size.
+ * @property {string[] | null} createSlotOutsiders      `null` when no create slot was supplied.
+ * @property {string[] | null} afterCreateSlotOutsiders `null` on the same terms.
+ * @property {string[] | null} windowOnlyOutsiders      `null` on the same terms.
  */
 
 /**
@@ -686,6 +794,13 @@ export function createSlotGroups(fills) {
  *   tripwire, and it should be 0: a non-zero value means the caller's window bounds and its create
  *   slot disagree, which is the same shape as a backwards walk that overshot its own mint. Those
  *   fills are in `fills` and in the outsider/operation totals; they are in NEITHER half.
+ * @property {WindowParticipants} identities THE WALLETS EVERY COUNT ABOVE IS A COUNT OF, in
+ *   first-seen order. Every one of them was already established to produce the counts; handing them
+ *   back rather than discarding them is what lets a saved reading be re-composed, joined across
+ *   windows or ranked, none of which a count supports. It is an OBSERVATION and it decides nothing:
+ *   {@link ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER} governs what a list of them may be said to
+ *   be, and {@link WINDOW_PARTICIPATION_IS_A_DIFFERENT_CLAIM} still governs what the reading claims.
+ *   The three create-slot-scoped members are `null` on exactly the terms their counts are.
  * @property {number | null} firstFillSlot
  * @property {number | null} lastFillSlot Both `null` on an empty window. **Their difference is not a
  *   duration** — slot time is not constant and this repo has already paid for treating it as though
@@ -809,6 +924,17 @@ export const WINDOW_OUTSIDER_BAR_MEASURED_AT = Object.freeze([5, 20, 50]);
  * `entry.mjs` → `WINNERS_ONLY_CAVEAT` one venue over. It is pure, reads no clock and no vendor, and
  * nothing in this repository calls it.
  *
+ * ## It NAMES as well as counts, and that changed nothing about what it claims
+ *
+ * {@link WindowParticipation.identities} hands back the wallets behind every count, because a count
+ * cannot be joined across windows, ranked, or audited against the chain and a list can. The evidence
+ * was already established to produce the counts, so naming costs no request and no arithmetic. What
+ * it does NOT do is widen the claim: the reading is still contested participation and not
+ * co-ordination, a named wallet is still a wallet and not a trader
+ * ({@link ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER}), and an operation wallet the caller could not
+ * name is still counted as an outsider — it is now counted *and listed* as one, which is the same
+ * error made legible rather than a new one.
+ *
  * @param {object} input
  * @param {readonly WindowFill[]} input.fills One window's fills, bounded by the caller, any order.
  * @param {string | null} [input.deployer] The wallet credited with the launch, or `null`/absent when
@@ -882,8 +1008,10 @@ export function measureWindowParticipation(input) {
     }
   }
 
-  let windowOnlyOutsiderWallets = 0;
-  for (const w of outsidersAfterCreateSlot) if (!outsidersInCreateSlot.has(w)) windowOnlyOutsiderWallets += 1;
+  /** @type {string[]} */
+  const windowOnly = [];
+  for (const w of outsidersAfterCreateSlot) if (!outsidersInCreateSlot.has(w)) windowOnly.push(w);
+  const windowOnlyOutsiderWallets = windowOnly.length;
 
   return {
     deployer,
@@ -902,6 +1030,15 @@ export function measureWindowParticipation(input) {
     afterCreateSlotOutsiderWallets: createSlot === null ? null : outsidersAfterCreateSlot.size,
     afterCreateSlotOutsiderFills: createSlot === null ? null : afterCreateSlotOutsiderFills,
     windowOnlyOutsiderWallets: createSlot === null ? null : windowOnlyOutsiderWallets,
+    // The identities the counts above are counts OF. Materialised from the same sets rather than
+    // re-derived, so a count and its list cannot come apart.
+    identities: {
+      outsiders: [...outsiders],
+      operation: [...operationSeen],
+      createSlotOutsiders: createSlot === null ? null : [...outsidersInCreateSlot],
+      afterCreateSlotOutsiders: createSlot === null ? null : [...outsidersAfterCreateSlot],
+      windowOnlyOutsiders: createSlot === null ? null : windowOnly,
+    },
     preCreateSlotFills,
     firstFillSlot,
     lastFillSlot,

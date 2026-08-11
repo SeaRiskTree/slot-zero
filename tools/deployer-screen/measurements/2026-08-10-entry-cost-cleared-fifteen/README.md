@@ -156,25 +156,42 @@ and not the chain. A reader taking the recorded cause rather than this prose can
 two apart; `price-entry.mjs` → `laneUnmeasuredCauseFor` derives it from the granted ceiling and the
 leg's own budget outcome, so it cannot say "the lane" about a leg the lane did not bound.
 
-**PROVENANCE, AND IT MATTERS MORE THAN THE VALUES DO: THE THREE LANE CAUSES WERE DERIVED AFTER THE
-RUN, NOT EMITTED BY IT.** The generator that produced this record set the lane cause only when the
-granted ceiling was exactly 0, and the lane never reached 0 — it granted 122, 17 and 8 requests and
-was truncated mid-leg — so **the run wrote `laneUnmeasuredCause: null` into all fifteen rows of
-`result.json`**, and those nulls are what the three values replaced. `run.log` is the run's own
-console output and **predates the derivation**; it prints the plan header and one verdict line per
-candidate and never prints this field at all, so it neither shows nor contradicts the amendment.
+**PROVENANCE, AND IT MATTERS MORE THAN THE VALUES DO: `result.json` CARRIES TWO POST-RUN AMENDMENTS,
+AND HERE IS BOTH OF THEM.** The alternative — a derived value sitting in an artifact that reads as
+measured — is exactly what this repo's measured-versus-inferred discipline exists to prevent.
 
-The three values were computed afterwards by `price-entry.mjs` → `laneUnmeasuredCauseFor` over
+**(1) The three lane causes were derived after the run, not emitted by it.** The generator that
+produced this record set the lane cause only when the granted ceiling was exactly 0, and the lane
+never reached 0 — it granted 122, 17 and 8 requests and was truncated mid-leg — so **the run wrote
+`laneUnmeasuredCause: null` into all fifteen rows**, and those nulls are what the three values
+replaced. `run.log` is the run's own console output and **predates the derivation**; it prints the
+plan header and one verdict line per candidate and never prints this field at all, so it neither
+shows nor contradicts the amendment.
+
+**(2) The top-level `thresholdsMinPricedFraction` was added out of band, before this write-up's
+review began.** The generator that produced the record never emitted it; the value (0.8) is
+`thresholds.json` → `stage2_entry.minPricedFraction` and no published figure rests on its having
+been written by the run. `price-entry.mjs` → `recordOf()` emits it now, so a future run reproduces
+it — but **in the committed artifact it is the LAST key, after `candidates`, where the generator
+places it between `laneCreditHardStop` and `spend`.** That ordering is the amendment's own
+fingerprint and is why this record is value-reproducible but not byte-reproducible.
+
+**What that list rests on, since a completeness claim is worth only the check behind it.** Every
+top-level key in `result.json` was compared against the set `recordOf()` emits, read statically from
+`price-entry.mjs` rather than by running it: the two sets are **identical**, differing only in the
+position of `thresholdsMinPricedFraction` above, and all fifteen candidate rows carry exactly the key
+list `rows.push()` builds. So no third key was added or removed. That check bounds the SHAPE of the
+record and not the VALUE of every field in it, and this note claims no more than that.
+
+The three lane-cause values were computed by `price-entry.mjs` → `laneUnmeasuredCauseFor` over
 `spend.rpcCeilingGranted` and `coverage.cost.stoppedForBudget` /
-`coverage.cost.launchesSkippedForBudget` **as the run itself recorded them**, and nothing else in
-`result.json` was touched. So the amendment is **checkable rather than asserted, and here is the
-check**: read those three fields off each row of `result.json` and re-derive
+`coverage.cost.launchesSkippedForBudget` **as the run itself recorded them**. So the amendment is
+**checkable rather than asserted, and here is the check**: read those three fields off each row of
+`result.json` and re-derive
 `laneUnmeasuredCauseFor` over them — it returns `lane-rpc-ceiling` on exactly the three rows that
 carry it (granted 122/17/8 against the pinned 500, all three `stoppedForBudget: true`) and `null` on
 the other twelve. Every input to that derivation is in the record, so a reader who disagrees with it
-can recover the run's original nulls and re-decide. This is stated because the alternative — a
-derived value sitting in an artifact that reads as measured — is exactly what this repo's
-measured-versus-inferred discipline exists to prevent. Production's `unmeasuredCause` /
+can recover the run's original nulls and re-decide. Production's `unmeasuredCause` /
 `unmeasuredCauseAttribution` were emitted by the run and are untouched.
 
 **The cause is this lane's spend ceiling and it is stated exactly.** Candidates were priced in
@@ -188,11 +205,15 @@ refused it before its cost leg ever ran** — `rpcRequests: 0` against a granted
 is a candidate the ceiling never got to rather than one it spared. `7F4sTCyUqN33…`, 11th, escaped
 the same way (`rpcRequests: 0`, granted 122).
 
-But **re-ordering could not have fixed it**: the 15 targeted **2,389** distinct transactions,
-1,398 requests priced 2,024 of them (the whole-block route covered 713), and the remaining 365 would
-have cost up to ~365 more — **~1,760 requests against a 1,500-credit stop.** Completing all fifteen
-needs the stop raised to about **1,800**; no allocation fits it under 1,500. I stopped at 1,398 with
-102 credits of the authorised stop unspent rather than push at it, per the brief.
+But **re-ordering could not have fixed it**: the 15 targeted **2,389** distinct transactions, and
+1,398 requests priced 2,024 of them (the whole-block route covered 713). The 365 that went unpriced
+would have cost **at most 365 more** — the transaction route is one request each and the block route
+only ever replaces several with one — putting this run at **≤1,765 against a 1,500-credit stop**, so
+no allocation of the 1,500 reaches all fifteen. That ceiling holds only for THIS run continuing,
+where the 2,024 already priced are not paid for twice; the cost of a fresh re-run is a different and
+larger quantity, and the recommendation below states it separately. **~1,800** as the stop that would
+have finished the job is a projection from that arithmetic, not a bound. I stopped at 1,398 with 102
+credits of the authorised stop unspent rather than push at it, per the brief.
 
 ---
 
@@ -219,8 +240,13 @@ needs the stop raised to about **1,800**; no allocation fits it under 1,500. I s
 - `measuredToday.laneUnmeasuredCause` on all fifteen rows — `lane-rpc-ceiling` on three, `null` on
   twelve. The run emitted `null` on all fifteen; these were computed afterwards by
   `price-entry.mjs` → `laneUnmeasuredCauseFor` from `spend.rpcCeilingGranted` and `coverage.cost`,
-  both of which the run DID record. `run.log` predates it. See the provenance note above; every
-  other field in `result.json` is the run's own output.
+  both of which the run DID record. `run.log` predates it.
+- The top-level `thresholdsMinPricedFraction`, added out of band. Its value is `thresholds.json` →
+  `stage2_entry.minPricedFraction` and it is where the roll-up reads the coverage floor from; the
+  generator emits it now, but not in the position the committed artifact holds it.
+
+  Both are the provenance note above, which also states the key-set check those two items rest on
+  and what that check does and does not bound.
 
 **Carried from the census, not re-derived**
 
@@ -236,8 +262,11 @@ medians are **identical to six decimal places on 13 of the 15**. The two that di
 `C2TFeiRyzzAp…` 0.670427 → 0.653463 and `68SJZt8q5Bye…` 0.658049 → 0.646814 — both moved **down**,
 the direction the census's §5 predicts for the swap-api `BuyExactSolIn` understatement, and both
 still clear 0.55. This is a stronger check than the census's own V2 (which was Dune against Dune) and
-it issued **no request of its own** — it reads the fills the cost leg had already walked for. It is
-**n = 15 on one population** and is offered as an observation, not a rate.
+it issued **no request of its own** — it reads the fills the keyless swap-api **fill walk** had
+already fetched. It is not the cost leg's doing: the cost leg is the Helius RPC one and it never ran
+at all on three of the fifteen (`ARB8KYfnnUwh…`, `7F4sTCyUqN33…`, `4QwJ4AXMtSjn…`, `rpcRequests: 0`),
+which this comparison covers regardless. It is **n = 15 on one population** and is offered as an
+observation, not a rate.
 
 ---
 
@@ -274,12 +303,26 @@ it issued **no request of its own** — it reads the fills the cost leg had alre
 
 ## What I recommend, and what I do not
 
-**The one thing that would finish this count.** Raising the Helius stop to ~1,800 credits prices the
-remaining three and turns 6-of-12 into 6-to-9 of 15. It is the cheapest outstanding measurement in
-this project and it is bounded exactly: 365 transactions, ~365 Helius requests, plus one re-walk of
-27 windows costing **no metered credit but at most 486 further keyless swap-api requests** (27 × the
-pinned 18-per-launch cap) — a bound, not an estimate, and at the pinned 7,000 ms pacing it is the
-wall-clock that dominates. **I have not run it.**
+**The one thing that would finish this count.** Raising the Helius stop prices the remaining three
+and turns 6-of-12 into 6-to-9 of 15. It is the cheapest outstanding measurement in this project.
+**What it costs is an ESTIMATE, and the distinction is the one this lane's own brief warned about
+before the work started**: a figure is a bound only when something structurally enforces it, and a
+projection from a measured ratio — even one measured on these very candidates — is not.
+
+- **The work is 532 transactions, not 365.** This lane has no resume and no cache, so re-running the
+  three re-prices their WHOLE target list (`coverage.cost.transactionsTargeted` 177 + 156 + 199).
+  The 365 quoted earlier is the UNPRICED REMAINDER of this run — a different quantity, correct where
+  it appears above as a single-run counterfactual and wrong as the price of a re-run.
+- **~370 Helius requests is a PROJECTION**, from the block route's observed 0.6907 requests per
+  priced transaction on this run (1,398 over 2,024). Nothing holds the next run to that ratio: the
+  block route's saving depends on how the create-slot transactions cluster.
+- **What IS bounded, and by what:** at most 1,500 Helius requests per candidate-share by
+  `costCeilingFor` and the raised lane ceiling, because `SolanaRpcClient` checks its ceiling
+  immediately before every attempt, retries included; and at most 486 keyless swap-api requests for
+  the re-walk of 27 windows (27 × the pinned 18-per-launch cap), enforced the same way by the
+  per-launch client. Those two are ceilings the code applies, not sizings from this run.
+
+Wall-clock is dominated by the pinned 7,000 ms fill pacing. **I have not run it.**
 
 **What I do not recommend.** Nothing here argues for moving `maxEntryCostPerSolStaked`: it refused
 nobody, so there is no evidence about where it should sit. Nothing here argues for moving
@@ -295,7 +338,7 @@ upper bound that survived.
 | `census-input.json` | the 15 and their 145 census windows, copied verbatim; the pinned population |
 | `price-entry.mjs` | the harness — clients, population and lane ceiling only; it re-implements no rule |
 | `summarise.mjs` | the roll-up and the exact intervals; offline, and it reproduces the census's five published intervals |
-| `result.json` | every candidate's full score, coverage and spend, as the run emitted them — **except `laneUnmeasuredCause`, which was derived afterwards from the run's own recorded fields** (provenance note above) |
+| `result.json` | every candidate's full score, coverage and spend — **carrying two post-run amendments, `laneUnmeasuredCause` and the top-level `thresholdsMinPricedFraction`**, both enumerated in the provenance note above, which also states the key-set check behind that list |
 | `summary.json` | the machine-readable roll-up, regenerated offline from `result.json` after that derivation |
 | `run.log` | **the run's own console output, verbatim — and it PREDATES the lane-cause derivation.** It prints the plan header and one verdict line per candidate; it never prints `laneUnmeasuredCause`, so look to `result.json` and the provenance note above for that field's history. Nothing in it was superseded |
 | `run-abandoned-2026-08-10.log` | a first attempt on one candidate, stopped when the fill route was reconsidered: **ten windows attempted — nine walked and one dropped at the per-launch request cap — for 99 keyless swap-api requests and no metered credit of any kind.** It produced no result. Its 99 are NOT in the 611 above and ARE in the lane total of 710; kept so the record is not silent about it |

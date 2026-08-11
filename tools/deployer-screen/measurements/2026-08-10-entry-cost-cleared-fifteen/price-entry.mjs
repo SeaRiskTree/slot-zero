@@ -60,7 +60,7 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveSolanaRpcEndpoint } from '../../credential.mjs';
@@ -126,7 +126,17 @@ export const LANE_CREDIT_HARD_STOP = 1500;
  */
 export function censusLaunchRefs(candidate) {
   return candidate.windows
-    .map((w) => ({ mint: w.mint, deployedAtMs: Date.parse(w.mintedUtc) }))
+    .map((w) => {
+      const deployedAtMs = Date.parse(w.mintedUtc);
+      if (!Number.isFinite(deployedAtMs)) {
+        throw new Error(
+          `census-input.json: ${candidate.deployer} window ${w.mint} carries an unparsable mintedUtc ` +
+            `${JSON.stringify(w.mintedUtc)}. The census population is pinned; refusing rather than ` +
+            `scoring a reshaped sample.`,
+        );
+      }
+      return { mint: w.mint, deployedAtMs };
+    })
     .sort((a, b) => b.deployedAtMs - a.deployedAtMs);
 }
 
@@ -146,6 +156,44 @@ export function costCeilingFor(pinnedPerCandidate, laneSpent, laneCeiling = LANE
   return Math.max(0, Math.min(pinnedPerCandidate, laneCeiling - laneSpent));
 }
 
+/**
+ * Whether THIS LANE's ceiling — rather than the vendor or the chain — is why a candidate has no cost
+ * reading.
+ *
+ * **It is derived from what happened to the leg, not from the leg never starting.** The first cut set
+ * the cause only when the granted ceiling was exactly 0, and the lane never reached 0: the three
+ * candidates it ran out on were granted 122, 17 and 8 requests and were truncated MID-leg. So the
+ * documented mechanism never fired in the case it was written for, and the three read as an ordinary
+ * `too-little-of-the-field-priced` — indistinguishable from a provider coverage failure to the only
+ * reader that matters, the one taking the RECORDED cause rather than the prose.
+ *
+ * The two conjuncts are both necessary. A granted ceiling below the pinned one says the lane, not
+ * `stage2_cost`, set the bound; the leg having stopped, skipped a launch for budget, or never been
+ * granted a request at all says that bound actually bit. Without the second, every candidate scored
+ * after the lane's budget started running down would be blamed on the lane whether or not it cost
+ * them anything.
+ *
+ * **It sits BESIDE production's `unmeasuredCause` and never replaces it** (captain decision 174b):
+ * production still says `too-little-of-the-field-priced` / `our-coverage`, and this refines WHOSE
+ * coverage failed. Returns `null` on a candidate that reached a verdict, since there is nothing to
+ * attribute.
+ *
+ * @param {object} args
+ * @param {string} args.verdict Production's verdict for the candidate.
+ * @param {number} args.ceilingGranted What {@link costCeilingFor} handed this candidate.
+ * @param {number} args.pinnedPerCandidate `stage2_cost.maxRpcRequestsPerCandidate`.
+ * @param {{ stoppedForBudget?: boolean, launchesSkippedForBudget?: number }} args.cost
+ *   `coverage.cost`, as the production scorer reports it.
+ * @returns {LaneUnmeasuredCause | null}
+ */
+export function laneUnmeasuredCauseFor({ verdict, ceilingGranted, pinnedPerCandidate, cost }) {
+  if (verdict !== 'entry-cost-unmeasured') return null;
+  if (ceilingGranted >= pinnedPerCandidate) return null;
+  const bit =
+    ceilingGranted === 0 || cost.stoppedForBudget === true || (cost.launchesSkippedForBudget ?? 0) > 0;
+  return bit ? 'lane-rpc-ceiling' : null;
+}
+
 /** @param {number | null | undefined} x */
 const fmt = (x) => (typeof x === 'number' && Number.isFinite(x) ? x.toFixed(6) : 'n/a');
 
@@ -153,7 +201,15 @@ async function main() {
   const argv = process.argv.slice(2);
   const dryRun = argv.includes('--dry-run');
   const onlyAt = argv.indexOf('--only');
-  const only = onlyAt === -1 ? null : (argv[onlyAt + 1] ?? null);
+  /** @type {string | null} */
+  let only = null;
+  if (onlyAt !== -1) {
+    const value = argv[onlyAt + 1];
+    if (value === undefined || value.startsWith('--')) {
+      throw new Error('--only needs a deployer address; it was given none. Refusing before the first request.');
+    }
+    only = value;
+  }
 
   /** @type {any} */
   const thresholds = JSON.parse(readFileSync(join(SCREEN, 'thresholds.json'), 'utf8'));
@@ -170,6 +226,11 @@ async function main() {
   const candidates = input.candidates.filter(
     (/** @type {CensusCandidate} */ c) => only === null || c.deployer === only,
   );
+  if (only !== null && candidates.length === 0) {
+    throw new Error(
+      `--only ${only} matches no deployer in census-input.json. Refusing before the first request.`,
+    );
+  }
 
   const endpoint = resolveSolanaRpcEndpoint(process.env);
   const startedAtIso = new Date().toISOString();
@@ -221,9 +282,7 @@ async function main() {
       ceiling === 0
         ? null
         : new SolanaRpcClient({ maxRequests: ceiling, endpoint, minIntervalMs: rpcPacing });
-    /** @type {LaneUnmeasuredCause | null} */
-    const laneCause = rpc === null ? 'lane-rpc-ceiling' : null;
-    if (laneCause !== null) {
+    if (rpc === null) {
       console.log(`  the lane RPC ceiling is spent — the cost leg is NOT run for this candidate`);
     }
 
@@ -268,7 +327,12 @@ async function main() {
         verdict: score.verdict,
         unmeasuredCause: score.unmeasuredCause,
         unmeasuredCauseAttribution: score.unmeasuredCauseAttribution,
-        laneUnmeasuredCause: laneCause,
+        laneUnmeasuredCause: laneUnmeasuredCauseFor({
+          verdict: score.verdict,
+          ceilingGranted: ceiling,
+          pinnedPerCandidate: costBounds.maxRpcRequestsPerCandidate,
+          cost: coverage.cost ?? {},
+        }),
         rationale: score.rationale,
         launchesSampled: score.launchesSampled,
         launchesRoomUnproven: score.launchesRoomUnproven,
@@ -329,6 +393,10 @@ async function main() {
           costPacingMs: rpcPacing,
           laneRpcCeiling: LANE_RPC_CEILING,
           laneCreditHardStop: LANE_CREDIT_HARD_STOP,
+          // The coverage floor the roll-up gates cost readings on, recorded rather than restated
+          // there: `summarise.mjs` refuses a record that does not carry it instead of defaulting,
+          // so a roll-up can never report against a bar this run did not apply.
+          thresholdsMinPricedFraction: entryThresholds.minPricedFraction,
           spend: {
             keylessRequests: keylessSpent,
             keylessShed,
@@ -349,6 +417,6 @@ async function main() {
   );
 }
 
-if (process.argv[1] !== undefined && import.meta.url.endsWith(process.argv[1].split('/').pop() ?? '')) {
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
   await main();
 }

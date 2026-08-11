@@ -39,8 +39,13 @@ This is the finding the captain should act on, so it is not in a table.
 
 `maxEntryCostPerSolStaked` is **0.12**. Of the nine candidates whose cost leg priced enough of the
 field for production to gate on it (`minPricedFraction` 0.8), **all nine came in below the bar**, in
-a tight band of **0.0266 to 0.0485 SOL per SOL staked per launch** — the nearest was 2.5× under.
-**`entry-cost-prohibitive` fired zero times.**
+a tight band of **0.028580 to 0.042928 SOL per SOL staked per launch** — the nearest, `Dzp1SrZ4…` at
+0.042928, was **2.8× under**. **`entry-cost-prohibitive` fired zero times.**
+
+**That band is the nine GATEABLE readings and nothing else.** The three thin readings — the ones
+below `minPricedFraction`, italicised in the table below — are excluded from it, from every count in
+this section and from every superlative in this document. Including them would let a median of one
+priced entry set the endpoint of a range, which is the reading `minPricedFraction` exists to refuse.
 
 What refused six of the twelve was the **field**, on both sides of the cost leg:
 
@@ -142,6 +147,15 @@ and captain decision 174b binds: a later stage may filter on a MEASURED verdict 
 unmeasured one whatever its cause. Two of the three carry a cost reading *below* 0.12 on the sliver
 that priced, which is suggestive and is not evidence.
 
+**TWO CAUSES ARE RECORDED ON EACH OF THE THREE, AND THEY ARE SEPARATE FIELDS THAT SAY DIFFERENT
+THINGS.** Production's `unmeasuredCause` / `unmeasuredCauseAttribution` say
+`too-little-of-the-field-priced` / `our-coverage` and are untouched — that is the ladder's own answer
+and it is what 174b binds a later stage to. Beside them, `laneUnmeasuredCause` is `lane-rpc-ceiling`,
+which refines *whose* coverage failed: THIS LANE's spend ceiling truncated the leg, not the vendor
+and not the chain. A reader taking the recorded cause rather than this prose can therefore tell the
+two apart; `price-entry.mjs` → `laneUnmeasuredCauseFor` derives it from the granted ceiling and the
+leg's own budget outcome, so it cannot say "the lane" about a leg the lane did not bound.
+
 **The cause is this lane's spend ceiling and it is stated exactly.** Candidates were priced in
 room-median order, so the three that ran out are the three lowest room medians — the hole is not
 random. But **re-ordering could not have fixed it**: the 15 targeted **2,389** distinct transactions,
@@ -164,6 +178,9 @@ needs the stop raised to about **1,800**; no allocation fits it under 1,500. I s
 - Every verdict, from the production ladder at the pinned bars.
 - The intervals, by exact Clopper–Pearson in `summarise.mjs` — **validated against the census's own
   published intervals**, which it reproduces on all five (15/369, 0/6, 0/22, 353/5,399, 7/101).
+  That validation is an assertion rather than a claim: `test/entry-cost-cleared-fifteen.test.ts`
+  drives the exported `clopperPearson` over those five pairs and over the `k = 0`, `k = n` and
+  `n = 0` edges, offline.
 
 **Carried from the census, not re-derived**
 

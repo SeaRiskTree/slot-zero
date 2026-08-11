@@ -1,4 +1,6 @@
 {
+  "thresholdsMinPricedFraction": 0.8,
+  "maxEntryCostPerSolStaked": 0.12,
   "attempted": 15,
   "decided": 12,
   "stage3": 6,
@@ -8,7 +10,7 @@
     "entry-cost-unmeasured": 3
   },
   "byCause": {
-    "too-little-of-the-field-priced": 3
+    "lane-rpc-ceiling": 3
   },
   "costLegRan": 12,
   "costPricedLaunches": 90,

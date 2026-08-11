@@ -1,7 +1,8 @@
 /**
  * Roll `result.json` up into the figures the report states, and nothing else.
  *
- * Offline: it reads one file and opens no socket. `node summarise.mjs [--json]`.
+ * Offline: it reads `result.json` and `thresholds.json` and opens no socket.
+ * `node summarise.mjs [--json]`.
  *
  * **Why the interval and not the bare count.** The census reports its own counts with exact
  * (Clopper–Pearson) 95% intervals because a first-ever positive on a small n is exactly where a bare
@@ -13,18 +14,13 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+import { isDeployerAttributable } from '../../entry.mjs';
 
-/** Verdicts that are a MEASURED answer about the deployer (captain decision 174b). */
-export const MEASURED_VERDICTS = [
-  'entry-open-after-costs',
-  'entry-room-absent',
-  'entry-cost-prohibitive',
-  'entry-field-loss-making',
-];
+const HERE = dirname(fileURLToPath(import.meta.url));
+const SCREEN = join(HERE, '..', '..');
 
 /**
  * The regularized incomplete beta function `I(x; a, b)`, by the standard continued fraction.
@@ -113,10 +109,43 @@ export function clopperPearson(k, n, alpha = 0.05) {
 }
 
 /**
+ * The pinned cost gate, from its one owner.
+ *
+ * Read at run time rather than copied, so a bar cannot be moved from this directory and a roll-up
+ * cannot report against a stale one.
+ *
+ * @returns {number}
+ */
+function readCostBar() {
+  /** @type {any} */
+  const thresholds = JSON.parse(readFileSync(join(SCREEN, 'thresholds.json'), 'utf8'));
+  const bar = thresholds?.stage2_entry?.maxEntryCostPerSolStaked;
+  if (typeof bar !== 'number' || !Number.isFinite(bar)) {
+    throw new Error('thresholds.json carries no numeric stage2_entry.maxEntryCostPerSolStaked.');
+  }
+  return bar;
+}
+
+/**
+ * Roll one `result.json` up.
+ *
+ * **Neither bar it reads is written here.** `minPricedFraction` comes off the record — the run states
+ * what it applied, and a record that does not carry it is REFUSED rather than defaulted, since a
+ * silent default reports against a bar no run ever used. `maxEntryCostPerSolStaked` comes off
+ * `thresholds.json`, the one owner, exactly as `price-entry.mjs` reads its pins at run time.
+ *
+ * **The MEASURED denominator is production's predicate, not a list.** `entry.mjs` →
+ * `isDeployerAttributable` decides which verdicts are an answer ABOUT THE DEPLOYER (captain decision
+ * 174b); a local copy of the four measured verdicts agreed with it today and would drift silently the
+ * moment the ladder gained one, which is the whole reason the predicate exists.
+ *
  * @param {any} result The parsed `result.json`.
+ * @param {object} [pins]
+ * @param {number} [pins.maxEntryCostPerSolStaked] `thresholds.json` → `stage2_entry`; read from disk
+ *   when omitted.
  * @returns {any}
  */
-export function summarise(result) {
+export function summarise(result, pins = {}) {
   const rows = result.candidates ?? [];
   /** @type {Record<string, number>} */
   const byVerdict = {};
@@ -139,7 +168,12 @@ export function summarise(result) {
   }
 
   const attempted = rows.length;
-  const decided = rows.filter((/** @type {any} */ r) => MEASURED_VERDICTS.includes(r.measuredToday.verdict)).length;
+  const decided = rows.filter((/** @type {any} */ r) =>
+    isDeployerAttributable({
+      verdict: r.measuredToday.verdict,
+      unmeasuredCause: r.measuredToday.unmeasuredCause ?? null,
+    }),
+  ).length;
   const stage3 = rows.filter((/** @type {any} */ r) => r.measuredToday.verdict === 'entry-open-after-costs').length;
   // A cost READING, which is a different and weaker thing from a Stage 3 pass: it says the seat's
   // price was measured on this candidate, whatever the ladder went on to say about the field.
@@ -149,7 +183,14 @@ export function summarise(result) {
   // deployer's entry cost is exactly the "we did not look" reading as "it was free" that
   // `entryCostPriced` exists to prevent. Production refuses those at the same bar
   // (`entry.mjs` → `entry-cost-unmeasured`), so this counts what production would let decide.
-  const minPriced = result.thresholdsMinPricedFraction ?? 0.8;
+  const minPriced = result.thresholdsMinPricedFraction;
+  if (typeof minPriced !== 'number' || !Number.isFinite(minPriced)) {
+    throw new Error(
+      'result.json carries no thresholdsMinPricedFraction. Refusing: a default would report the cost ' +
+        'readings against a bar the run may never have applied.',
+    );
+  }
+  const costBar = pins.maxEntryCostPerSolStaked ?? readCostBar();
   const costRead = rows.filter(
     (/** @type {any} */ r) =>
       Number.isFinite(r.measuredToday.entryCostPerSolStakedByLaunch?.median) &&
@@ -165,10 +206,12 @@ export function summarise(result) {
       r.measuredToday.entryCostPriced.rate < minPriced,
   ).length;
   const clearsCostGate = costRead.filter(
-    (/** @type {any} */ r) => r.measuredToday.entryCostPerSolStakedByLaunch.median < 0.12,
+    (/** @type {any} */ r) => r.measuredToday.entryCostPerSolStakedByLaunch.median < costBar,
   ).length;
 
   return {
+    thresholdsMinPricedFraction: minPriced,
+    maxEntryCostPerSolStaked: costBar,
     attempted,
     decided,
     stage3,
@@ -202,7 +245,8 @@ function main() {
   console.log('unmeasured causes:', JSON.stringify(s.byCause));
   console.log(
     `cost leg ran on ${s.costLegRan}; ${s.costPriced}/${s.costTargeted} transaction(s) priced across ` +
-      `${s.costPricedLaunches} launch(es); cost read on ${s.costReadOn}, of which ${s.clearsCostGate} below the 0.12 bar`,
+      `${s.costPricedLaunches} launch(es); cost read on ${s.costReadOn}, of which ${s.clearsCostGate} ` +
+      `below the ${s.maxEntryCostPerSolStaked} bar`,
   );
   for (const [name, ci] of Object.entries(s.intervals)) {
     if (ci === null) continue;
@@ -211,4 +255,6 @@ function main() {
   console.log('spend:', JSON.stringify(s.spend));
 }
 
-if (process.argv[1] !== undefined && process.argv[1].endsWith('summarise.mjs')) main();
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+  main();
+}

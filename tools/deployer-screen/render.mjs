@@ -30,6 +30,7 @@ import {
   priceWalkFallbackCliff,
 } from './dune.mjs';
 import { describeMonthlyCapCredits, estimatePlanCredits } from './client.mjs';
+import { unboundedCostComponents } from './bounds.mjs';
 import { LANDING_TIP_CAVEAT, NET_ALL_POSITIONS_SELECTION_CAVEAT } from './entry.mjs';
 // The reach the plan quotes is DERIVED, never a second copy of the formula: an operator reads this
 // block before authorising a run, so it has to describe the walk `readLaunchWindow` will actually do.
@@ -104,6 +105,17 @@ export const LIMITATIONS = [
   '    WON the auction — post-break our own subject saw a median 41.6 attempts per landed',
   '    transaction — and a wallet that paid and did not land is invisible to it. So the measured',
   '    cost of entering is the cost paid by winners and it understates the cost of TRYING.',
+  // Captain decision 466. The two bullets above are unchanged and stay true of the COST FIGURES:
+  // nothing here is attributed to an entrant. What changed is that a CEILING now exists over the
+  // create slot for both of them, and the honest half of that is what remains outside it — so this
+  // bullet says the scope in the same block that says the limit, and the per-candidate ledger says
+  // which rows were bounded on the day a record was written.
+  '  · WHAT EITHER OF THOSE COST *OUTSIDE THE CREATE SLOT*. Since captain decision 466 the create',
+  '    slot\'s own failed-attempt fee bill and its own tip total are read from a block this tool',
+  '    already fetches, and each is used as a whole-slot CEILING attributed to one entrant — never',
+  '    as a measurement of what anybody paid. Tips and attempts in the REST of the window stay',
+  '    unbounded, so the realized-profit verdict stays refused and every verdict that would state a',
+  '    result names the create-slot scope in its own name.',
   '  · Lead time, or the independence of the actors involved.',
   '',
   'The standing bar for acting on a signal of this class is real lead time, independence of the',
@@ -438,8 +450,12 @@ export function renderEntry(e, coverage) {
         "token's LATEST known price is harsher",
     );
   }
-  L.push('      ^ NOT a profit verdict: the landing tip and the cost of failed attempts are still');
-  L.push('        unbounded, and an unbounded cost forbids one.');
+  // WHAT USED TO BE TWO HAND-WRITTEN LINES HERE IS NOW READ OFF THE LEDGER — captain decision 466.
+  // They said "the landing tip and the cost of failed attempts are still unbounded", which was true
+  // when it was typed and is a claim no code could keep true; the rendered block now prints the rows
+  // themselves, so it cannot say "unbounded" about a term that has since been bounded, or stay
+  // silent about one that has not.
+  for (const line of renderCostLedger(e.costLedger, e.exitVerdict)) L.push(line);
   L.push('');
 
   L.push('      WHAT IT COSTS TO GET IN — recovered on-chain, and what the field cleared after it');
@@ -513,6 +529,60 @@ export function renderEntry(e, coverage) {
   for (const c of e.caveats) {
     for (const line of wrap(c, 84)) L.push(`      ! ${line}`);
   }
+  return L;
+}
+
+/**
+ * THE SUBTRACTION LEDGER, rendered — captain decision 466, Stage 3 increment 2.
+ *
+ * Every row, bounded and unbounded, in the order `bounds.mjs` → `COST_COMPONENTS` states them. The
+ * unbounded ones are the point of the block: an operator has to be able to read WHICH terms are
+ * still open and therefore what a `exit-unbounded` verdict is waiting on, and a count cannot say
+ * that because the remedy differs per row.
+ *
+ * The verdict prints with its own name intact, suffix included, because that suffix is what stops a
+ * reader taking a create-slot cost accounting for a whole-window one.
+ *
+ * @param {readonly import('./bounds.mjs').UnmeasuredComponent[]} ledger
+ * @param {import('./bounds.mjs').ExitVerdict} verdict
+ * @returns {string[]}
+ */
+export function renderCostLedger(ledger, verdict) {
+  /** @type {string[]} */
+  const L = [];
+  const unbounded = unboundedCostComponents(ledger);
+  L.push(`      REALIZED-PROFIT VERDICT: ${verdict}`);
+  L.push('      A FUNCTION of the subtraction ledger below, not of a caveat: a cost component with');
+  L.push('      no numeric boundary blocks a profit verdict entirely.');
+  L.push('        component                        kind        worst case (SOL)  from');
+  for (const c of ledger) {
+    // A POPULATION row reads `n/a`, never `UNBOUNDED`. Its `worstCaseSol` is null for a different
+    // reason — it is not a term in the sum at all and netting it would be inventing one — and
+    // printing the same word in both columns would read as four cost terms blocking the verdict
+    // where there are three.
+    const worst =
+      c.kind === 'population' ? 'n/a — not netted' : c.worstCaseSol === null ? 'UNBOUNDED' : c.worstCaseSol.toFixed(6);
+    L.push(
+      `        ${c.name.padEnd(32)} ${c.kind.padEnd(11)} ${worst.padStart(16)}  ` +
+        (c.observations > 0 ? `${c.observations} launch(es)` : '—'),
+    );
+  }
+  if (unbounded.length > 0) {
+    for (const line of wrap(
+      `${unbounded.length} COST component(s) UNBOUNDED, so no profit verdict may be issued: ${unbounded.join(', ')}`,
+      84,
+    )) {
+      L.push(`      ${line}`);
+    }
+    // The basis is where the honest half lives — what each number is a ceiling OVER, and what it
+    // cannot see. Printed for the unbounded rows because those are the ones an operator can act on.
+    for (const c of ledger.filter((r) => unbounded.includes(r.name))) {
+      wrap(`${c.name}: ${c.boundBasis}`, 84).forEach((line, i) => L.push(`        ${i === 0 ? '·' : ' '} ${line}`));
+    }
+  }
+  L.push('      The two bounded create-slot rows are WHOLE-SLOT TOTALS attributed to one entrant —');
+  L.push('      ceilings, not measurements of what anyone paid. Population rows (winners-only,');
+  L.push('      our own market impact) are named and never netted, and block nothing.');
   return L;
 }
 

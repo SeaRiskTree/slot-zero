@@ -73,6 +73,7 @@
  * It does not measure exit. Not partially, not as an input, not as a tiebreak. See `entry.mjs`.
  */
 
+import { costLedgerRecordRows } from './bounds.mjs';
 import { CeilingReached, RequestFailed } from './client.mjs';
 import { assertCostWalkAccounted } from './cost-source.mjs';
 import { entryCostTargets, measureLaunchEntry, priceLaunchEntry, scoreEntry } from './entry.mjs';
@@ -150,6 +151,19 @@ import { redactAll, redactVendorIdentifiers } from './record.mjs';
  *   not be priced exactly. **Not "cost zero".**
  * @property {number} viaBlock             Priced from a whole-block read (the §5.4 optimisation).
  * @property {number} viaTransaction       Priced one `getTransaction` at a time.
+ * @property {number} launchesSlotObserved Launches whose WHOLE create slot the source read as a
+ *   unit, so its failed-attempt fee bill and its tip total are known — captain decision 466, Stage 3
+ *   increment 2. **It costs nothing**: the observation comes out of a block response the pricing
+ *   above already paid for. Read against `launchesPriced` it is what says whether the subtraction
+ *   ledger's two create-slot rows could be bounded at all, since a bound over a subset of a
+ *   candidate's launches is not a bound over the candidate.
+ * @property {number} slotFailedAttempts   Landed-but-FAILED transactions touching the launches'
+ *   mints across those slots. Fees are charged on inclusion rather than on success, so this is money
+ *   that was really spent trying to land.
+ * @property {number} slotFailedAttemptFeeSol Their exact `meta.fee` total, base plus priority.
+ * @property {number} slotTipSol           SOL arriving at a published Jito tip account across those
+ *   slots. **A whole-slot total and NOT an attribution** — `pumpfun.mjs` → `readCreateSlotSlotCosts`
+ *   owns what it is a ceiling over and what it cannot see.
  * @property {boolean} stoppedForBudget
  * @property {string[]} notes              Why a route or a launch went the way it did.
  */
@@ -442,7 +456,10 @@ export async function scoreLaunchRefsEntry(fillSource, input) {
   const youngestEligibleAgeMs =
     eligible.length === 0 ? null : Math.min(...eligible.map((r) => input.nowMs - r.deployedAtMs));
 
-  /** @type {{ entry: import('./entry.mjs').LaunchEntry, fills: readonly import('./measure.mjs').Fill[] }[]} */
+  /**
+   * @type {{ entry: import('./entry.mjs').LaunchEntry, fills: readonly import('./measure.mjs').Fill[],
+   *   mint: string }[]}
+   */
   const measured = [];
   /** @type {string[]} */
   const dropNotes = [];
@@ -506,7 +523,11 @@ export async function scoreLaunchRefsEntry(fillSource, input) {
       dropNotes.push('DROPPED: no bonding-curve buy in the window, so there is no create slot to anchor on');
       continue;
     }
-    measured.push({ entry, fills: window.fills });
+    // The mint rides along IN MEMORY for one purpose and one only: it scopes the whole-slot
+    // failed-attempt observation to this launch when the cost leg reads its create slot as a unit
+    // (captain decision 466). It reaches no record — `toEntryRecordRow` writes no mint at any schema
+    // version, and MadeOnSol §5a(d) is the reason.
+    measured.push({ entry, fills: window.fills, mint: ref.mint });
     input.log?.(
       `    ${window.pages} page(s) / ${window.requests} request(s), ${window.fills.length} fill(s), room ` +
         `${entry.createSlot.roomLeft.toFixed(3)}, ${entry.field.length} competing wallet(s)`,
@@ -543,13 +564,21 @@ export async function scoreLaunchRefsEntry(fillSource, input) {
     // thrown away over one wallet's bad luck on a public endpoint that sheds a quarter of what it
     // is asked for. The same degradation the creation walk and the consistency pass already apply.
     let transportFailed = false;
+    /**
+     * What each launch's WHOLE create slot cost, keyed by create slot — the input to the
+     * subtraction ledger. Empty until a whole-block read serves one, which is what makes the
+     * per-signature fallback fail towards refusal rather than towards a partial bound.
+     *
+     * @type {Map<number, import('./bounds.mjs').CreateSlotCostObservation>}
+     */
+    const slotObservations = new Map();
     // Every launch whose walk was PAID FOR and whose pricing was attached, counted AS IT HAPPENS.
     // `launchesPriced` is the wrong basis to reconstruct this from on rollback: it counts only
     // launches where every target came back, so a launch that came back short for a non-budget
     // reason would land in neither counter and vanish from launch-level accounting entirely.
     let launchesAttached = 0;
 
-    for (const { entry, fills } of measured) {
+    for (const { entry, fills, mint } of measured) {
       const targets = entryCostTargets(fills, entry);
       cost.transactionsTargeted += targets.length;
       // Never start what cannot be finished, the same rule the fill walk applies. A launch priced
@@ -572,7 +601,11 @@ export async function scoreLaunchRefsEntry(fillSource, input) {
       /** @type {import('./cost-source.mjs').CostWalkResult} */
       let walk;
       try {
-        walk = await costSource.priceLaunch({ transactions: targets, createSlot: entry.createSlot.slot });
+        walk = await costSource.priceLaunch({
+          transactions: targets,
+          createSlot: entry.createSlot.slot,
+          mint,
+        });
       } catch (cause) {
         transportFailed = true;
         // Nothing this candidate priced backs the score any more, because the score is not recomputed
@@ -594,6 +627,18 @@ export async function scoreLaunchRefsEntry(fillSource, input) {
       // reason `assertWindowUsable` is called above: counters that do not add up are a source bug,
       // and a run record is reconciled arithmetically from exactly these numbers.
       assertCostWalkAccounted(walk, targets.length);
+      // THE HALF OF THE BLOCK THAT USED TO BE DISCARDED — captain decision 466, Stage 3 increment 2.
+      // It is kept whatever happens to the PRICING below, because it is a fact about the SLOT and
+      // not about our entrants: a launch whose partial pricing is discarded still contributed its
+      // room figure and its field to the score, so the ledger still has to bound it. Zero requests
+      // and zero credits — the response was fetched to price the transactions above.
+      if (walk.slotCosts !== null) {
+        slotObservations.set(entry.createSlot.slot, walk.slotCosts);
+        cost.launchesSlotObserved += 1;
+        cost.slotFailedAttempts += walk.slotCosts.failedAttempts;
+        cost.slotFailedAttemptFeeSol += walk.slotCosts.failedAttemptFeeSol;
+        cost.slotTipSol += walk.slotCosts.tipSol;
+      }
       cost.transactionsUnresolved += walk.unresolved;
       cost.viaBlock += walk.viaBlock;
       cost.viaTransaction += walk.viaTransaction;
@@ -632,7 +677,9 @@ export async function scoreLaunchRefsEntry(fillSource, input) {
     // A candidate whose walk died mid-flight keeps the pre-cost score, which is already
     // `entry-cost-unmeasured`. Rescoring on a partial attachment is the one thing that must not
     // happen: it would turn a failed measurement into a priced reading of unknown coverage.
-    if (!transportFailed) score = scoreEntry(pricedLaunches, t, context);
+    if (!transportFailed) {
+      score = scoreEntry(pricedLaunches, t, { ...context, createSlotCostObservations: slotObservations });
+    }
     input.log?.(
       `    entry cost: ${cost.transactionsPriced} of ${cost.transactionsTargeted} transaction(s) ` +
         `priced in ${cost.rpcRequests} RPC request(s)` +
@@ -678,6 +725,10 @@ export function emptyCostCoverage() {
     transactionsUnresolved: 0,
     viaBlock: 0,
     viaTransaction: 0,
+    launchesSlotObserved: 0,
+    slotFailedAttempts: 0,
+    slotFailedAttemptFeeSol: 0,
+    slotTipSol: 0,
     stoppedForBudget: false,
     notes: [],
   };
@@ -910,6 +961,22 @@ export function toEntryRecordRow(s, coverage) {
         windowCoAppearingWallets: [...e.windowCoAppearingWallets],
       })),
     })),
+    // Schema 26, captain decision 466 — Stage 3 increment 2. THE SUBTRACTION LEDGER, and the
+    // realized-profit verdict that is a FUNCTION of it rather than of a sentence beside it. Two of
+    // its cost rows became numbers at zero marginal cost (the create slot's own failed-attempt fee
+    // bill and its tip total, out of a block response the cost leg above had already fetched) and
+    // THREE stay `null` — so `exitVerdict` reads `exit-unbounded` on every candidate this build can
+    // score, which is the honest state rather than a defect. It gates nothing: `verdict` above is
+    // byte-identical with this block present and absent, exactly as with `roomLeftBound` (208b) and
+    // the all-positions figures (461). Rows are counts, SOL figures and sentences from a closed set
+    // of component names, so the retention boundary is untouched — no launch, no wallet, no mint can
+    // reach them, even though the walk held a mint in memory to scope the failed-attempt half.
+    // The rows are handed over WHOLE and this module never opens one — `bounds.mjs` →
+    // `costLedgerRecordRows` owns the projection, because a scoring module may not read a `.kind`
+    // and the fix for that is the row shape living with the module that defines it rather than a
+    // destructuring that dodges the scan.
+    costLedger: costLedgerRecordRows(s.costLedger, redactVendorIdentifiers),
+    exitVerdict: s.exitVerdict,
     caveats: redactAll(s.caveats),
     coverage: {
       launchRefsAvailable: coverage.launchRefsAvailable,

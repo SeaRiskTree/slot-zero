@@ -98,13 +98,28 @@
  * **NOTHING GATES ON THE NEW FIGURES.** No bar, gate, threshold, predicate or verdict reads one and
  * no threshold moved for them, which is the shape captain decision 208b established for
  * {@link EntryScore.roomLeftBound}: record it, publish it, decide nothing with it yet. That is
- * precisely what makes a change that reverses the sign of a headline number safe to land — and it
- * is also why this module names **no verdict** for the new reading. Two cost terms are still
- * unbounded (the separate-transaction landing tip, and what it costs to TRY and fail to land), and
- * under the captain's standing evidence bar an unbounded unknown on the cost side means no profit
- * verdict may be issued at all. This produces the number; it does not rule on it.
+ * precisely what makes a change that reverses the sign of a headline number safe to land.
+ *
+ * ## And the refusal that sits on top of all of it is now ARITHMETIC rather than a sentence
+ *
+ * Captain decision 466, Stage 3 increment 2. *"Two cost terms are still unbounded, so no profit
+ * verdict may be issued"* was, until now, a claim in this header and a clause inside
+ * {@link REALISATION_CONSTRUCTION_CAVEAT} — a hand-maintained condition, which is the shape that has
+ * gone stale twice in this tree. `bounds.mjs` makes it a function: {@link EntryScore.costLedger} is
+ * one typed row per cost and population component, and {@link EntryScore.exitVerdict} is
+ * `bounds.mjs` → `exitVerdict` over it, which returns `'exit-unbounded'` whenever ANY cost row has
+ * no numeric boundary.
+ *
+ * Two of those rows became numbers here at zero marginal cost — the create slot's whole
+ * failed-attempt fee bill and its whole tip total, read out of a `getBlock` response the cost leg
+ * already fetched (`pumpfun.mjs` → `readCreateSlotSlotCosts`). **Three stay `null`**, so every
+ * candidate this build can score still reads `'exit-unbounded'`, and that is the correct state
+ * rather than a defect. The verdict is REPORTING on the same terms as everything else in this
+ * header: no entry verdict, bar, gate or threshold reads it, and a test pins that a run's entry
+ * findings are byte-identical with it present and absent.
  */
 
+import { costLedger, describeCostLedger, exitVerdict } from './bounds.mjs';
 import {
   ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER,
   ROOM_LEFT_RANGE,
@@ -1508,6 +1523,19 @@ export function describeRoomMedianBound(b) {
  *   {@link ENTRANT_IDENTITY_IS_A_WALLET_NOT_A_TRADER} governs what a list of these addresses may be
  *   said to be, and it is in {@link EntryScore.caveats} on every score so the limit travels with the
  *   data rather than with this comment.
+ * @property {readonly import('./bounds.mjs').UnmeasuredComponent[]} costLedger  **THE SUBTRACTION
+ *   LEDGER** — one typed row per cost and population component of a realized-profit figure, with a
+ *   number where this build can bound it and `null` where it cannot. Captain decision 466, Stage 3
+ *   increment 2. `bounds.mjs` → `costLedger` owns the rows and what each bound is a ceiling OVER;
+ *   the two create-slot rows carry a number only when EVERY scored launch produced a whole-block
+ *   observation, so one per-signature fallback inside a sample takes both back to `null`.
+ * @property {import('./bounds.mjs').ExitVerdict} exitVerdict  The realized-profit verdict, as a
+ *   FUNCTION of {@link EntryScore.costLedger} rather than of a caveat string. It is Stage 3's
+ *   vocabulary and not {@link EntryScore.verdict}'s — every value of that one is a statement about
+ *   ENTRY — and it is carried here because Stage 3 is a second consumer of Stage 2's walk rather
+ *   than a reader of `runs/*.json`. **It reads `'exit-unbounded'` on every candidate this build can
+ *   score, and it gates nothing**: no bar, threshold, predicate or entry verdict reads it, and a
+ *   test pins that the entry finding is byte-identical without it.
  * @property {string[]} caveats
  */
 
@@ -1610,6 +1638,14 @@ export function describeRoomMedianBound(b) {
  * @param {number} [context.mintTimeDisagreements] Of those, the ones dropped because the vendor's
  *   mint time and the fill tape disagreed. Called out separately because it is the one drop cause
  *   that says the method's own assumption has broken rather than that a launch was awkward.
+ * @param {ReadonlyMap<number, import('./bounds.mjs').CreateSlotCostObservation>}
+ *   [context.createSlotCostObservations] What each launch's WHOLE create slot cost, keyed by create
+ *   slot — the failed-attempt fee bill and the tip total `pumpfun.mjs` → `readCreateSlotSlotCosts`
+ *   read out of a block response the cost leg had already paid for. Absent or short, the two
+ *   create-slot rows of {@link EntryScore.costLedger} stay UNBOUNDED, which is the required
+ *   direction: a ceiling read from four launches of six says nothing about the two it did not see.
+ *   **The population is the SCORED launches**, decided here rather than by the caller, because it is
+ *   here that the refused half is removed.
  * @param {number} [context.launchesPlanned] Launches the walk SET OUT to measure for this candidate
  *   — `stage2.mjs`'s `planned.length`. {@link roomBarRobustness} needs the size of the hole, and
  *   this is the only accounting that closes over every way a launch can fail to produce a room
@@ -1728,6 +1764,21 @@ export function scoreEntry(launches, t, context = {}) {
     (e) => e.realisedSolAtZeroRecoveryNetOfMeasuredFees > 0,
   );
 
+  // THE SUBTRACTION LEDGER, over the SCORED launches — captain decision 466, Stage 3 increment 2.
+  //
+  // The population is `scored` and not `launches`: a refused window contributes no room figure, no
+  // field entrant and no round trip (134a), so it is in no realized figure either and demanding an
+  // observation for it would refuse the ledger over a launch nothing is computed from. `costLedger`
+  // requires an observation for every one of them, so a single launch whose cost walk fell back to
+  // per-signature reads leaves both create-slot rows `null`.
+  const observations = context.createSlotCostObservations ?? new Map();
+  const ledger = costLedger({
+    observations: scored
+      .map((l) => observations.get(l.createSlot.slot))
+      .filter((o) => o !== undefined),
+    launchesRequiringObservation: scored.length,
+  });
+
   /** @type {EntryScore} */
   const score = {
     verdict: 'entry-unmeasured',
@@ -1810,6 +1861,12 @@ export function scoreEntry(launches, t, context = {}) {
       roomIsProven: roomIsProven(l.createSlot),
       entrants: l.field,
     })),
+    costLedger: ledger,
+    // A FUNCTION OF THE LEDGER, and the whole point of captain decision 466's shape: the refusal is
+    // computed from the rows rather than asserted in a sentence beside them. `realised` is `null`
+    // here — the ledger refuses before any realized figure is consulted, and inventing the
+    // comparison would need a BAR, which is a pin nobody has made (`bounds.mjs` → `exitVerdict`).
+    exitVerdict: exitVerdict({ ledger, realised: null, bar: null }),
     caveats: [],
   };
 
@@ -1872,6 +1929,11 @@ export function scoreEntry(launches, t, context = {}) {
   // one reading".
   score.caveats.push(REALISATION_CONSTRUCTION_CAVEAT);
   score.caveats.push(NET_ALL_POSITIONS_SELECTION_CAVEAT);
+  // And the LEDGER's own sentence, on every score for the same reason: the refusal is a property of
+  // the numbers above it, so it travels with them to the record and the rendered block rather than
+  // living in a doc. It names the unbounded rows rather than counting them, because the remedy
+  // differs per row (captain decision 466; `bounds.mjs` → `describeCostLedger`).
+  score.caveats.push(describeCostLedger(ledger, score.exitVerdict));
   score.caveats.push(
     'Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority ' +
       'fees, landing tips, the venue fee and rent are all absent from the fill tape; the ' +

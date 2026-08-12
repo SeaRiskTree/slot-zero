@@ -1869,6 +1869,59 @@ out" owns the long form; cite it rather than restating it. Six things bind:
   `fieldRealisedSolNetOverAllPositions`) because this repo enforces that every P&L field name ends
   `GrossOfFees` or `NetOfMeasuredFees`; that test wins.
 
+## THE REFUSAL IS ARITHMETIC NOW: the subtraction ledger, and a verdict that is a function of it
+
+`tools/deployer-screen/bounds.mjs`, record **schema 26**. Captain decision **466**, 2026-08-11 —
+increment 2 of `slot-zero-stage3-exit-design` → `report.md` §§6.1/6.2/6.6/9 (held in firstmate's
+records, not in this repo); `decision-466.md` is the durable record of the ceiling call.
+`tools/deployer-screen/README.md` → "The subtraction ledger, and a verdict that is a function of it"
+owns the long form; cite it rather than restating it. Six things bind:
+
+- **A COST COMPONENT WITH NO NUMERIC BOUNDARY BLOCKS A PROFIT VERDICT ENTIRELY, and that stopped
+  being a sentence.** It was a claim in `entry.mjs`'s header and a clause inside
+  `REALISATION_CONSTRUCTION_CAVEAT` — a hand-maintained condition, the shape this tree has twice
+  watched go stale. `costLedger` is one typed row per component (`worstCaseSol` is a number where
+  this build can bound it, **`null` where it cannot**) and `exitVerdict` is a function over the rows.
+  `assertCostLedgerComplete` runs on every evaluation, so a refusal cannot be deleted into a pass by
+  dropping a row.
+- **TWO ROWS BECAME NUMBERS AT ZERO MARGINAL COST — the half of the create-slot block this project
+  already fetched and threw away.** `pumpfun.mjs` → `readCreateSlotSlotCosts` reads, out of the
+  `getBlock` response the cost leg pays for anyway, (a) the exact `meta.fee` of every landed-but-
+  FAILED transaction touching that launch's mint — Solana bills inclusion, not success — and (b)
+  every lamport arriving at a published Jito tip account in the slot. Zero requests, zero credits,
+  zero wall clock, and Stage 2's keyless ceiling cannot move. **Both are WHOLE-SLOT TOTALS USED AS
+  PER-POSITION CEILINGS and neither is an attribution**: `readCreateSlotCosts`' refusal to tie a
+  sibling transaction to an entrant's bundle is untouched.
+- **THREE COST ROWS STAY `null`, so this does NOT unlock a profit verdict for a general deployer** —
+  every candidate this build can score reads `exit-unbounded`, which the design report calls the
+  correct and honest state. They are tips outside the create-slot bound, attempts outside the create
+  slot, and exit-side fees outside the walked horizon. `bounds.mjs` → `UNBOUNDABLE_TODAY` is the
+  list. **Three where §6.6's prose says two**: that table gives its `exit-side-fees-outside-horizon`
+  row `null` today and no number after, so this build reads it as unbounded — the direction that
+  refuses.
+- **THE VERDICT NAMES ITS OWN SCOPE, and that is 466 rather than decoration.** The captain declined
+  to raise `stage2_cost.maxRpcRequestsPerCandidate` (it stays **500**), so the attempt term is bounded
+  to the create slot — hence `exit-realised-at-worst-case-create-slot-costs-only` and its two
+  siblings, so a reader of the verdict string alone cannot mistake it for a whole-window cost
+  accounting. The two ABSENCE verdicts (`exit-unbounded`, `exit-unmeasured`) carry no suffix, state
+  no cost accounting, and are exactly the two `isExitFilterable` refuses — 174b, one stage over.
+  **They are also kept apart on purpose**: unmeasured means spend more, unbounded means BUILD a bound.
+- **IT FAILS TOWARDS REFUSAL IN THREE PLACES AND EACH IS PINNED BY A TEST.** No mint ⇒ no observation
+  (there is no way to say which of a busy slot's failures were attempts on this launch). A walk that
+  fell back to per-signature reads ⇒ `slotCosts: null`, never a zero. And a bound over four launches
+  of six is no bound over the candidate, so ONE fallback inside a sample takes both create-slot rows
+  back to `null`. The worst case over a sample is its LARGEST launch, never its median.
+- **IT GATES NOTHING** — 208b's shape again. No bar, threshold, predicate or entry verdict reads a
+  row, no threshold moved, and `entry.verdict` is byte-identical with the ledger bounded and not.
+  `bounds.mjs` is on `entry.mjs`'s and `stage2.mjs`'s declared pure-import list deliberately; the
+  record projection lives in `bounds.mjs` because a scoring module may not read a `.kind` and the fix
+  for that is the row shape living with the module that defines it, not a destructuring that dodges
+  the scan. **The BAR a profit verdict would be compared against is a REQUIRED pin and `exitVerdict`
+  throws without one** — `minFieldHitRateNet` is NOT it (different denominator), and pinning one is
+  the captain's. **`JITO_TIP_ACCOUNTS` is a published vendor list pinned as a literal and NOT
+  re-derived on-chain here**; an address missing from it makes the ceiling under-state, which is why
+  the residual sits in the unbounded row.
+
 ## The screen PERSISTS its entrants now, and it decides nothing with them
 
 `entry.mjs` → `EntryScore.windows`, projected by `stage2.mjs` → `toEntryRecordRow`, record **schema

@@ -16,7 +16,10 @@
  *
  * The landing-tip limit is unchanged and is not this module's to state: a tip paid in a SEPARATE
  * transaction of the same bundle is in no figure here, every cost is therefore a lower bound, and
- * `entry.mjs` → `LANDING_TIP_CAVEAT` is the one string that travels with the numbers.
+ * `entry.mjs` → `LANDING_TIP_CAVEAT` is the one string that travels with the numbers. What Stage 3
+ * increment 2 added is a CEILING on that tip and on the cost of failing to land, read out of the
+ * same block response and attributed to nobody — `pumpfun.mjs` → `readCreateSlotSlotCosts` owns it,
+ * and this module still only passes the walk through.
  */
 
 import { readCreateSlotCosts } from './pumpfun.mjs';
@@ -42,13 +45,17 @@ export function rpcCostSource(rpc, opts) {
     remaining: () => rpc.remaining(),
 
     /**
-     * @param {{ transactions: readonly import('./measure.mjs').WalletTransaction[], createSlot: number }} input
+     * @param {{ transactions: readonly import('./measure.mjs').WalletTransaction[],
+     *   createSlot: number, mint: string | null }} input
      * @returns {Promise<import('./cost-source.mjs').CostWalkResult>}
      */
     async priceLaunch(input) {
       const walk = await readCreateSlotCosts(rpc, {
         transactions: input.transactions,
         createSlot: input.createSlot,
+        // Passed through, never held: it scopes the whole-slot failed-attempt observation to this
+        // launch and nothing here retains it.
+        mint: input.mint,
         preferBlock,
       });
       // One probe decides the route for the candidate. `blockRouteTried` with nothing to show for

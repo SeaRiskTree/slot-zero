@@ -147,6 +147,18 @@ import {
   assertWindowUsable,
 } from '../tools/deployer-screen/fill-source.mjs';
 import { COST_SOURCE_KINDS, assertCostWalkAccounted } from '../tools/deployer-screen/cost-source.mjs';
+import {
+  COST_COMPONENTS,
+  EXIT_VERDICTS,
+  UNBOUNDABLE_TODAY,
+  UNFILTERABLE_EXIT_VERDICTS,
+  assertCostLedgerComplete,
+  costLedger,
+  describeCostLedger,
+  exitVerdict,
+  isExitFilterable,
+  unboundedCostComponents,
+} from '../tools/deployer-screen/bounds.mjs';
 import { swapApiFillSource } from '../tools/deployer-screen/swapapi-fills.mjs';
 import { rpcCostSource } from '../tools/deployer-screen/rpc-costs.mjs';
 import {
@@ -256,7 +268,9 @@ import {
   extractTradeRows,
   parseFillLoose,
   parseTransactionCosts,
+  JITO_TIP_ACCOUNTS,
   readCreateSlotCosts,
+  readCreateSlotSlotCosts,
   readCreatedHistory,
   readCreatedHistoryIndexed,
   readLaunchWindow,
@@ -285,6 +299,7 @@ import {
   LIMITATIONS,
   renderCompetenceCriterion,
   renderCompetenceMayhem,
+  renderCostLedger,
   renderDryRun,
   renderEntry,
   renderMayhemShare,
@@ -7155,6 +7170,10 @@ const ROTATION_BLOCK_KEYS_BY_SCHEMA: Record<number, string[]> = {
   25: [...ROTATION_BLOCK_KEYS_20, 'windowCap', 'newGroundRule'],
   // Schema 24 leaves the rotation block alone: what a run RECORDS grew, not how it allocates the cap.
   24: [...ROTATION_BLOCK_KEYS_20, 'windowCap', 'newGroundRule'],
+  // Schema 26 (captain decision 466) is the subtraction ledger, which lives on the `entry` block and
+  // is a statement about what a realized figure has NOT subtracted. Which survivors the cap was
+  // spent on is untouched by it.
+  26: [...ROTATION_BLOCK_KEYS_20, 'windowCap', 'newGroundRule'],
 };
 
 // One row of `scoringRotation.order`. Schema 20 carried the three fields 336a's recency rule reads;
@@ -7179,6 +7198,9 @@ const ROTATION_ORDER_ROW_KEYS_BY_SCHEMA: Record<number, string[]> = {
   24: [...ROTATION_ORDER_ROW_KEYS_20, 'launchesPerDay', 'newGroundWindows'],
   // Schema 25 leaves the comparator and its inputs alone; see ROTATION_BLOCK_KEYS_BY_SCHEMA.
   25: [...ROTATION_ORDER_ROW_KEYS_20, 'launchesPerDay', 'newGroundWindows'],
+  // Schema 26 likewise: the subtraction ledger says what a realized figure has NOT subtracted, which
+  // is not an input to WHICH survivors the cap is spent on.
+  26: [...ROTATION_ORDER_ROW_KEYS_20, 'launchesPerDay', 'newGroundWindows'],
 };
 
 describe('the keyless boundary holds in both directions', () => {
@@ -7346,6 +7368,11 @@ describe('the keyless boundary holds in both directions', () => {
   // Schema 25 adds no candidate ROW field either. The realization correction is a statement about
   // the POSITIONS inside `entry`, not about the deployer the row describes — ENTRY_KEYS_BY_SCHEMA.
   PERSISTED_BY_SCHEMA[25] = PERSISTED_BY_SCHEMA[24]!;
+  // Schema 26 adds no candidate ROW field either. The subtraction ledger and the realized-profit
+  // verdict computed from it are statements about the FIGURES inside `entry` — what they have not
+  // subtracted and therefore what may not be concluded from them — and not about the deployer the
+  // row describes. ENTRY_KEYS_BY_SCHEMA below.
+  PERSISTED_BY_SCHEMA[26] = PERSISTED_BY_SCHEMA[25]!;
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -7449,6 +7476,15 @@ describe('the keyless boundary holds in both directions', () => {
     'positionsStillHeldAtHorizon',
     'positionsHorizonNotObserved',
   ];
+  // Schema 26: captain decision 466. `costLedger` is one typed row per cost and population component
+  // of a realized-profit figure — a number where this build can bound it, `null` where it cannot —
+  // and `exitVerdict` is `bounds.mjs` → `exitVerdict` over those rows, which refuses whenever any
+  // `cost` row reads `null`. Two rows became numbers at ZERO marginal vendor cost (the create slot's
+  // own failed-attempt fee bill and its tip total, out of a `getBlock` response the cost leg had
+  // already fetched); THREE stay `null`, so every candidate this build can score reads
+  // `exit-unbounded`, and the verdict names its create-slot scope in its own name so a reader of the
+  // string alone cannot take it for a whole-window cost accounting.
+  const ENTRY_KEYS_26 = [...ENTRY_KEYS_25, 'costLedger', 'exitVerdict'];
   const ENTRY_KEYS_BY_SCHEMA: Record<number, string[]> = {
     3: ENTRY_KEYS_3_AND_4,
     4: ENTRY_KEYS_3_AND_4,
@@ -7516,6 +7552,14 @@ describe('the keyless boundary holds in both directions', () => {
     // — which is what a reader must know before comparing two records: what changed is that the
     // record now also carries the reading over the positions the older one silently dropped.
     25: ENTRY_KEYS_25,
+    // Schema 26: captain decision 466, Stage 3 increment 2. THE SUBTRACTION LEDGER, and a
+    // realized-profit verdict that is a FUNCTION of it rather than a sentence beside it. Both keys
+    // are RECORDING on the same terms as `roomLeftBound` (208b) and the all-positions figures (461):
+    // nothing reads them, `entry.verdict` is byte-identical without them, and no threshold moved.
+    // They need a version because a schema-≤25 record cannot be audited for WHICH cost terms were
+    // unbounded when it was written, and the absence of a ledger is not the same statement as an
+    // empty one.
+    26: ENTRY_KEYS_26,
   };
 
   // The `windows` row, per version, and the `entrants` row inside it. Two levels, both pinned, for
@@ -7543,6 +7587,7 @@ describe('the keyless boundary holds in both directions', () => {
   const ENTRY_WINDOW_KEYS_BY_SCHEMA: Record<number, string[]> = {
     24: ENTRY_WINDOW_KEYS_24,
     25: ENTRY_WINDOW_KEYS_24,
+    26: ENTRY_WINDOW_KEYS_24,
   };
   const ENTRY_ENTRANT_KEYS_24 = [
     'wallet',
@@ -7586,6 +7631,7 @@ describe('the keyless boundary holds in both directions', () => {
   const ENTRY_ENTRANT_KEYS_BY_SCHEMA: Record<number, string[]> = {
     24: ENTRY_ENTRANT_KEYS_24,
     25: ENTRY_ENTRANT_KEYS_25,
+    26: ENTRY_ENTRANT_KEYS_25,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -7688,6 +7734,7 @@ describe('the keyless boundary holds in both directions', () => {
     23: CREATION_KEYS_15,
     24: CREATION_KEYS_15,
     25: CREATION_KEYS_15,
+    26: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -7753,6 +7800,11 @@ describe('the keyless boundary holds in both directions', () => {
     23: ENTRY_COVERAGE_KEYS_6,
     24: ENTRY_COVERAGE_KEYS_6,
     25: ENTRY_COVERAGE_KEYS_6,
+    // Schema 26 adds four counters INSIDE `entry.coverage.cost` and no key to `coverage` itself:
+    // how many launches had their whole create slot read as a unit, and what those slots' failed
+    // attempts and tips totalled. They are the inputs the ledger's two bounded rows are derived
+    // from, kept so a record can be audited for why a row was bounded or was not.
+    26: ENTRY_COVERAGE_KEYS_6,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -7840,6 +7892,7 @@ describe('the keyless boundary holds in both directions', () => {
     23: SPEND_KEYS_8,
     24: SPEND_KEYS_8,
     25: SPEND_KEYS_8,
+    26: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -7904,6 +7957,7 @@ describe('the keyless boundary holds in both directions', () => {
     23: DUNE_KEYS_13,
     24: DUNE_KEYS_13,
     25: DUNE_KEYS_13,
+    26: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -7951,6 +8005,7 @@ describe('the keyless boundary holds in both directions', () => {
     23: DUNE_COVERAGE_KEYS_9,
     24: DUNE_COVERAGE_KEYS_9,
     25: DUNE_COVERAGE_KEYS_9,
+    26: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -7985,6 +8040,7 @@ describe('the keyless boundary holds in both directions', () => {
     23: DUNE_COVERAGE_TABLE_KEYS_9,
     24: DUNE_COVERAGE_TABLE_KEYS_9,
     25: DUNE_COVERAGE_TABLE_KEYS_9,
+    26: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
@@ -8036,6 +8092,7 @@ describe('the keyless boundary holds in both directions', () => {
     23: [],
     24: [],
     25: [],
+    26: [],
   };
 
   // The run-level `entrySourceAgreement` block's OWN key set, and `duneSpend` one level below it —
@@ -8067,6 +8124,7 @@ describe('the keyless boundary holds in both directions', () => {
     23: ENTRY_SOURCE_AGREEMENT_KEYS_18,
     24: ENTRY_SOURCE_AGREEMENT_KEYS_18,
     25: ENTRY_SOURCE_AGREEMENT_KEYS_18,
+    26: ENTRY_SOURCE_AGREEMENT_KEYS_18,
   };
   // This leg's own Dune meter. It is deliberately NOT folded into the run-level `dune` block: that
   // one bounds an enumeration answering a whole batch in ONE execution, this one bounds a leg
@@ -8098,6 +8156,7 @@ describe('the keyless boundary holds in both directions', () => {
     23: AGREEMENT_DUNE_SPEND_KEYS_18,
     24: AGREEMENT_DUNE_SPEND_KEYS_18,
     25: AGREEMENT_DUNE_SPEND_KEYS_18,
+    26: AGREEMENT_DUNE_SPEND_KEYS_18,
   };
   // And the per-candidate row, which is where the class that can be WRONG lives. The run level only
   // counts these, so a field vanishing here would be invisible to every pin above it.
@@ -8113,6 +8172,7 @@ describe('the keyless boundary holds in both directions', () => {
     23: ENTRY_AGREEMENT_KEYS_18,
     24: ENTRY_AGREEMENT_KEYS_18,
     25: ENTRY_AGREEMENT_KEYS_18,
+    26: ENTRY_AGREEMENT_KEYS_18,
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -8259,13 +8319,31 @@ describe('the keyless boundary holds in both directions', () => {
       // look authoritative and only one is the one a committed record was published under. So it
       // moved to `stats.mjs`, which imports nothing, reads no file, opens no socket and names no
       // vendor, leaving the closure below unaffected.
-      'entry.mjs': ['measure.mjs', 'stats.mjs'],
+      // Captain decision 466, and this edge was added HERE on purpose, which is what this allow-list
+      // is for. The subtraction ledger and the realized-profit verdict computed from it live in
+      // `bounds.mjs`, which imports nothing, reads no file, opens no socket and names no vendor —
+      // the same standing `stats.mjs` has — so the closure below is unaffected. It is where the
+      // refusal *"an unbounded cost forbids a profit verdict"* stopped being a sentence in a doc
+      // comment and became arithmetic.
+      'entry.mjs': ['bounds.mjs', 'measure.mjs', 'stats.mjs'],
       'stage0.mjs': ['entry.mjs', 'measure.mjs', 'rank.mjs'],
       // `client.mjs` for the ceiling and transport error types, `record.mjs` for redaction, and the
       // two CONTRACTS — which are importable only because they can never carry a vendor value, and
       // that is asserted below rather than assumed. No source implementation, and no transport
       // module that is one: the swap-api walk and the RPC cost walk both arrive by injection.
-      'stage2.mjs': ['client.mjs', 'cost-source.mjs', 'entry.mjs', 'fill-source.mjs', 'measure.mjs', 'record.mjs'],
+      // `bounds.mjs` joins for captain decision 466, and it is one CALL: the subtraction ledger's
+      // record projection lives with the module that defines the row rather than here, because a
+      // scoring module may not read a `.kind` and the scan below is deliberately blind to what the
+      // field means. `bounds.mjs` imports nothing and names no vendor, so the closure is unaffected.
+      'stage2.mjs': [
+        'bounds.mjs',
+        'client.mjs',
+        'cost-source.mjs',
+        'entry.mjs',
+        'fill-source.mjs',
+        'measure.mjs',
+        'record.mjs',
+      ],
     };
     for (const [module, allowed] of Object.entries(SCORING_IMPORTS)) {
       expect((all.get(`tools/deployer-screen/${module}`) ?? '').length, `${module} must exist`).toBeGreaterThan(0);
@@ -13717,6 +13795,132 @@ describe('the cost walk, and the route it took', () => {
     expect(walk.unresolved).toBe(0);
   });
 
+  it('reads the WHOLE SLOT out of the same block response — failed attempts and tips — 466', async () => {
+    // Stage 3 increment 2. The block was fetched to price T1 and T2; every OTHER transaction in it
+    // was parsed and discarded, and two of the cost terms blocking a realized-profit verdict were
+    // in there. ZERO marginal requests: the assertion on `calls` below is the whole cost argument.
+    const failed = (sig: string, feeLamports: number, keys: string[]) => ({
+      transaction: { signatures: [sig], message: { accountKeys: keys.map((k) => ({ pubkey: k })) } },
+      meta: {
+        err: { InstructionError: [0, 'X'] },
+        fee: feeLamports,
+        // A failed transaction moves nothing but its fee, which is exactly why its fee is the cost.
+        preBalances: keys.map(() => 0),
+        postBalances: keys.map(() => 0),
+      },
+    });
+    const tipTx = (sig: string, tipAccount: string, tipLamports: number) => ({
+      transaction: {
+        signatures: [sig],
+        message: { accountKeys: [{ pubkey: 'TIPPER' }, { pubkey: tipAccount }] },
+      },
+      meta: { err: null, fee: 5_000, preBalances: [10 * LAMPORTS_PER_SOL, 0], postBalances: [10 * LAMPORTS_PER_SOL - tipLamports, tipLamports] },
+    });
+    const TIP = JITO_TIP_ACCOUNTS[0]!;
+    const { calls, fetchImpl } = rpcOver((method) =>
+      method === 'getBlock'
+        ? {
+            transactions: [
+              txBody('T1', 'A', 3.1),
+              txBody('T2', 'B', 2.2),
+              // Two landed-but-FAILED attempts on THIS mint. Solana charges fees on inclusion
+              // rather than on success, so both paid in full.
+              failed('F1', 1_500_000, ['LOSER1', 'MINT-1']),
+              failed('F2', 2_500_000, ['LOSER2', 'MINT-1']),
+              // A failed transaction in the same slot that has nothing to do with this launch. A
+              // busy mainnet slot is full of them, and charging this launch for them would be the
+              // whole-slot total wearing a per-launch label.
+              failed('F3', 9_000_000, ['LOSER3', 'SOME-OTHER-MINT']),
+              tipTx('TIP1', TIP, 400_000),
+            ],
+          }
+        : txBody('T3', 'A', -4.9),
+    );
+    const rpc = new SolanaRpcClient({ maxRequests: 20, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreateSlotCosts(rpc, { transactions: targets, createSlot: 100, mint: 'MINT-1' });
+
+    // The request count is IDENTICAL to the route test above. That is the increment's whole cost
+    // claim, asserted rather than described.
+    expect(calls).toEqual(['getBlock', 'getTransaction']);
+    expect(walk.slotCosts).not.toBeNull();
+    expect(walk.slotCosts!.failedAttempts).toBe(2);
+    expect(walk.slotCosts!.failedAttemptFeeSol).toBeCloseTo(0.004, 12);
+    expect(walk.slotCosts!.tipSol).toBeCloseTo(0.0004, 12);
+    expect(walk.slotCosts!.tipTransfers).toBe(1);
+    // And the pricing it was fetched for is untouched by any of it.
+    expect(walk.priced.size).toBe(3);
+  });
+
+  it('the whole-slot read is REFUSED without a mint, and without a serving block route — 466', async () => {
+    // Two refusals, both in the direction that leaves the ledger unbounded and the verdict refused.
+    const withBlock = (method: string) =>
+      method === 'getBlock'
+        ? { transactions: [txBody('T1', 'A', 3.1), txBody('T2', 'B', 2.2)] }
+        : txBody('T3', 'A', -4.9);
+
+    // (1) NO MINT. There is no way to say which of a busy slot's failed transactions were attempts
+    // on this launch, and counting all of them would charge it for every unrelated bot in the block.
+    const a = rpcOver(withBlock);
+    const rpcA = new SolanaRpcClient({ maxRequests: 20, minIntervalMs: 0, fetchImpl: a.fetchImpl, sleepImpl: async () => {} });
+    const noMint = await readCreateSlotCosts(rpcA, { transactions: targets, createSlot: 100 });
+    expect(noMint.viaBlock).toBe(2);
+    expect(noMint.slotCosts).toBeNull();
+    expect(noMint.blockRouteNote).toMatch(/named no mint/);
+
+    // (2) NO BLOCK. The per-signature fallback fetches one transaction at a time and never sees the
+    // slot's other transactions, so it can say nothing about them — `null`, never a zero.
+    const b = rpcOver((method, params) =>
+      method === 'getBlock' ? null : txBody(String((params as string[])[0]), 'A', 1),
+    );
+    const rpcB = new SolanaRpcClient({ maxRequests: 20, minIntervalMs: 0, fetchImpl: b.fetchImpl, sleepImpl: async () => {} });
+    const fallback = await readCreateSlotCosts(rpcB, { transactions: targets, createSlot: 100, mint: 'MINT-1' });
+    expect(fallback.viaBlock).toBe(0);
+    expect(fallback.viaTransaction).toBe(3);
+    expect(fallback.slotCosts).toBeNull();
+    // And the contract guard refuses a source that claims one anyway.
+    expect(() =>
+      assertCostWalkAccounted({ ...fallback, slotCosts: { tipSol: 1, tipTransfers: 1, failedAttemptFeeSol: 1, failedAttempts: 1 } }, targets.length),
+    ).toThrow(/without pricing anything from a whole-block read/);
+  });
+
+  it('a tip account LOSING lamports never cancels out another transaction\'s tip', () => {
+    // A ceiling has to be a sum of what went IN. A tip account can also pay a fee or lose rent in
+    // some other transaction of the same slot, and netting that decrease would let one transaction
+    // erase another's tip — the optimistic direction, and the one that would understate the bound.
+    const TIP = JITO_TIP_ACCOUNTS[1]!;
+    const rows = [
+      {
+        transaction: { signatures: ['IN'], message: { accountKeys: [{ pubkey: 'X' }, { pubkey: TIP }] } },
+        meta: { err: null, fee: 5_000, preBalances: [0, 0], postBalances: [0, 700_000] },
+      },
+      {
+        transaction: { signatures: ['OUT'], message: { accountKeys: [{ pubkey: TIP }, { pubkey: 'Y' }] } },
+        meta: { err: null, fee: 5_000, preBalances: [900_000, 0], postBalances: [0, 900_000] },
+      },
+    ];
+    const o = readCreateSlotSlotCosts(rows, 'MINT-1');
+    expect(o.tipSol).toBeCloseTo(0.0007, 12);
+    expect(o.tipTransfers).toBe(1);
+  });
+
+  it('a block row this build cannot read exactly contributes NOTHING rather than a guess', () => {
+    // It biases both totals DOWN, which is the optimistic direction — and it is why the unbounded
+    // rows beside these two stay unbounded rather than the bound being trusted further than it goes.
+    const o = readCreateSlotSlotCosts(
+      [
+        null,
+        { transaction: { signatures: ['S'], message: { accountKeys: [{ pubkey: 'A' }] } } },
+        // Keys shorter than the balances: the mis-indexing trap, refused here as it is one parser over.
+        {
+          transaction: { signatures: ['S2'], message: { accountKeys: [{ pubkey: 'A' }] } },
+          meta: { err: { X: 1 }, fee: 5_000, preBalances: [0, 0], postBalances: [0, 0] },
+        },
+      ],
+      'MINT-1',
+    );
+    expect(o).toEqual({ tipSol: 0, tipTransfers: 0, failedAttemptFeeSol: 0, failedAttempts: 0 });
+  });
+
   it('falls back to per-signature reads when the block route serves nothing, and RECORDS it', async () => {
     // The route is UNTESTED against this endpoint, so it is probed behind a fallback and the run
     // record says which one paid for its numbers.
@@ -16627,12 +16831,12 @@ describe('the fill source is INJECTED, and Stage 2 names no vendor', () => {
       { tx: 'tx-1', slot: 10, wallets: [{ wallet: 'A', quotedSol: 1 }] },
       { tx: 'tx-2', slot: 10, wallets: [{ wallet: 'B', quotedSol: 2 }] },
     ];
-    const first = await source.priceLaunch({ transactions: targets, createSlot: 10 });
+    const first = await source.priceLaunch({ transactions: targets, createSlot: 10, mint: 'MINT-1' });
     expect(first.blockRouteTried).toBe(true);
     expect(blocks).toBe(1);
     // The probe answered once and the answer is latched for the rest of the candidate: a second
     // launch does not pay to rediscover that the block route does not serve this client.
-    const second = await source.priceLaunch({ transactions: targets, createSlot: 10 });
+    const second = await source.priceLaunch({ transactions: targets, createSlot: 10, mint: 'MINT-1' });
     expect(second.blockRouteTried).toBe(false);
     expect(blocks).toBe(1);
     // And the accounting guard holds a source to counters that reconcile.
@@ -18651,5 +18855,266 @@ describe('a LISTED wallet still has to pass the gate — 398a', () => {
         `${file} must not read candidateSource — it is provenance, never an input`,
       ).not.toContain('candidateSource');
     }
+  });
+});
+
+describe('the subtraction ledger, and a verdict that is a FUNCTION of it — captain decision 466', () => {
+  /**
+   * Eight proven launches, each in its OWN create slot, so an observation can be supplied for some
+   * and withheld from others. Built through the production pair — `measureLaunchEntry` over real
+   * fills — because the property under test is what `scoreEntry` does with the ledger, and a
+   * hand-built `LaunchEntry` could drift from the shape the walk produces.
+   *
+   * The operation shares one transaction with its own book wallet, which is what makes the create
+   * slot PROVEN (`measure.mjs` → `roomIsProven`, captain decisions 134a and 182a) and therefore
+   * scored at all — an unproven launch contributes nothing and would need no observation.
+   */
+  const launchInSlot = (slot: number) => {
+    const fills = [
+      fill({ slot, sid: sidAt(slot, 100), tx: `dev-${slot}`, wallet: 'dev', sol: 3, tokens: 3e5 }),
+      fill({ slot, sid: sidAt(slot, 100, 1), tx: `dev-${slot}`, wallet: 'devbook', sol: 2, tokens: 2e5 }),
+    ];
+    // Two outsiders per launch, so eight launches clear `minFieldRoundTrips` and the verdict under
+    // test is a MEASURED one rather than two unmeasured readings agreeing with each other.
+    for (const i of [0, 1]) {
+      fills.push(
+        fill({ slot, sid: sidAt(slot, 300 + i * 10), tx: `o-${slot}-${i}`, wallet: `w-${slot}-${i}`, sol: 5, tokens: 1000 }),
+        fill({
+          slot: slot + 40,
+          sid: sidAt(slot + 40, 300 + i * 10),
+          tx: `s-${slot}-${i}`,
+          wallet: `w-${slot}-${i}`,
+          sol: 6,
+          tokens: 1000,
+          side: 'sell',
+        }),
+      );
+    }
+    // Priced through the REAL pair, so the fixture cannot drift from the production path and the
+    // cost gate is satisfied by a measurement rather than by a threshold being lenient.
+    const entry = measureLaunchEntry(fills)!;
+    const targets = entryCostTargets(fills, entry);
+    const priced = new Map(
+      targets.map((t) => [
+        t.tx,
+        {
+          signature: t.tx,
+          feeSol: 0.005,
+          feePayer: t.wallets[0]!.wallet,
+          solOutByWallet: new Map(t.wallets.map((w) => [w.wallet, w.quotedSol + 0.01])),
+        },
+      ]),
+    );
+    return priceLaunchEntry(entry, targets, priced);
+  };
+  const eight = () => Array.from({ length: 8 }, (_, i) => launchInSlot(100 + i * 1000));
+  const observation = (tip: number, failedFee: number) => ({
+    tipSol: tip,
+    tipTransfers: tip > 0 ? 1 : 0,
+    failedAttemptFeeSol: failedFee,
+    failedAttempts: failedFee > 0 ? 2 : 0,
+  });
+  const observedMap = (launches: ReturnType<typeof eight>, tip = 0.05, failedFee = 0.004) =>
+    new Map(launches.map((l) => [l.createSlot.slot, observation(tip, failedFee)]));
+  const rowsOf = (ledger: readonly { name: string; worstCaseSol: number | null }[]) =>
+    new Map(ledger.map((c) => [c.name, c.worstCaseSol]));
+
+  it('an UNBOUNDED cost component refuses the verdict, and the refusal is arithmetic', () => {
+    // `report.md` §6.6's one-line rule, compiled. It was a sentence in a doc comment and a clause
+    // inside a caveat string until this decision, which is the shape this tree has twice watched go
+    // stale — a claim outrunning its enforcement.
+    const bounded = costLedger({ observations: [observation(0.05, 0.004)], launchesRequiringObservation: 1 });
+    expect(unboundedCostComponents(bounded)).toEqual([...UNBOUNDABLE_TODAY]);
+    expect(exitVerdict({ ledger: bounded, realised: { atWorstCase: 99, atMeasuredCost: 99 }, bar: 0 })).toBe(
+      'exit-unbounded',
+    );
+    // And it is the ROWS that decide, not the caller: hand it a ledger with every cost row bounded
+    // and the same call issues a verdict.
+    const all = bounded.map((c) => (c.kind === 'cost' ? { ...c, worstCaseSol: c.worstCaseSol ?? 0 } : c));
+    expect(exitVerdict({ ledger: all, realised: { atWorstCase: 1, atMeasuredCost: 1 }, bar: 0 })).toBe(
+      'exit-realised-at-worst-case-create-slot-costs-only',
+    );
+    expect(exitVerdict({ ledger: all, realised: { atWorstCase: -1, atMeasuredCost: 1 }, bar: 0 })).toBe(
+      'exit-realised-typical-not-worst-case-create-slot-costs-only',
+    );
+    expect(exitVerdict({ ledger: all, realised: { atWorstCase: -5, atMeasuredCost: -1 }, bar: 0 })).toBe(
+      'exit-loss-making-create-slot-costs-only',
+    );
+    // OUR coverage is a different class from an unbuilt bound, because the remedies differ:
+    // unmeasured means spend more, unbounded means build a bound.
+    expect(exitVerdict({ ledger: all, realised: null, bar: 0 })).toBe('exit-unmeasured');
+  });
+
+  it('a POPULATION component blocks nothing, however null it is — §6.4 and §6.5', () => {
+    // Winners-only selection and our own market impact cannot be given a numeric boundary at all,
+    // and netting them would be inventing one. They are named on the verdict instead, so
+    // requirement 3 does not bite on them — which is why `kind` is on the row rather than implied.
+    const ledger = costLedger({ observations: [observation(0.05, 0.004)], launchesRequiringObservation: 1 });
+    const population = ledger.filter((c) => c.kind === 'population');
+    expect(population.map((c) => c.name)).toEqual(['winners-only-selection', 'own-market-impact']);
+    expect(population.every((c) => c.worstCaseSol === null)).toBe(true);
+    expect(unboundedCostComponents(ledger)).not.toContain('winners-only-selection');
+    expect(unboundedCostComponents(ledger)).not.toContain('own-market-impact');
+  });
+
+  it('a bar is a REQUIRED pin and the verdict throws without one — a default IS a pin', () => {
+    // The same discipline `measure.mjs` → `measureWindowParticipation` states. `minFieldHitRateNet`
+    // is NOT this bar and must not be borrowed as one: it is calibrated over the denominator
+    // conditioned on the position having exited, which is a different quantity.
+    const ledger = costLedger({ observations: [observation(0.05, 0.004)], launchesRequiringObservation: 1 }).map(
+      (c) => (c.kind === 'cost' ? { ...c, worstCaseSol: c.worstCaseSol ?? 0 } : c),
+    );
+    expect(() => exitVerdict({ ledger, realised: { atWorstCase: 1, atMeasuredCost: 1 }, bar: null })).toThrow(
+      /needs a PINNED bar/,
+    );
+    expect(() => exitVerdict({ ledger, realised: { atWorstCase: 1, atMeasuredCost: 1 }, bar: Number.NaN })).toThrow(
+      /needs a PINNED bar/,
+    );
+  });
+
+  it('a ledger with a row missing is REFUSED, so a refusal cannot be deleted into a pass', () => {
+    // The one way a `null` cost term could stop blocking a verdict is the row going away, so the
+    // completeness check runs on every evaluation rather than at construction alone.
+    const ledger = costLedger({ observations: [], launchesRequiringObservation: 0 });
+    expect(ledger.map((c) => c.name)).toEqual([...COST_COMPONENTS]);
+    const short = ledger.filter((c) => c.name !== 'failed-attempts-rest-of-window');
+    expect(() => assertCostLedgerComplete(short)).toThrow(/must carry exactly/);
+    expect(() => exitVerdict({ ledger: short, realised: null, bar: 0 })).toThrow(/must carry exactly/);
+    expect(() => assertCostLedgerComplete([...ledger].reverse())).toThrow(/must carry exactly/);
+  });
+
+  it('the two create-slot rows are bounded ONLY when every scored launch was observed', () => {
+    // A bound read from four launches of six says nothing about the two it did not see, so a single
+    // per-signature fallback inside a candidate's sample takes both rows back to `null`. Failing
+    // towards refusal is the required direction.
+    const launches = eight();
+    const whole = scoreEntry(launches, ENTRY_T, { createSlotCostObservations: observedMap(launches) });
+    const wholeRows = rowsOf(whole.costLedger);
+    expect(wholeRows.get('landing-tip-create-slot')).toBeCloseTo(0.05, 9);
+    expect(wholeRows.get('failed-attempts-create-slot')).toBeCloseTo(0.004, 9);
+
+    const short = new Map(observedMap(launches));
+    short.delete(launches[0]!.createSlot.slot);
+    const partial = scoreEntry(launches, ENTRY_T, { createSlotCostObservations: short });
+    const partialRows = rowsOf(partial.costLedger);
+    expect(partialRows.get('landing-tip-create-slot')).toBeNull();
+    expect(partialRows.get('failed-attempts-create-slot')).toBeNull();
+
+    // And with no observations at all — which is what the FREE legs' first scoring pass sees, and
+    // what a run whose cost leg never started sees.
+    const none = scoreEntry(launches, ENTRY_T);
+    expect(rowsOf(none.costLedger).get('failed-attempts-create-slot')).toBeNull();
+    expect(none.exitVerdict).toBe('exit-unbounded');
+  });
+
+  it('the worst case over a sample is its LARGEST launch, never its median', () => {
+    // The ledger's promise is that a passing verdict survives the worst end of every boundary, and
+    // a median would let the worst launch through.
+    const launches = eight();
+    const varied = new Map(
+      launches.map((l, i) => [l.createSlot.slot, observation(i === 3 ? 2.5 : 0.01, i === 6 ? 0.9 : 0.001)]),
+    );
+    const rows = rowsOf(scoreEntry(launches, ENTRY_T, { createSlotCostObservations: varied }).costLedger);
+    expect(rows.get('landing-tip-create-slot')).toBeCloseTo(2.5, 9);
+    expect(rows.get('failed-attempts-create-slot')).toBeCloseTo(0.9, 9);
+  });
+
+  it('EVERY candidate this build can score reads exit-unbounded, and that is the honest state', () => {
+    // Three cost rows stay `null` after this increment — tips outside the create-slot bound,
+    // attempts outside the create slot (captain decision 466 declined to raise
+    // `stage2_cost.maxRpcRequestsPerCandidate`), and exit-side fees outside the walked horizon — so
+    // increment 2 alone does NOT unlock a profit verdict for a general deployer. The test states it
+    // rather than leaving it to be discovered by a reader diffing two tables.
+    const launches = eight();
+    const best = scoreEntry(launches, ENTRY_T, { createSlotCostObservations: observedMap(launches, 0, 0) });
+    expect(best.exitVerdict).toBe('exit-unbounded');
+    expect(unboundedCostComponents(best.costLedger)).toEqual([...UNBOUNDABLE_TODAY]);
+    expect(UNBOUNDABLE_TODAY).toHaveLength(3);
+  });
+
+  it('every verdict that STATES a result names the create-slot bound in its own name — 466', () => {
+    // The binding consequence of the captain declining to raise the RPC ceiling: a reader who sees
+    // only the verdict string must not be able to mistake it for a whole-window cost accounting.
+    // The two verdicts that report an ABSENCE of a result state no cost accounting to be mistaken
+    // about, and they are exactly the two that are unfilterable under 174b.
+    const stating = EXIT_VERDICTS.filter((v) => !UNFILTERABLE_EXIT_VERDICTS.includes(v));
+    expect(stating).toHaveLength(3);
+    for (const v of stating) {
+      expect(v, `${v} must name the bound its cost accounting is scoped to`).toMatch(/-create-slot-costs-only$/);
+      expect(isExitFilterable(v)).toBe(true);
+    }
+    for (const v of UNFILTERABLE_EXIT_VERDICTS) {
+      expect(v).not.toMatch(/create-slot/);
+      // 174b, one stage over: an unbounded verdict is a statement about OUR evidence — a bound we
+      // have not built — and dropping a candidate on it filters on our own ledger.
+      expect(isExitFilterable(v)).toBe(false);
+    }
+    // And a verdict this module does not recognise fails safe, exactly as `isDeployerAttributable`
+    // does one stage over.
+    expect(isExitFilterable('exit-realised')).toBe(false);
+  });
+
+  it('it GATES NOTHING — the entry verdict is byte-identical with the ledger bounded and not', () => {
+    // The shape captain decision 208b established for `roomLeftBound` and 461 repeated for the
+    // all-positions figures: record it, publish it, decide nothing with it yet.
+    const launches = eight();
+    const withLedger = scoreEntry(launches, ENTRY_T, { createSlotCostObservations: observedMap(launches) });
+    const without = scoreEntry(launches, ENTRY_T);
+    // A MEASURED verdict on both sides — two unmeasured readings agreeing would prove nothing.
+    expect(without.verdict).toBe('entry-open-after-costs');
+    expect(withLedger.verdict).toBe(without.verdict);
+    expect(withLedger.rationale).toBe(without.rationale);
+    expect(withLedger.unmeasuredCause).toBe(without.unmeasuredCause);
+    expect(withLedger.roomLeft).toEqual(without.roomLeft);
+    expect(withLedger.fieldHitRateGrossOfFees).toEqual(without.fieldHitRateGrossOfFees);
+    expect(withLedger.fieldRealisedSolOverAllPositionsGrossOfFees).toEqual(
+      without.fieldRealisedSolOverAllPositionsGrossOfFees,
+    );
+    // Structurally, too: no module that decides anything may read these two fields.
+    const deciding = ['measure.mjs', 'rank.mjs', 'stage0.mjs', 'grade.mjs', 'prediction.mjs', 'outcome.mjs', 'rotation.mjs'];
+    for (const module of deciding) {
+      const code = executableHalf(readFileSync(join(TOOL_DIR, module), 'utf8'));
+      expect(code, `${module} must not read the cost ledger`).not.toMatch(/costLedger|exitVerdict/);
+    }
+  });
+
+  it('the ledger reaches the CAVEATS, the record and the rendered block — not just a doc', () => {
+    // The same requirement `LANDING_TIP_CAVEAT` is a constant for: the limit travels with the
+    // number. A figure cannot be lifted out of one surface and quoted without the refusal.
+    const launches = eight();
+    const score = scoreEntry(launches, ENTRY_T, { createSlotCostObservations: observedMap(launches) });
+    const caveat = score.caveats.find((c) => c.includes('SUBTRACTION LEDGER'))!;
+    expect(caveat).toBeDefined();
+    expect(caveat).toContain('exit-unbounded');
+    for (const name of UNBOUNDABLE_TODAY) expect(caveat).toContain(name);
+    expect(caveat).toMatch(/CREATE-SLOT SCOPED/);
+    expect(caveat).toMatch(/READS THIS LEDGER/);
+    expect(describeCostLedger(score.costLedger, score.exitVerdict)).toBe(caveat);
+
+    // The record. Rows are counts, SOL figures and sentences from a closed set of component names,
+    // so the retention boundary is untouched — no mint reaches them even though the walk held one
+    // in memory to scope the failed-attempt half.
+    const row = toEntryRecordRow(score, emptyEntryCoverage()) as Record<string, unknown>;
+    const ledgerRows = row['costLedger'] as Record<string, unknown>[];
+    expect(ledgerRows.map((r) => r['name'])).toEqual([...COST_COMPONENTS]);
+    expect(row['exitVerdict']).toBe('exit-unbounded');
+    for (const r of ledgerRows) {
+      expect(Object.keys(r).sort()).toEqual(
+        ['boundBasis', 'direction', 'kind', 'label', 'name', 'observations', 'worstCaseSol'].sort(),
+      );
+    }
+    // `null` is UNBOUNDED and `0` is a measured zero — the projection must not collapse them.
+    const byName = new Map(ledgerRows.map((r) => [r['name'], r['worstCaseSol']]));
+    expect(byName.get('failed-attempts-rest-of-window')).toBeNull();
+    expect(byName.get('unrealised-positions')).toBe(0);
+    expect(JSON.stringify(row)).not.toContain('MINT');
+
+    // The rendered block, which is where two hand-written lines used to claim which terms were
+    // unbounded. It reads them off the rows now, so it cannot go stale against them.
+    const rendered = renderCostLedger(score.costLedger, score.exitVerdict).join('\n');
+    expect(rendered).toContain('exit-unbounded');
+    for (const name of UNBOUNDABLE_TODAY) expect(rendered).toContain(name);
+    expect(rendered).toContain('UNBOUNDED');
+    expect(rendered).toMatch(/ceilings, not measurements/);
   });
 });

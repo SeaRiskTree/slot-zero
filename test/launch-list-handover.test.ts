@@ -64,6 +64,7 @@ import { parseLaunchListRows, readDuneResultFile } from '../tools/arrival-rate-w
 import {
   buildPlan,
   launchListRefusalReason,
+  launchListUnreadableReason,
   readLaunchListInput,
   runPreflight,
 } from '../tools/arrival-rate-walk/collect.mjs';
@@ -811,6 +812,121 @@ describe('routing: a by-product can never be read as a raw export', () => {
       const read = readLaunchListInput(path, { nowMs: NOW_MS, maxAgeDays: null });
       expect(read.provenance).toBeNull();
       expect(read.list.byDeployer.get(wallet(1))).toHaveLength(3);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('folds a list it cannot read AT ALL into the same channel, kept legible apart — decision 486', () => {
+    // The structural failures are the ones `readLaunchListInput` THROWS on. Before 486 every one of
+    // them escaped the pre-flight entirely, so leg A — which opens no launch list — was never
+    // measured and `preflight.json` was never written. Each is folded into `launchListRefusal`, the
+    // channel the soft refusals already use, and the vendor's own sentence travels verbatim.
+    const dir = tmp();
+    try {
+      const good = writeLaunchListDocument(
+        buildLaunchListDocument({
+          enumeration: null,
+          wallets: [],
+          generatedAtMs: NOW_MS,
+          creationQueryId: 1,
+          recordSchemaVersion: 27,
+          runRecord: null,
+          candidateSource: 'wallet-list',
+          legFailure: null,
+        }),
+        dir,
+      );
+      const write = (name: string, body: unknown) => {
+        const p = join(dir, name);
+        writeFileSync(p, typeof body === 'string' ? body : JSON.stringify(body));
+        return p;
+      };
+      const doc = () => JSON.parse(readFileSync(good, 'utf8'));
+
+      const structural: [string, () => unknown][] = [
+        ['a directory that does not exist', () => readLaunchListInput(join(dir, 'nope'), { nowMs: NOW_MS, maxAgeDays: 30 })],
+        ['an empty handover directory', () => readLaunchListInput(tmp(), { nowMs: NOW_MS, maxAgeDays: 30 })],
+        ['a by-product with no stated maximum age', () => readLaunchListInput(good, { nowMs: NOW_MS, maxAgeDays: null })],
+        ['unreadable JSON', () => readLaunchListInput(write('broken.json', '{not json'), { nowMs: NOW_MS, maxAgeDays: 30 })],
+        [
+          'a wrong schemaVersion',
+          () =>
+            readLaunchListInput(write('v9.json', { ...doc(), schemaVersion: 9 }), {
+              nowMs: NOW_MS,
+              maxAgeDays: 30,
+            }),
+        ],
+        [
+          'a name that disagrees with the instant it declares',
+          () => {
+            const renamed = join(dir, '2026-01-01T00-00-00Z.json');
+            writeFileSync(renamed, readFileSync(good, 'utf8'));
+            return readLaunchListInput(renamed, { nowMs: NOW_MS, maxAgeDays: 30 });
+          },
+        ],
+        [
+          'no launches array',
+          () => {
+            const d = doc();
+            delete d.launches;
+            return readLaunchListInput(write('no-rows.json', d), { nowMs: NOW_MS, maxAgeDays: 30 });
+          },
+        ],
+      ];
+
+      for (const [label, read] of structural) {
+        let thrown: unknown = null;
+        try {
+          read();
+        } catch (cause) {
+          thrown = cause;
+        }
+        expect(thrown, `${label} must be a structural failure the pre-flight has to catch`).not.toBeNull();
+
+        const folded = launchListUnreadableReason(thrown);
+        // The vendor's own sentence survives, so the operator learns WHICH structural failure it was.
+        expect(folded, label).toContain((thrown as Error).message);
+        // And it never reads as "we read this and refuse to walk it", which is a different finding.
+        expect(folded, label).not.toMatch(/cannot be used/);
+        expect(folded, label).toMatch(/could not be read at all/);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps leg A when the list is structurally unreadable, and records it as REFUSED — decision 486', async () => {
+    const refusal = launchListUnreadableReason(new Error('there is no launch list at /x/nowhere'));
+    const dir = tmp();
+    try {
+      const result = await runPreflight({
+        out: dir,
+        client: new KeylessClient({
+          host: SOLANA_RPC,
+          maxRequests: 4,
+          minIntervalMs: 0,
+          fetchImpl: (async () =>
+            new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: 1_770_000_000 }), {
+              status: 200,
+            })) as unknown as typeof fetch,
+          sleepImpl: async () => {},
+        }),
+        // Nothing parsed, because nothing could be read — which is the state the catch leaves.
+        launchList: null,
+        launchListRefusal: refusal,
+        sampleLaunches: 1,
+      });
+
+      expect(result.samples.length).toBeGreaterThan(0);
+      expect(result.duneVerdict).toBeNull();
+      expect(result.launchListRefusal).toBe(refusal);
+
+      const written = JSON.parse(readFileSync(join(dir, 'preflight.json'), 'utf8'));
+      expect(written.legA.verdict).toEqual(result.verdict);
+      expect(written.legB.refused).toBe(refusal);
+      // NOT "no launch-list export was supplied" — one was, and it could not be read.
+      expect(written.legB.skipped).toBeUndefined();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -354,14 +354,29 @@ export function launchListRefusalReason(provenance) {
 }
 
 /**
- * {@link launchListRefusalReason} as a throw, for a caller with nowhere to put a verdict.
+ * A launch list that could not be READ AT ALL, stated in the same channel as one that was read and
+ * refused. Captain decision **486**, and the two are deliberately worded apart.
  *
- * @param {import('./launch-list.mjs').LaunchListProvenance | null} provenance
- * @returns {void}
+ * `readLaunchListInput` throws for the STRUCTURAL cases — no such directory, an empty handover
+ * directory, a by-product supplied with no `--launch-list-max-age-days`, unreadable JSON, a wrong
+ * `kind` or `schemaVersion`, a name that disagrees with the instant it declares, no `launches`
+ * array. Decision 485 moved the SOFT refusals off the throw path so leg A would survive them, and
+ * left these behind: they still unwound to the CLI's `main().catch` for exit 1, so leg A — which
+ * opens no launch list at all — was never measured and `preflight.json` was never written, which is
+ * the exact failure 485 named.
+ *
+ * **"This is not a launch list" and "we refuse to walk this one" must stay legible apart**, so the
+ * vendor's own message travels verbatim behind a prefix that says which of the two happened. It is
+ * neither flattened into the soft refusals' wording nor allowed to read as a clock verdict.
+ *
+ * **The PREFLIGHT alone gets this treatment.** The plan and walk phases have nowhere to put a
+ * verdict and a structurally unreadable list must still stop them, so their throws are untouched.
+ *
+ * @param {unknown} cause
+ * @returns {string}
  */
-export function refuseUnusableLaunchList(provenance) {
-  const reason = launchListRefusalReason(provenance);
-  if (reason !== null) throw new Error(reason);
+export function launchListUnreadableReason(cause) {
+  return `the launch list could not be read at all: ${cause instanceof Error ? cause.message : String(cause)}`;
 }
 
 /**
@@ -967,17 +982,28 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       // to the hard throws. `buildPlan` is where the plan and walk phases adopt them; this phase has
       // no plan, so it carries the reason into `runPreflight` and lets leg A be measured first
       // (captain decision 485): leg A opens no launch list, so a bad file may not cost it.
+      //
+      // AND THE STRUCTURAL FAILURES GO DOWN THE SAME CHANNEL (captain decision 486). A list that
+      // cannot be read AT ALL — no such directory, an empty one, no stated maximum age, unreadable
+      // JSON, the wrong kind or version — used to throw past this phase entirely, which discarded
+      // leg A and exited 1 where this phase's stop is 2. The catch is HERE and nowhere else: the
+      // plan and walk phases have nowhere to put a verdict, so a list they cannot read must still
+      // stop them.
       /** @type {import('./cohort.mjs').LaunchList | null} */
       let preflightList = null;
       /** @type {string | null} */
       let launchListRefusal = null;
       if (args.launchList !== null) {
-        const input = readLaunchListInput(args.launchList, {
-          nowMs: Date.now(),
-          maxAgeDays: args.launchListMaxAgeDays,
-        });
-        launchListRefusal = launchListRefusalReason(input.provenance);
-        preflightList = input.list;
+        try {
+          const input = readLaunchListInput(args.launchList, {
+            nowMs: Date.now(),
+            maxAgeDays: args.launchListMaxAgeDays,
+          });
+          launchListRefusal = launchListRefusalReason(input.provenance);
+          preflightList = input.list;
+        } catch (cause) {
+          launchListRefusal = launchListUnreadableReason(cause);
+        }
       }
       const { verdict, duneVerdict } = await runPreflight({
         out: /** @type {string} */ (out),

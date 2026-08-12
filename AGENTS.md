@@ -425,7 +425,11 @@ Five things bind anything that touches it or copies from it:
   REFUSES rather than being skipped, and `collect.mjs` → `launchListRefusalReason` holds the
   pre-flight's leg B to the walk's own refusals — **DECISION 485: leg A is measured and written
   first** (it opens no launch list), leg B is recorded `refused` rather than `skipped`, and the stop
-  is **exit 2**, the phase's own. Every command a refusal names carries `--launch-list`, because the
+  is **exit 2**, the phase's own. **DECISION 486 extends that to the STRUCTURAL failures**, which
+  used to throw past the phase for exit 1 and discard leg A: `launchListUnreadableReason` folds them
+  into the same channel with the original sentence verbatim, so *not a launch list* stays legible
+  apart from *refused to walk it* — **in the pre-flight ALONE**, since the plan and walk phases have
+  nowhere to put a verdict and are deliberately left throwing. Every command a refusal names carries `--launch-list`, because the
   write is opt-in and a suggestion without it sends the operator to a run that writes nothing. And
   the **retention
   posture moved while the ToS argument did not** — per-launch rows are no longer discarded;

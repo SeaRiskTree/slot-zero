@@ -218,6 +218,16 @@ cost that measurement. `preflight.json` records leg B as `refused` with the reas
 a failing verdict uses, because the collection it gates runs for days and a wrapper should read one
 number for one meaning.
 
+**A list the pre-flight cannot read AT ALL goes down that same channel** (captain decision 486) —
+no such directory, an empty handover directory, a by-product supplied with no
+`--launch-list-max-age-days`, unreadable JSON, the wrong `kind` or `schemaVersion`, a name that
+disagrees with the instant it declares, no `launches` array. Those used to throw past the phase for
+exit 1, discarding leg A and writing no `preflight.json` at all, which is the same failure 485 named
+one class over. `collect.mjs` → `launchListUnreadableReason` folds them in and carries the original
+sentence verbatim, so *"this is not a launch list"* and *"we read it and refuse to walk it"* stay
+legible apart. **The pre-flight alone gets this**: the plan and walk phases have nowhere to put a
+verdict, so a list they cannot read still stops them.
+
 ### Bounds
 
 Pinned in `bounds.json`, every value with a stated reason (a test enforces that, and *"no measurement

@@ -40,6 +40,34 @@
  * a statement about the screen. {@link LaunchBundling} reports both halves per launch, so a reader
  * can recover the older reading from the new record without re-running anything.
  *
+ * ## THE POPULATION HAS DRIFTED THE OTHER WAY, AND IT IS THE GATE ARM ALONE
+ *
+ * That same standard cuts at the POPULATION as well as at the predicate, and captain decision 451
+ * (2026-08-11) moved the population without moving this file. The survivor loop below asks
+ * `rank.mjs` → `verdictFor` with **no `subGate` input** and then keeps `gate-passed` alone, so this
+ * census surveys **only deployers that CLEAR `stage1_gate.minCompletionRate`** — while `screen.mjs`
+ * walks `admission.mjs` → `admittedToStage2`, the union of that arm and the sub-gate admission arm.
+ * **So this census is now NARROWER than the screen it is a finding about**, which is the reverse of
+ * the two premise shifts above: those left the headline stricter than the live rule over the same
+ * population, and this one changes the population itself.
+ *
+ * **What that means for reading `census/2026-08-03-bundling-census.md` and its `.json`**, which were
+ * measured before the second arm existed and are never retro-edited: every figure in them —
+ * 14 gate survivors, 112 windows, 44 of 112 proven under the union, 1 of 14 proven on all eight — is
+ * a statement about **gate-arm survivors** and about **no sub-gate deployer**. The proven-window
+ * rates may NOT be extended to the population 451 admits: the arm's own conditions select for launch
+ * flow (the sub-gate population is high-tempo by construction, median 12.27 launches/day on
+ * `runs/2026-08-04.json`), and nothing measured here says a high-tempo stranger's create slots carry
+ * co-ordination evidence at the same rate. Read the record's "candidates Stage 2 can reach a verdict
+ * for" as the gate arm's share of that set, not as the whole of it.
+ *
+ * **Re-running this pass over both arms is a separate MEASUREMENT and a decision, deliberately not
+ * taken here.** It costs a walk over a population that has never been surveyed, and its result would
+ * not be poolable with the committed record — two arms are two denominators
+ * (`admission.mjs` → `ARMS_ARE_NEVER_POOLED`), so a widened re-run reports the sub-gate arm apart or
+ * it reports nothing legible. Passing this census's `verdictFor` call a `subGate` assessment is the
+ * one-line half of that change and is not the expensive half.
+ *
  * What was *not* known is how large a population that silences. The live evidence was **two
  * strangers** (`data/slot-zero-stage2-reverify/report.md` §2a): one lost 4 of 8 windows, one lost
  * 8 of 8 with `maxWalletsInOneTx == 1` at min, median and max — a deployer that never bundles and
@@ -1477,6 +1505,12 @@ export async function main(opts, out, err) {
 
       const completion = measureCompletion(listing.records);
       const gate = applyGate({ completion, historySource: 'ownership-only' }, gateThresholds);
+      // NO `subGate` INPUT, SO THIS SURVEYS THE GATE ARM ALONE — see the module doc's population
+      // note. `verdictFor` defaults the arm to null, which means it was never ASKED rather than that
+      // it refused, so the only verdicts reachable here are the three pre-451 ones and the filter
+      // below keeps `gate-passed`. Since captain decision 451 the screen scores the UNION, so this
+      // census is narrower than the screen; widening it is a new measurement over a population that
+      // has never been walked, and it is a decision rather than this argument list gaining a field.
       const { verdict } = verdictFor({ gate, completion, capped: listing.truncated });
       const refs = listing.records
         .filter((r) => r.mint !== '' && Number.isFinite(r.deployedAtMs) && r.deployedAtMs > 0)

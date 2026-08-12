@@ -1366,6 +1366,70 @@ export function renderStage1(run) {
     }
   };
 
+  /**
+   * What the candidate columns mean. SHARED, because both arms print the same columns and the
+   * legend used to live inside the gate branch — so a run with zero gate passes and N sub-gate
+   * admissions, which is the EXPECTED shape of a sub-gate run rather than an edge case, printed
+   * full entry blocks with no legend at all.
+   *
+   * @returns {string[]}
+   */
+  const columnLegendLines = () => [
+    '  n    = launches in the denominator we computed ourselves — CREATED by this wallet',
+    '         inside the creation window, plus whatever the ownership listing showed before it',
+    '  done = of those, how many completed the bonding curve',
+    '  cap  = the page the GATE\'S reading came from was full, so older launches exist that',
+    '         it does not show. Under creation-derived history that is the ownership listing,',
+    '         which supplies everything before the creation window.',
+    `  seeds= how many of this run's ${run.coverage.seeds.length} enumeration queries surfaced this wallet`,
+  ];
+
+  /**
+   * What a verdict is worth, what may be filtered on, and whether the figures above are gross.
+   *
+   * **Takes the rows it is printed under**, because the gross/net sentence is a fact about THOSE
+   * candidates: computing it over the gate arm and printing it beneath a sub-gate block that
+   * carries priced seats publishes a false sentence, which is the class ruling 479a governs.
+   *
+   * @param {readonly import('./rank.mjs').Candidate[]} rows
+   * @returns {string[]}
+   */
+  const verdictLegendLines = (rows) => {
+    const lines = [];
+    // The legend has to speak the vocabulary the run actually emitted, and it has to state the
+    // gross-only limit exactly where it is true. Naming a verdict this tool can no longer emit, or
+    // calling a NET figure gross, misreads the run for whoever reads it — and the candidates are
+    // already in hand here, so the condition is a fact about THIS run rather than a hedge.
+    const anyPriced = rows.some((c) => c.entry !== null && c.entry.entryCostPriced.hits > 0);
+    lines.push('  NO VERDICT HERE MEANS "BEATABLE". ENTRY-OPEN-AFTER-COSTS is the strongest thing this');
+    lines.push('  stage says: room was present, the seat was priced from the chain, and the field still');
+    lines.push('  cleared after paying for it — so the EXIT question is worth asking. Exit is unmeasured.');
+    lines.push('  ENTRY-COST-PROHIBITIVE and ENTRY-COST-UNMEASURED are both REFUSALS, and the second is');
+    lines.push('  the absence of a finding rather than a finding of absence: the seat went unpriced, which');
+    lines.push('  is never evidence that it was cheap.');
+    // Captain decision 174b. The legend is where a reader learns what a verdict is worth, so it is
+    // where the filter rule belongs too — an unmeasured verdict is seven producers and every one of
+    // them is ours.
+    lines.push('  EVERY unmeasured verdict prints a CAUSE line saying WHOSE fact it is, and all seven');
+    lines.push('  producers are OUR COVERAGE. A later stage may filter ONLY on a MEASURED verdict, and');
+    lines.push('  never on an unmeasured one whatever its cause: an unmeasured outcome is no answer and');
+    lines.push('  must be carried forward, counted, never dropped. Filtering on the verdict alone');
+    lines.push('  filters on our own budget and evidence (decision 174b).');
+    if (anyPriced) {
+      lines.push('  The *NET* figures above are the on-chain correction and they sit BESIDE the *GROSS*');
+      lines.push('  ones rather than replacing them. They are an UPPER bound themselves: a landing tip');
+      lines.push('  paid in a separate transaction of the same bundle is in neither figure.');
+      lines.push('  Where a candidate\'s own block says NOT MEASURED, only the gross figures exist for it,');
+      lines.push('  and those are an upper bound.');
+    } else {
+      lines.push('  No candidate in this run carries a priced seat — the cost leg does not run under');
+      lines.push('  --no-stage2 or a --stage0 run, and does not run for a candidate the free legs (room,');
+      lines.push('  or the field GROSS of fees) already refused. So every realised figure above is gross');
+      lines.push('  of fees and therefore an upper bound.');
+    }
+    return lines;
+  };
+
   if (passed.length === 0) {
     if (run.completed) {
       L.push('NO CANDIDATE CLEARED THE GATE.');
@@ -1407,45 +1471,9 @@ export function renderStage1(run) {
     );
     for (const c of passed) renderAdmittedCandidate(c);
     L.push('');
-    L.push('  n    = launches in the denominator we computed ourselves — CREATED by this wallet');
-  L.push('         inside the creation window, plus whatever the ownership listing showed before it');
-    L.push('  done = of those, how many completed the bonding curve');
-    L.push('  cap  = the page the GATE\'S reading came from was full, so older launches exist that');
-  L.push('         it does not show. Under creation-derived history that is the ownership listing,');
-  L.push('         which supplies everything before the creation window.');
-    L.push(`  seeds= how many of this run's ${run.coverage.seeds.length} enumeration queries surfaced this wallet`);
+    for (const line of columnLegendLines()) L.push(line);
     L.push('');
-    // The legend has to speak the vocabulary the run actually emitted, and it has to state the
-    // gross-only limit exactly where it is true. Naming a verdict this tool can no longer emit, or
-    // calling a NET figure gross, misreads the run for whoever reads it — and the candidates are
-    // already in hand here, so the condition is a fact about THIS run rather than a hedge.
-    const anyPriced = passed.some((c) => c.entry !== null && c.entry.entryCostPriced.hits > 0);
-    L.push('  NO VERDICT HERE MEANS "BEATABLE". ENTRY-OPEN-AFTER-COSTS is the strongest thing this');
-    L.push('  stage says: room was present, the seat was priced from the chain, and the field still');
-    L.push('  cleared after paying for it — so the EXIT question is worth asking. Exit is unmeasured.');
-    L.push('  ENTRY-COST-PROHIBITIVE and ENTRY-COST-UNMEASURED are both REFUSALS, and the second is');
-    L.push('  the absence of a finding rather than a finding of absence: the seat went unpriced, which');
-    L.push('  is never evidence that it was cheap.');
-    // Captain decision 174b. The legend is where a reader learns what a verdict is worth, so it is
-    // where the filter rule belongs too — an unmeasured verdict is seven producers and every one of
-    // them is ours.
-    L.push('  EVERY unmeasured verdict prints a CAUSE line saying WHOSE fact it is, and all seven');
-    L.push('  producers are OUR COVERAGE. A later stage may filter ONLY on a MEASURED verdict, and');
-    L.push('  never on an unmeasured one whatever its cause: an unmeasured outcome is no answer and');
-    L.push('  must be carried forward, counted, never dropped. Filtering on the verdict alone');
-    L.push('  filters on our own budget and evidence (decision 174b).');
-    if (anyPriced) {
-      L.push('  The *NET* figures above are the on-chain correction and they sit BESIDE the *GROSS*');
-      L.push('  ones rather than replacing them. They are an UPPER bound themselves: a landing tip');
-      L.push('  paid in a separate transaction of the same bundle is in neither figure.');
-      L.push('  Where a candidate\'s own block says NOT MEASURED, only the gross figures exist for it,');
-      L.push('  and those are an upper bound.');
-    } else {
-      L.push('  No candidate in this run carries a priced seat — the cost leg does not run under');
-      L.push('  --no-stage2 or a --stage0 run, and does not run for a candidate the free legs (room,');
-      L.push('  or the field GROSS of fees) already refused. So every realised figure above is gross');
-      L.push('  of fees and therefore an upper bound.');
-    }
+    for (const line of verdictLegendLines(passed)) L.push(line);
   }
 
   // THE SECOND ARM'S OWN SECTION — captain decision 451, and the separation is the point rather
@@ -1471,11 +1499,19 @@ export function renderStage1(run) {
     );
     for (const c of subGateAdmitted) renderAdmittedCandidate(c);
     L.push('');
-    L.push(`  ${subGateAdmitted.length} candidate(s) on this arm. The columns mean what they mean in the`);
-    L.push('  gate block above — the reading is the same, only the population differs — and the rate');
-    L.push('  column is BELOW the gate bar on every row here by construction.');
+    L.push(`  ${subGateAdmitted.length} candidate(s) on this arm. The reading is the same one the gate arm is`);
+    L.push('  measured on — only the population differs — and the rate column is BELOW the gate bar on');
+    L.push('  every row here by construction.');
     L.push('  NO FIGURE HERE MAY BE ADDED TO ONE FROM THE GATE BLOCK, and none of the counts in this');
     L.push('  report does: the two arms are reported apart at every level, from the header line down.');
+    // THIS SECTION CARRIES ITS OWN LEGEND rather than pointing at the gate block's, because that
+    // block does not exist on a run with zero gate passes — which is this arm's expected shape, the
+    // gate arm having produced 0 measured passes in 43 scored. The gross/net sentence is computed
+    // over THESE rows, so it states what is true of the figures printed above it.
+    L.push('');
+    for (const line of columnLegendLines()) L.push(line);
+    L.push('');
+    for (const line of verdictLegendLines(subGateAdmitted)) L.push(line);
   }
 
   // Its own section, never folded into either list. A candidate that appeared in neither would

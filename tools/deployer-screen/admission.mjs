@@ -244,6 +244,15 @@ export function subGateBounds(gateThresholds, windowCap) {
  * quiet, which is an accepted cost for ALLOCATION between wallets already judged worth measuring and
  * is not one for ADMISSION, where a verdict about a wallet that has stopped launching is unspendable.
  *
+ * **AND THE UNIT IS NARROWER THAN THE HARVEST — a KNOWN LIMIT, stated rather than closed.** Both
+ * quantities come from `measureCompletion`, computed over the launches that survive captain
+ * decisions 351 and 352b, while Stage 2 visits `toLaunchRefs`'s UNFILTERED listing. So this
+ * condition is measured in the currency Stage 2 spends only up to that mismatch, and the error runs
+ * one way: a mayhem-heavy or criterion-unreadable deployer's flow is UNDERSTATED and the arm refuses
+ * more often than its true flow warrants. See the two reads inside {@link assessSubGateAdmission},
+ * which own the full statement, and `thresholds.json` →
+ * `stage1_gate.justification.subGateAdmission`.
+ *
  * **EVERY REFUSAL LEAVES THE CANDIDATE EXACTLY WHERE IT WAS.** This arm can only ADD; a candidate it
  * turns down keeps the `gate-failed` it already had, so a bound chosen too tight here cannot create
  * a rejection that did not already exist. That is the one direction this whole tool is allowed to
@@ -261,6 +270,23 @@ export function assessSubGateAdmission(input, gateBars, bounds) {
   /** @type {string[]} */
   const reasons = [];
 
+  // KNOWN LIMIT, AND IT IS STATED HERE RATHER THAN CLOSED. Both window-supply quantities below are
+  // read off `measureCompletion`'s output, whose `tokens`, `spanDays` and both deploy instants are
+  // computed over the set that SURVIVES captain decisions 351 (no mayhem launch) and 352b (no launch
+  // the RAISE-85 criterion could not be read on). Stage 2's visit list is not that set:
+  // `measure.mjs` -> `toLaunchRefs` walks the vendor's `pump_tokens` UNFILTERED, so a launch this
+  // arm does not count as supply is a launch a visit would still harvest.
+  //
+  // THE ERROR THEREFORE RUNS ONE WAY: a mayhem-heavy or criterion-unreadable deployer's flow is
+  // UNDERSTATED — its tempo reads low against the derived floor and its last launch reads older than
+  // it is — so the arm REFUSES more often than the true flow warrants. It can only fail to ADMIT,
+  // never over-admit, and a refusal leaves the candidate with the `gate-failed` it already had,
+  // which is why the mismatch is survivable in this direction and would not be in the other.
+  // It is the same accepted limit `rotation.mjs` -> `RotationRow.launchesPerDay` already records for
+  // the rank key, and that doc owns the argument rather than it being re-made here.
+  //
+  // RE-SOURCING THIS ARM'S TEMPO FROM THE UNFILTERED LISTING IS AN OPEN DECISION and is deliberately
+  // not taken here: moving a bar and changing what it measures in one step leaves neither auditable.
   const launchesPerDay = launchesPerDayOf(completion);
   const lastMs = completion.lastDeployIso === null ? Number.NaN : Date.parse(completion.lastDeployIso);
   const daysSinceLastLaunch =

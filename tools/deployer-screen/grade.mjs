@@ -540,7 +540,12 @@ export function loadGradeLedger(path) {
     throw new Error(
       `The grade ledger at ${path} declares schemaVersion ${String(l['schemaVersion'])}; this build ` +
         `reads ${GRADE_LEDGER_VERSION}. Grade ledgers are never retro-fitted — migrate it ` +
-        `deliberately rather than letting a run rebuild it from nothing.`,
+        `deliberately rather than letting a run rebuild it from nothing. FROM VERSION 1 THE ` +
+        `MIGRATION IS ONE FIELD: version 2 added \`admissionArm\` to every grade row and split the ` +
+        `hit rate by it (captain decisions 451 and 480a), and a row carrying no arm is the GATE ` +
+        `arm exactly — nothing before record schema 26 could admit a claim through the second one. ` +
+        `So setting "schemaVersion": 2 is the whole of it; every existing row is already correct ` +
+        `and is read as the gate arm's.`,
     );
   }
   if (typeof l['grades'] !== 'object' || l['grades'] === null) {

@@ -20203,4 +20203,87 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
     expect(subGateBlock).toContain('says nothing about whether its window is enterable either');
     expect(subGateBlock).toContain(SUB_GATE_ADMISSION_IS_NOT_A_FINDING);
   });
+
+  it('a SUB-GATE-ONLY run carries its own legend and points at no block that was not printed', () => {
+    // THE EXPECTED SHAPE OF A SUB-GATE RUN, not an edge case: the gate arm has produced 0 measured
+    // passes in 43 scored, so zero gate passes beside N sub-gate admissions is what this arm exists
+    // to produce. The whole Stage 2 legend used to live inside the `passed.length > 0` branch, so
+    // that run printed full entry blocks with no column legend, no verdict vocabulary, no captain
+    // decision 174b filter rule and no gross/net caveat — under a footer pointing at a gate block
+    // that was never rendered.
+    const completion = measureCompletion(
+      Array.from({ length: 40 }, (_, i) => ({ deployedAtMs: T0 + i * DAY, completed: i < 4 })),
+    );
+    const envelope = {
+      keyedRequests: 2,
+      keylessRequests: 0,
+      rpcRequests: 0,
+      rpcLoadShedEvents: 0,
+      historySource: 'creation-derived' as const,
+      elapsedMs: 1000,
+      startedAtIso: '2026-08-11T00:00:00.000Z',
+      completed: true,
+      truncationReason: null,
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 1,
+        prefilteredOut: 0,
+        worthARequest: 1,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 1,
+        coverageTruncated: false,
+      },
+      unmeasured: [],
+      thresholds: {},
+    };
+    const candidate = (wallet: string, verdict: 'gate-passed' | 'sub-gate-admitted') => ({
+      wallet,
+      seededBy: ['alerts'],
+      completion,
+      completionCapped: false,
+      gate: { passed: verdict === 'gate-passed', reasons: [] as string[] },
+      verdict,
+      rationale: '',
+      consistency: null,
+      historySource: 'creation-derived' as const,
+      vendorCompletion: completion,
+      vendorVerdict: verdict,
+      vendorPageCapped: false,
+      creation: null,
+      entry: null,
+      entryCoverage: null,
+    });
+
+    const subGateOnly = renderStage1({
+      ...envelope,
+      candidates: [candidate('SUBWALLET', 'sub-gate-admitted')],
+    } as never);
+
+    // No gate block at all — this is the shape under test.
+    expect(subGateOnly).toContain('NO CANDIDATE CLEARED THE GATE.');
+    expect(subGateOnly).not.toContain('CLEARED THE COMPETENCE GATE — and, where Stage 2 reached them');
+    // ...and the reader still gets every part of the legend.
+    expect(subGateOnly).toMatch(/^ {2}n {4}= launches in the denominator/m);
+    expect(subGateOnly).toMatch(/^ {2}done = of those/m);
+    expect(subGateOnly).toContain('NO VERDICT HERE MEANS "BEATABLE"');
+    expect(subGateOnly).toContain('filters on our own budget and evidence (decision 174b)');
+    expect(subGateOnly).toMatch(/gross\s+of fees and therefore an upper bound/);
+    // The footer no longer sends the reader to a block that was not rendered.
+    expect(subGateOnly).not.toContain('mean in the\n  gate block above');
+    expect(subGateOnly).toContain('The reading is the same one the gate arm is');
+
+    // AND A RUN WITH NO SUB-GATE ADMISSIONS RENDERS BYTE-IDENTICALLY TO THE PRE-451 SHAPE, which is
+    // what every committed record is: the legend was hoisted, not rewritten.
+    const gateOnly = renderStage1({
+      ...envelope,
+      candidates: [candidate('GATEWALLET', 'gate-passed')],
+    } as never);
+    expect(gateOnly).not.toContain('SUB-GATE ADMITTED — FAILED');
+    const gateLegend = gateOnly.slice(gateOnly.indexOf('  n    = launches in the denominator'));
+    const subGateLegend = subGateOnly.slice(subGateOnly.indexOf('  n    = launches in the denominator'));
+    expect(subGateLegend).toBe(gateLegend);
+  });
 });

@@ -53,6 +53,7 @@ import {
   ARMS_ARE_NEVER_POOLED,
   SUB_GATE_ADMISSION_IS_NOT_A_FINDING,
   SUB_GATE_ADMISSION_RULE,
+  admissionArmOf,
 } from './admission.mjs';
 import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
@@ -1342,7 +1343,18 @@ export function renderStage1(run) {
       L.push('');
     } else {
       L.push('      ENTRY: NOT SCORED — no entry measurement was taken for this wallet.');
-      L.push('      Passing the competence gate says nothing about whether its window is enterable.');
+      // THE SENTENCE IS PER ARM AND THE ARM COMES OFF THE ROW'S OWN VERDICT, never off which block
+      // called this formatter: a wording chosen by the call site is free to disagree with the
+      // verdict the record carries, and under the sub-gate heading the gate-arm sentence is FALSE by
+      // construction — every wallet there FAILED that gate. This report is quoted out of context, so
+      // a line reading as "it passed the gate" is the one thing captain decision 451 must not imply.
+      if (admissionArmOf(c.verdict) === 'sub-gate') {
+        L.push('      This wallet FAILED the competence gate and was admitted for measurement by the');
+        L.push('      second arm; that says nothing about whether its window is enterable either.');
+        L.push(`      ${SUB_GATE_ADMISSION_IS_NOT_A_FINDING}`);
+      } else {
+        L.push('      Passing the competence gate says nothing about whether its window is enterable.');
+      }
     }
     if (c.consistency !== null) {
       L.push(`      consistency: ${c.consistency.state.toUpperCase()} — ${c.consistency.note}`);

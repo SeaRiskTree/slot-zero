@@ -19753,18 +19753,10 @@ describe('451: the sub-gate arm admits a refused deployer, and the two arms are 
     // `admittedMedianVendorMinusGateRate` predates the second arm and stays the GATE arm's: the
     // sub-gate rows must not enter its denominator.
     expect(metrics['admittedMedianVendorMinusGateRate']!(record)).toBe(0);
-
-    // And the rendered report keeps them apart at every level: its own heading, its own count, and
-    // the never-pool sentence on the block itself.
-    const renderSource = readFileSync(join(TOOL_DIR, 'render.mjs'), 'utf8');
-    expect(renderSource).toContain("c.verdict === 'sub-gate-admitted'");
-    expect(renderSource).toContain('ARMS_ARE_NEVER_POOLED');
-    // No expression anywhere adds one arm's population to the other's.
-    for (const [path, text] of all) {
-      expect(executableHalf(text), `${path} adds the two arms into one figure`).not.toMatch(
-        /passed\.length\s*\+\s*subGateAdmitted\.length|subGateAdmitted\.length\s*\+\s*passed\.length/,
-      );
-    }
+    // That the rendered report keeps the two apart — its own heading, its own count and the
+    // never-pool sentence on the block — is asserted on the rendered OUTPUT below, in "reports the
+    // two arms apart, in the record and in the rendered report". A source-text proxy for it would
+    // pass over dead code and break on a behaviour-preserving rename.
   });
 
   it('cannot move a spend bound, because no ceiling is a function of who was admitted', () => {
@@ -20027,4 +20019,74 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
     expect(metrics['subGateAdmittedCount']!(record)).toBe(1);
     expect(metrics['gateFailedCount']!(record)).toBe(0);
   }, 60_000);
+
+  it('never tells a sub-gate wallet it passed the gate — the unscored sentence is per ARM', () => {
+    // THE SHARED FORMATTER SERVES BOTH ARMS, so its prose has to come off the ROW rather than off
+    // the block that called it. Its unscored-entry branch used to say "Passing the competence gate
+    // says nothing about whether its window is enterable" under a heading whose every wallet FAILED
+    // that gate — a line that reads, quoted out of context, as the one claim captain decision 451
+    // must not imply.
+    const completion = measureCompletion(
+      Array.from({ length: 40 }, (_, i) => ({ deployedAtMs: T0 + i * DAY, completed: i < 4 })),
+    );
+    const row = (wallet: string, verdict: 'gate-passed' | 'sub-gate-admitted') => ({
+      wallet,
+      seededBy: ['alerts'],
+      completion,
+      completionCapped: false,
+      gate: { passed: verdict === 'gate-passed', reasons: [] as string[] },
+      verdict,
+      rationale: '',
+      consistency: null,
+      historySource: 'creation-derived' as const,
+      vendorCompletion: completion,
+      vendorVerdict: verdict,
+      vendorPageCapped: false,
+      creation: null,
+      // Nobody was scored, which is the branch that carries the sentence.
+      entry: null,
+      entryCoverage: null,
+    });
+    const text = renderStage1({
+      candidates: [row('GATEWALLET', 'gate-passed'), row('SUBWALLET', 'sub-gate-admitted')],
+      keyedRequests: 2,
+      keylessRequests: 0,
+      rpcRequests: 0,
+      rpcLoadShedEvents: 0,
+      historySource: 'creation-derived' as const,
+      elapsedMs: 1000,
+      startedAtIso: '2026-08-11T00:00:00.000Z',
+      completed: true,
+      truncationReason: null,
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 2,
+        prefilteredOut: 0,
+        worthARequest: 2,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 2,
+        coverageTruncated: false,
+      },
+      unmeasured: [],
+      thresholds: {},
+    } as never);
+
+    const GATE_ARM_SENTENCE = 'Passing the competence gate says nothing about whether its window is enterable.';
+    const armStart = text.indexOf('SUB-GATE ADMITTED — FAILED');
+    expect(armStart).toBeGreaterThan(-1);
+    const gateBlock = text.slice(text.indexOf('CLEARED THE COMPETENCE GATE'), armStart);
+    const subGateBlock = text.slice(armStart);
+
+    // The gate arm's wording is unchanged, and it stays where it is true.
+    expect(gateBlock).toContain(GATE_ARM_SENTENCE);
+    expect(subGateBlock).not.toContain(GATE_ARM_SENTENCE);
+    // And the second arm says something true and no stronger, beside the caveat that travels with
+    // every admission: measured, not established.
+    expect(subGateBlock).toContain('FAILED the competence gate and was admitted for measurement');
+    expect(subGateBlock).toContain('says nothing about whether its window is enterable either');
+    expect(subGateBlock).toContain(SUB_GATE_ADMISSION_IS_NOT_A_FINDING);
+  });
 });

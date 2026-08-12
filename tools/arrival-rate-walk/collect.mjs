@@ -187,10 +187,12 @@ export function ledger(out, phase) {
  * @param {object} args
  * @param {string} args.out
  * @param {KeylessClient} args.client
- * @param {string | null} [args.launchListPath] A RAW Dune export. Read here, unchanged.
- * @param {import('./cohort.mjs').LaunchList | null} [args.launchList] An already-parsed list, which
- *   is how a screen by-product reaches leg B: that shape carries a staleness ceiling and is read by
- *   `launch-list.mjs` rather than by `readDuneResultFile`, so it arrives parsed. Takes precedence.
+ * @param {import('./cohort.mjs').LaunchList | null} [args.launchList] The list, ALREADY PARSED —
+ *   this function opens no file. `readLaunchListInput` is the one reader: it is what tells a screen
+ *   by-product from a raw Dune export, applies the staleness ceiling to the first, and produces the
+ *   refusal below. Taking a PATH here as well would be a second door into leg B that reads with
+ *   `readDuneResultFile` directly and so honours none of that, which is why the parameter that used
+ *   to do it is gone rather than kept for a caller that might want it.
  * @param {string | null} [args.launchListRefusal] Why the supplied list may not be walked — see
  *   {@link launchListRefusalReason}. **Leg A runs and is written either way** (captain decision 485):
  *   it compares the chain clock against the vendor clock and reads no launch list, so a problem with
@@ -204,7 +206,6 @@ export function ledger(out, phase) {
 export async function runPreflight({
   out,
   client,
-  launchListPath = null,
   launchList = null,
   launchListRefusal = null,
   sampleLaunches = BOUNDS.preflight.sampleLaunches,
@@ -223,13 +224,7 @@ export async function runPreflight({
   let duneSamples = [];
   /** @type {import('./preflight.mjs').SkewVerdict | null} */
   let duneVerdict = null;
-  const legBList =
-    launchListRefusal !== null
-      ? null
-      : (launchList ??
-        (launchListPath === null
-          ? null
-          : parseLaunchListRows(readDuneResultFile(readFileSync(launchListPath, 'utf8'), launchListPath))));
+  const legBList = launchListRefusal !== null ? null : launchList;
   if (launchListRefusal !== null) {
     say(`preflight leg B REFUSED: ${launchListRefusal}`);
   } else if (legBList !== null) {

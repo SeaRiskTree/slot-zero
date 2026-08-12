@@ -12,8 +12,8 @@
  * Four properties, and each is one of the decision's binding constraints:
  *
  * 1. **No new spending.** The by-product is a projection of rows `enumerateCreations` already
- *    parsed for the gate. A run that writes it issues exactly the requests a run that does not
- *    issue, and the writer module reaches no vendor at all.
+ *    parsed for the gate. The enumeration's own request counter does not advance across building
+ *    and writing the document, and the writer module reaches no vendor at all.
  * 2. **The frequency lane stays credential-free.** Its reader is file I/O. The zero-credential
  *    tests in its own suite are untouched and still cover the new file, because they scan every file
  *    in that directory — this suite pins the reader's shape from the other side.
@@ -179,7 +179,10 @@ async function enumerate(wallets: string[], rows: unknown[]) {
     bounds: BOUNDS,
     allowance: ALLOWANCE,
   });
-  return { result, requests: s.requests() };
+  // The LIVE counter, not a snapshot of it. A number read here is fixed before the caller has done
+  // anything, so a caller asking "did this next step issue a request" would be comparing two
+  // constants — which is exactly how the zero-cost assertion below came to be unable to fail.
+  return { result, requests: s.requests };
 }
 
 function tmp(): string {
@@ -238,24 +241,57 @@ describe('the two copies of the envelope contract cannot drift', () => {
 });
 
 describe('the by-product rides on the approved path and costs nothing', () => {
-  it('writing it issues exactly the requests not writing it issues', async () => {
-    // The whole claim in one assertion: the rows come out of the enumeration's own parsed output,
-    // so the document is free. If a future edit made the writer fetch anything, the two counts
-    // would diverge here rather than on a bill.
+  it('building AND writing the document issues not one request — captain decision 457a', async () => {
+    // THE LOAD-BEARING CLAIM OF THIS WHOLE CHANGE, and the assertion has to be able to fail. The
+    // by-product is legitimate only because it costs nothing: the rows come out of the
+    // enumeration's own parsed output, so the document is a projection of what the leg already paid
+    // for. The count is therefore read BEFORE and AFTER the build and the write, and it is the same
+    // live counter both times — an earlier cut compared two numbers each frozen at the end of their
+    // own enumeration, which is trivially equal for identical inputs and would have stayed green
+    // had the writer started fetching.
     const rows = [...launchRows(wallet(1), 4, 4), ...launchRows(wallet(2), 3, 3)];
-    const withList = await enumerate([wallet(1), wallet(2)], rows);
-    const withoutList = await enumerate([wallet(1), wallet(2)], rows);
-    buildLaunchListDocument({
-      enumeration: withList.result,
-      wallets: [wallet(1), wallet(2)],
-      generatedAtMs: NOW_MS,
-      creationQueryId: 1,
-      recordSchemaVersion: 27,
-      runRecord: null,
-      candidateSource: 'wallet-list',
-      legFailure: null,
-    });
-    expect(withList.requests).toBe(withoutList.requests);
+    const { result, requests } = await enumerate([wallet(1), wallet(2)], rows);
+
+    // The counter is REAL: the enumeration it just ran actually spent requests through it. Without
+    // this, a stub that answered nothing would satisfy the equality below with 0 === 0 and the test
+    // would prove nothing about the writer at all.
+    const beforeWrite = requests();
+    expect(beforeWrite, 'the counter must have advanced during the enumeration').toBeGreaterThan(0);
+
+    const dir = tmp();
+    // GLOBAL fetch as well as the client's own counter, because they catch different writers. The
+    // counter above only sees traffic routed through the injected `fetchImpl`, so a writer reaching
+    // for `globalThis.fetch` directly would slip past it — which is the shape a future edit would
+    // most plausibly take, and it is the one that spends without appearing on any client's ledger.
+    const globalCalls: string[] = [];
+    vi.stubGlobal('fetch', ((url: unknown) => {
+      globalCalls.push(String(url));
+      return Promise.reject(new Error('the launch-list by-product may not reach a vendor'));
+    }) as unknown as typeof fetch);
+    try {
+      const doc = buildLaunchListDocument({
+        enumeration: result,
+        wallets: [wallet(1), wallet(2)],
+        generatedAtMs: NOW_MS,
+        creationQueryId: 1,
+        recordSchemaVersion: 27,
+        runRecord: null,
+        candidateSource: 'wallet-list',
+        legFailure: null,
+      });
+      writeLaunchListDocument(doc, dir);
+
+      // Both halves of the by-product — the projection and the file — are inside the span.
+      expect(requests(), 'building and writing the launch list must issue nothing').toBe(beforeWrite);
+      expect(globalCalls, 'the writer must reach no vendor of its own').toEqual([]);
+      // And it genuinely produced the thing whose cost was just measured, so the zero is not the
+      // zero of a step that did not happen.
+      expect(doc.launches).toHaveLength(rows.length);
+      expect(readdirSync(dir)).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('the writer module reaches no vendor: no client, no host, no credential', () => {

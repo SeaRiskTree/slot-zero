@@ -396,8 +396,9 @@ Five things bind anything that touches it or copies from it:
   (**unchanged**) writes its parsed rows to `<data root>/screen-launch-lists/` as a by-product under
   `--launch-list`, and this lane READS that file. `tools/deployer-screen/launch-list.mjs` is the writer,
   `tools/arrival-rate-walk/launch-list.mjs` the reader, `test/launch-list-handover.test.ts` pins the
-  two copies of the envelope contract and asserts a run that writes it issues exactly the requests a
-  run that does not. **Five things bind.** It costs **zero** in every currency — the rows
+  two copies of the envelope contract and asserts the enumeration's own request counter does not
+  advance across building and writing the document — against a counter it first proves advanced
+  during the enumeration, so a zero cannot be a step that never ran. **Five things bind.** It costs **zero** in every currency — the rows
   are already in memory and the write reaches no vendor — and it **gates nothing**, so
   `RECORD_SCHEMA_VERSION` is deliberately unmoved; the flag is **opt-in on RETENTION grounds, exactly
   as `--out` is**, not because it spends. **`--wallets` (398a) is what points the screen at

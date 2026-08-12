@@ -1246,8 +1246,10 @@ leg parsed for the gate.
 
 **It costs nothing in every currency, and that is structural rather than careful.** No request, no
 execution, no credit, no byte of vendor traffic, no wall clock past a file write —
-`test/launch-list-handover.test.ts` asserts that a run which writes it issues exactly the requests a
-run that does not issue. **It gates nothing**: no bar, threshold, verdict or record field reads it,
+`test/launch-list-handover.test.ts` reads the enumeration's own request counter before and after the
+document is built AND written, and asserts it did not advance, having first asserted that the same
+counter DID advance during the enumeration so a zero cannot be the zero of a step that never
+happened. **It gates nothing**: no bar, threshold, verdict or record field reads it,
 and `RECORD_SCHEMA_VERSION` is deliberately unmoved — nothing was added to the versioned contract the
 grading lane consumes.
 

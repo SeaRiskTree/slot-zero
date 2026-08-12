@@ -317,6 +317,29 @@ export function readLaunchListInput(target, { nowMs, maxAgeDays }) {
 }
 
 /**
+ * Hold a launch list's own refusals against a caller that has no plan to carry them.
+ *
+ * `buildPlan` adopts them into `plan.refusals`, which is how the plan and walk phases surface them.
+ * The pre-flight has no plan: it reads the list only to check the two clocks against the committed
+ * tape. Left unread, those refusals were collected and thrown away — so leg B could measure skew
+ * against a list whose enumeration leg had FAILED, whose coverage probe REFUSED, or that is past the
+ * `--launch-list-max-age-days` the run itself stated, and report `ok` from it.
+ *
+ * **It throws rather than returning a verdict**, because a failing pre-flight is already a hard stop:
+ * the collection it gates runs for days and the failure it looks for deletes create slots silently,
+ * so a soft reading there is a reading nobody acts on.
+ *
+ * @param {import('./launch-list.mjs').LaunchListProvenance | null} provenance
+ * @returns {void}
+ */
+export function refuseUnusableLaunchList(provenance) {
+  if (provenance === null || provenance.refusals.length === 0) return;
+  throw new Error(
+    `the launch list at ${provenance.path} cannot be used: ${provenance.refusals.join(' ')}`,
+  );
+}
+
+/**
  * @typedef {object} Plan
  * @property {boolean} ok Cleared by a {@link Plan.refusals} entry only. An advisory never clears it.
  * @property {string[]} refusals Each one stops the run.
@@ -915,15 +938,19 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         onRequest: ledger(/** @type {string} */ (out), 'preflight'),
       });
       // Leg B reads whatever `--launch-list` points at, by-product or raw export, through the ONE
-      // reader that knows the difference — so a by-product used for the clock check is held to the
-      // same staleness rule the walk is.
-      const preflightList =
-        args.launchList === null
-          ? null
-          : readLaunchListInput(args.launchList, {
-              nowMs: Date.now(),
-              maxAgeDays: args.launchListMaxAgeDays,
-            }).list;
+      // reader that knows the difference — and is held to the SAME refusals the walk is, not merely
+      // to the hard throws. `refuseUnusableLaunchList` is the enforcement the plan and walk phases
+      // get from `buildPlan`; this phase has no plan to carry them, so it refuses here.
+      /** @type {import('./cohort.mjs').LaunchList | null} */
+      let preflightList = null;
+      if (args.launchList !== null) {
+        const input = readLaunchListInput(args.launchList, {
+          nowMs: Date.now(),
+          maxAgeDays: args.launchListMaxAgeDays,
+        });
+        refuseUnusableLaunchList(input.provenance);
+        preflightList = input.list;
+      }
       const { verdict, duneVerdict } = await runPreflight({
         out: /** @type {string} */ (out),
         client,

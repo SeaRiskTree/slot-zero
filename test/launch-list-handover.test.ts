@@ -24,7 +24,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,7 +61,11 @@ import {
   resolveLaunchListPath,
 } from '../tools/arrival-rate-walk/launch-list.mjs';
 import { parseLaunchListRows, readDuneResultFile } from '../tools/arrival-rate-walk/cohort.mjs';
-import { buildPlan, readLaunchListInput } from '../tools/arrival-rate-walk/collect.mjs';
+import {
+  buildPlan,
+  readLaunchListInput,
+  refuseUnusableLaunchList,
+} from '../tools/arrival-rate-walk/collect.mjs';
 
 const NOW_MS = Date.parse('2026-08-12T00:00:00.000Z');
 const KEY = 'x'.repeat(32);
@@ -256,27 +260,12 @@ describe('the by-product rides on the approved path and costs nothing', () => {
       fileURLToPath(new URL('../tools/deployer-screen/launch-list.mjs', import.meta.url)),
       'utf8',
     );
-    expect(text, 'the writer must not open a socket').not.toMatch(/\bfetch\s*\(/);
+    // `fetch(` is deliberately NOT asserted here: `test/deployer-screen.test.ts` already holds the
+    // whole directory to an allow-list of two files that may call it, and the zero-cost claim itself
+    // is proven behaviourally above by the request counts.
     expect(text, 'the writer must not build a client').not.toMatch(/from\s+['"]\.\/client\.mjs['"]/);
     expect(text, 'the writer must not read the environment').not.toMatch(/process\.env/);
     expect(text, 'the writer must not name a host').not.toMatch(/https?:\/\//);
-  });
-
-  it('the reader is file I/O and nothing else', () => {
-    const text = readFileSync(
-      fileURLToPath(new URL('../tools/arrival-rate-walk/launch-list.mjs', import.meta.url)),
-      'utf8',
-    );
-    // The zero-credential boundary itself is asserted over EVERY file in that directory by
-    // `test/arrival-rate-walk.test.ts`, unchanged and still failing if the boundary is crossed.
-    // This is the same claim stated about the one file this decision added, so a reader of this
-    // suite does not have to go and find the other one.
-    expect(text).not.toMatch(/\bfetch\s*\(/);
-    expect(text).not.toMatch(/process\.env/);
-    expect(text).not.toMatch(/https?:\/\//);
-    // The IMPORT, not the word: this module names the screen's CLI in its own refusal messages on
-    // purpose, because "run the screen over these wallets" is the only route to a launch list.
-    expect(text, 'the reader must not import the screen').not.toMatch(/from\s+['"][^'"]*deployer-screen/);
   });
 });
 
@@ -523,6 +512,51 @@ describe("the screen's own refusals reach the plan", () => {
     ).toMatch(/coverage probe .* REFUSED/);
   });
 
+  it('REFUSES a deployers block it cannot read, rather than skipping the entries', () => {
+    // The block is the only thing that says which wallets were asked about and which the screen
+    // would gate on. Skipping an entry it cannot read removes a wallet from BOTH answers at once —
+    // its rows stay walkable and its absence from `unusableDeployers` reads as "vouched for".
+    const withJunk = provenanceFor((d) => {
+      d['deployers'] = [{ wallet: wallet(1), usable: true, reasons: [] }, 'not an object', { usable: true }];
+    });
+    expect(withJunk.refusals.join(' ')).toMatch(/2 of the 3 entries in the deployers block/);
+    expect(withJunk.refusals.join(' ')).toMatch(/Refused rather than skipped/);
+  });
+
+  it('REFUSES a wallet whose rows are present but whose status is not', () => {
+    const orphaned = provenanceFor((d) => {
+      d['deployers'] = [{ wallet: wallet(1), usable: true, reasons: [] }];
+      d['launches'] = [...launchRows(wallet(1), 1, 1), ...launchRows(wallet(2), 2, 2)];
+    });
+    expect(orphaned.refusals.join(' ')).toMatch(/no entry in its deployers block/);
+    expect(orphaned.refusals.join(' ')).toContain(wallet(2));
+    expect(orphaned.refusals.join(' '), 'the vouched-for wallet is not named').not.toContain(wallet(1));
+
+    // And the clean case raises none of it: every wallet with rows has a status. (The base document
+    // this fixture mutates has no enumeration at all, so its own coverage refusal stands either
+    // way — what is asserted here is that THIS rule stays quiet.)
+    const whole = provenanceFor((d) => {
+      d['deployers'] = [{ wallet: wallet(1), usable: true, reasons: [] }];
+      d['launches'] = launchRows(wallet(1), 3, 3);
+    });
+    expect(whole.refusals.join(' ')).not.toMatch(/deployers block/);
+  });
+
+  it('carries those refusals into the plan, which is where a run stops on them', () => {
+    const provenance = provenanceFor((d) => {
+      d['deployers'] = [{ wallet: wallet(1), usable: true, reasons: [] }];
+      d['launches'] = [...launchRows(wallet(1), 1, 1), ...launchRows(wallet(2), 2, 2)];
+    });
+    const plan = buildPlan({
+      cohortText: null,
+      launchList: parseLaunchListRows([...launchRows(wallet(1), 1, 1), ...launchRows(wallet(2), 2, 2)]),
+      nowMs: NOW_MS,
+      launchListProvenance: provenance,
+    });
+    expect(plan.ok).toBe(false);
+    expect(plan.refusals.join(' ')).toMatch(/no entry in its deployers block/);
+  });
+
   it('a deployer the screen would not gate on refuses the plan ONLY where the plan walks it', () => {
     // This document is one screen batch and the frequency lane's cohort is chosen elsewhere, so a
     // wallet in it that nobody here asked for is somebody else's refusal.
@@ -625,6 +659,33 @@ describe('routing: a by-product can never be read as a raw export', () => {
     }
   });
 
+  it("the pre-flight is held to the walk's refusals, not only to the hard throws", () => {
+    // Leg B has no plan to carry the soft refusals into, so it enforces them itself — otherwise the
+    // clock check could pass over a list whose enumeration leg failed, whose coverage probe refused,
+    // or that is past the maximum age the run itself stated, and report `ok` from it.
+    const stale = readLaunchListDocument(
+      JSON.stringify(
+        buildLaunchListDocument({
+          enumeration: null,
+          wallets: [],
+          generatedAtMs: NOW_MS - 40 * DAY_MS,
+          creationQueryId: 1,
+          recordSchemaVersion: 27,
+          runRecord: null,
+          candidateSource: 'wallet-list',
+          legFailure: 'the execution timed out',
+        }),
+      ),
+      { path: '/x/2026-07-03T00-00-00Z.json', nowMs: NOW_MS, maxAgeMs: 30 * DAY_MS },
+    ).provenance;
+    expect(stale.refusals.length).toBeGreaterThan(0);
+    expect(() => refuseUnusableLaunchList(stale)).toThrow(/cannot be used/);
+
+    // A list with nothing against it, and a raw export with no provenance at all, both pass.
+    expect(() => refuseUnusableLaunchList({ ...stale, refusals: [] })).not.toThrow();
+    expect(() => refuseUnusableLaunchList(null)).not.toThrow();
+  });
+
   it('reads a RAW Dune export exactly as before, with no ceiling and no staleness flag', () => {
     const dir = tmp();
     try {
@@ -682,7 +743,7 @@ describe('the whole screen writes it, and only when asked — end to end through
       })),
     );
 
-  const runScreen = async (extraArgs: string[]) => {
+  const runScreen = async (extraArgs: string[], opts: { duneKey?: boolean } = {}) => {
     const nowMs = Date.now();
     const dir = mkdtempSync(join(tmpdir(), 'screen-e2e-'));
     const rows = screenRows(nowMs);
@@ -733,15 +794,11 @@ describe('the whole screen writes it, and only when asked — end to end through
       const parsed = parseArgs(['--json', '--no-rotation', '--out', join(dir, 'run.json'), ...extraArgs]);
       if (!parsed.ok) throw new Error(parsed.message);
       const errs: string[] = [];
-      const code = await main(
-        parsed.opts,
-        { [KEY_ENV_VAR]: 'm'.repeat(32), [DUNE_KEY_ENV_VAR]: 'd'.repeat(32) },
-        () => {},
-        (l) => errs.push(l),
-      );
-      expect(errs.join('\n')).toBe('');
+      const env: Record<string, string> = { [KEY_ENV_VAR]: 'm'.repeat(32) };
+      if (opts.duneKey !== false) env[DUNE_KEY_ENV_VAR] = 'd'.repeat(32);
+      const code = await main(parsed.opts, env, () => {}, (l) => errs.push(l));
       expect(code).toBe(0);
-      return dir;
+      return { dir, errs };
     } finally {
       vi.unstubAllGlobals();
     }
@@ -749,7 +806,8 @@ describe('the whole screen writes it, and only when asked — end to end through
 
   it('writes the enumeration it already paid for, readable by the frequency lane', async () => {
     const lists = join(tmp(), 'handover');
-    const dir = await runScreen(['--launch-list', lists]);
+    const { dir, errs } = await runScreen(['--launch-list', lists]);
+    expect(errs.join('\n')).toBe('');
     try {
       // Read back through the arrival-rate lane's OWN reader, pointed at the directory rather than
       // the file — which is the discovery route a real collection takes.
@@ -781,11 +839,77 @@ describe('the whole screen writes it, and only when asked — end to end through
   it('writes NOTHING without the flag — persisting is opt-in, exactly as --out is', async () => {
     // The guard that keeps a test run, or any run nobody asked, from depositing a fixture in the
     // handover directory a real lane takes its newest list from.
-    const dir = await runScreen([]);
+    const { dir, errs } = await runScreen([]);
+    expect(errs.join('\n')).toBe('');
     try {
       expect(readdirSync(dir).sort()).toEqual(['run.json']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('SAYS SO when it was asked for a list and had no enumeration to project — captain decision 483', async () => {
+    // The two causes left once the contradictions are refused: no usable Dune credential, and a
+    // batch with no candidate. Neither is a fault and neither may be silent — the reader takes the
+    // NEWEST list in the directory, so an operator who believes this run refreshed it walks an
+    // older observation. On `err`, so a `--json` run hears it too.
+    const lists = join(tmp(), 'handover-unwritten');
+    const { dir, errs } = await runScreen(['--launch-list', lists], { duneKey: false });
+    try {
+      expect(errs.join('\n')).toMatch(/no launch list was written/);
+      expect(errs.join('\n')).toMatch(/DUNE_API_KEY/);
+      expect(errs.join('\n')).toContain(lists);
+      expect(existsSync(lists)).toBe(false);
+    } finally {
+      rmSync(lists, { recursive: true, force: true });
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('asking for the list while forbidding the enumeration is REFUSED — captain decision 483', () => {
+  // `--launch-list` asks for the Stage 1 Dune enumeration's output; `--no-dune` and
+  // `--ownership-only` forbid the enumeration that produces it. Suppressed, the run writes nothing
+  // and says nothing, and the reader's newest-file rule then serves an older list as the world.
+  const refusalOf = (argv: string[]) => {
+    const parsed = parseArgs(argv);
+    expect(parsed.ok, argv.join(' ')).toBe(false);
+    return parsed.ok ? '' : parsed.message;
+  };
+
+  it('refuses --launch-list beside --no-dune and beside --ownership-only, in parseArgs', () => {
+    for (const flag of ['--no-dune', '--ownership-only']) {
+      const message = refusalOf(['--launch-list', '/tmp/x', flag]);
+      expect(message).toContain(flag);
+      expect(message).toMatch(/--launch-list/);
+      expect(message).toMatch(/contradict/);
+      expect(message, 'the refusal must state that nothing was spent').toMatch(/nothing was billed/);
+    }
+    // And the bare spelling — `--launch-list` with no path means the handover directory — is the
+    // same ask and is refused the same way.
+    expect(refusalOf(['--launch-list', '--no-dune'])).toMatch(/contradict/);
+  });
+
+  it('refuses the same pair in `main`, so a direct caller cannot reach the leg with it unrefused', async () => {
+    const parsed = parseArgs(['--json', '--launch-list', '/tmp/x']);
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const errs: string[] = [];
+    const code = await main(
+      { ...parsed.opts, noDune: true },
+      { [KEY_ENV_VAR]: 'm'.repeat(32), [DUNE_KEY_ENV_VAR]: 'd'.repeat(32) },
+      () => {},
+      (l) => errs.push(l),
+    );
+    expect(code).toBe(2);
+    expect(errs.join('\n')).toMatch(/Refusing to run/);
+    expect(errs.join('\n')).toMatch(/--no-dune/);
+  });
+
+  it('leaves every non-contradicting combination alone', () => {
+    for (const argv of [['--launch-list', '/tmp/x'], ['--no-dune'], ['--ownership-only'], []]) {
+      const parsed = parseArgs(argv);
+      expect(parsed.ok, argv.join(' ')).toBe(true);
     }
   });
 });

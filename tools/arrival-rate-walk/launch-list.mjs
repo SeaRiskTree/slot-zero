@@ -349,14 +349,58 @@ export function readLaunchListDocument(text, { path, nowMs, maxAgeMs }) {
         `findings and reading the first as "created nothing" is the invisible false rejection.`,
     );
   } else {
+    // **AN ENTRY THIS READER CANNOT READ IS A REFUSAL, NEVER A SKIP.** The deployers block is the
+    // only thing that says which wallets were asked about and which of them the screen would gate
+    // on, so an entry that carries no readable wallet removes a wallet from BOTH answers at once:
+    // its rows would then be walked with nothing vouching for them, and its absence from
+    // `unusableDeployers` would read as "the screen vouched for it". Same direction as the
+    // writer-side rule that one unreadable row refuses the whole batch.
+    let unreadableDeployerEntries = 0;
+    /** @type {Set<string>} */
+    const declaredWallets = new Set();
     for (const raw of rawDeployers) {
-      if (typeof raw !== 'object' || raw === null) continue;
+      if (typeof raw !== 'object' || raw === null) {
+        unreadableDeployerEntries += 1;
+        continue;
+      }
       const row = /** @type {Record<string, unknown>} */ (raw);
       const wallet = row['wallet'];
-      if (typeof wallet !== 'string' || wallet === '') continue;
+      if (typeof wallet !== 'string' || wallet === '') {
+        unreadableDeployerEntries += 1;
+        continue;
+      }
+      declaredWallets.add(wallet);
       if (row['usable'] === true) continue;
       const reasons = Array.isArray(row['reasons']) ? row['reasons'].map(String) : [];
       unusableDeployers.push({ wallet, reasons });
+    }
+    if (unreadableDeployerEntries > 0) {
+      refusals.push(
+        `${unreadableDeployerEntries} of the ${rawDeployers.length} entries in the deployers block ` +
+          `of ${path} could not be read as a wallet with a status. That block is what says which ` +
+          `wallets were asked about and which of them the screen would gate on, so an entry it ` +
+          `cannot read leaves rows in this file that nothing vouches for — and leaves them looking ` +
+          `vouched for. Refused rather than skipped.`,
+      );
+    }
+    // The other half of the same rule, from the other side: a wallet whose ROWS are here but whose
+    // status is not. Walking it would be an arrival rate over a history no run claimed was whole,
+    // which is exactly what `unusableDeployers` exists to stop where the status IS present.
+    /** @type {Set<string>} */
+    const undeclared = new Set();
+    for (const raw of rawRows) {
+      if (typeof raw !== 'object' || raw === null) continue;
+      const deployer = /** @type {Record<string, unknown>} */ (raw)['deployer'];
+      if (typeof deployer !== 'string' || deployer === '') continue;
+      if (!declaredWallets.has(deployer)) undeclared.add(deployer);
+    }
+    if (undeclared.size > 0) {
+      refusals.push(
+        `${undeclared.size} wallet(s) have rows in ${path} but no entry in its deployers block ` +
+          `(${[...undeclared].sort().slice(0, 5).join(', ')}${undeclared.size > 5 ? ', …' : ''}). ` +
+          `Nothing in this file says whether the screen would gate on those histories, so walking ` +
+          `them would measure an arrival rate over a reading nobody vouched for.`,
+      );
     }
     if (unusableDeployers.length > 0) {
       // An ADVISORY here and a REFUSAL only where the plan wants the wallet: this document is one

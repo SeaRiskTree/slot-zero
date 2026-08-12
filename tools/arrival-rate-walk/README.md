@@ -199,6 +199,19 @@ per-deployer: a wallet the screen marked `usable: false` — a capped prefix, a 
 outside the probed coverage — refuses the plan **only where this run means to walk it**, since one
 screen batch is not this lane's cohort.
 
+Two more are the DOCUMENT'S own integrity, and both are refusals rather than skips because the
+`deployers` block is the only thing that says which wallets were asked about and which of them the
+screen would gate on: an **entry that carries no readable wallet and status**, and a **wallet whose
+rows are in `launches` with no entry of its own**. Either one leaves rows that nothing vouches for
+while making them look vouched for — the invisible direction — so the reader refuses, matching the
+writer-side rule that one unreadable row refuses the whole batch.
+
+**The pre-flight is held to the same refusals the walk is.** Leg B's clock check has no plan to carry
+them into, so `collect.mjs` → `refuseUnusableLaunchList` throws there instead: otherwise the clock
+check could measure skew against a list whose enumeration leg failed, whose coverage probe refused,
+or that is past the maximum age the run itself stated, and report `ok` from it. A failing pre-flight
+is already a hard stop (exit 2) because the collection it gates runs for days.
+
 ### Bounds
 
 Pinned in `bounds.json`, every value with a stated reason (a test enforces that, and *"no measurement

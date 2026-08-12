@@ -408,7 +408,18 @@ Five things bind anything that touches it or copies from it:
   (`--launch-list-max-age-days`) the list is refused — **no maximum is pinned, because nothing
   measured says how fast this population goes stale and a default is a pin nobody chose.** **An
   absent or empty handover directory REFUSES**, and `--launch-list` is still required rather than
-  defaulted to that directory, because it names the POPULATION a run measures. And the **retention
+  defaulted to that directory, because it names the POPULATION a run measures. **CAPTAIN DECISION 483
+  closed the silent-no-write hole on the WRITER side and it is two treatments, not one**: asking for
+  the list while forbidding the enumeration that produces it (`--launch-list` beside `--no-dune` /
+  `--ownership-only`) is a CONTRADICTION and is REFUSED — `screen.mjs` →
+  `launchListEnumerationContradiction`, its own predicate in `duneFillSourceContradiction`'s shape and
+  checked in both `parseArgs` and `main` — while the two LEGITIMATE states (no usable `DUNE_API_KEY`,
+  no candidate to enumerate) print a line naming which applied and saying no list was written. That
+  line and the write-FAILURE line go to **stderr unconditionally**, `--json` included, because the run
+  record deliberately carries nothing about this by-product; the success line stays on stdout. The
+  reader side is the same rule: an unreadable `deployers` entry, or a wallet with rows and no entry,
+  REFUSES rather than being skipped, and `collect.mjs` → `refuseUnusableLaunchList` holds the
+  pre-flight's leg B to the walk's own refusals. And the **retention
   posture moved while the ToS argument did not** — per-launch rows are no longer discarded;
   `CREATION-DERIVED.md` §8.7 and the screen README's "Retention" own the correction. Everything else
   is proven on a bounded sample: 5/5 create slots and exact fill counts against the committed tape

@@ -1285,7 +1285,24 @@ narrowed by this tool's bar.
 **Writing the file cannot fail the run.** The store may be read-only, full, or simply absent on a box
 that never fetched it; none of that is a reason to throw away a screen whose keyed allowance is
 already spent, so the failure is printed and the run continues — the same rule a Dune failure follows
-when it degrades to the walk.
+when it degrades to the walk. **The failure line goes to stderr unconditionally**, `--json` included:
+the record deliberately carries nothing about this by-product, so a suppressed failure line would
+leave a JSON-mode operator with no way at all to learn the handover did not happen. The success line
+stays on stdout behind `--json` as every other progress line does.
+
+**ASKING FOR THE LIST WHILE FORBIDDING THE ENUMERATION IS REFUSED, AND THE TWO STATES THAT ARE NOT A
+CONTRADICTION SAY SO INSTEAD** (captain decision 483). `--launch-list` asks for the Stage 1 Dune
+enumeration's output and `--no-dune` / `--ownership-only` forbid the enumeration that produces it:
+`screen.mjs` → `launchListEnumerationContradiction` REFUSES that pair, in `parseArgs` and again in
+`main`, the two-place shape `duneFillSourceContradiction` already uses one flag over — and it is its
+own predicate rather than an extension of that one, which is about Stage 2's entry fill source.
+Suppressing it is the worse of the two, because the reader takes the NEWEST list in the handover
+directory: a run that writes nothing and reports nothing leaves an EARLIER list standing as the
+current state of the world, which is exactly what the "a leg that FAILED writes a document too" rule
+above exists to prevent, arriving from the other side. The two remaining causes — **no usable
+`DUNE_API_KEY`**, and a batch with **no candidate to enumerate** — are legitimate states rather than
+contradictions, so the run names which one applied and states plainly that no list was written, on
+stderr for the same reason the write failure is.
 
 ## Retention — MadeOnSol terms §5a(d)
 

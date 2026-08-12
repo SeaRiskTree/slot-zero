@@ -371,7 +371,8 @@ Five things bind anything that touches it or copies from it:
   floor by 5 s and counts `preMintFills`, because `readLaunchWindow`'s pre-mint tripwire has **zero
   slack** and a positive skew of one millisecond deletes an entire create slot, silently. Leg B — the
   same comparison against Dune's column directly, which costs no request and no execution — has NOT
-  run; it needs a launch-list export.
+  run; it needs a launch list, which since 457a the deployer screen's `--launch-list` by-product
+  supplies (the bullet below owns the handover).
 - **Seed a population question from HISTORY, not from success** (captain decision 165b). Every seed
   this repo has — MadeOnSol `recent-bonds`/`alerts`, both leaderboards, a Dune `total_bonded` ranking
   — conditions on current or lifetime success, so a deployer whose window opened, paid, closed and who
@@ -398,7 +399,8 @@ Five things bind anything that touches it or copies from it:
   `tools/arrival-rate-walk/launch-list.mjs` the reader, `test/launch-list-handover.test.ts` pins the
   two copies of the envelope contract and asserts the enumeration's own request counter does not
   advance across building and writing the document — against a counter it first proves advanced
-  during the enumeration, so a zero cannot be a step that never ran. **Five things bind.** It costs **zero** in every currency — the rows
+  during the enumeration, so a zero cannot be a step that never ran. **What binds:** it costs
+  **zero** in every currency — the rows
   are already in memory and the write reaches no vendor — and it **gates nothing**, so
   `RECORD_SCHEMA_VERSION` is deliberately unmoved; the flag is **opt-in on RETENTION grounds, exactly
   as `--out` is**, not because it spends. **`--wallets` (398a) is what points the screen at

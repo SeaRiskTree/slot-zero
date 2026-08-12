@@ -2392,11 +2392,19 @@ evidence bar — *"everything measurable measured, everything not measurable giv
 labelled as such, so a profitable verdict means profitable even at the worst case for the parts we
 can't see"* — asks the figure to survive the worst case. Resolving an unexited position at zero
 recovery **is** that worst case; `fieldResidualMarkedSolAtWindowLastPriceGrossOfFees` is the bound on it, and
-§5.4's measurement is why the choice is not academic.
+§5.4's measurement is why the choice is not academic. **The two marks are not the same mark, and the
+field carries the more generous one:** §5.4 marks at the token's LATEST known price, the harsher of
+the two, while the field — and the line the rendered block prints under it — marks at the last price
+the walked WINDOW itself showed. `entry.mjs` →
+`EntryScore.fieldResidualMarkedSolAtWindowLastPriceGrossOfFees` owns the distinction, including why
+its `n` can sit below `positionsStillHeldAtHorizon`.
 
 **Two denominators, and they are never pooled.** The gross all-positions figures are over every
-resolvable position. The NET ones are over the subset whose **whole window** the cost leg priced —
-that is, every transaction the wallet appears in across the window was already in the priced target
+resolvable position that carries a realized figure at all — a position resolvable by token
+readability whose SOL amount is unreadable is EXCLUDED rather than scored as a loss, which is OUR
+coverage and not a fact about the field, so that `n` can sit below the resolvable count. The NET ones
+are over the subset whose **whole window** the cost leg priced — that is, every transaction the
+wallet appears in across the window was already in the priced target
 set, and `entryCostTargets` admits a transaction when it is in the create slot **or** it carries a
 wallet that closed. So a wallet that sold INSIDE its create slot is in scope, and a wallet whose
 later transaction is bundled with a closed one is priced whole. The selection is non-random and

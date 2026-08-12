@@ -14247,6 +14247,65 @@ describe('attaching a measured cost to a launch\'s field', () => {
     priceLaunchEntry(entry, entryCostTargets(fills, entry), new Map([costs('buyA', 'A', 3.25)]));
     expect(entry.field[0]!.entryCostSol).toBeNaN();
   });
+
+  it('the zero-recovery net leg IS the window one on an exited position, structurally', () => {
+    // Captain decision 461 documents that equality in prose. It is enforced here in two ways,
+    // because neither alone is enough. `closedInWindow` is exactly `positionOutcome === 'exited'`,
+    // so where it holds beside `wholeWindowInScope` the two scopes were literally the same call —
+    // and a second walk over the same transaction list is free to drift the day one of the two
+    // conditions is edited. The reuse removes the class; these two pin that it stays removed.
+    const entry = measureLaunchEntry(fills)!;
+    const targets = entryCostTargets(fills, entry);
+    const priced = priceLaunchEntry(
+      entry,
+      targets,
+      new Map([costs('buyA', 'A', 0.25 + 3, 0.05), costs('sellA', 'A', -3.95)]),
+    );
+    const e = priced.field[0]!;
+    expect(e.positionOutcome).toBe('exited');
+    // `toBe` is `Object.is`, so an equality between two NaNs would pass vacuously. Pin the window
+    // figure at its real measured value first, so the equality below is an equality of numbers.
+    expect(e.realisedSolNetOfMeasuredFees).toBeCloseTo(0.7, 9);
+    // Not `toBeCloseTo`: the point is that they are the SAME number, to the last bit.
+    expect(e.realisedSolAtZeroRecoveryNetOfMeasuredFees).toBe(e.realisedSolNetOfMeasuredFees);
+    expect(e.returnPerSolAtZeroRecoveryNetOfMeasuredFees).toBe(e.returnPerSolNetOfMeasuredFees);
+    // And where the scope is incomplete both are absent together, rather than one of them being a
+    // cheap partial figure.
+    const half = priceLaunchEntry(entry, targets, new Map([costs('buyA', 'A', 3.25)]));
+    expect(half.field[0]!.realisedSolAtZeroRecoveryNetOfMeasuredFees).toBeNaN();
+    expect(half.field[0]!.realisedSolNetOfMeasuredFees).toBeNaN();
+
+    // The structural half: `priceLaunchEntry` walks a wallet's whole window ONCE. A reintroduced
+    // second `sum(e.wallet, mine)` would satisfy the equality above on the day it was written and
+    // is exactly what may drift later, so the call site is pinned as a source fact — the same
+    // idiom this suite already uses for "the entry module computes no mean anywhere".
+    // Its weakness is named rather than left implicit: this is a scan over source TEXT, so a
+    // behaviour-preserving rename of the `e`/`mine` locals, an extraction of the sum into a named
+    // const, or a reformat of the expression across lines WILL break this assertion while the
+    // equality it guards still holds. Captain decision 482a accepted that cost, because a
+    // re-expanded IDENTICAL second walk is otherwise undetectable — it agrees with every value
+    // assertion on the day it is written. It signs nothing beyond the one call-site count.
+    const src = readFileSync(join(TOOL_DIR, 'entry.mjs'), 'utf8');
+    const from = src.indexOf('export function priceLaunchEntry');
+    expect(from).toBeGreaterThanOrEqual(0);
+    // Bound the slice at `priceLaunchEntry`'s own end: the next top-level `export`, or the
+    // function's own closing brace in column 0, whichever comes first.
+    const nextExport = src.indexOf('\nexport ', from + 1);
+    const closingBrace = src.indexOf('\n}', from);
+    const ends = [nextExport, closingBrace].filter((i) => i >= 0);
+    expect(ends.length).toBeGreaterThan(0);
+    const body = src.slice(from, Math.min(...ends));
+    // If a refactor breaks the extraction, fail loudly here rather than scanning nothing (or the
+    // whole rest of the module) and passing on a count that means something else.
+    expect(body.length).toBeGreaterThan(0);
+    expect(body).toContain('sum(e.wallet, mine)');
+    expect(body).not.toContain('ENTRY_VERDICTS');
+    const code = body
+      .split('\n')
+      .filter((l) => !l.trimStart().startsWith('*') && !l.trimStart().startsWith('//') && !l.includes('/**'))
+      .join('\n');
+    expect(code.match(/sum\(e\.wallet, mine\)/g) ?? []).toHaveLength(1);
+  });
 });
 
 describe('the entrants are KEPT — captain decision 459, increment 1 of the entrant pivot', () => {

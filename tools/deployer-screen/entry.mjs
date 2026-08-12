@@ -799,7 +799,6 @@ export function priceLaunchEntry(entry, targets, priced) {
     const mine = byWallet.get(e.wallet) ?? [];
     const inCreateSlot = mine.filter((t) => t.slot === entry.createSlot.slot);
     const entryScope = sum(e.wallet, inCreateSlot);
-    const windowScope = e.closedInWindow ? sum(e.wallet, mine) : null;
 
     // THE ZERO-RECOVERY NET LEG, captain decision 461, and it asks for no transaction the scope did
     // not already hold. Two conditions, and the second is the one that keeps it honest:
@@ -816,11 +815,21 @@ export function priceLaunchEntry(entry, targets, priced) {
     // On an EXITED position both conditions hold wherever `windowScope` is non-null, so this equals
     // `realisedSolNetOfMeasuredFees` there — which is what makes the conditioned reading a strict
     // subset of the all-positions one rather than a second, differently-computed population.
+    //
+    // THAT EQUALITY IS STRUCTURAL RATHER THAN INCIDENTAL, and the shape below is what makes it so.
+    // `closedInWindow` is exactly `positionOutcome === 'exited'`, so where the two legs both apply
+    // they are the same wallet's same transaction list summed over the same `priced` — the whole
+    // window, walked ONCE and read by both. It was two separate `sum(e.wallet, mine)` calls whose
+    // agreement rested on a comment; a divergence is now unrepresentable rather than merely
+    // unobserved, and `test/deployer-screen.test.ts` pins the single call site as a source fact. Do
+    // not re-expand it into a second walk. The two legs still differ in WHEN they read it: the
+    // window one only for an exited position, the zero-recovery one for any resolvable position
+    // whose whole window is in scope.
     const wholeWindowInScope = mine.length === e.windowTxCount;
-    const zeroRecoveryScope =
-      e.positionOutcome !== 'horizon-not-observed' && wholeWindowInScope
-        ? sum(e.wallet, mine)
-        : null;
+    const zeroRecoveryEligible = e.positionOutcome !== 'horizon-not-observed' && wholeWindowInScope;
+    const wholeWindowScope = e.closedInWindow || zeroRecoveryEligible ? sum(e.wallet, mine) : null;
+    const windowScope = e.closedInWindow ? wholeWindowScope : null;
+    const zeroRecoveryScope = zeroRecoveryEligible ? wholeWindowScope : null;
 
     const entryCostSol = entryScope === null ? Number.NaN : entryScope.solOut - entryScope.quotedSol;
     const netRealised = windowScope === null ? Number.NaN : -windowScope.solOut;

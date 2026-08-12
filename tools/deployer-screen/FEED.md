@@ -223,10 +223,15 @@ So every run reports, in this order — alarm first, then the new count, then th
 - **Per seed: rows, wallets, and how many of those wallets were new.** Rows present with wallets zero
   means *our reader is wrong*, not that the vendor is empty. (A wallet two seeds both surfaced counts
   as new under both, so per-seed novelty does not sum to the run total.)
-- **Gated / cleared / held / unmeasured**, and the backlog still waiting.
+- **Gated / cleared / admitted by the sub-gate arm / held / unmeasured**, which partition the gated
+  total, and the backlog still waiting.
 - **Discovery lag** and the **cadence filter's** cost, as above.
 - **Spend**, against the per-run ceiling and the assumed daily figure.
-- **The queue**: wallets that cleared the gate and have not been screened.
+- **The queue**: wallets not yet screened, on BOTH arms and counted apart — those that cleared the
+  competence gate, and those that FAILED it and were admitted for measurement by the sub-gate arm
+  (captain decision 451). The list is served whole because draining it is a spend decision; every
+  count stays per arm, and each queue row carries `admissionArm` so the split survives into the
+  record.
 
 **Four conditions exit 9** (`ledger.mjs` → `feedAlarm`), because they need four different fixes:
 

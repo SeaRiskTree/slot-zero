@@ -2186,7 +2186,8 @@ lane that touches Stage 2:
   RISES every day and saturates after `windowCap / launchesPerDay` days, which is exactly how long
   that wallet takes to produce a full visit's worth of new launches; once saturated it ties on flow
   and 336a's least-recently-scored tiebreak is a strict FIFO, so the set ahead of it only shrinks.
-  Every gate survivor has a strictly positive tempo by construction (`minTokens` launches over a
+  Every ADMITTED candidate has a strictly positive tempo by construction, on either arm — 451's
+  second arm re-checks `minTokens` as its condition 1 (`minTokens` launches over a
   finite span, and a test pins `minTokens >= maxLaunchesPerCandidate` so the never-scored key stays
   exact), so **every survivor saturates in bounded time**. A never-scored survivor ranks first
   whatever anyone's flow, and an **UNREADABLE tempo is SATURATED, never zero** — reading absence as

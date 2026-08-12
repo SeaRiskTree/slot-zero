@@ -103,6 +103,7 @@ import {
   readEntryReading,
 } from './entry-agreement.mjs';
 import {
+  BOTH_ARMS_FIGURE,
   SUB_GATE_ADMISSION_RULE,
   admissionArmOf,
   admittedToStage2,
@@ -1799,8 +1800,9 @@ export async function main(opts, env, out, err, seam = {}) {
   // metered allowance, but the failure it prevents is worse: the keyless work happens AFTER the
   // keyed allowance has been spent, so a ceiling discovered half-way through wastes the quota it
   // already paid for. The gate's own ownership listing costs up to `LISTING_PAGES_FOR_MERGE` per
-  // candidate and `--consistency` costs up to 3 more per gate survivor, of which every candidate
-  // could be one.
+  // candidate and `--consistency` costs up to 3 more per ADMITTED candidate — either arm since
+  // captain decision 451 — of which every candidate could be one, which is why the worst case below
+  // prices the whole candidate cap and is unmoved by the second arm.
   const listingPagesPerCandidate = opts.ownershipOnly ? 0 : LISTING_PAGES_FOR_MERGE;
   const worstCaseKeyless = maxCandidates * (listingPagesPerCandidate + (opts.consistency ? 3 : 0));
   if (worstCaseKeyless > budget.maxKeylessRequests) {
@@ -3113,7 +3115,8 @@ export async function main(opts, env, out, err, seam = {}) {
         ) => rows.filter((c) => admissionArmOf(c.verdict) === arm).length;
         out(
           `STAGE 2 — ENTRY: room in the opening window, and what the field achieved. ` +
-            `Scoring ${toScore.length} of ${survivors.length} admitted candidate(s) — ` +
+            `Scoring ${toScore.length} of ${survivors.length} admitted candidate(s) ` +
+            `(${BOTH_ARMS_FIGURE}) — ` +
             `gate arm ${scoredByArm('gate', toScore)}/${scoredByArm('gate', survivors)}, ` +
             `sub-gate arm ${scoredByArm('sub-gate', toScore)}/${scoredByArm('sub-gate', survivors)} ` +
             `(captain decision 451; the two are separate populations and are never pooled) — ` +
@@ -3236,7 +3239,10 @@ export async function main(opts, env, out, err, seam = {}) {
     if (opts.consistency) {
       if (!opts.json) {
         out('');
-        out('CONSISTENCY — keyless pump.fun creator walk for admitted candidates, BOTH ARMS (no quota cost)');
+        out(
+          `CONSISTENCY — keyless pump.fun creator walk for admitted candidates, ` +
+            `${BOTH_ARMS_FIGURE} (no quota cost)`,
+        );
       }
       for (const c of candidates) {
         // Both arms, for the reason Stage 2 scores both: a consistency reading is a keyless

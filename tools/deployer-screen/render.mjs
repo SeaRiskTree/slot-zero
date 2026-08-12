@@ -51,6 +51,7 @@ import {
 import { CROSS_VENUE_STRICTNESS_UNESTABLISHED, RAISE_85_IS_THE_COMPLETION_MEASURE } from './measure.mjs';
 import {
   ARMS_ARE_NEVER_POOLED,
+  BOTH_ARMS_FIGURE,
   SUB_GATE_ADMISSION_IS_NOT_A_FINDING,
   SUB_GATE_ADMISSION_RULE,
   admissionArmOf,
@@ -1126,12 +1127,12 @@ export function renderStage1(run) {
   // spent on whoever was admitted, so these counters are over the union rather than over either
   // population; the arm-by-arm figures are the gate/sub-gate lines below.
   L.push(
-    `keyless requests   ${run.keylessRequests}  (pump.fun; BOTH ARMS — what the walk spent, not one arm's)` +
+    `keyless requests   ${run.keylessRequests}  (pump.fun; ${BOTH_ARMS_FIGURE} — what the walk spent, not one arm's)` +
       (run.keylessShed === undefined ? '' : `, ${run.keylessShed} shed and retried`),
   );
   L.push(
     `solana rpc         ${run.rpcRequests}  (creation-derived history; ${run.rpcLoadShedEvents} load-shed; ` +
-      `BOTH ARMS, as above)`,
+      `${BOTH_ARMS_FIGURE}, as above)`,
   );
   L.push(`history source     ${run.historySource}${run.historySource === 'ownership-only' ? '  !! BIASED BOTH WAYS (rejects on counts, inflates the rate)' : ''}`);
   L.push(`elapsed            ${(run.elapsedMs / 1000).toFixed(1)}s`);
@@ -1159,7 +1160,7 @@ export function renderStage1(run) {
     // Both arms, and it says so: since captain decision 451 the walk serves the admitted union, so
     // this tally has two populations behind it. That is correct for a count of what the WALK
     // refused, and it is exactly why the label may not be left implicit.
-    L.push('  (BOTH ARMS — the walk serves whoever was admitted, so this is not one arm\'s figure)');
+    L.push(`  (${BOTH_ARMS_FIGURE} — the walk serves whoever was admitted, so this is not one arm's figure)`);
     for (const line of renderDropTally(runDropTotal, runDrops, '  ')) L.push(line);
   }
   L.push('');
@@ -1298,7 +1299,8 @@ export function renderStage1(run) {
           `${c.creation.notCreatedByWallet} acquired, ${c.creation.movedCreator} creator moved); ` +
           `+${c.creation.listedOutsideWindow} carried over from the listing`,
       );
-      // Captain decision 227a, printed on EVERY gate survivor rather than only where the share is
+      // Captain decision 227a, printed on EVERY admitted candidate (either arm, since this formatter
+    // serves both) rather than only where the share is
       // non-zero: this list is what a later decision reads to size the screen's mayhem exposure,
       // and a wallet that is silent here would be indistinguishable from one measured at zero.
       for (const line of renderMayhemShare(c.creation, '      ')) L.push(line);
@@ -1525,11 +1527,15 @@ export function renderStage1(run) {
     // this review has now caught twice: it falsifies itself the moment a spanning figure is added,
     // and it did. The standard is that a figure over the union SAYS SO WHERE IT PRINTS, so the
     // sentence points at that label rather than counting the places it appears.
-    L.push('  THE RUN-LEVEL TALLIES THAT DELIBERATELY SPAN BOTH ARMS ARE MARKED "BOTH ARMS" WHERE');
-    L.push('  THEY PRINT — the rotation block and the spend counters under the run header, and the');
-    L.push('  Stage 2 DROPS block. Each counts what the WALK did — allocation, coverage, spend —');
-    L.push('  rather than what either population achieved, so none is a finding and none may be read');
-    L.push('  as one arm\'s. A figure NOT carrying that mark is per candidate or per arm.');
+    L.push(`  A RUN-LEVEL TALLY THAT DELIBERATELY SPANS BOTH ARMS IS MARKED "${BOTH_ARMS_FIGURE}" WHERE`);
+    L.push('  IT PRINTS — the Stage 2 header total, the rotation block, the spend counters under the');
+    L.push('  run header, and the Stage 2 DROPS block all carry it today. THE MARK IS THE RULE, NOT');
+    L.push('  THAT LIST: `admission.mjs` -> `BOTH_ARMS_FIGURE` is the one spelling of it, so a tally');
+    L.push('  added later marks itself and this sentence stays true without being edited — which is');
+    L.push('  what an enumeration here could not do, having been found short three times.');
+    L.push('  Each such figure counts what the WALK did — allocation, coverage, spend — rather than');
+    L.push('  what either population achieved, so none is a finding and none may be read as one');
+    L.push('  arm\'s. A figure NOT carrying that mark is per candidate or per arm.');
     // THIS SECTION CARRIES ITS OWN LEGEND rather than pointing at the gate block's, because that
     // block does not exist on a run with zero gate passes — which is this arm's expected shape, the
     // gate arm having produced 0 measured passes in 43 scored. The gross/net sentence is computed
@@ -2371,7 +2377,7 @@ export function renderRotation(block, indent) {
   }
   /** @type {string[]} */
   const lines = [
-    `${indent}ROTATION (BOTH ARMS — one cap allocated over every ADMITTED candidate, gate and ` +
+    `${indent}ROTATION (${BOTH_ARMS_FIGURE} — one cap allocated over every ADMITTED candidate, gate and ` +
       `sub-gate alike; captain decision 451, and no count on these lines is one arm's):`,
     `${indent}  most new ground first, least-recently-scored breaking ties — ` +
       `${block.selected.length} scored, ${block.deferred.length} deferred to a later run, of ` +

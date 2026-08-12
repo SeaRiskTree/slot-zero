@@ -67,6 +67,21 @@ import { launchesPerDayOf } from './rotation.mjs';
 export const ADMISSION_ARMS = Object.freeze(['gate', 'sub-gate']);
 
 /**
+ * THE MARK EVERY UNION-SPANNING FIGURE CARRIES WHERE IT PRINTS.
+ *
+ * A figure over the ADMITTED UNION is neither per candidate nor per arm, and a reader meeting one
+ * beside the per-arm counts would otherwise take it for the gate arm's. So each such figure says so
+ * at the point of reading, and this constant is the ONE spelling of that mark.
+ *
+ * **It is a constant rather than four literals because the alternative failed twice.** The sub-gate
+ * footer used to ENUMERATE the spanning tallies — first as a count ("TWO..."), then as a list — and
+ * review found the enumeration short three times running, because a new union figure has no reason
+ * to know a list of its siblings exists. A shared mark inverts that: a new total marks itself with
+ * this and the footer's claim stays true without being edited.
+ */
+export const BOTH_ARMS_FIGURE = 'BOTH ARMS';
+
+/**
  * The one sentence that says the two arms are two populations. Written once because it is stated on
  * the candidate row, in the rendered block, in the run record and in this module's own refusals,
  * and this repo never retro-edits a record — so a wording that overstates is permanent.

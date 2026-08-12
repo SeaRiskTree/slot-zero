@@ -1584,7 +1584,8 @@ already measured.
 Pure greed by flow would park one, so the rule is deliberately not pure greed and the guarantee falls
 out of clauses 2 and 3. `newGroundWindows` **saturates**: a wallet's ground grows with the time it
 has waited and reaches the ceiling after `windowCap / launchesPerDay` days — exactly how long that
-wallet takes to produce a full visit's worth of new launches. Every gate survivor has a strictly
+wallet takes to produce a full visit's worth of new launches. Every ADMITTED candidate — either
+arm, since the second one re-checks `minTokens` as its own condition 1 — has a strictly
 positive tempo, because passing the gate needs `stage1_gate.minTokens` launches over a finite span,
 so **every survivor saturates in bounded time**. Once saturated, rows tie on flow and clause 3 orders
 them least-recently-scored first, which is a strict FIFO queue: anything scored *after* a saturated
@@ -3248,7 +3249,7 @@ Note also that the **1,400 keyless ceiling in `budget` is a per-client ceiling, 
 `screen.mjs` builds two independent keyless clients, and Stage 2's 1,260 sits on its own. The
 enforced combined worst case is 2,660. The 1,400 is **derived from the candidate cap**, not chosen, and it is
 derived over both passes that share the `frontend-api-v3` client: the gate's ownership listing at 4
-pages per candidate (780) plus `--consistency` at 3 pages per gate survivor (585) is 1,365 worst
+pages per candidate (780) plus `--consistency` at 3 pages per ADMITTED candidate, either arm (585), is 1,365 worst
 case. The previous 600 counted only the consistency pass, so gating at the default candidate cap
 already overran it — and because the keyless work runs *after* the keyed allowance is spent, that
 overrun would have thrown away a paid-for run. Keeping Stage 2's ceiling separate is what stops it

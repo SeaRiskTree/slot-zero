@@ -162,6 +162,7 @@ import {
 import {
   ADMISSION_ARMS,
   ARMS_ARE_NEVER_POOLED,
+  BOTH_ARMS_FIGURE,
   SUB_GATE_ADMISSION_IS_NOT_A_FINDING,
   SUB_GATE_ADMISSION_RULE,
   admissionArmOf,
@@ -2994,7 +2995,9 @@ describe('a ceiling hit is never recordable as a measured result', () => {
 
   it('sizes the keyless ceiling to cover the candidate cap, so the walk cannot run out mid-run', () => {
     const b = loadThresholds()['budget'];
-    // 3 pages per gate survivor is what readCreatorHistory is asked for. If this stops holding, a
+    // 3 pages per ADMITTED candidate — either arm since 451 — is what readCreatorHistory is asked
+    // for, and the ceiling prices the whole candidate cap so the second arm cannot move it. If this
+    // stops holding, a
     // default --consistency run stops looking part-way through a run already paid for in keyed
     // quota, and the wallets after that point are unmeasured rather than measured-and-clean.
     expect(b.maxKeylessRequests).toBeGreaterThanOrEqual(3 * b.maxCandidates);
@@ -9141,7 +9144,7 @@ describe('the keyless boundary holds in both directions', () => {
   });
 
   it('the pinned keyless ceiling covers BOTH passes that share the frontend-api-v3 client', () => {
-    // The ceiling was justified on the consistency pass alone — 3 pages per gate survivor — while
+    // The ceiling was justified on the consistency pass alone — 3 pages per admitted candidate — while
     // the GATE spends 4 pages per CANDIDATE on the same client. At the default candidate cap that
     // already overran it, and because the keyless work runs AFTER the keyed allowance is spent, the
     // overrun would have thrown away a run that was already paid for in vendor quota.
@@ -18120,7 +18123,7 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     // is allocated across both arms — and the block says so WHERE IT PRINTS. It sits directly under
     // header lines that state the two arms apart, so an unlabelled `of N survivor(s)` there reads as
     // the gate arm's. The record side lists the same fields in `record.mjs`'s schema-26 note.
-    expect(on).toContain('ROTATION (BOTH ARMS');
+    expect(on).toContain(`ROTATION (${BOTH_ARMS_FIGURE}`);
     expect(on).toContain('no count on these lines is one arm');
     expect(on).toContain('tools/deployer-screen/rotation/stage2-scored.json @ sha256:abc');
     expect(on).toContain('6 wallet(s) recovered from committed run records');
@@ -18321,8 +18324,9 @@ describe('the scoring cap goes where a visit covers the most new ground — 399a
     });
     expect(sel.selected).toEqual(['NEW1', 'NEW2']);
     // A never-scored row states the window cap as its ground: a visit to it covers as much as a
-    // visit can, exactly rather than approximately, because a gate survivor carries at least
-    // `minTokens` launches and that floor is above the cap (pinned below).
+    // visit can, exactly rather than approximately, because an admitted candidate on EITHER arm
+    // carries at least `minTokens` launches — 451's second arm re-checks that same bar — and that
+    // floor is above the cap (pinned below).
     expect(sel.order[0]!.newGroundWindows).toBe(WINDOW_CAP);
     expect(sel.order[0]!.lastScoredAtIso).toBeNull();
   });
@@ -20130,6 +20134,9 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
 
     // And Stage 2's own header states the split rather than one pooled survivor count.
     expect(text).toMatch(/gate arm 1\/1, sub-gate arm 1\/1/);
+    // ITS TOTAL CARRIES THE MARK TOO. `survivors.length` is the admitted UNION, so it is neither per
+    // candidate nor per arm — and the footer promises every such figure says so where it prints.
+    expect(text).toContain(`admitted candidate(s) (${BOTH_ARMS_FIGURE})`);
 
     // Nothing THIS ARM writes calls the population profitable. Scoped to the arm's own prose — the
     // heading, the rule, the caveats and the legend, everything down to the first wallet row —
@@ -20394,8 +20401,15 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
     // moment a third was found, twice in this review; the sentence points at the mark those figures
     // carry instead, so adding a fourth cannot make it wrong. The spend counters print above.
     expect(subGateOnly).not.toMatch(/TWO RUN-LEVEL TALLIES/);
-    expect(subGateOnly).toContain('ARE MARKED "BOTH ARMS" WHERE');
-    expect(subGateOnly).toMatch(/^keyless requests.*BOTH ARMS — what the walk spent, not one arm's/m);
+    expect(subGateOnly).toContain(`IS MARKED "${BOTH_ARMS_FIGURE}" WHERE`);
+    // THE MARK IS THE RULE RATHER THAN A LIST. The footer enumerated these tallies twice — as a
+    // count, then as a list — and review found the enumeration short three times, because a new
+    // union figure has no reason to know its siblings are listed somewhere. It now points at the
+    // shared mark, so a tally added later marks itself and the sentence stays true.
+    expect(subGateOnly).toContain('THE MARK IS THE RULE, NOT');
+    expect(subGateOnly).toMatch(
+      new RegExp(`^keyless requests.*${BOTH_ARMS_FIGURE} — what the walk spent, not one arm's`, 'm'),
+    );
 
     // AND THE TWO ARMS SHARE ONE LEGEND, WHICH IS WHAT THE HOIST HAD TO PRESERVE: the sub-gate
     // block's legend is byte-identical to the gate block's, so neither arm can drift into its own

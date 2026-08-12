@@ -780,8 +780,78 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   version. What genuinely changes is that a screened LAUNCH becomes identifiable from a record,
  *   since a create slot plus an entrant address recovers the mint from the chain.
  *   `tools/deployer-screen/README.md` → "Retention" owns the whole claim.
+ *
+ * - **25 — EVERY POSITION TAKEN IS COUNTED, NOT ONLY THE ONES THAT EXITED.** Captain decision 461
+ *   (2026-08-11), the realization correction. **This is the version boundary at which a headline
+ *   figure changes sign**, and it changes sign because of a counting choice rather than because of
+ *   new data. Nine new keys inside `entry` —
+ *   `fieldRealisedSolOverAllPositionsGrossOfFees`, `fieldReturnPerSolOverAllPositionsGrossOfFees`,
+ *   `fieldHitRateOverAllPositionsGrossOfFees`, `fieldRealisedSolOverAllPositionsNetOfMeasuredFees`,
+ *   `fieldReturnPerSolOverAllPositionsNetOfMeasuredFees`, `fieldHitRateOverAllPositionsNetOfMeasuredFees`,
+ *   `fieldResidualMarkedSolAtWindowLastPriceGrossOfFees`, `positionsStillHeldAtHorizon` and
+ *   `positionsHorizonNotObserved` on the block itself, plus eight on every `entry.windows[].entrants`
+ *   row (`positionOutcome`, `windowTxCount`, `residualTokens`,
+ *   `residualMarkedSolAtWindowLastPriceGrossOfFees`, `realisedSolAtZeroRecoveryGrossOfFees`,
+ *   `returnPerSolAtZeroRecoveryGrossOfFees`, `realisedSolAtZeroRecoveryNetOfMeasuredFees`,
+ *   `returnPerSolAtZeroRecoveryNetOfMeasuredFees`). No candidate ROW field and no run-level block:
+ *   `PERSISTED_BY_SCHEMA[25]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[25]`, `SPEND_KEYS_BY_SCHEMA[25]`,
+ *   `DUNE_KEYS_BY_SCHEMA[25]`, `CREATION_KEYS_BY_SCHEMA[25]`, `ROTATION_BLOCK_KEYS_BY_SCHEMA[25]`
+ *   and `ENTRY_WINDOW_KEYS_BY_SCHEMA[25]` all equal `[24]`.
+ *
+ *   **NO EXISTING FIELD MOVES.** Every `…OfFees` figure is the identical quantity it was at schema
+ *   24 and may be pooled across the boundary, `closedInWindow` is unchanged and is exactly
+ *   `positionOutcome === 'exited'`, and no threshold moved — a schema-24 and a schema-25 run over
+ *   the same inputs reach byte-identical verdicts. What is added sits BESIDE them.
+ *
+ *   **Why it needs a version.** Every field figure through schema 24 is computed only over positions
+ *   that GOT OUT: a position entered and never exited was dropped from the denominator rather than
+ *   resolved. Over the same 32 launches and the same 265 create-slot outsider positions of the
+ *   committed tape, fee-inclusive, conditioning on exiting reads 80/158 positive and **+108.28 SOL**
+ *   while counting every position taken reads 86/265 and **−8.12 SOL** — a nested-subset comparison,
+ *   not two pooled populations, and the 107 that never got out are worth −116.40 SOL between them.
+ *   **And they are not unknowns: 7 of 140 priced unexited entries are above water even marked at the
+ *   token's LATEST known price**, so the schema-≤24 denominator deletes losers rather than
+ *   unknowns and is OPTIMISTIC rather than conservative. A consumer must be able to tell a record
+ *   that carries both constructions from one that carries only the flattering one, and no schema-24
+ *   field says which. (`slot-zero-stage3-exit-design` → `report.md` §§5.3, 5.4, held in firstmate's
+ *   records, not in this repo.)
+ *
+ *   **The three outcomes, and the two that used to be one value.** `entry.mjs` → `POSITION_OUTCOMES`
+ *   owns the rule. `exited` is a realized figure; `still-held-at-horizon` is resolved at **zero
+ *   recovery** — the worst case for the part we cannot see, which is what the captain's standing
+ *   evidence bar asks a figure to survive — with `residualMarkedSolAtWindowLastPriceGrossOfFees` reported
+ *   BESIDE it and never instead of it; `horizon-not-observed` is OUR COVERAGE, resolved neither way,
+ *   counted and surfaced and **not filterable** under captain decision 174b. `fieldOpenPositions` is
+ *   the sum of the last two, which is precisely the conflation this version splits.
+ *
+ *   **Two denominators that are not the same and are never pooled.** The gross all-positions figures
+ *   are over every resolvable position; the NET ones are over the subset whose WHOLE window the cost
+ *   leg priced — every transaction the wallet appears in across the window was already in the priced
+ *   target set, which admits the create slot and any transaction carrying a wallet that closed, so a
+ *   wallet that sold INSIDE its create slot is in scope and a wallet bundled with a closed one is
+ *   priced whole. The selection is non-random and its direction is UNMEASURED
+ *   (`entry.mjs` → `NET_ALL_POSITIONS_SELECTION_CAVEAT`), so the gap between the two readings is not
+ *   a fee cost. `entryCostTargets` was deliberately NOT widened — that would spend RPC requests this correction
+ *   is not authorised to spend — so the shortfall is stated by `fieldHitRateOverAllPositionsNetOfMeasuredFees.n`
+ *   rather than being closed.
+ *
+ *   **Every rate added here carries its exact (Clopper–Pearson) interval** as `lo`/`hi` beside
+ *   `rate`; `tools/deployer-screen/stats.mjs` is the one implementation, shared with the
+ *   2026-08-10 measurement that first needed it. The pre-existing three-key `HitRate` shape is
+ *   untouched, because four earlier versions pin it and a consumer version-detects on it.
+ *
+ *   **What it costs: nothing, in every currency**, on the same terms as schema 24 — every input was
+ *   already in the fill walk's response and in the cost leg's output, and Stage 2's keyless ceiling
+ *   (`maxCandidatesScored` × `maxLaunchesPerCandidate` × `maxRequestsPerLaunch`) cannot move.
+ *
+ *   **It decides NOTHING, and that is what makes it safe to land.** No bar, gate, threshold,
+ *   predicate or verdict reads one of these fields and a test pins that — the shape captain decision
+ *   208b established for `entry.roomLeftBound`. **And it is NOT a profit verdict**: two cost terms
+ *   are still unbounded (the separate-transaction landing tip, and what it costs to try and fail to
+ *   land), and under the captain's evidence bar an unbounded cost forbids one. This version produces
+ *   the number; making it rulable is a later increment.
  */
-export const RECORD_SCHEMA_VERSION = 24;
+export const RECORD_SCHEMA_VERSION = 25;
 
 /**
  * The predictions-document contract version, carried inside the document itself.

@@ -230,7 +230,9 @@ credits of the authorised stop unspent rather than push at it, per the brief.
 - Every entry cost: `entry.mjs` → `entryCostTargets` → `rpc-costs.mjs` → `pumpfun.mjs` →
   `readCreateSlotCosts` (`meta.fee` plus the real lamport deltas), over Helius.
 - Every verdict, from the production ladder at the pinned bars.
-- The intervals, by exact Clopper–Pearson in `summarise.mjs` — **validated against the census's own
+- The intervals, by exact Clopper–Pearson through `summarise.mjs` — whose implementation captain
+  decision 461 moved VERBATIM to `tools/deployer-screen/stats.mjs`, re-exported from here so every
+  importer reads the same bytes and no published figure moves — **validated against the census's own
   published intervals**, which it reproduces on all five (15/369, 0/6, 0/22, 353/5,399, 7/101).
   That validation is an assertion rather than a claim: `test/entry-cost-cleared-fifteen.test.ts`
   drives the exported `clopperPearson` over those five pairs and over the `k = 0`, `k = n` and
@@ -344,7 +346,7 @@ upper bound that survived.
 |---|---|
 | `census-input.json` | the 15 and their 145 census windows, copied verbatim; the pinned population |
 | `price-entry.mjs` | the harness — clients, population and lane ceiling only; it re-implements no rule |
-| `summarise.mjs` | the roll-up and the exact intervals; offline, and it reproduces the census's five published intervals |
+| `summarise.mjs` | the roll-up and the exact intervals; offline, and it reproduces the census's five published intervals. The interval code itself now lives in `tools/deployer-screen/stats.mjs` (moved verbatim by captain decision 461) and is re-exported from here |
 | `result.json` | every candidate's full score, coverage and spend — **carrying two post-run amendments, `laneUnmeasuredCause` and the top-level `thresholdsMinPricedFraction`**, both enumerated in the provenance note above, which also states the key-set check behind that list |
 | `summary.json` | the machine-readable roll-up, regenerated offline from `result.json` after that derivation |
 | `run.log` | **the run's own console output, verbatim — and it PREDATES the lane-cause derivation.** It prints the plan header and one verdict line per candidate; it never prints `laneUnmeasuredCause`, so look to `result.json` and the provenance note above for that field's history. Nothing in it was superseded |

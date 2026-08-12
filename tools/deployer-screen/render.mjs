@@ -30,7 +30,7 @@ import {
   priceWalkFallbackCliff,
 } from './dune.mjs';
 import { describeMonthlyCapCredits, estimatePlanCredits } from './client.mjs';
-import { LANDING_TIP_CAVEAT } from './entry.mjs';
+import { LANDING_TIP_CAVEAT, NET_ALL_POSITIONS_SELECTION_CAVEAT } from './entry.mjs';
 // The reach the plan quotes is DERIVED, never a second copy of the formula: an operator reads this
 // block before authorising a run, so it has to describe the walk `readLaunchWindow` will actually do.
 import { windowReachMs } from './pumpfun.mjs';
@@ -292,6 +292,25 @@ function roomBoundLine(b) {
   );
 }
 
+/**
+ * A rate with its exact interval, in one line, for a surface that prints the rate.
+ *
+ * The interval is not decoration here. The whole content of captain decision 461 is that two
+ * constructions of the same population disagree, and a reader comparing two bare rates cannot see
+ * whether the difference survives the sample. `entry.mjs` → `boundedHitRate` owns the construction.
+ *
+ * @param {import('./entry.mjs').BoundedHitRate} h
+ * @param {string} population  What the denominator is, named rather than left to be inferred.
+ * @returns {string}
+ */
+function boundedHitRateLine(h, population) {
+  if (h.n === 0) return `hit rate: NO observation over ${population} — not a zero`;
+  return (
+    `hit rate: ${h.hits}/${h.n} of ${population} above zero (${pct(h.rate)}, exact 95% ` +
+    `[${pct(h.lo)}, ${pct(h.hi)}])`
+  );
+}
+
 /** @returns {string} */
 function distHeader() {
   return (
@@ -380,6 +399,47 @@ export function renderEntry(e, coverage) {
     `      ${e.fieldEntrants} field entr(y/ies), ${e.fieldClosedRoundTrips} closed, ` +
       `${e.fieldOpenPositions} still open at the window's end and therefore with NO complete P&L`,
   );
+  L.push('');
+
+  // CAPTAIN DECISION 461, and the ordering is the argument: the conditioned block above prints
+  // first because it is what every earlier record carries, and this one prints under it labelled as
+  // the reading that resolves the positions the one above DROPS. Neither replaces the other, and the
+  // rendered surface is one of the three places `REALISATION_CONSTRUCTION_CAVEAT` is required to
+  // reach (the score's caveats and the run record are the others).
+  L.push('      THE SAME FIELD OVER *EVERY POSITION TAKEN* — the reading above is conditioned on');
+  L.push('      the position having EXITED, which is the OPTIMISTIC one. Here the ones still held');
+  L.push('      at the horizon are resolved at ZERO RECOVERY, the worst case.');
+  L.push(distHeader());
+  L.push(distLine('realised SOL *ALL, GROSS*', e.fieldRealisedSolOverAllPositionsGrossOfFees));
+  L.push(distLine('return per SOL *ALL*', e.fieldReturnPerSolOverAllPositionsGrossOfFees));
+  L.push(`      ${boundedHitRateLine(e.fieldHitRateOverAllPositionsGrossOfFees, 'every position taken')}`);
+  if (e.fieldHitRateOverAllPositionsNetOfMeasuredFees.n > 0) {
+    L.push(distLine('realised SOL *ALL, NET*', e.fieldRealisedSolOverAllPositionsNetOfMeasuredFees));
+    L.push(distLine('return per SOL *ALL, NET*', e.fieldReturnPerSolOverAllPositionsNetOfMeasuredFees));
+    L.push(
+      `      ${boundedHitRateLine(e.fieldHitRateOverAllPositionsNetOfMeasuredFees, 'positions priced across their whole window')}`,
+    );
+    for (const line of wrap(NET_ALL_POSITIONS_SELECTION_CAVEAT, 84)) L.push(`      ! ${line}`);
+  }
+  L.push(
+    `      ${e.positionsStillHeldAtHorizon} still HELD at the horizon (resolved at zero recovery), ` +
+      `${e.positionsHorizonNotObserved} whose closure our rows`,
+  );
+  L.push(
+    `      cannot decide at all — OUR COVERAGE, resolved neither way, and not filterable (174b)`,
+  );
+  if (e.fieldResidualMarkedSolAtWindowLastPriceGrossOfFees.n > 0) {
+    // The BOUND on the worst case, printed under it rather than into it. A mark is a price nobody
+    // paid: on the committed tape 95% of unexited positions are losses even at the token's LATEST
+    // known price, which is why the headline resolves at zero and this sits beside it.
+    L.push(distLine('residual MARKED (bound)', e.fieldResidualMarkedSolAtWindowLastPriceGrossOfFees));
+    L.push(
+      "      ^ marked at the WINDOW's own last price — the MORE GENEROUS of the two marks; the " +
+        "token's LATEST known price is harsher",
+    );
+  }
+  L.push('      ^ NOT a profit verdict: the landing tip and the cost of failed attempts are still');
+  L.push('        unbounded, and an unbounded cost forbids one.');
   L.push('');
 
   L.push('      WHAT IT COSTS TO GET IN — recovered on-chain, and what the field cleared after it');

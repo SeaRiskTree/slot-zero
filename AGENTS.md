@@ -1814,6 +1814,61 @@ dev currently?"*, and the shape of the answer is the point:
   postdictions is that the document is committed in its own commit ahead of the run, exactly as
   `thresholds.json` is — the record cannot prove that and does not claim to.
 
+## EVERY FIELD FIGURE BEFORE SCHEMA 25 IS CONDITIONED ON THE POSITION HAVING EXITED
+
+`entry.mjs` → `POSITION_OUTCOMES` and the `…OverAllPositions…` fields on `EntryScore`, record
+**schema 25**. Captain decision 461, 2026-08-11 — increment 1 of `slot-zero-stage3-exit-design` →
+`report.md` §9, evidence in its §§5.3/5.4 (held in firstmate's records, not in this repo).
+`tools/deployer-screen/README.md` → "Every position taken is counted, not only the ones that got
+out" owns the long form; cite it rather than restating it. Six things bind:
+
+- **THE PROJECT'S HEADLINE PROFIT FIGURE WAS POSITIVE BECAUSE OF A COUNTING CHOICE, AND IT IS
+  ACTUALLY NEGATIVE.** A position entered and never exited was dropped from the denominator rather
+  than resolved, so every published field rate here is **P(profit | the position exited)**. Over the
+  same 32 launches and the same 265 create-slot outsider positions of the committed tape,
+  fee-inclusive: **80/158 = 0.5063 [0.4257, 0.5867] and +108.28 SOL** conditioned, against
+  **86/265 = 0.3245 [0.2685, 0.3845] and −8.12 SOL** over every position taken (−62.24 with the two
+  known winning units removed). The 107 that never got out are worth −116.40 SOL between them. It is
+  a **nested-subset** comparison, never two pooled populations.
+- **AND THE DROPPED POSITIONS ARE LOSSES, NOT UNKNOWNS — so the old denominator is OPTIMISTIC rather
+  than conservative.** Of the 140 priced unexited entries only **7 = 0.0500 [0.0203, 0.1003]** are
+  above water once marked at the token's latest known price; they staked 267.19 SOL and are 149.17
+  down in cash with 28.91 of marked residual.
+- **THREE OUTCOMES, AND TWO OF THEM USED TO BE ONE `false`.** `exited` carries a realized figure;
+  `still-held-at-horizon` is resolved at **ZERO RECOVERY** — the worst case the captain's standing
+  evidence bar asks a figure to survive — with the marked residual reported BESIDE it and never
+  instead of it; `horizon-not-observed` is **OUR COVERAGE**, resolved neither way, counted, surfaced
+  and **not filterable** (174b). `closedInWindow` is kept and is exactly `positionOutcome ===
+  'exited'`, and `fieldOpenPositions` is the sum of the other two — which is the conflation this
+  splits. Under today's fill-source contract the third outcome's only producer is undecidable
+  closure: a source that cannot prove it covered the window returns `usable: false` and the launch is
+  dropped whole, so the coverage question is answered one layer up, per LAUNCH.
+- **TWO DENOMINATORS, NEVER POOLED, AND THE SECOND IS SMALLER FOR OUR REASON.** The gross
+  all-positions figures are over every resolvable position; the NET ones over the subset whose WHOLE
+  window the cost leg priced — every transaction the wallet appears in was already in
+  `entryCostTargets`'s set (the create slot, or a transaction carrying a wallet that closed), and the
+  selection is non-random with its direction **UNMEASURED**; `entry.mjs` →
+  `NET_ALL_POSITIONS_SELECTION_CAVEAT` owns it, including that the gap between the two readings is
+  not a fee cost. **That scope was deliberately NOT widened** (it is a spend), so the shortfall is
+  stated by `fieldHitRateOverAllPositionsNetOfMeasuredFees.n` rather than closed.
+- **IT COSTS NOTHING AND GATES NOTHING**, which is what makes a change reversing a headline's sign
+  safe to land: every input was already in `readLaunchWindow`'s response and `priceLaunchEntry`'s
+  output, Stage 2's keyless ceiling (7 × 10 × 18 = 1,260) cannot move, no bar/gate/threshold/
+  predicate/verdict reads a new field, no threshold moved, and a test pins both — 208b's shape.
+  **No existing figure moves either**, so a schema-24 and a schema-25 `…OfFees` reading may be
+  pooled.
+- **IT IS NOT A PROFIT VERDICT AND NO VERDICT STATE IS NAMED FOR IT.** The landing tip and the cost
+  of failed attempts are still **unbounded**, and under the captain's bar an unbounded cost forbids a
+  profit verdict entirely. Do not let the new figure be presented as one.
+  `entry.mjs` → `REALISATION_CONSTRUCTION_CAVEAT` is the label that travels with both readings to the
+  caveats, the rendered block and the run record. **Every rate added from 461 on carries its exact
+  (Clopper–Pearson) interval** as `lo`/`hi`; `tools/deployer-screen/stats.mjs` is the ONE
+  implementation (the 2026-08-10 measurement re-exports it), and the pre-existing three-key `HitRate`
+  shape is untouched because four earlier schema versions pin it. **The field NAMES deviate from the
+  design report's** (`fieldRealisedSolOverAllPositionsNetOfMeasuredFees`, not
+  `fieldRealisedSolNetOverAllPositions`) because this repo enforces that every P&L field name ends
+  `GrossOfFees` or `NetOfMeasuredFees`; that test wins.
+
 ## The screen PERSISTS its entrants now, and it decides nothing with them
 
 `entry.mjs` → `EntryScore.windows`, projected by `stage2.mjs` → `toEntryRecordRow`, record **schema

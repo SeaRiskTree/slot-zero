@@ -66,6 +66,43 @@
  * Two limits travel with every one of those numbers rather than living in a document —
  * {@link LANDING_TIP_CAVEAT} and {@link WINNERS_ONLY_CAVEAT} — and both run in the same direction:
  * entry looks cheaper, and the field more profitable, than either was.
+ *
+ * ## And a THIRD optimism, which is not about fees at all — it is about who gets counted
+ *
+ * Captain decision 461, 2026-08-11. Every field figure above is computed over the positions that
+ * GOT OUT. A position that was entered and never exited was dropped from the denominator rather
+ * than resolved, so `fieldHitRateGrossOfFees` and `fieldHitRateNetOfMeasuredFees` are
+ * **P(profit | the position exited)** and not P(profit).
+ *
+ * That is the right quantity for the question Stage 2 asks — *is the field, once out, in profit* —
+ * and it is the wrong one for *what did a position taken here actually realize*. Measured on the
+ * committed tape over the same 32 launches and the same 265 create-slot outsider positions,
+ * fee-inclusive: conditioned on exiting the field reads 80/158 positive and **+108.28 SOL**; over
+ * every position taken, with the unexited resolved at zero recovery, it reads 86/265 and
+ * **−8.12 SOL**. Same launches, same positions, one construction choice — the 107 that never got
+ * out are worth −116.40 SOL between them.
+ *
+ * **And those positions are not unknowns, they are losses.** Of the 140 priced create-slot outsider
+ * entries that never closed, **7 = 0.0500 [0.0203, 0.1003]** are above water once their remaining
+ * tokens are marked at the token's LATEST known price. So dropping them deletes losers
+ * rather than unknowns, and the conditioned denominator is **optimistic rather than conservative**.
+ * (`slot-zero-stage3-exit-design` → `report.md` §§5.3, 5.4, held in firstmate's records, not in
+ * this repo.)
+ *
+ * So {@link FieldEntrant.positionOutcome} splits the old `closedInWindow` boolean into the three
+ * states {@link POSITION_OUTCOMES} names, and every `…OverAllPositions` figure on
+ * {@link EntryScore} is the same statistic over every position taken. **Both constructions are
+ * reported and neither replaces the other** — {@link REALISATION_CONSTRUCTION_CAVEAT} is the label
+ * that says which is which, and it is on every score.
+ *
+ * **NOTHING GATES ON THE NEW FIGURES.** No bar, gate, threshold, predicate or verdict reads one and
+ * no threshold moved for them, which is the shape captain decision 208b established for
+ * {@link EntryScore.roomLeftBound}: record it, publish it, decide nothing with it yet. That is
+ * precisely what makes a change that reverses the sign of a headline number safe to land — and it
+ * is also why this module names **no verdict** for the new reading. Two cost terms are still
+ * unbounded (the separate-transaction landing tip, and what it costs to TRY and fail to land), and
+ * under the captain's standing evidence bar an unbounded unknown on the cost side means no profit
+ * verdict may be issued at all. This produces the number; it does not rule on it.
  */
 
 import {
@@ -80,6 +117,7 @@ import {
   tallyCreateSlot,
   walletTransactions,
 } from './measure.mjs';
+import { clopperPearson } from './stats.mjs';
 
 /**
  * The one limit that must travel with every cost and every after-cost figure this module produces.
@@ -121,6 +159,149 @@ export const WINNERS_ONLY_CAVEAT =
  * outsider pair. Matching it is what makes a live measurement comparable to the published one.
  */
 export const RESIDUAL_TOLERANCE = 0.001;
+
+/**
+ * @typedef {'exited' | 'still-held-at-horizon' | 'horizon-not-observed'} PositionOutcome
+ *
+ * What became of one position taken. Captain decision 461: **every position taken gets an outcome**,
+ * and the three are kept apart because two of them used to be the same value.
+ *
+ * - **`exited`** — flat by the horizon (residual within {@link RESIDUAL_TOLERANCE} of the tokens
+ *   bought, the committed dataset's own `closed_in_window` rule). A realized figure exists, and it
+ *   is the one the `…GrossOfFees` / `…NetOfMeasuredFees` fields already carried.
+ * - **`still-held-at-horizon`** — the wallet bought, we can read what it bought and what it sold,
+ *   and it was not flat. **Resolved at ZERO RECOVERY** in every `…AtZeroRecovery` /
+ *   `…OverAllPositions` figure, with {@link FieldEntrant.residualMarkedSolAtWindowLastPriceGrossOfFees} printed
+ *   BESIDE it and never instead of it. Zero recovery is the worst case for the part we cannot see,
+ *   which is what the captain's standing evidence bar asks a figure to survive; the mark is the
+ *   bound on it, and a mark is a price nobody paid.
+ * - **`horizon-not-observed`** — OUR COVERAGE. The rows we hold cannot decide closure at all, so
+ *   the position is carried, counted and surfaced, and it is resolved NEITHER way. Never a loss and
+ *   never a hit: an undecidable position resolved at zero recovery would be a manufactured loss,
+ *   which is the mirror of the manufactured profit this whole correction removes. Captain decision
+ *   174b's rule applies to it unchanged — {@link EntryScore.positionsHorizonNotObserved} is
+ *   reported, and a later stage may not filter a candidate on it.
+ *
+ * **What can produce the third one, exhaustively, and what cannot.** Today it is the undecidable
+ * closure case alone: a fill whose token amount we could not read, or an entrant whose buys sum to
+ * no tokens at all, so `tokensBought − tokensSold` is not a residual. The other producer a reader
+ * will look for — *the walk did not reach the end of the window* — **cannot arise inside a scored
+ * launch**, and that is a property of the fill-source contract rather than of this function: a
+ * source that cannot prove it covered the window returns `usable: false`, `stage2.mjs` →
+ * `assertWindowUsable` holds every source to that, and the launch is dropped whole and counted as
+ * `launchesDropped` (`our-coverage`, unfilterable, already 174b-compliant). So the coverage question
+ * is answered one layer up, per LAUNCH, and this outcome is the per-POSITION remainder of it.
+ */
+
+/**
+ * Every value {@link FieldEntrant.positionOutcome} may take, in the order the design states them.
+ *
+ * Exported as a closed set so a consumer can exhaust it rather than testing for the two it happens
+ * to have thought of, which is the boolean this replaces.
+ *
+ * @type {readonly PositionOutcome[]}
+ */
+export const POSITION_OUTCOMES = Object.freeze([
+  'exited',
+  'still-held-at-horizon',
+  'horizon-not-observed',
+]);
+
+/**
+ * The label that keeps the two realized constructions apart, and it is on every score.
+ *
+ * A constant rather than a sentence retyped per surface, for the reason {@link LANDING_TIP_CAVEAT}
+ * is one: the requirement is that it reaches **the number** — the score's caveats, the rendered
+ * block and the persisted run record — so neither figure can be lifted out of a surface and quoted
+ * as though it were the other.
+ *
+ * Note what it does NOT say. It does not say the all-positions figure is a profit verdict; two cost
+ * terms remain unbounded and no verdict may rest on it. See the module header.
+ */
+export const REALISATION_CONSTRUCTION_CAVEAT =
+  'TWO REALIZED CONSTRUCTIONS ARE REPORTED AND NEITHER REPLACES THE OTHER. The *OfFees figures are ' +
+  'conditioned on the position having EXITED, which is the OPTIMISTIC one: a position that was ' +
+  'entered and never exited is dropped from that denominator rather than resolved, and on the ' +
+  'committed tape those dropped positions are 95% LOSSES even when their remaining tokens are ' +
+  "marked at the token's LATEST known price — so dropping them deletes losers, not " +
+  'unknowns. The *OverAllPositions figures beside them count every position taken, with the ones ' +
+  'still held at the horizon resolved at ZERO RECOVERY (the worst case) and their marked residual ' +
+  "reported separately — and that residual is marked at the WINDOW's own last price, which is the " +
+  'MORE GENEROUS of the two marks, not the harsher latest-known-price one this sentence cites. ' +
+  'Positions whose closure our own rows cannot decide are in NEITHER ' +
+  'construction and are counted as horizon-not-observed. NONE of this is a profit verdict: the ' +
+  'landing tip and the cost of failed attempts are still unbounded, and an unbounded cost forbids ' +
+  'one.';
+
+/**
+ * That the net all-positions population is a NON-RANDOM subset of the gross one, stated the way
+ * {@link LANDING_TIP_CAVEAT} and {@link WINNERS_ONLY_CAVEAT} state their own limits — and with the
+ * direction left UNSIGNED, which is the whole point of it.
+ *
+ * **The condition, exactly.** A position carries a whole-window net figure only where every
+ * transaction the wallet appears in across the window was in the priced target set —
+ * `mine.length === windowTxCount` in {@link priceLaunchEntry}. {@link entryCostTargets} admits a
+ * transaction when it is in the create slot OR it carries a wallet that closed, so this is NOT
+ * "the wallet never traded again" and NOT "it never sold": a wallet that sold inside its create slot
+ * is in scope, and a wallet whose later transaction happens to be bundled with a closed wallet is
+ * priced whole.
+ *
+ * **Why the direction is not signed.** `realisedSolAtZeroRecoveryGrossOfFees` is `solOut − solIn`.
+ * An excluded wallet that SOLD later has recovered SOL and would have scored better, which pulls the
+ * net reading down; an excluded wallet that BOUGHT more later — averaging in, ordinary sniper
+ * behaviour — carries a larger `solIn`, would have scored worse, and pulls it up. Which way the
+ * selection runs therefore depends on the mix of later buys and later sells among the excluded
+ * positions, and that mix is UNMEASURED. Captain decisions 198b and 208b already refuse this shape:
+ * an unmeasured direction is not to be signed, and a one-way correction to it is wrong.
+ *
+ * What survives either way is that the two readings are not a fee apart, so the gap between them
+ * cannot be read as a fee cost. The cost leg was not widened to close the shortfall because widening
+ * it is a spend.
+ */
+export const NET_ALL_POSITIONS_SELECTION_CAVEAT =
+  'THE NET *OverAllPositions FIGURES ARE OVER A NON-RANDOM SUBSET OF THE GROSS ONES, AND WHICH WAY ' +
+  'THAT SELECTION RUNS IS UNMEASURED. A position carries a whole-window net figure only where every ' +
+  'transaction it appears in across the window was already in the priced target set — which admits ' +
+  'the create slot and any transaction carrying a wallet that closed, so a wallet that sold inside ' +
+  'its create slot is in scope and a wallet bundled with a closed one can be priced whole. An ' +
+  'excluded wallet that sold later would have scored better and an excluded wallet that bought more ' +
+  'later would have scored worse, so the direction depends on a mix this run has not measured and ' +
+  'is NOT claimed. DO NOT difference the net and gross readings to infer a fee cost: the gap is not ' +
+  'all fees. The cost leg was not widened to close it, which would be a spend.';
+
+/**
+ * @typedef {object} BoundedHitRate
+ * @property {number} n     Observations the rate is over.
+ * @property {number} hits
+ * @property {number} rate  `hits / n`, or `NaN` when `n === 0`.
+ * @property {number} lo    Exact (Clopper–Pearson) two-sided 95% lower bound; `NaN` when `n === 0`.
+ * @property {number} hi    The upper bound, on the same terms.
+ */
+
+/**
+ * A share of a sample WITH its exact interval — {@link hitRate} plus the two bounds.
+ *
+ * Separate from {@link hitRate} rather than a widening of it, deliberately. `HitRate` is pinned in
+ * the run record's schema at four earlier versions and a consumer version-detects on that shape, so
+ * growing it would silently change what every older reader parses. This is the shape for a rate
+ * added from captain decision 461 onward.
+ *
+ * **Why the interval is not optional here.** Every rate this reports is over a small, hard-won n,
+ * and the whole content of the correction is that two constructions of the SAME population read
+ * differently — a reader comparing 0.5063 with 0.3245 has to be able to see whether the difference
+ * survives the sample. The bare rates cannot say; the intervals can. Exact rather than approximate
+ * for the reason `stats.mjs` states.
+ *
+ * @template T
+ * @param {readonly T[]} values
+ * @param {(v: T) => boolean} predicate
+ * @returns {BoundedHitRate}
+ */
+export function boundedHitRate(values, predicate) {
+  const h = hitRate(values, predicate);
+  const ci = clopperPearson(h.hits, h.n);
+  return { ...h, lo: ci === null ? Number.NaN : ci.lo, hi: ci === null ? Number.NaN : ci.hi };
+}
 
 /**
  * @typedef {object} Distribution
@@ -222,6 +403,39 @@ export function hitRate(values, predicate) {
  *   Recorded and read by nothing: widening the collapse scope is a decision, not a diff.
  * @property {number} stakeSol           Total buy SOL across the whole opening window.
  * @property {boolean} closedInWindow    Whether the position was flat by the window's end.
+ *   **Exactly `positionOutcome === 'exited'`, and it is kept so no existing figure moves.** It is
+ *   the field that could not tell a wallet that was still HOLDING from one whose closure our rows
+ *   could not decide; read {@link FieldEntrant.positionOutcome} for that.
+ * @property {PositionOutcome} positionOutcome  What became of this position — {@link
+ *   POSITION_OUTCOMES} owns the three states and the rule. Captain decision 461.
+ * @property {number} windowTxCount      Distinct transactions this wallet appears in across the
+ *   whole walked window. Free from the same fills, and it is what lets {@link priceLaunchEntry}
+ *   tell a wallet whose WHOLE window was priced from one whose create slot alone was: an unexited
+ *   position is not in the cost leg's round-trip scope, so its later transactions are usually
+ *   unpriced, and a sum over the ones that happen to be in scope would be a WRONG figure rather
+ *   than a missing one.
+ * @property {number} residualTokens     `tokens bought − tokens sold` at the horizon. `NaN` when
+ *   closure is undecidable; at or near zero on an exited position by the closure rule itself.
+ * @property {number} residualMarkedSolAtWindowLastPriceGrossOfFees  {@link FieldEntrant.residualTokens} valued
+ *   at the LAST price the walked window itself showed. **The bound printed beside the zero-recovery
+ *   resolution, never instead of it** — a mark is a price nobody paid, and on the committed tape
+ *   95% of unexited positions are losses even marked at the token's LATEST known price.
+ *   `NaN` when the residual or the window's last price is unreadable. Gross of fees like every other
+ *   fill-derived figure.
+ * @property {number} realisedSolAtZeroRecoveryGrossOfFees  `sol out − sol in` with anything still held
+ *   valued at NOTHING. Defined on an `exited` position (where it EQUALS
+ *   {@link FieldEntrant.realisedSolGrossOfFees}) and on a `still-held-at-horizon` one; `NaN` on
+ *   `horizon-not-observed`, which is resolved neither way.
+ * @property {number} returnPerSolAtZeroRecoveryGrossOfFees  That over `stakeSol`. `NaN` on the same terms.
+ * @property {number} realisedSolAtZeroRecoveryNetOfMeasuredFees  The same worst-case resolution, from real lamport
+ *   changes rather than from quotes. **`NaN` unless every one of this wallet's
+ *   {@link FieldEntrant.windowTxCount} window transactions was priced** — every transaction the
+ *   wallet appears in has to have been in {@link entryCostTargets}'s set, which admits the create
+ *   slot and any transaction carrying a wallet that closed, so a wallet that sold INSIDE its create
+ *   slot is in scope and a wallet bundled with a closed one is priced whole. That is not a gap to be closed by asking for
+ *   more: widening the target list would spend RPC requests this correction is not authorised to
+ *   spend, and the count is reported instead.
+ * @property {number} returnPerSolAtZeroRecoveryNetOfMeasuredFees  That over `stakeSol`. `NaN` on the same terms.
  * @property {number} realisedSolGrossOfFees   `sol out − sol in`. **`NaN` unless closed** — an open
  *   position has no complete P&L, and the committed dataset makes the same field absent rather than
  *   zero for exactly this reason.
@@ -331,14 +545,20 @@ export function measureLaunchEntry(fills) {
   // Whole-window totals, needed for the closure test. Sells matter as much as buys: a wallet that
   // never sold has no realised figure at all, and imputing one from a mark is how a paper number
   // becomes a claimed profit.
-  /** @type {Map<string, { solIn: number, solOut: number, tokensBought: number, tokensSold: number }>} */
+  //
+  // `txs` rides along because it is the same pass and the same rows: how many DISTINCT transactions
+  // this wallet made inside the window is what tells the cost leg later whether it priced the whole
+  // of a position or only its create slot (captain decision 461, and see
+  // {@link FieldEntrant.windowTxCount}).
+  /** @type {Map<string, { solIn: number, solOut: number, tokensBought: number, tokensSold: number, txs: Set<string> }>} */
   const totals = new Map();
   for (const f of fills) {
     let t = totals.get(f.wallet);
     if (t === undefined) {
-      t = { solIn: 0, solOut: 0, tokensBought: 0, tokensSold: 0 };
+      t = { solIn: 0, solOut: 0, tokensBought: 0, tokensSold: 0, txs: new Set() };
       totals.set(f.wallet, t);
     }
+    t.txs.add(f.tx);
     if (f.side === 'buy') {
       t.solIn += f.sol;
       t.tokensBought += f.tokens;
@@ -348,10 +568,42 @@ export function measureLaunchEntry(fills) {
     }
   }
 
+  // THE WINDOW'S OWN LAST PRICE, which is the only mark this walk can produce for free.
+  //
+  // It is the SOL per token of the newest readable fill the window holds, in the venue's own
+  // within-slot order — `sid` is the ordering key and it is compared as a STRING, because 22 decimal
+  // digits is past `Number.MAX_SAFE_INTEGER` (`measure.mjs` → `blockTxIndex` owns why). All the
+  // window's `sid`s share a length, so a lexicographic comparison IS the numeric one; the slot
+  // comparison ahead of it makes that independent of any key that is not that shape.
+  //
+  // It exists to BOUND the zero-recovery resolution, never to replace it: the design's own
+  // measurement puts 54 of 140 unexited positions above water at this mark against 7 of 140 at the
+  // token's LATEST known price, so this is the FLATTERING mark of the two and is reported
+  // as a bound rather than as an outcome.
+  /** @type {import('./measure.mjs').Fill | null} */
+  let newest = null;
+  for (const f of fills) {
+    if (!(Number.isFinite(f.sol) && Number.isFinite(f.tokens) && f.tokens > 0)) continue;
+    if (
+      newest === null ||
+      f.slot > newest.slot ||
+      (f.slot === newest.slot && f.sid > newest.sid)
+    ) {
+      newest = f;
+    }
+  }
+  const windowLastPrice = newest === null ? Number.NaN : newest.sol / newest.tokens;
+
   /** @type {FieldEntrant[]} */
   const field = [];
   for (const [wallet, q] of queue) {
-    const t = totals.get(wallet) ?? { solIn: 0, solOut: 0, tokensBought: 0, tokensSold: 0 };
+    const t = totals.get(wallet) ?? {
+      solIn: 0,
+      solOut: 0,
+      tokensBought: 0,
+      tokensSold: 0,
+      txs: new Set(),
+    };
     // An unreadable token amount makes closure undecidable. Undecidable is reported as OPEN, never
     // as closed: a wrongly-closed pair contributes a fabricated P&L to the distribution, whereas a
     // wrongly-open one only shrinks the sample and says so.
@@ -359,6 +611,24 @@ export function measureLaunchEntry(fills) {
     const closedInWindow =
       decidable && t.tokensBought > 0 && t.tokensBought - t.tokensSold <= RESIDUAL_TOLERANCE * t.tokensBought;
     const realised = closedInWindow ? t.solOut - t.solIn : Number.NaN;
+    // THE THREE-STATE SPLIT of that boolean — captain decision 461, and {@link POSITION_OUTCOMES}
+    // owns the rule. `decidable && tokensBought > 0` is exactly the condition under which the
+    // residual `bought − sold` is a residual at all, so it is the line between a position we can
+    // resolve at zero recovery and one we cannot resolve either way. Note that it is the SAME
+    // conjunction the closure test above already applies: this adds no reading, it stops two
+    // different readings sharing one `false`.
+    const resolvable = decidable && t.tokensBought > 0;
+    /** @type {PositionOutcome} */
+    const positionOutcome = closedInWindow
+      ? 'exited'
+      : resolvable
+        ? 'still-held-at-horizon'
+        : 'horizon-not-observed';
+    // Zero recovery: what is still held is worth NOTHING. On an exited position the residual is
+    // within tolerance of zero by the closure rule, so this is `realised` to the last bit — which is
+    // what makes the conditioned figure a strict SUBSET of this one rather than a second population.
+    const grossAtZeroRecovery = resolvable ? t.solOut - t.solIn : Number.NaN;
+    const residualTokens = resolvable ? t.tokensBought - t.tokensSold : Number.NaN;
     const unit = {
       createSlotCoAppearingWallets: coAppearing(createSlotByTx, wallet),
       windowCoAppearingWallets: coAppearing(windowByTx, wallet),
@@ -377,6 +647,18 @@ export function measureLaunchEntry(fills) {
       windowCoAppearingWallets: unit.windowCoAppearingWallets,
       stakeSol: t.solIn,
       closedInWindow,
+      positionOutcome,
+      windowTxCount: t.txs.size,
+      residualTokens,
+      residualMarkedSolAtWindowLastPriceGrossOfFees: residualTokens * windowLastPrice,
+      realisedSolAtZeroRecoveryGrossOfFees: grossAtZeroRecovery,
+      returnPerSolAtZeroRecoveryGrossOfFees:
+        resolvable && t.solIn > 0 ? grossAtZeroRecovery / t.solIn : Number.NaN,
+      // Absent until the chain is asked, exactly like the two fields below it: the fill tape can
+      // resolve a position at zero recovery GROSS, and nothing but real lamport changes can do it
+      // net.
+      realisedSolAtZeroRecoveryNetOfMeasuredFees: Number.NaN,
+      returnPerSolAtZeroRecoveryNetOfMeasuredFees: Number.NaN,
       realisedSolGrossOfFees: realised,
       returnPerSolGrossOfFees: closedInWindow && t.solIn > 0 ? realised / t.solIn : Number.NaN,
       // Absent until the chain is asked. NaN and not 0: "we have not priced this" and "this cost
@@ -407,6 +689,17 @@ export function measureLaunchEntry(fills) {
  * The union matters: a closed entrant's create-slot transaction belongs to both scopes, and paying
  * an RPC request for it twice would be the difference between a run that fits its ceiling and one
  * that does not.
+ *
+ * **CAPTAIN DECISION 461 DELIBERATELY DID NOT WIDEN THIS.** Resolving unexited positions at zero
+ * recovery would be *better evidenced* with their whole windows priced too — but that is more RPC
+ * requests, and that correction is authorised to cost nothing in every currency. So the scope is
+ * byte-identical to what it was, {@link priceLaunchEntry} gives an unexited position a NET figure
+ * only where its whole window happens to already be in scope (every transaction it appears in was
+ * admitted by the filter below — the create slot, or a transaction carrying a wallet that closed —
+ * which on the committed tape is the majority of unexited positions, 128 of the open window's 212),
+ * and {@link EntryScore.fieldHitRateOverAllPositionsNetOfMeasuredFees}`.n` states
+ * how many that was rather than the shortfall being silent. Widening it is a spend, and a spend is
+ * the captain's.
  *
  * Pure. The walk that spends requests on the result is `pumpfun.mjs` → `readCreateSlotCosts`.
  *
@@ -485,14 +778,39 @@ export function priceLaunchEntry(entry, targets, priced) {
     const entryScope = sum(e.wallet, inCreateSlot);
     const windowScope = e.closedInWindow ? sum(e.wallet, mine) : null;
 
+    // THE ZERO-RECOVERY NET LEG, captain decision 461, and it asks for no transaction the scope did
+    // not already hold. Two conditions, and the second is the one that keeps it honest:
+    //
+    // 1. The position must be RESOLVABLE — exited or still held, never `horizon-not-observed`,
+    //    which is resolved neither way.
+    // 2. Every one of this wallet's window transactions must be in scope. `entryCostTargets` asks
+    //    for a whole window only for wallets that CLOSED, so an unexited wallet that traded again
+    //    after its create slot has transactions nobody priced — and summing the ones that happen to
+    //    be in scope while calling the result a whole-window figure is a wrong number rather than a
+    //    missing one, in the cheap direction. `windowTxCount` is what makes that check possible;
+    //    it is counted off the same fills the targets were built from.
+    //
+    // On an EXITED position both conditions hold wherever `windowScope` is non-null, so this equals
+    // `realisedSolNetOfMeasuredFees` there — which is what makes the conditioned reading a strict
+    // subset of the all-positions one rather than a second, differently-computed population.
+    const wholeWindowInScope = mine.length === e.windowTxCount;
+    const zeroRecoveryScope =
+      e.positionOutcome !== 'horizon-not-observed' && wholeWindowInScope
+        ? sum(e.wallet, mine)
+        : null;
+
     const entryCostSol = entryScope === null ? Number.NaN : entryScope.solOut - entryScope.quotedSol;
     const netRealised = windowScope === null ? Number.NaN : -windowScope.solOut;
+    const netAtZeroRecovery = zeroRecoveryScope === null ? Number.NaN : -zeroRecoveryScope.solOut;
     return {
       ...e,
       entryCostSol,
       entryCostPerSolStaked:
         entryScope !== null && e.createSlotFillSol > 0 ? entryCostSol / e.createSlotFillSol : Number.NaN,
       entryTxFeeSol: entryScope === null ? Number.NaN : entryScope.feeAsPayerSol,
+      realisedSolAtZeroRecoveryNetOfMeasuredFees: netAtZeroRecovery,
+      returnPerSolAtZeroRecoveryNetOfMeasuredFees:
+        zeroRecoveryScope !== null && e.stakeSol > 0 ? netAtZeroRecovery / e.stakeSol : Number.NaN,
       realisedSolNetOfMeasuredFees: netRealised,
       returnPerSolNetOfMeasuredFees:
         windowScope !== null && e.stakeSol > 0 ? netRealised / e.stakeSol : Number.NaN,
@@ -1120,9 +1438,57 @@ export function describeRoomMedianBound(b) {
  * @property {Distribution} fieldReturnPerSolNetOfMeasuredFees
  * @property {HitRate} fieldHitRateNetOfMeasuredFees  Share of priced closed round trips above zero.
  * @property {number} fieldClosedRoundTripsPriced  Closed round trips with a complete net figure.
+ * @property {Distribution} fieldRealisedSolOverAllPositionsGrossOfFees  **EVERY POSITION TAKEN**, with the
+ *   ones still held at the horizon resolved at ZERO RECOVERY — captain decision 461. The same
+ *   statistic as {@link EntryScore.fieldRealisedSolGrossOfFees} over a strictly larger, nested
+ *   population: that one drops an unexited position, this one resolves it at the worst case. On the
+ *   committed tape the difference is the sign of the headline. Reported BESIDE the conditioned
+ *   figure and never instead of it; {@link REALISATION_CONSTRUCTION_CAVEAT} is the label.
+ *   **Positions whose closure our rows cannot decide are in NEITHER** — see
+ *   {@link EntryScore.positionsHorizonNotObserved}.
+ * @property {Distribution} fieldReturnPerSolOverAllPositionsGrossOfFees  The same, per SOL staked.
+ * @property {BoundedHitRate} fieldHitRateOverAllPositionsGrossOfFees  Share of every position taken above
+ *   zero at that resolution, with its exact (Clopper–Pearson) interval. `n` is the same `n` the
+ *   distribution above reports: a position whose SOL amount is unreadable carries no realized figure
+ *   and is EXCLUDED rather than scored as a loss, so this `n` can sit below the resolvable count.
+ *   The conditioned twin is
+ *   {@link EntryScore.fieldHitRateGrossOfFees}, whose `n` is the exited subset of this `n`.
+ * @property {Distribution} fieldRealisedSolOverAllPositionsNetOfMeasuredFees  The same construction, net of
+ *   measured fees. **Its population is the positions whose WHOLE window was priced** — every
+ *   transaction the wallet appears in was already in the cost leg's target set, which was not
+ *   widened for this correction and would have cost RPC requests (see {@link entryCostTargets}). A
+ *   different denominator from the gross one above and never pooled with it — each carries its own
+ *   `n`, and the subset is NON-RANDOM with the direction unmeasured:
+ *   {@link NET_ALL_POSITIONS_SELECTION_CAVEAT}.
+ * @property {Distribution} fieldReturnPerSolOverAllPositionsNetOfMeasuredFees  The same, per SOL staked.
+ * @property {BoundedHitRate} fieldHitRateOverAllPositionsNetOfMeasuredFees  Share of those above zero, with its
+ *   exact interval. `n` is how many positions carried a complete whole-window net figure, and the
+ *   positions it drops are not a random sample of the gross one —
+ *   {@link NET_ALL_POSITIONS_SELECTION_CAVEAT}.
+ * @property {Distribution} fieldResidualMarkedSolAtWindowLastPriceGrossOfFees  **THE BOUND ON THE ZERO-RECOVERY
+ *   RESOLUTION, over the positions still held at the horizon** — what their remaining tokens would
+ *   be worth at the last price the walked window itself showed. It is reported BESIDE the worst-case
+ *   figures and is never substituted into one: a mark is a price nobody paid, and on the committed
+ *   tape 95% of unexited positions are losses even at the token's LATEST known price — **a HARSHER
+ *   mark than this one**, which is the window's own last price and the more generous of the two.
+ *   Empty when nothing is still held, and its `n` can sit BELOW
+ *   {@link EntryScore.positionsStillHeldAtHorizon}: {@link distribution} drops a non-finite value,
+ *   and a still-held position whose window showed no readable price at all marks at `NaN`.
+ * @property {number} positionsStillHeldAtHorizon   Positions entered, decidable, and NOT flat at the
+ *   horizon. Resolved at zero recovery above; this is how many that was.
+ * @property {number} positionsHorizonNotObserved   Positions whose closure our own rows cannot
+ *   decide, so they are resolved NEITHER way and are in neither construction. **OUR COVERAGE**, in
+ *   captain decision 174b's sense: reported and counted, never a loss, and a later stage may not
+ *   filter a candidate on it. With {@link EntryScore.fieldClosedRoundTrips} and
+ *   {@link EntryScore.positionsStillHeldAtHorizon} it partitions {@link EntryScore.fieldEntrants}
+ *   exactly, and the last two sum to {@link EntryScore.fieldOpenPositions} — which is the boolean
+ *   these two replace.
  * @property {number} fieldEntrants          Distinct (wallet, launch) create-slot entries.
  * @property {number} fieldClosedRoundTrips
  * @property {number} fieldOpenPositions     Entries with no complete P&L. Reported, never imputed.
+ *   **The conflation captain decision 461 splits**: it is `positionsStillHeldAtHorizon +
+ *   positionsHorizonNotObserved`, and those are a fact about the deployer's field and a fact about
+ *   our coverage respectively.
  * @property {number} deployerMismatches     Launches whose first create-slot buyer was not the
  *   candidate wallet. See {@link scoreEntry}.
  * @property {readonly EntryWindow[]} windows **EVERY window the walk delivered, refused ones
@@ -1321,6 +1687,47 @@ export function scoreEntry(launches, t, context = {}) {
     closedPriced.map((e) => e.realisedSolNetOfMeasuredFees),
   );
 
+  // ---- THE REALIZATION CORRECTION, captain decision 461. Reported, gating nothing. -----------
+  //
+  // Every figure above is over positions that GOT OUT. These are the same statistics over every
+  // position taken, with the ones still held at the horizon resolved at ZERO RECOVERY — the worst
+  // case for the part we cannot see, which is what the captain's standing evidence bar asks a figure
+  // to survive. The module header owns the measurement and the reason the conditioned reading is
+  // the optimistic one rather than the conservative one.
+  //
+  // THREE DENOMINATORS, kept apart because they answer different questions and pooling them is the
+  // defect this whole correction is about:
+  //
+  // - `resolvable` — exited plus still-held. What the fill tape alone can resolve at zero recovery.
+  // - `resolvablePriced` — the subset of those whose WHOLE window the cost leg priced. Smaller for
+  //   a reason that is ours and not the deployer's, and `entryCostTargets` owns why it was not
+  //   widened.
+  // - `stillHeld` — the positions the mark is a bound ON. Never a population any rate is over.
+  const resolvable = field.filter((e) => e.positionOutcome !== 'horizon-not-observed');
+  const stillHeld = field.filter((e) => e.positionOutcome === 'still-held-at-horizon');
+  const horizonNotObserved = field.filter((e) => e.positionOutcome === 'horizon-not-observed');
+  const resolvablePriced = resolvable.filter((e) =>
+    Number.isFinite(e.realisedSolAtZeroRecoveryNetOfMeasuredFees),
+  );
+  // A position resolvable by TOKEN readability can still carry an unreadable SOL amount, so it
+  // contributes to no realized figure — `distribution` drops it — and it is excluded from the rate
+  // rather than scored as a loss, which would manufacture a loss out of OUR OWN coverage in the same
+  // direction 461 exists to close. So this rate's `n` may sit BELOW `resolvable.length`, and it is
+  // the same `n` the gross distribution beside it reports. (The pre-existing conditioned
+  // `fieldHitRateGrossOfFees` has the same shape and is deliberately NOT moved: it is a published
+  // quantity and schema 25 claims every `…OfFees` figure is poolable across the boundary.)
+  const resolvableGross = resolvable.filter((e) =>
+    Number.isFinite(e.realisedSolAtZeroRecoveryGrossOfFees),
+  );
+  const fieldHitRateOverAllPositionsGrossOfFees = boundedHitRate(
+    resolvableGross,
+    (e) => e.realisedSolAtZeroRecoveryGrossOfFees > 0,
+  );
+  const fieldHitRateOverAllPositionsNetOfMeasuredFees = boundedHitRate(
+    resolvablePriced,
+    (e) => e.realisedSolAtZeroRecoveryNetOfMeasuredFees > 0,
+  );
+
   /** @type {EntryScore} */
   const score = {
     verdict: 'entry-unmeasured',
@@ -1368,6 +1775,29 @@ export function scoreEntry(launches, t, context = {}) {
     ),
     fieldHitRateNetOfMeasuredFees,
     fieldClosedRoundTripsPriced: closedPriced.length,
+    // Captain decision 461. BESIDE the conditioned figures above, never instead of them, and read
+    // by nothing — the shape 208b established for `roomLeftBound`.
+    fieldRealisedSolOverAllPositionsGrossOfFees: distribution(
+      resolvable.map((e) => e.realisedSolAtZeroRecoveryGrossOfFees),
+    ),
+    fieldReturnPerSolOverAllPositionsGrossOfFees: distribution(
+      resolvable.map((e) => e.returnPerSolAtZeroRecoveryGrossOfFees),
+    ),
+    fieldHitRateOverAllPositionsGrossOfFees,
+    fieldRealisedSolOverAllPositionsNetOfMeasuredFees: distribution(
+      resolvablePriced.map((e) => e.realisedSolAtZeroRecoveryNetOfMeasuredFees),
+    ),
+    fieldReturnPerSolOverAllPositionsNetOfMeasuredFees: distribution(
+      resolvablePriced.map((e) => e.returnPerSolAtZeroRecoveryNetOfMeasuredFees),
+    ),
+    fieldHitRateOverAllPositionsNetOfMeasuredFees,
+    // The BOUND on the zero-recovery resolution, over the positions it resolves. Reported so the
+    // worst case can be read against what the window's own last price says is still there.
+    fieldResidualMarkedSolAtWindowLastPriceGrossOfFees: distribution(
+      stillHeld.map((e) => e.residualMarkedSolAtWindowLastPriceGrossOfFees),
+    ),
+    positionsStillHeldAtHorizon: stillHeld.length,
+    positionsHorizonNotObserved: horizonNotObserved.length,
     fieldEntrants: field.length,
     fieldClosedRoundTrips: closed.length,
     fieldOpenPositions: field.length - closed.length,
@@ -1428,9 +1858,20 @@ export function scoreEntry(launches, t, context = {}) {
   if (score.fieldOpenPositions > 0) {
     score.caveats.push(
       `${score.fieldOpenPositions} of ${field.length} field entries were still open at the window's ` +
-        `end and have NO complete P&L; they are excluded from the realised figures, never marked`,
+        `end and have NO complete P&L; they are excluded from the *OfFees realised figures, never ` +
+        `marked. Of those, ${score.positionsStillHeldAtHorizon} were STILL HELD at the horizon and ` +
+        `are resolved at ZERO RECOVERY in the *OverAllPositions figures, and ` +
+        `${score.positionsHorizonNotObserved} could not have their closure decided from the rows we ` +
+        `hold at all — those are OUR COVERAGE and are resolved neither way (captain decisions 461 ` +
+        `and 174b).`,
     );
   }
+  // ON EVERY SCORE, including one that reached no bar, for the reason `roomLeftBound.caveat` is: the
+  // point of the decision is that the FIGURE states which construction produced it, so a surface
+  // cannot print a realised number without the label, and silence is never read as "there is only
+  // one reading".
+  score.caveats.push(REALISATION_CONSTRUCTION_CAVEAT);
+  score.caveats.push(NET_ALL_POSITIONS_SELECTION_CAVEAT);
   score.caveats.push(
     'Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority ' +
       'fees, landing tips, the venue fee and rent are all absent from the fill tape; the ' +

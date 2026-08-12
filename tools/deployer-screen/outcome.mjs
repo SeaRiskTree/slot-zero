@@ -416,7 +416,7 @@ export function dueForMeasurement(predictions, ledger, nowMs, bounds) {
  * no denominator, and it would hide the thing this split exists to show: the second arm was opened
  * because the gate arm has produced zero after-cost passes, so a pooled rate would let one arm's
  * accuracy stand in for the other's. A grade row carrying no arm — a version-1 ledger's — is the
- * GATE arm's, exactly: nothing before record schema 26 could admit through the second.
+ * GATE arm's, exactly: nothing before record schema 27 could admit through the second.
  *
  * `claims` / `graded` / `ungraded` / `ungradedByReason` stay whole-ledger bookkeeping, and they are
  * not arm statistics: they count rows and the reasons rows went ungraded, never a success rate.

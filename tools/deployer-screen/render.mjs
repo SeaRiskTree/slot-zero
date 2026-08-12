@@ -2349,7 +2349,7 @@ export function renderDryRun(plan) {
  * are over the ADMITTED UNION, because the rotation allocates ONE cap across both arms; at record
  * schema ≤25 they were the gate-passing population alone. That is allocation rather than a finding,
  * so spanning the arms is correct — and it is exactly why the label may not be left implicit, since
- * the header lines directly above these state the two arms apart. `record.mjs`'s schema-26 note
+ * the header lines directly above these state the two arms apart. `record.mjs`'s schema-27 note
  * lists the same fields on the record side, and the two must not drift.
  *
  * @param {{ enabled: boolean, reason: string | null, statePath: string | null,

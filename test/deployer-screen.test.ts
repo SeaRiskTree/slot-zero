@@ -18122,7 +18122,7 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     // CAPTAIN DECISION 451: every count on these lines is over the ADMITTED UNION, because one cap
     // is allocated across both arms — and the block says so WHERE IT PRINTS. It sits directly under
     // header lines that state the two arms apart, so an unlabelled `of N survivor(s)` there reads as
-    // the gate arm's. The record side lists the same fields in `record.mjs`'s schema-26 note.
+    // the gate arm's. The record side lists the same fields in `record.mjs`'s schema-27 note.
     expect(on).toContain(`ROTATION (${BOTH_ARMS_FIGURE}`);
     expect(on).toContain('no count on these lines is one arm');
     expect(on).toContain('tools/deployer-screen/rotation/stage2-scored.json @ sha256:abc');
@@ -19790,7 +19790,7 @@ describe('451: the sub-gate arm admits a refused deployer, and the two arms are 
   const NOW_ISO_480A = '2026-09-02T00:00:00.000Z';
 
   it('480a: the entry-verdict metric is the GATE arm`s, with a sub-gate sibling and no sum', () => {
-    // THE LEAK 451 LEFT BEHIND. `measuredEntryVerdictCount` keys on `entry`, and at schema 26 that
+    // THE LEAK 451 LEFT BEHIND. `measuredEntryVerdictCount` keys on `entry`, and at schema 27 that
     // spans both admitted populations — so a run scoring one gate-arm and two sub-gate candidates
     // published a single count over two denominators, permanently, in a record never retro-edited.
     // The NAME stays the gate arm's because a committed predictions document holds this tool to it.
@@ -19839,7 +19839,7 @@ describe('451: the sub-gate arm admits a refused deployer, and the two arms are 
 
   it('480a: the grader reports a hit rate PER ARM and never one pooled', () => {
     // A record at schema <=25 carries no `admissionArm`, and its claims are the GATE arm's — exactly,
-    // not by default. A schema-26 sub-gate row is graded into its own denominator.
+    // not by default. A schema-27 sub-gate row is graded into its own denominator.
     const claim = (over: Record<string, unknown>) => ({
       source: 'r.json',
       wallet: 'W',
@@ -20206,7 +20206,7 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
       .filter((k) => comparable(admitting.record, k) !== comparable(refusing.record, k))
       .sort();
 
-    // EXACTLY these, and every one is named in `record.mjs`'s schema-26 note:
+    // EXACTLY these, and every one is named in `record.mjs`'s schema-27 note:
     //   candidates            per-arm BY CONSTRUCTION — the row carries `admissionArm`.
     //   predictions           per-arm BY CONSTRUCTION — the block reports `byArm` (480a).
     //   entryDrops            the walk's own tally, over whatever it walked.

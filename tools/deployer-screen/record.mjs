@@ -1098,7 +1098,7 @@ export const DERIVED_PREDICTION_METRICS = {
   /**
    * The same count over the SECOND ADMISSION ARM — captain decision 451, split out by 480a.
    *
-   * Reads 0 on every schema-≤25 record, which is exact rather than a default: nothing before 26
+   * Reads 0 on every schema-≤26 record, which is exact rather than a default: nothing before 27
    * could admit through this arm, so a row carrying no `admissionArm` is the gate arm's and never an
    * unknown one.
    */

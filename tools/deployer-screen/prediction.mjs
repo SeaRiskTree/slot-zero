@@ -430,7 +430,7 @@ export function buildPredictionBlock(input) {
  * live under `byArm` and are never summed here or by any reader.
  *
  * **A row carrying no `admissionArm` is the GATE arm, and that is exact rather than a default:**
- * nothing before record schema 26 could admit through the second arm, so its absence is
+ * nothing before record schema 27 could admit through the second arm, so its absence is
  * unambiguous rather than unknown. `candidates`, `noClaim` and `noClaimByReason` stay run-level
  * bookkeeping over every ranked row — most of them in NEITHER arm, since a rejected candidate is
  * counted there too — so they are not an arm statistic and pool nothing.
@@ -515,7 +515,7 @@ export const MIN_GRADEABLE_SCHEMA = 6;
  * @property {'gate' | 'sub-gate'} admissionArm WHICH ARM admitted the candidate this claim is about
  *   — captain decisions 451 and 480a. Carried so a hit rate can be reported per arm rather than
  *   pooled over two populations with two denominators. A record row carrying no `admissionArm` is
- *   the GATE arm, exactly: nothing before record schema 26 could admit through the second one.
+ *   the GATE arm, exactly: nothing before record schema 27 could admit through the second one.
  * @property {string | number | null} thresholdsVersion
  * @property {Record<string, unknown>} stage2Entry The `stage2_entry` bars THIS run applied.
  * @property {Record<string, unknown>} stage2Cost  The `stage2_cost` bars THIS run applied.
@@ -624,7 +624,7 @@ export function extractPredictions(records) {
           gateReading: typeof block['gateReading'] === 'string' ? block['gateReading'] : '(unrecorded)',
           entryReading: typeof block['entryReading'] === 'string' ? block['entryReading'] : '(unrecorded)',
           // ABSENT MEANS THE GATE ARM, and that is exact rather than a fallback: no record before
-          // schema 26 could admit a candidate through the second arm, so there is no era in which
+          // schema 27 could admit a candidate through the second arm, so there is no era in which
           // this field's absence stands for an unknown arm.
           admissionArm: c['admissionArm'] === 'sub-gate' ? 'sub-gate' : 'gate',
           thresholdsVersion: r['thresholdsVersion'] ?? null,

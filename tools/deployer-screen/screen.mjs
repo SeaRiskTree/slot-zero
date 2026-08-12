@@ -3107,7 +3107,7 @@ export async function main(opts, env, out, err, seam = {}) {
         // It is not the ONLY place an admitted total appears — `scoringRotation`'s `survivors`,
         // `order`, `selected` and `neverScoredBefore`, and `scoringCap.survivorsUnscored`, are all
         // over this same union, because the rotation ALLOCATES the cap across both arms. Those are
-        // allocation figures rather than findings and publish no rate; `record.mjs`'s schema-26 note
+        // allocation figures rather than findings and publish no rate; `record.mjs`'s schema-27 note
         // owns the consequence for a reader comparing them across the boundary.
         const scoredByArm = (
           /** @type {import('./admission.mjs').AdmissionArm} */ arm,
@@ -3647,7 +3647,7 @@ export async function main(opts, env, out, err, seam = {}) {
         // UNION where at ≤25 it was the gate-passed scored set alone. It is a tally of what the WALK
         // refused rather than a finding about deployers, so spanning both arms is correct here — but
         // a reader comparing `total` or `byReason.mintTimeDisagreement` across the boundary must not
-        // read a rise as gate-population behaviour. `record.mjs`'s schema-26 note enumerates every
+        // read a rise as gate-population behaviour. `record.mjs`'s schema-27 note enumerates every
         // field this is true of; add to that list, not only here.
         entryDrops: (() => {
           const by = candidates.reduce(

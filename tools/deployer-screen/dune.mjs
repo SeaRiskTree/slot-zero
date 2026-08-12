@@ -1077,6 +1077,39 @@ function readRowCount(value) {
 }
 
 /**
+ * Project one wallet's parsed rows back into the six-column shape they arrived in.
+ *
+ * Captain decision 457a's by-product, and it is a PROJECTION of rows already in memory: no request,
+ * no credit, no vendor. It runs off {@link parseCreationRows}' output rather than off the raw result
+ * so that every row it emits has already survived the parser — the deployer, the mint, the timestamp
+ * and `launches_total` are all established, and `bonded` is a real boolean rather than whatever the
+ * column held. A batch with ANY unreadable row is refused whole one level up, so a consumer must
+ * still read the refusal beside these rows; what this guarantees is only that a row present here is
+ * a row this leg could read.
+ *
+ * `launches_total` is the reconciled per-wallet count, so a wallet whose own rows disagreed about
+ * its size (`declared === null`) emits NO rows at all rather than rows carrying a count this leg
+ * refused. That is the same direction the refusal itself runs in: a reading that cannot account for
+ * its own size is withheld, not published with the doubtful field blanked.
+ *
+ * @param {string} wallet
+ * @param {readonly DuneLaunch[]} launches
+ * @param {number | null} declaredLaunches
+ * @returns {LaunchListRow[]}
+ */
+export function toLaunchListRows(wallet, launches, declaredLaunches) {
+  if (declaredLaunches === null) return [];
+  return launches.map((l) => ({
+    deployer: wallet,
+    mint: l.mint,
+    created_at: new Date(l.createdAtMs).toISOString(),
+    bonded: l.bonded,
+    launches_total: declaredLaunches,
+    is_mayhem_mode: l.mayhem,
+  }));
+}
+
+/**
  * @typedef {object} WalletEnumeration
  * @property {boolean} usable      Whether this wallet's reading may be gated on. `false` means fall
  *   back to the creation walk — never "this wallet has no launches".
@@ -1742,6 +1775,26 @@ export async function readCoverageProbe(client, opts) {
  *   count by construction, and they no longer are.
  * @property {OversizedSplitOutcome} oversizedSplit What the split did, what it cost and what it did
  *   NOT reach. Present on every run, `attempted: false` when nothing was truncated.
+ * @property {Map<string, readonly LaunchListRow[]>} launchListByWallet The rows this leg PARSED, in
+ *   the six-column shape {@link CREATION_SQL} returns, keyed on the wallet they belong to. Captain
+ *   decision 457a's by-product: a projection of what the execution already paid for, costing no
+ *   request and reaching no bar. Empty for a wallet the enumeration returned nothing for, which is
+ *   why {@link WalletEnumeration}`.usable` travels with it and is what a consumer must read first —
+ *   see `launch-list.mjs`, which is the only consumer and states the whole contract.
+ */
+
+/**
+ * @typedef {object} LaunchListRow
+ * @property {string} deployer
+ * @property {string} mint
+ * @property {string} created_at ISO-8601, UTC, millisecond precision. Written back out of the epoch
+ *   millisecond {@link parseDuneTimestamp} read, so the value a reader parses is the value this leg
+ *   parsed rather than whichever of Dune's two spellings the wire carried.
+ * @property {boolean} bonded
+ * @property {number} launches_total The deployer's TRUE count before {@link CREATION_SQL}'s cap —
+ *   the only thing that distinguishes a capped prefix from a whole history, which is why it travels
+ *   on every row rather than being inferred from how many rows arrived.
+ * @property {boolean | null} is_mayhem_mode `null` is NOT MEASURED, never "not a mayhem launch".
  */
 
 /**
@@ -1792,7 +1845,13 @@ function refusedEnumeration(wallets, reasons) {
   const coverage = { ok: false, fromMs: null, toMs: null, reasons: [...reasons], holes: [], staleOnly: false };
   /** @type {Map<string, WalletEnumeration>} */
   const byWallet = new Map();
+  /** @type {Map<string, readonly LaunchListRow[]>} */
+  const launchListByWallet = new Map();
   for (const wallet of wallets) {
+    // Empty rather than absent, and the distinction is the whole of captain decision 457a's third
+    // contract sentence: this wallet WAS asked about and nothing came back, which is not the same
+    // as a wallet no run ever put in a batch. The refusal travels with it in `byWallet`.
+    launchListByWallet.set(wallet, []);
     byWallet.set(
       wallet,
       toWalletEnumeration({
@@ -1810,6 +1869,7 @@ function refusedEnumeration(wallets, reasons) {
     probe,
     coverage,
     byWallet,
+    launchListByWallet,
     unreadableRows: 0,
     rowsReturned: 0,
     walletsRefusedByShape: 0,
@@ -2337,9 +2397,18 @@ export async function enumerateCreations(client, opts) {
 
   /** @type {Map<string, WalletEnumeration>} */
   const byWallet = new Map();
+  // Captain decision 457a's by-product, accumulated at the SAME point the gate's own reading is —
+  // so a wallet re-answered by an oversized-split follow-up replaces its truncated prefix here
+  // exactly as it does in `byWallet`, and the two can never describe different histories.
+  /** @type {Map<string, readonly LaunchListRow[]>} */
+  const launchListByWallet = new Map();
   /** @type {(rowsByWallet: Map<string, DuneLaunch[]>, declaredByWallet: Map<string, number | null>, batchReasons: readonly string[]) => void} */
   const fill = (rowsByWallet, declaredByWallet, batchReasons) => {
     for (const w of opts.wallets) {
+      launchListByWallet.set(
+        w,
+        toLaunchListRows(w, rowsByWallet.get(w) ?? [], declaredByWallet.get(w) ?? null),
+      );
       byWallet.set(
         w,
         toWalletEnumeration({
@@ -2382,6 +2451,7 @@ export async function enumerateCreations(client, opts) {
       launchCap,
       walletsRefusedByLaunchCap: 0,
       oversizedSplit,
+      launchListByWallet,
     };
   }
 
@@ -2515,6 +2585,10 @@ export async function enumerateCreations(client, opts) {
                 `whole follow-up execution is refused. The creation walk answers for it.`,
             ];
       for (const w of group.wallets) {
+        launchListByWallet.set(
+          w,
+          toLaunchListRows(w, parsed.byWallet.get(w) ?? [], parsed.declaredByWallet.get(w) ?? null),
+        );
         byWallet.set(
           w,
           toWalletEnumeration({
@@ -2548,6 +2622,7 @@ export async function enumerateCreations(client, opts) {
     launchCap,
     walletsRefusedByLaunchCap,
     oversizedSplit,
+    launchListByWallet,
   };
 }
 

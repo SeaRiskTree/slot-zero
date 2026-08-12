@@ -1226,6 +1226,97 @@ pair that clears the captain's 1,000-window floor, neither doing it alone. The r
 enumeration that would PRODUCE these lists (350a) is still its own lane. And nothing here tries to
 establish who anyone is: captain decision 370a closed that question permanently.
 
+### The launch list this run leaves behind — captain decision 457a
+
+**A run's Dune enumeration answer is now written down instead of discarded, so the frequency lane can
+read it.** `tools/arrival-rate-walk/` needs a launch list — which mints each cohort deployer created,
+and when — and it structurally cannot fetch one: it is keyless throughout and its credential
+allow-list is EMPTY. PR 87 / decision 437a then required a lane budget on every code path that spends
+a Dune credit, which left that lane's launch-list leg with **no guarded execution path at all.** The
+captain's answer was not to give an unkeyed lane a keyed one, and not to add a second guarded caller
+here, but to notice that this tool ALREADY enumerates exactly those rows on a path that is already
+budgeted and already approved.
+
+**Which path, and why it was already approved.** `dune.mjs` → `enumerateCreations` — the Stage 1
+creation-enumeration leg, one of only two callers of `DuneClient.execute` in this repository
+(`test/dune-credit-ceiling.test.ts` → "437(a)" pins that enumeration as a source fact), refusing
+before its first request without a monthly allowance decision and a lane budget, and the route a
+default run has taken since captain decision 156a. The by-product is a projection of the rows that
+leg parsed for the gate.
+
+**It costs nothing in every currency, and that is structural rather than careful.** No request, no
+execution, no credit, no byte of vendor traffic, no wall clock past a file write —
+`test/launch-list-handover.test.ts` reads the enumeration's own request counter before and after the
+document is built AND written, and asserts it did not advance, having first asserted that the same
+counter DID advance during the enumeration so a zero cannot be the zero of a step that never
+happened. **It gates nothing**: no bar, threshold, verdict or record field reads it,
+and `RECORD_SCHEMA_VERSION` is deliberately unmoved — nothing was added to the versioned contract the
+grading lane consumes.
+
+**It is OPT-IN, and the flag buys permission to PERSIST rather than to spend.** `--launch-list`
+writes to the handover directory below; `--launch-list <dir>` writes to that directory; the default
+writes nothing at all. Since it costs no vendor traffic there is no spend to opt into — what an
+operator is asking for is per-launch rows on disk, and this tool's standing posture is that those
+live in memory for one run unless somebody says otherwise. It is `--out`'s posture, applied to the
+same class of data. (It is also what keeps a test run, or any run nobody asked, from depositing a
+fixture in the directory a real lane takes its newest list from — that mattered in practice: the
+first cut defaulted the write ON and the suite filled the handover directory with synthetic rows.)
+
+**Where it goes.** `<data root>/screen-launch-lists/<generated instant>.json` by default, off-tree,
+named by `config/data-root.mjs`. A real batch is tens of thousands of rows, so a file per run inside this
+repository would grow back exactly what dry dock phase C removed; it is the same reason the
+arrival-rate walk's `--out` lives in the store. The file name is the document's own `generatedAtIso`,
+so lexicographic order is chronological order and a reader can take the newest without opening
+every file — and the reader re-derives that name from the envelope and refuses a mismatch.
+
+**What travels with it.** The document embeds its own contract (`launch-list.mjs` →
+`LAUNCH_LIST_CONTRACT`) because the reader is a lane that cannot see this README at the moment it
+walks: the rows are a by-product and no lane may issue a request to refresh them; `generatedAtIso` is
+the OBSERVATION CEILING and a deployer quiet near it may have stopped launching or may simply be
+beyond the list's reach; an absent wallet was NEVER ASKED ABOUT and an empty row set is not a history
+of zero; and a deployer the gate would not vouch for may not be walked on its rows. A leg that FAILED
+writes a document too, with no rows and the failure on it, so the newest file can say that the newest
+attempt came back empty rather than leaving an older successful list standing in for the world.
+
+**How a lane gets a list over the wallets it wants**: run the screen over them with `--wallets`
+(captain decision 398a, above). Enumeration happens before the gate reads anything, so a wallet that
+FAILS the competence gate still has its launches enumerated — which is what keeps the arrival-rate
+lane's historical seed (decision 165b: take the month whole, no filter on success) from being
+narrowed by this tool's bar.
+
+**Writing the file cannot fail the run.** The store may be read-only, full, or simply absent on a box
+that never fetched it; none of that is a reason to throw away a screen whose keyed allowance is
+already spent, so the failure is printed and the run continues — the same rule a Dune failure follows
+when it degrades to the walk. **The failure line goes to stderr unconditionally**, `--json` included:
+the record deliberately carries nothing about this by-product, so a suppressed failure line would
+leave a JSON-mode operator with no way at all to learn the handover did not happen. The success line
+stays on stdout behind `--json` as every other progress line does.
+
+**ASKING FOR THE LIST WHILE FORBIDDING THE ENUMERATION IS REFUSED, AND THE TWO STATES THAT ARE NOT A
+CONTRADICTION SAY SO INSTEAD** (captain decision 483). `--launch-list` asks for the Stage 1 Dune
+enumeration's output and `--no-dune` / `--ownership-only` forbid the enumeration that produces it:
+`screen.mjs` → `launchListEnumerationContradiction` REFUSES that pair, in `parseArgs` and again in
+`main`, the two-place shape `duneFillSourceContradiction` already uses one flag over — and it is its
+own predicate rather than an extension of that one, which is about Stage 2's entry fill source.
+Suppressing it is the worse of the two, because the reader takes the NEWEST list in the handover
+directory: a run that writes nothing and reports nothing leaves an EARLIER list standing as the
+current state of the world, which is exactly what the "a leg that FAILED writes a document too" rule
+above exists to prevent, arriving from the other side. The two remaining causes — **no usable
+`DUNE_API_KEY`**, and a batch with **no candidate to enumerate** — are legitimate states rather than
+contradictions, so the run names which one applied and states plainly that no list was written, on
+stderr for the same reason the write failure is.
+
+**THERE ARE SIX WAYS A `--launch-list` RUN CAN END WITH NO FILE, AND ONE DERIVATION NAMES ALL OF
+THEM** (captain decision 484). Two are the refused contradictions above. The other four are
+legitimate modes and are the note's: no usable `DUNE_API_KEY`, no candidate to enumerate, `--stage0`
+and `--dry-run`. **Neither mode flag is refused** — captain decision 286c already ruled on exactly
+this by folding `--stage0` into `entryFillSourceIsRead` so a guard would NOT refuse the free,
+offline, keyless mode, and by deliberately not folding `--dry-run`, which PLANS a source rather than
+reading one. Both return above the write site, so `screen.mjs` → `launchListNotWrittenNote` is asked
+by each of the three return paths rather than a line being copied into each: three expressions that
+merely agree is captain decision 144a's defect, and a new early return asks the one function and
+gets the whole rule.
+
 ## Retention — MadeOnSol terms §5a(d)
 
 > *(d) you may not cache, store, or accumulate API Data beyond what is reasonably necessary to
@@ -1285,9 +1376,22 @@ establish who anyone is: captain decision 370a closed that question permanently.
   database.
 
 **The same posture covers Dune**, whose own terms were read before the first committed run and
-neither address caching nor derived data — its per-launch rows live in memory for one run, and the
-record keeps the coverage *bound* rather than the vendor's monthly counts.
-[CREATION-DERIVED.md §8.7](./CREATION-DERIVED.md) owns that reading.
+address neither caching nor derived data, and the run record keeps the coverage *bound* rather than
+the vendor's monthly counts. [CREATION-DERIVED.md §8.7](./CREATION-DERIVED.md) owns that reading.
+
+**ONE HALF OF THAT POSTURE MOVED WITH CAPTAIN DECISION 457a AND THIS SENTENCE USED TO DENY IT.** It
+read *"its per-launch rows live in memory for one run"*, and on a run that writes the launch list
+that is no longer true: the enumeration's own rows — deployer, mint, creation instant, whether the
+curve completed, the deployer's total, the mayhem flag — are written to
+`<data root>/screen-launch-lists/`. **The argument behind the posture is unchanged and is worth
+stating rather than assuming.** Those columns are chain facts, obtainable keylessly from the chain
+and not proprietary to the vendor; the file is written OUTSIDE this repository and is never
+committed, so no git history accumulates it; the terms address caching and derived data nowhere; and
+the whole purpose of the file is to REMOVE an execution — the arrival-rate lane's launch-list leg —
+rather than to add one, so it reduces the vendor's load rather than increasing it. **What it is not
+is a neutral change**, and it is recorded here for the same reason schema 24's entrant addresses are
+two bullets up: the retention posture moved and the argument did not. It is also why the write is
+OPT-IN rather than on by default — a run persists these rows because an operator asked for them.
 
 **§5a(b)** — internal research only. No publishing, no outbound feed, no shared surface, no
 third-party display. The output is a text report and an optional local JSON file.

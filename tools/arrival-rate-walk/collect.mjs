@@ -40,6 +40,13 @@ import { fileURLToPath } from 'node:url';
 import { KeylessClient, CeilingReached, SWAP_API, SOLANA_RPC } from './client.mjs';
 import { readLaunches, readWindowTape, csvField } from './tape.mjs';
 import { readDuneResultFile, parseCohortRows, parseLaunchListRows, assessCohortCoverage, chooseThreshold } from './cohort.mjs';
+import {
+  LAUNCH_LIST_STALENESS_RULE,
+  isLaunchListDocument,
+  launchListHandoverDir,
+  readLaunchListDocument,
+  resolveLaunchListPath,
+} from './launch-list.mjs';
 import { selectPreflightLaunches, measureBlockTimeSkew, measureDuneClockSkew, assessSkew } from './preflight.mjs';
 import { walkOpeningWindow } from './walk.mjs';
 import {
@@ -78,12 +85,18 @@ export function positiveNumber(flag, raw) {
 /** @param {readonly string[]} argv */
 export function parseArgs(argv) {
   /** @type {{ phase: string, out: string | null, cohort: string | null, launchList: string | null,
+   *   launchListMaxAgeDays: number | null,
    *   limit: number | null, only: string[], minIntervalMs: number, maxRequests: number, dryRun: boolean }} */
   const args = {
     phase: '',
     out: null,
     cohort: null,
     launchList: null,
+    // No default, on purpose. A launch list from the deployer screen states the instant its
+    // observation stops, and nothing measured here says how fast that population goes stale — so
+    // the bound is the run's to state and is recorded in the plan beside the result. A raw Dune
+    // export carries no ceiling and needs none of this. See `launch-list.mjs`.
+    launchListMaxAgeDays: null,
     limit: null,
     only: [],
     minIntervalMs: BOUNDS.walk.minIntervalMs,
@@ -101,6 +114,9 @@ export function parseArgs(argv) {
     else if (a === '--out') args.out = next();
     else if (a === '--cohort') args.cohort = next();
     else if (a === '--launch-list') args.launchList = next();
+    else if (a === '--launch-list-max-age-days') {
+      args.launchListMaxAgeDays = positiveNumber('--launch-list-max-age-days', next());
+    }
     else if (a === '--limit') args.limit = positiveNumber('--limit', next());
     else if (a === '--only') args.only.push(next());
     else if (a === '--min-interval-ms') args.minIntervalMs = positiveNumber('--min-interval-ms', next());
@@ -118,8 +134,18 @@ export function parseArgs(argv) {
   if (args.maxRequests > BOUNDS.walk.maxRequestsPerRun) {
     throw new Error(`--max-requests may not exceed the pinned ceiling of ${BOUNDS.walk.maxRequestsPerRun}`);
   }
+  // STILL REQUIRED, and deliberately not defaulted to the handover directory captain decision 457a
+  // adds. `--launch-list` names the POPULATION this run measures, and a walk that picked up
+  // whichever list happened to be newest in the store would choose its own population silently —
+  // which is the same failure as reading an absent list as an empty one, arriving from the other
+  // side. The directory is printed by the screen and named in the README; the operator passes it,
+  // and `--launch-list <dir>` then means "the newest list in here".
   if (args.phase === 'walk' && args.launchList === null) {
-    throw new Error('--launch-list is required for the walk: it is what says which launches exist');
+    throw new Error(
+      `--launch-list is required for the walk: it is what says which launches exist. It takes a raw ` +
+        `Dune export, a deployer-screen launch list, or a DIRECTORY of the latter — the handover ` +
+        `directory is ${launchListHandoverDir()}.`,
+    );
   }
   if (args.phase !== 'plan' && args.out === null) {
     throw new Error('--out is required: a run that leaves no record is not reproducible');
@@ -161,12 +187,29 @@ export function ledger(out, phase) {
  * @param {object} args
  * @param {string} args.out
  * @param {KeylessClient} args.client
- * @param {string | null} [args.launchListPath]
+ * @param {import('./cohort.mjs').LaunchList | null} [args.launchList] The list, ALREADY PARSED —
+ *   this function opens no file. `readLaunchListInput` is the one reader: it is what tells a screen
+ *   by-product from a raw Dune export, applies the staleness ceiling to the first, and produces the
+ *   refusal below. Taking a PATH here as well would be a second door into leg B that reads with
+ *   `readDuneResultFile` directly and so honours none of that, which is why the parameter that used
+ *   to do it is gone rather than kept for a caller that might want it.
+ * @param {string | null} [args.launchListRefusal] Why the supplied list may not be walked — see
+ *   {@link launchListRefusalReason}. **Leg A runs and is written either way** (captain decision 485):
+ *   it compares the chain clock against the vendor clock and reads no launch list, so a problem with
+ *   a file it never opens may not cost that measurement. Leg B is refused instead of skipped, and
+ *   `preflight.json` records WHICH — "refused" and "no list was supplied" are opposite findings.
  * @param {number} [args.sampleLaunches]
  * @returns {Promise<{ verdict: import('./preflight.mjs').SkewVerdict, samples: import('./preflight.mjs').SkewSample[],
- *   duneVerdict: import('./preflight.mjs').SkewVerdict | null, duneSamples: import('./preflight.mjs').SkewSample[] }>}
+ *   duneVerdict: import('./preflight.mjs').SkewVerdict | null, duneSamples: import('./preflight.mjs').SkewSample[],
+ *   launchListRefusal: string | null }>}
  */
-export async function runPreflight({ out, client, launchListPath = null, sampleLaunches = BOUNDS.preflight.sampleLaunches }) {
+export async function runPreflight({
+  out,
+  client,
+  launchList = null,
+  launchListRefusal = null,
+  sampleLaunches = BOUNDS.preflight.sampleLaunches,
+}) {
   const picked = selectPreflightLaunches(readLaunches(), (m) => readWindowTape(m), sampleLaunches);
   say(`preflight leg A: ${picked.length} launches, at most ${picked.length * BOUNDS.preflight.attemptsPerLaunch} requests`);
   const samples = await measureBlockTimeSkew({
@@ -181,8 +224,11 @@ export async function runPreflight({ out, client, launchListPath = null, sampleL
   let duneSamples = [];
   /** @type {import('./preflight.mjs').SkewVerdict | null} */
   let duneVerdict = null;
-  if (launchListPath !== null) {
-    const list = parseLaunchListRows(readDuneResultFile(readFileSync(launchListPath, 'utf8'), launchListPath));
+  const legBList = launchListRefusal !== null ? null : launchList;
+  if (launchListRefusal !== null) {
+    say(`preflight leg B REFUSED: ${launchListRefusal}`);
+  } else if (legBList !== null) {
+    const list = legBList;
     duneSamples = measureDuneClockSkew([...list.byDeployer.values()].flat(), (m) => readWindowTape(m));
     duneVerdict = assessSkew(duneSamples, BOUNDS.walk.mintFloorSlackMs);
     say(`preflight leg B: ${duneSamples.length} launches matched against the committed tape, 0 requests`);
@@ -203,15 +249,17 @@ export async function runPreflight({ out, client, launchListPath = null, sampleL
         slackMs: BOUNDS.walk.mintFloorSlackMs,
         legA: { source: 'getBlockTime(createSlot) vs the committed window sidecar', verdict, samples },
         legB:
-          duneVerdict === null
-            ? { skipped: 'no launch-list export was supplied' }
-            : { source: "Dune created_at vs the committed window sidecar", verdict: duneVerdict, samples: duneSamples },
+          launchListRefusal !== null
+            ? { refused: launchListRefusal }
+            : duneVerdict === null
+              ? { skipped: 'no launch-list export was supplied' }
+              : { source: "Dune created_at vs the committed window sidecar", verdict: duneVerdict, samples: duneSamples },
       },
       null,
       2,
     ) + '\n',
   );
-  return { verdict, samples, duneVerdict, duneSamples };
+  return { verdict, samples, duneVerdict, duneSamples, launchListRefusal };
 }
 
 // -------------------------------------------------------------------------------------------
@@ -232,6 +280,101 @@ export function readLaunchList(text, label) {
 }
 
 /**
+ * Read whatever the operator pointed `--launch-list` at: a raw Dune export, or the deployer screen's
+ * launch-list by-product (captain decision 457a), or a DIRECTORY holding the latter.
+ *
+ * **The routing keys on the document's own marker, never on the file name or the flag**, because the
+ * failure worth removing is a by-product read as a raw export: `readDuneResultFile` would find its
+ * rows under a `rows` key if it had one, walk them, and report nothing whatever about the
+ * observation ceiling they were collected under. The by-product deliberately keys its rows
+ * elsewhere, so that route already refuses — this makes it route correctly instead.
+ *
+ * **A by-product needs `maxAgeDays` and there is no default.** See
+ * {@link LAUNCH_LIST_STALENESS_RULE}: nothing measured here says how fast a screened deployer
+ * population goes stale, so the bound is stated by the run and recorded in the plan rather than
+ * invented once and inherited silently forever. A raw export carries no ceiling to check and is
+ * unaffected.
+ *
+ * @param {string} target A file or a directory.
+ * @param {object} opts
+ * @param {number} opts.nowMs
+ * @param {number | null} opts.maxAgeDays
+ * @returns {{ list: import('./cohort.mjs').LaunchList,
+ *   provenance: import('./launch-list.mjs').LaunchListProvenance | null }}
+ */
+export function readLaunchListInput(target, { nowMs, maxAgeDays }) {
+  const resolved = resolveLaunchListPath(target);
+  if (!resolved.ok) throw new Error(resolved.reason);
+  const text = readFileSync(resolved.path, 'utf8');
+  if (!isLaunchListDocument(text)) {
+    return { list: readLaunchList(text, resolved.path), provenance: null };
+  }
+  if (maxAgeDays === null) {
+    throw new Error(
+      `${resolved.path} is a deployer-screen launch list, which states the instant its observation ` +
+        `stops. Pass --launch-list-max-age-days to say how old a list this run will walk. ` +
+        LAUNCH_LIST_STALENESS_RULE,
+    );
+  }
+  const { rows, provenance } = readLaunchListDocument(text, {
+    path: resolved.path,
+    nowMs,
+    maxAgeMs: maxAgeDays * 86_400_000,
+  });
+  return { list: parseLaunchListRows(rows), provenance };
+}
+
+/**
+ * Hold a launch list's own refusals against a caller that has no plan to carry them.
+ *
+ * `buildPlan` adopts them into `plan.refusals`, which is how the plan and walk phases surface them.
+ * The pre-flight has no plan: it reads the list only to check the two clocks against the committed
+ * tape. Left unread, those refusals were collected and thrown away — so leg B could measure skew
+ * against a list whose enumeration leg had FAILED, whose coverage probe REFUSED, or that is past the
+ * `--launch-list-max-age-days` the run itself stated, and report `ok` from it.
+ *
+ * **It states the refusal rather than throwing it**, captain decision 485. The first cut threw
+ * before `runPreflight` was called, which cost LEG A — the chain-clock-versus-vendor-clock check,
+ * which uses no launch list at all — over a problem with a file it does not read, and unwound to the
+ * CLI's `main().catch` for exit 1 where this phase's documented hard stop is exit 2. Leg A is
+ * measured and written first, this refuses leg B, and the exit code is the phase's own.
+ *
+ * @param {import('./launch-list.mjs').LaunchListProvenance | null} provenance
+ * @returns {string | null} Why the list may not be walked, or `null` when nothing is against it —
+ *   including for a raw Dune export, which carries no provenance and states no ceiling.
+ */
+export function launchListRefusalReason(provenance) {
+  if (provenance === null || provenance.refusals.length === 0) return null;
+  return `the launch list at ${provenance.path} cannot be used: ${provenance.refusals.join(' ')}`;
+}
+
+/**
+ * A launch list that could not be READ AT ALL, stated in the same channel as one that was read and
+ * refused. Captain decision **486**, and the two are deliberately worded apart.
+ *
+ * `readLaunchListInput` throws for the STRUCTURAL cases — no such directory, an empty handover
+ * directory, a by-product supplied with no `--launch-list-max-age-days`, unreadable JSON, a wrong
+ * `kind` or `schemaVersion`, a name that disagrees with the instant it declares, no `launches`
+ * array. Decision 485 moved the SOFT refusals off the throw path so leg A would survive them, and
+ * left these behind: they still unwound to the CLI's `main().catch` for exit 1, so leg A — which
+ * opens no launch list at all — was never measured and `preflight.json` was never written, which is
+ * the exact failure 485 named.
+ *
+ * **"This is not a launch list" and "we refuse to walk this one" must stay legible apart**, so the
+ * vendor's own message travels verbatim behind a prefix that says which of the two happened. It is
+ * neither flattened into the soft refusals' wording nor allowed to read as a clock verdict.
+ *
+ * **The PREFLIGHT alone gets this treatment.** The plan and walk phases have nowhere to put a
+ * verdict and a structurally unreadable list must still stop them, so their throws are untouched.
+ *
+ * @param {unknown} cause
+ * @returns {string}
+ */
+export function launchListUnreadableReason(cause) {
+  return `the launch list could not be read at all: ${cause instanceof Error ? cause.message : String(cause)}`;
+}
+
+/**
  * @typedef {object} Plan
  * @property {boolean} ok Cleared by a {@link Plan.refusals} entry only. An advisory never clears it.
  * @property {string[]} refusals Each one stops the run.
@@ -247,6 +390,10 @@ export function readLaunchList(text, label) {
  * @property {{ p50: number, p95: number, ceiling: number }} expectedRequests
  * @property {{ p50Hours: number, p95Hours: number }} expectedWallClock
  * @property {{ executions: number, estimatedCredits: number }} duneSpend
+ * @property {import('./launch-list.mjs').LaunchListProvenance | null} launchListProvenance Where the
+ *   list came from and how old it is, when it came from the deployer screen's by-product (captain
+ *   decision 457a). `null` for a raw Dune export, which states no observation ceiling — that is an
+ *   absence of the evidence, never a claim that the export is fresh.
  * @property {string[]} caveats
  */
 
@@ -259,9 +406,14 @@ export function readLaunchList(text, label) {
  * @param {import('./cohort.mjs').LaunchList} input.launchList The already-parsed launch list — see
  *   {@link readLaunchList}.
  * @param {number} input.nowMs
+ * @param {import('./launch-list.mjs').LaunchListProvenance | null} [input.launchListProvenance] The
+ *   handover evidence when the list is the screen's by-product. Its own refusals are adopted whole —
+ *   a stale list, a failed enumeration leg, a refused coverage probe — and a deployer the screen
+ *   would not gate on refuses the plan **only when this run means to walk it**, because this
+ *   document is one screen batch and a wallet outside this lane's cohort is somebody else's refusal.
  * @returns {Plan}
  */
-export function buildPlan({ cohortText, launchList, nowMs }) {
+export function buildPlan({ cohortText, launchList, nowMs, launchListProvenance = null }) {
   /** @type {string[]} */
   const refusals = [];
   /** @type {string[]} */
@@ -359,6 +511,29 @@ export function buildPlan({ cohortText, launchList, nowMs }) {
     }
   }
 
+  // ---- THE HANDOVER'S OWN EVIDENCE (captain decision 457a). ---------------------------------
+  // Adopted whole, and BEFORE the cost estimate, so a run that cannot use its list never reads a
+  // request budget as though it were going to spend one. The screen's refusals are refusals about
+  // the LIST — a stale ceiling, a failed enumeration leg, a coverage probe that would not vouch for
+  // its surfaces — and none of them is a judgement about a deployer.
+  if (launchListProvenance !== null) {
+    refusals.push(...launchListProvenance.refusals);
+    advisories.push(...launchListProvenance.advisories);
+    // A wallet the screen would not gate on refuses this plan only where this plan MEANS TO WALK
+    // IT. The document is one screen batch and this lane's cohort is chosen elsewhere, so refusing
+    // on a wallet nobody here asked for would make an unrelated run's coverage gap this run's.
+    const walked = new Set(cohort.map((c) => c.wallet));
+    for (const { wallet, reasons } of launchListProvenance.unusableDeployers) {
+      if (!walked.has(wallet)) continue;
+      refusals.push(
+        `${wallet} is in this run's cohort, and the deployer screen would not gate on the launch ` +
+          `history it read for that wallet: ${reasons.join(' ')} The rows are in the list; what is ` +
+          `missing is any claim that they are whole, so walking them would measure an arrival rate ` +
+          `over a history nobody vouched for. Re-run the screen over this wallet.`,
+      );
+    }
+  }
+
   // Per-launch page budgets measured on the committed tape's opening windows: p50 4, p95 13, max 24.
   // Requests rather than pages, because the endpoint sheds about a quarter of every request when
   // pushed and a page budget understates the true cost by roughly threefold.
@@ -391,6 +566,7 @@ export function buildPlan({ cohortText, launchList, nowMs }) {
     threshold,
     ladder,
     cohort,
+    launchListProvenance,
     launchesToWalk,
     expectedRequests,
     expectedWallClock: { p50Hours: hours(expectedRequests.p50), p95Hours: hours(expectedRequests.p95) },
@@ -796,24 +972,63 @@ if (import.meta.url === `file://${process.argv[1]}`) {
         minIntervalMs: BOUNDS.preflight.minIntervalMs,
         onRequest: ledger(/** @type {string} */ (out), 'preflight'),
       });
+      // Leg B reads whatever `--launch-list` points at, by-product or raw export, through the ONE
+      // reader that knows the difference — and is held to the SAME refusals the walk is, not merely
+      // to the hard throws. `buildPlan` is where the plan and walk phases adopt them; this phase has
+      // no plan, so it carries the reason into `runPreflight` and lets leg A be measured first
+      // (captain decision 485): leg A opens no launch list, so a bad file may not cost it.
+      //
+      // AND THE STRUCTURAL FAILURES GO DOWN THE SAME CHANNEL (captain decision 486). A list that
+      // cannot be read AT ALL — no such directory, an empty one, no stated maximum age, unreadable
+      // JSON, the wrong kind or version — used to throw past this phase entirely, which discarded
+      // leg A and exited 1 where this phase's stop is 2. The catch is HERE and nowhere else: the
+      // plan and walk phases have nowhere to put a verdict, so a list they cannot read must still
+      // stop them.
+      /** @type {import('./cohort.mjs').LaunchList | null} */
+      let preflightList = null;
+      /** @type {string | null} */
+      let launchListRefusal = null;
+      if (args.launchList !== null) {
+        try {
+          const input = readLaunchListInput(args.launchList, {
+            nowMs: Date.now(),
+            maxAgeDays: args.launchListMaxAgeDays,
+          });
+          launchListRefusal = launchListRefusalReason(input.provenance);
+          preflightList = input.list;
+        } catch (cause) {
+          launchListRefusal = launchListUnreadableReason(cause);
+        }
+      }
       const { verdict, duneVerdict } = await runPreflight({
         out: /** @type {string} */ (out),
         client,
-        launchListPath: args.launchList,
+        launchList: preflightList,
+        launchListRefusal,
       });
       say(`preflight leg A: ${JSON.stringify(verdict)}`);
       if (duneVerdict !== null) say(`preflight leg B: ${JSON.stringify(duneVerdict)}`);
       // A failing pre-flight is a hard stop. The collection it gates is days long and the failure it
-      // looks for deletes create slots silently.
-      process.exit(verdict.ok && (duneVerdict === null || duneVerdict.ok) ? 0 : 2);
+      // looks for deletes create slots silently. A REFUSED launch list stops on the same code as a
+      // failing verdict, so a wrapper reads one number for one meaning — and leg A's verdict is in
+      // `preflight.json` either way.
+      process.exit(
+        verdict.ok && launchListRefusal === null && (duneVerdict === null || duneVerdict.ok) ? 0 : 2,
+      );
     }
 
     if (args.phase === 'plan') {
       if (args.launchList === null) throw new Error('--launch-list is required to cost a run');
+      const nowMs = Date.now();
+      const input = readLaunchListInput(args.launchList, {
+        nowMs,
+        maxAgeDays: args.launchListMaxAgeDays,
+      });
       const plan = buildPlan({
         cohortText: args.cohort === null ? null : readFileSync(args.cohort, 'utf8'),
-        launchList: readLaunchList(readFileSync(args.launchList, 'utf8'), args.launchList),
-        nowMs: Date.now(),
+        launchList: input.list,
+        nowMs,
+        launchListProvenance: input.provenance,
       });
       process.stdout.write(JSON.stringify(plan, null, 2) + '\n');
       if (out !== null) writeFileSync(join(out, 'plan.json'), JSON.stringify(plan, null, 2) + '\n');
@@ -823,11 +1038,26 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     if (args.phase === 'walk') {
       // Parsed ONCE and shared with the walk below: two readings of the same file that can diverge
       // is a plan costing one run and a walk walking another.
-      const list = readLaunchList(
-        readFileSync(/** @type {string} */ (args.launchList), 'utf8'),
-        args.launchList ?? 'launch list',
-      );
-      const plan = buildPlan({ cohortText: null, launchList: list, nowMs: Date.now() });
+      const nowMs = Date.now();
+      const input = readLaunchListInput(/** @type {string} */ (args.launchList), {
+        nowMs,
+        maxAgeDays: args.launchListMaxAgeDays,
+      });
+      const list = input.list;
+      const plan = buildPlan({
+        cohortText: null,
+        launchList: list,
+        nowMs,
+        launchListProvenance: input.provenance,
+      });
+      if (input.provenance !== null) {
+        say(
+          `launch list: ${input.provenance.path}, generated ${input.provenance.generatedAtIso} ` +
+            `(${input.provenance.ageDays.toFixed(2)} days old against the ` +
+            `${input.provenance.maxAgeDays.toFixed(2)} this run stated), ` +
+            `${input.provenance.walletsUsable}/${input.provenance.walletsAsked} deployers usable`,
+        );
+      }
       say(
         `plan: ${plan.launchesToWalk} launches, p50 ~${plan.expectedRequests.p50} requests ` +
           `(~${plan.expectedWallClock.p50Hours.toFixed(1)} h), p95 ~${plan.expectedRequests.p95} ` +

@@ -122,8 +122,10 @@ a read it cannot resolve to a name fails the guard rather than passing as nothin
 doc owns that bound; cite it rather than restating it.
 
 - **Ask it; never compose a path.** `POPULATION_TAPE_DIR` / `GRADUATED_LIFE_TAPE_DIR` for the two
-  datasets, `datasetDir(name)` for either, `requireDataset(name, dir)` at the point a reader opens
-  its FIRST file — that last one is what turns "there is no data here" into a sentence naming what
+  datasets, `datasetDir(name)` for either, `screenLaunchListDir()` for the ONE non-dataset it owns —
+  the launch-list handover directory captain decision 457a added, deliberately absent from
+  `DATASETS` so no manifest check or `requireDataset` guarantee attaches to a run's own output —
+  `requireDataset(name, dir)` at the point a reader opens its FIRST file — that last one is what turns "there is no data here" into a sentence naming what
   is missing, where it was looked for and how to point elsewhere, instead of an `ENOENT` five
   directories down. A test scans `src/`, `analysis/`, `tools/` and `test/` for a dataset name in
   executable text and fails on a new one; its allow-list holds exactly one entry, and it is a
@@ -369,7 +371,8 @@ Five things bind anything that touches it or copies from it:
   floor by 5 s and counts `preMintFills`, because `readLaunchWindow`'s pre-mint tripwire has **zero
   slack** and a positive skew of one millisecond deletes an entire create slot, silently. Leg B — the
   same comparison against Dune's column directly, which costs no request and no execution — has NOT
-  run; it needs a launch-list export.
+  run; it needs a launch list, which since 457a the deployer screen's `--launch-list` by-product
+  supplies (the bullet below owns the handover).
 - **Seed a population question from HISTORY, not from success** (captain decision 165b). Every seed
   this repo has — MadeOnSol `recent-bonds`/`alerts`, both leaderboards, a Dune `total_bonded` ranking
   — conditions on current or lifetime success, so a deployer whose window opened, paid, closed and who
@@ -382,16 +385,61 @@ Five things bind anything that touches it or copies from it:
   inside a bounded window and the loss falls on late entrants. `ALL_ENTRANT_FLOOR_CAVEAT` reaches the
   row, the CSV column name and the record. Persisting fills preserves the option; it does not repair
   the data.
-- **The lane is still keyless, and its cohort SQL is now DEPLOYED — executed from OUTSIDE this
-  directory.** `cohort.mjs` → `COHORT_SQL` is saved Dune query `8214953` (captain decision 187a) and
-  `bounds.json` → `dune.cohortQueryId` pins it, but this directory's credential allow-list is empty
-  and a test enforces that, so it cannot execute its own statement: `tools/creation-census/` is the
-  keyed half that does — see `tools/creation-census/README.md`. **The slot-exhaustion reason once
-  recorded here was false** — see the Dune section's "10 PRIVATE
-  QUERIES" entry for how to re-check the count. The launch-list leg reuses the screen's existing
-  `8204672` **unchanged**. Everything else is proven on a bounded sample: 5/5 create slots and exact
-  fill counts against the committed tape (25 requests, 0 shed), and `arrival.mjs` reproduces §4.1's
-  break dates, §4.3's three regimes and §5's 82.7-day window offline.
+- **The lane is still keyless, and BOTH its Dune statements are executed from OUTSIDE this
+  directory — the second one is now a BY-PRODUCT nobody executes for it.** `cohort.mjs` →
+  `COHORT_SQL` is saved Dune query `8214953` (captain decision 187a) and `bounds.json` →
+  `dune.cohortQueryId` pins it, but this directory's credential allow-list is empty and a test
+  enforces that, so it cannot execute its own statement: `tools/creation-census/` is the keyed half
+  that does. **The slot-exhaustion reason once recorded here was false** — see the Dune section's
+  "10 PRIVATE QUERIES" entry for how to re-check the count. **THE LAUNCH-LIST LEG HAD NO GUARDED
+  EXECUTION PATH AT ALL AFTER PR 87 / DECISION 437a, AND CAPTAIN DECISION 457a CLOSED THAT WITHOUT
+  GIVING AN UNKEYED LANE A KEYED ONE**: the deployer screen's Stage 1 enumeration of `8204672`
+  (**unchanged**) writes its parsed rows to `<data root>/screen-launch-lists/` as a by-product under
+  `--launch-list`, and this lane READS that file. `tools/deployer-screen/launch-list.mjs` is the writer,
+  `tools/arrival-rate-walk/launch-list.mjs` the reader, `test/launch-list-handover.test.ts` pins the
+  two copies of the envelope contract and asserts the enumeration's own request counter does not
+  advance across building and writing the document — against a counter it first proves advanced
+  during the enumeration, so a zero cannot be a step that never ran. **What binds:** it costs
+  **zero** in every currency — the rows
+  are already in memory and the write reaches no vendor — and it **gates nothing**, so
+  `RECORD_SCHEMA_VERSION` is deliberately unmoved; the flag is **opt-in on RETENTION grounds, exactly
+  as `--out` is**, not because it spends. **`--wallets` (398a) is what points the screen at
+  a cohort**, and enumeration precedes the gate, so a wallet that FAILS the competence gate still has
+  its launches enumerated and decision 165b's whole-month seed is not narrowed by the screen's bar.
+  **`generatedAtIso` is the OBSERVATION CEILING**, the age is reported on every read, a future
+  instant is refused rather than given a negative age, and past a maximum age the run STATES
+  (`--launch-list-max-age-days`) the list is refused — **no maximum is pinned, because nothing
+  measured says how fast this population goes stale and a default is a pin nobody chose.** **An
+  absent or empty handover directory REFUSES**, and `--launch-list` is still required rather than
+  defaulted to that directory, because it names the POPULATION a run measures. **CAPTAIN DECISION 483
+  closed the silent-no-write hole on the WRITER side and it is two treatments, not one**: asking for
+  the list while forbidding the enumeration that produces it (`--launch-list` beside `--no-dune` /
+  `--ownership-only`) is a CONTRADICTION and is REFUSED — `screen.mjs` →
+  `launchListEnumerationContradiction`, its own predicate in `duneFillSourceContradiction`'s shape and
+  checked in both `parseArgs` and `main` — while the two LEGITIMATE states (no usable `DUNE_API_KEY`,
+  no candidate to enumerate) print a line naming which applied and saying no list was written. That
+  line and the write-FAILURE line go to **stderr unconditionally**, `--json` included, because the run
+  record deliberately carries nothing about this by-product; the success line stays on stdout.
+  **DECISION 484 then made that note ONE derivation asked by every path that can return without
+  writing** (`screen.mjs` → `launchListNotWrittenNote`): there are SIX causes — the two refused
+  contradictions plus no credential, no candidate, `--stage0` and `--dry-run` — and the two mode
+  flags are NOT refused, on 286c's precedent that both are legitimate modes. The
+  reader side is the same rule: an unreadable `deployers` entry, or a wallet with rows and no entry,
+  REFUSES rather than being skipped, and `collect.mjs` → `launchListRefusalReason` holds the
+  pre-flight's leg B to the walk's own refusals — **DECISION 485: leg A is measured and written
+  first** (it opens no launch list), leg B is recorded `refused` rather than `skipped`, and the stop
+  is **exit 2**, the phase's own. **DECISION 486 extends that to the STRUCTURAL failures**, which
+  used to throw past the phase for exit 1 and discard leg A: `launchListUnreadableReason` folds them
+  into the same channel with the original sentence verbatim, so *not a launch list* stays legible
+  apart from *refused to walk it* — **in the pre-flight ALONE**, since the plan and walk phases have
+  nowhere to put a verdict and are deliberately left throwing. Every command a refusal names carries `--launch-list`, because the
+  write is opt-in and a suggestion without it sends the operator to a run that writes nothing. And
+  the **retention
+  posture moved while the ToS argument did not** — per-launch rows are no longer discarded;
+  `CREATION-DERIVED.md` §8.7 and the screen README's "Retention" own the correction. Everything else
+  is proven on a bounded sample: 5/5 create slots and exact fill counts against the committed tape
+  (25 requests, 0 shed), and `arrival.mjs` reproduces §4.1's break dates, §4.3's three regimes and
+  §5's 82.7-day window offline.
 
 ## pump.fun / Solana provider facts
 

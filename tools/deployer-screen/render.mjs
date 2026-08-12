@@ -433,6 +433,10 @@ export function renderEntry(e, coverage) {
     // paid: on the committed tape 95% of unexited positions are losses even at the token's LATEST
     // known price, which is why the headline resolves at zero and this sits beside it.
     L.push(distLine('residual MARKED (bound)', e.fieldResidualMarkedSolAtWindowLastPriceGrossOfFees));
+    L.push(
+      "      ^ marked at the WINDOW's own last price — the MORE GENEROUS of the two marks; the " +
+        "token's LATEST known price is harsher",
+    );
   }
   L.push('      ^ NOT a profit verdict: the landing tip and the cost of failed attempts are still');
   L.push('        unbounded, and an unbounded cost forbids one.');

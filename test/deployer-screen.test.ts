@@ -14046,8 +14046,7 @@ describe('every position taken is counted — captain decision 461, the realizat
     scoreEntry(Array.from({ length: n }, () => measureLaunchEntry(window461())!), ENTRY_T);
 
   /** The window priced through the REAL pair, so a fixture cannot drift from the production path. */
-  const pricedWindow = () => {
-    const fills = window461();
+  const pricedWindow = (fills: ReturnType<typeof window461> = window461()) => {
     const entry = measureLaunchEntry(fills)!;
     const targets = entryCostTargets(fills, entry);
     // 0.05 SOL of real cost above the quote on every transaction the leg was asked for.
@@ -14310,21 +14309,36 @@ describe('every position taken is counted — captain decision 461, the realizat
     expect(tooFew.caveats).toContain(REALISATION_CONSTRUCTION_CAVEAT);
   });
 
-  it('the NET all-positions population is the WORSE half, and its direction rides on every score', () => {
-    // Captain decision 471a. The shortfall is not random: an unexited position is priced across its
-    // whole window only where it never sold, so the wallet that recovered some SOL — and would score
-    // strictly better at zero recovery — is exactly the one left out. `partial` sold 40 of its 100
-    // and is absent from the net reading while `holder`, which sold nothing, is in it.
-    const priced = pricedWindow();
+  it('the NET all-positions population is NON-RANDOM, and its direction is left UNSIGNED', () => {
+    // Captain decision 473a. The excluded set is not a random shortfall of the gross one — but no
+    // direction follows from that, because `realisedSolAtZeroRecoveryGrossOfFees` is `solOut - solIn`
+    // and the exclusion is on transactions, not on side: `partial` sold later and would have scored
+    // BETTER than the included `holder`, while `adder` bought more later and scores WORSE. The
+    // fixture holds one of each, so no single direction survives them both.
+    const withAdder = () => [
+      ...window461(),
+      fill({ slot: 100, tx: 'bAdd', wallet: 'adder', sol: 2, tokens: 100, sid: sidAt(100, 4006) }),
+      fill({ slot: 141, tx: 'bAdd2', wallet: 'adder', sol: 1, tokens: 50, sid: sidAt(141, 4006) }),
+    ];
+    const priced = pricedWindow(withAdder());
     const by = (w: string) => priced.field.find((f) => f.wallet === w)!;
+    expect(by('adder').positionOutcome).toBe('still-held-at-horizon');
+    // Both traded outside the priced target set, so both are absent from the net denominator while
+    // `holder`, whose whole window was in scope, is in it.
+    expect(by('partial').realisedSolAtZeroRecoveryNetOfMeasuredFees).toBeNaN();
+    expect(by('adder').realisedSolAtZeroRecoveryNetOfMeasuredFees).toBeNaN();
+    expect(Number.isFinite(by('holder').realisedSolAtZeroRecoveryNetOfMeasuredFees)).toBe(true);
+    // And they STRADDLE the included one at zero recovery, which is why the caveat signs nothing.
     expect(by('partial').realisedSolAtZeroRecoveryGrossOfFees).toBeGreaterThan(
       by('holder').realisedSolAtZeroRecoveryGrossOfFees,
     );
-    expect(by('partial').realisedSolAtZeroRecoveryNetOfMeasuredFees).toBeNaN();
-    expect(Number.isFinite(by('holder').realisedSolAtZeroRecoveryNetOfMeasuredFees)).toBe(true);
-    // So the two readings must not be differenced to infer a fee cost, and the label saying so
+    expect(by('adder').realisedSolAtZeroRecoveryGrossOfFees).toBeLessThan(
+      by('holder').realisedSolAtZeroRecoveryGrossOfFees,
+    );
+    // The two readings still must not be differenced to infer a fee cost, and the label saying so
     // travels with the number rather than living in a document.
-    expect(NET_ALL_POSITIONS_SELECTION_CAVEAT).toMatch(/biased DOWNWARD/);
+    expect(NET_ALL_POSITIONS_SELECTION_CAVEAT).toMatch(/UNMEASURED/);
+    expect(NET_ALL_POSITIONS_SELECTION_CAVEAT).not.toMatch(/biased DOWNWARD|WORSE HALF/i);
     expect(NET_ALL_POSITIONS_SELECTION_CAVEAT).toMatch(/not all fees/);
     expect(scoreOf().caveats).toContain(NET_ALL_POSITIONS_SELECTION_CAVEAT);
     const tooFew = scoreEntry([measureLaunchEntry(window461())!], ENTRY_T);

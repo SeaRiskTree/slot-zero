@@ -226,33 +226,48 @@ export const REALISATION_CONSTRUCTION_CAVEAT =
   "marked at the token's LATEST known price — so dropping them deletes losers, not " +
   'unknowns. The *OverAllPositions figures beside them count every position taken, with the ones ' +
   'still held at the horizon resolved at ZERO RECOVERY (the worst case) and their marked residual ' +
-  'reported separately. Positions whose closure our own rows cannot decide are in NEITHER ' +
+  "reported separately — and that residual is marked at the WINDOW's own last price, which is the " +
+  'MORE GENEROUS of the two marks, not the harsher latest-known-price one this sentence cites. ' +
+  'Positions whose closure our own rows cannot decide are in NEITHER ' +
   'construction and are counted as horizon-not-observed. NONE of this is a profit verdict: the ' +
   'landing tip and the cost of failed attempts are still unbounded, and an unbounded cost forbids ' +
   'one.';
 
 /**
- * The DIRECTION of the net all-positions reading's selection, stated the way
- * {@link LANDING_TIP_CAVEAT} and {@link WINNERS_ONLY_CAVEAT} state theirs.
+ * That the net all-positions population is a NON-RANDOM subset of the gross one, stated the way
+ * {@link LANDING_TIP_CAVEAT} and {@link WINNERS_ONLY_CAVEAT} state their own limits — and with the
+ * direction left UNSIGNED, which is the whole point of it.
  *
- * The population is not a random shortfall of the gross one. An unexited position enters the net
- * denominator only where its WHOLE window was already priced, which for such a position means the
- * wallet made no transaction outside its create slot — it never sold anything. A still-held wallet
- * that partially sold has recovered SOL and so scores strictly better at zero recovery, and it is
- * exactly the one left out. So the net reading is biased DOWNWARD relative to the gross one over and
- * above the fee correction, and the gap between them is not all fees.
+ * **The condition, exactly.** A position carries a whole-window net figure only where every
+ * transaction the wallet appears in across the window was in the priced target set —
+ * `mine.length === windowTxCount` in {@link priceLaunchEntry}. {@link entryCostTargets} admits a
+ * transaction when it is in the create slot OR it carries a wallet that closed, so this is NOT
+ * "the wallet never traded again" and NOT "it never sold": a wallet that sold inside its create slot
+ * is in scope, and a wallet whose later transaction happens to be bundled with a closed wallet is
+ * priced whole.
  *
- * The bias runs towards pessimism, which is the safe direction here and is why the correction ships
- * with the population unchanged rather than with the cost leg widened — widening it is a spend.
+ * **Why the direction is not signed.** `realisedSolAtZeroRecoveryGrossOfFees` is `solOut − solIn`.
+ * An excluded wallet that SOLD later has recovered SOL and would have scored better, which pulls the
+ * net reading down; an excluded wallet that BOUGHT more later — averaging in, ordinary sniper
+ * behaviour — carries a larger `solIn`, would have scored worse, and pulls it up. Which way the
+ * selection runs therefore depends on the mix of later buys and later sells among the excluded
+ * positions, and that mix is UNMEASURED. Captain decisions 198b and 208b already refuse this shape:
+ * an unmeasured direction is not to be signed, and a one-way correction to it is wrong.
+ *
+ * What survives either way is that the two readings are not a fee apart, so the gap between them
+ * cannot be read as a fee cost. The cost leg was not widened to close the shortfall because widening
+ * it is a spend.
  */
 export const NET_ALL_POSITIONS_SELECTION_CAVEAT =
-  'THE NET *OverAllPositions FIGURES ARE OVER A NON-RANDOM SUBSET OF THE GROSS ONES, AND IT IS THE ' +
-  'WORSE HALF. An unexited position is priced across its whole window only where the wallet made no ' +
-  'transaction outside its create slot — that is, it never sold anything — so a still-held wallet ' +
-  'that partially sold has recovered SOL, would score strictly better at zero recovery, and is ' +
-  'exactly the one excluded. The net reading is therefore biased DOWNWARD relative to the gross one ' +
-  'over and above the fee correction: DO NOT difference the two to infer a fee cost, because the ' +
-  'gap is not all fees. The cost leg was not widened to close it, which would be a spend.';
+  'THE NET *OverAllPositions FIGURES ARE OVER A NON-RANDOM SUBSET OF THE GROSS ONES, AND WHICH WAY ' +
+  'THAT SELECTION RUNS IS UNMEASURED. A position carries a whole-window net figure only where every ' +
+  'transaction it appears in across the window was already in the priced target set — which admits ' +
+  'the create slot and any transaction carrying a wallet that closed, so a wallet that sold inside ' +
+  'its create slot is in scope and a wallet bundled with a closed one can be priced whole. An ' +
+  'excluded wallet that sold later would have scored better and an excluded wallet that bought more ' +
+  'later would have scored worse, so the direction depends on a mix this run has not measured and ' +
+  'is NOT claimed. DO NOT difference the net and gross readings to infer a fee cost: the gap is not ' +
+  'all fees. The cost leg was not widened to close it, which would be a spend.';
 
 /**
  * @typedef {object} BoundedHitRate
@@ -1437,12 +1452,12 @@ export function describeRoomMedianBound(b) {
  *   The conditioned twin is
  *   {@link EntryScore.fieldHitRateGrossOfFees}, whose `n` is the exited subset of this `n`.
  * @property {Distribution} fieldRealisedSolOverAllPositionsNetOfMeasuredFees  The same construction, net of
- *   measured fees. **Its population is the positions whose WHOLE window was priced**, which for an
- *   unexited position means it made no transaction outside the create slot: the cost leg's targets
- *   were not widened for this correction and would have cost RPC requests (see
- *   {@link entryCostTargets}). A different denominator from the gross one above and never pooled
- *   with it — each carries its own `n`, and
- *   {@link NET_ALL_POSITIONS_SELECTION_CAVEAT} states which way the selection runs.
+ *   measured fees. **Its population is the positions whose WHOLE window was priced** — every
+ *   transaction the wallet appears in was already in the cost leg's target set, which was not
+ *   widened for this correction and would have cost RPC requests (see {@link entryCostTargets}). A
+ *   different denominator from the gross one above and never pooled with it — each carries its own
+ *   `n`, and the subset is NON-RANDOM with the direction unmeasured:
+ *   {@link NET_ALL_POSITIONS_SELECTION_CAVEAT}.
  * @property {Distribution} fieldReturnPerSolOverAllPositionsNetOfMeasuredFees  The same, per SOL staked.
  * @property {BoundedHitRate} fieldHitRateOverAllPositionsNetOfMeasuredFees  Share of those above zero, with its
  *   exact interval. `n` is how many positions carried a complete whole-window net figure, and the
@@ -1452,8 +1467,11 @@ export function describeRoomMedianBound(b) {
  *   RESOLUTION, over the positions still held at the horizon** — what their remaining tokens would
  *   be worth at the last price the walked window itself showed. It is reported BESIDE the worst-case
  *   figures and is never substituted into one: a mark is a price nobody paid, and on the committed
- *   tape 95% of unexited positions are losses even at the token's LATEST known price.
- *   Empty when nothing is still held.
+ *   tape 95% of unexited positions are losses even at the token's LATEST known price — **a HARSHER
+ *   mark than this one**, which is the window's own last price and the more generous of the two.
+ *   Empty when nothing is still held, and its `n` can sit BELOW
+ *   {@link EntryScore.positionsStillHeldAtHorizon}: {@link distribution} drops a non-finite value,
+ *   and a still-held position whose window showed no readable price at all marks at `NaN`.
  * @property {number} positionsStillHeldAtHorizon   Positions entered, decidable, and NOT flat at the
  *   horizon. Resolved at zero recovery above; this is how many that was.
  * @property {number} positionsHorizonNotObserved   Positions whose closure our own rows cannot

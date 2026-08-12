@@ -18116,6 +18116,12 @@ describe('Stage 2 scoring has a MEMORY, and it stays reproducible — captain de
     };
     const on = renderRotation(block, '  ').join('\n');
     expect(on).toContain('most new ground first, least-recently-scored breaking ties');
+    // CAPTAIN DECISION 451: every count on these lines is over the ADMITTED UNION, because one cap
+    // is allocated across both arms — and the block says so WHERE IT PRINTS. It sits directly under
+    // header lines that state the two arms apart, so an unlabelled `of N survivor(s)` there reads as
+    // the gate arm's. The record side lists the same fields in `record.mjs`'s schema-26 note.
+    expect(on).toContain('ROTATION (BOTH ARMS');
+    expect(on).toContain('no count on these lines is one arm');
     expect(on).toContain('tools/deployer-screen/rotation/stage2-scored.json @ sha256:abc');
     expect(on).toContain('6 wallet(s) recovered from committed run records');
     expect(on).toContain(REPRODUCIBILITY_RULE);
@@ -20377,6 +20383,13 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
     // The footer no longer sends the reader to a block that was not rendered.
     expect(subGateOnly).not.toContain('mean in the\n  gate block above');
     expect(subGateOnly).toContain('The reading is the same one the gate arm is');
+
+    // AND THE FOOTER STATES NO COUNT OF SPANNING TALLIES. A literal "TWO" falsified itself the
+    // moment a third was found, twice in this review; the sentence points at the mark those figures
+    // carry instead, so adding a fourth cannot make it wrong. The spend counters print above.
+    expect(subGateOnly).not.toMatch(/TWO RUN-LEVEL TALLIES/);
+    expect(subGateOnly).toContain('ARE MARKED "BOTH ARMS" WHERE');
+    expect(subGateOnly).toMatch(/^keyless requests.*BOTH ARMS — what the walk spent, not one arm's/m);
 
     // AND THE TWO ARMS SHARE ONE LEGEND, WHICH IS WHAT THE HOIST HAD TO PRESERVE: the sub-gate
     // block's legend is byte-identical to the gate block's, so neither arm can drift into its own

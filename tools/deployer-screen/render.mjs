@@ -1122,11 +1122,17 @@ export function renderStage1(run) {
   L.push('');
   L.push(`run started        ${run.startedAtIso}`);
   L.push(`keyed requests     ${run.keyedRequests}  (MadeOnSol, Ultra — ${MADEONSOL_DAILY_REQUESTS.toLocaleString('en-US')}/day, exclusive to this lane)`);
+  // BOTH ARMS, and these say so where they print — captain decision 451. What the walk SPENT is
+  // spent on whoever was admitted, so these counters are over the union rather than over either
+  // population; the arm-by-arm figures are the gate/sub-gate lines below.
   L.push(
-    `keyless requests   ${run.keylessRequests}  (pump.fun)` +
+    `keyless requests   ${run.keylessRequests}  (pump.fun; BOTH ARMS — what the walk spent, not one arm's)` +
       (run.keylessShed === undefined ? '' : `, ${run.keylessShed} shed and retried`),
   );
-  L.push(`solana rpc         ${run.rpcRequests}  (creation-derived history; ${run.rpcLoadShedEvents} load-shed)`);
+  L.push(
+    `solana rpc         ${run.rpcRequests}  (creation-derived history; ${run.rpcLoadShedEvents} load-shed; ` +
+      `BOTH ARMS, as above)`,
+  );
   L.push(`history source     ${run.historySource}${run.historySource === 'ownership-only' ? '  !! BIASED BOTH WAYS (rejects on counts, inflates the rate)' : ''}`);
   L.push(`elapsed            ${(run.elapsedMs / 1000).toFixed(1)}s`);
   L.push(`prefiltered out    ${run.prefiltered}  (skipped before spending a request)`);
@@ -1509,10 +1515,15 @@ export function renderStage1(run) {
     L.push('  NO FIGURE HERE MAY BE ADDED TO ONE FROM THE GATE BLOCK: the two arms are two');
     L.push('  populations with two denominators, and every PER-CANDIDATE and PER-ARM count in this');
     L.push('  report keeps them apart, from the header line down.');
-    L.push('  TWO RUN-LEVEL TALLIES DELIBERATELY SPAN BOTH ARMS and are labelled where they print:');
-    L.push('  the Stage 2 DROPS block above, and the spend counters. Both count what the WALK did');
-    L.push('  rather than what either population achieved, so they are allocation and coverage');
-    L.push('  figures and not findings — and neither may be read as one arm\'s.');
+    // NO COUNT OF SUCH TALLIES IS STATED HERE, DELIBERATELY. A literal "TWO" is the brittleness
+    // this review has now caught twice: it falsifies itself the moment a spanning figure is added,
+    // and it did. The standard is that a figure over the union SAYS SO WHERE IT PRINTS, so the
+    // sentence points at that label rather than counting the places it appears.
+    L.push('  THE RUN-LEVEL TALLIES THAT DELIBERATELY SPAN BOTH ARMS ARE MARKED "BOTH ARMS" WHERE');
+    L.push('  THEY PRINT — the rotation block and the spend counters under the run header, and the');
+    L.push('  Stage 2 DROPS block. Each counts what the WALK did — allocation, coverage, spend —');
+    L.push('  rather than what either population achieved, so none is a finding and none may be read');
+    L.push('  as one arm\'s. A figure NOT carrying that mark is per candidate or per arm.');
     // THIS SECTION CARRIES ITS OWN LEGEND rather than pointing at the gate block's, because that
     // block does not exist on a run with zero gate passes — which is this arm's expected shape, the
     // gate arm having produced 0 measured passes in 43 scored. The gross/net sentence is computed
@@ -2314,6 +2325,14 @@ export function renderDryRun(plan) {
  * An operator who can see only the wallet list cannot tell a flow-weighted selection from a
  * round-robin one, and the two are the same list on a first run by design.
  *
+ * **EVERY COUNT HERE SPANS BOTH ADMISSION ARMS AND THE BLOCK SAYS SO WHERE IT PRINTS** — captain
+ * decision 451. `survivors`, `selected`, `deferred`, `neverScoredBefore` and the saturation counts
+ * are over the ADMITTED UNION, because the rotation allocates ONE cap across both arms; at record
+ * schema ≤25 they were the gate-passing population alone. That is allocation rather than a finding,
+ * so spanning the arms is correct — and it is exactly why the label may not be left implicit, since
+ * the header lines directly above these state the two arms apart. `record.mjs`'s schema-26 note
+ * lists the same fields on the record side, and the two must not drift.
+ *
  * @param {{ enabled: boolean, reason: string | null, statePath: string | null,
  *   stateDigestBefore: string | null, survivors: number, selected: readonly string[],
  *   deferred: readonly string[], neverScoredBefore: number, importedFromRunRecords: number,
@@ -2339,7 +2358,9 @@ export function renderRotation(block, indent) {
   }
   /** @type {string[]} */
   const lines = [
-    `${indent}ROTATION: most new ground first, least-recently-scored breaking ties — ` +
+    `${indent}ROTATION (BOTH ARMS — one cap allocated over every ADMITTED candidate, gate and ` +
+      `sub-gate alike; captain decision 451, and no count on these lines is one arm's):`,
+    `${indent}  most new ground first, least-recently-scored breaking ties — ` +
       `${block.selected.length} scored, ${block.deferred.length} deferred to a later run, of ` +
       `${block.survivors} survivor(s); ${block.neverScoredBefore} had never been scored.`,
     `${indent}  state ${block.statePath ?? '(none)'} @ ${block.stateDigestBefore ?? 'NO PRIOR STATE — first run'}`,

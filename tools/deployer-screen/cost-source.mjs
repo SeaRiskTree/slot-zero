@@ -72,7 +72,9 @@ export const COST_SOURCE_KINDS = Object.freeze(['solana-rpc', 'dune']);
  * @property {number} viaBlock            Priced from a whole-block read.
  * @property {number} viaTransaction      Priced one transaction at a time.
  * @property {boolean} blockRouteTried
- * @property {string | null} blockRouteNote Why the block route was not used, when it was not.
+ * @property {string | null} blockRouteNote Why the block route was not used, when it was not — or
+ *   why no whole-slot observation was taken from a route that DID serve, which is the other way this
+ *   field goes non-null (a block read with no mint to scope the slot's failures to).
  * @property {boolean} stoppedForBudget   The per-candidate ceiling ended the walk early.
  * @property {import('./bounds.mjs').CreateSlotCostObservation | null} slotCosts  What the WHOLE
  *   create slot cost — its failed-attempt fee bill and its tip total — when a source read the slot

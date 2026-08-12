@@ -329,7 +329,14 @@ export function costLedger(input) {
         'MEASURED, and already subtracted rather than bounded: `entry.mjs` → `priceLaunchEntry` ' +
         'sums a wallet\'s real lamport delta over its whole window transaction set, so a fee paid ' +
         'closing a position inside the horizon is inside the `NetOfMeasuredFees` figures already. ' +
-        'Zero is what remains to subtract, not a claim that exit fees are free.',
+        'Zero is what remains to subtract, not a claim that exit fees are free. THE ZERO IS SCOPED ' +
+        'TO THAT CONSTRUCTION: those fees are netted only in the `*NetOfMeasuredFees` figures, ' +
+        'whose population is the non-random subset whose WHOLE window the cost leg priced ' +
+        '(`entry.mjs` → `NET_ALL_POSITIONS_SELECTION_CAVEAT`, captain decision 461), and the GROSS ' +
+        'construction nets nothing — so a realised figure computed over the gross population may ' +
+        'NOT be compared against this zero. It is inert today because three other rows keep the ' +
+        'verdict at `exit-unbounded`; closing those rows requires this row\'s scope to be revisited ' +
+        'rather than inherited.',
       label:
         'EXIT-SIDE FEES INSIDE THE HORIZON ARE ALREADY NETTED. On the committed tape they are ' +
         '2.12% of the measured fee bill — all the money is in the entry auction.',

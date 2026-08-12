@@ -998,7 +998,17 @@ export function toEntryRecordRow(s, coverage) {
       requestsIssued: coverage.requestsIssued,
       stoppedForBudget: coverage.stoppedForBudget,
       dropNotes: redactAll(coverage.dropNotes),
-      cost: { ...coverage.cost, notes: redactAll(coverage.cost.notes) },
+      // The two SOL counters are rounded HERE and not at accumulation, so the in-memory coverage
+      // keeps full precision for any arithmetic and only the persisted figure is fixed to six
+      // decimals, exactly like every other SOL figure in a record. A raw lamports/1e9 sum across
+      // launches otherwise writes values like 0.004000000000000001 into a committed record, so two
+      // runs over the same inputs would differ in bytes for no semantic reason.
+      cost: {
+        ...coverage.cost,
+        slotFailedAttemptFeeSol: round(coverage.cost.slotFailedAttemptFeeSol),
+        slotTipSol: round(coverage.cost.slotTipSol),
+        notes: redactAll(coverage.cost.notes),
+      },
     },
   };
 }

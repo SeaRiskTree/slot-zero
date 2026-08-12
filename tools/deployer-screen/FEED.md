@@ -333,15 +333,31 @@ derivation and everything it does not claim. Three things bind here specifically
 against it, so what a bump would have said is said here instead. Do not read the record as though the
 new meaning had always been the meaning:
 
-- **`held` on the run row, and `yield.held`, CHANGED MEANING when this arm landed.** They counted
+**The affected fields are named below as the complete list, and that list is DERIVED rather than
+counted** — swept from the two `state === 'held'` filters this record is built through (`feed.mjs`'s
+own `gradedThisRun` one, and `ledger.mjs` → `summariseLedger`, which the `ledger` block is written
+verbatim from). An earlier draft of this section said "exactly two fields" and was three short; a
+count is not a completeness argument, so do not restore one — add the name and re-sweep the filters.
+
+- **Five figures CHANGED MEANING when this arm landed, all narrowing by the same rule.** They counted
   every wallet that failed the gate; they now EXCLUDE the wallets this arm admits, which are filed
-  under `queued-sub-gate`. So `held` is a smaller quantity after the arm than before it over the same
-  population, and a DROP in it across the boundary is a change of RULE, not a change of population.
-- **`queuedSubGate` on the run row and `yield.admittedSubGate` arrived UNVERSIONED** — present on
-  records written after the arm, absent on records written before it, at the same declared version.
-- **A consumer reading `schemaVersion: 3` cannot tell from the version alone which meaning of those
-  fields it holds.** That is precisely the ambiguity schemas 2 and 3 were each spent removing, and
-  here it is accepted rather than removed. The weaker substitute available to a reader is to check
+  under `queued-sub-gate`. So each is a smaller quantity after the arm than before it over the same
+  population, and a DROP across the boundary is a change of RULE, not a change of population. They
+  are **`held` on the run row**, **`yield.held`**, **`ledger.held`** (the same rule on the cumulative
+  count), and **`ledger.heldOnOwnershipReading`** and **`ledger.heldNearMiss`**.
+- **The direction matters for the last two, because they are not bookkeeping.** They are the standing
+  count of the false negatives this lane *creates* by grading on the biased vendor page, and the
+  one-leg-near-miss shortlist inside it — the two figures `summariseLedger` exists to keep honest.
+  The wallets this arm rescues are exactly rate-bar-only failures, i.e. one-leg near misses, so
+  moving them out of `held` makes **both read LOWER while the underlying population has not improved
+  at all**: a reader comparing two schema-3 records across this change sees the cost of the cheap
+  reading appear to fall when it did not.
+- **Four figures arrived UNVERSIONED** — present on records written after the arm, absent on records
+  written before it, at the same declared version: **`queuedSubGate` on the run row**,
+  **`yield.admittedSubGate`**, **`ledger.queuedSubGate`** and **`ledger.queuedSubGateUnscreened`**.
+- **A consumer reading `schemaVersion: 3` cannot tell from the version alone which meaning of any of
+  those fields it holds.** That is precisely the ambiguity schemas 2 and 3 were each spent removing,
+  and here it is accepted rather than removed. The weaker substitute available to a reader is to check
   whether the record carries `queuedSubGate` at all: present ⇒ the post-451 meaning, absent ⇒ the
   pre-451 one. That is an inference from a field's presence and not a version, and it is what this
   decision leaves consumers with. `feed.mjs` → `FEED_RECORD_SCHEMA_VERSION` carries the same note.

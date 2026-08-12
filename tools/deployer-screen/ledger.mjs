@@ -778,9 +778,15 @@ export function feedAlarm(input) {
  *   reason. `queuedForScreen` returns BOTH — draining the queue is a spend decision and not a
  *   statistic — so these two are what a reader adds up mentally and this module never does.
  * @property {number} heldOnOwnershipReading Held wallets graded on the biased reading. The standing
- *   count of possible false negatives this lane creates by being cheap.
+ *   count of possible false negatives this lane creates by being cheap — **of the ones still held,
+ *   which since captain decision 451 is no longer all of them.**
  * @property {number} heldNearMiss Of those, the ones that missed on exactly one gate leg. The most
- *   plausible false negatives, and the shortlist worth a creation-derived re-read.
+ *   plausible false negatives, and the shortlist worth a creation-derived re-read — **again, of the
+ *   ones still held.** The second admission arm takes rate-bar-only failures out of `held` and into
+ *   `queued-sub-gate`, and a rate-bar-only failure IS a one-leg near miss, so this figure and
+ *   `heldOnOwnershipReading` both READ LOWER after the arm than before it with the underlying
+ *   population unimproved. `feed.mjs` -> `FEED_RECORD_SCHEMA_VERSION` owns that disclosure (captain
+ *   decision 481b), because the record carrying these two did not bump its version for it.
  * @property {number} lagObservations Wallets with a usable first-deploy time.
  * @property {number | null} lagMedianDaysAtLeast How long a wallet here had ALREADY been deploying
  *   when this project first saw it, median. A LOWER BOUND — see {@link discoveryLagDays}.
@@ -795,6 +801,15 @@ export function feedAlarm(input) {
  * set aside has to be a number in every run's report — otherwise that half of the bias is a sentence
  * in a document and the wallets are simply gone. The other half, the rate this reading inflates,
  * is not visible here at all: it lands in the `queued` pile, which these two figures do not count.
+ *
+ * **AND SINCE CAPTAIN DECISION 451 THEY COUNT A SMALLER PILE, WHICH IS NOT THE SAME AS A SMALLER
+ * COST.** Both are computed from `state === 'held'`, and the second admission arm files the wallets
+ * it admits `queued-sub-gate` instead — wallets that failed on the completion rate ALONE, which is
+ * exactly the one-leg near miss `heldNearMiss` selects. So both figures read lower after the arm
+ * than before it over an unimproved population. The `ledger` block goes into the feed record
+ * verbatim at an unchanged `FEED_RECORD_SCHEMA_VERSION`, so `feed.mjs` ->
+ * `FEED_RECORD_SCHEMA_VERSION` is where that is disclosed to a reader of the record; cite it rather
+ * than restating it.
  *
  * @param {Ledger} ledger
  * @returns {LedgerSummary}

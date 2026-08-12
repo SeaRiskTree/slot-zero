@@ -129,24 +129,46 @@ const DEFAULT_RUNS_DIR = join(HERE, 'runs');
  * ## SCHEMA 3 NOW HAS TWO MEANINGS AND WAS DELIBERATELY NOT BUMPED — captain decision 481b
  *
  * The second admission arm (captain decision 451, `admission.mjs`) landed on this lane without a
- * version bump, and 481b took that decision AGAINST the recommendation to bump. Three things are
- * true of it and none may be softened or written as though it had always been so:
+ * version bump, and 481b took that decision AGAINST the recommendation to bump. None of what follows
+ * may be softened or written as though it had always been so.
  *
- * 1. **`held` on the run row and `yield.held` CHANGED MEANING.** Before the arm they counted every
- *    wallet that failed the gate. They now EXCLUDE the wallets that arm admits, which are filed
- *    `queued-sub-gate` instead — so `held` is a smaller quantity after the arm than before it, over
- *    the same population, and a DROP in it across the boundary is a change of RULE and not a change
- *    of population.
- * 2. **`queuedSubGate` on the run row and `yield.admittedSubGate` arrived UNVERSIONED.** They exist
- *    on records written after the arm and are absent on records written before it, at the same
- *    declared version.
- * 3. **A consumer reading `schemaVersion: 3` therefore cannot tell from the version alone which
- *    meaning of those fields it holds.** That is the exact ambiguity a bump exists to remove — the
- *    one the note above records schema 2 and 3 being spent on — and here it is being accepted rather
- *    than removed. What a reader can do instead is check whether the record carries `queuedSubGate`
- *    at all: present means the post-451 meaning, absent means the pre-451 one. That is an inference
- *    from a field's presence, which is strictly weaker than a version, and it is what this decision
- *    leaves consumers with.
+ * **THE AFFECTED FIELDS ARE NAMED HERE AS THE COMPLETE LIST, AND THE LIST IS DERIVED RATHER THAN
+ * COUNTED.** Every figure this record carries that is computed from the `held` state, or that the
+ * arm introduced, is below — swept from `gradedThisRun.filter(state === 'held')` here and from
+ * `ledger.mjs` → `summariseLedger`'s own `state === 'held'` filter, which the `ledger` block is
+ * written verbatim from. An earlier draft said "exactly two fields" and was three short; a count is
+ * not a completeness argument, so do not restore one — add the name and re-sweep the two filters.
+ *
+ * **CHANGED MEANING — five figures, all narrowing by the same rule.** Before the arm each counted
+ * every wallet that failed the gate; they now EXCLUDE the wallets the arm admits, which are filed
+ * `queued-sub-gate` instead. So each is a SMALLER quantity after the arm than before it over the
+ * same population, and a DROP across the boundary is a change of RULE and not a change of
+ * population.
+ *
+ * - **`held` on the run row** and **`yield.held`**.
+ * - **`ledger.held`**, the same rule one block over: the cumulative count rather than the run's.
+ * - **`ledger.heldOnOwnershipReading`** and **`ledger.heldNearMiss`**, AND THE DIRECTION HERE IS THE
+ *   one worth stating, because these two are not bookkeeping. `ledger.mjs` → `summariseLedger`
+ *   describes them as the figures that keep the cheap reading honest: the standing count of the
+ *   false negatives this lane CREATES by grading on the biased vendor page, and the shortlist of
+ *   one-leg near misses inside it. The wallets the arm rescues are precisely rate-bar-only failures
+ *   — one-leg near misses — so moving them out of `held` makes **both read LOWER while the
+ *   underlying population has not improved at all.** A reader comparing two schema-3 records across
+ *   this change sees the cost of the cheap reading appear to fall when it did not. The rendered line
+ *   calls `heldNearMiss` "the plausible false negatives", which is still true of what it counts and
+ *   is no longer the whole of that pile.
+ *
+ * **ARRIVED UNVERSIONED — four figures.** They exist on records written after the arm and are absent
+ * on records written before it, at the same declared version: **`queuedSubGate` on the run row**,
+ * **`yield.admittedSubGate`**, **`ledger.queuedSubGate`** and **`ledger.queuedSubGateUnscreened`**.
+ *
+ * **A consumer reading `schemaVersion: 3` therefore cannot tell from the version alone which meaning
+ * of any of those fields it holds.** That is the exact ambiguity a bump exists to remove — the one
+ * the note above records schema 2 and 3 being spent on — and here it is being accepted rather than
+ * removed. What a reader can do instead is check whether the record carries `queuedSubGate` at all:
+ * present means the post-451 meaning, absent means the pre-451 one. That is an inference from a
+ * field's presence, which is strictly weaker than a version, and it is what this decision leaves
+ * consumers with.
  */
 export const FEED_RECORD_SCHEMA_VERSION = 3;
 
@@ -1242,7 +1264,10 @@ export function renderLedgerState(ledger) {
     `    ${s.queuedSubGateUnscreened} FAILED the gate and are queued anyway by the sub-gate arm ` +
       `(captain decision 451) — a separate population, never pooled with the line above`,
     `    ${s.heldOnOwnershipReading} held on the OWNERSHIP reading, which rejects through the counts and inflates the rate — of those,`,
-    `    ${s.heldNearMiss} missed on exactly ONE gate leg — the plausible false negatives.`,
+    `    ${s.heldNearMiss} missed on exactly ONE gate leg — the plausible false negatives STILL HELD.`,
+    '    Since captain decision 451 those two count a SMALLER pile without the population having',
+    '    improved: a rate-bar-only failure is a one-leg near miss, and the sub-gate arm now files',
+    '    those as queued rather than held. A fall in either is that rule, not a cheaper reading.',
     '    They are NOT re-polled: a competent dev does not reopen a window, so re-checking them is',
     '    the graveyard. Re-reading one on the creation-derived history is a screen.mjs run and a',
     '    deliberate decision, not a schedule.',

@@ -65,6 +65,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { POPULATION_TAPE, POPULATION_TAPE_DIR, requireDataset } from '../../config/data-root.mjs';
+import { assessSubGateAdmission, subGateBounds } from './admission.mjs';
 import { BoundedClient, CeilingReached, MADEONSOL_DAILY_REQUESTS, VendorRefused } from './client.mjs';
 import { KEY_ENV_VAR, resolveKey } from './credential.mjs';
 import {
@@ -408,13 +409,34 @@ export function unmeasuredAlarmDisabledWarning(gateBatch) {
  * conditional inside the run loop. The mapping is where this lane's central caution lives:
  * `gate-failed` becomes `held`, and `held` is not a rejection.
  *
+ * ## THE SECOND ADMISSION ARM REACHES THIS LANE TOO, AND IT HAD TO — captain decision 451
+ *
+ * `ledger.mjs` grades a wallet ONCE and never offers it again, so a discovery feed left on the old
+ * rule would file every sub-gate deployer as `held` permanently: the captain's ruling would apply
+ * at `screen.mjs` and never reach the surface that decides which wallets the screen is ever offered.
+ * That is the invisible, permanent direction this whole lane is built to avoid, so the arm is asked
+ * here as well and an admission becomes its own state, `queued-sub-gate`.
+ *
+ * **IT IS ASKED ON THE VENDOR PAGE, WHICH IS A DIFFERENT AND BIASED READING, and that is disclosed
+ * rather than corrected.** FEED.md → "Why the gate here reads ownership" owns the argument: this
+ * page's rate reads HIGHER than the gate reading on 37 of 81 wallets and by up to +0.6929, so the
+ * inflow floor admits more wallets here than `screen.mjs` would. The direction is the cheap one —
+ * `screen.mjs` re-judges every queued wallet on the creation-derived history and can still refuse
+ * it, while a wallet this lane files is never offered again — and it is the same asymmetry that
+ * keeps the feed on the vendor page at all.
+ *
  * @param {unknown} profile A parsed `/deployer-hunter/{wallet}` response.
  * @param {{ minTokens: number, minCompletionRate: number, minSpanDays: number }} gateThresholds
+ * @param {{ bounds: import('./admission.mjs').SubGateBounds, nowMs: number } | null} [subGate] The
+ *   second arm's bounds and the run's own instant. Omitted or `null` means the arm was NOT
+ *   CONSULTED — every verdict is then what it was before captain decision 451, which is what keeps
+ *   the superseded behaviour reachable from a test rather than reconstructed by a second code path.
+ *   The run loop below always passes it, and a test pins that it does.
  * @returns {{ state: import('./ledger.mjs').FeedState, gateVerdict: string, rationale: string,
  *             completion: import('./measure.mjs').CompletionMeasurement, capped: boolean,
  *             shortfalls: string[] }}
  */
-export function triage(profile, gateThresholds) {
+export function triage(profile, gateThresholds, subGate = null) {
   const { records, capped } = toTokenRecords(profile);
   const completion = measureCompletion(records);
   // `historySource: 'ownership-only'` is passed so a zero-token rejection names the vendor rather
@@ -462,10 +484,33 @@ export function triage(profile, gateThresholds) {
             'shape are indistinguishable from here',
         ]
       : [];
-  const { verdict, rationale } = verdictFor({ gate, completion, capped, notMeasured });
+  const { verdict, rationale } = verdictFor({
+    gate,
+    completion,
+    capped,
+    notMeasured,
+    // Captain decision 451. `verdictFor` consults it only where the gate refused a COMPLETE
+    // reading, so an unmeasured profile — the state the paragraphs above exist to protect — is
+    // reached before the arm is asked and cannot be admitted by it.
+    subGate:
+      subGate === null
+        ? null
+        : assessSubGateAdmission({ completion, gate, nowMs: subGate.nowMs }, gateThresholds, subGate.bounds),
+  });
 
   /** @type {import('./ledger.mjs').FeedState} */
-  const state = verdict === 'gate-passed' ? 'queued' : verdict === 'gate-failed' ? 'held' : 'unmeasured';
+  const state =
+    verdict === 'gate-passed'
+      ? 'queued'
+      : // ITS OWN STATE AND NOT `queued`, for the reason it is its own verdict one module over: the
+        // two arms are two populations, and `summariseLedger`'s counts would otherwise pool them.
+        // `queuedForScreen` deliberately serves both, because the queue is a spend decision and not
+        // a statistic — the same distinction `admittedToStage2` draws at the screen.
+        verdict === 'sub-gate-admitted'
+        ? 'queued-sub-gate'
+        : verdict === 'gate-failed'
+          ? 'held'
+          : 'unmeasured';
 
   return {
     state,
@@ -508,6 +553,12 @@ export async function main(opts, env, out, err, deps = {}) {
     minCompletionRate: T['stage1_gate'].minCompletionRate,
     minSpanDays: T['stage1_gate'].minSpanDays,
   };
+  // Captain decision 451's second arm. Resolved once and REFUSING rather than defaulting if its
+  // pins are missing, exactly as `screen.mjs` does — on a scheduled lane a quietly self-sized arm
+  // would file a population nobody sized, once, permanently. The window cap is `stage2_entry`'s
+  // because the tempo floor is one Stage 2 VISIT's worth of windows and this lane queues for that
+  // stage; it scores nothing itself.
+  const subGateAdmissionBounds = subGateBounds(T['stage1_gate'], T['stage2_entry'].maxLaunchesPerCandidate);
 
   // ---- Stage 0. Local, ~1 second, no network and no key. ----------------------------------
   // The gate this lane applies is the screen's gate. If the screen no longer reproduces the
@@ -570,6 +621,9 @@ export async function main(opts, env, out, err, deps = {}) {
 
   const startedAt = Date.now();
   const startedAtIso = new Date(startedAt).toISOString();
+  // One instant for every elapsed-days judgement in the run, so a wallet's sub-gate admission does
+  // not depend on where in the batch it was gated.
+  const runStartedMs = startedAt;
   const resolution = resolveKey(env);
 
   // ---- The dry path, which is the DEFAULT. Requests nothing, writes nothing. ---------------
@@ -731,7 +785,11 @@ export async function main(opts, env, out, err, deps = {}) {
 
     for (const wallet of batch) {
       const profile = await client.getJson(`/deployer-hunter/${encodeURIComponent(wallet)}`);
-      const t = triage(profile, gateThresholds);
+      // Captain decision 451's second arm, on the run's own instant so a wallet's admission does
+      // not depend on where in the batch it was gated. The window cap is `stage2_entry`'s because
+      // that is the recipe `screen.mjs` will re-judge a queued wallet under — this lane scores
+      // nothing itself, so borrowing the screen's cap is what keeps the two arms the same arm.
+      const t = triage(profile, gateThresholds, { bounds: subGateAdmissionBounds, nowMs: runStartedMs });
       const graded = gradeWallet(
         ledger,
         wallet,
@@ -816,6 +874,9 @@ export async function main(opts, env, out, err, deps = {}) {
       newlySurfaced,
       gated: gradedThisRun.length,
       queued: gradedThisRun.filter((g) => g.state === 'queued').length,
+      // Captain decision 451, and its own figure rather than folded into `queued`: the two arms are
+      // two populations, and the dry-streak alarm reads these counts.
+      queuedSubGate: gradedThisRun.filter((g) => g.state === 'queued-sub-gate').length,
       held: gradedThisRun.filter((g) => g.state === 'held').length,
       unmeasured: gradedThisRun.filter((g) => g.state === 'unmeasured').length,
       prefiltered: prefilteredThisRun.length,
@@ -903,6 +964,9 @@ export async function main(opts, env, out, err, deps = {}) {
         gated: gradedThisRun.length,
         gatedFromBacklog: gradedThisRun.filter((g) => g.fromBacklog).length,
         clearedTheGate: gradedThisRun.filter((g) => g.state === 'queued').length,
+        // Captain decision 451. NOT added to `clearedTheGate` — these wallets FAILED the gate and
+        // were admitted for measurement anyway, which is a different fact with its own denominator.
+        admittedSubGate: gradedThisRun.filter((g) => g.state === 'queued-sub-gate').length,
         held: gradedThisRun.filter((g) => g.state === 'held').length,
         unmeasured: gradedThisRun.filter((g) => g.state === 'unmeasured').length,
         backlog: backlogDepth(ledger),
@@ -1121,9 +1185,14 @@ export function renderLedgerState(ledger) {
   const s = summariseLedger(ledger);
   return [
     '  LEDGER — everything this project has seen. A wallet here is never offered as new again.',
-    `    ${s.wallets} wallet(s): ${s.queued} queued, ${s.held} held, ${s.unmeasured} unmeasured, ` +
+    `    ${s.wallets} wallet(s): ${s.queued} queued, ${s.queuedSubGate} queued SUB-GATE, ` +
+      `${s.held} held, ${s.unmeasured} unmeasured, ` +
       `${s.prefiltered} pre-filtered, ${s.deferred} awaiting the gate`,
     `    ${s.queuedUnscreened} cleared the gate and have not been through the beatability screen`,
+    // Captain decision 451, on its OWN line with its OWN denominator. Adding it to the line above
+    // would be the one thing that decision forbids: two populations through one number.
+    `    ${s.queuedSubGateUnscreened} FAILED the gate and are queued anyway by the sub-gate arm ` +
+      `(captain decision 451) — a separate population, never pooled with the line above`,
     `    ${s.heldOnOwnershipReading} held on the OWNERSHIP reading, which rejects through the counts and inflates the rate — of those,`,
     `    ${s.heldNearMiss} missed on exactly ONE gate leg — the plausible false negatives.`,
     '    They are NOT re-polled: a competent dev does not reopen a window, so re-checking them is',

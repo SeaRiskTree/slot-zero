@@ -301,6 +301,27 @@ Committed state, 2026-08-02 (`--bootstrap` over the two committed screen runs): 
 queued (11 of them not yet screened), 61 held, 7 pre-filtered.** All 61 held on the ownership reading;
 **48 of them missed on exactly one gate leg.**
 
+## The second admission arm reaches this lane too — captain decision 451
+
+A deployer that FAILS the competence gate can now be queued anyway, by the arm `admission.mjs` owns;
+`tools/deployer-screen/README.md` → "The SECOND ADMISSION ARM" is the owner of the rule, the
+derivation and everything it does not claim. Three things bind here specifically:
+
+- **It had to reach this lane.** The ledger grades a wallet ONCE and never offers it again, so a feed
+  left on the old rule would file every sub-gate deployer as `held` permanently — the ruling would
+  apply at `screen.mjs` and never reach the surface that decides which wallets the screen is ever
+  offered. That is exactly the invisible, permanent direction this lane is built to avoid.
+- **It is asked on the vendor page, which is the biased reading, and that is disclosed rather than
+  corrected.** This page's rate reads HIGHER than the gate reading on 37 of 81 wallets and by up to
+  +0.6929 (see the section above), so the arm's inflow floor admits more wallets here than
+  `screen.mjs` would. The direction is the cheap one: the screen re-judges every queued wallet on the
+  creation-derived history and can still refuse it, while a wallet this lane files is gone for good.
+- **An admission is its own state, `queued-sub-gate`.** `summariseLedger` counts it apart from
+  `queued` — two arms, two populations, two denominators, and no figure adds them — while
+  `queuedForScreen` returns both, because draining the queue is a spend decision and not a
+  statistic. A schema-1 ledger written before the decision can never carry the value, so its absence
+  is unambiguous and no migration is owed.
+
 ## Known gap: the two lanes are joined by a file, not by code
 
 **The screen now takes a wallet list** — `--wallets <file>`, captain decision 398a — which gates the

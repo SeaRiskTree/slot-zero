@@ -102,6 +102,13 @@ import {
   pickRecordedReading,
   readEntryReading,
 } from './entry-agreement.mjs';
+import {
+  SUB_GATE_ADMISSION_RULE,
+  admissionArmOf,
+  admittedToStage2,
+  assessSubGateAdmission,
+  subGateBounds,
+} from './admission.mjs';
 import { applyGate, measureConsistency, rankCandidates, verdictFor } from './rank.mjs';
 import {
   NEW_GROUND_RULE,
@@ -1568,6 +1575,15 @@ export async function main(opts, env, out, err, seam = {}) {
   const budget = T['budget'];
   /** @type {import('./stage2.mjs').Stage2Thresholds} */
   const entryThresholds = { ...T['stage2_entry'] };
+  // CAPTAIN DECISION 451'S SECOND ADMISSION ARM. Resolved once, here, and it REFUSES rather than
+  // defaults if its pins are missing — a run whose arm quietly sized itself would be admitting a
+  // population nobody sized. Two of its four bounds are derived from `maxLaunchesPerCandidate`
+  // rather than written down, which is why the recipe is handed in: the tempo floor is one Stage 2
+  // visit's worth of windows inside the refresh horizon, and that cap has moved before (8 -> 10,
+  // captain decision 190a). It is the SWAP-API recipe's cap because that is what a run reads today;
+  // a Gate 3 cutover selecting `stage2_entry_dune` would hand its own, which is exactly the reason
+  // this is not read from the file here.
+  const subGate = subGateBounds(T['stage1_gate'], entryThresholds.maxLaunchesPerCandidate);
   /** @type {{ maxRpcRequestsPerCandidate: number, rpcMinIntervalMs: number, preferBlockRoute: boolean }} */
   const costBounds = T['stage2_cost'];
   // The scoring cap can be lowered from the command line and never raised. Same rule as the
@@ -2278,6 +2294,11 @@ export async function main(opts, env, out, err, seam = {}) {
   // ---- Stage 1 ---------------------------------------------------------------------------
   const startedAt = Date.now();
   const startedAtIso = new Date(startedAt).toISOString();
+  // THE RUN'S OWN INSTANT, and every clock-reading judgement takes it from here. Captain decision
+  // 451's recency bound and the rotation's `newGroundWindows` both measure elapsed days, and two
+  // readings of `Date.now()` inside one gate loop would make a candidate's admission depend on
+  // where in the run it was gated. Same rule `nowIso` already carries into `selectForScoring`.
+  const runStartedMs = startedAt;
   let completed = true;
   /** @type {string | null} */
   let abortReason = null;
@@ -2651,13 +2672,29 @@ export async function main(opts, env, out, err, seam = {}) {
       // one release later — which is how this defect survived as a comment for as long as it did.
       const vendorCompletion = measureCompletion(records);
       const vendorGate = applyGate({ completion: vendorCompletion }, gateThresholds);
-      const vendorVerdict = verdictFor({ gate: vendorGate, completion: vendorCompletion, capped });
+      // THE SECOND ARM IS APPLIED TO BOTH READINGS OR THE COMPARISON STOPS BEING ONE. `vendorVerdict`
+      // is what the OLD READING would have decided under THIS RUN'S rule, so leaving captain
+      // decision 451's arm off it would report every sub-gate admission as `verdictChanged` — a
+      // difference the reading did not cause, in the one field that exists to measure what the
+      // reading costs.
+      const vendorSubGate = assessSubGateAdmission(
+        { completion: vendorCompletion, gate: vendorGate, nowMs: runStartedMs },
+        gateThresholds,
+        subGate,
+      );
+      const vendorVerdict = verdictFor({
+        gate: vendorGate,
+        completion: vendorCompletion,
+        capped,
+        subGate: vendorSubGate,
+      });
 
       /** @type {import('./rank.mjs').CreationReading | null} */
       let creation = null;
       let completion = vendorCompletion;
       let gateReadingCapped = capped;
       let gate = vendorGate;
+      let subGateAssessment = vendorSubGate;
       let { verdict, rationale } = vendorVerdict;
 
       if (!opts.ownershipOnly) {
@@ -2831,7 +2868,21 @@ export async function main(opts, env, out, err, seam = {}) {
               `not be read: ${listingUnmeasuredNote}`,
           );
         }
-        ({ verdict, rationale } = verdictFor({ gate, completion, capped: gateReadingCapped, notMeasured }));
+        // Captain decision 451's arm, on the reading this run gated on. Free — every field it reads
+        // (`tokens`, `spanDays`, `rate`, `lastDeployIso`) is already in the measurement above — and
+        // `verdictFor` consults it only where the gate refused a COMPLETE reading.
+        subGateAssessment = assessSubGateAdmission(
+          { completion, gate, nowMs: runStartedMs },
+          gateThresholds,
+          subGate,
+        );
+        ({ verdict, rationale } = verdictFor({
+          gate,
+          completion,
+          capped: gateReadingCapped,
+          notMeasured,
+          subGate: subGateAssessment,
+        }));
         // Both bounds go through the merge's own test, so the record cannot claim a window the
         // reading it was produced from treated as empty. `coveredFromIso: null` means the walk
         // never finished a signature page, so it covered NOTHING and `coveredDays` is 0 — not a
@@ -2936,6 +2987,15 @@ export async function main(opts, env, out, err, seam = {}) {
         completionCapped: gateReadingCapped,
         gate,
         verdict,
+        // Schema 26, captain decision 451. DERIVED from the verdict rather than set beside it, so
+        // the arm and the verdict cannot come apart — and `null` here is a candidate NO arm
+        // admitted, never a third arm.
+        admissionArm: admissionArmOf(verdict),
+        // Kept only where the arm actually decided something. On a `gate-unmeasured` candidate
+        // `verdictFor` returns before consulting it, so recording the assessment there would read
+        // as "the second arm refused this wallet" over a reading nobody took — the invisible false
+        // rejection this tool exists to remove, restored one field over.
+        subGate: verdict === 'gate-failed' || verdict === 'sub-gate-admitted' ? subGateAssessment : null,
         rationale,
         consistency: null,
         entry: null,
@@ -2962,7 +3022,17 @@ export async function main(opts, env, out, err, seam = {}) {
     // cannot build one nobody scores with. Two expressions that merely agree is captain decision
     // 144a's defect, and it is what let the construction sit outside this guard in the first place.
     if (entrySourcePlan !== null) {
-      const survivors = candidates.filter((c) => c.verdict === 'gate-passed');
+      // BOTH ARMS, and this union is the ONE place they meet — captain decision 451. It selects who
+      // is MEASURED and counts nothing: `admittedToStage2` is enumerated as a source fact by
+      // `test/deployer-screen.test.ts` precisely so a third caller cannot quietly build a statistic
+      // over two populations with two denominators. Every count below this line is still per arm.
+      //
+      // It does not widen the spend by a request: `maxScored` is unmoved (captain decision 339a) and
+      // Stage 2's keyless ceiling is `maxCandidatesScored` x `maxLaunchesPerCandidate` x
+      // `maxRequestsPerLaunch`, none of which is a function of how many candidates were admitted. On
+      // the last real run the cap was not even reached — 4 survivors against 7 slots — so what the
+      // second arm buys first is idle capacity.
+      const survivors = candidates.filter((c) => admittedToStage2(c.verdict));
       // **WHICH survivors the cap is spent on — captain decisions 336a and 399a.** It used to be
       // `survivors.slice(0, maxScored)`: the first seven in `mergeSeeds` order, which is
       // deterministic, so a daily run re-measured the same seven every day while the median
@@ -3013,11 +3083,23 @@ export async function main(opts, env, out, err, seam = {}) {
 
       if (!opts.json) {
         out('');
+        // THE TWO ARMS ARE COUNTED APART ON THE HEADER LINE, not summed into one "survivors"
+        // figure — captain decision 451. The total is stated too, because it is the SPEND's own
+        // denominator (the cap is over both), and it is the only place the two may appear as one
+        // number: it counts what was walked, not what was found.
+        const scoredByArm = (
+          /** @type {import('./admission.mjs').AdmissionArm} */ arm,
+          /** @type {readonly import('./rank.mjs').Candidate[]} */ rows,
+        ) => rows.filter((c) => admissionArmOf(c.verdict) === arm).length;
         out(
           `STAGE 2 — ENTRY: room in the opening window, and what the field achieved. ` +
-            `Scoring ${toScore.length} of ${survivors.length} gate survivor(s), ` +
+            `Scoring ${toScore.length} of ${survivors.length} admitted candidate(s) — ` +
+            `gate arm ${scoredByArm('gate', toScore)}/${scoredByArm('gate', survivors)}, ` +
+            `sub-gate arm ${scoredByArm('sub-gate', toScore)}/${scoredByArm('sub-gate', survivors)} ` +
+            `(captain decision 451; the two are separate populations and are never pooled) — ` +
             `ceiling ${entryThresholds.maxKeylessRequests} keyless request(s).`,
         );
+        if (scoredByArm('sub-gate', survivors) > 0) out(`  ${SUB_GATE_ADMISSION_RULE}`);
         // Captain decision 336a, on the line under the header and on EVERY run, including one with
         // rotation OFF: an operator reading a run that repeated yesterday's seven wallets has to be
         // able to see from the run itself whether that was a rotation or a repeat.
@@ -3127,14 +3209,20 @@ export async function main(opts, env, out, err, seam = {}) {
       }
     }
 
-    // Optional keyless consistency pass, survivors only.
+    // Optional keyless consistency pass, admitted candidates only — BOTH arms since captain
+    // decision 451. A ceiling hit here is caught per candidate and recorded as unmeasured rather
+    // than aborting the run, which is what makes the wider population safe to walk under an unmoved
+    // `budget.maxKeylessRequests`.
     if (opts.consistency) {
       if (!opts.json) {
         out('');
-        out('CONSISTENCY — keyless pump.fun creator walk for gate survivors (no quota cost)');
+        out('CONSISTENCY — keyless pump.fun creator walk for admitted candidates, BOTH ARMS (no quota cost)');
       }
       for (const c of candidates) {
-        if (c.verdict !== 'gate-passed') continue;
+        // Both arms, for the reason Stage 2 scores both: a consistency reading is a keyless
+        // observation about a wallet this run is measuring, and withholding it from the sub-gate arm
+        // would leave that population's only long-horizon evidence unmeasured on our own choice.
+        if (!admittedToStage2(c.verdict)) continue;
         try {
           // `truncated` travels with the result. This is the only surface here making a
           // long-horizon claim, and it is computed over a page-capped walk of a listing that is
@@ -3811,6 +3899,28 @@ function toRecordRow(c, run) {
     // through the redaction boundary. See `record.mjs` → `redactCreationNotes`.
     creation: redactCreationNotes(c.creation),
     verdict: c.verdict,
+    // Schema 26, captain decision 451 — WHICH ARM ADMITTED THIS CANDIDATE, so a later reading can
+    // separate gate-passing results from sub-gate ones instead of pooling them. `'gate'`,
+    // `'sub-gate'`, or `null` for a candidate no arm admitted; a schema-≤26 record carries neither
+    // this field nor the `sub-gate-admitted` verdict, and its absence is unambiguous.
+    admissionArm: c.admissionArm,
+    // What the second arm made of a candidate the gate refused, `null` where it was not consulted.
+    // The BOUNDS travel with it rather than being looked up from today's file: this arm is sized
+    // against a population, so a record has to say which values it was judged under. `reasons` is
+    // template-generated from counts and bars, and goes through the redaction boundary anyway for
+    // the reason `rationale` does — containment must not depend on every future writer remembering.
+    subGate:
+      c.subGate === null
+        ? null
+        : {
+            admitted: c.subGate.admitted,
+            reasons: redactAll(c.subGate.reasons),
+            launchesPerDay: c.subGate.launchesPerDay,
+            daysSinceLastLaunch: c.subGate.daysSinceLastLaunch,
+            minCompletionRate: c.subGate.bounds.minCompletionRate,
+            minLaunchesPerDay: c.subGate.bounds.minLaunchesPerDay,
+            maxDaysSinceLastLaunch: c.subGate.bounds.maxDaysSinceLastLaunch,
+          },
     // FREE TEXT, so it goes through the redaction boundary — the same one `toEntryRecordRow`
     // applies to its half. These three are all template-generated from counts and rates today
     // (`rank.mjs` → `verdictFor` / `applyGate` / `measureConsistency`), so nothing leaks now; the

@@ -159,6 +159,16 @@ import {
   isExitFilterable,
   unboundedCostComponents,
 } from '../tools/deployer-screen/bounds.mjs';
+import {
+  ADMISSION_ARMS,
+  ARMS_ARE_NEVER_POOLED,
+  SUB_GATE_ADMISSION_IS_NOT_A_FINDING,
+  SUB_GATE_ADMISSION_RULE,
+  admissionArmOf,
+  admittedToStage2,
+  assessSubGateAdmission,
+  subGateBounds,
+} from '../tools/deployer-screen/admission.mjs';
 import { swapApiFillSource } from '../tools/deployer-screen/swapapi-fills.mjs';
 import { rpcCostSource } from '../tools/deployer-screen/rpc-costs.mjs';
 import {
@@ -1500,7 +1510,7 @@ describe('ordering is deterministic and not a league table', () => {
     wallet: string,
     n: number,
     done: number,
-    verdict: 'gate-passed' | 'gate-unmeasured' | 'gate-failed',
+    verdict: 'gate-passed' | 'sub-gate-admitted' | 'gate-unmeasured' | 'gate-failed',
     roomMedian?: number,
   ) => {
     const completion = measureCompletion(
@@ -1513,6 +1523,10 @@ describe('ordering is deterministic and not a league table', () => {
       completionCapped: false,
       gate: { passed: verdict === 'gate-passed', reasons: [] as string[] },
       verdict,
+      // Schema 26, captain decision 451. Derived from the verdict exactly as `screen.mjs` derives
+      // it, so a fixture cannot claim an arm its verdict does not carry.
+      admissionArm: admissionArmOf(verdict),
+      subGate: null,
       rationale: '',
       consistency: null,
       historySource: 'creation-derived' as const,
@@ -2299,13 +2313,23 @@ describe('the CLI contract', () => {
       if (key.startsWith('$') || key === 'active' || key === 'justification') continue;
       expect(s2.justification[key], `stage2_entry.${key} has no justification`).toBeTruthy();
     }
-    // Every threshold carries its anchor.
+    // Every threshold carries its anchor. `subGateAdmission` is captain decision 451's second
+    // ADMISSION ARM — a nested block rather than a scalar, and it carries one entry covering both of
+    // its pins, which is what the coverage assertion over this file's blocks requires and what the
+    // arm's own derivation needs: the inflow floor and the refresh horizon are argued together.
     expect(Object.keys(T['stage1_gate'].justification).sort()).toEqual([
       'completionRateSource',
       'minCompletionRate',
       'minSpanDays',
       'minTokens',
+      'subGateAdmission',
     ]);
+    // The bar the arm loosens does NOT move, and the arm's own floor is strictly inside it: captain
+    // decision 451 is a loosening and neither a removal nor a lowering of `minCompletionRate`.
+    expect(T['stage1_gate'].minCompletionRate).toBe(0.25);
+    expect(T['stage1_gate'].subGateAdmission.minCompletionRate).toBeGreaterThan(0);
+    expect(T['stage1_gate'].subGateAdmission.minCompletionRate).toBeLessThan(T['stage1_gate'].minCompletionRate);
+    expect(T['stage1_gate'].subGateAdmission.visitRefreshDays).toBeGreaterThan(0);
   });
 
   it('THE THREE SAMPLING CAPS ARE SOURCE-SCOPED, and neither entry may borrow the other\'s arithmetic', () => {
@@ -7174,6 +7198,14 @@ const ROTATION_BLOCK_KEYS_BY_SCHEMA: Record<number, string[]> = {
   // is a statement about what a realized figure has NOT subtracted. Which survivors the cap was
   // spent on is untouched by it.
   26: [...ROTATION_BLOCK_KEYS_20, 'windowCap', 'newGroundRule'],
+  // Schema 27 (captain decision 451) admits a second population to Stage 2 and leaves this block's
+  // SHAPE alone — deliberately, and it is worth saying why rather than letting it read as nothing
+  // having happened. The rotation ranks whoever the run admitted; the arms differ in how a wallet
+  // GOT there, not in how much new ground a visit to it covers, and `launchesPerDay` is already the
+  // gate's own reading for both. What the `order` list means therefore widens — it is the admitted
+  // population now, not the gate-passing one — and a reader comparing two runs across the boundary
+  // reads the candidate rows' `admissionArm` to see which arm each row came from.
+  27: [...ROTATION_BLOCK_KEYS_20, 'windowCap', 'newGroundRule'],
 };
 
 // One row of `scoringRotation.order`. Schema 20 carried the three fields 336a's recency rule reads;
@@ -7201,6 +7233,9 @@ const ROTATION_ORDER_ROW_KEYS_BY_SCHEMA: Record<number, string[]> = {
   // Schema 26 likewise: the subtraction ledger says what a realized figure has NOT subtracted, which
   // is not an input to WHICH survivors the cap is spent on.
   26: [...ROTATION_ORDER_ROW_KEYS_20, 'launchesPerDay', 'newGroundWindows'],
+  // Schema 27 leaves them alone too — same reason, one level down: a sub-gate admission is ranked
+  // on the same tempo, from the same reading, by the same comparator.
+  27: [...ROTATION_ORDER_ROW_KEYS_20, 'launchesPerDay', 'newGroundWindows'],
 };
 
 describe('the keyless boundary holds in both directions', () => {
@@ -7373,6 +7408,14 @@ describe('the keyless boundary holds in both directions', () => {
   // subtracted and therefore what may not be concluded from them — and not about the deployer the
   // row describes. ENTRY_KEYS_BY_SCHEMA below.
   PERSISTED_BY_SCHEMA[26] = PERSISTED_BY_SCHEMA[25]!;
+  // Schema 27 (captain decision 451) adds TWO candidate-row fields, and they are the whole of what
+  // makes the loosening auditable: `admissionArm` says which arm admitted this wallet — `'gate'`,
+  // `'sub-gate'`, or `null` for one no arm admitted — and `subGate` carries what the second arm
+  // made of a candidate the gate refused, INCLUDING the bounds it was judged under, because that
+  // arm is sized against a population and a record quoting only today's thresholds could not say
+  // what a past run applied. Every other measured field is the same quantity at 26 and 27 and may
+  // be pooled; the two ARMS may not be, ever.
+  PERSISTED_BY_SCHEMA[27] = [...PERSISTED_BY_SCHEMA[26]!, 'admissionArm', 'subGate'].sort();
 
   // The `entry` block's own contract, per schema version. A schema-3 or schema-4 `entry.roomLeft`
   // may be inflated by the operation's own stake booked as outsider capital and the record carries
@@ -7560,6 +7603,10 @@ describe('the keyless boundary holds in both directions', () => {
     // unbounded when it was written, and the absence of a ledger is not the same statement as an
     // empty one.
     26: ENTRY_KEYS_26,
+    // Schema 27 (captain decision 451) adds a second ADMISSION ARM. Everything it adds is on the
+    // candidate ROW — `admissionArm` and `subGate` — so this block is untouched, and a figure
+    // inside it means at 27 exactly what it meant at 26 FOR ONE ARM AT A TIME.
+    27: ENTRY_KEYS_26,
   };
 
   // The `windows` row, per version, and the `entrants` row inside it. Two levels, both pinned, for
@@ -7588,6 +7635,10 @@ describe('the keyless boundary holds in both directions', () => {
     24: ENTRY_WINDOW_KEYS_24,
     25: ENTRY_WINDOW_KEYS_24,
     26: ENTRY_WINDOW_KEYS_24,
+    // Schema 27 (captain decision 451) adds a second ADMISSION ARM. Everything it adds is on the
+    // candidate ROW — `admissionArm` and `subGate` — so this block is untouched, and a figure
+    // inside it means at 27 exactly what it meant at 26 FOR ONE ARM AT A TIME.
+    27: ENTRY_WINDOW_KEYS_24,
   };
   const ENTRY_ENTRANT_KEYS_24 = [
     'wallet',
@@ -7632,6 +7683,10 @@ describe('the keyless boundary holds in both directions', () => {
     24: ENTRY_ENTRANT_KEYS_24,
     25: ENTRY_ENTRANT_KEYS_25,
     26: ENTRY_ENTRANT_KEYS_25,
+    // Schema 27 (captain decision 451) adds a second ADMISSION ARM. Everything it adds is on the
+    // candidate ROW — `admissionArm` and `subGate` — so this block is untouched, and a figure
+    // inside it means at 27 exactly what it meant at 26 FOR ONE ARM AT A TIME.
+    27: ENTRY_ENTRANT_KEYS_25,
   };
 
   // The `creation` block's own key set, per version — a block four assertions could see the NAME of
@@ -7735,6 +7790,10 @@ describe('the keyless boundary holds in both directions', () => {
     24: CREATION_KEYS_15,
     25: CREATION_KEYS_15,
     26: CREATION_KEYS_15,
+    // Schema 27 (captain decision 451) adds a second ADMISSION ARM. Everything it adds is on the
+    // candidate ROW — `admissionArm` and `subGate` — so this block is untouched, and a figure
+    // inside it means at 27 exactly what it meant at 26 FOR ONE ARM AT A TIME.
+    27: CREATION_KEYS_15,
   };
 
   // `entry.coverage`'s own key set, per version, for the same reason one level further down: the
@@ -7805,6 +7864,10 @@ describe('the keyless boundary holds in both directions', () => {
     // attempts and tips totalled. They are the inputs the ledger's two bounded rows are derived
     // from, kept so a record can be audited for why a row was bounded or was not.
     26: ENTRY_COVERAGE_KEYS_6,
+    // Schema 27 (captain decision 451) adds a second ADMISSION ARM. Everything it adds is on the
+    // candidate ROW — `admissionArm` and `subGate` — so this block is untouched, and a figure
+    // inside it means at 27 exactly what it meant at 26 FOR ONE ARM AT A TIME.
+    27: ENTRY_COVERAGE_KEYS_6,
   };
 
   // And `entry.coverage.cost`'s own key set, one level further down again — the hole schema 26 would
@@ -7860,6 +7923,7 @@ describe('the keyless boundary holds in both directions', () => {
     24: ENTRY_COST_KEYS_6_TO_25,
     25: ENTRY_COST_KEYS_6_TO_25,
     26: ENTRY_COST_KEYS_26,
+    27: ENTRY_COST_KEYS_26,
   };
 
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
@@ -7948,6 +8012,10 @@ describe('the keyless boundary holds in both directions', () => {
     24: SPEND_KEYS_8,
     25: SPEND_KEYS_8,
     26: SPEND_KEYS_8,
+    // Schema 27 (captain decision 451) adds a second ADMISSION ARM. Everything it adds is on the
+    // candidate ROW — `admissionArm` and `subGate` — so this block is untouched, and a figure
+    // inside it means at 27 exactly what it meant at 26 FOR ONE ARM AT A TIME.
+    27: SPEND_KEYS_8,
   };
 
   // The run-level `dune` block, pinned PER VERSION like every other block of this record. It was
@@ -8013,6 +8081,10 @@ describe('the keyless boundary holds in both directions', () => {
     24: DUNE_KEYS_13,
     25: DUNE_KEYS_13,
     26: DUNE_KEYS_13,
+    // Schema 27 (captain decision 451) adds a second ADMISSION ARM. Everything it adds is on the
+    // candidate ROW — `admissionArm` and `subGate` — so this block is untouched, and a figure
+    // inside it means at 27 exactly what it meant at 26 FOR ONE ARM AT A TIME.
+    27: DUNE_KEYS_13,
   };
 
   // `dune.coverage` — the probe's own bounds — pinned per version in the same idiom as
@@ -8061,6 +8133,10 @@ describe('the keyless boundary holds in both directions', () => {
     24: DUNE_COVERAGE_KEYS_9,
     25: DUNE_COVERAGE_KEYS_9,
     26: DUNE_COVERAGE_KEYS_9,
+    // Schema 27 (captain decision 451) adds a second ADMISSION ARM. Everything it adds is on the
+    // candidate ROW — `admissionArm` and `subGate` — so this block is untouched, and a figure
+    // inside it means at 27 exactly what it meant at 26 FOR ONE ARM AT A TIME.
+    27: DUNE_COVERAGE_KEYS_9,
   };
   // And one level further down: the per-table projection inside `dune.coverage.tables`. Pinning
   // only the eight keys above would have left this key set free to grow, which is the same gap this
@@ -8096,12 +8172,20 @@ describe('the keyless boundary holds in both directions', () => {
     24: DUNE_COVERAGE_TABLE_KEYS_9,
     25: DUNE_COVERAGE_TABLE_KEYS_9,
     26: DUNE_COVERAGE_TABLE_KEYS_9,
+    // Schema 27 (captain decision 451) adds a second ADMISSION ARM. Everything it adds is on the
+    // candidate ROW — `admissionArm` and `subGate` — so this block is untouched, and a figure
+    // inside it means at 27 exactly what it meant at 26 FOR ONE ARM AT A TIME.
+    27: DUNE_COVERAGE_TABLE_KEYS_9,
   };
 
   // Keys a version adds to the record OUTSIDE the candidate row and its `entry` block — today the
   // `stage0` block. The three key sets above cannot see these, which is how schema 7 could have
   // shipped a second meaning under version 6 with every existing assertion still green.
   const RECORD_KEYS_ADDED_BY_SCHEMA: Record<number, string[]> = {
+    // Captain decision 451's second admission arm. Both keys are asserted against `toRecordRow`'s
+    // own source AND against the README's schema row, so a version that documents an arm it does
+    // not emit — or emits one it does not document — fails here rather than in a committed record.
+    27: ['admissionArm', 'subGate'],
     7: [
       'includingUnprovenLaunchesPriced',
       'includingUnprovenPairsPriced',
@@ -8180,6 +8264,10 @@ describe('the keyless boundary holds in both directions', () => {
     24: ENTRY_SOURCE_AGREEMENT_KEYS_18,
     25: ENTRY_SOURCE_AGREEMENT_KEYS_18,
     26: ENTRY_SOURCE_AGREEMENT_KEYS_18,
+    // Schema 27 (captain decision 451) adds a second ADMISSION ARM. Everything it adds is on the
+    // candidate ROW — `admissionArm` and `subGate` — so this block is untouched, and a figure
+    // inside it means at 27 exactly what it meant at 26 FOR ONE ARM AT A TIME.
+    27: ENTRY_SOURCE_AGREEMENT_KEYS_18,
   };
   // This leg's own Dune meter. It is deliberately NOT folded into the run-level `dune` block: that
   // one bounds an enumeration answering a whole batch in ONE execution, this one bounds a leg
@@ -8212,6 +8300,10 @@ describe('the keyless boundary holds in both directions', () => {
     24: AGREEMENT_DUNE_SPEND_KEYS_18,
     25: AGREEMENT_DUNE_SPEND_KEYS_18,
     26: AGREEMENT_DUNE_SPEND_KEYS_18,
+    // Schema 27 (captain decision 451) adds a second ADMISSION ARM. Everything it adds is on the
+    // candidate ROW — `admissionArm` and `subGate` — so this block is untouched, and a figure
+    // inside it means at 27 exactly what it meant at 26 FOR ONE ARM AT A TIME.
+    27: AGREEMENT_DUNE_SPEND_KEYS_18,
   };
   // And the per-candidate row, which is where the class that can be WRONG lives. The run level only
   // counts these, so a field vanishing here would be invisible to every pin above it.
@@ -8228,6 +8320,10 @@ describe('the keyless boundary holds in both directions', () => {
     24: ENTRY_AGREEMENT_KEYS_18,
     25: ENTRY_AGREEMENT_KEYS_18,
     26: ENTRY_AGREEMENT_KEYS_18,
+    // Schema 27 (captain decision 451) adds a second ADMISSION ARM. Everything it adds is on the
+    // candidate ROW — `admissionArm` and `subGate` — so this block is untouched, and a figure
+    // inside it means at 27 exactly what it meant at 26 FOR ONE ARM AT A TIME.
+    27: ENTRY_AGREEMENT_KEYS_18,
   };
 
   it('the network tool never imports the keyless analysis core, and vice versa', () => {
@@ -19409,4 +19505,526 @@ describe('the subtraction ledger, and a verdict that is a FUNCTION of it — cap
     expect(rendered).toContain('UNBOUNDED');
     expect(rendered).toMatch(/ceilings, not measurements/);
   });
+});
+
+describe('451: the sub-gate arm admits a refused deployer, and the two arms are never pooled', () => {
+  const T = loadThresholds() as Record<string, Record<string, never>>;
+  const GATE_BARS = {
+    minTokens: Number(T['stage1_gate']!['minTokens']),
+    minCompletionRate: Number(T['stage1_gate']!['minCompletionRate']),
+    minSpanDays: Number(T['stage1_gate']!['minSpanDays']),
+  };
+  const WINDOW_CAP = Number(T['stage2_entry']!['maxLaunchesPerCandidate']);
+  const BOUNDS = subGateBounds(T['stage1_gate']! as never, WINDOW_CAP);
+
+  /**
+   * A completion measurement in the shape the gate reads, built from a candidate ROW's own fields.
+   *
+   * The record carries the four quantities this arm reads — `tokens`, `completionRate`, `spanDays`
+   * and `windowLastDeploy` — so the derivations below run over the real population rather than over
+   * a fixture. The mayhem and criterion counts are zeroed because a schema-12 record predates both
+   * exclusions; that is a statement about the record, not an assumption about the wallets.
+   */
+  const measurementFrom = (row: Record<string, unknown>) => ({
+    tokens: Number(row['tokens']),
+    completed: Number(row['completed']),
+    rate: Number(row['completionRate']),
+    spanDays: Number(row['spanDays']),
+    firstDeployIso: (row['windowFirstDeploy'] as string | null) ?? null,
+    lastDeployIso: (row['windowLastDeploy'] as string | null) ?? null,
+    mayhemExcluded: 0,
+    mayhemUnreadable: Number(row['tokens']),
+    criterionUnreadable: 0,
+    criterionEstimated: Number(row['tokens']),
+    droppedNoTimestamp: 0,
+  });
+
+  it('derives both window-supply bounds and REFUSES rather than defaulting without its pins', () => {
+    // The tempo floor is one Stage 2 visit's worth of windows inside the refresh horizon, and it is
+    // DERIVED so it moves when the window cap moves — which that cap has done (8 -> 10, captain
+    // decision 190a). A written 0.465 would have stayed at the 8-launch value silently.
+    expect(BOUNDS.minLaunchesPerDay).toBeCloseTo(WINDOW_CAP / BOUNDS.visitRefreshDays, 6);
+    expect(subGateBounds(T['stage1_gate']! as never, 20).minLaunchesPerDay).toBeCloseTo(
+      20 / BOUNDS.visitRefreshDays,
+      6,
+    );
+    // The recency bound is the same horizon, unmodified: a wallet silent for longer than the median
+    // ALREADY-ADMITTED survivor takes to refresh a whole visit has produced no ground at all.
+    expect(BOUNDS.maxDaysSinceLastLaunch).toBe(BOUNDS.visitRefreshDays);
+
+    // A guard that weakens when its inputs go missing fails in the one direction this decision has
+    // to be safe in: quietly admitting a population nobody sized. So every pin is REQUIRED.
+    expect(() => subGateBounds({} as never, WINDOW_CAP)).toThrow(/subGateAdmission is missing/);
+    expect(() =>
+      subGateBounds({ subGateAdmission: { minCompletionRate: 0, visitRefreshDays: 21.5 } } as never, WINDOW_CAP),
+    ).toThrow(/must be a positive number/);
+    // "Do not set the bar to zero" is captain decision 451's own wording, and it is enforced rather
+    // than documented: a zero inflow floor is unrepresentable under this guard.
+    expect(BOUNDS.minCompletionRate).toBeGreaterThan(0);
+    expect(BOUNDS.minCompletionRate).toBeLessThan(GATE_BARS.minCompletionRate);
+    expect(() => subGateBounds(T['stage1_gate']! as never, 0)).toThrow(/window cap/);
+  });
+
+  it('admits 8 and refuses 54 of the 62 the rate bar removes on the committed 2026-08-04 run', () => {
+    // THE DERIVATION, RE-RUN OVER THE POPULATION IT WAS DERIVED FROM. `thresholds.json` ->
+    // `stage1_gate.justification.subGateAdmission` states these figures as the in-repo half of the
+    // argument, and this is what makes them checkable rather than quoted: a bar that quietly stopped
+    // refusing — or quietly stopped admitting — moves one of these counts.
+    const rec = JSON.parse(
+      readFileSync(join(TOOL_DIR, 'runs', '2026-08-04.json'), 'utf8'),
+    ) as Record<string, never>;
+    const nowMs = Date.parse(String(rec['startedAtIso']));
+    const rows = rec['candidates'] as unknown as Record<string, unknown>[];
+    expect(rows).toHaveLength(82);
+
+    let admitted = 0;
+    let refusedOnInflow = 0;
+    let refusedOnTempo = 0;
+    let refusedOnRecency = 0;
+    let outsideTheArm = 0;
+    for (const row of rows) {
+      const completion = measurementFrom(row);
+      const gate = applyGate({ completion }, GATE_BARS);
+      if (gate.passed) continue;
+      const seen = assessSubGateAdmission({ completion, gate, nowMs }, GATE_BARS, BOUNDS);
+      if (seen.admitted) {
+        admitted += 1;
+        continue;
+      }
+      const why = seen.reasons.join(' | ');
+      if (/sample too small|window too short/.test(why)) outsideTheArm += 1;
+      else if (/completion rate/.test(why)) refusedOnInflow += 1;
+      else if (/launch tempo/.test(why)) refusedOnTempo += 1;
+      else if (/last launch/.test(why)) refusedOnRecency += 1;
+    }
+
+    // 4 cleared the gate; 16 miss the count bars, which this arm does NOT loosen; 62 remain.
+    expect(outsideTheArm).toBe(16);
+    expect(admitted + refusedOnInflow + refusedOnTempo + refusedOnRecency).toBe(62);
+    expect(admitted).toBe(8);
+    // The inflow floor is what does the work — it refuses 53 of the 54 — and the tempo floor is a
+    // GUARD rather than the binding filter on this population, which is high-tempo by construction.
+    // The justification says exactly this; a lane that ever reads the tempo bound as the filter can
+    // be corrected from here.
+    expect(refusedOnInflow).toBe(53);
+    expect(refusedOnTempo).toBe(1);
+    // Zero on this record, and kept anyway: the class it guards exists in the wider population and
+    // not here (one wallet the gate PASSED on the same run had last launched 61.68 days earlier).
+    expect(refusedOnRecency).toBe(0);
+    const stalePassers = rows.filter(
+      (r) =>
+        r['verdict'] === 'gate-passed' &&
+        (nowMs - Date.parse(String(r['windowLastDeploy']))) / 86_400_000 > BOUNDS.maxDaysSinceLastLaunch,
+    );
+    expect(stalePassers).toHaveLength(1);
+  });
+
+  it('never admits a candidate that cleared the gate, and never loosens the two count bars', () => {
+    const nowMs = Date.parse('2026-08-04T00:00:00.000Z');
+    const measurement = (tokens: number, rate: number, spanDays: number, lastDeployIso: string) => ({
+      tokens,
+      completed: Math.round(tokens * rate),
+      rate,
+      spanDays,
+      firstDeployIso: '2026-01-01T00:00:00.000Z',
+      lastDeployIso,
+      mayhemExcluded: 0,
+      mayhemUnreadable: tokens,
+      criterionUnreadable: 0,
+      criterionEstimated: tokens,
+      droppedNoTimestamp: 0,
+    });
+    const assess = (m: ReturnType<typeof measurement>) =>
+      assessSubGateAdmission({ completion: m, gate: applyGate({ completion: m }, GATE_BARS), nowMs }, GATE_BARS, BOUNDS);
+
+    // A wallet the gate PASSED belongs to the other arm and this one says so rather than deciding.
+    const passing = assess(measurement(100, 0.4, 200, '2026-08-03T00:00:00.000Z'));
+    expect(passing.admitted).toBe(false);
+    expect(passing.reasons.join(' ')).toMatch(/admitted through the gate arm and not this one/);
+
+    // Sub-gate rate, everything else in order — the population captain decision 451 admits.
+    const admitted = assess(measurement(100, 0.1, 200, '2026-08-03T00:00:00.000Z'));
+    expect(admitted.admitted).toBe(true);
+
+    // The sample-size and evidence-window bars are NOT loosened by this arm, on either side.
+    expect(assess(measurement(GATE_BARS.minTokens - 1, 0.1, 200, '2026-08-03T00:00:00.000Z')).admitted).toBe(false);
+    expect(assess(measurement(100, 0.1, GATE_BARS.minSpanDays - 1, '2026-08-03T00:00:00.000Z')).admitted).toBe(false);
+    // And neither is the inflow floor, the tempo floor or the recency bound.
+    expect(assess(measurement(100, BOUNDS.minCompletionRate / 2, 200, '2026-08-03T00:00:00.000Z')).admitted).toBe(false);
+    expect(assess(measurement(30, 0.1, 1_000, '2026-08-03T00:00:00.000Z')).admitted).toBe(false); // tempo 0.03/day
+    expect(assess(measurement(100, 0.1, 200, '2026-05-01T00:00:00.000Z')).admitted).toBe(false); // silent 95 days
+  });
+
+  it('is consulted only BELOW the gate and BELOW every unmeasured branch', () => {
+    // The order is the whole of the arm's safety: an arm that could admit a candidate whose reading
+    // was never taken would be manufacturing a population out of our own coverage.
+    const completion = measureCompletion(
+      Array.from({ length: 100 }, (_, i) => ({ deployedAtMs: T0 + i * DAY, completed: i < 10 })),
+    );
+    const gate = applyGate({ completion }, GATE_BARS);
+    expect(gate.passed).toBe(false);
+    const seen = assessSubGateAdmission(
+      { completion, gate, nowMs: T0 + 100 * DAY },
+      GATE_BARS,
+      BOUNDS,
+    );
+    expect(seen.admitted).toBe(true);
+
+    expect(verdictFor({ gate, completion, capped: false, subGate: seen }).verdict).toBe('sub-gate-admitted');
+    // An INCOMPLETE reading outranks the arm — captain decision 174b's direction, and 351/352b's.
+    expect(
+      verdictFor({ gate, completion, capped: false, notMeasured: ['the listing could not be read'], subGate: seen })
+        .verdict,
+    ).toBe('gate-unmeasured');
+    // With the arm not consulted at all, every verdict is what it was before captain decision 451.
+    expect(verdictFor({ gate, completion, capped: false }).verdict).toBe('gate-failed');
+    // And a refusal is still reported on the row, so "the arm refused this" and "the arm was never
+    // asked" cannot be read as the same thing.
+    const refused = assessSubGateAdmission(
+      { completion, gate, nowMs: T0 + 1_000 * DAY },
+      GATE_BARS,
+      BOUNDS,
+    );
+    expect(refused.admitted).toBe(false);
+    expect(verdictFor({ gate, completion, capped: false, subGate: refused }).rationale).toMatch(
+      /the sub-gate arm \(captain decision 451\) also refused it/,
+    );
+  });
+
+  it('claims the measurement and NEVER profitability', () => {
+    // Captain decision 451 does not settle whether the sub-gate passes are real, and this repo's own
+    // pinned rule is why: measured cost is a LOWER bound, so a net figure above a bar cannot EARN a
+    // verdict. Nothing this arm emits may read as a finding of profitability.
+    const admissionText = readFileSync(join(TOOL_DIR, 'admission.mjs'), 'utf8');
+    expect(SUB_GATE_ADMISSION_IS_NOT_A_FINDING).toMatch(/LOWER bound/);
+    expect(SUB_GATE_ADMISSION_IS_NOT_A_FINDING).toMatch(/cannot earn a verdict/);
+    expect(SUB_GATE_ADMISSION_RULE).toMatch(/spend-worthiness/);
+    for (const claim of [/\bprofitable\b/i, /\bbeatable\b/i, /\bedge\b/i]) {
+      expect(executableHalf(admissionText), `admission.mjs must not claim ${String(claim)}`).not.toMatch(claim);
+    }
+    // The caveat rides on the ADMISSION's own rationale, so it reaches the record row, the rendered
+    // block and any line quoted out of context — not only a document.
+    const completion = measureCompletion(
+      Array.from({ length: 100 }, (_, i) => ({ deployedAtMs: T0 + i * DAY, completed: i < 10 })),
+    );
+    const gate = applyGate({ completion }, GATE_BARS);
+    const seen = assessSubGateAdmission({ completion, gate, nowMs: T0 + 100 * DAY }, GATE_BARS, BOUNDS);
+    expect(seen.rationale).toContain(SUB_GATE_ADMISSION_IS_NOT_A_FINDING);
+    expect(seen.rationale).toContain(ARMS_ARE_NEVER_POOLED);
+    expect(seen.rationale).toMatch(/FAILED the competence gate/);
+  });
+
+  it('pools nothing: the union predicate SELECTS who is measured and counts nothing', () => {
+    // THE ACCEPTANCE CRITERION, ENFORCED AS A SOURCE FACT. The two arms are two populations with two
+    // denominators, so the only legitimate use of their union is choosing a population to spend a
+    // keyless walk on. `admittedToStage2` is that union, and its call sites are enumerated here for
+    // the same reason `client.execute`'s are one lane over: a third caller is how a pooled figure
+    // would arrive, and it arrives silently.
+    const all = readAll(TOOL_DIR, 'tools/deployer-screen/');
+    const callers = [...all.entries()]
+      .filter(([path, text]) => !path.endsWith('admission.mjs') && executableHalf(text).includes('admittedToStage2'))
+      .map(([path]) => path)
+      .sort();
+    expect(callers).toEqual(['tools/deployer-screen/screen.mjs']);
+    // Both call sites are SELECTIONS — the Stage 2 survivor list and the consistency walk — and
+    // neither is an argument to a count, a length or a rate.
+    const screenSource = executableHalf(all.get('tools/deployer-screen/screen.mjs') ?? '');
+    const uses = [...screenSource.matchAll(/admittedToStage2\([^)]*\)/g)].map((m) => m[0]);
+    expect(uses).toHaveLength(2);
+    for (const use of uses) {
+      expect(screenSource).toMatch(new RegExp(`(filter\\(\\(c\\) => ${use.replace(/[()]/g, '\\$&')}|!${use.replace(/[()]/g, '\\$&')}\\) continue)`));
+    }
+
+    // Every gate-population statistic this tool already computes stays over ONE arm. `gatePassedCount`
+    // must not learn to include the second, and there is deliberately no metric that sums the two.
+    const metrics = DERIVED_PREDICTION_METRICS as Record<string, (r: Record<string, unknown>) => number | null>;
+    const record = {
+      candidates: [
+        { verdict: 'gate-passed', completionRate: 0.4, vendorCompletionRate: 0.4, tokens: 100, spanDays: 200 },
+        { verdict: 'sub-gate-admitted', completionRate: 0.1, vendorCompletionRate: 0.1, tokens: 100, spanDays: 200 },
+        { verdict: 'sub-gate-admitted', completionRate: 0.1, vendorCompletionRate: 0.1, tokens: 100, spanDays: 200 },
+        { verdict: 'gate-failed', completionRate: 0.01, vendorCompletionRate: 0.01, tokens: 100, spanDays: 200 },
+      ],
+      thresholds: { stage1_gate: { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 } },
+    };
+    expect(metrics['gatePassedCount']!(record)).toBe(1);
+    expect(metrics['subGateAdmittedCount']!(record)).toBe(2);
+    expect(metrics['gateFailedCount']!(record)).toBe(1);
+    // `admittedMedianVendorMinusGateRate` predates the second arm and stays the GATE arm's: the
+    // sub-gate rows must not enter its denominator.
+    expect(metrics['admittedMedianVendorMinusGateRate']!(record)).toBe(0);
+
+    // And the rendered report keeps them apart at every level: its own heading, its own count, and
+    // the never-pool sentence on the block itself.
+    const renderSource = readFileSync(join(TOOL_DIR, 'render.mjs'), 'utf8');
+    expect(renderSource).toContain("c.verdict === 'sub-gate-admitted'");
+    expect(renderSource).toContain('ARMS_ARE_NEVER_POOLED');
+    // No expression anywhere adds one arm's population to the other's.
+    for (const [path, text] of all) {
+      expect(executableHalf(text), `${path} adds the two arms into one figure`).not.toMatch(
+        /passed\.length\s*\+\s*subGateAdmitted\.length|subGateAdmitted\.length\s*\+\s*passed\.length/,
+      );
+    }
+  });
+
+  it('cannot move a spend bound, because no ceiling is a function of who was admitted', () => {
+    // Captain decision 451 is authorised to spend nothing, and that is structural rather than
+    // careful: Stage 2's keyless ceiling is the product of three caps, none of which counts
+    // candidates ADMITTED, and `maxCandidatesScored` does not move (captain decision 339a).
+    const entry = loadThresholds()['stage2_entry'] as Record<string, number>;
+    expect(entry['maxCandidatesScored']).toBe(7);
+    expect(entry['maxLaunchesPerCandidate']).toBe(10);
+    expect(entry['maxRequestsPerLaunch']).toBe(18);
+    expect(entry['maxCandidatesScored']! * entry['maxLaunchesPerCandidate']! * entry['maxRequestsPerLaunch']!).toBe(
+      entry['maxKeylessRequests'],
+    );
+    // The arm itself reaches no vendor and reads no clock of its own: it takes the run's instant.
+    const text = executableHalf(readFileSync(join(TOOL_DIR, 'admission.mjs'), 'utf8'));
+    for (const forbidden of ['fetch(', 'Date.now(', 'process.env', 'readFileSync']) {
+      expect(text, `admission.mjs must not use ${forbidden}`).not.toContain(forbidden);
+    }
+    // Both arms are in the vocabulary, and nothing else is.
+    expect([...ADMISSION_ARMS]).toEqual(['gate', 'sub-gate']);
+    expect(admissionArmOf('gate-passed')).toBe('gate');
+    expect(admissionArmOf('sub-gate-admitted')).toBe('sub-gate');
+    expect(admissionArmOf('gate-failed')).toBe(null);
+    expect(admissionArmOf('gate-unmeasured')).toBe(null);
+  });
+});
+
+describe('451: a sub-gate deployer reaches Stage 2, and the record says which arm let it in', () => {
+  // THE RULING, DRIVEN END TO END THROUGH `main` OVER STUBBED TRANSPORTS — the shape captain
+  // decision 398a's own end-to-end pin uses, and for the same reason: the property that matters is
+  // about CONTROL FLOW, and a unit test of the predicate cannot see whether the candidate actually
+  // reached the scoring loop or how the record and the report described it afterwards.
+  //
+  // Two wallets, launching just as often over just as long: one clears every bar, the other bonds
+  // 10% of its launches and so fails on the RATE ALONE — the population captain decision 451 admits.
+  const DUNE_IDS = loadThresholds()['dune'] as { coverageQueryId: number; creationQueryId: number };
+  const GATE = loadThresholds()['stage1_gate'] as {
+    minTokens: number;
+    minCompletionRate: number;
+    minSpanDays: number;
+    subGateAdmission: { minCompletionRate: number; visitRefreshDays: number };
+  };
+  const MADEONSOL_FAKE_KEY = 'm'.repeat(32);
+  const COMPETENT = `Wa11etArmA${'y'.repeat(28)}`;
+  const SUBGATE = `Wa11etArmB${'y'.repeat(28)}`;
+
+  const duneTs = (ms: number) => `${new Date(ms).toISOString().replace('T', ' ').replace('Z', '')} UTC`;
+
+  const freshProbe = (nowMs: number) => {
+    const lastMonth = new Date(nowMs).toISOString().slice(0, 7);
+    return probeRows([
+      {
+        table: 'evt_createevent',
+        first: '2024-04-26 09:55:52.000 UTC',
+        last: duneTs(nowMs - 3_600_000),
+        total: 20_571_130,
+        months: monthsBetween('2024-04', lastMonth),
+      },
+      {
+        table: 'call_create',
+        first: '2024-01-14 12:57:12.000 UTC',
+        last: duneTs(nowMs - 3_600_000),
+        total: 14_145_301,
+        months: monthsBetween('2024-01', lastMonth),
+      },
+    ]);
+  };
+
+  const usageBody = (nowMs: number) => ({
+    billing_periods: [
+      {
+        start_date: new Date(nowMs - 5 * DAY).toISOString().slice(0, 10),
+        end_date: new Date(nowMs + 25 * DAY).toISOString().slice(0, 10),
+        credits_used: 0,
+        credits_included: 4000,
+      },
+    ],
+  });
+
+  /**
+   * `SUBGATE`'s rate sits strictly between the arm's floor and the gate's bar, and its tempo and
+   * recency clear the derived window-supply bounds with room — so the ONLY thing standing between it
+   * and Stage 2 is captain decision 451.
+   */
+  const creationRows = (nowMs: number) => {
+    const n = GATE.minTokens * 2;
+    const spread = Math.max(GATE.minSpanDays * 3, 60);
+    const forWallet = (deployer: string, bonded: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        deployer,
+        mint: `${deployer.slice(0, 8)}_${i}`,
+        created_at: duneTs(nowMs - (spread - (i * spread) / n) * DAY),
+        bonded: i < bonded,
+        launches_total: n,
+        is_mayhem_mode: false,
+      }));
+    // 10% bonded: above `subGateAdmission.minCompletionRate` (0.05), below `minCompletionRate` (0.25).
+    return [...forWallet(COMPETENT, n), ...forWallet(SUBGATE, Math.round(n * 0.1))];
+  };
+
+  const runBothArms = async () => {
+    const nowMs = Date.now();
+    const dir = mkdtempSync(join(tmpdir(), 'subgate-run-'));
+    const listPath = join(dir, 'both-arms.txt');
+    writeFileSync(listPath, `${COMPETENT}\n${SUBGATE}\n`, 'utf8');
+    const out = join(dir, 'run.json');
+    // A TEMPORARY rotation path — a test may not move the tool's own committed memory.
+    const rotation = join(dir, 'rotation.json');
+    const rows = creationRows(nowMs);
+
+    const fetchImpl = async (url: unknown) => {
+      const target = String(url);
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+
+      if (target.startsWith(DUNE_API_BASE)) {
+        const path = target.replace(DUNE_API_BASE, '');
+        if (path.startsWith('/usage')) return json(usageBody(nowMs));
+        if (path.startsWith(`/query/${DUNE_IDS.coverageQueryId}/results`)) {
+          return json({
+            result: {
+              rows: freshProbe(nowMs),
+              metadata: { total_row_count: freshProbe(nowMs).length, total_result_set_bytes: 1000 },
+            },
+          });
+        }
+        if (path.startsWith(`/query/${DUNE_IDS.coverageQueryId}`)) return json({ query_sql: COVERAGE_SQL });
+        if (path.startsWith(`/query/${DUNE_IDS.creationQueryId}/execute`)) return json({ execution_id: 'e1' });
+        if (path.startsWith(`/query/${DUNE_IDS.creationQueryId}`)) return json({ query_sql: CREATION_SQL });
+        if (path.startsWith('/execution/e1/status')) return json({ state: 'QUERY_STATE_COMPLETED' });
+        if (path.startsWith('/execution/e1/results')) {
+          return json({
+            result: { rows, metadata: { total_row_count: rows.length, total_result_set_bytes: 50_000 } },
+          });
+        }
+        throw new Error(`unstubbed Dune request ${path}`);
+      }
+      if (target.startsWith(BASE_URL)) {
+        const wallet = [COMPETENT, SUBGATE].find((w) => target.includes(w));
+        // Minted seconds ago, so Stage 2's eligibility gate refuses every launch and the scoring
+        // loop reaches a verdict without one keyless request. It is still a real pass THROUGH that
+        // loop, which is what the `entry` assertions below read.
+        if (wallet !== undefined) {
+          return json({ pump_tokens: [{ mint: `${wallet}-live`, created_timestamp: nowMs, complete: true }] });
+        }
+        throw new Error(`unexpected enumeration request ${target}`);
+      }
+      if (target.startsWith(FRONTEND_API)) return json([]);
+      if (target.startsWith(PUBLIC_SOLANA_RPC)) return json({ jsonrpc: '2.0', id: 1, result: [] });
+      throw new Error(`unstubbed request ${target}`);
+    };
+
+    vi.stubGlobal('fetch', fetchImpl as unknown as typeof fetch);
+    try {
+      // NOT `--json`: the rendered report is half of what captain decision 451 requires, and it is
+      // only produced on this branch.
+      const parsed = parseArgs(['--wallets', listPath, '--out', out, '--rotation', rotation]);
+      if (!parsed.ok) throw new Error(parsed.message);
+      const lines: string[] = [];
+      const errs: string[] = [];
+      const code = await main(
+        parsed.opts,
+        { [KEY_ENV_VAR]: MADEONSOL_FAKE_KEY, [DUNE_KEY_ENV_VAR]: DUNE_FAKE_KEY },
+        (l) => lines.push(l),
+        (l) => errs.push(l),
+      );
+      expect(errs.join('\n')).toBe('');
+      expect(code).toBe(0);
+      const record = JSON.parse(readFileSync(out, 'utf8')) as Record<string, any>;
+      return { record, text: lines.join('\n') };
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  };
+
+  it('admits the sub-gate wallet to Stage 2 and files the arm on its row', async () => {
+    const { record } = await runBothArms();
+    const rows = record['candidates'] as Record<string, any>[];
+    const good = rows.find((r) => r['wallet'] === COMPETENT)!;
+    const sub = rows.find((r) => r['wallet'] === SUBGATE)!;
+
+    // The gate arm is untouched by the decision.
+    expect(good['verdict']).toBe('gate-passed');
+    expect(good['admissionArm']).toBe('gate');
+    expect(good['subGate']).toBeNull();
+    expect(good['entry']).not.toBeNull();
+
+    // THE RULING. It failed the competence bar and was measured anyway.
+    expect(sub['completionRate']).toBeLessThan(GATE.minCompletionRate);
+    expect(sub['completionRate']).toBeGreaterThanOrEqual(GATE.subGateAdmission.minCompletionRate);
+    expect(sub['verdict']).toBe('sub-gate-admitted');
+    expect(sub['admissionArm']).toBe('sub-gate');
+    // It reached Stage 2 — the point of the decision, and the thing a verdict alone cannot show.
+    expect(sub['entry']).not.toBeNull();
+    expect(sub['entrySource']).toBe('swap-api');
+
+    // The arm's own block, and the BOUNDS it was judged under: this arm is sized against a
+    // population, so a record quoting only today's thresholds could not say what a past run applied.
+    expect(Object.keys(sub['subGate']).sort()).toEqual(
+      [
+        'admitted',
+        'reasons',
+        'launchesPerDay',
+        'daysSinceLastLaunch',
+        'minCompletionRate',
+        'minLaunchesPerDay',
+        'maxDaysSinceLastLaunch',
+      ].sort(),
+    );
+    expect(sub['subGate']['admitted']).toBe(true);
+    expect(sub['subGate']['reasons']).toEqual([]);
+    expect(sub['subGate']['minCompletionRate']).toBe(GATE.subGateAdmission.minCompletionRate);
+    expect(sub['subGate']['minLaunchesPerDay']).toBeCloseTo(
+      Number((loadThresholds()['stage2_entry'] as Record<string, number>)['maxLaunchesPerCandidate']) /
+        GATE.subGateAdmission.visitRefreshDays,
+      6,
+    );
+    expect(sub['subGate']['launchesPerDay']).toBeGreaterThan(sub['subGate']['minLaunchesPerDay']);
+    expect(sub['subGate']['daysSinceLastLaunch']).toBeLessThan(sub['subGate']['maxDaysSinceLastLaunch']);
+    // The rationale it carries states what admission does and does not claim, verbatim.
+    expect(sub['rationale']).toContain(SUB_GATE_ADMISSION_IS_NOT_A_FINDING);
+    expect(sub['rationale']).toContain(ARMS_ARE_NEVER_POOLED);
+    expect(record['schemaVersion']).toBe(RECORD_SCHEMA_VERSION);
+  }, 60_000);
+
+  it('reports the two arms apart, in the record and in the rendered report', async () => {
+    const { record, text } = await runBothArms();
+
+    // The header counts them on separate lines, and the sub-gate wallets get their own section with
+    // their own denominator — never a row in the gate block, and never one among the rejections.
+    expect(text).toMatch(/^gate passed {8}1$/m);
+    expect(text).toMatch(/^sub-gate admitted {2}1 {2}\(FAILED the gate/m);
+    expect(text).toContain('SUB-GATE ADMITTED — FAILED THE COMPETENCE GATE, MEASURED ANYWAY');
+    expect(text).toContain(ARMS_ARE_NEVER_POOLED);
+    expect(text).toContain(SUB_GATE_ADMISSION_IS_NOT_A_FINDING);
+    expect(text).toContain(SUB_GATE_ADMISSION_RULE);
+    // The gate block names only the gate-arm wallet; the sub-gate one appears below its own heading.
+    const gateBlock = text.slice(
+      text.indexOf('CLEARED THE COMPETENCE GATE'),
+      text.indexOf('SUB-GATE ADMITTED — FAILED'),
+    );
+    expect(gateBlock).toContain(COMPETENT);
+    expect(gateBlock).not.toContain(SUBGATE);
+
+    // And Stage 2's own header states the split rather than one pooled survivor count.
+    expect(text).toMatch(/gate arm 1\/1, sub-gate arm 1\/1/);
+
+    // Nothing THIS ARM writes calls the population profitable. Scoped to the arm's own prose — the
+    // heading, the rule, the caveats and the legend, everything down to the first wallet row —
+    // because the report's standing LIMITATIONS footer and `LANDING_TIP_CAVEAT` both use the word
+    // legitimately, in warnings ("a profitable-looking field does not imply a profitable entry").
+    // A whole-report ban would fail on the caveats that exist to prevent exactly this misreading.
+    const armStart = text.indexOf('SUB-GATE ADMITTED — FAILED');
+    const armProse = text.slice(armStart, text.indexOf(SUBGATE, armStart));
+    expect(armProse.length).toBeGreaterThan(200);
+    expect(armProse).not.toMatch(/\bprofitable\b/i);
+
+    // The record's derived metrics keep the two apart — and neither counts the other's population.
+    const metrics = DERIVED_PREDICTION_METRICS as Record<string, (r: Record<string, unknown>) => number | null>;
+    expect(metrics['gatePassedCount']!(record)).toBe(1);
+    expect(metrics['subGateAdmittedCount']!(record)).toBe(1);
+    expect(metrics['gateFailedCount']!(record)).toBe(0);
+  }, 60_000);
 });

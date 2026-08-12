@@ -49,6 +49,11 @@ import {
 // once — and this one exists precisely because a cheap one-bar reading makes a cross-venue
 // comparability claim easier to reach for.
 import { CROSS_VENUE_STRICTNESS_UNESTABLISHED, RAISE_85_IS_THE_COMPLETION_MEASURE } from './measure.mjs';
+import {
+  ARMS_ARE_NEVER_POOLED,
+  SUB_GATE_ADMISSION_IS_NOT_A_FINDING,
+  SUB_GATE_ADMISSION_RULE,
+} from './admission.mjs';
 import { groupUnmeasured, kindMetaOf, partitionUnmeasured } from './record.mjs';
 import { addDropReasons, emptyDropReasons, totalDrops } from './stage2.mjs';
 
@@ -1102,6 +1107,11 @@ export function renderStage0(r, vendorReadings) {
 export function renderStage1(run) {
   const L = [];
   const passed = run.candidates.filter((c) => c.verdict === 'gate-passed');
+  // CAPTAIN DECISION 451's SECOND ARM, FILTERED APART FROM `passed` AND NEVER CONCATENATED WITH IT.
+  // Every count, list and legend below belongs to one arm or the other: two populations, two
+  // denominators (`admission.mjs` → `ARMS_ARE_NEVER_POOLED`). A schema-≤26 record simply has none
+  // of these, so this block is empty and the page renders exactly as it did.
+  const subGateAdmitted = run.candidates.filter((c) => c.verdict === 'sub-gate-admitted');
   const notMeasured = run.candidates.filter((c) => c.verdict === 'gate-unmeasured');
   const failed = run.candidates.filter((c) => c.verdict === 'gate-failed');
 
@@ -1121,6 +1131,10 @@ export function renderStage1(run) {
   L.push(`prefiltered out    ${run.prefiltered}  (skipped before spending a request)`);
   L.push(`candidates gated   ${run.candidates.length}`);
   L.push(`gate passed        ${passed.length}`);
+  L.push(
+    `sub-gate admitted  ${subGateAdmitted.length}  (FAILED the gate, admitted for measurement by ` +
+      `the second arm — captain decision 451; a separate population, never pooled with the line above)`,
+  );
   L.push(`gate unmeasured    ${notMeasured.length}  (reading incomplete — NOT rejections)`);
   L.push(`gate failed        ${failed.length}`);
 
@@ -1239,6 +1253,107 @@ export function renderStage1(run) {
   }
   L.push('');
 
+  /**
+   * One admitted candidate's block — the same formatter for BOTH ARMS, called from two places.
+   *
+   * **Shared on purpose, and it is the arms' SEPARATION that made it necessary** (captain
+   * decision 451). A sub-gate admission is measured by exactly the same Stage 2 at exactly the
+   * same recipe, so a second formatter would let the two readings drift into looking like two
+   * different measurements — while the thing that must stay apart is the POPULATIONS, which the
+   * two calling blocks below keep apart with their own headings, their own counts and their own
+   * denominators. Same measurement, two populations; never one pooled list.
+   *
+   * @param {import('./rank.mjs').Candidate} c
+   */
+  const renderAdmittedCandidate = (c) => {
+    L.push(
+      `  ${pad(c.wallet, 46)}${padl(String(c.completion.tokens), 4)}  ` +
+        `${padl(String(c.completion.completed), 5)}  ${padl(pct(c.completion.rate), 7)}  ` +
+        `${padl(num(c.completion.spanDays, 0), 5)}  ${pad(c.completionCapped ? 'yes' : 'no', 4)}  ` +
+        `${c.seededBy.length}`,
+    );
+    // Captain decision 351, beside 227a's share and never instead of it: the share is over what
+    // the ENUMERATION returned, this is what the exclusion removed from the history the RATE on
+    // the line above was computed on, and reading either as the other is what this pair prevents.
+    // OUTSIDE the `creation` guard below, unlike the share: the exclusion is a fact about the
+    // gate's own reading, which exists on an --ownership-only run too, where the honest answer is
+    // "nothing here could be read for mayhem mode" rather than silence.
+    for (const line of renderCompetenceMayhem(c.completion, '      ')) L.push(line);
+    for (const line of renderCompetenceCriterion(c.completion, '      ')) L.push(line);
+    if (c.creation !== null) {
+      L.push(
+        `      created ${c.creation.createdInWindow} in a ${num(c.creation.coveredDays, 1)}d window ` +
+          `(ownership showed ${c.creation.listedInWindow}: ${c.creation.hiddenByOwnership} HIDDEN, ` +
+          `${c.creation.notCreatedByWallet} acquired, ${c.creation.movedCreator} creator moved); ` +
+          `+${c.creation.listedOutsideWindow} carried over from the listing`,
+      );
+      // Captain decision 227a, printed on EVERY gate survivor rather than only where the share is
+      // non-zero: this list is what a later decision reads to size the screen's mayhem exposure,
+      // and a wallet that is silent here would be indistinguishable from one measured at zero.
+      for (const line of renderMayhemShare(c.creation, '      ')) L.push(line);
+      // A walk that covered nothing gets its own sentence rather than the general one with a
+      // hole where the date should be. "Before null" tells a reader nothing, and the state it
+      // stands for — the reading falls back to the ownership listing, with no window to correct
+      // it — is the one they most need to know before reading the rate above as a correction.
+      // An empty window withdraws the right to call a listed token "acquired"; it does NOT
+      // discard the creates the walk proved on the page it abandoned, and those are exactly the
+      // launches ownership hides, so the sentence has to count them in rather than claim the
+      // listing is the whole of it. The two parts are NAMED and only the listing's row count is
+      // quoted: the walk-proven remainder is not a number this record can derive, because a
+      // listing row with no timestamp or no mint counts once here and not at all in the gate's
+      // history, and printing a derived difference would be printing a number we do not have.
+      if (c.creation.coveredFromIso === null) {
+        L.push(
+          `      ^ the walk stopped on ${c.creation.stopReason} before covering ANY window, so ` +
+            `these ${c.completion.tokens} launch(es) are the ownership listing ` +
+            `(${c.creation.listedOutsideWindow} row(s)) plus whatever creates the walk proved ` +
+            `before stopping — a LOWER BOUND, biased towards rejection`,
+        );
+      } else if (!c.creation.wholeHistory) {
+        L.push(
+          `      ^ the walk stopped on ${c.creation.stopReason}, so anything created before ` +
+            `${c.creation.coveredFromIso} is a LOWER BOUND from the ownership listing`,
+        );
+      }
+      if (c.creation.curvesUnread > 0) {
+        L.push(
+          `      ^ ${c.creation.curvesUnread} curve account(s) unread; bonded status came from ` +
+            `the on-chain curve for ${c.creation.bondedFromCurve} launch(es) and from the ` +
+            `ownership listing for ${c.creation.bondedFromListing}`,
+        );
+      }
+      if (!c.creation.windowExact) {
+        L.push(
+          `      ^ ${c.creation.unresolvedTransactions} transaction(s) never resolved, so the walk ` +
+            `is NOT authoritative inside its own window: ${c.creation.listedInWindowCarried} ` +
+            `in-window listing row(s) were carried rather than read as acquired`,
+        );
+      }
+    }
+    if (c.verdict !== c.vendorVerdict) {
+      L.push(
+        `      ^ VERDICT CHANGED: the ownership reading (${c.vendorCompletion.completed}/` +
+          `${c.vendorCompletion.tokens}) would have said ${c.vendorVerdict}`,
+      );
+    }
+    if (c.entry !== null) {
+      L.push('');
+      for (const line of renderEntry(c.entry, c.entryCoverage)) L.push(line);
+      L.push('');
+    } else {
+      L.push('      ENTRY: NOT SCORED — no entry measurement was taken for this wallet.');
+      L.push('      Passing the competence gate says nothing about whether its window is enterable.');
+    }
+    if (c.consistency !== null) {
+      L.push(`      consistency: ${c.consistency.state.toUpperCase()} — ${c.consistency.note}`);
+      if (c.consistency.historyTruncated) {
+        L.push('      ^ computed over a PAGE-CAPPED creator walk, so it is a lower bound twice over.');
+      }
+    } else {
+      L.push('      consistency over time: UNMEASURED (pass --consistency to measure, keyless)');
+    }
+  };
+
   if (passed.length === 0) {
     if (run.completed) {
       L.push('NO CANDIDATE CLEARED THE GATE.');
@@ -1251,6 +1366,15 @@ export function renderStage1(run) {
         L.push(`EXCEPT for ${notMeasured.length} candidate(s) whose reading was NOT MEASURED — see the`);
         L.push('GATE UNMEASURED section below. Those wallets were not judged at all, so "no candidate');
         L.push('cleared the gate" does not cover them.');
+      }
+      // And the sentence above must not read as "nothing was measured" on a run whose whole Stage 2
+      // population came through the second arm — which is the expected shape of a sub-gate run, not
+      // an edge case: the gate refuses these deployers by construction.
+      if (subGateAdmitted.length > 0) {
+        L.push('');
+        L.push(`AND ${subGateAdmitted.length} candidate(s) were admitted anyway by the SUB-GATE ARM`);
+        L.push('(captain decision 451) — they failed this gate and were measured regardless. They are');
+        L.push('their own section below, with their own denominator.');
       }
     } else {
       // Never the completion language on an aborted run: an empty ranking that reads as a real
@@ -1269,94 +1393,7 @@ export function renderStage1(run) {
       `  ${pad('wallet', 46)}${padl('n', 4)}  ${padl('done', 5)}  ${padl('rate', 7)}  ` +
         `${padl('days', 5)}  ${pad('cap', 4)}  seeds`,
     );
-    for (const c of passed) {
-      L.push(
-        `  ${pad(c.wallet, 46)}${padl(String(c.completion.tokens), 4)}  ` +
-          `${padl(String(c.completion.completed), 5)}  ${padl(pct(c.completion.rate), 7)}  ` +
-          `${padl(num(c.completion.spanDays, 0), 5)}  ${pad(c.completionCapped ? 'yes' : 'no', 4)}  ` +
-          `${c.seededBy.length}`,
-      );
-      // Captain decision 351, beside 227a's share and never instead of it: the share is over what
-      // the ENUMERATION returned, this is what the exclusion removed from the history the RATE on
-      // the line above was computed on, and reading either as the other is what this pair prevents.
-      // OUTSIDE the `creation` guard below, unlike the share: the exclusion is a fact about the
-      // gate's own reading, which exists on an --ownership-only run too, where the honest answer is
-      // "nothing here could be read for mayhem mode" rather than silence.
-      for (const line of renderCompetenceMayhem(c.completion, '      ')) L.push(line);
-      for (const line of renderCompetenceCriterion(c.completion, '      ')) L.push(line);
-      if (c.creation !== null) {
-        L.push(
-          `      created ${c.creation.createdInWindow} in a ${num(c.creation.coveredDays, 1)}d window ` +
-            `(ownership showed ${c.creation.listedInWindow}: ${c.creation.hiddenByOwnership} HIDDEN, ` +
-            `${c.creation.notCreatedByWallet} acquired, ${c.creation.movedCreator} creator moved); ` +
-            `+${c.creation.listedOutsideWindow} carried over from the listing`,
-        );
-        // Captain decision 227a, printed on EVERY gate survivor rather than only where the share is
-        // non-zero: this list is what a later decision reads to size the screen's mayhem exposure,
-        // and a wallet that is silent here would be indistinguishable from one measured at zero.
-        for (const line of renderMayhemShare(c.creation, '      ')) L.push(line);
-        // A walk that covered nothing gets its own sentence rather than the general one with a
-        // hole where the date should be. "Before null" tells a reader nothing, and the state it
-        // stands for — the reading falls back to the ownership listing, with no window to correct
-        // it — is the one they most need to know before reading the rate above as a correction.
-        // An empty window withdraws the right to call a listed token "acquired"; it does NOT
-        // discard the creates the walk proved on the page it abandoned, and those are exactly the
-        // launches ownership hides, so the sentence has to count them in rather than claim the
-        // listing is the whole of it. The two parts are NAMED and only the listing's row count is
-        // quoted: the walk-proven remainder is not a number this record can derive, because a
-        // listing row with no timestamp or no mint counts once here and not at all in the gate's
-        // history, and printing a derived difference would be printing a number we do not have.
-        if (c.creation.coveredFromIso === null) {
-          L.push(
-            `      ^ the walk stopped on ${c.creation.stopReason} before covering ANY window, so ` +
-              `these ${c.completion.tokens} launch(es) are the ownership listing ` +
-              `(${c.creation.listedOutsideWindow} row(s)) plus whatever creates the walk proved ` +
-              `before stopping — a LOWER BOUND, biased towards rejection`,
-          );
-        } else if (!c.creation.wholeHistory) {
-          L.push(
-            `      ^ the walk stopped on ${c.creation.stopReason}, so anything created before ` +
-              `${c.creation.coveredFromIso} is a LOWER BOUND from the ownership listing`,
-          );
-        }
-        if (c.creation.curvesUnread > 0) {
-          L.push(
-            `      ^ ${c.creation.curvesUnread} curve account(s) unread; bonded status came from ` +
-              `the on-chain curve for ${c.creation.bondedFromCurve} launch(es) and from the ` +
-              `ownership listing for ${c.creation.bondedFromListing}`,
-          );
-        }
-        if (!c.creation.windowExact) {
-          L.push(
-            `      ^ ${c.creation.unresolvedTransactions} transaction(s) never resolved, so the walk ` +
-              `is NOT authoritative inside its own window: ${c.creation.listedInWindowCarried} ` +
-              `in-window listing row(s) were carried rather than read as acquired`,
-          );
-        }
-      }
-      if (c.verdict !== c.vendorVerdict) {
-        L.push(
-          `      ^ VERDICT CHANGED: the ownership reading (${c.vendorCompletion.completed}/` +
-            `${c.vendorCompletion.tokens}) would have said ${c.vendorVerdict}`,
-        );
-      }
-      if (c.entry !== null) {
-        L.push('');
-        for (const line of renderEntry(c.entry, c.entryCoverage)) L.push(line);
-        L.push('');
-      } else {
-        L.push('      ENTRY: NOT SCORED — no entry measurement was taken for this wallet.');
-        L.push('      Passing the competence gate says nothing about whether its window is enterable.');
-      }
-      if (c.consistency !== null) {
-        L.push(`      consistency: ${c.consistency.state.toUpperCase()} — ${c.consistency.note}`);
-        if (c.consistency.historyTruncated) {
-          L.push('      ^ computed over a PAGE-CAPPED creator walk, so it is a lower bound twice over.');
-        }
-      } else {
-        L.push('      consistency over time: UNMEASURED (pass --consistency to measure, keyless)');
-      }
-    }
+    for (const c of passed) renderAdmittedCandidate(c);
     L.push('');
     L.push('  n    = launches in the denominator we computed ourselves — CREATED by this wallet');
   L.push('         inside the creation window, plus whatever the ownership listing showed before it');
@@ -1397,6 +1434,36 @@ export function renderStage1(run) {
       L.push('  or the field GROSS of fees) already refused. So every realised figure above is gross');
       L.push('  of fees and therefore an upper bound.');
     }
+  }
+
+  // THE SECOND ARM'S OWN SECTION — captain decision 451, and the separation is the point rather
+  // than the layout. These wallets FAILED the gate above; printing them in that list would give
+  // every count on it two denominators, and printing them among the rejections would hide a
+  // population this project is measuring on purpose. Same formatter, same Stage 2, same recipe;
+  // separate heading, separate count, separate legend.
+  if (subGateAdmitted.length > 0) {
+    L.push('');
+    L.push('='.repeat(78));
+    L.push('SUB-GATE ADMITTED — FAILED THE COMPETENCE GATE, MEASURED ANYWAY (captain decision 451)');
+    L.push('='.repeat(78));
+    L.push('');
+    L.push(`  ${SUB_GATE_ADMISSION_RULE}`);
+    L.push('');
+    L.push(`  ${ARMS_ARE_NEVER_POOLED}`);
+    L.push('');
+    L.push(`  ${SUB_GATE_ADMISSION_IS_NOT_A_FINDING}`);
+    L.push('');
+    L.push(
+      `  ${pad('wallet', 46)}${padl('n', 4)}  ${padl('done', 5)}  ${padl('rate', 7)}  ` +
+        `${padl('days', 5)}  ${pad('cap', 4)}  seeds`,
+    );
+    for (const c of subGateAdmitted) renderAdmittedCandidate(c);
+    L.push('');
+    L.push(`  ${subGateAdmitted.length} candidate(s) on this arm. The columns mean what they mean in the`);
+    L.push('  gate block above — the reading is the same, only the population differs — and the rate');
+    L.push('  column is BELOW the gate bar on every row here by construction.');
+    L.push('  NO FIGURE HERE MAY BE ADDED TO ONE FROM THE GATE BLOCK, and none of the counts in this');
+    L.push('  report does: the two arms are reported apart at every level, from the header line down.');
   }
 
   // Its own section, never folded into either list. A candidate that appeared in neither would

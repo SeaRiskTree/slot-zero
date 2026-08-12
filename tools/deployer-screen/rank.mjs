@@ -34,7 +34,22 @@
  * the state lives in the VERDICT and not only in the wording beside it — a reader filtering a run
  * record on `verdict` must not be able to miss it.
  *
- * @typedef {'gate-passed' | 'gate-unmeasured' | 'gate-failed'} Verdict
+ * `sub-gate-admitted` is the fourth and it arrived with captain decision 451 (record schema 27). It
+ * means: **this wallet FAILED the gate and is being measured anyway**, through the second admission
+ * arm `admission.mjs` owns. It is a value of its own rather than a flag beside `gate-passed` for the
+ * same reason `gate-unmeasured` is — the record is filtered on this field, and here the hazard runs
+ * both ways at once. Folded into `gate-passed`, every statistic this repo already computes over gate
+ * survivors would silently pool two populations with two denominators, which captain decision 451
+ * forbids; left as `gate-failed`, the candidate would never reach Stage 2 at all. So the arms are
+ * distinguishable by construction: a count over `gate-passed` is arm A's alone, a count over
+ * `sub-gate-admitted` is arm B's alone, and `admission.mjs` → `admittedToStage2` is the ONE place
+ * they are unionised — to select who gets measured, never to count anything.
+ *
+ * **A schema-≤26 record's `gateFailedCount` therefore counts wallets a schema-27 run would file
+ * under the new value**, and the two are not the same quantity; the run record's own
+ * `subGateAdmittedCount` is what a reader compares across the boundary.
+ *
+ * @typedef {'gate-passed' | 'sub-gate-admitted' | 'gate-unmeasured' | 'gate-failed'} Verdict
  */
 
 // The pure measurement core, and the ONLY runtime edge this module has. It takes the two RAISE-85
@@ -415,10 +430,24 @@ export function applyGate(input, t) {
  *   surface the number did not come from.
  * @property {GateResult} gate
  * @property {Verdict} verdict
+ * @property {import('./admission.mjs').AdmissionArm | null} admissionArm WHICH ARM ADMITTED THIS
+ *   CANDIDATE — captain decision 451, record schema 27. `'gate'`, `'sub-gate'`, or `null` for a
+ *   candidate no arm admitted, which is a rejection or an absent measurement and never a third arm.
+ *   **Derived from {@link Candidate.verdict} and never set independently** (`admission.mjs` →
+ *   `admissionArmOf`), so the two cannot disagree; it exists as a field because a reader separating
+ *   the two populations should not have to know which verdict values are admissions. A schema-≤26
+ *   record carries neither this field nor the `sub-gate-admitted` verdict, and its absence is
+ *   unambiguous — nothing before 27 could admit through the second arm.
+ * @property {import('./admission.mjs').SubGateAssessment | null} subGate What the second arm made of
+ *   this candidate, `null` when the arm was not consulted (it is asked only about a candidate the
+ *   gate refused). Kept whole rather than reduced to the arm above, for the reason `creation` is:
+ *   the counts alone cannot say WHICH condition refused a wallet, and a bound that has quietly
+ *   stopped admitting anybody is invisible without them.
  * @property {string} rationale
  * @property {ConsistencyResult | null} consistency `null` unless `--consistency` was passed.
  * @property {import('./entry.mjs').EntryScore | null} entry Stage 2's ENTRY score. `null` when the
- *   candidate did not clear the gate, `--no-stage2` was passed, or the scoring cap dropped it.
+ *   candidate was admitted by NEITHER arm (captain decision 451), `--no-stage2` was passed, or the
+ *   scoring cap dropped it.
  *   Deliberately a separate field with its own verdict vocabulary rather than a component of
  *   {@link Verdict}: competence and entry room are different claims, and collapsing them would put
  *   this module back in the business of recommending.
@@ -469,8 +498,20 @@ export function applyGate(input, t) {
  * to supply a `notMeasured` entry: the unreadable launches leave `tokens` and `spanDays` too, so
  * `minTokens` and `minSpanDays` could otherwise fail a wallet over OUR coverage.
  *
+ * {@link SubGateInput} is captain decision 451's second arm and it is checked LAST, below every
+ * unmeasured branch and below the gate itself. The order is the whole of its safety: an arm that
+ * could admit a candidate whose reading was never taken would be manufacturing a population out of
+ * our own coverage, and an arm consulted before the gate could re-decide a wallet the gate passed.
+ * It is a DATA input rather than an import for a structural reason — `rank.mjs` imports only the
+ * pure core (`test/deployer-screen.test.ts` → "a scoring module imports only from a declared pure
+ * set"), and the arm reads the rotation's tempo derivation, so the assessment is made by the caller
+ * and handed here already decided.
+ *
+ * @typedef {{ admitted: boolean, rationale: string, reasons: readonly string[] }} SubGateInput
+ *
  * @param {{ gate: GateResult, completion: import('./measure.mjs').CompletionMeasurement,
- *           capped: boolean, notMeasured?: readonly string[] }} input
+ *           capped: boolean, notMeasured?: readonly string[],
+ *           subGate?: SubGateInput | null }} input
  * @returns {{ verdict: Verdict, rationale: string }}
  */
 export function verdictFor(input) {
@@ -572,9 +613,23 @@ export function verdictFor(input) {
   }
 
   if (!input.gate.passed) {
+    // CAPTAIN DECISION 451'S SECOND ARM, and it sits here — after every unmeasured branch, after
+    // the gate — because that is what keeps it a loosening rather than a bypass. Reaching this line
+    // means the reading was complete and the thresholds decided against it; the arm then asks the
+    // separate question of whether measuring this wallet is worth the spend anyway.
+    const subGate = input.subGate ?? null;
+    if (subGate !== null && subGate.admitted) {
+      return { verdict: 'sub-gate-admitted', rationale: subGate.rationale };
+    }
     return {
       verdict: 'gate-failed',
-      rationale: `did not clear the completion gate: ${input.gate.reasons.join('; ')}`,
+      rationale:
+        `did not clear the completion gate: ${input.gate.reasons.join('; ')}` +
+        // WHY IT WAS NOT ADMITTED EITHER, on the row, whenever the arm was consulted. A wallet that
+        // failed the gate AND missed the second arm is a different fact from one nobody offered the
+        // arm to, and a record that cannot tell them apart cannot say what the arm actually
+        // refused — which is the only way to see a bound that has quietly stopped admitting anyone.
+        (subGate === null ? '' : `. ${subGate.rationale}`),
     };
   }
 
@@ -615,11 +670,17 @@ export function verdictFor(input) {
  * Presentational rather than a ranking claim: `render.mjs` prints the result as a table of measured
  * results, not as a league table. Three keys, in this order:
  *
- * 1. **Gate class.** Survivors, then candidates whose reading was never measured, then rejections.
- *    `gate-unmeasured` sits between the two because it is neither: sorting it with the rejections
- *    would bury a wallet nobody has judged among the wallets that were judged and failed. The map
- *    is total over {@link Verdict} — an unhandled value would make the comparator return NaN, which
- *    is not a strict weak ordering and would silently break the byte-identical-output guarantee.
+ * 1. **Gate class.** Gate survivors, then sub-gate admissions, then candidates whose reading was
+ *    never measured, then rejections. `gate-unmeasured` sits above the rejections because it is
+ *    neither: sorting it with them would bury a wallet nobody has judged among the wallets that
+ *    were judged and failed. `sub-gate-admitted` sits BELOW the gate survivors and above everything
+ *    else — it is an admission, so it belongs with the measured population, and it is the weaker
+ *    claim of the two, so it does not displace an arm-A survivor from the head of a list. **The
+ *    ordering is presentational and pools nothing**: the two arms are still two populations, and
+ *    `render.mjs` prints them in separate blocks with separate counts (captain decision 451). The
+ *    map is total over {@link Verdict} — an unhandled value would make the comparator return NaN,
+ *    which is not a strict weak ordering and would silently break the byte-identical-output
+ *    guarantee.
  * 2. **Measured entry room, descending** — the promise the Stage 1 lane made when it left the seam:
  *    once Stage 2 landed, room-left would become the sort key. A candidate with **no** entry score
  *    sorts *after* every scored one rather than being interleaved at some imputed room, because an
@@ -636,7 +697,7 @@ export function verdictFor(input) {
  */
 export function rankCandidates(candidates) {
   /** @type {Record<Verdict, number>} */
-  const classOrder = { 'gate-passed': 0, 'gate-unmeasured': 1, 'gate-failed': 2 };
+  const classOrder = { 'gate-passed': 0, 'sub-gate-admitted': 1, 'gate-unmeasured': 2, 'gate-failed': 3 };
   /** @param {Candidate} c @returns {number} */
   const roomKey = (c) =>
     c.entry === null || !Number.isFinite(c.entry.roomLeft.median) ? Number.NEGATIVE_INFINITY : c.entry.roomLeft.median;

@@ -449,6 +449,9 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
     newlySurfaced,
     gated: 0,
     queued: 0,
+    // Schema-451's second arm. Present on every FeedRunRow; these fixtures stand for runs that
+    // admitted nobody through it.
+    queuedSubGate: 0,
     held: 0,
     unmeasured: 0,
     prefiltered: 0,
@@ -572,6 +575,7 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
           newlySurfaced: i,
           gated: 0,
           queued: 0,
+          queuedSubGate: 0,
           held: 0,
           unmeasured: 0,
           prefiltered: 0,

@@ -890,8 +890,35 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   it for a whole-window cost accounting. And it fails towards refusal: where the cost walk falls
  *   back to per-signature reads there is no observation, the create-slot rows go back to `null`, and
  *   the verdict stays `exit-unbounded`.
+ *
+ * ## Schema 27 — WHICH ARM ADMITTED THIS CANDIDATE (captain decision 451, 2026-08-11)
+ *
+ * A deployer the competence gate REFUSES can now reach Stage 2 through a second admission arm
+ * (`admission.mjs`), because all six `entry-open-after-costs` verdicts this project has produced
+ * come from that population while every population the gate admits has returned zero. The version
+ * exists because the record has to be able to keep the two apart:
+ *
+ * - **A fourth `verdict` value, `sub-gate-admitted`**, and it is a value rather than a flag so that
+ *   nothing already counting `gate-passed` can pick these up. **`gateFailedCount` is therefore not
+ *   the same quantity at 26 and 27** — a wallet the second arm admits was `gate-failed` before and
+ *   is not now — and `subGateAdmittedCount` beside it is what a reader compares across the boundary.
+ * - **`admissionArm` on the candidate row**, derived from the verdict so the two cannot disagree.
+ * - **`subGate` on the candidate row**, `null` unless the arm decided something: whether it
+ *   admitted, why not when it did not, the two quantities it read (launch tempo, days since the
+ *   last launch) and THE BOUNDS IT WAS JUDGED UNDER — the arm is sized against a population, so a
+ *   record that quoted only today's `thresholds.json` could not say what a past run applied.
+ *
+ * **Every other measured field is the same quantity at 26 and 27 and may be pooled** — no bar
+ * moved, `stage1_gate.minCompletionRate` is still 0.25 and Stage 2's ceilings are untouched, since
+ * none of them is a function of how many candidates were ADMITTED. **What may never be pooled is
+ * the two arms** (`admission.mjs` → `ARMS_ARE_NEVER_POOLED`): they are two populations with two
+ * denominators, and a figure over one of them says nothing about the other.
+ *
+ * **It is not a finding that the sub-gate population is profitable and must not be read as one.**
+ * `thresholds.json` → `stage2_entry.justification.minFieldHitRateNet` records that measured cost is
+ * a LOWER bound, so an after-cost result above a bar is an upper bound on itself.
  */
-export const RECORD_SCHEMA_VERSION = 26;
+export const RECORD_SCHEMA_VERSION = 27;
 
 /**
  * The predictions-document contract version, carried inside the document itself.
@@ -956,6 +983,17 @@ export const DERIVED_PREDICTION_METRICS = {
   gatePassedCount: (r) => countVerdict(r, 'gate-passed'),
   gateFailedCount: (r) => countVerdict(r, 'gate-failed'),
   gateUnmeasuredCount: (r) => countVerdict(r, 'gate-unmeasured'),
+  /**
+   * Candidates the SECOND ADMISSION ARM admitted — captain decision 451, record schema 27.
+   *
+   * **Its own metric and never added to `gatePassedCount`.** The two arms are two populations with
+   * two denominators (`admission.mjs` → `ARMS_ARE_NEVER_POOLED`), so a prediction about one says
+   * nothing about the other and there is deliberately no metric here that sums them. It reads 0 on
+   * every schema-≤26 record, which is exact rather than a default: nothing before 27 could admit
+   * through this arm — but note the mirror image, that a schema-≤26 `gateFailedCount` counts
+   * wallets a schema-27 run files under this metric instead.
+   */
+  subGateAdmittedCount: (r) => countVerdict(r, 'sub-gate-admitted'),
   /** Candidates clearing `minTokens` and `minSpanDays` — the population the rate bar then judges. */
   gateEligibleCount: (r) => {
     const t = gateThresholdsOf(r);
@@ -979,6 +1017,14 @@ export const DERIVED_PREDICTION_METRICS = {
   medianGateCompletionRate: (r) => median(candidatesOf(r).map((c) => c['completionRate'])),
   medianVendorPageCompletionRate: (r) => median(candidatesOf(r).map((c) => c['vendorCompletionRate'])),
   medianVendorMinusGateRate: (r) => median(vendorMinusGate(candidatesOf(r))),
+  /**
+   * **THE GATE ARM'S ONLY, despite the name, and the name is deliberately not changed.** It
+   * predates captain decision 451's second arm, and a metric name is a contract a committed
+   * predictions document holds this tool to — renaming it would silently invalidate documents
+   * written against it. What matters is that it stays over ONE population: pooling the sub-gate arm
+   * in here would give this median two denominators, which is the one thing 451 forbids. A sub-gate
+   * reading of the same comparison would be a new metric, not a widening of this one.
+   */
   admittedMedianVendorMinusGateRate: (r) =>
     median(vendorMinusGate(candidatesOf(r).filter((c) => c['verdict'] === 'gate-passed'))),
   /** Candidates the two readings disagreed about — the size of what the gate reading changed. */

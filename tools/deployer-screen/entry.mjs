@@ -248,11 +248,13 @@ export const REALISATION_CONSTRUCTION_CAVEAT =
   'MORE GENEROUS of the two marks, not the harsher latest-known-price one this sentence cites. ' +
   'Positions whose closure our own rows cannot decide are in NEITHER ' +
   'construction and are counted as horizon-not-observed. NONE of this is a profit verdict. The ' +
-  'landing tip and the cost of failed attempts are bounded only INSIDE THE CREATE SLOT, by a ' +
-  "whole-slot ceiling attributed to one entrant rather than by any measurement of what an entrant " +
-  'paid; their residuals — landing-tip-outside-bound and failed-attempts-rest-of-window — carry no ' +
-  'numeric boundary at all. Which cost terms are unbounded is not asserted here: it is read off ' +
-  'the subtraction ledger, and the refusal that follows from it is exitVerdict.';
+  'landing tip and the cost of failed attempts can be bounded ONLY INSIDE THE CREATE SLOT and ' +
+  'only WHERE this build read that slot as a unit — a whole-slot ceiling attributed to one ' +
+  'entrant, never a measurement of what an entrant paid — and they are UNBOUNDED wherever it did ' +
+  'not; their residuals, landing-tip-outside-bound and failed-attempts-rest-of-window, carry no ' +
+  'numeric boundary in either case. WHICH terms are bounded for THIS candidate is not asserted ' +
+  'here: it is read off the subtraction ledger, and the refusal that follows from it is ' +
+  'exitVerdict.';
 
 /**
  * That the net all-positions population is a NON-RANDOM subset of the gross one, stated the way

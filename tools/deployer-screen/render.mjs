@@ -30,7 +30,7 @@ import {
   priceWalkFallbackCliff,
 } from './dune.mjs';
 import { describeMonthlyCapCredits, estimatePlanCredits } from './client.mjs';
-import { unboundedCostComponents } from './bounds.mjs';
+import { CREATE_SLOT_CEILING_ROWS, unboundedCostComponents } from './bounds.mjs';
 import { LANDING_TIP_CAVEAT, NET_ALL_POSITIONS_SELECTION_CAVEAT } from './entry.mjs';
 // The reach the plan quotes is DERIVED, never a second copy of the formula: an operator reads this
 // block before authorising a run, so it has to describe the walk `readLaunchWindow` will actually do.
@@ -580,9 +580,23 @@ export function renderCostLedger(ledger, verdict) {
       wrap(`${c.name}: ${c.boundBasis}`, 84).forEach((line, i) => L.push(`        ${i === 0 ? '·' : ' '} ${line}`));
     }
   }
-  L.push('      The two bounded create-slot rows are WHOLE-SLOT TOTALS attributed to one entrant —');
-  L.push('      ceilings, not measurements of what anyone paid. Population rows (winners-only,');
-  L.push('      our own market impact) are named and never netted, and block nothing.');
+  // Only where THIS ledger actually carries one. Printed unconditionally it announced ceilings
+  // under a table that had just read UNBOUNDED for both create-slot rows, which is the ordinary
+  // case whenever a scored launch produced no whole-slot observation.
+  const boundedCreateSlot = ledger.filter(
+    (c) => CREATE_SLOT_CEILING_ROWS.includes(c.name) && c.worstCaseSol !== null,
+  );
+  if (boundedCreateSlot.length > 0) {
+    for (const line of wrap(
+      `The create-slot row(s) bounded above (${boundedCreateSlot.map((c) => c.name).join(', ')}) are ` +
+        'WHOLE-SLOT TOTALS attributed to one entrant — ceilings, not measurements of what anyone paid.',
+      84,
+    )) {
+      L.push(`      ${line}`);
+    }
+  }
+  L.push('      Population rows (winners-only, our own market impact) are named and never netted,');
+  L.push('      and block nothing.');
   return L;
 }
 

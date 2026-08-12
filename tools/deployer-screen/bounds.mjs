@@ -128,6 +128,23 @@ export const UNBOUNDABLE_TODAY = Object.freeze([
 ]);
 
 /**
+ * The two rows a whole-slot observation can bound, named here because they are the only ones whose
+ * `worstCaseSol` is a CEILING OVER A SLOT rather than a term measured directly.
+ *
+ * A surface saying so must say it of the rows that are bounded on the ledger IN HAND, never of the
+ * pair in general: both read `null` whenever any scored launch produced no whole-slot observation,
+ * which is the ordinary case rather than an edge one — the block route is attempted only where the
+ * create slot carries two or more of the launch's transactions, and a per-signature fallback,
+ * a transport failure or a budget-skipped launch each take the pair back to `null`.
+ *
+ * @type {readonly string[]}
+ */
+export const CREATE_SLOT_CEILING_ROWS = Object.freeze([
+  'landing-tip-create-slot',
+  'failed-attempts-create-slot',
+]);
+
+/**
  * @typedef {'exit-realised-at-worst-case-create-slot-costs-only'
  *   | 'exit-realised-typical-not-worst-case-create-slot-costs-only'
  *   | 'exit-loss-making-create-slot-costs-only'

@@ -13303,6 +13303,90 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     expect(score.exitVerdict).toBe('exit-unbounded');
   });
 
+  it('the walk holds a MINT to scope the slot observation, and no mint reaches the record — ToS 5a(d)', async () => {
+    // The retention claim is load-bearing: the mint is threaded through the `CostSource` contract in
+    // memory to scope the failed-attempt half to THIS launch, and it must reach no persisted field.
+    // The fixture uses BASE58-SHAPED mints so the shape check below could actually fail — a mint the
+    // regex cannot match proves nothing about a projection that leaked one.
+    const BASE58 = /[1-9A-HJ-NP-Za-km-z]{32,44}/;
+    const mints = 'abcdefgh'.split('').map((s) => `GgCd2sMK7yBaXcVnJrTqWfLpNuEhZdSbVxKtQmR${s}`);
+    for (const mint of mints) expect(mint).toMatch(BASE58);
+    const b58Profile = {
+      pump_tokens: mints.map((mint, i) => ({
+        mint,
+        created_timestamp: CREATED - i * 3_600_000,
+        complete: true,
+      })),
+    };
+
+    const client = new KeylessClient({
+      maxRequests: 400,
+      minIntervalMs: 0,
+      fetchImpl: walkableWindow(10 * (1 / 0.6 - 1), 1),
+      sleepImpl: async () => {},
+    });
+    /** Every mint the cost leg was handed, so the test proves the thread exists before denying it. */
+    const scoped: (string | null)[] = [];
+    let issued = 0;
+    const costSource = {
+      kind: 'solana-rpc' as const,
+      issued: () => issued,
+      remaining: () => 1_000,
+      priceLaunch: async (input: {
+        transactions: readonly { tx: string; slot: number; wallets: { wallet: string; quotedSol: number }[] }[];
+        mint: string | null;
+      }) => {
+        scoped.push(input.mint);
+        issued += 1;
+        const priced = new Map(
+          input.transactions.map((t) => [
+            t.tx,
+            {
+              signature: t.tx,
+              feeSol: 0.000_005,
+              feePayer: t.wallets[0]?.wallet ?? null,
+              solOutByWallet: new Map(t.wallets.map((w) => [w.wallet, w.quotedSol + 0.02])),
+            },
+          ]),
+        );
+        return {
+          priced,
+          requests: 1,
+          unresolved: 0,
+          viaBlock: priced.size,
+          viaTransaction: 0,
+          blockRouteTried: true,
+          blockRouteNote: null,
+          stoppedForBudget: false,
+          slotCosts: { tipSol: 0.05, tipTransfers: 1, failedAttemptFeeSol: 0.004, failedAttempts: 2 },
+        };
+      },
+    };
+
+    const { score, coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
+      wallet: 'dev',
+      profile: b58Profile,
+      nowMs: NOW,
+      thresholds: T as never,
+      costSource: costSource as never,
+    });
+
+    // The thread is real: every scored launch's own mint reached the cost source.
+    expect(scoped).toEqual(mints);
+    // And with every launch observed the two create-slot rows carry NUMBERS, so the projection is
+    // exercised on the path that has something to leak.
+    const rows = new Map(score.costLedger.map((c) => [c.name, c.worstCaseSol]));
+    expect(rows.get('landing-tip-create-slot')).toBeCloseTo(0.05, 9);
+    expect(rows.get('failed-attempts-create-slot')).toBeCloseTo(0.004, 9);
+
+    const row = toEntryRecordRow(score, coverage) as Record<string, unknown>;
+    for (const block of ['costLedger', 'coverage'] as const) {
+      const json = JSON.stringify(block === 'coverage' ? (row['coverage'] as Record<string, unknown>)['cost'] : row[block]);
+      expect(json, `${block} carries a base58-shaped identifier`).not.toMatch(BASE58);
+      for (const mint of mints) expect(json).not.toContain(mint);
+    }
+  });
+
   it('a dead RPC leaves the candidate UNMEASURED and never aborts the run', async () => {
     // The public endpoint sheds about a quarter of what it is asked for, so a walk that exhausts
     // its retries is the ordinary case rather than an incident. Before this guard the error
@@ -14020,6 +14104,17 @@ describe('the cost walk, and the route it took', () => {
     expect(() =>
       assertCostWalkAccounted({ ...fallback, slotCosts: { tipSol: 1, tipTransfers: 1, failedAttemptFeeSol: 1, failedAttempts: 1 } }, targets.length),
     ).toThrow(/without pricing anything from a whole-block read/);
+    // A source omitting the field entirely has answered NOTHING about the slot, and it is reported
+    // as that rather than as the opposite fault: `undefined` is not the `null` that means "walked
+    // it, saw no whole slot", and a guard naming the wrong failure sends a reader to the wrong
+    // place while aborting the candidate's cost leg.
+    const { slotCosts: _omitted, ...noField } = fallback;
+    expect(() => assertCostWalkAccounted(noField as never, targets.length)).toThrow(/`slotCosts` is missing/);
+    expect(() => assertCostWalkAccounted(noField as never, targets.length)).not.toThrow(
+      /without pricing anything from a whole-block read/,
+    );
+    // And the honest `null` the real fallback returned still passes.
+    expect(() => assertCostWalkAccounted(fallback, targets.length)).not.toThrow();
   });
 
   it('a tip account LOSING lamports never cancels out another transaction\'s tip', () => {
@@ -19246,7 +19341,6 @@ describe('the subtraction ledger, and a verdict that is a FUNCTION of it — cap
     const byName = new Map(ledgerRows.map((r) => [r['name'], r['worstCaseSol']]));
     expect(byName.get('failed-attempts-rest-of-window')).toBeNull();
     expect(byName.get('unrealised-positions')).toBe(0);
-    expect(JSON.stringify(row)).not.toContain('MINT');
 
     // The rendered block, which is where two hand-written lines used to claim which terms were
     // unbounded. It reads them off the rows now, so it cannot go stale against them.

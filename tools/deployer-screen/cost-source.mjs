@@ -139,6 +139,15 @@ export function assertCostWalkAccounted(walk, targets) {
   // response the source says it never fetched is a bound resting on nothing. Same reason as the
   // clause above, one field over — and it fails LOUDLY rather than silently dropping the
   // observation, because a source producing one without the route is a source bug.
+  // A source that carries no `slotCosts` field at all has answered NOTHING about the slot, which is
+  // a different fault from claiming an observation it could not have made — and reporting it as the
+  // second names the opposite of what went wrong.
+  if (walk.slotCosts === undefined) {
+    throw new Error(
+      'a cost source did not say whether it read the whole create slot: `slotCosts` is missing, and ' +
+        'a missing answer is not the `null` that means "no whole-slot observation"',
+    );
+  }
   if (walk.slotCosts !== null && walk.viaBlock === 0) {
     throw new Error(
       'a cost source reported whole-slot costs without pricing anything from a whole-block read',

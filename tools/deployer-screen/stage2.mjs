@@ -154,9 +154,11 @@ import { redactAll, redactVendorIdentifiers } from './record.mjs';
  * @property {number} launchesSlotObserved Launches whose WHOLE create slot the source read as a
  *   unit, so its failed-attempt fee bill and its tip total are known — captain decision 466, Stage 3
  *   increment 2. **It costs nothing**: the observation comes out of a block response the pricing
- *   above already paid for. Read against `launchesPriced` it is what says whether the subtraction
- *   ledger's two create-slot rows could be bounded at all, since a bound over a subset of a
- *   candidate's launches is not a bound over the candidate.
+ *   above already paid for. It counts every WALKED launch that came back with one, launches
+ *   `roomIsProven` refuses included — so it is a reading of what the block route SERVED and **not**
+ *   the subtraction ledger's own denominator, which is the SCORED launches alone. The two can
+ *   disagree in both directions, and only `entry.costLedger` says whether a create-slot row was
+ *   bounded for this candidate.
  * @property {number} slotFailedAttempts   Landed-but-FAILED transactions touching the launches'
  *   mints across those slots. Fees are charged on inclusion rather than on success, so this is money
  *   that was really spent trying to land.

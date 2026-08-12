@@ -2427,12 +2427,14 @@ land.**
 
 **And it is NOT a profit verdict, so no verdict state is named for it.** The separate-transaction
 landing tip (`LANDING_TIP_CAVEAT`) and what it costs to *try* and fail to land
-(`WINNERS_ONLY_CAVEAT`) are bounded only inside the CREATE SLOT since captain decision 466, by a
-whole-slot ceiling attributed to one entrant rather than by a measurement of what anyone paid; their
-residuals — `landing-tip-outside-bound` and `failed-attempts-rest-of-window` — carry no numeric
-boundary, and under the captain's bar an unbounded cost forbids a profit verdict entirely. Which
-terms are unbounded is not restated here or in the caveat: it is read off the subtraction ledger
-below, which is what `exitVerdict` is computed from. This produces the number; making it rulable is
+(`WINNERS_ONLY_CAVEAT`) can be bounded only inside the CREATE SLOT since captain decision 466, and
+only where a run read that slot as a unit — a whole-slot ceiling attributed to one entrant rather
+than a measurement of what anyone paid — while a candidate whose sample holds one launch the block
+route did not serve reads both rows `null` instead, which is the ordinary case. Their residuals —
+`landing-tip-outside-bound` and `failed-attempts-rest-of-window` — carry no numeric boundary either
+way, and under the captain's bar an unbounded cost forbids a profit verdict entirely. Which terms
+are bounded for a given candidate is not restated here or in the caveat: it is read off that
+candidate's own subtraction ledger below, which is what `exitVerdict` is computed from. This produces the number; making it rulable is
 a later increment.
 `REALISATION_CONSTRUCTION_CAVEAT` is the label that travels with both readings, into the score's
 caveats, the rendered block and the run record, so neither can be quoted as though it were the

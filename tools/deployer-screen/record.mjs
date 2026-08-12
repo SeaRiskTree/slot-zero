@@ -826,8 +826,12 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *
  *   **Two denominators that are not the same and are never pooled.** The gross all-positions figures
  *   are over every resolvable position; the NET ones are over the subset whose WHOLE window the cost
- *   leg priced, which for an unexited position means it made no transaction outside its create slot.
- *   `entryCostTargets` was deliberately NOT widened — that would spend RPC requests this correction
+ *   leg priced — every transaction the wallet appears in across the window was already in the priced
+ *   target set, which admits the create slot and any transaction carrying a wallet that closed, so a
+ *   wallet that sold INSIDE its create slot is in scope and a wallet bundled with a closed one is
+ *   priced whole. The selection is non-random and its direction is UNMEASURED
+ *   (`entry.mjs` → `NET_ALL_POSITIONS_SELECTION_CAVEAT`), so the gap between the two readings is not
+ *   a fee cost. `entryCostTargets` was deliberately NOT widened — that would spend RPC requests this correction
  *   is not authorised to spend — so the shortfall is stated by `fieldHitRateOverAllPositionsNetOfMeasuredFees.n`
  *   rather than being closed.
  *

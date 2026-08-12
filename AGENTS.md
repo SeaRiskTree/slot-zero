@@ -1845,10 +1845,12 @@ out" owns the long form; cite it rather than restating it. Six things bind:
   dropped whole, so the coverage question is answered one layer up, per LAUNCH.
 - **TWO DENOMINATORS, NEVER POOLED, AND THE SECOND IS SMALLER FOR OUR REASON.** The gross
   all-positions figures are over every resolvable position; the NET ones over the subset whose WHOLE
-  window the cost leg priced — which for an unexited position means it made no transaction outside
-  its create slot, since `entryCostTargets` asks for a round-trip window only for wallets that
-  closed. **That scope was deliberately NOT widened** (it is a spend), so the shortfall is stated by
-  `fieldHitRateOverAllPositionsNetOfMeasuredFees.n` rather than closed.
+  window the cost leg priced — every transaction the wallet appears in was already in
+  `entryCostTargets`'s set (the create slot, or a transaction carrying a wallet that closed), and the
+  selection is non-random with its direction **UNMEASURED**; `entry.mjs` →
+  `NET_ALL_POSITIONS_SELECTION_CAVEAT` owns it, including that the gap between the two readings is
+  not a fee cost. **That scope was deliberately NOT widened** (it is a spend), so the shortfall is
+  stated by `fieldHitRateOverAllPositionsNetOfMeasuredFees.n` rather than closed.
 - **IT COSTS NOTHING AND GATES NOTHING**, which is what makes a change reversing a headline's sign
   safe to land: every input was already in `readLaunchWindow`'s response and `priceLaunchEntry`'s
   output, Stage 2's keyless ceiling (7 × 10 × 18 = 1,260) cannot move, no bar/gate/threshold/

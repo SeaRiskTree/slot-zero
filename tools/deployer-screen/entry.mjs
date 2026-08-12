@@ -429,9 +429,10 @@ export function hitRate(values, predicate) {
  * @property {number} returnPerSolAtZeroRecoveryGrossOfFees  That over `stakeSol`. `NaN` on the same terms.
  * @property {number} realisedSolAtZeroRecoveryNetOfMeasuredFees  The same worst-case resolution, from real lamport
  *   changes rather than from quotes. **`NaN` unless every one of this wallet's
- *   {@link FieldEntrant.windowTxCount} window transactions was priced** — which for an unexited
- *   position means it made no transaction outside the create slot, since the cost leg targets a
- *   round-trip window only for wallets that closed. That is not a gap to be closed by asking for
+ *   {@link FieldEntrant.windowTxCount} window transactions was priced** — every transaction the
+ *   wallet appears in has to have been in {@link entryCostTargets}'s set, which admits the create
+ *   slot and any transaction carrying a wallet that closed, so a wallet that sold INSIDE its create
+ *   slot is in scope and a wallet bundled with a closed one is priced whole. That is not a gap to be closed by asking for
  *   more: widening the target list would spend RPC requests this correction is not authorised to
  *   spend, and the count is reported instead.
  * @property {number} returnPerSolAtZeroRecoveryNetOfMeasuredFees  That over `stakeSol`. `NaN` on the same terms.
@@ -693,9 +694,10 @@ export function measureLaunchEntry(fills) {
  * recovery would be *better evidenced* with their whole windows priced too — but that is more RPC
  * requests, and that correction is authorised to cost nothing in every currency. So the scope is
  * byte-identical to what it was, {@link priceLaunchEntry} gives an unexited position a NET figure
- * only where its whole window happens to already be in scope (a wallet that made no transaction
- * outside the create slot — which on the committed tape is the majority of unexited positions,
- * 128 of the open window's 212), and {@link EntryScore.fieldHitRateOverAllPositionsNetOfMeasuredFees}`.n` states
+ * only where its whole window happens to already be in scope (every transaction it appears in was
+ * admitted by the filter below — the create slot, or a transaction carrying a wallet that closed —
+ * which on the committed tape is the majority of unexited positions, 128 of the open window's 212),
+ * and {@link EntryScore.fieldHitRateOverAllPositionsNetOfMeasuredFees}`.n` states
  * how many that was rather than the shortfall being silent. Widening it is a spend, and a spend is
  * the captain's.
  *

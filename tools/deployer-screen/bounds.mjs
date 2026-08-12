@@ -274,10 +274,13 @@ export function costLedger(input) {
       direction: /** @type {ComponentDirection} */ ('optimistic'),
       worstCaseSol: null,
       boundBasis:
-        'UNBOUNDED, and it stays unbounded after this increment. Two things are in it and both are ' +
-        'invisible to a create-slot block read: a tip paid in a DIFFERENT slot of the window, and a ' +
-        'tip paid inside the create slot to an account that is not in this build\'s published tip ' +
-        'list. Nothing in this repository holds a magnitude for either.',
+        'UNBOUNDED, and it stays unbounded after this increment. THREE things are in it (captain ' +
+        'decision 478a added the third): a tip paid in a DIFFERENT slot of the window, a tip paid ' +
+        'inside the create slot to an account that is not in this build\'s published tip list, and ' +
+        'a tip or a failed attempt sitting in a create-slot row the parser REFUSED — ' +
+        '`pumpfun.mjs` → `readCreateSlotSlotCosts` skips a row it cannot read exactly, so such a ' +
+        'row is in neither create-slot ceiling. Nothing in this repository holds a magnitude for ' +
+        'any of the three.',
       label:
         'TIPS OUTSIDE THE CREATE-SLOT BOUND ARE UNBOUNDED — a tip paid in another slot, or paid in ' +
         'the create slot by a route this build cannot recognise. Their absence makes entry look ' +
@@ -293,7 +296,11 @@ export function costLedger(input) {
         'The largest single create slot\'s TOTAL `meta.fee` over every landed-but-FAILED ' +
         'transaction touching that launch\'s mint — base plus priority, exact, and charged because ' +
         'Solana bills inclusion rather than success — attributed entirely to one entrant. A ceiling ' +
-        'over the slot, not a measurement of what any entrant spent failing.' +
+        'over the slot, not a measurement of what any entrant spent failing. IT COVERS ONLY THE ' +
+        'ROWS THIS BUILD COULD PARSE (captain decision 478a): `pumpfun.mjs` → ' +
+        '`readCreateSlotSlotCosts` skips a block row it cannot read exactly, so a failed attempt ' +
+        'sitting in such a row is outside this ceiling and sits in `landing-tip-outside-bound`, ' +
+        'which is UNBOUNDED.' +
         (complete
           ? ` Read from ${observations} launch(es), ${total((o) => o.failedAttempts)} failed ` +
             'transaction(s) in total.'

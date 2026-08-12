@@ -7807,6 +7807,61 @@ describe('the keyless boundary holds in both directions', () => {
     26: ENTRY_COVERAGE_KEYS_6,
   };
 
+  // And `entry.coverage.cost`'s own key set, one level further down again — the hole schema 26 would
+  // otherwise have fallen through. `ENTRY_COVERAGE_KEYS_BY_SCHEMA` pins that a `cost` key exists and
+  // nothing about what is inside it, so 26's four counters were contract-bearing fields in an
+  // unpinned block: a rename or a removal would have left `RECORD_SCHEMA_VERSION` and the README
+  // claiming a contract no assertion held. Same rule as every per-schema block pin here — the
+  // VERSION decides whether to assert, never the block's presence.
+  const ENTRY_COST_KEYS_6_TO_25 = [
+    'launchesDiscarded',
+    'launchesPriced',
+    'launchesSkippedForBudget',
+    'notes',
+    'ran',
+    'rpcRequests',
+    'stoppedForBudget',
+    'transactionsDiscarded',
+    'transactionsPriced',
+    'transactionsTargeted',
+    'transactionsUnresolved',
+    'viaBlock',
+    'viaTransaction',
+  ];
+  // Schema 26, captain decision 466: what the create slot itself cost, out of a block response the
+  // pricing above had already paid for. `launchesSlotObserved` read against `launchesPriced` is what
+  // says whether the ledger's two create-slot rows could be bounded at all.
+  const ENTRY_COST_KEYS_26 = [
+    ...ENTRY_COST_KEYS_6_TO_25,
+    'launchesSlotObserved',
+    'slotFailedAttemptFeeSol',
+    'slotFailedAttempts',
+    'slotTipSol',
+  ];
+  const ENTRY_COST_KEYS_BY_SCHEMA: Record<number, string[]> = {
+    6: ENTRY_COST_KEYS_6_TO_25,
+    7: ENTRY_COST_KEYS_6_TO_25,
+    8: ENTRY_COST_KEYS_6_TO_25,
+    9: ENTRY_COST_KEYS_6_TO_25,
+    10: ENTRY_COST_KEYS_6_TO_25,
+    11: ENTRY_COST_KEYS_6_TO_25,
+    12: ENTRY_COST_KEYS_6_TO_25,
+    13: ENTRY_COST_KEYS_6_TO_25,
+    14: ENTRY_COST_KEYS_6_TO_25,
+    15: ENTRY_COST_KEYS_6_TO_25,
+    16: ENTRY_COST_KEYS_6_TO_25,
+    17: ENTRY_COST_KEYS_6_TO_25,
+    18: ENTRY_COST_KEYS_6_TO_25,
+    19: ENTRY_COST_KEYS_6_TO_25,
+    20: ENTRY_COST_KEYS_6_TO_25,
+    21: ENTRY_COST_KEYS_6_TO_25,
+    22: ENTRY_COST_KEYS_6_TO_25,
+    23: ENTRY_COST_KEYS_6_TO_25,
+    24: ENTRY_COST_KEYS_6_TO_25,
+    25: ENTRY_COST_KEYS_6_TO_25,
+    26: ENTRY_COST_KEYS_26,
+  };
+
   // The run-level `spend` block's own key set, per version. This is the hole schema 8 fell through:
   // the three key sets above see a candidate row, its `entry` and that block's `coverage`, and NONE
   // of them can see a run-level block — so five new `spend` keys shipped under an unchanged version
@@ -8882,6 +8937,17 @@ describe('the keyless boundary holds in both directions', () => {
             expect(Object.keys(coverage as object).sort(), `${file} entry.coverage`).toEqual(
               [...coverageExpected!].sort(),
             );
+            // Undefined only below schema 6, where the cost leg did not exist and `coverage` itself
+            // carries no `cost` key — which the assertion above already pins.
+            const costExpected = ENTRY_COST_KEYS_BY_SCHEMA[schemaVersionOf(parsed)];
+            if (costExpected !== undefined) {
+              const cost = (coverage as Record<string, unknown>)['cost'];
+              expect(cost, `${file} declares a schema whose entry.coverage carries a cost block, and has none`)
+                .not.toBeUndefined();
+              expect(Object.keys(cost as object).sort(), `${file} entry.coverage.cost`).toEqual(
+                [...costExpected].sort(),
+              );
+            }
           }
         }
       }
@@ -9105,6 +9171,9 @@ describe('the keyless boundary holds in both directions', () => {
     expect(Object.keys(row).sort()).toEqual([...ENTRY_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort());
     expect(Object.keys(row.coverage).sort()).toEqual(
       [...ENTRY_COVERAGE_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
+    );
+    expect(Object.keys(row.coverage.cost).sort()).toEqual(
+      [...ENTRY_COST_KEYS_BY_SCHEMA[RECORD_SCHEMA_VERSION]!].sort(),
     );
 
     // And INSIDE `entry.windows` — at both levels, against a score built from real fills, because
@@ -13162,6 +13231,76 @@ describe('Stage 2 spends what the dry run said it would, and no keyed request at
     } as never);
     expect(unpriced).toMatch(/every realised figure above is gross\s+of fees and therefore an upper bound/);
     expect(unpriced).not.toContain('ENTRY-ROOM-PRESENT');
+  });
+
+  it('a whole-slot observation is held PER LAUNCH, so launches sharing a create slot cannot borrow one', async () => {
+    // Two mints can be created in the same slot, and this fixture's eight launches all are. Held
+    // per create slot, one launch's observation answers for every other launch in that slot: the
+    // ledger's completeness check reads the same object eight times as eight launches and bounds
+    // both create-slot rows, while the failed-attempt half was scoped to ONE launch's mint. That is
+    // the direction the ledger exists to refuse, so the bound has to fall back to `null` here.
+    const client = new KeylessClient({
+      maxRequests: 400,
+      minIntervalMs: 0,
+      fetchImpl: walkableWindow(10 * (1 / 0.6 - 1), 1),
+      sleepImpl: async () => {},
+    });
+    let walked = 0;
+    let issued = 0;
+    const costSource = {
+      kind: 'solana-rpc' as const,
+      issued: () => issued,
+      remaining: () => 1_000,
+      priceLaunch: async (input: {
+        transactions: readonly { tx: string; slot: number; wallets: { wallet: string; quotedSol: number }[] }[];
+      }) => {
+        walked += 1;
+        issued += 1;
+        const priced = new Map(
+          input.transactions.map((t) => [
+            t.tx,
+            {
+              signature: t.tx,
+              feeSol: 0.000_005,
+              feePayer: t.wallets[0]?.wallet ?? null,
+              solOutByWallet: new Map(t.wallets.map((w) => [w.wallet, w.quotedSol + 0.02])),
+            },
+          ]),
+        );
+        return {
+          priced,
+          requests: 1,
+          unresolved: 0,
+          viaBlock: priced.size,
+          viaTransaction: 0,
+          blockRouteTried: true,
+          blockRouteNote: null,
+          stoppedForBudget: false,
+          // Only the FIRST launch's slot is read as a unit; every other launch falls back, exactly
+          // as a per-signature route does.
+          slotCosts:
+            walked === 1 ? { tipSol: 0.05, tipTransfers: 1, failedAttemptFeeSol: 0.004, failedAttempts: 2 } : null,
+        };
+      },
+    };
+
+    const { score, coverage } = await scoreCandidateEntry(swapApiFillSource(client), {
+      wallet: 'dev',
+      profile: profile(8),
+      nowMs: NOW,
+      thresholds: T as never,
+      costSource: costSource as never,
+    });
+
+    expect(coverage.launchesUsable).toBe(8);
+    expect(score.launchesSampled).toBe(8);
+    // The persisted counter counts observations the ledger actually saw, never launches that merely
+    // shared a slot with one.
+    expect(coverage.cost.launchesSlotObserved).toBe(1);
+    const rows = new Map(score.costLedger.map((c) => [c.name, c.worstCaseSol]));
+    expect(rows.get('landing-tip-create-slot')).toBeNull();
+    expect(rows.get('failed-attempts-create-slot')).toBeNull();
+    expect(score.exitVerdict).toBe('exit-unbounded');
   });
 
   it('a dead RPC leaves the candidate UNMEASURED and never aborts the run', async () => {
@@ -18915,7 +19054,7 @@ describe('the subtraction ledger, and a verdict that is a FUNCTION of it — cap
     failedAttempts: failedFee > 0 ? 2 : 0,
   });
   const observedMap = (launches: ReturnType<typeof eight>, tip = 0.05, failedFee = 0.004) =>
-    new Map(launches.map((l) => [l.createSlot.slot, observation(tip, failedFee)]));
+    new Map(launches.map((l) => [l, observation(tip, failedFee)]));
   const rowsOf = (ledger: readonly { name: string; worstCaseSol: number | null }[]) =>
     new Map(ledger.map((c) => [c.name, c.worstCaseSol]));
 
@@ -18994,7 +19133,7 @@ describe('the subtraction ledger, and a verdict that is a FUNCTION of it — cap
     expect(wholeRows.get('failed-attempts-create-slot')).toBeCloseTo(0.004, 9);
 
     const short = new Map(observedMap(launches));
-    short.delete(launches[0]!.createSlot.slot);
+    short.delete(launches[0]!);
     const partial = scoreEntry(launches, ENTRY_T, { createSlotCostObservations: short });
     const partialRows = rowsOf(partial.costLedger);
     expect(partialRows.get('landing-tip-create-slot')).toBeNull();
@@ -19012,7 +19151,7 @@ describe('the subtraction ledger, and a verdict that is a FUNCTION of it — cap
     // a median would let the worst launch through.
     const launches = eight();
     const varied = new Map(
-      launches.map((l, i) => [l.createSlot.slot, observation(i === 3 ? 2.5 : 0.01, i === 6 ? 0.9 : 0.001)]),
+      launches.map((l, i) => [l, observation(i === 3 ? 2.5 : 0.01, i === 6 ? 0.9 : 0.001)]),
     );
     const rows = rowsOf(scoreEntry(launches, ENTRY_T, { createSlotCostObservations: varied }).costLedger);
     expect(rows.get('landing-tip-create-slot')).toBeCloseTo(2.5, 9);

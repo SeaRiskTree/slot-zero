@@ -1638,9 +1638,10 @@ export function describeRoomMedianBound(b) {
  * @param {number} [context.mintTimeDisagreements] Of those, the ones dropped because the vendor's
  *   mint time and the fill tape disagreed. Called out separately because it is the one drop cause
  *   that says the method's own assumption has broken rather than that a launch was awkward.
- * @param {ReadonlyMap<number, import('./bounds.mjs').CreateSlotCostObservation>}
- *   [context.createSlotCostObservations] What each launch's WHOLE create slot cost, keyed by create
- *   slot — the failed-attempt fee bill and the tip total `pumpfun.mjs` → `readCreateSlotSlotCosts`
+ * @param {ReadonlyMap<LaunchEntry, import('./bounds.mjs').CreateSlotCostObservation>}
+ *   [context.createSlotCostObservations] What each launch's WHOLE create slot cost, keyed by the
+ *   LAUNCH it was read for and never by its create slot, which two launches can share — the
+ *   failed-attempt fee bill and the tip total `pumpfun.mjs` → `readCreateSlotSlotCosts`
  *   read out of a block response the cost leg had already paid for. Absent or short, the two
  *   create-slot rows of {@link EntryScore.costLedger} stay UNBOUNDED, which is the required
  *   direction: a ceiling read from four launches of six says nothing about the two it did not see.
@@ -1773,9 +1774,7 @@ export function scoreEntry(launches, t, context = {}) {
   // per-signature reads leaves both create-slot rows `null`.
   const observations = context.createSlotCostObservations ?? new Map();
   const ledger = costLedger({
-    observations: scored
-      .map((l) => observations.get(l.createSlot.slot))
-      .filter((o) => o !== undefined),
+    observations: scored.map((l) => observations.get(l)).filter((o) => o !== undefined),
     launchesRequiringObservation: scored.length,
   });
 

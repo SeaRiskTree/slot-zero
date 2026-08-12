@@ -565,11 +565,15 @@ export async function scoreLaunchRefsEntry(fillSource, input) {
     // is asked for. The same degradation the creation walk and the consistency pass already apply.
     let transportFailed = false;
     /**
-     * What each launch's WHOLE create slot cost, keyed by create slot — the input to the
-     * subtraction ledger. Empty until a whole-block read serves one, which is what makes the
-     * per-signature fallback fail towards refusal rather than towards a partial bound.
+     * What each launch's WHOLE create slot cost, keyed by the LAUNCH the observation was read for —
+     * the input to the subtraction ledger. Never keyed by the create slot: two mints created in the
+     * same slot would collide, the second observation would answer for the first, and the ledger's
+     * completeness check would read one object twice as two launches and bound rows over a launch
+     * whose failed attempts were never scoped. Empty until a whole-block read serves one, which is
+     * what makes the per-signature fallback fail towards refusal rather than towards a partial
+     * bound.
      *
-     * @type {Map<number, import('./bounds.mjs').CreateSlotCostObservation>}
+     * @type {Map<import('./entry.mjs').LaunchEntry, import('./bounds.mjs').CreateSlotCostObservation>}
      */
     const slotObservations = new Map();
     // Every launch whose walk was PAID FOR and whose pricing was attached, counted AS IT HAPPENS.
@@ -632,12 +636,12 @@ export async function scoreLaunchRefsEntry(fillSource, input) {
       // not about our entrants: a launch whose partial pricing is discarded still contributed its
       // room figure and its field to the score, so the ledger still has to bound it. Zero requests
       // and zero credits — the response was fetched to price the transactions above.
-      if (walk.slotCosts !== null) {
-        slotObservations.set(entry.createSlot.slot, walk.slotCosts);
+      const slotCosts = walk.slotCosts;
+      if (slotCosts !== null) {
         cost.launchesSlotObserved += 1;
-        cost.slotFailedAttempts += walk.slotCosts.failedAttempts;
-        cost.slotFailedAttemptFeeSol += walk.slotCosts.failedAttemptFeeSol;
-        cost.slotTipSol += walk.slotCosts.tipSol;
+        cost.slotFailedAttempts += slotCosts.failedAttempts;
+        cost.slotFailedAttemptFeeSol += slotCosts.failedAttemptFeeSol;
+        cost.slotTipSol += slotCosts.tipSol;
       }
       cost.transactionsUnresolved += walk.unresolved;
       cost.viaBlock += walk.viaBlock;
@@ -662,6 +666,7 @@ export async function scoreLaunchRefsEntry(fillSource, input) {
             `a short one`,
         );
         pricedLaunches.push(entry);
+        if (slotCosts !== null) slotObservations.set(entry, slotCosts);
         continue;
       }
       // Priced means EVERY target came back. A launch missing one transaction still contributes
@@ -670,7 +675,9 @@ export async function scoreLaunchRefsEntry(fillSource, input) {
       if (targets.length > 0 && walk.priced.size === targets.length) cost.launchesPriced += 1;
       if (walk.priced.size > 0) launchesAttached += 1;
       cost.transactionsPriced += walk.priced.size;
-      pricedLaunches.push(priceLaunchEntry(entry, targets, walk.priced));
+      const priced = priceLaunchEntry(entry, targets, walk.priced);
+      pricedLaunches.push(priced);
+      if (slotCosts !== null) slotObservations.set(priced, slotCosts);
     }
 
     cost.rpcRequests = costSource.issued() - rpcBefore;

@@ -14263,6 +14263,9 @@ describe('attaching a measured cost to a launch\'s field', () => {
     );
     const e = priced.field[0]!;
     expect(e.positionOutcome).toBe('exited');
+    // `toBe` is `Object.is`, so an equality between two NaNs would pass vacuously. Pin the window
+    // figure at its real measured value first, so the equality below is an equality of numbers.
+    expect(e.realisedSolNetOfMeasuredFees).toBeCloseTo(0.7, 9);
     // Not `toBeCloseTo`: the point is that they are the SAME number, to the last bit.
     expect(e.realisedSolAtZeroRecoveryNetOfMeasuredFees).toBe(e.realisedSolNetOfMeasuredFees);
     expect(e.returnPerSolAtZeroRecoveryNetOfMeasuredFees).toBe(e.returnPerSolNetOfMeasuredFees);
@@ -14274,9 +14277,29 @@ describe('attaching a measured cost to a launch\'s field', () => {
 
     // The structural half: `priceLaunchEntry` walks a wallet's whole window ONCE. A reintroduced
     // second `sum(e.wallet, mine)` would satisfy the equality above on the day it was written and
-    // is exactly what may drift later, so the call site is pinned as a source fact.
+    // is exactly what may drift later, so the call site is pinned as a source fact — the same
+    // idiom this suite already uses for "the entry module computes no mean anywhere".
+    // Its weakness is named rather than left implicit: this is a scan over source TEXT, so a
+    // behaviour-preserving rename of the `e`/`mine` locals, an extraction of the sum into a named
+    // const, or a reformat of the expression across lines WILL break this assertion while the
+    // equality it guards still holds. Captain decision 482a accepted that cost, because a
+    // re-expanded IDENTICAL second walk is otherwise undetectable — it agrees with every value
+    // assertion on the day it is written. It signs nothing beyond the one call-site count.
     const src = readFileSync(join(TOOL_DIR, 'entry.mjs'), 'utf8');
-    const body = src.slice(src.indexOf('export function priceLaunchEntry'));
+    const from = src.indexOf('export function priceLaunchEntry');
+    expect(from).toBeGreaterThanOrEqual(0);
+    // Bound the slice at `priceLaunchEntry`'s own end: the next top-level `export`, or the
+    // function's own closing brace in column 0, whichever comes first.
+    const nextExport = src.indexOf('\nexport ', from + 1);
+    const closingBrace = src.indexOf('\n}', from);
+    const ends = [nextExport, closingBrace].filter((i) => i >= 0);
+    expect(ends.length).toBeGreaterThan(0);
+    const body = src.slice(from, Math.min(...ends));
+    // If a refactor breaks the extraction, fail loudly here rather than scanning nothing (or the
+    // whole rest of the module) and passing on a count that means something else.
+    expect(body.length).toBeGreaterThan(0);
+    expect(body).toContain('sum(e.wallet, mine)');
+    expect(body).not.toContain('ENTRY_VERDICTS');
     const code = body
       .split('\n')
       .filter((l) => !l.trimStart().startsWith('*') && !l.trimStart().startsWith('//') && !l.includes('/**'))

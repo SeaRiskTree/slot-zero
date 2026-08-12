@@ -1857,9 +1857,12 @@ out" owns the long form; cite it rather than restating it. Six things bind:
   predicate/verdict reads a new field, no threshold moved, and a test pins both — 208b's shape.
   **No existing figure moves either**, so a schema-24 and a schema-25 `…OfFees` reading may be
   pooled.
-- **IT IS NOT A PROFIT VERDICT AND NO VERDICT STATE IS NAMED FOR IT.** The landing tip and the cost
-  of failed attempts are still **unbounded**, and under the captain's bar an unbounded cost forbids a
-  profit verdict entirely. Do not let the new figure be presented as one.
+- **IT IS NOT A PROFIT VERDICT AND NO VERDICT STATE IS NAMED FOR IT AT THIS VERSION.** Under the
+  captain's bar an unbounded cost forbids a profit verdict entirely, and at schema 25 the landing tip
+  and the cost of failed attempts were unbounded outright. Do not let the new figure be presented as
+  a profit verdict. **Which terms are bounded is no longer stated in prose or in a caveat** — the
+  section below (466, schema 26) owns the ledger and the refusal, and every candidate this build can
+  score still reads `exit-unbounded`.
   `entry.mjs` → `REALISATION_CONSTRUCTION_CAVEAT` is the label that travels with both readings to the
   caveats, the rendered block and the run record. **Every rate added from 461 on carries its exact
   (Clopper–Pearson) interval** as `lo`/`hi`; `tools/deployer-screen/stats.mjs` is the ONE

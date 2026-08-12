@@ -273,6 +273,7 @@ import {
   RpcCredentialRejected,
   SLOT_RATE_MARGIN,
   SOLANA_RPC,
+  SWAP_API,
   SolanaRpcClient,
   creditsForTransactions,
   extractTradeRows,
@@ -19955,7 +19956,7 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
    * recency clear the derived window-supply bounds with room — so the ONLY thing standing between it
    * and Stage 2 is captain decision 451.
    */
-  const creationRows = (nowMs: number) => {
+  const creationRows = (nowMs: number, subGateShare = 0.1) => {
     const n = GATE.minTokens * 2;
     const spread = Math.max(GATE.minSpanDays * 3, 60);
     const forWallet = (deployer: string, bonded: number) =>
@@ -19967,11 +19968,14 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
         launches_total: n,
         is_mayhem_mode: false,
       }));
-    // 10% bonded: above `subGateAdmission.minCompletionRate` (0.05), below `minCompletionRate` (0.25).
-    return [...forWallet(COMPETENT, n), ...forWallet(SUBGATE, Math.round(n * 0.1))];
+    // 10% bonded by default: above `subGateAdmission.minCompletionRate` (0.05), below
+    // `minCompletionRate` (0.25). A caller passing a share BELOW the arm's inflow floor gets the
+    // SAME wallet refused by the arm instead — the counterfactual the field-population guard below
+    // rests on: one wallet, one rate moved, every other input identical.
+    return [...forWallet(COMPETENT, n), ...forWallet(SUBGATE, Math.round(n * subGateShare))];
   };
 
-  const runBothArms = async () => {
+  const runBothArms = async (subGateShare = 0.1, launchAgeMs = 0) => {
     const nowMs = Date.now();
     const dir = mkdtempSync(join(tmpdir(), 'subgate-run-'));
     const listPath = join(dir, 'both-arms.txt');
@@ -19979,7 +19983,7 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
     const out = join(dir, 'run.json');
     // A TEMPORARY rotation path — a test may not move the tool's own committed memory.
     const rotation = join(dir, 'rotation.json');
-    const rows = creationRows(nowMs);
+    const rows = creationRows(nowMs, subGateShare);
 
     const fetchImpl = async (url: unknown) => {
       const target = String(url);
@@ -20013,11 +20017,15 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
         // loop reaches a verdict without one keyless request. It is still a real pass THROUGH that
         // loop, which is what the `entry` assertions below read.
         if (wallet !== undefined) {
-          return json({ pump_tokens: [{ mint: `${wallet}-live`, created_timestamp: nowMs, complete: true }] });
+          return json({ pump_tokens: [{ mint: `${wallet}-live`, created_timestamp: nowMs - launchAgeMs, complete: true }] });
         }
         throw new Error(`unexpected enumeration request ${target}`);
       }
       if (target.startsWith(FRONTEND_API)) return json([]);
+      // Only reached when a caller ages the launches past Stage 2's eligibility gate. An empty page
+      // is a REFUSED window, which is what puts a row in the run-level drop tally — the cheapest way
+      // to make a coverage-derived figure non-zero without standing up a fills fixture.
+      if (target.startsWith(SWAP_API)) return json([]);
       if (target.startsWith(PUBLIC_SOLANA_RPC)) return json({ jsonrpc: '2.0', id: 1, result: [] });
       throw new Error(`unstubbed request ${target}`);
     };
@@ -20132,6 +20140,73 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
     expect(metrics['gatePassedCount']!(record)).toBe(1);
     expect(metrics['subGateAdmittedCount']!(record)).toBe(1);
     expect(metrics['gateFailedCount']!(record)).toBe(0);
+  }, 60_000);
+
+  it('451: admitting a sub-gate candidate moves exactly the documented run-level fields', async () => {
+    // THE GUARD THE SCHEMA-26 NOTE'S ENUMERATION NEEDS, because that enumeration has been found
+    // incomplete twice — first missing the rotation block, then `entryDrops`. A field computed over
+    // the SCORED set silently changed population when Stage 2 started walking both arms, and its
+    // name, shape and key set stayed put, so no key-set pin could see it.
+    //
+    // The counterfactual is one rate: the SAME wallet, admitted by the second arm in one run and
+    // refused by its inflow floor in the other. Every run-level key whose value differs between the
+    // two is a key whose population includes the sub-gate arm — so pinning that SET catches a NEW
+    // such field the next time one is added, and fails until it is listed in the note.
+    // SEQUENTIAL, not concurrent: `runBothArms` stubs the global `fetch` and unstubs it in a
+    // `finally`, so two overlapping runs would tear down each other's transport.
+    // The launches are aged past Stage 2's eligibility gate so the scoring loop actually WALKS,
+    // which is what makes a coverage-derived figure like `entryDrops` reachable at all. The other
+    // tests in this block keep the default (minted seconds ago) and reach a verdict with no keyless
+    // request, so their inputs are untouched by this.
+    const WALKABLE_AGE_MS = 6 * 60 * 60 * 1000;
+    const admitting = await runBothArms(0.1, WALKABLE_AGE_MS);
+    const refusing = await runBothArms(0.01, WALKABLE_AGE_MS);
+    // The counterfactual is real: the same wallet lands on opposite sides of the arm.
+    const armOf = (r: Record<string, any>) =>
+      (r['candidates'] as Record<string, any>[]).find((c) => c['wallet'] === SUBGATE)!['verdict'];
+    expect(armOf(admitting.record)).toBe('sub-gate-admitted');
+    expect(armOf(refusing.record)).toBe('gate-failed');
+
+    // Keys that differ between ANY two runs of this tool, for reasons that have nothing to do with
+    // the arm: wall-clock instants, elapsed time, and the rotation-state digests derived from them.
+    // Excluded by name so the pin below is about POPULATION and not about time.
+    const VOLATILE = new Set(['startedAtIso', 'finishedAtIso', 'elapsedMs', 'scoringRotation']);
+    const moved = Object.keys(admitting.record)
+      .filter((k) => !VOLATILE.has(k))
+      .filter((k) => JSON.stringify(admitting.record[k]) !== JSON.stringify(refusing.record[k]))
+      .sort();
+
+    // EXACTLY these, and every one is named in `record.mjs`'s schema-26 note:
+    //   candidates            per-arm BY CONSTRUCTION — the row carries `admissionArm`.
+    //   predictions           per-arm BY CONSTRUCTION — the block reports `byArm` (480a).
+    //   entryDrops            the walk's own tally, over whatever it walked.
+    //   keylessRequests       what the run SPENT, on the population it scored.
+    //   keylessRequestsStage2 the same, scoped to the stage that does the walking.
+    //   dune                  NOT a population widening: the counterfactual moves this wallet's
+    //                         completion RATE, and the rate comes from the enumeration, so its
+    //                         result bytes necessarily differ. Pinned rather than excluded so the
+    //                         exception is visible and cannot quietly absorb a real one.
+    expect(moved).toEqual([
+      'candidates',
+      'dune',
+      'entryDrops',
+      'keylessRequests',
+      'keylessRequestsStage2',
+      'predictions',
+    ]);
+
+    // WHAT THIS FIXTURE CANNOT REACH, stated so the pin is not read as the whole enumeration:
+    // `keylessShed` (nothing sheds here), `rpcRequests` / `rpcLoadShedEvents` (the cost leg never
+    // runs — room refuses first), `scoringCap.survivorsUnscored` (2 candidates against a cap of 7,
+    // so no shortfall), `truncationReason` (null for the same reason) and `entrySourceAgreement`
+    // (the mode is unactivated). All five are documented as widened; none moves on two candidates
+    // and one refused window each, so a regression confined to them would pass here.
+    expect(admitting.record['scoringCap'].survivorsUnscored).toBe(0);
+    expect(admitting.record['truncationReason']).toBeNull();
+
+    // And the widening is real rather than incidental: the sub-gate candidate's own refused window
+    // is IN the run-level drop tally, which is what makes it a two-population figure.
+    expect(admitting.record['entryDrops'].total).toBeGreaterThan(refusing.record['entryDrops'].total);
   }, 60_000);
 
   it('never tells a sub-gate wallet it passed the gate — the unscored sentence is per ARM', () => {
@@ -20275,13 +20350,19 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
     expect(subGateOnly).not.toContain('mean in the\n  gate block above');
     expect(subGateOnly).toContain('The reading is the same one the gate arm is');
 
-    // AND A RUN WITH NO SUB-GATE ADMISSIONS RENDERS BYTE-IDENTICALLY TO THE PRE-451 SHAPE, which is
-    // what every committed record is: the legend was hoisted, not rewritten.
+    // AND THE TWO ARMS SHARE ONE LEGEND, WHICH IS WHAT THE HOIST HAD TO PRESERVE: the sub-gate
+    // block's legend is byte-identical to the gate block's, so neither arm can drift into its own
+    // vocabulary. WHAT IS NOT ASSERTED HERE, deliberately: any byte-identity with the PRE-451
+    // output. No pre-451 baseline is rendered below — both sides of this comparison are the current
+    // build — and such a claim would be false anyway, because `renderStage1` emits the
+    // `sub-gate admitted 0` header line on EVERY run, admissions or not. That zero is printed on
+    // purpose: a block that vanishes when empty is indistinguishable from one never computed.
     const gateOnly = renderStage1({
       ...envelope,
       candidates: [candidate('GATEWALLET', 'gate-passed')],
     } as never);
     expect(gateOnly).not.toContain('SUB-GATE ADMITTED — FAILED');
+    expect(gateOnly).toMatch(/^sub-gate admitted {2}0 {2}\(FAILED the gate/m);
     const gateLegend = gateOnly.slice(gateOnly.indexOf('  n    = launches in the denominator'));
     const subGateLegend = subGateOnly.slice(subGateOnly.indexOf('  n    = launches in the denominator'));
     expect(subGateLegend).toBe(gateLegend);

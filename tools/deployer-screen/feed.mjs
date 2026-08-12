@@ -897,7 +897,7 @@ export async function main(opts, env, out, err, deps = {}) {
       gated: gradedThisRun.length,
       queued: gradedThisRun.filter((g) => g.state === 'queued').length,
       // Captain decision 451, and its own figure rather than folded into `queued`: the two arms are
-      // two populations, and the dry-streak alarm reads these counts.
+      // two populations with two denominators.
       queuedSubGate: gradedThisRun.filter((g) => g.state === 'queued-sub-gate').length,
       held: gradedThisRun.filter((g) => g.state === 'held').length,
       unmeasured: gradedThisRun.filter((g) => g.state === 'unmeasured').length,

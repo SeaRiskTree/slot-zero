@@ -861,11 +861,9 @@ export function render(report, opts) {
       `      said not       ${rate(a.byClaim['not-beatable'])}`,
     );
   }
-  lines.push(
-    `    ungraded       ${g.ungraded} of ${g.claims} claim(s) in the ledger`,
-    `  ${g.armsAreNeverPooled}`,
-  );
+  lines.push(`    ungraded       ${g.ungraded} of ${g.claims} claim(s) in the ledger`);
   for (const [reason, n] of Object.entries(g.ungradedByReason)) lines.push(`      · ${reason}: ${n}`);
+  lines.push('', `  ${g.armsAreNeverPooled}`);
   lines.push('', `  ${g.caveat}`, `  READING: ${g.reading}`);
   return lines.join('\n');
 }

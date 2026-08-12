@@ -3423,7 +3423,8 @@ export async function main(opts, env, out, err, seam = {}) {
     // `deriveTruncation`, which owns the three that every stage shares.
     const scoringShortfall =
       scoringTruncatedBy > 0
-        ? `the Stage 2 scoring cap of ${maxScored} left ${scoringTruncatedBy} gate survivor(s) with no entry score`
+        ? `the Stage 2 scoring cap of ${maxScored} left ${scoringTruncatedBy} admitted candidate(s) ` +
+          `with no entry score (both arms — captain decision 451)`
         : null;
     // Redacted for the same reason `toEntryRecordRow` redacts its notes: these strings can be built
     // from a thrown error, and an error's message is exactly where a vendor-derived identifier
@@ -3622,6 +3623,14 @@ export async function main(opts, env, out, err, seam = {}) {
         // read: it says the vendor's mint time and pump.fun's fills contradicted each other, which
         // on our own tape never happens, so a non-zero value in a committed record is the evidence
         // that the assumption has broken on strangers.
+        //
+        // **ITS POPULATION WIDENED AT SCHEMA 26 WHILE ITS NAME AND SHAPE DID NOT** — captain
+        // decision 451. Stage 2 walks whoever EITHER arm admitted, so this reduces over the admitted
+        // UNION where at ≤25 it was the gate-passed scored set alone. It is a tally of what the WALK
+        // refused rather than a finding about deployers, so spanning both arms is correct here — but
+        // a reader comparing `total` or `byReason.mintTimeDisagreement` across the boundary must not
+        // read a rise as gate-population behaviour. `record.mjs`'s schema-26 note enumerates every
+        // field this is true of; add to that list, not only here.
         entryDrops: (() => {
           const by = candidates.reduce(
             (acc, c) => (c.entryCoverage === null ? acc : addDropReasons(acc, c.entryCoverage.dropsByReason)),

@@ -908,25 +908,56 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   last launch) and THE BOUNDS IT WAS JUDGED UNDER — the arm is sized against a population, so a
  *   record that quoted only today's `thresholds.json` could not say what a past run applied.
  *
- * **SIX FIELDS CHANGED POPULATION AT THIS VERSION WITHOUT CHANGING NAME OR SHAPE, and they are the
- * ones a reader will otherwise misread.** Stage 2 now walks whoever EITHER arm admitted, so
- * `scoringRotation.survivors`, `scoringRotation.order`, `scoringRotation.selected`,
- * `scoringRotation.neverScoredBefore` and `scoringCap.survivorsUnscored` are over the ADMITTED
- * UNION at 27 where they were over `verdict === 'gate-passed'` ALONE at ≤26. Their KEY SETS are
- * untouched (`ROTATION_BLOCK_KEYS_BY_SCHEMA[27]` equals `[26]`), which is exactly why the change is
- * easy to miss: a rise in `survivors` or `survivorsUnscored` across this boundary may be the second
- * arm rather than a larger gate population, and reading it as the latter is the misreading. **They
- * are not a breach of the never-pool rule** — the rotation ALLOCATES a cap over both arms and
- * publishes no rate — and the split stays recoverable, because every row of `order` names a wallet
- * whose candidate row carries `admissionArm`, so a reader can partition the order list by arm. The
- * run-level `predictions` block is split by arm at source (`prediction.mjs` →
- * `summarisePredictions` reports `byArm`) and carries no pooled `withClaim` / `beatable` /
- * `notBeatable`, captain decision 480a.
+ * ### THE FIELDS WHOSE POPULATION WIDENED, AND THIS LIST IS THE WHOLE OF THEM
  *
- * **Every other measured field is the same quantity at 26 and 27 and may be pooled** — no bar
- * moved, `stage1_gate.minCompletionRate` is still 0.25 and Stage 2's ceilings are untouched, since
- * none of them is a function of how many candidates were ADMITTED. **What may never be pooled is
- * the two arms** (`admission.mjs` → `ARMS_ARE_NEVER_POOLED`): they are two populations with two
+ * Stage 2 now walks whoever EITHER arm admitted, so **every field computed over the SCORED set is
+ * over the ADMITTED UNION at 27 where it was over `verdict === 'gate-passed'` ALONE at ≤26.** Their
+ * names, shapes and key sets are untouched, which is exactly why the change is easy to miss: a rise
+ * in one of these across the boundary may be the second arm rather than a larger gate population,
+ * and reading it as the latter is the misreading. The list was assembled by walking every run-level
+ * and candidate-row field rather than by patching the ones review found, and it is:
+ *
+ * - **`scoringRotation.survivors` / `.order` / `.selected` / `.neverScoredBefore`, and
+ *   `scoringCap.survivorsUnscored`** — the rotation ALLOCATES one cap over both arms.
+ * - **`entryDrops.total` and every `entryDrops.byReason.*`**, and the rendered `STAGE 2 DROPS` block
+ *   that shares the reduce — a tally of what the WALK refused, over whatever it walked.
+ * - **`keylessRequests`, `keylessRequestsStage2`, `keylessShed`, `rpcRequests`,
+ *   `rpcLoadShedEvents`** and the `spend` counters derived from them — what the run SPENT, on the
+ *   population it scored.
+ * - **`truncationReason`**, when the scoring cap contributed a sentence to it: the shortfall it
+ *   names is admitted candidates left unscored, not gate survivors.
+ * - **`entrySourceAgreement.candidates` / `.byClass`** — over the candidates carrying an agreement
+ *   row, which is the scored set. `null` on every run to date, the mode being unactivated, so no
+ *   committed record shows it; it is listed because the version boundary is the same one.
+ *
+ * **NONE OF THESE BREACHES THE NEVER-POOL RULE, and the reason is the same for all of them:** each
+ * counts what the WALK did — allocation, coverage, spend — rather than what either population
+ * ACHIEVED, and none is a rate. The split also stays recoverable, because every one of them is
+ * decomposable through the candidate rows, each of which carries `admissionArm`. A figure about
+ * outcomes is per arm at source: the run-level `predictions` block reports `byArm` and carries no
+ * pooled `withClaim` / `beatable` / `notBeatable`, `measuredEntryVerdictCount` is the gate arm's
+ * with `subGateMeasuredEntryVerdictCount` beside it, and `gatePassedCount` /
+ * `subGateAdmittedCount` are counted apart (captain decisions 451 and 480a).
+ *
+ * **THIS ENUMERATION IS NOT SELF-MAINTAINING, and it has now been found incomplete twice.** A field
+ * added later whose population is the scored set will not appear here by itself. What guards it is
+ * `test/deployer-screen.test.ts` → "451: admitting a sub-gate candidate moves exactly the
+ * documented run-level fields", which runs the screen twice over the SAME wallet — admitted by the
+ * second arm once, refused by its inflow floor once — and pins the SET of run-level keys whose
+ * value differs. A new field over the scored set moves in that diff and fails the pin until it is
+ * listed here. **Its reach is a SUBSET of this list and the test says which**: on two candidates
+ * and one refused window each, `keylessShed`, `rpcRequests`, `rpcLoadShedEvents`,
+ * `scoringCap.survivorsUnscored`, `truncationReason` and `entrySourceAgreement` do not move at all,
+ * so a regression confined to them passes. Nothing expressible closes that gap — a field can only
+ * be observed to widen where the fixture makes it non-zero — and stating the residue is why this
+ * paragraph exists rather than a claim that the list maintains itself.
+ *
+ * **Every field NOT listed above is the same quantity at 26 and 27 and may be pooled** — the
+ * whole-population counts (`gated`, `prefilteredOut`, `coverage.*`) never depended on the gate's
+ * verdict, and every per-candidate measurement means what it always did. No bar moved,
+ * `stage1_gate.minCompletionRate` is still 0.25 and Stage 2's ceilings are untouched, since none of
+ * them is a function of how many candidates were ADMITTED. **What may never be pooled is the two
+ * arms** (`admission.mjs` → `ARMS_ARE_NEVER_POOLED`): they are two populations with two
  * denominators, and a figure over one of them says nothing about the other.
  *
  * **It is not a finding that the sub-gate population is profitable and must not be read as one.**

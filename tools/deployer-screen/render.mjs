@@ -1150,6 +1150,10 @@ export function renderStage1(run) {
   if (runDropTotal > 0) {
     L.push('');
     L.push('STAGE 2 DROPS — every launch window the entry walk refused, across the whole run');
+    // Both arms, and it says so: since captain decision 451 the walk serves the admitted union, so
+    // this tally has two populations behind it. That is correct for a count of what the WALK
+    // refused, and it is exactly why the label may not be left implicit.
+    L.push('  (BOTH ARMS — the walk serves whoever was admitted, so this is not one arm\'s figure)');
     for (const line of renderDropTally(runDropTotal, runDrops, '  ')) L.push(line);
   }
   L.push('');
@@ -1502,8 +1506,13 @@ export function renderStage1(run) {
     L.push(`  ${subGateAdmitted.length} candidate(s) on this arm. The reading is the same one the gate arm is`);
     L.push('  measured on — only the population differs — and the rate column is BELOW the gate bar on');
     L.push('  every row here by construction.');
-    L.push('  NO FIGURE HERE MAY BE ADDED TO ONE FROM THE GATE BLOCK, and none of the counts in this');
-    L.push('  report does: the two arms are reported apart at every level, from the header line down.');
+    L.push('  NO FIGURE HERE MAY BE ADDED TO ONE FROM THE GATE BLOCK: the two arms are two');
+    L.push('  populations with two denominators, and every PER-CANDIDATE and PER-ARM count in this');
+    L.push('  report keeps them apart, from the header line down.');
+    L.push('  TWO RUN-LEVEL TALLIES DELIBERATELY SPAN BOTH ARMS and are labelled where they print:');
+    L.push('  the Stage 2 DROPS block above, and the spend counters. Both count what the WALK did');
+    L.push('  rather than what either population achieved, so they are allocation and coverage');
+    L.push('  figures and not findings — and neither may be read as one arm\'s.');
     // THIS SECTION CARRIES ITS OWN LEGEND rather than pointing at the gate block's, because that
     // block does not exist on a run with zero gate passes — which is this arm's expected shape, the
     // gate arm having produced 0 measured passes in 43 scored. The gross/net sentence is computed

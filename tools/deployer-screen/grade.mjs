@@ -540,7 +540,12 @@ export function loadGradeLedger(path) {
     throw new Error(
       `The grade ledger at ${path} declares schemaVersion ${String(l['schemaVersion'])}; this build ` +
         `reads ${GRADE_LEDGER_VERSION}. Grade ledgers are never retro-fitted — migrate it ` +
-        `deliberately rather than letting a run rebuild it from nothing.`,
+        `deliberately rather than letting a run rebuild it from nothing. FROM VERSION 1 THE ` +
+        `MIGRATION IS ONE FIELD: version 2 added \`admissionArm\` to every grade row and split the ` +
+        `hit rate by it (captain decisions 451 and 480a), and a row carrying no arm is the GATE ` +
+        `arm exactly — nothing before record schema 27 could admit a claim through the second one. ` +
+        `So setting "schemaVersion": 2 is the whole of it; every existing row is already correct ` +
+        `and is read as the gate arm's.`,
     );
   }
   if (typeof l['grades'] !== 'object' || l['grades'] === null) {
@@ -843,15 +848,22 @@ export function render(report, opts) {
   }
   if (!opts.live) lines.push('    DRY RUN — nothing was fetched and nothing was written. --live spends this.');
 
-  lines.push(
-    '',
-    '  THE SCREEN\'S OWN HIT RATE',
-    `    overall        ${rate(g.overall)}`,
-    `    said beatable  ${rate(g.byClaim.beatable)}`,
-    `    said not       ${rate(g.byClaim['not-beatable'])}`,
-    `    ungraded       ${g.ungraded} of ${g.claims} claim(s) in the ledger`,
-  );
+  lines.push('', '  THE SCREEN\'S OWN HIT RATE, PER ADMISSION ARM');
+  for (const { arm, label } of [
+    { arm: 'gate', label: 'GATE ARM — cleared the competence gate' },
+    { arm: 'sub-gate', label: 'SUB-GATE ARM — failed that gate, measured anyway (451)' },
+  ]) {
+    const a = g.byArm[arm];
+    lines.push(
+      `    ${label}`,
+      `      all claims     ${rate(a.overall)}`,
+      `      said beatable  ${rate(a.byClaim.beatable)}`,
+      `      said not       ${rate(a.byClaim['not-beatable'])}`,
+    );
+  }
+  lines.push(`    ungraded       ${g.ungraded} of ${g.claims} claim(s) in the ledger`);
   for (const [reason, n] of Object.entries(g.ungradedByReason)) lines.push(`      · ${reason}: ${n}`);
+  lines.push('', `  ${g.armsAreNeverPooled}`);
   lines.push('', `  ${g.caveat}`, `  READING: ${g.reading}`);
   return lines.join('\n');
 }

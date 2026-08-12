@@ -198,7 +198,8 @@ lane's output:
 | feed state | meaning |
 |---|---|
 | `queued` | Cleared the gate on the ownership reading. **The feed's product**: worth putting through the beatability screen. **Not a pass** — the rate that cleared it may read up to +0.6929 above the gate's on the same wallet. |
-| `held` | Did **not** clear it. **This is NOT a rejection.** It is a triage outcome on a reading whose count bars fail 46 more of 82 wallets than the gate reading does. |
+| `queued-sub-gate` | FAILED the gate and is queued anyway, admitted by the second arm (captain decision 451). Its own state and its own count — never added to `queued` — and `queuedForScreen` serves both. See *"The second admission arm reaches this lane too"* below. |
+| `held` | Did **not** clear it, **and was not admitted by the second arm either** — since 451 this is a smaller pile than it was. **This is NOT a rejection.** It is a triage outcome on a reading whose count bars fail 46 more of 82 wallets than the gate reading does. |
 | `unmeasured` | The vendor's profile carried no readable launch record — **or the completion criterion could not be read on some of the records it did carry** (captain decision 352b), since those launches leave the count and span bars as well as the rate. An empty deployer and a moved response shape are indistinguishable from here, so neither is recorded as a finding. |
 | `prefiltered` | Never gated: the vendor's trailing deploy count was below the floor. The cadence filter. |
 | `deferred` | Surfaced and recorded, waiting for a gate batch. |
@@ -223,10 +224,15 @@ So every run reports, in this order — alarm first, then the new count, then th
 - **Per seed: rows, wallets, and how many of those wallets were new.** Rows present with wallets zero
   means *our reader is wrong*, not that the vendor is empty. (A wallet two seeds both surfaced counts
   as new under both, so per-seed novelty does not sum to the run total.)
-- **Gated / cleared / held / unmeasured**, and the backlog still waiting.
+- **Gated / cleared / admitted by the sub-gate arm / held / unmeasured**, which partition the gated
+  total, and the backlog still waiting.
 - **Discovery lag** and the **cadence filter's** cost, as above.
 - **Spend**, against the per-run ceiling and the assumed daily figure.
-- **The queue**: wallets that cleared the gate and have not been screened.
+- **The queue**: wallets not yet screened, on BOTH arms and counted apart — those that cleared the
+  competence gate, and those that FAILED it and were admitted for measurement by the sub-gate arm
+  (captain decision 451). The list is served whole because draining it is a spend decision; every
+  count stays per arm, and each queue row carries `admissionArm` so the split survives into the
+  record.
 
 **Four conditions exit 9** (`ledger.mjs` → `feedAlarm`), because they need four different fixes:
 
@@ -300,6 +306,62 @@ day when nothing new appears.
 Committed state, 2026-08-02 (`--bootstrap` over the two committed screen runs): **82 wallets — 14
 queued (11 of them not yet screened), 61 held, 7 pre-filtered.** All 61 held on the ownership reading;
 **48 of them missed on exactly one gate leg.**
+
+## The second admission arm reaches this lane too — captain decision 451
+
+A deployer that FAILS the competence gate can now be queued anyway, by the arm `admission.mjs` owns;
+`tools/deployer-screen/README.md` → "The SECOND ADMISSION ARM" is the owner of the rule, the
+derivation and everything it does not claim. Three things bind here specifically:
+
+- **It had to reach this lane.** The ledger grades a wallet ONCE and never offers it again, so a feed
+  left on the old rule would file every sub-gate deployer as `held` permanently — the ruling would
+  apply at `screen.mjs` and never reach the surface that decides which wallets the screen is ever
+  offered. That is exactly the invisible, permanent direction this lane is built to avoid.
+- **It is asked on the vendor page, which is the biased reading, and that is disclosed rather than
+  corrected.** This page's rate reads HIGHER than the gate reading on 37 of 81 wallets and by up to
+  +0.6929 (see the section above), so the arm's inflow floor admits more wallets here than
+  `screen.mjs` would. The direction is the cheap one: the screen re-judges every queued wallet on the
+  creation-derived history and can still refuse it, while a wallet this lane files is gone for good.
+- **An admission is its own state, `queued-sub-gate`.** `summariseLedger` counts it apart from
+  `queued` — two arms, two populations, two denominators, and no figure adds them — while
+  `queuedForScreen` returns both, because draining the queue is a spend decision and not a
+  statistic. A schema-1 ledger written before the decision can never carry the value, so its absence
+  is unambiguous and no migration is owed.
+
+### The feed RECORD's version was deliberately not bumped — captain decision 481b
+
+`FEED_RECORD_SCHEMA_VERSION` stays **3**. It was recommended that it be bumped and the captain ruled
+against it, so what a bump would have said is said here instead. Do not read the record as though the
+new meaning had always been the meaning:
+
+**The affected fields are named below as the complete list, and that list is DERIVED rather than
+counted** — swept from the two `state === 'held'` filters this record is built through (`feed.mjs`'s
+own `gradedThisRun` one, and `ledger.mjs` → `summariseLedger`, which the `ledger` block is written
+verbatim from). An earlier draft of this section said "exactly two fields" and was three short; a
+count is not a completeness argument, so do not restore one — add the name and re-sweep the filters.
+
+- **Five figures CHANGED MEANING when this arm landed, all narrowing by the same rule.** They counted
+  every wallet that failed the gate; they now EXCLUDE the wallets this arm admits, which are filed
+  under `queued-sub-gate`. So each is a smaller quantity after the arm than before it over the same
+  population, and a DROP across the boundary is a change of RULE, not a change of population. They
+  are **`held` on the run row**, **`yield.held`**, **`ledger.held`** (the same rule on the cumulative
+  count), and **`ledger.heldOnOwnershipReading`** and **`ledger.heldNearMiss`**.
+- **The direction matters for the last two, because they are not bookkeeping.** They are the standing
+  count of the false negatives this lane *creates* by grading on the biased vendor page, and the
+  one-leg-near-miss shortlist inside it — the two figures `summariseLedger` exists to keep honest.
+  The wallets this arm rescues are exactly rate-bar-only failures, i.e. one-leg near misses, so
+  moving them out of `held` makes **both read LOWER while the underlying population has not improved
+  at all**: a reader comparing two schema-3 records across this change sees the cost of the cheap
+  reading appear to fall when it did not.
+- **Four figures arrived UNVERSIONED** — present on records written after the arm, absent on records
+  written before it, at the same declared version: **`queuedSubGate` on the run row**,
+  **`yield.admittedSubGate`**, **`ledger.queuedSubGate`** and **`ledger.queuedSubGateUnscreened`**.
+- **A consumer reading `schemaVersion: 3` cannot tell from the version alone which meaning of any of
+  those fields it holds.** That is precisely the ambiguity schemas 2 and 3 were each spent removing,
+  and here it is accepted rather than removed. The weaker substitute available to a reader is to check
+  whether the record carries `queuedSubGate` at all: present ⇒ the post-451 meaning, absent ⇒ the
+  pre-451 one. That is an inference from a field's presence and not a version, and it is what this
+  decision leaves consumers with. `feed.mjs` → `FEED_RECORD_SCHEMA_VERSION` carries the same note.
 
 ## Known gap: the two lanes are joined by a file, not by code
 

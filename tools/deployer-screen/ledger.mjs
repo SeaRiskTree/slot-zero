@@ -64,13 +64,20 @@ export const LEDGER_SCHEMA_VERSION = 1;
  *   re-offer them as new every run. They queue, and the next run drains the backlog first.
  * - `queued` — cleared the gate on the ownership reading. Worth putting through the beatability
  *   screen. This is the feed's product.
+ * - `queued-sub-gate` — **FAILED the gate and is queued anyway**, admitted by the second arm
+ *   (captain decision 451, `admission.mjs`). It exists as its own state rather than as `queued`
+ *   because the two are two populations with two denominators and {@link summariseLedger} counts
+ *   them apart; `queuedForScreen` serves both, because draining the queue is a spend decision and
+ *   not a statistic. **A schema-1 ledger written before that decision can never carry this value**,
+ *   so its absence is unambiguous and no migration is owed — the same reasoning `candidateSource`'s
+ *   absence carries one tool over.
  * - `held` — did not clear it. **NOT a rejection** — see the module comment.
  * - `unmeasured` — the gate could not decide: no usable per-token record to read.
  * - `prefiltered` — never gated at all, because the vendor's trailing-window deploy count was below
  *   the pre-filter floor. That floor is a **cadence** filter, so this state is where a slow-but-steady
  *   deployer lands. Counted and reported rather than silently dropped.
  *
- * @typedef {'deferred' | 'queued' | 'held' | 'unmeasured' | 'prefiltered'} FeedState
+ * @typedef {'deferred' | 'queued' | 'queued-sub-gate' | 'held' | 'unmeasured' | 'prefiltered'} FeedState
  */
 
 /**
@@ -83,7 +90,8 @@ export const LEDGER_SCHEMA_VERSION = 1;
  *   feed that is churning the same names.
  * @property {string[]} seededBy   Every enumeration query that has ever surfaced it, sorted.
  * @property {FeedState} state
- * @property {string | null} gateVerdict `gate-passed` | `gate-failed` | `gate-unmeasured`, verbatim
+ * @property {string | null} gateVerdict `gate-passed` | `sub-gate-admitted` | `gate-failed` |
+ *   `gate-unmeasured`, verbatim
  *   from `rank.mjs`. Kept beside `state` rather than folded into it: `state` is the feed's own
  *   triage word and `gateVerdict` is what the shared gate actually returned, and collapsing the two
  *   would make `held` read as a measured rejection.
@@ -121,7 +129,11 @@ export const LEDGER_SCHEMA_VERSION = 1;
  * @property {number} alreadyKnown
  * @property {number} newlySurfaced
  * @property {number} gated
- * @property {number} queued
+ * @property {number} queued Cleared the gate. THE GATE ARM ALONE — captain decision 451's second
+ *   arm is `queuedSubGate` below and the two are never added here or anywhere else.
+ * @property {number} queuedSubGate FAILED the gate and was queued anyway by the second arm. Its own
+ *   figure, with its own denominator; 0 on every ledger written before that decision, which is
+ *   exact rather than defaulted since no earlier run could produce the state.
  * @property {number} held
  * @property {number} unmeasured
  * @property {number} prefiltered
@@ -480,7 +492,17 @@ export function importRunRecords(ledger, records) {
             ? (row['historySource'] === 'creation-derived' ? 'creation-derived' : 'ownership-only')
             : reading;
           entry.gradedAtIso = seenAt;
-          entry.state = verdict === 'gate-passed' ? 'queued' : verdict === 'gate-failed' ? 'held' : 'unmeasured';
+          // Captain decision 451's fourth verdict maps to its own state, exactly as `triage` does.
+          // A committed record carrying `sub-gate-admitted` describes a wallet the screen MEASURED,
+          // so folding it into `unmeasured` here would file an admitted wallet as unjudged.
+          entry.state =
+            verdict === 'gate-passed'
+              ? 'queued'
+              : verdict === 'sub-gate-admitted'
+                ? 'queued-sub-gate'
+                : verdict === 'gate-failed'
+                  ? 'held'
+                  : 'unmeasured';
           const tokens = row['tokens'];
           entry.tokens = typeof tokens === 'number' ? tokens : entry.tokens;
           const rate = row['completionRate'];
@@ -740,17 +762,31 @@ export function feedAlarm(input) {
 /**
  * @typedef {object} LedgerSummary
  * @property {number} wallets
- * @property {number} queued
+ * @property {number} queued Cleared the gate. THE GATE ARM ALONE — captain decision 451's second
+ *   arm is `queuedSubGate` below, and the two are never added here or anywhere else.
+ * @property {number} queuedSubGate FAILED the gate and was queued anyway by the second arm. Its own
+ *   figure with its own denominator; 0 on every ledger written before that decision, which is exact
+ *   rather than defaulted since no earlier run could produce the state.
  * @property {number} held
  * @property {number} unmeasured
  * @property {number} prefiltered
  * @property {number} deferred
  * @property {number} screened
- * @property {number} queuedUnscreened The feed's actual product: cleared the gate, not yet screened.
+ * @property {number} queuedUnscreened The feed's actual product on the GATE ARM: cleared the gate,
+ *   not yet screened.
+ * @property {number} queuedSubGateUnscreened The same for the second arm, kept apart for the same
+ *   reason. `queuedForScreen` returns BOTH — draining the queue is a spend decision and not a
+ *   statistic — so these two are what a reader adds up mentally and this module never does.
  * @property {number} heldOnOwnershipReading Held wallets graded on the biased reading. The standing
- *   count of possible false negatives this lane creates by being cheap.
+ *   count of possible false negatives this lane creates by being cheap — **of the ones still held,
+ *   which since captain decision 451 is no longer all of them.**
  * @property {number} heldNearMiss Of those, the ones that missed on exactly one gate leg. The most
- *   plausible false negatives, and the shortlist worth a creation-derived re-read.
+ *   plausible false negatives, and the shortlist worth a creation-derived re-read — **again, of the
+ *   ones still held.** The second admission arm takes rate-bar-only failures out of `held` and into
+ *   `queued-sub-gate`, and a rate-bar-only failure IS a one-leg near miss, so this figure and
+ *   `heldOnOwnershipReading` both READ LOWER after the arm than before it with the underlying
+ *   population unimproved. `feed.mjs` -> `FEED_RECORD_SCHEMA_VERSION` owns that disclosure (captain
+ *   decision 481b), because the record carrying these two did not bump its version for it.
  * @property {number} lagObservations Wallets with a usable first-deploy time.
  * @property {number | null} lagMedianDaysAtLeast How long a wallet here had ALREADY been deploying
  *   when this project first saw it, median. A LOWER BOUND — see {@link discoveryLagDays}.
@@ -765,6 +801,15 @@ export function feedAlarm(input) {
  * set aside has to be a number in every run's report — otherwise that half of the bias is a sentence
  * in a document and the wallets are simply gone. The other half, the rate this reading inflates,
  * is not visible here at all: it lands in the `queued` pile, which these two figures do not count.
+ *
+ * **AND SINCE CAPTAIN DECISION 451 THEY COUNT A SMALLER PILE, WHICH IS NOT THE SAME AS A SMALLER
+ * COST.** Both are computed from `state === 'held'`, and the second admission arm files the wallets
+ * it admits `queued-sub-gate` instead — wallets that failed on the completion rate ALONE, which is
+ * exactly the one-leg near miss `heldNearMiss` selects. So both figures read lower after the arm
+ * than before it over an unimproved population. The `ledger` block goes into the feed record
+ * verbatim at an unchanged `FEED_RECORD_SCHEMA_VERSION`, so `feed.mjs` ->
+ * `FEED_RECORD_SCHEMA_VERSION` is where that is disclosed to a reader of the record; cite it rather
+ * than restating it.
  *
  * @param {Ledger} ledger
  * @returns {LedgerSummary}
@@ -782,29 +827,37 @@ export function summariseLedger(ledger) {
     lagMaxDaysAtLeast: lags.length === 0 ? null : Number(Math.max(...lags).toFixed(2)),
     wallets: entries.length,
     queued: entries.filter((e) => e.state === 'queued').length,
+    queuedSubGate: entries.filter((e) => e.state === 'queued-sub-gate').length,
     held: held.length,
     unmeasured: entries.filter((e) => e.state === 'unmeasured').length,
     prefiltered: entries.filter((e) => e.state === 'prefiltered').length,
     deferred: entries.filter((e) => e.state === 'deferred').length,
     screened: entries.filter((e) => e.screened).length,
     queuedUnscreened: entries.filter((e) => e.state === 'queued' && !e.screened).length,
+    queuedSubGateUnscreened: entries.filter((e) => e.state === 'queued-sub-gate' && !e.screened).length,
     heldOnOwnershipReading: heldCheap.length,
     heldNearMiss: heldCheap.filter((e) => e.shortfalls.length === 1).length,
   };
 }
 
 /**
- * The feed's product: wallets that cleared the gate and have not been through the screen.
+ * The feed's product: wallets admitted by EITHER arm that have not been through the screen.
  *
  * Ordered oldest-queued first so a queue that is drained slowly is drained fairly, and so the
  * printed list is stable between runs.
+ *
+ * **BOTH ARMS, and that is the one place they meet here** — captain decision 451. This function
+ * answers *which wallets is it worth spending the screen on*, which is a spend decision; every
+ * COUNT stays per arm ({@link summariseLedger}), because a figure over both would have two
+ * denominators. It is the same distinction `admission.mjs` → `admittedToStage2` draws one tool over,
+ * and each returned row carries its own `state` so a caller that needs the arms apart has them.
  *
  * @param {Ledger} ledger
  * @returns {LedgerEntry[]}
  */
 export function queuedForScreen(ledger) {
   return Object.values(ledger.wallets)
-    .filter((e) => e.state === 'queued' && !e.screened)
+    .filter((e) => (e.state === 'queued' || e.state === 'queued-sub-gate') && !e.screened)
     .sort((a, b) => {
       const ga = a.gradedAtIso ?? a.firstSeenIso;
       const gb = b.gradedAtIso ?? b.firstSeenIso;

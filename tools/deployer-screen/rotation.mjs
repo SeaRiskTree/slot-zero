@@ -72,9 +72,11 @@
  * 2. Then descending {@link RotationRow.newGroundWindows} — and it **SATURATES**. A wallet's ground
  *    grows with the time it has waited, so a low-flow wallet's key rises every day and reaches the
  *    ceiling after `windowCap / launchesPerDay` days, which is exactly how long that wallet takes to
- *    produce a full visit's worth of new launches. Every gate survivor has a strictly positive
- *    tempo, because passing the gate requires `stage1_gate.minTokens` launches over a finite span,
- *    so every survivor saturates in bounded time.
+ *    produce a full visit's worth of new launches. EVERY ADMITTED CANDIDATE HAS A STRICTLY POSITIVE
+ *    TEMPO, ON EITHER ARM, so every one of them saturates in bounded time: clearing the competence
+ *    gate requires `stage1_gate.minTokens` launches over a finite span, and captain decision 451's
+ *    second arm re-checks that same sample-size bar as its condition 1 — it loosens the completion
+ *    RATE and nothing else — so a sub-gate admission carries the same floor a gate survivor does.
  * 3. Once saturated, rows tie on flow and the tiebreak is 336a's own: ascending `lastScoredAtIso`,
  *    least recently measured first. That is a strict FIFO queue — anything scored after a saturated
  *    wallet sorts BEHIND it forever — so the set ahead of a saturated wallet only shrinks, and it is
@@ -101,7 +103,10 @@
  * this project has ever SEEN, so a scheduled feed does not re-offer them as new. This one records
  * which wallets Stage 2 has ever SCORED, so a scheduled screen does not re-measure them. Two
  * different questions over two different populations — the feed's ledger holds every wallet the
- * vendor ever surfaced, this holds only gate survivors that reached the scoring loop — and one file
+ * vendor ever surfaced, this holds every wallet STAGE 2 HAS SCORED, whichever arm admitted it (captain decision 451;
+ * `screen.mjs` selects on `admission.mjs` -> `admittedToStage2`, so a sub-gate admission is stamped
+ * here exactly as a gate survivor is, and a reader splits the file by arm through the candidate rows
+ * of the run records that produced it) — and one file
  * answering both would make either question's answer depend on the other's cadence. What IS reused
  * is {@link ledgerRunRecords}, and the SHAPE of `nextGateBatch`: oldest first, with a deterministic
  * tiebreak, because a rotation that drains freshest-first starves its own tail permanently while
@@ -315,8 +320,9 @@ export function launchesPerDayOf(completion) {
  * flat, and they are three different facts that happen to share an answer:
  *
  * - **Never scored.** Nothing about this wallet has been harvested, so a visit covers as much as a
- *   visit can. It is the cap EXACTLY rather than approximately, because a gate survivor carries at
- *   least `stage1_gate.minTokens` launches and that floor is above the window cap — a test pins the
+ *   visit can. It is the cap EXACTLY rather than approximately, because an ADMITTED CANDIDATE ON
+ *   EITHER ARM carries at least `stage1_gate.minTokens` launches — the second arm re-checks that bar
+ *   too — and that floor is above the window cap; a test pins the
  *   inequality, so a lane that lowered the floor below the cap is told rather than left with a value
  *   that quietly overstates.
  * - **An unreadable tempo.** Absence of evidence, and reading it as no flow would park the wallet
@@ -531,7 +537,8 @@ export function markScored(rotation, wallet, scoredAtIso) {
  * bound on its size.
  *
  * @param {Rotation} rotation
- * @param {readonly string[]} wallets Gate survivors, in the order the screen would have sliced.
+ * @param {readonly string[]} wallets The candidates Stage 2 ADMITTED, on either arm, in the order
+ *   the screen would have sliced.
  * @param {RotationFlow} flow What the flow term is computed from. Required rather than defaulted:
  *   a caller that forgot it would get 336a's allocation while the record claimed 399a's.
  * @returns {RotationRow[]}

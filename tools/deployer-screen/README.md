@@ -408,6 +408,103 @@ for HAVING a mayhem record.
 `test/deployer-screen.test.ts` → *"the flag DECIDES the competence measure and nothing else"* is
 what holds all of it, including that a malformed column still changes no verdict.
 
+## The SECOND ADMISSION ARM — a deployer the gate refuses can still be measured
+
+**Captain decision 451 (2026-08-11), record schema 27, thresholds 6.10.0.** `admission.mjs` is the
+rule; `thresholds.json` → `stage1_gate.subGateAdmission` holds its two pins and
+`…justification.subGateAdmission` holds the whole derivation with every figure and its provenance.
+**Cite those rather than restating them** — what follows is the shape.
+
+**Why.** All six `entry-open-after-costs` verdicts this project has ever produced come from
+deployers that FAIL `minCompletionRate` — sub-gate on 15 of 15 of the population that produced them,
+highest lifetime rate 0.2000 — while every population the gate ADMITS has returned zero: 0 of 21
+scored on the widened gate-passing legs (exact 95% [0.0000, 0.1611]) and 0 of 43 scored across all
+nine committed run records. Either the gate is wrong about these deployers or they are not the
+business; the captain ruled the former. (`slot-zero-viability-verdict` → `report.md` §§2–3 and
+`decision-451.md`, held in firstmate's records, not in this repo.)
+
+**It is a LOOSENING and not a removal**, on the captain's standing ruling of 2026-08-07: *"the gate
+can loosen but the candidates being measured must be worth the spend."* So:
+
+| | |
+|---|---|
+| **The bar stays** | `minCompletionRate` is 0.25 and decides which ARM a candidate is judged on. There is no flag that turns it off, and no bar moved for this decision. |
+| **Two thirds of the gate binds unchanged** | A sub-gate candidate must clear `minTokens` and `minSpanDays` — the sample-size and evidence-window guarantees, without which a rate is not a reading. The chain-scale census is why the loosening is confined to the third bar: of 6,535 July deployers clearing the other two, `minCompletionRate` alone removes **6,477**, against 889 and 12. |
+| **Condition 2 — the inflow floor** | Since captain decision 352b the rate counts RAISE-85, so a floor on it is a floor on the MONEY reaching this deployer's launches — the pool an entrant's prize is a share of — and not a second competence claim. The value is the census distribution's: **90% of the deployers the rate bar removes sit below 0.05**, so the arm admits the top decile of what the bar refuses. |
+| **Condition 3 — window supply** | A Stage 2 visit walks the most recent `maxLaunchesPerCandidate` windows, so a candidate that cannot fill a visit — or has stopped launching — is a measurement that cannot be spent. Both bounds are **derived** from one pinned horizon, `visitRefreshDays` 21.5 (the time the ALREADY-ADMITTED population takes to refresh a full visit's windows, `rotation.mjs`/336a), and neither is written down: the tempo floor is `maxLaunchesPerCandidate / visitRefreshDays`, and that cap has moved before (8 → 10, captain decision 190a). |
+
+**What it does on this repo's own committed record**, re-derived offline by
+`test/deployer-screen.test.ts` → *"451: the sub-gate arm admits a refused deployer…"*: over
+`runs/2026-08-04.json`, 4 candidates cleared the gate and 62 were removed by the rate bar alone; the
+arm admits **8** of those 62 and refuses **54** — 53 on the inflow floor, 1 on the tempo floor, 0 on
+recency. The tempo floor is a **guard rather than the binding filter** on this population, which is
+high-tempo by construction (median 12.27 launches a day), and the recency bound refuses nobody here
+while the class it guards demonstrably exists: one wallet the gate PASSED on that run had last
+launched 61.68 days earlier.
+
+**It moves no ceiling and it is NOT free.** Two claims were conflated here and only one survives —
+and the one that survives is narrower than it first read.
+
+*What survives, the CEILING claim.* On a DEFAULT run no ceiling is a function of how many candidates
+were ADMITTED: Stage 2's keyless ceiling is
+`maxCandidatesScored × maxLaunchesPerCandidate × maxRequestsPerLaunch` and the cost leg's is per
+candidate SCORED, both bounded by a cap that does not move (captain decision 339a). No key, no
+credit and no metered vendor quota is spent by admitting anyone.
+
+*One leg's COST does scale with the admitted count, and "the arm cannot cause one extra vendor call"
+was wrong.* The **opt-in** keyless creator walk behind `--consistency` visits every ADMITTED
+candidate at up to 3 pump.fun pages each, so on the run below it walks 12 wallets where it would
+have walked 4. Five things make that survivable, and none of them is a ceiling this arm moved: the
+leg was **already** per-survivor and uncapped before captain decision 451, so what 451 changed is
+its POPULATION and not its boundedness; it is **keyless and metered nowhere**; what bounds it is
+`budget.maxKeylessRequests`, unchanged; it runs **after** Stage 2, so a ceiling reached there cannot
+starve the scoring leg; and a ceiling hit is caught **per candidate** and recorded as an UNMEASURED
+consistency reading rather than aborting the run. Whether that leg should now be capped per run is
+OPEN and the captain's — `stage1_gate.justification.subGateAdmission` records the question.
+
+*What does not survive: "it costs nothing".* **It costs SCORING SLOTS, and they were not idle.** On
+the committed `runs/2026-08-04.json` the arm takes the admitted population from **4 to 12 against a
+cap of 7**, so at today's pins **the cap now BINDS where it did not**: 5 admitted candidates go
+unscored and `scoringCap.survivorsUnscored` reads 5 where the gate arm alone left 0.
+
+**AND THE DISPLACEMENT IS ARM-BLIND.** `screen.mjs` filters `candidates` in gate-loop/seed order —
+`rankCandidates` does not run until the record is built, so gate-passed rows are not sorted first —
+and `rotation.mjs` → `compareRotationRows` ranks on `newGroundWindows` and `lastScoredAtIso` and
+reads no arm at all. The sub-gate population is high-tempo by construction (median 12.27 launches a
+day on that record), so on a first run every row saturates the flow term, they all tie, and the
+seven slots go by seed order. **A gate-arm survivor can therefore go unscored in favour of a
+sub-gate admission, and which candidate loses is decided by tempo and recency rather than by arm.**
+That is a measured consequence, not an intended design and not a harmless one.
+
+**WHETHER THE CAP SHOULD BE RESERVED OR SPLIT PER ARM — OR RAISED — IS OPEN AND IS THE CAPTAIN'S**,
+exactly as 336a, 399a and 339a were. This lane does not decide it;
+`thresholds.json` → `stage1_gate.justification.subGateAdmission` records the question.
+
+**The arms are two populations and are NEVER pooled.** `sub-gate-admitted` is its own verdict value
+rather than a flag beside `gate-passed`, so nothing that already counts gate survivors can pick
+these up; `admissionArm` is on every candidate row; the rendered report gives the arm its own
+heading, its own count and its own legend; and `admission.mjs` → `admittedToStage2` — the one place
+the two are unionised, to choose who is MEASURED — has its call sites enumerated as a source fact so
+a third caller fails the suite rather than quietly publishing a figure with two denominators. One
+consequence for a reader crossing the boundary: **`gateFailedCount` is not the same quantity at 25
+and 26**, and `subGateAdmittedCount` is what to compare.
+
+**It settles nothing about whether the sub-gate passes are real.**
+`thresholds.json` → `stage2_entry.justification.minFieldHitRateNet` records that measured cost is a
+LOWER bound — the separate-transaction landing tip is in no figure here — so an after-cost result
+above a bar is an upper bound on itself and cannot earn a verdict. `admission.mjs` →
+`SUB_GATE_ADMISSION_IS_NOT_A_FINDING` travels with every admission, and a test asserts this arm's
+executable half never calls anything profitable.
+
+**The feed learned the arm too, and it had to.** `ledger.mjs` grades a wallet once and never offers
+it again, so a discovery lane left on the old rule would file every sub-gate deployer as `held`
+permanently and the ruling would never reach the surface that decides what the screen is offered.
+`feed.mjs` → `triage` asks the arm on the vendor page — a different and rate-inflating reading, and
+that is disclosed rather than corrected, because `screen.mjs` re-judges every queued wallet on the
+creation-derived history while a filed wallet is gone for good. An admission there is its own state,
+`queued-sub-gate`, counted apart by `summariseLedger` and served alongside `queued` by
+`queuedForScreen`.
+
 ## The completion measure is RAISE-85, on every venue including pump.fun
 
 **Captain decision 352b (2026-08-09).** `completed` no longer means *pump.fun said this graduated*.
@@ -1245,6 +1342,7 @@ Records carry `schemaVersion`. **A record with no `schemaVersion` is version 1.*
 | 24 | **THE ENTRANTS ARE KEPT — the first entrant-level rows this project has ever persisted** — captain decision 459 (2026-08-11), increment 1 of the pivot to scoring entrants. ONE new key inside `entry`: `windows`, one row per WALKED window (refused windows INCLUDED), each carrying that window's create-slot summary (`createSlot`, `deployer`, `roomIsProven`, `roomLeft`, `operationShare`, `devSol`, `coordinatedSol`, `independentSol`, `coordinatedWallets`, `independentWallets`, `bundledTx`, `maxWalletsInOneTx`, `runTx`, `adjacencyMarks`) and an `entrants` array of one row per create-slot outsider wallet: `wallet`, `sid`, `createSlotTx`, `blockTxIndex`, `queuePosition`, `outsiderQueuePosition`, `solQueuedAheadSol`, `createSlotFillSol`, `stakeSol`, `closedInWindow`, `realisedSolGrossOfFees`, `returnPerSolGrossOfFees`, `entryCostSol`, `entryCostPerSolStaked`, `entryTxFeeSol`, `realisedSolNetOfMeasuredFees`, `returnPerSolNetOfMeasuredFees`, `entrantUnitIsProven`, `unitCoAppearingWallets`, `windowCoAppearingWallets`. NO new candidate ROW field and no new run-level block: `PERSISTED_BY_SCHEMA[24]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[24]`, `SPEND_KEYS_BY_SCHEMA[24]`, `DUNE_KEYS_BY_SCHEMA[24]`, `CREATION_KEYS_BY_SCHEMA[24]` and `ROTATION_BLOCK_KEYS_BY_SCHEMA[24]` all equal `[23]`. **No measured quantity moves and no threshold moves**, so a schema-23 `completionRate`, `entry` aggregate or `spend` figure and a schema-24 one may be pooled. **Why it needs a version:** every `entry` field before this one is an aggregate, and two committed measurements walked 353 stranger windows across 36 scored deployers, counted 1,058 field entrants and persisted not one address and not one `sid` — evidence computed, discarded, and unrecoverable without re-walking. A consumer must be able to tell a record that holds the evidence from one that holds only its summary, and no aggregate says which. **What it costs: nothing, in every currency** — every byte was already in the fill walk's own response, so no vendor request, no credit and no wall clock, and Stage 2's keyless ceiling (`maxCandidatesScored` x `maxLaunchesPerCandidate` x `maxRequestsPerLaunch`) cannot move because none of the three is a function of what is recorded. **The population is every WALKED window and not every SCORED one:** observing who filled a create slot needs no proof of co-ordination, only claiming they were independent does, and on the widened measurement 209 of 210 windows walked cleanly while 38 produced a room reading — so `roomIsProven` rides on every window row and on a `false` row the entrant list says truthfully WHO filled while `roomLeft` and `operationShare` beside it are the unproven readings captain decision 134a refuses to score. **It decides NOTHING** — no bar, gate, threshold, predicate or verdict reads it and a test pins that, the shape captain decision 208b established for `entry.roomLeftBound`; a schema-23 and a schema-24 run over the same inputs reach byte-identical verdicts. **Two things a reader must not get wrong:** `sid` is a STRING and never a number (22 decimal digits is past `Number.MAX_SAFE_INTEGER`, and arithmetic on it rounds a fill into the previous slot); and `entrantUnitIsProven` reads `false` on every row this version can write, **by construction rather than by measurement** — the co-ordination rule's half (a) reclassifies any two wallets sharing a create-slot transaction as the operation's own before the entrant set exists, so the collapse rule has nothing left to collapse. It says the question was asked and found no evidence, never that the wallet is an independent trader. |
 | 25 | **EVERY POSITION TAKEN IS COUNTED, NOT ONLY THE ONES THAT EXITED** — captain decision 461 (2026-08-11), the realization correction. **This is the version boundary at which a headline figure changes sign, and it changes sign because of a counting choice rather than because of new data.** NINE new keys inside `entry` — `fieldRealisedSolOverAllPositionsGrossOfFees`, `fieldReturnPerSolOverAllPositionsGrossOfFees`, `fieldHitRateOverAllPositionsGrossOfFees`, `fieldRealisedSolOverAllPositionsNetOfMeasuredFees`, `fieldReturnPerSolOverAllPositionsNetOfMeasuredFees`, `fieldHitRateOverAllPositionsNetOfMeasuredFees`, `fieldResidualMarkedSolAtWindowLastPriceGrossOfFees`, `positionsStillHeldAtHorizon` and `positionsHorizonNotObserved` — plus EIGHT on every `entry.windows[].entrants` row: `positionOutcome`, `windowTxCount`, `residualTokens`, `residualMarkedSolAtWindowLastPriceGrossOfFees`, `realisedSolAtZeroRecoveryGrossOfFees`, `returnPerSolAtZeroRecoveryGrossOfFees`, `realisedSolAtZeroRecoveryNetOfMeasuredFees` and `returnPerSolAtZeroRecoveryNetOfMeasuredFees`. NO new candidate ROW field and no new run-level block: `PERSISTED_BY_SCHEMA[25]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[25]`, `SPEND_KEYS_BY_SCHEMA[25]`, `DUNE_KEYS_BY_SCHEMA[25]`, `CREATION_KEYS_BY_SCHEMA[25]`, `ROTATION_BLOCK_KEYS_BY_SCHEMA[25]` and `ENTRY_WINDOW_KEYS_BY_SCHEMA[25]` all equal `[24]`. **NO EXISTING FIELD MOVES:** every `…OfFees` figure is the identical quantity it was at schema 24 and may be pooled across the boundary, `closedInWindow` is unchanged and is exactly `positionOutcome === "exited"`, and no threshold moved — a schema-24 and a schema-25 run over the same inputs reach byte-identical verdicts. What is added sits BESIDE them. **Why it needs a version:** every field figure through schema 24 is computed only over positions that GOT OUT — a position entered and never exited was dropped from the denominator rather than resolved — so `fieldHitRateGrossOfFees` and `fieldHitRateNetOfMeasuredFees` are **P(profit | the position exited)** and not P(profit). Over the same 32 launches and the same 265 create-slot outsider positions of the committed tape, fee-inclusive, conditioning on exiting reads **80/158 positive and +108.28 SOL** while counting every position taken reads **86/265 and −8.12 SOL**; the 107 that never got out are worth −116.40 SOL between them. That is a NESTED-SUBSET comparison, not two pooled populations. **And the dropped positions are not unknowns, they are losses:** of the 140 priced unexited entries, **7 = 0.0500 [0.0203, 0.1003]** are above water once their remaining tokens are marked at the token's LATEST known price — so the schema-≤24 denominator deletes losers rather than unknowns and is OPTIMISTIC rather than conservative. A consumer must be able to tell a record carrying both constructions from one carrying only the flattering one, and no schema-24 field says which. **The three outcomes, and the two that used to be one value** (`entry.mjs` → `POSITION_OUTCOMES` owns the rule): `exited` is a realized figure; `still-held-at-horizon` is resolved at **zero recovery**, the worst case for the part we cannot see, with `residualMarkedSolAtWindowLastPriceGrossOfFees` reported BESIDE it and never instead of it; `horizon-not-observed` is **OUR COVERAGE**, resolved neither way, counted and surfaced and **not filterable** under captain decision 174b. `fieldOpenPositions` is the sum of the last two, which is precisely the conflation this version splits. **Two denominators that are not the same and are never pooled:** the gross all-positions figures are over every resolvable position, the NET ones over the subset whose WHOLE window the cost leg priced — that is, every transaction the wallet appears in across the window was already in the priced target set, which admits the create slot and any transaction carrying a wallet that closed (so a wallet that sold INSIDE its create slot is in scope, and a wallet whose later transaction is bundled with a closed one is priced whole), and which way that non-random selection runs is UNMEASURED. `entryCostTargets` was deliberately NOT widened, because that would spend RPC requests this correction is not authorised to spend, so the shortfall is STATED by `fieldHitRateOverAllPositionsNetOfMeasuredFees.n` rather than closed. **Every rate added here carries its exact (Clopper–Pearson) interval** as `lo`/`hi` beside `rate` (`tools/deployer-screen/stats.mjs` is the one implementation, shared with the 2026-08-10 measurement that first needed it); the pre-existing three-key `HitRate` shape is untouched, because four earlier versions pin it and a consumer version-detects on it. **What it costs: nothing, in every currency** — every input was already in the fill walk's response and in the cost leg's output, and Stage 2's keyless ceiling (`maxCandidatesScored` x `maxLaunchesPerCandidate` x `maxRequestsPerLaunch` = 1,260) cannot move, because none of the three is a function of what is recorded. **It decides NOTHING, and that is what makes a change reversing the sign of a headline number safe to land:** no bar, gate, threshold, predicate or verdict reads one of these fields and a test pins that — the shape captain decision 208b established for `entry.roomLeftBound`. **And it is NOT a profit verdict.** Two cost terms are still unbounded — the separate-transaction landing tip, and what it costs to TRY and fail to land — and under the captain's standing evidence bar an unbounded cost forbids one, which is why this version names no verdict state for the new reading. It produces the number; making it rulable is a later increment. |
 | 26 | **THE SUBTRACTION LEDGER, AND A REALIZED-PROFIT VERDICT THAT IS A FUNCTION OF IT** — captain decision 466 (2026-08-11), Stage 3 increment 2. TWO new keys inside `entry`: `costLedger`, one typed row per cost and population component of a realized-profit figure (`name`, `kind`, `direction`, `worstCaseSol`, `boundBasis`, `label`, `observations`), and `exitVerdict`, which is `bounds.mjs` → `exitVerdict` computed over those rows. FOUR new counters inside `entry.coverage.cost`: `launchesSlotObserved`, `slotFailedAttempts`, `slotFailedAttemptFeeSol` and `slotTipSol`. NO new candidate ROW field and no new run-level block: `PERSISTED_BY_SCHEMA[26]`, `SPEND_KEYS_BY_SCHEMA[26]`, `DUNE_KEYS_BY_SCHEMA[26]`, `CREATION_KEYS_BY_SCHEMA[26]`, `ROTATION_BLOCK_KEYS_BY_SCHEMA[26]`, `ENTRY_WINDOW_KEYS_BY_SCHEMA[26]` and `ENTRY_ENTRANT_KEYS_BY_SCHEMA[26]` all equal `[25]`. **NO EXISTING FIELD MOVES AND NOTHING GATES ON THE NEW ONES** — a schema-25 and a schema-26 run over the same inputs reach byte-identical `entry.verdict`s, no threshold moved, and a test pins both; this is the shape captain decision 208b established for `entry.roomLeftBound` and 461 repeated for the all-positions figures. **`exitVerdict` is Stage 3's vocabulary and is never `entry.verdict`'s** — every value of that one is a statement about ENTRY (`bounds.mjs` → `EXIT_VERDICTS`). **Why it needs a version:** *"no profit verdict may be issued while a cost term is unbounded"* was a sentence in a doc comment and a clause inside a caveat string — a hand-maintained condition, the shape this tree has twice watched go stale — and it is arithmetic now, so a record can be audited for WHICH terms were unbounded on the day it was written. The absence of a ledger on a schema-≤25 record is not the same statement as an empty one. **What became a number, and at what cost:** the create slot's own failed-attempt fee bill (exact `meta.fee`, base plus priority, over every landed-but-FAILED transaction touching that launch's mint — Solana charges fees on inclusion rather than on success) and the SOL arriving at a published Jito tip account in that slot. Both come out of the `getBlock` response the cost leg had ALREADY fetched to price the entrants' own transactions, so this costs **zero vendor requests, zero credits and zero wall clock**, and Stage 2's keyless ceiling cannot move because none of its three factors is a function of what is recorded. **Both are WHOLE-SLOT TOTALS USED AS PER-POSITION CEILINGS.** They over-attribute grossly on purpose — that is what a worst case is for — and they attribute nothing to anybody: `readCreateSlotCosts`' standing refusal to tie a sibling transaction in the same slot to an entrant's bundle is untouched. **THREE cost rows stay `null`**, so a profit verdict is still not issuable for a general deployer: tips outside the create-slot bound (including a tip paid inside it by a route this build cannot recognise), attempts outside the create slot, and exit-side fees outside the walked horizon. The second of those is deliberate rather than an oversight — captain decision 466 declined to raise `stage2_cost.maxRpcRequestsPerCandidate`, which stays at 500 — and its consequence is the NAMING rule: every verdict that would state a result carries `-create-slot-costs-only` in its own name, so a reader who sees only the verdict string cannot mistake it for a whole-window cost accounting. **It fails towards refusal, and a test pins that:** where the cost walk falls back to per-signature reads there is no whole-slot observation, the two create-slot rows go back to `null`, and the verdict stays `exit-unbounded` — and a bound over four launches of six is no bound over the candidate, so a single fallback inside a sample refuses the whole ledger. **The tip list's provenance is stated rather than assumed:** `pumpfun.mjs` → `JITO_TIP_ACCOUNTS` is a published vendor list pinned as a literal and NOT re-derived on-chain by this lane, and an address missing from it makes the ceiling UNDER-state, which is why the residual sits in the unbounded row rather than being folded into the bounded one. |
+| 27 | **A DEPLOYER THE COMPETENCE GATE REFUSES CAN NOW REACH STAGE 2, THROUGH A SECOND ADMISSION ARM** — captain decision 451 (2026-08-11). **Why:** all six `entry-open-after-costs` verdicts this project has ever produced come from deployers that FAIL `stage1_gate.minCompletionRate` — sub-gate on 15 of 15 of the population that produced them, highest lifetime rate 0.2000 — while every population the gate ADMITS has returned zero: 0 of 21 scored on the widened gate-passing legs (exact 95% [0.0000, 0.1611]) and 0 of 43 scored across all nine committed run records (`slot-zero-viability-verdict` -> `report.md` §§2-3, held in firstmate's records, not in this repo). **A FOURTH `verdict` VALUE, `sub-gate-admitted`**, and it is a value rather than a flag beside `gate-passed` because the hazard runs both ways: folded in, every statistic this repo already computes over gate survivors would silently pool two populations with two denominators; left as `gate-failed`, the candidate would never reach Stage 2 at all. **TWO new candidate ROW fields** — `admissionArm` (`'gate'` | `'sub-gate'` | `null`, derived from the verdict so the two cannot disagree) and `subGate` (what the arm made of a candidate the gate refused: whether it admitted, why not when it did not, the launch tempo and days-since-last-launch it read, AND the bounds it was judged under — the arm is sized against a population, so a record quoting only today's `thresholds.json` could not say what a past run applied). No new run-level block and no other block moves: `ENTRY_KEYS_BY_SCHEMA[27]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[27]`, `SPEND_KEYS_BY_SCHEMA[27]`, `DUNE_KEYS_BY_SCHEMA[27]`, `CREATION_KEYS_BY_SCHEMA[27]` and `ROTATION_BLOCK_KEYS_BY_SCHEMA[27]` all equal `[26]`. **IT IS A LOOSENING AND NOT A REMOVAL:** `minCompletionRate` stays 0.25 and still decides which ARM a candidate is judged on, `minTokens` and `minSpanDays` bind unchanged on both arms, and the second arm carries its own spend-worthiness test — an INFLOW floor (`stage1_gate.subGateAdmission.minCompletionRate`, derived from the census distribution of the population the rate bar removes) and a WINDOW-SUPPLY floor (tempo and recency, both DERIVED from `subGateAdmission.visitRefreshDays` and `stage2_entry.maxLaunchesPerCandidate` rather than written down). On the committed `runs/2026-08-04.json` it admits 8 and refuses 54 of the 62 candidates the rate bar removes there. **IT MOVES NO CEILING, AND IT IS NOT FREE — two claims, and the surviving one is NARROWER than it first read.** On a DEFAULT run no ceiling is a function of how many candidates were ADMITTED, so a second arm cannot move a spend bound; it changes WHICH candidates compete for a cap that does not move. **One leg's COST does scale with the admitted count**: the opt-in keyless `--consistency` creator walk visits every ADMITTED candidate at up to 3 pump.fun pages each, so "the arm cannot cause one extra vendor call" was wrong. It was already per-survivor and uncapped before 451 (451 changed its POPULATION, not its boundedness), it is keyless and metered nowhere, `budget.maxKeylessRequests` still bounds it, it runs after Stage 2 so a ceiling there cannot starve the scoring leg, and a ceiling hit is caught per candidate as an UNMEASURED consistency reading. Capping it per run is OPEN and the captain's. **What it DOES cost is SCORING SLOTS, and they were not idle:** on that run the arm takes the admitted population from 4 to 12 against a cap of 7, so at today's pins the cap BINDS where it did not, 5 admitted candidates go unscored, and `scoringCap.survivorsUnscored` reads 5 where the gate arm alone left 0. **The displacement is ARM-BLIND** — the Stage 2 filter runs in gate-loop/seed order and `compareRotationRows` ranks on flow and recency without reading the arm, so a gate-arm survivor can lose its slot to a sub-gate admission. Whether the cap should be reserved or split per arm, or raised, is OPEN and the captain's; `stage1_gate.justification.subGateAdmission` records it. **WHAT MAY AND MAY NOT BE POOLED:** the two ARMS never are, at any level, and `gateFailedCount` is therefore NOT the same quantity across this boundary — a wallet the arm admits was `gate-failed` at 26 and is `sub-gate-admitted` at 27, counted by the new `subGateAdmittedCount` metric. **THE FIELDS WHOSE POPULATION WIDENED, AND THIS LIST IS THE WHOLE OF THEM:** Stage 2 walks whoever EITHER arm admitted, so every field computed over the SCORED set is over the ADMITTED UNION at 26 where it was over `verdict === "gate-passed"` ALONE at ≤25 — names, shapes and key sets untouched (`ROTATION_BLOCK_KEYS_BY_SCHEMA[27]` equals `[25]`), which is precisely why the change is easy to miss, so a RISE in one of them across this boundary may be the second arm rather than a larger gate population. The list was assembled by walking every run-level and candidate-row field rather than by patching the ones review found: `scoringRotation.survivors` / `.order` / `.selected` / `.neverScoredBefore` and `scoringCap.survivorsUnscored` (one cap allocated over both arms); `entryDrops.total` and every `entryDrops.byReason.*`, plus the rendered `STAGE 2 DROPS` block that shares the reduce (what the WALK refused, over whatever it walked); `keylessRequests`, `keylessRequestsStage2`, `keylessShed`, `rpcRequests`, `rpcLoadShedEvents` and the `spend` counters derived from them (what the run SPENT); `truncationReason` where the scoring cap contributed its shortfall sentence; and `entrySourceAgreement.candidates` / `.byClass`, `null` on every run to date because that mode is unactivated. **None of these breaches the never-pool rule and the reason is the same for all of them:** each counts what the WALK did — allocation, coverage, spend — rather than what either population ACHIEVED, none is a rate, and each stays decomposable through the candidate rows, every one of which carries `admissionArm`. Figures about OUTCOMES are per arm at source: the `predictions` block reports `byArm` and carries no pooled `withClaim` / `beatable` / `notBeatable` (captain decision 480a), `measuredEntryVerdictCount` stays the GATE arm's with `subGateMeasuredEntryVerdictCount` beside it, and `grade.mjs` reports a hit rate per arm and never one pooled. **THIS ENUMERATION IS NOT SELF-MAINTAINING and has been found incomplete twice** — what guards it is `test/deployer-screen.test.ts` → "451: admitting a sub-gate candidate moves exactly the documented run-level fields", which runs the screen twice over the SAME wallet (admitted by the second arm once, refused by its inflow floor once) and pins the SET of run-level keys whose value differs, so a new field over the scored set fails that test until it is listed here. **`scoringRotation` is INSIDE that pin, compared field by field** — it is the first block this enumeration was found to have missed and it holds five of the fields above, so a guard that skipped it could not fail on what it was built for; only `scoredAtIso` and the two state digests are dropped, each an instant or a hash over one rather than a population. Its reach is still a SUBSET of the list and the test names which: on two candidates and one refused window each, `keylessShed`, `rpcRequests`, `rpcLoadShedEvents`, `scoringCap.survivorsUnscored`, `truncationReason` and `entrySourceAgreement` do not move at all, so a regression confined to them passes. Every field NOT listed above is the same quantity at 26 and 27 and may be pooled. **AND IT IS NOT A FINDING THAT THESE DEPLOYERS ARE PROFITABLE:** `thresholds.json` -> `stage2_entry.justification.minFieldHitRateNet` records that measured cost is a LOWER bound, so an after-cost result above a bar is an upper bound on itself and cannot earn a verdict. Admission buys the MEASUREMENT and nothing else. |
 
 **Reading a verdict across the schema-6 boundary — this is the one that will bite.**
 `entry-room-present` is gone. A schema-≤5 `entry-room-present` means *room was present and the price
@@ -1384,8 +1482,9 @@ a deployer that fails either is refused before one Solana RPC request is spent o
 
 ### WHICH survivors the cap is spent on — the rotation, and what it traded
 
-**Captain decision 336a.** Stage 2 scores at most `stage2_entry.maxCandidatesScored` gate survivors
-a run. It used to take `survivors.slice(0, maxScored)` — the first seven in `mergeSeeds` order, which
+**Captain decision 336a.** Stage 2 scores at most `stage2_entry.maxCandidatesScored` ADMITTED
+candidates a run — since captain decision 451 that is both arms, the competence gate's survivors and
+the sub-gate arm's admissions, ranked by one comparator and competing for one cap that does not move. It used to take `survivors.slice(0, maxScored)` — the first seven in `mergeSeeds` order, which
 is deterministic — so **a daily run re-measured the same seven wallets every day.** That is not a
 cheap repeat, it is a wasted run: the median survivor needs about **21.5 days** for its ten windows
 to refresh and **0 of 27** refresh within a day, so a same-day re-measure re-answers a question
@@ -1485,7 +1584,8 @@ already measured.
 Pure greed by flow would park one, so the rule is deliberately not pure greed and the guarantee falls
 out of clauses 2 and 3. `newGroundWindows` **saturates**: a wallet's ground grows with the time it
 has waited and reaches the ceiling after `windowCap / launchesPerDay` days — exactly how long that
-wallet takes to produce a full visit's worth of new launches. Every gate survivor has a strictly
+wallet takes to produce a full visit's worth of new launches. Every ADMITTED candidate — either
+arm, since the second one re-checks `minTokens` as its own condition 1 — has a strictly
 positive tempo, because passing the gate needs `stage1_gate.minTokens` launches over a finite span,
 so **every survivor saturates in bounded time**. Once saturated, rows tie on flow and clause 3 orders
 them least-recently-scored first, which is a strict FIFO queue: anything scored *after* a saturated
@@ -3075,8 +3175,8 @@ enumeration's. It cannot run today, and this table is what every run applies.
 
 | bound | value |
 |---|---|
-| gate survivors scored | 7 (`--score` can lower it, never raise it) |
-| launches per survivor, PLANNED | 10 |
+| ADMITTED candidates scored, BOTH ARMS | 7 (`--score` can lower it, never raise it). Since captain decision 451 the population is the competence gate's survivors *and* the sub-gate arm's admissions, competing for one cap that does not move. |
+| launches per candidate, PLANNED | 10 |
 | launches that must be SCORED (`minLaunchesSampled`) | 8 |
 | **requests per launch, retries included** | 18 |
 | stage ceiling, on its own client | **1,260** |
@@ -3149,7 +3249,7 @@ Note also that the **1,400 keyless ceiling in `budget` is a per-client ceiling, 
 `screen.mjs` builds two independent keyless clients, and Stage 2's 1,260 sits on its own. The
 enforced combined worst case is 2,660. The 1,400 is **derived from the candidate cap**, not chosen, and it is
 derived over both passes that share the `frontend-api-v3` client: the gate's ownership listing at 4
-pages per candidate (780) plus `--consistency` at 3 pages per gate survivor (585) is 1,365 worst
+pages per candidate (780) plus `--consistency` at 3 pages per ADMITTED candidate, either arm (585), is 1,365 worst
 case. The previous 600 counted only the consistency pass, so gating at the default candidate cap
 already overran it — and because the keyless work runs *after* the keyed allowance is spent, that
 overrun would have thrown away a paid-for run. Keeping Stage 2's ceiling separate is what stops it
@@ -3845,6 +3945,17 @@ bytes, and the ledger is written atomically through a temp file and a rename: a 
 leaves the old ledger intact rather than a truncated one. A ledger that exists and cannot be read —
 corrupt, or from a schema this build does not know — **refuses the run** rather than starting over,
 because a latched grade has no other copy and an empty ledger would be written straight back over it.
+`GRADE_LEDGER_VERSION` is **2** — captain decisions 451 and 480a put `admissionArm` on every grade
+row — so a version-1 ledger refuses the run until it is migrated deliberately; `grade.mjs` →
+`loadGradeLedger` prints the whole migration in its refusal, and `outcome.mjs` →
+`GRADE_LEDGER_VERSION` owns why it is a version rather than a silent field.
+
+**The hit rate is reported PER ADMISSION ARM and there is no pooled one** (captain decision 480a).
+Since captain decision 451 a claim can be about a candidate the competence gate refused and the
+second arm admitted, and those are two populations with two denominators — see *"The SECOND
+ADMISSION ARM"* above, which owns the rule. So the report prints the overall and per-claim rates
+once for the gate arm and once for the sub-gate arm, and `claims` / `graded` / `ungraded` stay
+whole-ledger bookkeeping rather than becoming arm statistics.
 
 **Every provider call is bounded, and the plan is refused before the first request.** One keyed
 MadeOnSol profile per claim (ceiling 6 — 3 claims × the client's one retry), the keyless fill walk
@@ -3907,6 +4018,12 @@ proven, where Stage 2 requires only 8 proven of 10 planned. The launch **count**
 `maxLaunchesPerCandidate`; the **predicate** does not follow `minLaunchesSampled`. The census's
 re-run predicate is therefore deliberately stricter than the live rule, in the same understating
 direction, and reconciling the two is a separate decision.
+
+**And since captain decision 451 the POPULATION has drifted too, the other way**: this pass keeps
+`gate-passed` alone, so it surveys gate-arm survivors while `screen.mjs` walks the union of both
+admission arms — so the census is now NARROWER than the screen it is a finding about, and its rates
+may not be extended to the wallets the second arm admits. `bundling.mjs`'s module header owns that
+argument and what a widened re-run would cost.
 
 **What the pass does, and what it deliberately does not.** It walks create-slot windows with Stage
 2's own pinned window parameters and reports only `bundledTx`, `runTx`, `maxWalletsInOneTx`,

@@ -1262,7 +1262,9 @@ dev currently?"*, and the shape of the answer is the point:
   would PRODUCE lists (350a) is still a separate lane**, and `feed.mjs` still neither writes a list
   nor is read by `screen.mjs`.
 - **Stage 1 ENUMERATES on Dune** (keyed, free tier — which mints the wallet created, with the RPC
-  walk as fallback) and **GATES on competence** (keyed, MadeOnSol). **Stage 2 SCORES ENTRY** (keyless): room in
+  walk as fallback) and **GATES on competence** (keyed, MadeOnSol) — **on TWO ARMS since captain
+  decision 451**, the competence gate and the sub-gate admission arm; see "A DEPLOYER THE GATE
+  REFUSES CAN NOW BE MEASURED" below, and never pool the two arms' results. **Stage 2 SCORES ENTRY** (keyless): room in
   the opening window, what every *other* sniping wallet there achieved, and — since the captain's
   ruling of 2026-08-02 — **what it cost them to land**. **Stage 3 — EXIT — is a separate lane and no
   exit signal may reach an entry number.** Room to enter is not room to leave, and one blended score
@@ -1814,6 +1816,86 @@ dev currently?"*, and the shape of the answer is the point:
   postdictions is that the document is committed in its own commit ahead of the run, exactly as
   `thresholds.json` is — the record cannot prove that and does not claim to.
 
+## A DEPLOYER THE GATE REFUSES CAN NOW BE MEASURED — the second admission arm
+
+`tools/deployer-screen/admission.mjs`, pins at `thresholds.json` → `stage1_gate.subGateAdmission`
+(6.10.0), record **schema 27**. Captain decision **451**, 2026-08-11; the evidence is
+`slot-zero-viability-verdict` → `report.md` §§2–3 and `decision-451.md`, held in firstmate's records,
+not in this repo. `tools/deployer-screen/README.md` → "The SECOND ADMISSION ARM" owns the long form
+and `…justification.subGateAdmission` owns every figure — cite them rather than restating them.
+Seven things bind:
+
+- **THE REASON IS A DISCONTINUITY, NOT A PREFERENCE.** All six `entry-open-after-costs` verdicts this
+  project has ever produced come from deployers that FAIL `minCompletionRate` — sub-gate on 15 of 15
+  of the population that produced them, highest lifetime rate 0.2000 — while every population the
+  gate ADMITS returned zero: **0 of 21** scored on the widened gate-passing legs (exact 95%
+  [0.0000, 0.1611]) and **0 of 43** across all nine committed run records. Either the gate is wrong
+  about these deployers or they are not the business; the captain ruled the former.
+- **IT IS A LOOSENING AND NOT A REMOVAL, on the captain's standing gate ruling of 2026-08-07** —
+  *"the gate can loosen but the candidates being measured must be worth the spend."* `minCompletionRate`
+  stays **0.25** and decides which ARM a candidate is judged on; `minTokens` and `minSpanDays` bind
+  unchanged on both arms; no bar moved. Confining the loosening to the rate bar is the census's own
+  shape: of the 6,535 July deployers clearing the other two, the rate bar alone removes **6,477**,
+  against 889 and 12.
+- **THE ADMISSION RULE IS DERIVED FROM THE POPULATION AND NEVER FROM THE SIX KNOWN PASSES**, which
+  would have made every later verdict circular. Two conditions beyond the sole-failure one. The
+  **inflow floor** (0.05): since 352b the rate counts RAISE-85, so a floor on it is a floor on the
+  MONEY reaching the launches Stage 2 would measure, and the value is the census distribution's —
+  **90% of the deployers the rate bar removes sit below 0.05**, so the arm admits that population's
+  top decile and refuses the rest. The **window-supply floor**: a Stage 2 visit walks the most recent
+  `maxLaunchesPerCandidate` windows, so a candidate that cannot fill one, or has stopped launching,
+  is a measurement that cannot be spent — both bounds **derived, never written**, from one pinned
+  horizon (`visitRefreshDays` 21.5, the time the ALREADY-ADMITTED population takes to refresh a full
+  visit's windows) plus the window cap, which has moved before (8 → 10, 190a).
+- **MEASURED ON THE COMMITTED RECORD AND RE-DERIVED BY A TEST ON EVERY RUN:** over
+  `runs/2026-08-04.json` the arm admits **8** and refuses **54** of the 62 the rate bar removes — 53
+  on the inflow floor, **1** on the tempo floor, **0** on recency. So the tempo bound is a GUARD and
+  not the binding filter (that population is high-tempo by construction, median 12.27 launches/day),
+  and the recency bound refuses nobody there while the class it guards exists: one wallet the gate
+  PASSED on the same run had last launched 61.68 days earlier. **The check against the six is a
+  CHECK and not the derivation**: the rule admits four of them and refuses two (rates 0.018 and
+  0.036), and the lever for that decile is a measurement of pass rate by sub-gate rate decile — not a
+  floor lowered to catch wallets already known to have passed.
+- **IT MOVES NO CEILING, AND IT IS NOT FREE — two claims, and the surviving one is NARROWER than it
+  first read.** On a DEFAULT run no ceiling is a function of how many candidates were ADMITTED —
+  Stage 2's keyless ceiling is `maxCandidatesScored` × `maxLaunchesPerCandidate` ×
+  `maxRequestsPerLaunch` and the cost leg's is per candidate SCORED — and `maxCandidatesScored` does
+  not move (339a). **ONE LEG'S COST DOES SCALE WITH THE ADMITTED COUNT and "it cannot cause one
+  extra vendor call" was wrong**: the OPT-IN keyless creator walk behind `--consistency` visits every
+  ADMITTED candidate at up to 3 pump.fun pages each, so on the run below it walks 12 wallets where it
+  walked 4. It was ALREADY per-survivor and uncapped before 451 — what 451 changed is its POPULATION,
+  not its boundedness — it is KEYLESS and metered nowhere, `budget.maxKeylessRequests` still bounds
+  it, it runs AFTER Stage 2 so a ceiling there cannot starve the scoring leg, and a ceiling hit is
+  caught per candidate as an UNMEASURED consistency reading rather than aborting the run. Whether it
+  should now be capped per run is OPEN and the captain's. **What it DOES cost is SCORING SLOTS, and they were not
+  idle**: on the committed `runs/2026-08-04.json` the arm takes the admitted population from **4 to
+  12 against a cap of 7**, so at today's pins the cap BINDS where it did not, 5 admitted candidates
+  go unscored, and `scoringCap.survivorsUnscored` reads 5 where the gate arm alone left 0. **The
+  displacement is ARM-BLIND**: `screen.mjs` filters in gate-loop/seed order (`rankCandidates` runs
+  only when the record is built) and `rotation.mjs` → `compareRotationRows` ranks on flow and
+  recency without reading the arm, and the sub-gate population is high-tempo by construction (median
+  12.27 launches/day there), so the rows tie at the saturated flow term and the slots go by seed
+  order — **a gate-arm survivor can lose its slot to a sub-gate admission.** Whether the cap should
+  be RESERVED or SPLIT per arm, or raised, is **OPEN and the captain's** (as 336a, 399a and 339a
+  were); `thresholds.json` → `stage1_gate.justification.subGateAdmission` records the question and
+  this lane does not answer it.
+- **THE TWO ARMS ARE TWO POPULATIONS AND ARE NEVER POOLED.** `sub-gate-admitted` is a fourth
+  **verdict value** rather than a flag, so nothing already counting `gate-passed` picks these up and
+  nothing filing `gate-failed` buries them; `admissionArm` is on every candidate row; the rendered
+  report gives the arm its own heading, count and legend; and `admission.mjs` → `admittedToStage2` —
+  the ONE union, used to choose who is measured and never to count anything — has its call sites
+  enumerated as a source fact, so a third caller fails the suite. **`gateFailedCount` is therefore
+  not the same quantity at schema 26 and 27** and `subGateAdmittedCount` is what to compare across
+  it. The feed learned the arm too, because `ledger.mjs` grades a wallet once and never offers it
+  again: an admission there is the state `queued-sub-gate`, counted apart and served alongside
+  `queued`.
+- **IT SETTLES NOTHING ABOUT WHETHER THE SUB-GATE PASSES ARE REAL, AND NOTHING MAY SAY OTHERWISE.**
+  `stage2_entry.justification.minFieldHitRateNet` records that measured cost is a LOWER bound — the
+  separate-transaction landing tip is in no figure here — so an after-cost result above a bar is an
+  upper bound on itself and cannot EARN a verdict. `admission.mjs` →
+  `SUB_GATE_ADMISSION_IS_NOT_A_FINDING` travels with every admission, and a test asserts the arm's
+  executable half never calls anything profitable. Stage 3 increment 2 is what changes that.
+
 ## EVERY FIELD FIGURE BEFORE SCHEMA 25 IS CONDITIONED ON THE POSITION HAVING EXITED
 
 `entry.mjs` → `POSITION_OUTCOMES` and the `…OverAllPositions…` fields on `EntryScore`, record
@@ -2104,7 +2186,8 @@ lane that touches Stage 2:
   RISES every day and saturates after `windowCap / launchesPerDay` days, which is exactly how long
   that wallet takes to produce a full visit's worth of new launches; once saturated it ties on flow
   and 336a's least-recently-scored tiebreak is a strict FIFO, so the set ahead of it only shrinks.
-  Every gate survivor has a strictly positive tempo by construction (`minTokens` launches over a
+  Every ADMITTED candidate has a strictly positive tempo by construction, on either arm — 451's
+  second arm re-checks `minTokens` as its condition 1 (`minTokens` launches over a
   finite span, and a test pins `minTokens >= maxLaunchesPerCandidate` so the never-scored key stays
   exact), so **every survivor saturates in bounded time**. A never-scored survivor ranks first
   whatever anyone's flow, and an **UNREADABLE tempo is SATURATED, never zero** — reading absence as

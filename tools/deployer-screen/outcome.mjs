@@ -47,6 +47,7 @@
  * sorted key order.
  */
 
+import { ARMS_ARE_NEVER_POOLED } from './admission.mjs';
 import { hitRate } from './entry.mjs';
 import { entryPredictionClaim } from './prediction.mjs';
 
@@ -56,8 +57,13 @@ import { entryPredictionClaim } from './prediction.mjs';
  * Same contract as the run record's: **bump, never retro-edit**. A graded claim is evidence about
  * the screen's own accuracy, and a lane that rewrote its own past grades would be marking its own
  * homework twice.
+ *
+ * **2** adds `admissionArm` to every grade row and splits {@link summariseGrades} by it — captain
+ * decisions 451 and 480a. A version rather than a silent field because the hit rate itself changed
+ * shape: a version-1 ledger's rows carry no arm, so a reader holding one has nothing in the document
+ * that says whether the rate beside it was over one population or two.
  */
-export const GRADE_LEDGER_VERSION = 1;
+export const GRADE_LEDGER_VERSION = 2;
 
 /**
  * The reading every outcome figure in this ledger is taken on, carried on the row rather than only
@@ -191,6 +197,9 @@ export function gradeKeyOf(p) {
  * @property {string} predictedVerdict
  * @property {string} madeAtIso
  * @property {string} gateReading      Which history the GATE read when the claim was made.
+ * @property {'gate' | 'sub-gate'} admissionArm WHICH ARM admitted the candidate this claim is about
+ *   — captain decisions 451 and 480a. The hit rate is reported per arm and never pooled, because
+ *   the two are two populations with two denominators.
  * @property {string} outcomeReading   {@link OUTCOME_READING}.
  * @property {string | number | null} thresholdsVersion
  * @property {GradeState} state
@@ -235,6 +244,7 @@ export function gradeOne(prediction, outcome, refusal, nowIso, existing = null) 
     predictedVerdict: prediction.verdict,
     madeAtIso: prediction.madeAtIso,
     gateReading: prediction.gateReading,
+    admissionArm: prediction.admissionArm === 'sub-gate' ? 'sub-gate' : 'gate',
     outcomeReading: OUTCOME_READING,
     thresholdsVersion: prediction.thresholdsVersion,
     state: 'ungraded',
@@ -399,6 +409,18 @@ export function dueForMeasurement(predictions, ledger, nowMs, bounds) {
  * cannot be read. `entry.mjs` → `hitRate` is reused rather than re-implemented so "what a hit rate
  * is" has one definition in this tool, including its `NaN`-not-zero rule for an empty sample.
  *
+ * **EVERY RATE IS PER ADMISSION ARM AND THERE IS NO POOLED ONE — captain decision 480a.** Since
+ * captain decision 451 a claim can be about a candidate the competence gate REFUSED and the second
+ * arm admitted, and those are two populations with two denominators
+ * (`admission.mjs` → `ARMS_ARE_NEVER_POOLED`). A single `overall` across them would be a rate with
+ * no denominator, and it would hide the thing this split exists to show: the second arm was opened
+ * because the gate arm has produced zero after-cost passes, so a pooled rate would let one arm's
+ * accuracy stand in for the other's. A grade row carrying no arm — a version-1 ledger's — is the
+ * GATE arm's, exactly: nothing before record schema 27 could admit through the second.
+ *
+ * `claims` / `graded` / `ungraded` / `ungradedByReason` stay whole-ledger bookkeeping, and they are
+ * not arm statistics: they count rows and the reasons rows went ungraded, never a success rate.
+ *
  * @param {ReturnType<typeof emptyGradeLedger>} ledger
  * @returns {object}
  */
@@ -417,6 +439,23 @@ export function summariseGrades(ledger) {
     const h = hitRate(sample, (r) => r.state === 'hit');
     return { n: h.n, hits: h.hits, rate: Number.isFinite(h.rate) ? Number(h.rate.toFixed(4)) : null };
   };
+  /** @param {'gate' | 'sub-gate'} arm */
+  const forArm = (arm) => {
+    const sample = graded.filter((r) => (r.admissionArm === 'sub-gate' ? 'sub-gate' : 'gate') === arm);
+    return {
+      graded: sample.length,
+      overall: rate(sample),
+      // Broken out by what was CLAIMED, because the two are different questions and a pooled rate
+      // can hide that the screen is right about one and wrong about the other. A screen that says
+      // "not beatable" about everything scores well on a population of unbeatable deployers while
+      // being useless, and only the split shows it. INSIDE the arm, so the two splits compose
+      // rather than one undoing the other.
+      byClaim: {
+        beatable: rate(sample.filter((r) => r.predictedClaim === 'beatable')),
+        'not-beatable': rate(sample.filter((r) => r.predictedClaim === 'not-beatable')),
+      },
+    };
+  };
   return {
     schemaVersion: GRADE_LEDGER_VERSION,
     reading: OUTCOME_READING,
@@ -424,15 +463,8 @@ export function summariseGrades(ledger) {
     graded: graded.length,
     ungraded: rows.length - graded.length,
     ungradedByReason,
-    overall: rate(graded),
-    // Broken out by what was CLAIMED, because the two are different questions and a pooled rate can
-    // hide that the screen is right about one and wrong about the other. A screen that says
-    // "not beatable" about everything scores well on a population of unbeatable deployers while
-    // being useless, and only the split shows it.
-    byClaim: {
-      beatable: rate(graded.filter((r) => r.predictedClaim === 'beatable')),
-      'not-beatable': rate(graded.filter((r) => r.predictedClaim === 'not-beatable')),
-    },
+    byArm: { gate: forArm('gate'), 'sub-gate': forArm('sub-gate') },
+    armsAreNeverPooled: ARMS_ARE_NEVER_POOLED,
     caveat: HIT_RATE_CAVEAT,
   };
 }

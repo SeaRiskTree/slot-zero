@@ -54,10 +54,12 @@ import {
   main,
   parseFeedArgs,
   planFeedRun,
+  renderLedgerState,
   triage,
   unmeasuredAlarmDisabledWarning,
   wrap,
 } from '../tools/deployer-screen/feed.mjs';
+import { subGateBounds } from '../tools/deployer-screen/admission.mjs';
 import { KEY_ENV_VAR } from '../tools/deployer-screen/credential.mjs';
 
 const TOOL_DIR = fileURLToPath(new URL('../tools/deployer-screen/', import.meta.url));
@@ -449,6 +451,9 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
     newlySurfaced,
     gated: 0,
     queued: 0,
+    // Schema-451's second arm. Present on every FeedRunRow; these fixtures stand for runs that
+    // admitted nobody through it.
+    queuedSubGate: 0,
     held: 0,
     unmeasured: 0,
     prefiltered: 0,
@@ -572,6 +577,7 @@ describe('a dead feed cannot read as a healthy quiet one', () => {
           newlySurfaced: i,
           gated: 0,
           queued: 0,
+          queuedSubGate: 0,
           held: 0,
           unmeasured: 0,
           prefiltered: 0,
@@ -711,6 +717,148 @@ describe('a failure on the cheap reading is HELD, never rejected', () => {
     // suppressed, because no other branch would fire.
     expect(triage({ pump_tokens: [] }, GATE).state).toBe('unmeasured');
     expect(triage({ pump_tokens: [] }, GATE).rationale).toMatch(/no launch record at all/);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Captain decision 451's second arm, on the half whose failure mode is permanent: `ledger.mjs`
+// grades a wallet ONCE and never offers it again, so a sub-gate deployer wrongly filed as `held`
+// here is unrecoverable and invisible. Everything below drives the real functions; nothing is
+// asserted by reading source.
+
+describe('451: the second admission arm reaches the discovery feed', () => {
+  const T = JSON.parse(readFileSync(join(TOOL_DIR, 'thresholds.json'), 'utf8')) as {
+    stage1_gate: {
+      minTokens: number;
+      minCompletionRate: number;
+      minSpanDays: number;
+      subGateAdmission: { minCompletionRate: number; visitRefreshDays: number };
+    };
+    stage2_entry: { maxLaunchesPerCandidate: number };
+  };
+  const BOUNDS = subGateBounds(T.stage1_gate, T.stage2_entry.maxLaunchesPerCandidate);
+  const REAL_GATE = {
+    minTokens: T.stage1_gate.minTokens,
+    minCompletionRate: T.stage1_gate.minCompletionRate,
+    minSpanDays: T.stage1_gate.minSpanDays,
+  };
+  const NOW = T0;
+  const ARM = { bounds: BOUNDS, nowMs: NOW };
+
+  /**
+   * A wallet whose rate sits strictly between the arm's inflow floor and the gate's bar, launching
+   * often enough to fill one Stage 2 visit inside the refresh horizon and still launching today —
+   * so the ONLY thing between it and the queue is captain decision 451.
+   */
+  const subGateProfile = () => profile(40, 4, 60, NOW);
+
+  it('queues a sub-gate wallet in ITS OWN state, and holds the same wallet when the arm is not asked', () => {
+    const rate = 4 / 40;
+    expect(rate).toBeLessThan(T.stage1_gate.minCompletionRate);
+    expect(rate).toBeGreaterThanOrEqual(T.stage1_gate.subGateAdmission.minCompletionRate);
+
+    const admitted = triage(subGateProfile(), REAL_GATE, ARM);
+    expect(admitted.state).toBe('queued-sub-gate');
+    expect(admitted.gateVerdict).toBe('sub-gate-admitted');
+    expect(admitted.rationale).toMatch(/FAILED the competence gate/);
+
+    // THE PRE-451 BEHAVIOUR IS STILL REACHABLE, and it is the same code path with the arm absent —
+    // not a second implementation that could drift from this one.
+    const notAsked = triage(subGateProfile(), REAL_GATE);
+    expect(notAsked.state).toBe('held');
+    expect(notAsked.gateVerdict).toBe('gate-failed');
+
+    // The arm is a LOOSENING and not a bypass: a wallet failing on anything but the rate is still
+    // held, whether or not the arm is consulted.
+    expect(triage(profile(10, 1, 60, NOW), REAL_GATE, ARM).state).toBe('held');
+    expect(triage(profile(40, 4, 3, NOW), REAL_GATE, ARM).state).toBe('held');
+    // And a wallet that has stopped launching is refused on the arm's own window-supply bound.
+    expect(triage(profile(40, 4, 60, NOW - 400 * DAY), REAL_GATE, ARM).state).toBe('held');
+  });
+
+  it('counts the two arms APART and serves both to the screen', () => {
+    const ledger = emptyLedger();
+    const grade = (
+      wallet: string,
+      state: 'queued' | 'queued-sub-gate' | 'held',
+      verdict: string,
+      at: string,
+    ) => {
+      recordSeen(ledger, wallet, ['alerts'], at);
+      gradeWallet(
+        ledger,
+        wallet,
+        {
+          state,
+          gateVerdict: verdict,
+          gateReading: 'ownership-only',
+          tokens: 40,
+          completionRate: state === 'queued' ? 0.5 : 0.1,
+          spanDays: 60,
+          firstDeployIso: '2026-06-01T00:00:00.000Z',
+          shortfalls: [],
+        },
+        at,
+      );
+    };
+    grade('GATE_A', 'queued', 'gate-passed', '2026-08-01T00:00:00.000Z');
+    grade('SUB_A', 'queued-sub-gate', 'sub-gate-admitted', '2026-08-02T00:00:00.000Z');
+    grade('SUB_B', 'queued-sub-gate', 'sub-gate-admitted', '2026-08-03T00:00:00.000Z');
+    grade('HELD_A', 'held', 'gate-failed', '2026-08-04T00:00:00.000Z');
+
+    const s = summariseLedger(ledger);
+    expect(s.queued).toBe(1);
+    expect(s.queuedSubGate).toBe(2);
+    expect(s.queuedUnscreened).toBe(1);
+    expect(s.queuedSubGateUnscreened).toBe(2);
+    expect(s.held).toBe(1);
+    expect(s.wallets).toBe(4);
+    // THE ACCEPTANCE CRITERION: no figure this summary publishes is the two arms added together.
+    const pooled = s.queued + s.queuedSubGate;
+    for (const [key, value] of Object.entries(s)) {
+      if (typeof value !== 'number') continue;
+      expect(value, `${key} reads as the two arms pooled`).not.toBe(pooled);
+    }
+
+    // The QUEUE is a spend decision rather than a statistic, so it serves both — oldest first, and
+    // every row still carries the state that says which arm put it there.
+    const queue = queuedForScreen(ledger);
+    expect(queue.map((e) => e.wallet)).toEqual(['GATE_A', 'SUB_A', 'SUB_B']);
+    expect(queue.map((e) => e.state)).toEqual(['queued', 'queued-sub-gate', 'queued-sub-gate']);
+
+    // And the rendered state prints the second arm on its own line, with its own denominator.
+    const text = renderLedgerState(ledger);
+    expect(text).toMatch(/1 cleared the gate and have not been through the beatability screen/);
+    expect(text).toMatch(/2 FAILED the gate and are queued anyway by the sub-gate arm/);
+    expect(text).toMatch(/never pooled with the line above/);
+    expect(text).not.toMatch(/3 cleared the gate/);
+  });
+
+  it('imports a committed sub-gate verdict as queued, never as unmeasured', () => {
+    // A record carrying `sub-gate-admitted` describes a wallet the screen MEASURED. Folding it into
+    // `unmeasured` would file an admitted wallet as unjudged and drop it out of the queue.
+    const ledger = emptyLedger();
+    const { imported } = importRunRecords(ledger, [
+      {
+        file: 'r.json',
+        body: {
+          startedAtIso: '2026-08-11T00:00:00.000Z',
+          schemaVersion: 26,
+          candidates: [
+            { wallet: 'PASSED', verdict: 'gate-passed', tokens: 61, completionRate: 0.54, spanDays: 581 },
+            { wallet: 'SUBGATE', verdict: 'sub-gate-admitted', tokens: 40, completionRate: 0.1, spanDays: 60 },
+            { wallet: 'FAILED', verdict: 'gate-failed', tokens: 14 },
+          ],
+        },
+      },
+    ]);
+    expect(imported).toBe(3);
+    expect(ledger.wallets['SUBGATE']!.state).toBe('queued-sub-gate');
+    expect(ledger.wallets['SUBGATE']!.gateVerdict).toBe('sub-gate-admitted');
+    expect(ledger.wallets['PASSED']!.state).toBe('queued');
+    expect(ledger.wallets['FAILED']!.state).toBe('held');
+    expect(queuedForScreen(ledger).map((e) => e.wallet).sort()).toEqual(['PASSED', 'SUBGATE']);
+    expect(summariseLedger(ledger)).toMatchObject({ queued: 1, queuedSubGate: 1, unmeasured: 0 });
   });
 });
 
@@ -1090,7 +1238,14 @@ describe('the feed end to end', () => {
     expect(record.yield.newlySurfaced).toBe(3);
     expect(record.yield.alreadyKnown).toBe(0);
     expect(record.yield.gated).toBe(3);
-    expect(record.yield.clearedTheGate! + record.yield.held! + record.yield.unmeasured!).toBe(record.yield.gated);
+    // THE PARTITION, and captain decision 451's arm is a TERM IN IT rather than a fifth state
+    // sitting outside it: a reader must be able to add the printed parts and get the printed total.
+    expect(
+      record.yield.clearedTheGate! +
+        record.yield.admittedSubGate! +
+        record.yield.held! +
+        record.yield.unmeasured!,
+    ).toBe(record.yield.gated);
     expect(record.yield.backlog).toBe(0);
     // A wallet two seeds both surfaced is new under both, so per-seed novelty does not sum to the
     // run total — the rendered block says so and the record must be consistent with it.
@@ -1147,6 +1302,94 @@ describe('the feed end to end', () => {
     expect(code).toBe(7);
     expect(JSON.parse(readFileSync(outPath, 'utf8'))).toEqual({ kept: true });
     expect(JSON.parse(readFileSync(join(dir, 'feed-run.partial.json'), 'utf8'))).toMatchObject({ completed: false });
+  });
+
+  it('the run loop asks the second arm, so a sub-gate wallet is queued rather than held forever', async () => {
+    // THE CLAUSE `triage`'s OWN DOC MAKES, ASSERTED THROUGH THE RUN LOOP: the arm is passed on every
+    // gated wallet. Dropping the argument would restore the pre-451 behaviour silently, and this
+    // lane's mistakes are permanent — `ledger.mjs` grades a wallet once and never offers it again.
+    // The profile is anchored on the run's own clock rather than on a fixture date, because the
+    // arm's recency bound is measured against `Date.now()` inside `main`.
+    const now = Date.now();
+    const { fetchImpl } = vendor(
+      { 'recent-bonds': ['Wsub', 'Wgate'], alerts: [], leaderboard: [] },
+      // 4 of 40 bonded = 0.10: below the gate's 0.25 and above the arm's 0.05 floor, over a 60-day
+      // span that fills a Stage 2 visit inside the refresh horizon.
+      { Wsub: profile(40, 4, 60, now), Wgate: profile(40, 20, 60, now) },
+    );
+    const lines: string[] = [];
+    const code = await main(opts(), env, (l) => lines.push(l), () => {}, { fetchImpl, sleepImpl });
+
+    expect(code).toBe(0);
+    const ledger = loadLedger(ledgerPath) as Ledger;
+    expect(ledger.wallets['Wsub']!.state).toBe('queued-sub-gate');
+    expect(ledger.wallets['Wsub']!.gateVerdict).toBe('sub-gate-admitted');
+    expect(ledger.wallets['Wgate']!.state).toBe('queued');
+    // Both are the feed's product, and the run reports them as two populations rather than one.
+    expect(queuedForScreen(ledger).map((e) => e.wallet).sort()).toEqual(['Wgate', 'Wsub']);
+    expect(summariseLedger(ledger)).toMatchObject({ queued: 1, queuedSubGate: 1, held: 0 });
+    const run = ledger.runs[ledger.runs.length - 1]!;
+    expect(run.queued).toBe(1);
+    expect(run.queuedSubGate).toBe(1);
+    expect(lines.join('\n')).toMatch(/FAILED the gate and are queued anyway by the sub-gate arm/);
+  });
+
+  it('reports the sub-gate arm in the run its own yield and queue — and claims no gate pass for it', async () => {
+    // THE RUN THAT PERFORMS THE RULING MUST REPORT IT. The yield block is this run's headline and
+    // its parts must add up to its own total; the queue is the product, and a header calling every
+    // row a wallet that "cleared the gate" is false by construction for the sub-gate half.
+    const now = Date.now();
+    const outPath = join(dir, 'feed-run.json');
+    const { fetchImpl } = vendor(
+      { 'recent-bonds': ['Wsub', 'Wgate', 'Whold'], alerts: [], leaderboard: [] },
+      {
+        Wsub: profile(40, 4, 60, now),
+        Wgate: profile(40, 20, 60, now),
+        // Fails the sample-size bar, which neither arm loosens.
+        Whold: profile(10, 1, 60, now),
+      },
+    );
+    const lines: string[] = [];
+    const code = await main(opts({ gate: 3, out: outPath }), env, (l) => lines.push(l), () => {}, {
+      fetchImpl,
+      sleepImpl,
+    });
+    expect(code).toBe(0);
+
+    const record = JSON.parse(readFileSync(outPath, 'utf8')) as {
+      yield: Record<string, number>;
+      queue: { wallet: string; admissionArm: string }[];
+    };
+    // The partition holds WITH the new term, and would not without it.
+    expect(record.yield.gated).toBe(3);
+    expect(record.yield.clearedTheGate).toBe(1);
+    expect(record.yield.admittedSubGate).toBe(1);
+    expect(record.yield.held).toBe(1);
+    expect(
+      record.yield.clearedTheGate! +
+        record.yield.admittedSubGate! +
+        record.yield.held! +
+        record.yield.unmeasured!,
+    ).toBe(record.yield.gated);
+
+    // THE COMMITTED RECORD CAN SPLIT ITS OWN QUEUE. Without the arm on the row an operator writing
+    // this list out for `screen.mjs --wallets` mixes two populations irreversibly, and feed records
+    // are never retro-edited.
+    expect(record.queue.map((q) => [q.wallet, q.admissionArm]).sort()).toEqual([
+      ['Wgate', 'gate'],
+      ['Wsub', 'sub-gate'],
+    ]);
+
+    const text = lines.join('\n');
+    // The rendered yield names the arm rather than leaving a wallet unaccounted for...
+    expect(text).toMatch(/admitted by the SUB-GATE arm\s+1/);
+    // ...and the queue header no longer says the whole list cleared a gate half of it failed.
+    expect(text).not.toMatch(/THE QUEUE — \d+ wallet\(s\) that cleared the gate/);
+    expect(text).toMatch(/THE QUEUE — 2 wallet\(s\) NOT yet screened, on two arms and never pooled/);
+    expect(text).toMatch(/^ {4}1 cleared the competence gate$/m);
+    expect(text).toMatch(/^ {4}1 FAILED it and were admitted for measurement by the SUB-GATE arm/m);
+    expect(text).toMatch(/\[sub-gate\] Wsub/);
+    expect(text).toMatch(/\[ {4}gate\] Wgate/);
   });
 
   it('refuses to run without a credential, and says it is NOT a dry feed', async () => {

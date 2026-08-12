@@ -890,8 +890,90 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   it for a whole-window cost accounting. And it fails towards refusal: where the cost walk falls
  *   back to per-signature reads there is no observation, the create-slot rows go back to `null`, and
  *   the verdict stays `exit-unbounded`.
+ *
+ * ## Schema 27 — WHICH ARM ADMITTED THIS CANDIDATE (captain decision 451, 2026-08-11)
+ *
+ * A deployer the competence gate REFUSES can now reach Stage 2 through a second admission arm
+ * (`admission.mjs`), because all six `entry-open-after-costs` verdicts this project has produced
+ * come from that population while every population the gate admits has returned zero. The version
+ * exists because the record has to be able to keep the two apart:
+ *
+ * - **A fourth `verdict` value, `sub-gate-admitted`**, and it is a value rather than a flag so that
+ *   nothing already counting `gate-passed` can pick these up. **`gateFailedCount` is therefore not
+ *   the same quantity at 26 and 27** — a wallet the second arm admits was `gate-failed` before and
+ *   is not now — and `subGateAdmittedCount` beside it is what a reader compares across the boundary.
+ * - **`admissionArm` on the candidate row**, derived from the verdict so the two cannot disagree.
+ * - **`subGate` on the candidate row**, `null` unless the arm decided something: whether it
+ *   admitted, why not when it did not, the two quantities it read (launch tempo, days since the
+ *   last launch) and THE BOUNDS IT WAS JUDGED UNDER — the arm is sized against a population, so a
+ *   record that quoted only today's `thresholds.json` could not say what a past run applied.
+ *
+ * ### THE FIELDS WHOSE POPULATION WIDENED, AND THIS LIST IS THE WHOLE OF THEM
+ *
+ * Stage 2 now walks whoever EITHER arm admitted, so **every field computed over the SCORED set is
+ * over the ADMITTED UNION at 27 where it was over `verdict === 'gate-passed'` ALONE at ≤26.** Their
+ * names, shapes and key sets are untouched, which is exactly why the change is easy to miss: a rise
+ * in one of these across the boundary may be the second arm rather than a larger gate population,
+ * and reading it as the latter is the misreading. The list was assembled by walking every run-level
+ * and candidate-row field rather than by patching the ones review found, and it is:
+ *
+ * - **`scoringRotation.survivors` / `.order` / `.selected` / `.neverScoredBefore`, and
+ *   `scoringCap.survivorsUnscored`** — the rotation ALLOCATES one cap over both arms.
+ * - **`entryDrops.total` and every `entryDrops.byReason.*`**, and the rendered `STAGE 2 DROPS` block
+ *   that shares the reduce — a tally of what the WALK refused, over whatever it walked.
+ * - **`keylessRequests`, `keylessRequestsStage2`, `keylessShed`, `rpcRequests`,
+ *   `rpcLoadShedEvents`** and the `spend` counters derived from them — what the run SPENT, on the
+ *   population it scored.
+ * - **`truncationReason`**, when the scoring cap contributed a sentence to it: the shortfall it
+ *   names is admitted candidates left unscored, not gate survivors.
+ * - **`entrySourceAgreement.candidates` / `.byClass`** — over the candidates carrying an agreement
+ *   row, which is the scored set. `null` on every run to date, the mode being unactivated, so no
+ *   committed record shows it; it is listed because the version boundary is the same one.
+ *
+ * **NONE OF THESE BREACHES THE NEVER-POOL RULE, and the reason is the same for all of them:** each
+ * counts what the WALK did — allocation, coverage, spend — rather than what either population
+ * ACHIEVED, and none is a rate. The split also stays recoverable, because every one of them is
+ * decomposable through the candidate rows, each of which carries `admissionArm`. A figure about
+ * outcomes is per arm at source: the run-level `predictions` block reports `byArm` and carries no
+ * pooled `withClaim` / `beatable` / `notBeatable`, `measuredEntryVerdictCount` is the gate arm's
+ * with `subGateMeasuredEntryVerdictCount` beside it, and `gatePassedCount` /
+ * `subGateAdmittedCount` are counted apart (captain decisions 451 and 480a).
+ *
+ * **THIS ENUMERATION IS NOT SELF-MAINTAINING, and it has now been found incomplete twice.** A field
+ * added later whose population is the scored set will not appear here by itself. What guards it is
+ * `test/deployer-screen.test.ts` → "451: admitting a sub-gate candidate moves exactly the
+ * documented run-level fields", which runs the screen twice over the SAME wallet — admitted by the
+ * second arm once, refused by its inflow floor once — and pins the SET of run-level keys whose
+ * value differs. A new field over the scored set moves in that diff and fails the pin until it is
+ * listed here. **`scoringRotation` is INSIDE that pin, compared field by field** — it is the first
+ * block this enumeration was found to have missed and it holds five of the fields above, so a guard
+ * that skipped it could not fail on what it was built for; only `scoredAtIso` and the two state
+ * digests are dropped, each an instant or a hash over one rather than a population.
+ *
+ * **Its reach is still a SUBSET of this list and the test says which**: on two candidates and one
+ * refused window each, `keylessShed`, `rpcRequests`, `rpcLoadShedEvents`,
+ * `scoringCap.survivorsUnscored`, `truncationReason` and `entrySourceAgreement` do not move at all,
+ * so a regression confined to them passes. Nothing expressible closes that gap — a field can only
+ * be observed to widen where the fixture makes it non-zero — and stating the residue is why this
+ * paragraph exists rather than a claim that the list maintains itself.
+ *
+ * **Every field NOT listed above is the same quantity at 26 and 27 and may be pooled** — the
+ * whole-population counts (`gated`, `prefilteredOut`, `coverage.*`) never depended on the gate's
+ * verdict, and every per-candidate measurement means what it always did. No bar moved,
+ * `stage1_gate.minCompletionRate` is still 0.25 and Stage 2's ceilings are untouched, since none of
+ * them is a function of how many candidates were ADMITTED. **The one leg whose COST does scale with
+ * the admitted count is the opt-in `--consistency` creator walk** — keyless, metered nowhere,
+ * bounded by the unmoved `budget.maxKeylessRequests`, and run after Stage 2; it is what makes the
+ * `keylessRequests` widening above a real one rather than a bookkeeping note.
+ * **What may never be pooled is the two
+ * arms** (`admission.mjs` → `ARMS_ARE_NEVER_POOLED`): they are two populations with two
+ * denominators, and a figure over one of them says nothing about the other.
+ *
+ * **It is not a finding that the sub-gate population is profitable and must not be read as one.**
+ * `thresholds.json` → `stage2_entry.justification.minFieldHitRateNet` records that measured cost is
+ * a LOWER bound, so an after-cost result above a bar is an upper bound on itself.
  */
-export const RECORD_SCHEMA_VERSION = 26;
+export const RECORD_SCHEMA_VERSION = 27;
 
 /**
  * The predictions-document contract version, carried inside the document itself.
@@ -956,6 +1038,17 @@ export const DERIVED_PREDICTION_METRICS = {
   gatePassedCount: (r) => countVerdict(r, 'gate-passed'),
   gateFailedCount: (r) => countVerdict(r, 'gate-failed'),
   gateUnmeasuredCount: (r) => countVerdict(r, 'gate-unmeasured'),
+  /**
+   * Candidates the SECOND ADMISSION ARM admitted — captain decision 451, record schema 27.
+   *
+   * **Its own metric and never added to `gatePassedCount`.** The two arms are two populations with
+   * two denominators (`admission.mjs` → `ARMS_ARE_NEVER_POOLED`), so a prediction about one says
+   * nothing about the other and there is deliberately no metric here that sums them. It reads 0 on
+   * every schema-≤26 record, which is exact rather than a default: nothing before 27 could admit
+   * through this arm — but note the mirror image, that a schema-≤26 `gateFailedCount` counts
+   * wallets a schema-27 run files under this metric instead.
+   */
+  subGateAdmittedCount: (r) => countVerdict(r, 'sub-gate-admitted'),
   /** Candidates clearing `minTokens` and `minSpanDays` — the population the rate bar then judges. */
   gateEligibleCount: (r) => {
     const t = gateThresholdsOf(r);
@@ -979,19 +1072,61 @@ export const DERIVED_PREDICTION_METRICS = {
   medianGateCompletionRate: (r) => median(candidatesOf(r).map((c) => c['completionRate'])),
   medianVendorPageCompletionRate: (r) => median(candidatesOf(r).map((c) => c['vendorCompletionRate'])),
   medianVendorMinusGateRate: (r) => median(vendorMinusGate(candidatesOf(r))),
+  /**
+   * **THE GATE ARM'S ONLY, despite the name, and the name is deliberately not changed.** It
+   * predates captain decision 451's second arm, and a metric name is a contract a committed
+   * predictions document holds this tool to — renaming it would silently invalidate documents
+   * written against it. What matters is that it stays over ONE population: pooling the sub-gate arm
+   * in here would give this median two denominators, which is the one thing 451 forbids. A sub-gate
+   * reading of the same comparison would be a new metric, not a widening of this one.
+   */
   admittedMedianVendorMinusGateRate: (r) =>
     median(vendorMinusGate(candidatesOf(r).filter((c) => c['verdict'] === 'gate-passed'))),
   /** Candidates the two readings disagreed about — the size of what the gate reading changed. */
   verdictChangedCount: (r) => candidatesOf(r).filter((c) => c['verdictChanged'] === true).length,
-  /** Scored candidates carrying a MEASURED entry verdict. `entry-unmeasured` is no answer, never one. */
-  measuredEntryVerdictCount: (r) =>
-    candidatesOf(r).filter((c) => {
-      const e = c['entry'];
-      if (typeof e !== 'object' || e === null) return false;
-      const v = /** @type {Record<string, unknown>} */ (e)['verdict'];
-      return typeof v === 'string' && v !== 'entry-unmeasured';
-    }).length,
+  /**
+   * Scored candidates carrying a MEASURED entry verdict. `entry-unmeasured` is no answer, never one.
+   *
+   * **THE GATE ARM'S ONLY, despite the name, and the name is deliberately not changed** — captain
+   * decision 480a, the same reasoning as `admittedMedianVendorMinusGateRate` above. It predates
+   * captain decision 451's second arm, and a metric name is a contract a committed predictions
+   * document holds this tool to, so renaming it would silently invalidate documents written against
+   * it. `subGateMeasuredEntryVerdictCount` below is the second arm's, and there is deliberately no
+   * metric that sums the two.
+   */
+  measuredEntryVerdictCount: (r) => measuredEntryVerdicts(r, 'gate'),
+  /**
+   * The same count over the SECOND ADMISSION ARM — captain decision 451, split out by 480a.
+   *
+   * Reads 0 on every schema-≤26 record, which is exact rather than a default: nothing before 27
+   * could admit through this arm, so a row carrying no `admissionArm` is the gate arm's and never an
+   * unknown one.
+   */
+  subGateMeasuredEntryVerdictCount: (r) => measuredEntryVerdicts(r, 'sub-gate'),
 };
+
+/**
+ * Candidates of ONE admission arm whose `entry` block carries a measured verdict.
+ *
+ * Written once and taken twice rather than as two filters, so the two arms' counts cannot drift into
+ * measuring different things — which is the failure a split by arm exists to prevent.
+ *
+ * @param {Record<string, unknown>} record
+ * @param {'gate' | 'sub-gate'} arm
+ * @returns {number}
+ */
+function measuredEntryVerdicts(record, arm) {
+  return candidatesOf(record).filter((c) => {
+    // An ABSENT `admissionArm` is the gate arm, exactly (see the metric docs above), so the
+    // comparison is against `'sub-gate'` alone rather than against both spellings.
+    const rowArm = c['admissionArm'] === 'sub-gate' ? 'sub-gate' : 'gate';
+    if (rowArm !== arm) return false;
+    const e = c['entry'];
+    if (typeof e !== 'object' || e === null) return false;
+    const v = /** @type {Record<string, unknown>} */ (e)['verdict'];
+    return typeof v === 'string' && v !== 'entry-unmeasured';
+  }).length;
+}
 
 /** @param {Record<string, unknown>} record @returns {Record<string, unknown>[]} */
 function candidatesOf(record) {

@@ -71,6 +71,7 @@
  * is the one cost this shape exists to avoid.
  */
 
+import { ARMS_ARE_NEVER_POOLED } from './admission.mjs';
 import { ENTRY_VERDICTS, isDeployerAttributable } from './entry.mjs';
 
 /**
@@ -421,24 +422,43 @@ export function buildPredictionBlock(input) {
  * different states — the first spent nothing on them, the second spent a full Stage 2 walk each and
  * still could not answer.
  *
- * @param {readonly { prediction?: PredictionBlock | null }[]} rows Persisted candidate rows.
+ * **THE CLAIM COUNTS ARE PER ARM AND THERE IS NO POOLED ONE — captain decision 480a.** A claim is
+ * made about a candidate Stage 2 scored, and since captain decision 451 that population is the union
+ * of the competence gate's survivors and the second admission arm's admissions. `withClaim`,
+ * `beatable` and `notBeatable` over that union would be three figures with two denominators, which
+ * is the one arithmetic {@link import('./admission.mjs').ARMS_ARE_NEVER_POOLED} forbids — so they
+ * live under `byArm` and are never summed here or by any reader.
+ *
+ * **A row carrying no `admissionArm` is the GATE arm, and that is exact rather than a default:**
+ * nothing before record schema 27 could admit through the second arm, so its absence is
+ * unambiguous rather than unknown. `candidates`, `noClaim` and `noClaimByReason` stay run-level
+ * bookkeeping over every ranked row — most of them in NEITHER arm, since a rejected candidate is
+ * counted there too — so they are not an arm statistic and pool nothing.
+ *
+ * @param {readonly { prediction?: PredictionBlock | null, admissionArm?: string | null }[]} rows
+ *   Persisted candidate rows.
  * @returns {object}
  */
 export function summarisePredictions(rows) {
   /** @type {Record<string, number>} */
   const noClaimByReason = {};
-  let withClaim = 0;
-  let beatable = 0;
-  let notBeatable = 0;
+  const byArm = {
+    gate: { withClaim: 0, beatable: 0, notBeatable: 0 },
+    'sub-gate': { withClaim: 0, beatable: 0, notBeatable: 0 },
+  };
+  let withClaimTotal = 0;
   for (const row of rows) {
+    const arm = row.admissionArm === 'sub-gate' ? 'sub-gate' : 'gate';
     for (const c of row.prediction?.claims ?? []) {
       if (c.subject !== 'entry') continue;
       if (c.claim === 'beatable') {
-        withClaim += 1;
-        beatable += 1;
+        byArm[arm].withClaim += 1;
+        byArm[arm].beatable += 1;
+        withClaimTotal += 1;
       } else if (c.claim === 'not-beatable') {
-        withClaim += 1;
-        notBeatable += 1;
+        byArm[arm].withClaim += 1;
+        byArm[arm].notBeatable += 1;
+        withClaimTotal += 1;
       } else {
         const key = c.noClaimReason ?? 'verdict-unrecognised';
         noClaimByReason[key] = (noClaimByReason[key] ?? 0) + 1;
@@ -450,10 +470,9 @@ export function summarisePredictions(rows) {
     subjects: [...PREDICTION_SUBJECTS],
     subjectsDeferred: DEFERRED_SUBJECTS.map((d) => ({ ...d })),
     candidates: rows.length,
-    withClaim,
-    beatable,
-    notBeatable,
-    noClaim: rows.length - withClaim,
+    byArm,
+    armsAreNeverPooled: ARMS_ARE_NEVER_POOLED,
+    noClaim: rows.length - withClaimTotal,
     noClaimByReason,
     caveat: PREDICTION_RUN_CAVEAT,
   };
@@ -493,6 +512,10 @@ export const MIN_GRADEABLE_SCHEMA = 6;
  * @property {number} outOfSampleAfterMs
  * @property {string} gateReading
  * @property {string} entryReading
+ * @property {'gate' | 'sub-gate'} admissionArm WHICH ARM admitted the candidate this claim is about
+ *   — captain decisions 451 and 480a. Carried so a hit rate can be reported per arm rather than
+ *   pooled over two populations with two denominators. A record row carrying no `admissionArm` is
+ *   the GATE arm, exactly: nothing before record schema 27 could admit through the second one.
  * @property {string | number | null} thresholdsVersion
  * @property {Record<string, unknown>} stage2Entry The `stage2_entry` bars THIS run applied.
  * @property {Record<string, unknown>} stage2Cost  The `stage2_cost` bars THIS run applied.
@@ -600,6 +623,10 @@ export function extractPredictions(records) {
           outOfSampleAfterMs,
           gateReading: typeof block['gateReading'] === 'string' ? block['gateReading'] : '(unrecorded)',
           entryReading: typeof block['entryReading'] === 'string' ? block['entryReading'] : '(unrecorded)',
+          // ABSENT MEANS THE GATE ARM, and that is exact rather than a fallback: no record before
+          // schema 27 could admit a candidate through the second arm, so there is no era in which
+          // this field's absence stands for an unknown arm.
+          admissionArm: c['admissionArm'] === 'sub-gate' ? 'sub-gate' : 'gate',
           thresholdsVersion: r['thresholdsVersion'] ?? null,
           stage2Entry,
           stage2Cost,

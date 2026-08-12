@@ -14247,6 +14247,42 @@ describe('attaching a measured cost to a launch\'s field', () => {
     priceLaunchEntry(entry, entryCostTargets(fills, entry), new Map([costs('buyA', 'A', 3.25)]));
     expect(entry.field[0]!.entryCostSol).toBeNaN();
   });
+
+  it('the zero-recovery net leg IS the window one on an exited position, structurally', () => {
+    // Captain decision 461 documents that equality in prose. It is enforced here in two ways,
+    // because neither alone is enough. `closedInWindow` is exactly `positionOutcome === 'exited'`,
+    // so where it holds beside `wholeWindowInScope` the two scopes were literally the same call —
+    // and a second walk over the same transaction list is free to drift the day one of the two
+    // conditions is edited. The reuse removes the class; these two pin that it stays removed.
+    const entry = measureLaunchEntry(fills)!;
+    const targets = entryCostTargets(fills, entry);
+    const priced = priceLaunchEntry(
+      entry,
+      targets,
+      new Map([costs('buyA', 'A', 0.25 + 3, 0.05), costs('sellA', 'A', -3.95)]),
+    );
+    const e = priced.field[0]!;
+    expect(e.positionOutcome).toBe('exited');
+    // Not `toBeCloseTo`: the point is that they are the SAME number, to the last bit.
+    expect(e.realisedSolAtZeroRecoveryNetOfMeasuredFees).toBe(e.realisedSolNetOfMeasuredFees);
+    expect(e.returnPerSolAtZeroRecoveryNetOfMeasuredFees).toBe(e.returnPerSolNetOfMeasuredFees);
+    // And where the scope is incomplete both are absent together, rather than one of them being a
+    // cheap partial figure.
+    const half = priceLaunchEntry(entry, targets, new Map([costs('buyA', 'A', 3.25)]));
+    expect(half.field[0]!.realisedSolAtZeroRecoveryNetOfMeasuredFees).toBeNaN();
+    expect(half.field[0]!.realisedSolNetOfMeasuredFees).toBeNaN();
+
+    // The structural half: `priceLaunchEntry` walks a wallet's whole window ONCE. A reintroduced
+    // second `sum(e.wallet, mine)` would satisfy the equality above on the day it was written and
+    // is exactly what may drift later, so the call site is pinned as a source fact.
+    const src = readFileSync(join(TOOL_DIR, 'entry.mjs'), 'utf8');
+    const body = src.slice(src.indexOf('export function priceLaunchEntry'));
+    const code = body
+      .split('\n')
+      .filter((l) => !l.trimStart().startsWith('*') && !l.trimStart().startsWith('//') && !l.includes('/**'))
+      .join('\n');
+    expect(code.match(/sum\(e\.wallet, mine\)/g) ?? []).toHaveLength(1);
+  });
 });
 
 describe('the entrants are KEPT — captain decision 459, increment 1 of the entrant pivot', () => {

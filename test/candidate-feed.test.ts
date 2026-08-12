@@ -1238,7 +1238,14 @@ describe('the feed end to end', () => {
     expect(record.yield.newlySurfaced).toBe(3);
     expect(record.yield.alreadyKnown).toBe(0);
     expect(record.yield.gated).toBe(3);
-    expect(record.yield.clearedTheGate! + record.yield.held! + record.yield.unmeasured!).toBe(record.yield.gated);
+    // THE PARTITION, and captain decision 451's arm is a TERM IN IT rather than a fifth state
+    // sitting outside it: a reader must be able to add the printed parts and get the printed total.
+    expect(
+      record.yield.clearedTheGate! +
+        record.yield.admittedSubGate! +
+        record.yield.held! +
+        record.yield.unmeasured!,
+    ).toBe(record.yield.gated);
     expect(record.yield.backlog).toBe(0);
     // A wallet two seeds both surfaced is new under both, so per-seed novelty does not sum to the
     // run total — the rendered block says so and the record must be consistent with it.
@@ -1325,6 +1332,64 @@ describe('the feed end to end', () => {
     expect(run.queued).toBe(1);
     expect(run.queuedSubGate).toBe(1);
     expect(lines.join('\n')).toMatch(/FAILED the gate and are queued anyway by the sub-gate arm/);
+  });
+
+  it('reports the sub-gate arm in the run its own yield and queue — and claims no gate pass for it', async () => {
+    // THE RUN THAT PERFORMS THE RULING MUST REPORT IT. The yield block is this run's headline and
+    // its parts must add up to its own total; the queue is the product, and a header calling every
+    // row a wallet that "cleared the gate" is false by construction for the sub-gate half.
+    const now = Date.now();
+    const outPath = join(dir, 'feed-run.json');
+    const { fetchImpl } = vendor(
+      { 'recent-bonds': ['Wsub', 'Wgate', 'Whold'], alerts: [], leaderboard: [] },
+      {
+        Wsub: profile(40, 4, 60, now),
+        Wgate: profile(40, 20, 60, now),
+        // Fails the sample-size bar, which neither arm loosens.
+        Whold: profile(10, 1, 60, now),
+      },
+    );
+    const lines: string[] = [];
+    const code = await main(opts({ gate: 3, out: outPath }), env, (l) => lines.push(l), () => {}, {
+      fetchImpl,
+      sleepImpl,
+    });
+    expect(code).toBe(0);
+
+    const record = JSON.parse(readFileSync(outPath, 'utf8')) as {
+      yield: Record<string, number>;
+      queue: { wallet: string; admissionArm: string }[];
+    };
+    // The partition holds WITH the new term, and would not without it.
+    expect(record.yield.gated).toBe(3);
+    expect(record.yield.clearedTheGate).toBe(1);
+    expect(record.yield.admittedSubGate).toBe(1);
+    expect(record.yield.held).toBe(1);
+    expect(
+      record.yield.clearedTheGate! +
+        record.yield.admittedSubGate! +
+        record.yield.held! +
+        record.yield.unmeasured!,
+    ).toBe(record.yield.gated);
+
+    // THE COMMITTED RECORD CAN SPLIT ITS OWN QUEUE. Without the arm on the row an operator writing
+    // this list out for `screen.mjs --wallets` mixes two populations irreversibly, and feed records
+    // are never retro-edited.
+    expect(record.queue.map((q) => [q.wallet, q.admissionArm]).sort()).toEqual([
+      ['Wgate', 'gate'],
+      ['Wsub', 'sub-gate'],
+    ]);
+
+    const text = lines.join('\n');
+    // The rendered yield names the arm rather than leaving a wallet unaccounted for...
+    expect(text).toMatch(/admitted by the SUB-GATE arm\s+1/);
+    // ...and the queue header no longer says the whole list cleared a gate half of it failed.
+    expect(text).not.toMatch(/THE QUEUE — \d+ wallet\(s\) that cleared the gate/);
+    expect(text).toMatch(/THE QUEUE — 2 wallet\(s\) NOT yet screened, on two arms and never pooled/);
+    expect(text).toMatch(/^ {4}1 cleared the competence gate$/m);
+    expect(text).toMatch(/^ {4}1 FAILED it and were admitted for measurement by the SUB-GATE arm/m);
+    expect(text).toMatch(/\[sub-gate\] Wsub/);
+    expect(text).toMatch(/\[ {4}gate\] Wgate/);
   });
 
   it('refuses to run without a credential, and says it is NOT a dry feed', async () => {

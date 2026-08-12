@@ -1034,8 +1034,17 @@ export async function main(opts, env, out, err, deps = {}) {
       ledger: summary,
       // The product. Wallet addresses are public on-chain data and ours to keep; nothing per-token
       // survives here, exactly as screen.mjs's own projection guarantees.
+      //
+      // THE QUEUE IS SERVED WHOLE AND EVERY COUNT STAYS PER ARM — captain decision 451. Which
+      // wallets are worth the screen's spend is one question over both arms (`ledger.mjs` ->
+      // `queuedForScreen`); how many of each there are is two questions with two denominators
+      // (`yield.clearedTheGate` and `yield.admittedSubGate`, `ledger.queued` and
+      // `ledger.queuedSubGate`). `admissionArm` is what keeps those compatible: without it a
+      // consumer handed this list — an operator writing it out for `screen.mjs --wallets`, say —
+      // could not split it back into the two populations, and feed records are never retro-edited.
       queue: queue.map((e) => ({
         wallet: e.wallet,
+        admissionArm: e.state === 'queued-sub-gate' ? 'sub-gate' : 'gate',
         firstSeenIso: e.firstSeenIso,
         gradedAtIso: e.gradedAtIso,
         gateReading: e.gateReading,
@@ -1118,6 +1127,14 @@ export function renderFeedRun(record) {
   lines.push(`  already known (duplicates) ${y.alreadyKnown} of ${y.distinctWalletsSeeded} surfaced`);
   lines.push(`  gated this run             ${y.gated} (${y.gatedFromBacklog} from the backlog)`);
   lines.push(`    cleared the gate         ${y.clearedTheGate}  -> queued for the beatability screen`);
+  // Captain decision 451, and it is a LINE OF ITS OWN rather than an addend on the one above: these
+  // four partition `gated`, so a reader can add the printed parts and get the printed total, while
+  // the two arms keep their own denominators. Folding it into `cleared the gate` would state that
+  // these wallets passed a gate every one of them failed.
+  lines.push(
+    `    admitted by the SUB-GATE arm ${y.admittedSubGate}  -> FAILED the gate and queued for ` +
+      `measurement anyway (451)`,
+  );
   lines.push(`    held (NOT a rejection)   ${y.held}`);
   lines.push(`    unmeasured               ${y.unmeasured}`);
   lines.push(`  still waiting to be gated  ${y.backlog}`);
@@ -1170,14 +1187,23 @@ export function renderFeedRun(record) {
   );
 
   const queue = record['queue'];
+  // THE QUEUE IS SERVED WHOLE AND DESCRIBED PER ARM — captain decision 451. Draining it is a spend
+  // decision (`ledger.mjs` -> `queuedForScreen` owns that argument), but the wallets in it did not
+  // all clear the gate: every `sub-gate` row FAILED it. So the header states the two counts apart,
+  // with their own denominators, and every row says which arm put it there.
+  const queueGate = queue.filter((/** @type {{ admissionArm?: string }} */ q) => q.admissionArm !== 'sub-gate').length;
+  const queueSubGate = queue.length - queueGate;
   lines.push('');
-  lines.push(`  THE QUEUE — ${queue.length} wallet(s) that cleared the gate and have NOT been screened.`);
+  lines.push(`  THE QUEUE — ${queue.length} wallet(s) NOT yet screened, on two arms and never pooled:`);
+  lines.push(`    ${queueGate} cleared the competence gate`);
+  lines.push(`    ${queueSubGate} FAILED it and were admitted for measurement by the SUB-GATE arm (451)`);
   if (queue.length === 0) {
     lines.push('    (empty)');
   } else {
     for (const q of queue.slice(0, 20)) {
       lines.push(
-        `    ${q.wallet}  ${q.tokens === null ? '?' : q.tokens} launches, ` +
+        `    [${q.admissionArm === 'sub-gate' ? 'sub-gate' : '    gate'}] ${q.wallet}  ` +
+          `${q.tokens === null ? '?' : q.tokens} launches, ` +
           `${q.completionRate === null ? '?' : (q.completionRate * 100).toFixed(1)}% over ` +
           `${q.spanDays === null ? '?' : q.spanDays.toFixed(0)}d` +
           (q.discoveryLagDaysAtLeast === null ? '' : `, first seen >= ${q.discoveryLagDaysAtLeast}d after it started`),

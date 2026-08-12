@@ -230,9 +230,10 @@ describe('the prediction a run records — the half without which nothing can ev
       { prediction: buildPredictionBlock({ entry: null, madeAtIso: MADE_AT, gateReading: 'g', thresholdsVersion: null }) },
     ];
     const s = summarisePredictions(rows) as Record<string, any>;
-    expect(s.withClaim).toBe(2);
-    expect(s.beatable).toBe(1);
-    expect(s.notBeatable).toBe(1);
+    // Every row here is gate-arm (no `admissionArm`, which is exactly what a schema-<=25 record
+    // carries), so the gate arm holds all of it and the sub-gate arm reads a true zero.
+    expect(s.byArm.gate).toEqual({ withClaim: 2, beatable: 1, notBeatable: 1 });
+    expect(s.byArm['sub-gate']).toEqual({ withClaim: 0, beatable: 0, notBeatable: 0 });
     expect(s.noClaim).toBe(2);
     // A run with two `not-scored` and a run with two `entry-unmeasured` are in completely different
     // states, and a lump total could not tell them apart.
@@ -361,7 +362,7 @@ describe('grading a claim, out of sample', () => {
     // The measurement is still kept — it is evidence about coverage even when it grades nothing.
     expect(row.outcome).not.toBeNull();
     const { ledger } = mergeGrades(emptyGradeLedger(), [row], NOW_ISO);
-    expect((summariseGrades(ledger) as Record<string, any>).overall).toEqual({ n: 0, hits: 0, rate: null });
+    expect((summariseGrades(ledger) as Record<string, any>).byArm.gate.overall).toEqual({ n: 0, hits: 0, rate: null });
   });
 
   it('names the reading on every row, so an outcome figure can never be pooled with another', () => {
@@ -668,7 +669,7 @@ describe('the loop is idempotent, and a settled grade is never revised', () => {
       NOW_ISO,
     );
     expect(Object.keys(ledger.grades)).toHaveLength(2);
-    expect((summariseGrades(ledger) as Record<string, any>).overall).toEqual({ n: 2, hits: 1, rate: 0.5 });
+    expect((summariseGrades(ledger) as Record<string, any>).byArm.gate.overall).toEqual({ n: 2, hits: 1, rate: 0.5 });
   });
 
   it('never re-offers a settled claim, and a too-soon claim does not advance the retry clock', () => {
@@ -764,12 +765,12 @@ describe('the hit rate, and what is kept out of its denominator', () => {
     ];
     const { ledger } = mergeGrades(emptyGradeLedger(), rows, NOW_ISO);
     const s = summariseGrades(ledger) as Record<string, any>;
-    expect(s.overall).toEqual({ n: 1, hits: 1, rate: 1 });
+    expect(s.byArm.gate.overall).toEqual({ n: 1, hits: 1, rate: 1 });
     expect(s.graded).toBe(1);
     expect(s.ungraded).toBe(2);
     expect(s.ungradedByReason).toEqual({ 'outcome-unmeasured': 1, 'no-post-prediction-launches': 1 });
     // Nothing beatable was ever claimed here, and that reads as no observations — not as 0%.
-    expect(s.byClaim.beatable).toEqual({ n: 0, hits: 0, rate: null });
+    expect(s.byArm.gate.byClaim.beatable).toEqual({ n: 0, hits: 0, rate: null });
     expect(s.caveat).toMatch(/ONLY AS GOOD AS ITS `n`/);
   });
 
@@ -782,9 +783,9 @@ describe('the hit rate, and what is kept out of its denominator', () => {
       gradeOne(claimFixture({ source: 'c.json', claim: 'beatable' }) as never, outcomeFixture('entry-room-absent'), null, NOW_ISO),
     ];
     const s = summariseGrades(mergeGrades(emptyGradeLedger(), rows, NOW_ISO).ledger) as Record<string, any>;
-    expect(s.overall).toEqual({ n: 3, hits: 2, rate: 0.6667 });
-    expect(s.byClaim['not-beatable']).toEqual({ n: 2, hits: 2, rate: 1 });
-    expect(s.byClaim.beatable).toEqual({ n: 1, hits: 0, rate: 0 });
+    expect(s.byArm.gate.overall).toEqual({ n: 3, hits: 2, rate: 0.6667 });
+    expect(s.byArm.gate.byClaim['not-beatable']).toEqual({ n: 2, hits: 2, rate: 1 });
+    expect(s.byArm.gate.byClaim.beatable).toEqual({ n: 1, hits: 0, rate: 0 });
   });
 });
 
@@ -1083,8 +1084,8 @@ describe('the loop closes — a live run, end to end, against a counting stub', 
     expect(report.measured).toBe(1);
     // The screen said not-beatable; out of sample the operation still takes 90 of 100 SOL, so room
     // is 0.1 against a 0.55 bar and the outcome agrees. The loop has scored the screen.
-    expect(report.grades.overall).toEqual({ n: 1, hits: 1, rate: 1 });
-    expect(report.grades.byClaim['not-beatable']).toEqual({ n: 1, hits: 1, rate: 1 });
+    expect(report.grades.byArm.gate.overall).toEqual({ n: 1, hits: 1, rate: 1 });
+    expect(report.grades.byArm.gate.byClaim['not-beatable']).toEqual({ n: 1, hits: 1, rate: 1 });
     // Spend, against the pinned ceilings — counted at the stub, not computed in a comment.
     expect(s.keyed()).toBe(1);
     expect(report.spend.keyed).toBeLessThanOrEqual(F['maxKeyedRequests']!);
@@ -1111,7 +1112,7 @@ describe('the loop closes — a live run, end to end, against a counting stub', 
     expect(second.stubs.keyless()).toBe(0);
     expect(second.report.measured).toBe(0);
     expect(second.report.settled).toBe(1);
-    expect(second.report.grades.overall).toEqual(first.report.grades.overall);
+    expect(second.report.grades.byArm).toEqual(first.report.grades.byArm);
     // And the ledger itself is unchanged apart from its own timestamp.
     const after = readFileSync(join(dir, 'grades.json'), 'utf8');
     expect(JSON.parse(after).grades).toEqual(JSON.parse(before).grades);

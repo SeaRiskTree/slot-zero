@@ -341,8 +341,18 @@ import {
 import {
   ENTRY_PREDICTION_READING,
   ENTRY_PREDICTION_READING_DUNE,
+  buildPredictionBlock,
   entryReadingFor,
+  summarisePredictions,
 } from '../tools/deployer-screen/prediction.mjs';
+// Captain decision 480a: the grader's hit rate is one of the three statistics that must stay per
+// arm, so the anti-pooling block below drives it rather than describing it.
+import {
+  emptyGradeLedger,
+  gradeOne,
+  mergeGrades,
+  summariseGrades,
+} from '../tools/deployer-screen/outcome.mjs';
 
 const GATE = { minTokens: 25, minCompletionRate: 0.25, minSpanDays: 14 };
 
@@ -8232,6 +8242,13 @@ describe('the keyless boundary holds in both directions', () => {
     24: [],
     25: [],
     26: [],
+    // Schema 27 (captain decision 451) adds NO run-level KEY: both of its fields are on the
+    // candidate row, above. What it does change here is the SHAPE of schema 16's `predictions`
+    // block — captain decision 480a split its claim counts by admission arm, so `withClaim`,
+    // `beatable` and `notBeatable` moved under `byArm` and no pooled figure remains. A key-set
+    // table cannot see that, which is why the split is driven behaviourally in the anti-pooling
+    // block below ("480a: the run-level predictions block counts claims PER ARM").
+    27: [],
   };
 
   // The run-level `entrySourceAgreement` block's OWN key set, and `duneSpend` one level below it —
@@ -19757,6 +19774,103 @@ describe('451: the sub-gate arm admits a refused deployer, and the two arms are 
     // never-pool sentence on the block — is asserted on the rendered OUTPUT below, in "reports the
     // two arms apart, in the record and in the rendered report". A source-text proxy for it would
     // pass over dead code and break on a behaviour-preserving rename.
+  });
+
+  const NOW_ISO_480A = '2026-09-02T00:00:00.000Z';
+
+  it('480a: the entry-verdict metric is the GATE arm`s, with a sub-gate sibling and no sum', () => {
+    // THE LEAK 451 LEFT BEHIND. `measuredEntryVerdictCount` keys on `entry`, and at schema 26 that
+    // spans both admitted populations — so a run scoring one gate-arm and two sub-gate candidates
+    // published a single count over two denominators, permanently, in a record never retro-edited.
+    // The NAME stays the gate arm's because a committed predictions document holds this tool to it.
+    const metrics = DERIVED_PREDICTION_METRICS as Record<string, (r: Record<string, unknown>) => number | null>;
+    const measured = (verdict: string) => ({ verdict: 'x', entry: { verdict } });
+    const record = {
+      candidates: [
+        { ...measured('entry-room-absent'), admissionArm: 'gate' },
+        { ...measured('entry-open-after-costs'), admissionArm: 'sub-gate' },
+        { ...measured('entry-room-absent'), admissionArm: 'sub-gate' },
+        // Unmeasured is no answer on either arm, and must count on neither.
+        { ...measured('entry-unmeasured'), admissionArm: 'sub-gate' },
+        // A schema-<=25 row carries NO arm at all, and that reads as the gate arm exactly — nothing
+        // before 26 could admit through the second one.
+        measured('entry-room-absent'),
+      ],
+    };
+    expect(metrics['measuredEntryVerdictCount']!(record)).toBe(2);
+    expect(metrics['subGateMeasuredEntryVerdictCount']!(record)).toBe(2);
+    // And there is no metric that adds them: nothing in the vocabulary reads 4 on this record.
+    for (const [name, fn] of Object.entries(metrics)) {
+      expect(fn(record), `${name} sums the two arms`).not.toBe(4);
+    }
+  });
+
+  it('480a: the run-level predictions block counts claims PER ARM and publishes no pooled figure', () => {
+    // `summarisePredictions` counted `withClaim`/`beatable`/`notBeatable` over every row carrying a
+    // claim — which at schema <=25 was exactly the gate-passed population and at 26 is the union.
+    const claim = (verdict: string) =>
+      buildPredictionBlock({ entry: { verdict }, madeAtIso: '2026-08-11T00:00:00.000Z', gateReading: 'g', thresholdsVersion: null });
+    const s = summarisePredictions([
+      { admissionArm: 'gate', prediction: claim('entry-room-absent') },
+      { admissionArm: 'sub-gate', prediction: claim('entry-open-after-costs') },
+      { admissionArm: 'sub-gate', prediction: claim('entry-room-absent') },
+      // Neither arm admitted this one, so it carries no claim and lands in the no-claim bookkeeping.
+      { admissionArm: null, prediction: claim('entry-unmeasured') },
+    ] as never) as Record<string, any>;
+    expect(s.byArm.gate).toEqual({ withClaim: 1, beatable: 0, notBeatable: 1 });
+    expect(s.byArm['sub-gate']).toEqual({ withClaim: 2, beatable: 1, notBeatable: 1 });
+    expect(s.noClaim).toBe(1);
+    // The pooled figures are GONE rather than kept beside the split — a reader reaching for the old
+    // key must get `undefined` and not a number with two denominators.
+    for (const gone of ['withClaim', 'beatable', 'notBeatable']) expect(s[gone]).toBeUndefined();
+    expect(s.armsAreNeverPooled).toBe(ARMS_ARE_NEVER_POOLED);
+  });
+
+  it('480a: the grader reports a hit rate PER ARM and never one pooled', () => {
+    // A record at schema <=25 carries no `admissionArm`, and its claims are the GATE arm's — exactly,
+    // not by default. A schema-26 sub-gate row is graded into its own denominator.
+    const claim = (over: Record<string, unknown>) => ({
+      source: 'r.json',
+      wallet: 'W',
+      subject: 'entry',
+      claim: 'not-beatable',
+      verdict: 'entry-room-absent',
+      madeAtIso: '2026-08-11T00:00:00.000Z',
+      outOfSampleAfterMs: Date.parse('2026-08-11T00:00:00.000Z'),
+      gateReading: 'creation-derived',
+      entryReading: 'swap-api',
+      thresholdsVersion: null,
+      stage2Entry: {},
+      stage2Cost: {},
+      ...over,
+    });
+    const outcome = (verdict: string) => ({
+      verdict,
+      unmeasuredCause: null,
+      launchesAfterBoundary: 3,
+      launchesScored: 3,
+      measuredAtIso: '2026-09-01T00:00:00.000Z',
+    });
+    const rows = [
+      // Gate arm: one hit, one miss.
+      gradeOne(claim({ source: 'a.json', admissionArm: 'gate' }) as never, outcome('entry-room-absent') as never, null, NOW_ISO_480A),
+      gradeOne(claim({ source: 'b.json', admissionArm: 'gate' }) as never, outcome('entry-open-after-costs') as never, null, NOW_ISO_480A),
+      // Sub-gate arm: one hit.
+      gradeOne(claim({ source: 'c.json', admissionArm: 'sub-gate' }) as never, outcome('entry-room-absent') as never, null, NOW_ISO_480A),
+      // No arm recorded at all — a pre-451 record, and the gate arm's exactly.
+      gradeOne(claim({ source: 'd.json' }) as never, outcome('entry-room-absent') as never, null, NOW_ISO_480A),
+    ];
+    expect(rows.map((r) => r.admissionArm)).toEqual(['gate', 'gate', 'sub-gate', 'gate']);
+    const s = summariseGrades(mergeGrades(emptyGradeLedger(), rows, NOW_ISO_480A).ledger) as Record<string, any>;
+    expect(s.byArm.gate.overall).toEqual({ n: 3, hits: 2, rate: 0.6667 });
+    expect(s.byArm['sub-gate'].overall).toEqual({ n: 1, hits: 1, rate: 1 });
+    // The split by CLAIM composes with the split by arm rather than replacing it.
+    expect(s.byArm['sub-gate'].byClaim['not-beatable']).toEqual({ n: 1, hits: 1, rate: 1 });
+    // No pooled rate survives anywhere in the summary — 4 graded rows and no `n: 4` reading.
+    expect(s.overall).toBeUndefined();
+    expect(s.byClaim).toBeUndefined();
+    expect(JSON.stringify(s)).not.toContain('"n":4');
+    expect(s.armsAreNeverPooled).toBe(ARMS_ARE_NEVER_POOLED);
   });
 
   it('cannot move a spend bound, because no ceiling is a function of who was admitted', () => {

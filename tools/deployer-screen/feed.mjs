@@ -125,6 +125,28 @@ const DEFAULT_RUNS_DIR = join(HERE, 'runs');
  * rather than corrected in place because the two quantities differ by ~250x while both being
  * well-formed request counts, so a reader holding a schema-2 record has nothing in the record itself
  * that would tell them which one they have — a version is exactly how that is said.
+ *
+ * ## SCHEMA 3 NOW HAS TWO MEANINGS AND WAS DELIBERATELY NOT BUMPED — captain decision 481b
+ *
+ * The second admission arm (captain decision 451, `admission.mjs`) landed on this lane without a
+ * version bump, and 481b took that decision AGAINST the recommendation to bump. Three things are
+ * true of it and none may be softened or written as though it had always been so:
+ *
+ * 1. **`held` on the run row and `yield.held` CHANGED MEANING.** Before the arm they counted every
+ *    wallet that failed the gate. They now EXCLUDE the wallets that arm admits, which are filed
+ *    `queued-sub-gate` instead — so `held` is a smaller quantity after the arm than before it, over
+ *    the same population, and a DROP in it across the boundary is a change of RULE and not a change
+ *    of population.
+ * 2. **`queuedSubGate` on the run row and `yield.admittedSubGate` arrived UNVERSIONED.** They exist
+ *    on records written after the arm and are absent on records written before it, at the same
+ *    declared version.
+ * 3. **A consumer reading `schemaVersion: 3` therefore cannot tell from the version alone which
+ *    meaning of those fields it holds.** That is the exact ambiguity a bump exists to remove — the
+ *    one the note above records schema 2 and 3 being spent on — and here it is being accepted rather
+ *    than removed. What a reader can do instead is check whether the record carries `queuedSubGate`
+ *    at all: present means the post-451 meaning, absent means the pre-451 one. That is an inference
+ *    from a field's presence, which is strictly weaker than a version, and it is what this decision
+ *    leaves consumers with.
  */
 export const FEED_RECORD_SCHEMA_VERSION = 3;
 

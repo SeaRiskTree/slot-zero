@@ -1795,8 +1795,8 @@ export function renderDryRun(plan) {
     };
     L.push(
       fromSwapApi
-        ? 'KEYLESS — STAGE 2, the ENTRY score. pump.fun fill tape (swap-api), for gate survivors only:'
-        : `STAGE 2, the ENTRY score. Fill tape from the ${eligibility.kind} source, for gate survivors only:`,
+        ? 'KEYLESS — STAGE 2, the ENTRY score. pump.fun fill tape (swap-api), for ADMITTED candidates only:'
+        : `STAGE 2, the ENTRY score. Fill tape from the ${eligibility.kind} source, for ADMITTED candidates only:`,
     );
     // THE REQUEST LINE BELONGS TO THE SELECTED SOURCE, so it is printed only for the source that
     // makes it. Under the Gate 3 cutover this block described a swap-api walk while Stage 2 read
@@ -1815,8 +1815,14 @@ export function renderDryRun(plan) {
     L.push('  This stage spends NO KEYED REQUEST. The mint list comes from the profile Stage 1 has');
     L.push('  already paid for, so the shared vendor allowance is untouched by everything below.');
     L.push('');
-    L.push(`  survivors scored              up to ${plan.maxScored}  (pinned cap ${t.maxCandidatesScored})`);
-    L.push(`  launches per survivor         up to ${t.maxLaunchesPerCandidate}`);
+    // ADMITTED, not gate-passing: since captain decision 451 this stage scores BOTH ARMS — the
+    // competence gate's survivors and the sub-gate arm's admissions — competing for one cap that
+    // does not move. A plan naming only the gate arm would understate the population it walks.
+    L.push('  The population is every candidate ADMITTED to Stage 2, on EITHER arm — the competence');
+    L.push('  gate\'s survivors and the sub-gate arm\'s admissions (captain decision 451). The cap');
+    L.push('  below is one cap over both; the report keeps the two populations and their counts apart.');
+    L.push(`  admitted scored               up to ${plan.maxScored}  (pinned cap ${t.maxCandidatesScored})`);
+    L.push(`  launches per candidate        up to ${t.maxLaunchesPerCandidate}`);
     L.push(`  requests per launch           up to ${t.maxRequestsPerLaunch}, RETRIES INCLUDED`);
     if (fromSwapApi) {
       L.push(`                                (measured on the swap-api source at this ${windowReachMs(t) / 1000}s reach`);
@@ -2200,8 +2206,10 @@ export function renderDryRun(plan) {
   }
   if (plan.consistency) {
     L.push('');
-    L.push('KEYLESS — a further creator walk for gate survivors, for long-horizon consistency:');
-    L.push(`  up to 3 pages per survivor, so up to ${3 * plan.maxCandidates} if every candidate survives.`);
+    L.push('KEYLESS — a further creator walk for ADMITTED candidates (BOTH ARMS — the competence');
+    L.push('  gate\'s survivors and the sub-gate arm\'s admissions, captain decision 451), for');
+    L.push('  long-horizon consistency:');
+    L.push(`  up to 3 pages per candidate, so up to ${3 * plan.maxCandidates} if every candidate is admitted.`);
   } else {
     L.push('KEYLESS — no consistency pass. Pass --consistency to measure it (no quota cost).');
     L.push('');

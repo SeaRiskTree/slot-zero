@@ -843,13 +843,22 @@ export function render(report, opts) {
   }
   if (!opts.live) lines.push('    DRY RUN — nothing was fetched and nothing was written. --live spends this.');
 
+  lines.push('', '  THE SCREEN\'S OWN HIT RATE, PER ADMISSION ARM');
+  for (const { arm, label } of [
+    { arm: 'gate', label: 'GATE ARM — cleared the competence gate' },
+    { arm: 'sub-gate', label: 'SUB-GATE ARM — failed that gate, measured anyway (451)' },
+  ]) {
+    const a = g.byArm[arm];
+    lines.push(
+      `    ${label}`,
+      `      all claims     ${rate(a.overall)}`,
+      `      said beatable  ${rate(a.byClaim.beatable)}`,
+      `      said not       ${rate(a.byClaim['not-beatable'])}`,
+    );
+  }
   lines.push(
-    '',
-    '  THE SCREEN\'S OWN HIT RATE',
-    `    overall        ${rate(g.overall)}`,
-    `    said beatable  ${rate(g.byClaim.beatable)}`,
-    `    said not       ${rate(g.byClaim['not-beatable'])}`,
     `    ungraded       ${g.ungraded} of ${g.claims} claim(s) in the ledger`,
+    `  ${g.armsAreNeverPooled}`,
   );
   for (const [reason, n] of Object.entries(g.ungradedByReason)) lines.push(`      · ${reason}: ${n}`);
   lines.push('', `  ${g.caveat}`, `  READING: ${g.reading}`);

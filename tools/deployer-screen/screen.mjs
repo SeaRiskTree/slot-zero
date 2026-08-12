@@ -1097,9 +1097,12 @@ OPTIONS
                       tiering on, and the dry-run plan prints the exact enumeration cost.
   --no-stage2         Skip entry scoring. Stage 1 only — the competence gate on its own, which
                       answers nothing about whether a window is enterable.
-  --score <n>         Max gate survivors to score in Stage 2. Cannot exceed the pinned cap.
-  --consistency       Also measure long-horizon consistency for gate survivors, via a keyless
-                      pump.fun creator walk. Costs no MadeOnSol quota.
+  --score <n>         Max ADMITTED candidates to score in Stage 2 — BOTH ARMS, the competence
+                      gate's survivors and the sub-gate arm's admissions (captain decision 451).
+                      One cap over both populations; it does not grow because a second arm exists,
+                      and the run reports what each arm got separately. Cannot exceed the pinned cap.
+  --consistency       Also measure long-horizon consistency for ADMITTED candidates on either arm,
+                      via a keyless pump.fun creator walk. Costs no MadeOnSol quota.
   --ownership-only    Gate on the OWNERSHIP reading alone and skip the creation-derived walk.
                       Fast and free of Solana RPC, and BIASED BOTH WAYS AT ONCE — it rejects
                       through the count bars (20 of 82 clear minTokens+minSpanDays on the
@@ -3085,8 +3088,13 @@ export async function main(opts, env, out, err, seam = {}) {
         out('');
         // THE TWO ARMS ARE COUNTED APART ON THE HEADER LINE, not summed into one "survivors"
         // figure — captain decision 451. The total is stated too, because it is the SPEND's own
-        // denominator (the cap is over both), and it is the only place the two may appear as one
-        // number: it counts what was walked, not what was found.
+        // denominator (the cap is over both): it counts what was walked, not what was found.
+        //
+        // It is not the ONLY place an admitted total appears — `scoringRotation`'s `survivors`,
+        // `order`, `selected` and `neverScoredBefore`, and `scoringCap.survivorsUnscored`, are all
+        // over this same union, because the rotation ALLOCATES the cap across both arms. Those are
+        // allocation figures rather than findings and publish no rate; `record.mjs`'s schema-26 note
+        // owns the consequence for a reader comparing them across the boundary.
         const scoredByArm = (
           /** @type {import('./admission.mjs').AdmissionArm} */ arm,
           /** @type {readonly import('./rank.mjs').Candidate[]} */ rows,

@@ -322,6 +322,25 @@ derivation and everything it does not claim. Three things bind here specifically
   statistic. A schema-1 ledger written before the decision can never carry the value, so its absence
   is unambiguous and no migration is owed.
 
+### The feed RECORD's version was deliberately not bumped — captain decision 481b
+
+`FEED_RECORD_SCHEMA_VERSION` stays **3**. It was recommended that it be bumped and the captain ruled
+against it, so what a bump would have said is said here instead. Do not read the record as though the
+new meaning had always been the meaning:
+
+- **`held` on the run row, and `yield.held`, CHANGED MEANING when this arm landed.** They counted
+  every wallet that failed the gate; they now EXCLUDE the wallets this arm admits, which are filed
+  under `queued-sub-gate`. So `held` is a smaller quantity after the arm than before it over the same
+  population, and a DROP in it across the boundary is a change of RULE, not a change of population.
+- **`queuedSubGate` on the run row and `yield.admittedSubGate` arrived UNVERSIONED** — present on
+  records written after the arm, absent on records written before it, at the same declared version.
+- **A consumer reading `schemaVersion: 3` cannot tell from the version alone which meaning of those
+  fields it holds.** That is precisely the ambiguity schemas 2 and 3 were each spent removing, and
+  here it is accepted rather than removed. The weaker substitute available to a reader is to check
+  whether the record carries `queuedSubGate` at all: present ⇒ the post-451 meaning, absent ⇒ the
+  pre-451 one. That is an inference from a field's presence and not a version, and it is what this
+  decision leaves consumers with. `feed.mjs` → `FEED_RECORD_SCHEMA_VERSION` carries the same note.
+
 ## Known gap: the two lanes are joined by a file, not by code
 
 **The screen now takes a wallet list** — `--wallets <file>`, captain decision 398a — which gates the

@@ -908,6 +908,21 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   last launch) and THE BOUNDS IT WAS JUDGED UNDER — the arm is sized against a population, so a
  *   record that quoted only today's `thresholds.json` could not say what a past run applied.
  *
+ * **SIX FIELDS CHANGED POPULATION AT THIS VERSION WITHOUT CHANGING NAME OR SHAPE, and they are the
+ * ones a reader will otherwise misread.** Stage 2 now walks whoever EITHER arm admitted, so
+ * `scoringRotation.survivors`, `scoringRotation.order`, `scoringRotation.selected`,
+ * `scoringRotation.neverScoredBefore` and `scoringCap.survivorsUnscored` are over the ADMITTED
+ * UNION at 27 where they were over `verdict === 'gate-passed'` ALONE at ≤26. Their KEY SETS are
+ * untouched (`ROTATION_BLOCK_KEYS_BY_SCHEMA[27]` equals `[26]`), which is exactly why the change is
+ * easy to miss: a rise in `survivors` or `survivorsUnscored` across this boundary may be the second
+ * arm rather than a larger gate population, and reading it as the latter is the misreading. **They
+ * are not a breach of the never-pool rule** — the rotation ALLOCATES a cap over both arms and
+ * publishes no rate — and the split stays recoverable, because every row of `order` names a wallet
+ * whose candidate row carries `admissionArm`, so a reader can partition the order list by arm. The
+ * run-level `predictions` block is split by arm at source (`prediction.mjs` →
+ * `summarisePredictions` reports `byArm`) and carries no pooled `withClaim` / `beatable` /
+ * `notBeatable`, captain decision 480a.
+ *
  * **Every other measured field is the same quantity at 26 and 27 and may be pooled** — no bar
  * moved, `stage1_gate.minCompletionRate` is still 0.25 and Stage 2's ceilings are untouched, since
  * none of them is a function of how many candidates were ADMITTED. **What may never be pooled is
@@ -1029,15 +1044,49 @@ export const DERIVED_PREDICTION_METRICS = {
     median(vendorMinusGate(candidatesOf(r).filter((c) => c['verdict'] === 'gate-passed'))),
   /** Candidates the two readings disagreed about — the size of what the gate reading changed. */
   verdictChangedCount: (r) => candidatesOf(r).filter((c) => c['verdictChanged'] === true).length,
-  /** Scored candidates carrying a MEASURED entry verdict. `entry-unmeasured` is no answer, never one. */
-  measuredEntryVerdictCount: (r) =>
-    candidatesOf(r).filter((c) => {
-      const e = c['entry'];
-      if (typeof e !== 'object' || e === null) return false;
-      const v = /** @type {Record<string, unknown>} */ (e)['verdict'];
-      return typeof v === 'string' && v !== 'entry-unmeasured';
-    }).length,
+  /**
+   * Scored candidates carrying a MEASURED entry verdict. `entry-unmeasured` is no answer, never one.
+   *
+   * **THE GATE ARM'S ONLY, despite the name, and the name is deliberately not changed** — captain
+   * decision 480a, the same reasoning as `admittedMedianVendorMinusGateRate` above. It predates
+   * captain decision 451's second arm, and a metric name is a contract a committed predictions
+   * document holds this tool to, so renaming it would silently invalidate documents written against
+   * it. `subGateMeasuredEntryVerdictCount` below is the second arm's, and there is deliberately no
+   * metric that sums the two.
+   */
+  measuredEntryVerdictCount: (r) => measuredEntryVerdicts(r, 'gate'),
+  /**
+   * The same count over the SECOND ADMISSION ARM — captain decision 451, split out by 480a.
+   *
+   * Reads 0 on every schema-≤25 record, which is exact rather than a default: nothing before 26
+   * could admit through this arm, so a row carrying no `admissionArm` is the gate arm's and never an
+   * unknown one.
+   */
+  subGateMeasuredEntryVerdictCount: (r) => measuredEntryVerdicts(r, 'sub-gate'),
 };
+
+/**
+ * Candidates of ONE admission arm whose `entry` block carries a measured verdict.
+ *
+ * Written once and taken twice rather than as two filters, so the two arms' counts cannot drift into
+ * measuring different things — which is the failure a split by arm exists to prevent.
+ *
+ * @param {Record<string, unknown>} record
+ * @param {'gate' | 'sub-gate'} arm
+ * @returns {number}
+ */
+function measuredEntryVerdicts(record, arm) {
+  return candidatesOf(record).filter((c) => {
+    // An ABSENT `admissionArm` is the gate arm, exactly (see the metric docs above), so the
+    // comparison is against `'sub-gate'` alone rather than against both spellings.
+    const rowArm = c['admissionArm'] === 'sub-gate' ? 'sub-gate' : 'gate';
+    if (rowArm !== arm) return false;
+    const e = c['entry'];
+    if (typeof e !== 'object' || e === null) return false;
+    const v = /** @type {Record<string, unknown>} */ (e)['verdict'];
+    return typeof v === 'string' && v !== 'entry-unmeasured';
+  }).length;
+}
 
 /** @param {Record<string, unknown>} record @returns {Record<string, unknown>[]} */
 function candidatesOf(record) {

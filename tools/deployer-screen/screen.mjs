@@ -3030,11 +3030,19 @@ export async function main(opts, env, out, err, seam = {}) {
       // `test/deployer-screen.test.ts` precisely so a third caller cannot quietly build a statistic
       // over two populations with two denominators. Every count below this line is still per arm.
       //
-      // It does not widen the spend by a request: `maxScored` is unmoved (captain decision 339a) and
-      // Stage 2's keyless ceiling is `maxCandidatesScored` x `maxLaunchesPerCandidate` x
-      // `maxRequestsPerLaunch`, none of which is a function of how many candidates were admitted. On
-      // the last real run the cap was not even reached — 4 survivors against 7 slots — so what the
-      // second arm buys first is idle capacity.
+      // IT WIDENS NO SPEND BOUND AND IT IS NOT FREE, and those are two different claims. No request,
+      // credit or wall-clock ceiling moves: `maxScored` is unmoved (captain decision 339a) and Stage
+      // 2's keyless ceiling is `maxCandidatesScored` x `maxLaunchesPerCandidate` x
+      // `maxRequestsPerLaunch`, none of which is a function of how many candidates were admitted.
+      //
+      // What it DOES cost is SCORING SLOTS. On the committed `runs/2026-08-04.json` the arm takes
+      // the admitted population from 4 to 12 against a cap of 7, so at today's pins the cap BINDS
+      // where it did not and 5 admitted candidates go unscored. And the displacement is ARM-BLIND:
+      // this filter runs in gate-loop/seed order (`rankCandidates` is not called until the record is
+      // built) and `compareRotationRows` reads only flow and recency, so a gate-arm survivor can
+      // lose its slot to a sub-gate admission. Whether the cap should be reserved or split per arm,
+      // or raised, is OPEN and the captain's — `thresholds.json` ->
+      // `stage1_gate.justification.subGateAdmission` records the question.
       const survivors = candidates.filter((c) => admittedToStage2(c.verdict));
       // **WHICH survivors the cap is spent on — captain decisions 336a and 399a.** It used to be
       // `survivors.slice(0, maxScored)`: the first seven in `mergeSeeds` order, which is

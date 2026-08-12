@@ -20168,12 +20168,29 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
     expect(armOf(refusing.record)).toBe('gate-failed');
 
     // Keys that differ between ANY two runs of this tool, for reasons that have nothing to do with
-    // the arm: wall-clock instants, elapsed time, and the rotation-state digests derived from them.
-    // Excluded by name so the pin below is about POPULATION and not about time.
-    const VOLATILE = new Set(['startedAtIso', 'finishedAtIso', 'elapsedMs', 'scoringRotation']);
+    // the arm: wall-clock instants and elapsed time. Excluded by name so the pin below is about
+    // POPULATION and not about time.
+    //
+    // `scoringRotation` is NOT excluded — it was, and that was the defect: it is the FIRST block the
+    // widened-field enumeration was found to have missed and it holds five of the listed fields, so
+    // a guard that skipped it could not fail on the very thing it was built for. It is compared
+    // field by field instead, with only its genuinely non-deterministic members dropped BY NAME
+    // below, each of which is a hash or an instant rather than a population.
+    const VOLATILE = new Set(['startedAtIso', 'finishedAtIso', 'elapsedMs']);
+    // `scoredAtIso` is the run's own instant; the two digests are SHA-256 over bytes that embed it.
+    // Nothing here is derived from who was admitted, so dropping them removes noise and no signal.
+    const ROTATION_NON_DETERMINISTIC = new Set(['scoredAtIso', 'stateDigestBefore', 'stateDigestAfter']);
+    const stripRotation = (block: unknown) =>
+      block === null || typeof block !== 'object'
+        ? block
+        : Object.fromEntries(
+            Object.entries(block as Record<string, unknown>).filter(([k]) => !ROTATION_NON_DETERMINISTIC.has(k)),
+          );
+    const comparable = (record: Record<string, any>, key: string) =>
+      JSON.stringify(key === 'scoringRotation' ? stripRotation(record[key]) : record[key]);
     const moved = Object.keys(admitting.record)
       .filter((k) => !VOLATILE.has(k))
-      .filter((k) => JSON.stringify(admitting.record[k]) !== JSON.stringify(refusing.record[k]))
+      .filter((k) => comparable(admitting.record, k) !== comparable(refusing.record, k))
       .sort();
 
     // EXACTLY these, and every one is named in `record.mjs`'s schema-26 note:
@@ -20182,6 +20199,7 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
     //   entryDrops            the walk's own tally, over whatever it walked.
     //   keylessRequests       what the run SPENT, on the population it scored.
     //   keylessRequestsStage2 the same, scoped to the stage that does the walking.
+    //   scoringRotation       survivors/order/selected/neverScoredBefore, over the admitted union.
     //   dune                  NOT a population widening: the counterfactual moves this wallet's
     //                         completion RATE, and the rate comes from the enumeration, so its
     //                         result bytes necessarily differ. Pinned rather than excluded so the
@@ -20193,14 +20211,24 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
       'keylessRequests',
       'keylessRequestsStage2',
       'predictions',
+      'scoringRotation',
     ]);
+
+    // AND THE ROTATION BLOCK MOVES FOR THE DOCUMENTED REASON rather than incidentally: the admitted
+    // union is one wallet larger, so the ranked order the cap is spent over is one row longer. This
+    // is the assertion the whole-block exclusion used to hide.
+    expect(admitting.record['scoringRotation'].survivors).toBe(2);
+    expect(refusing.record['scoringRotation'].survivors).toBe(1);
+    expect(admitting.record['scoringRotation'].order.map((r: Record<string, any>) => r['wallet'])).toContain(SUBGATE);
+    expect(refusing.record['scoringRotation'].order.map((r: Record<string, any>) => r['wallet'])).not.toContain(SUBGATE);
 
     // WHAT THIS FIXTURE CANNOT REACH, stated so the pin is not read as the whole enumeration:
     // `keylessShed` (nothing sheds here), `rpcRequests` / `rpcLoadShedEvents` (the cost leg never
     // runs — room refuses first), `scoringCap.survivorsUnscored` (2 candidates against a cap of 7,
-    // so no shortfall), `truncationReason` (null for the same reason) and `entrySourceAgreement`
-    // (the mode is unactivated). All five are documented as widened; none moves on two candidates
-    // and one refused window each, so a regression confined to them would pass here.
+    // so no shortfall — the cap binds on a real run, not on this one), `truncationReason` (null for
+    // the same reason) and `entrySourceAgreement` (the mode is unactivated). All five are documented
+    // as widened; none moves on two candidates and one refused window each, so a regression confined
+    // to them would pass here.
     expect(admitting.record['scoringCap'].survivorsUnscored).toBe(0);
     expect(admitting.record['truncationReason']).toBeNull();
 

@@ -1856,12 +1856,22 @@ Seven things bind:
   CHECK and not the derivation**: the rule admits four of them and refuses two (rates 0.018 and
   0.036), and the lever for that decile is a measurement of pass rate by sub-gate rate decile — not a
   floor lowered to catch wallets already known to have passed.
-- **IT COSTS NOTHING IN EVERY CURRENCY, STRUCTURALLY.** No ceiling in this tool is a function of how
-  many candidates were ADMITTED — Stage 2's keyless ceiling is `maxCandidatesScored` ×
+- **IT BUYS NO VENDOR CALL, STRUCTURALLY — AND IT IS NOT FREE. Two claims, and only the first
+  survives.** No request, credit or wall-clock ceiling in this tool is a function of how many
+  candidates were ADMITTED — Stage 2's keyless ceiling is `maxCandidatesScored` ×
   `maxLaunchesPerCandidate` × `maxRequestsPerLaunch` and the cost leg's is per candidate SCORED — and
-  `maxCandidatesScored` does not move (339a). It changes WHICH candidates compete for a cap that does
-  not move (336a/399a's shape), and on the last real run the cap was not even reached: 4 survivors
-  against 7 slots.
+  `maxCandidatesScored` does not move (339a). **What it DOES cost is SCORING SLOTS, and they were not
+  idle**: on the committed `runs/2026-08-04.json` the arm takes the admitted population from **4 to
+  12 against a cap of 7**, so at today's pins the cap BINDS where it did not, 5 admitted candidates
+  go unscored, and `scoringCap.survivorsUnscored` reads 5 where the gate arm alone left 0. **The
+  displacement is ARM-BLIND**: `screen.mjs` filters in gate-loop/seed order (`rankCandidates` runs
+  only when the record is built) and `rotation.mjs` → `compareRotationRows` ranks on flow and
+  recency without reading the arm, and the sub-gate population is high-tempo by construction (median
+  12.27 launches/day there), so the rows tie at the saturated flow term and the slots go by seed
+  order — **a gate-arm survivor can lose its slot to a sub-gate admission.** Whether the cap should
+  be RESERVED or SPLIT per arm, or raised, is **OPEN and the captain's** (as 336a, 399a and 339a
+  were); `thresholds.json` → `stage1_gate.justification.subGateAdmission` records the question and
+  this lane does not answer it.
 - **THE TWO ARMS ARE TWO POPULATIONS AND ARE NEVER POOLED.** `sub-gate-admitted` is a fourth
   **verdict value** rather than a flag, so nothing already counting `gate-passed` picks these up and
   nothing filing `gate-failed` buries them; `admissionArm` is on every candidate row; the rendered

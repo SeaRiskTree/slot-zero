@@ -945,8 +945,13 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  * documented run-level fields", which runs the screen twice over the SAME wallet — admitted by the
  * second arm once, refused by its inflow floor once — and pins the SET of run-level keys whose
  * value differs. A new field over the scored set moves in that diff and fails the pin until it is
- * listed here. **Its reach is a SUBSET of this list and the test says which**: on two candidates
- * and one refused window each, `keylessShed`, `rpcRequests`, `rpcLoadShedEvents`,
+ * listed here. **`scoringRotation` is INSIDE that pin, compared field by field** — it is the first
+ * block this enumeration was found to have missed and it holds five of the fields above, so a guard
+ * that skipped it could not fail on what it was built for; only `scoredAtIso` and the two state
+ * digests are dropped, each an instant or a hash over one rather than a population.
+ *
+ * **Its reach is still a SUBSET of this list and the test says which**: on two candidates and one
+ * refused window each, `keylessShed`, `rpcRequests`, `rpcLoadShedEvents`,
  * `scoringCap.survivorsUnscored`, `truncationReason` and `entrySourceAgreement` do not move at all,
  * so a regression confined to them passes. Nothing expressible closes that gap — a field can only
  * be observed to widen where the fixture makes it non-zero — and stating the residue is why this

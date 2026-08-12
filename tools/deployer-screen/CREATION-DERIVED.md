@@ -772,3 +772,19 @@ only the columns the tool reads and aggregating server-side is the opposite of t
 their own fair-use text calls acceptable. Neither document addresses caching or derived data, so the
 `derive and discard` posture applied to MadeOnSol applies here unchanged: per-launch rows live in
 memory for one run, only derived counts are written, and only with `--out`.
+
+**THAT LAST CLAUSE IS NOW CONDITIONAL, UNDER CAPTAIN DECISION 457a, AND IS CORRECTED HERE RATHER
+THAN LEFT STANDING.** A run given `--launch-list` writes this leg's per-launch rows — deployer, mint, creation instant,
+whether the curve completed, the deployer's total, the mayhem flag — to
+`<data root>/screen-launch-lists/`, as the launch list `tools/arrival-rate-walk/` reads
+(`launch-list.mjs` owns it; the README section "The launch list this run leaves behind" owns the
+operator's half). **The ToS reading above is unchanged and the reasons are worth stating rather than
+assuming.** Those six columns are chain facts, obtainable keylessly from the chain and not
+proprietary to Dune; nothing about the vendor — its monthly counts, its credit balance, its result
+metadata — is persisted; the file is written OUTSIDE this repository and is never committed, so no
+public git history accumulates it; the sentence above records that neither document addresses caching
+or derived data at all; and the file exists to REMOVE an execution the arrival-rate lane would
+otherwise need, so it lowers this account's load on the vendor rather than raising it. What is
+genuinely different is the posture, not the argument — the same shape captain decision 459 recorded
+for entrant addresses one stage over. The write is **opt-in**, exactly as `--out` is and on the same
+retention grounds rather than on cost grounds: it reaches no vendor either way.

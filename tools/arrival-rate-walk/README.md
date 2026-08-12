@@ -12,8 +12,11 @@ deployers, over seven months each.** Captain decision 154d authorised it; decisi
 its shape.
 
 **It is keyless throughout.** Its credential allow-list is empty and `test/arrival-rate-walk.test.ts`
-enforces that, so the collector — which runs for days — structurally cannot spend money. The lane's
-only metered spend is **two Dune executions the operator issues by hand**, both statements committed.
+enforces that, so the collector — which runs for days — structurally cannot spend money. Two Dune
+executions stand behind a whole collection and **neither is issued from here**: the cohort's is
+`tools/creation-census/`'s, and since captain decision 457a the launch list is a **by-product of a
+deployer-screen run** rather than a statement anybody executes for this lane. Both statements are
+committed; the count is unchanged and what moved is who issues the second one and under whose budget.
 
 ---
 
@@ -107,8 +110,10 @@ node tools/arrival-rate-walk/collect.mjs --phase preflight --out <dir> --launch-
 **Result, 2026-08-03: the two clocks agree exactly on 12 of 12 launches spread across the committed
 tape's whole range.** Twelve keyless requests, all answered 200. `preflight-2026-08-03.md` holds the
 sample, the spend and the limits — chiefly that leg A infers Dune's column from its schema, while
-**leg B reads that column directly, costs no request and no execution, and has not run** because the
-launch-list export does not exist yet. Run leg B before the collection.
+**leg B reads that column directly, costs no request and no execution, and has not run** because no
+launch-list export has been produced yet. Since captain decision 457a there is a route to one that
+costs this lane nothing — a deployer-screen run over the cohort, see "Where the launch list comes
+from" below — so leg B is now reachable rather than blocked. Run it before the collection.
 
 The CLI exits **2** on a failing pre-flight. A collection is days long and this failure is silent.
 
@@ -117,24 +122,82 @@ The CLI exits **2** on a failing pre-flight. A collection is days long and this 
 ## Running it
 
 ```bash
-# 1. Two Dune executions. cohort.mjs commits both statements; neither runs from this directory.
-#    COHORT_SQL -> the January cohort, saved query 8214953, run by the census tool (see below):
+# 1. The cohort. One Dune execution, run by the census tool — nothing executes from this directory.
 node tools/creation-census/run.mjs --month 2026-01 --min-launches 20 --max-rows 2000 --live
-#    deployer-screen's CREATION_SQL, saved query 8204672, unchanged, with {{deployers}} = the cohort
-#    (still by hand — no tool in this repository drives it yet)
 
-# 2. Cost the run. Issues NOTHING.
-node tools/arrival-rate-walk/collect.mjs --phase plan --cohort <file> --launch-list <file>
+# 2. The launch list, as a BY-PRODUCT of a deployer-screen run over that cohort (decision 457a).
+#    The screen gates the wallets it is given; the launch list falls out of the enumeration it was
+#    going to do anyway. No execution belongs to this lane and none is added for it.
+node tools/deployer-screen/screen.mjs --wallets <cohort-wallets.txt> --no-stage2 \\
+    --launch-list --out <record>
 
-# 3. Collect. Checkpoints every launch; re-running resumes.
-node tools/arrival-rate-walk/collect.mjs --phase walk --launch-list <file> --out <dir> [--dry-run]
+# 3. Cost the run. Issues NOTHING.
+node tools/arrival-rate-walk/collect.mjs --phase plan --cohort <file> \
+    --launch-list <file|dir> --launch-list-max-age-days <n>
 
-# 4. Derive both series and the windows. Offline.
+# 4. Collect. Checkpoints every launch; re-running resumes.
+node tools/arrival-rate-walk/collect.mjs --phase walk \
+    --launch-list <file|dir> --launch-list-max-age-days <n> --out <dir> [--dry-run]
+
+# 5. Derive both series and the windows. Offline.
 node tools/arrival-rate-walk/collect.mjs --phase series --out <dir>
 ```
 
-Both Dune results may be handed over as the API's JSON envelope, a bare row array, or the browser's
-CSV export — whichever the operator produced.
+A cohort export may be handed over as the API's JSON envelope, a bare row array, or the browser's CSV
+export — whichever the operator produced. `--launch-list` takes the same three for a raw export, or
+the screen's by-product, or a DIRECTORY of by-products, in which case the newest is read.
+
+### Where the launch list comes from, and why not from here
+
+**This lane cannot fetch one, by construction.** It is keyless throughout, its credential allow-list
+is empty and `test/arrival-rate-walk.test.ts` enforces both. PR 87 / decision 437a then required a
+lane budget on every code path that spends a Dune credit, which left this leg with no guarded
+execution path at all — it could not run. **Captain decision 457a closed that by having the deployer
+screen's already-approved enumeration leg (`dune.mjs` → `enumerateCreations`) write its rows down**
+rather than discard them, and by keeping this lane a reader of a file. The alternative — a second
+guarded caller here — is the option the captain did not choose, and `test/launch-list-handover.test.ts`
+is what keeps the implementation on the side that was chosen.
+
+The by-product goes to `<data root>/screen-launch-lists/`, off-tree for the same reason `--out` is
+(`config/data-root.mjs` owns the location), and `--launch-list` is what asks for it — **opt-in, on
+retention grounds rather than cost grounds**, since the rows are already in the screen's memory when
+it writes them and the write reaches no vendor. It costs **zero** in every currency.
+
+`--wallets` (captain decision 398a) is what points the screen at THIS lane's cohort, and it matters
+that the seed survives it: enumeration happens before the gate reads anything, so **a cohort wallet
+the screen's own competence gate fails still has its launches enumerated** and decision 165b's
+"take the month whole, no filter on success" is not narrowed by the screen's bar. What the list does
+narrow on is our own coverage — a wallet the screen could not vouch for, which is a refusal below.
+
+### The staleness rule, and what an absent list does
+
+`launch-list.mjs` → `LAUNCH_LIST_STALENESS_RULE` is the text and it travels into `plan.json`. Cite it
+rather than restating it; the shape is:
+
+- **`generatedAtIso` is the observation ceiling.** Nothing after it was looked for, so a deployer that
+  appears to have gone quiet at the ceiling may simply be beyond the list's reach. `arrival.mjs`
+  measures observation from the first to the last MEASURED launch rather than from a wall clock, so an
+  old list yields a **shorter** observation rather than the same one over fewer launches — but the
+  last segment of every deployer is then censored by OUR file's age rather than by the deployer's
+  behaviour, and nothing in the series itself can tell those apart.
+- **The age is reported on every read**, and a list generated after the reading clock is REFUSED
+  rather than given a negative age.
+- **Past a maximum age the run STATES, the list is refused.** `--launch-list-max-age-days` is
+  required for a by-product and **no default is pinned**: nothing measured here says how fast a
+  screened deployer population goes stale, and a default would be a pin nobody chose. What the run
+  applied is recorded in `plan.json` beside the result.
+- **An absent or empty handover directory refuses**, with a sentence naming the screen invocation
+  that fills it. `--launch-list` itself is still REQUIRED and is deliberately not defaulted to the
+  handover directory: it names the POPULATION this run measures, and a walk that picked up whichever
+  list happened to be newest would choose its own population silently.
+
+Three refusals come from the screen's own reading of its answer and are adopted whole, because a list
+that cannot vouch for itself is not a shorter list: a **failed enumeration leg**, an **unreadable
+row** anywhere in the batch (which refuses the batch there, for the reason `parseCreationRows`
+gives), and a **coverage probe that would not vouch for the create surfaces**. A fourth is
+per-deployer: a wallet the screen marked `usable: false` — a capped prefix, a history reaching
+outside the probed coverage — refuses the plan **only where this run means to walk it**, since one
+screen batch is not this lane's cohort.
 
 ### Bounds
 
@@ -149,7 +212,7 @@ backs this, and here is what would"* is an acceptable reason — inventing an an
 | per run | **20,000 attempts**, ~22 h of wall clock; the collector checkpoints, so this stops a run rather than losing one |
 | per deployer | **600 launches**, above which the deployer is **refused from the plan rather than truncated** |
 | pre-flight | **12 launches, 3 attempts each, 60 requests** |
-| Dune | **2 executions, ~15 credits** of a 2,500/month free tier |
+| Dune | **2 executions, ~15 credits** of a 2,500/month free tier — one the census tool's, one a deployer-screen run's, **none this directory's** |
 
 **Credits are not the binding constraint here; wall clock is.** A 15-deployer cohort at ~140 launches
 each is ~2,100 launches, which at the measured p50 of 4 pages is ~8,400 requests and **days** of paced
@@ -190,9 +253,9 @@ The census tool's **default month is 2026-07, not this lane's 2026-01** — disc
 that are screenable today, a walk wants forward observation time — so this lane's month is passed
 explicitly, as above. One census month is one execution.
 
-Everything else in the lane is deployed and exercised: the launch-list leg reuses the screen's
-existing saved query `8204672` **unchanged**, and the walk, the series and the arrival measurement are
-proven on a bounded sample (below).
+Everything else in the lane is deployed and exercised: the launch list comes off the screen's own
+enumeration of that same saved query `8204672`, **unchanged**, and the walk, the series and the
+arrival measurement are proven on a bounded sample (below).
 
 **Deploying the committed SQL is half a change.** If `COHORT_SQL` is edited here, the saved query must
 be updated in place in the same commit, and whatever executes it must compare the two first — exactly

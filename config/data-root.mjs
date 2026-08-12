@@ -111,6 +111,25 @@ export const GRADUATED_LIFE_TAPE = 'graduated-life-tape-2026-08-02';
 export const DATASETS = Object.freeze([POPULATION_TAPE, GRADUATED_LIFE_TAPE]);
 
 /**
+ * Where the deployer screen leaves the launch lists it produces as a by-product, and where the
+ * arrival-rate walk looks for them. Captain decision 457a.
+ *
+ * **It is a HANDOVER DIRECTORY, not a dataset, and the difference is deliberate.** It is absent from
+ * {@link DATASETS}, so nothing verifies it against a manifest, `datasetDir` refuses it by name and
+ * {@link requireDataset} will not vouch for it — a launch list is a run's own output, written by one
+ * lane and read by another, not part of the published store. What it shares with the datasets is the
+ * only thing that matters here: **it is OUT of the tree.** A screen run's enumeration answer is
+ * thousands of rows per candidate, and a multi-megabyte file per run written into the repository
+ * grows back exactly what dry dock phase C removed — the same reason
+ * `tools/arrival-rate-walk/collect.mjs` puts its `--out` in the store.
+ *
+ * It lives here rather than in either tool because **neither tool may import the other** (both
+ * boundaries are asserted in both directions), so a copy in each is a path free to be corrected in
+ * one and forgotten in the other. That is this module's whole job: ask it, never compose a path.
+ */
+export const SCREEN_LAUNCH_LIST_DIRNAME = 'screen-launch-lists';
+
+/**
  * Expand a leading `~/` (or a bare `~`) against this account's home directory.
  *
  * Only that form. `~other` is somebody else's home in shell syntax and a literal directory name
@@ -189,6 +208,21 @@ export function datasetDir(dataset, env = process.env) {
     throw new Error(`unknown dataset '${dataset}': this root holds ${DATASETS.join(' and ')}`);
   }
   return join(resolveDataRoot(env), dataset);
+}
+
+/**
+ * The launch-list handover directory inside the resolved root.
+ *
+ * Deliberately NOT `datasetDir`: {@link SCREEN_LAUNCH_LIST_DIRNAME} is not a dataset, so it gets no
+ * manifest check and no {@link requireDataset} guarantee. **The directory is not checked for
+ * existence here** — the writer creates it and the reader reports its absence as the refusal it is,
+ * which for a handover is the useful message rather than "fetch the release asset".
+ *
+ * @param {Record<string, string | undefined>} [env]
+ * @returns {string}
+ */
+export function screenLaunchListDir(env = process.env) {
+  return join(resolveDataRoot(env), SCREEN_LAUNCH_LIST_DIRNAME);
 }
 
 /** The population tape's directory, wherever the root points. */

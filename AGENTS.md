@@ -122,8 +122,10 @@ a read it cannot resolve to a name fails the guard rather than passing as nothin
 doc owns that bound; cite it rather than restating it.
 
 - **Ask it; never compose a path.** `POPULATION_TAPE_DIR` / `GRADUATED_LIFE_TAPE_DIR` for the two
-  datasets, `datasetDir(name)` for either, `requireDataset(name, dir)` at the point a reader opens
-  its FIRST file — that last one is what turns "there is no data here" into a sentence naming what
+  datasets, `datasetDir(name)` for either, `screenLaunchListDir()` for the ONE non-dataset it owns —
+  the launch-list handover directory captain decision 457a added, deliberately absent from
+  `DATASETS` so no manifest check or `requireDataset` guarantee attaches to a run's own output —
+  `requireDataset(name, dir)` at the point a reader opens its FIRST file — that last one is what turns "there is no data here" into a sentence naming what
   is missing, where it was looked for and how to point elsewhere, instead of an `ENOENT` five
   directories down. A test scans `src/`, `analysis/`, `tools/` and `test/` for a dataset name in
   executable text and fails on a new one; its allow-list holds exactly one entry, and it is a
@@ -382,16 +384,36 @@ Five things bind anything that touches it or copies from it:
   inside a bounded window and the loss falls on late entrants. `ALL_ENTRANT_FLOOR_CAVEAT` reaches the
   row, the CSV column name and the record. Persisting fills preserves the option; it does not repair
   the data.
-- **The lane is still keyless, and its cohort SQL is now DEPLOYED — executed from OUTSIDE this
-  directory.** `cohort.mjs` → `COHORT_SQL` is saved Dune query `8214953` (captain decision 187a) and
-  `bounds.json` → `dune.cohortQueryId` pins it, but this directory's credential allow-list is empty
-  and a test enforces that, so it cannot execute its own statement: `tools/creation-census/` is the
-  keyed half that does — see `tools/creation-census/README.md`. **The slot-exhaustion reason once
-  recorded here was false** — see the Dune section's "10 PRIVATE
-  QUERIES" entry for how to re-check the count. The launch-list leg reuses the screen's existing
-  `8204672` **unchanged**. Everything else is proven on a bounded sample: 5/5 create slots and exact
-  fill counts against the committed tape (25 requests, 0 shed), and `arrival.mjs` reproduces §4.1's
-  break dates, §4.3's three regimes and §5's 82.7-day window offline.
+- **The lane is still keyless, and BOTH its Dune statements are executed from OUTSIDE this
+  directory — the second one is now a BY-PRODUCT nobody executes for it.** `cohort.mjs` →
+  `COHORT_SQL` is saved Dune query `8214953` (captain decision 187a) and `bounds.json` →
+  `dune.cohortQueryId` pins it, but this directory's credential allow-list is empty and a test
+  enforces that, so it cannot execute its own statement: `tools/creation-census/` is the keyed half
+  that does. **The slot-exhaustion reason once recorded here was false** — see the Dune section's
+  "10 PRIVATE QUERIES" entry for how to re-check the count. **THE LAUNCH-LIST LEG HAD NO GUARDED
+  EXECUTION PATH AT ALL AFTER PR 87 / DECISION 437a, AND CAPTAIN DECISION 457a CLOSED THAT WITHOUT
+  GIVING AN UNKEYED LANE A KEYED ONE**: the deployer screen's Stage 1 enumeration of `8204672`
+  (**unchanged**) writes its parsed rows to `<data root>/screen-launch-lists/` as a by-product under
+  `--launch-list`, and this lane READS that file. `tools/deployer-screen/launch-list.mjs` is the writer,
+  `tools/arrival-rate-walk/launch-list.mjs` the reader, `test/launch-list-handover.test.ts` pins the
+  two copies of the envelope contract and asserts a run that writes it issues exactly the requests a
+  run that does not. **Five things bind.** It costs **zero** in every currency — the rows
+  are already in memory and the write reaches no vendor — and it **gates nothing**, so
+  `RECORD_SCHEMA_VERSION` is deliberately unmoved; the flag is **opt-in on RETENTION grounds, exactly
+  as `--out` is**, not because it spends. **`--wallets` (398a) is what points the screen at
+  a cohort**, and enumeration precedes the gate, so a wallet that FAILS the competence gate still has
+  its launches enumerated and decision 165b's whole-month seed is not narrowed by the screen's bar.
+  **`generatedAtIso` is the OBSERVATION CEILING**, the age is reported on every read, a future
+  instant is refused rather than given a negative age, and past a maximum age the run STATES
+  (`--launch-list-max-age-days`) the list is refused — **no maximum is pinned, because nothing
+  measured says how fast this population goes stale and a default is a pin nobody chose.** **An
+  absent or empty handover directory REFUSES**, and `--launch-list` is still required rather than
+  defaulted to that directory, because it names the POPULATION a run measures. And the **retention
+  posture moved while the ToS argument did not** — per-launch rows are no longer discarded;
+  `CREATION-DERIVED.md` §8.7 and the screen README's "Retention" own the correction. Everything else
+  is proven on a bounded sample: 5/5 create slots and exact fill counts against the committed tape
+  (25 requests, 0 shed), and `arrival.mjs` reproduces §4.1's break dates, §4.3's three regimes and
+  §5's 82.7-day window offline.
 
 ## pump.fun / Solana provider facts
 

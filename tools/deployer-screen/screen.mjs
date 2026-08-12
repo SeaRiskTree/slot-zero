@@ -62,6 +62,7 @@ import {
   walkFallbackRefusalReason,
   walkFallbackReasons,
 } from './dune.mjs';
+import { buildLaunchListDocument, screenLaunchListDir, writeLaunchListDocument } from './launch-list.mjs';
 import { measureCompletion, toTokenRecords } from './measure.mjs';
 import { buildPredictionBlock, summarisePredictions } from './prediction.mjs';
 import {
@@ -1160,6 +1161,13 @@ OPTIONS
   --no-rotation       Take the head of the survivor list, exactly as every run before 336a did, and
                       read and write no state. The record still carries a scoringRotation block
                       saying rotation was off, so a stateless run is never mistaken for a rotated one.
+  --launch-list [dir] Write the launch list the Dune enumeration leg already produced, for
+                      tools/arrival-rate-walk/ to read with no credential (captain decision 457a).
+                      Bare, it writes to the off-repo handover directory config/data-root.mjs owns;
+                      with a path, to that directory. Default: nothing is written. The file is a
+                      projection of rows this run already paid for, so it costs no request, no
+                      execution and no credit — the flag is opt-in for the same reason --out is,
+                      because it persists per-launch rows rather than because it spends.
   --out <path>        Write the run record as JSON. Default: nothing is written. An INCOMPLETE run
                       writes <path>.partial.json instead, leaving <path> untouched.
   --json              Print the run record as JSON instead of text.
@@ -1249,6 +1257,12 @@ export function parseArgs(argv) {
     rotation: DEFAULT_ROTATION_STATE,
     runsDir: DEFAULT_RUNS_DIR,
     rotate: true,
+    // OPT-IN, exactly as `--out` is and for the same reason. Writing it costs nothing in every
+    // currency, so the flag is not buying permission to SPEND — it is buying permission to
+    // PERSIST, and this tool's standing posture is that per-launch rows live in memory for one run
+    // unless an operator asks for them on disk. A default-on write would also make every test that
+    // drives a Dune leg deposit a fixture in the handover directory a real lane reads from.
+    launchListDir: null,
     help: false,
   };
 
@@ -1369,6 +1383,12 @@ export function parseArgs(argv) {
       }
       case '--no-rotation':
         opts.rotate = false;
+        break;
+      case '--launch-list':
+        // Bare, it means the handover directory `config/data-root.mjs` owns; with a path, that
+        // path. `next()` returns null for a missing value, which is what makes both spellings one
+        // case rather than two flags that could disagree about where the default is.
+        opts.launchListDir = next() ?? screenLaunchListDir();
         break;
       default:
         return { ok: false, message: `unknown option '${String(arg)}'` };
@@ -1517,6 +1537,11 @@ export function parseArgs(argv) {
  *   survivor list exactly as it did before 336a, and no state is read or written. It exists so the
  *   stateless behaviour a published pre-336a result was produced under stays reachable, and so a
  *   test can prove the two selections coincide on an empty rotation.
+ * @property {string | null} launchListDir Where to write the launch list the Dune enumeration leg
+ *   already produced, for `tools/arrival-rate-walk/` to read (captain decision 457a). `null` — the
+ *   default — writes nothing. **Opt-in like `--out`, and for the same reason**: the flag buys
+ *   permission to PERSIST rather than to spend, since the rows are already in memory and writing
+ *   them reaches no vendor. Inert on a run whose Dune leg is never asked. See `launch-list.mjs`.
  * @property {boolean} help
  */
 
@@ -2550,6 +2575,66 @@ export async function main(opts, env, out, err, seam = {}) {
       }
       duneLegAnsweredForNobody =
         [...(duneEnumeration?.byWallet.values() ?? [])].filter((w) => w.usable).length === 0;
+
+      // ---- THE LAUNCH LIST, AS A BY-PRODUCT (captain decision 457a). -------------------------
+      // It rides HERE, at the end of the leg that produced it, rather than beside the run record —
+      // because what makes it free is that it is a projection of THIS leg's own parsed rows, and
+      // putting it anywhere else would leave that fact to a comment. It issues nothing: no request,
+      // no execution, no credit, no byte of vendor traffic — the flag that switches it on buys
+      // permission to PERSIST, never to spend. The leg is the one PR 87 / decision 437a already
+      // guards, so the frequency lane gets its list without a second guarded caller and without a
+      // spending path of its own.
+      //
+      // A leg that THREW writes a document too, with no rows and the failure on it. The reader
+      // takes the newest file, so an empty newest one has to be able to say "the newest attempt
+      // came back with nothing" — writing nothing at all would leave an older, successful list
+      // standing in for the current state of the world.
+      //
+      // IT CANNOT FAIL THE RUN. The store may be read-only, or on a full disk, or simply absent on
+      // a box that has never fetched it; none of that is a reason to throw away a screen whose
+      // keyed allowance is already spent. The failure is printed and the run continues, exactly as
+      // a Dune failure degrades to the walk rather than aborting.
+      //
+      // Nothing downstream reads either outcome, deliberately: no bar, gate, threshold or verdict
+      // sees this file, and the run record does not carry it — `RECORD_SCHEMA_VERSION` is unmoved
+      // because nothing was added to the versioned contract the grading lane consumes. The
+      // provenance a consumer needs runs the other way and is inside the document: which run, which
+      // path and which instant produced this list.
+      if (opts.launchListDir !== null) {
+        try {
+          const written = writeLaunchListDocument(
+            buildLaunchListDocument({
+              enumeration: duneEnumeration,
+              wallets: gating.map((s) => s.wallet),
+              generatedAtMs: Date.now(),
+              creationQueryId: duneBounds.creationQueryId,
+              recordSchemaVersion: RECORD_SCHEMA_VERSION,
+              runRecord: opts.out,
+              // Read off the batch rather than off the run's flags, and JOINED rather than assumed
+              // to be one value: `--wallets` refuses `--tier` and `--candidates` today, so a mixed
+              // batch is unreachable, but this field is provenance and a provenance field that
+              // silently reports the first row's answer for all of them is worse than a longer
+              // string. It is read by nothing, here or on the record.
+              candidateSource: [...new Set(gating.map((s) => s.candidateSource))].sort().join('+'),
+              legFailure: duneUnusableNote,
+            }),
+            opts.launchListDir,
+          );
+          if (!opts.json) {
+            out(
+              `  launch list written to ${written} — a BY-PRODUCT of the execution above, costing ` +
+                `no request. tools/arrival-rate-walk/ reads it with no credential.`,
+            );
+          }
+        } catch (cause) {
+          if (!opts.json) {
+            out(
+              `  !! the launch-list by-product could not be written (the run is unaffected): ` +
+                `${cause instanceof Error ? cause.message : String(cause)}`,
+            );
+          }
+        }
+      }
     }
 
     // ---- THE SPEND CLIFF, PRICED BEFORE IT IS PAID (captain decision 298a). ------------------

@@ -2425,10 +2425,15 @@ fields, no threshold moved, and a test pins both — the shape captain decision 
 `roomLeftBound`. **That is what makes a change reversing the sign of a headline number safe to
 land.**
 
-**And it is NOT a profit verdict, so no verdict state is named for it.** Two cost terms remain
-unbounded — the separate-transaction landing tip (`LANDING_TIP_CAVEAT`) and what it costs to *try*
-and fail to land (`WINNERS_ONLY_CAVEAT`) — and under the captain's bar an unbounded cost forbids a
-profit verdict entirely. This produces the number; making it rulable is a later increment.
+**And it is NOT a profit verdict, so no verdict state is named for it.** The separate-transaction
+landing tip (`LANDING_TIP_CAVEAT`) and what it costs to *try* and fail to land
+(`WINNERS_ONLY_CAVEAT`) are bounded only inside the CREATE SLOT since captain decision 466, by a
+whole-slot ceiling attributed to one entrant rather than by a measurement of what anyone paid; their
+residuals — `landing-tip-outside-bound` and `failed-attempts-rest-of-window` — carry no numeric
+boundary, and under the captain's bar an unbounded cost forbids a profit verdict entirely. Which
+terms are unbounded is not restated here or in the caveat: it is read off the subtraction ledger
+below, which is what `exitVerdict` is computed from. This produces the number; making it rulable is
+a later increment.
 `REALISATION_CONSTRUCTION_CAVEAT` is the label that travels with both readings, into the score's
 caveats, the rendered block and the run record, so neither can be quoted as though it were the
 other.

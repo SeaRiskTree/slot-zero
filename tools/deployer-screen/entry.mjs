@@ -230,8 +230,11 @@ export const POSITION_OUTCOMES = Object.freeze([
  * block and the persisted run record — so neither figure can be lifted out of a surface and quoted
  * as though it were the other.
  *
- * Note what it does NOT say. It does not say the all-positions figure is a profit verdict; two cost
- * terms remain unbounded and no verdict may rest on it. See the module header.
+ * Note what it does NOT say. It does not say the all-positions figure is a profit verdict, and it no
+ * longer asserts WHICH cost terms are unbounded either: that is {@link EntryScore.costLedger}'s to
+ * state and {@link EntryScore.exitVerdict}'s to rule on. The clause names the residual ROWS rather
+ * than counting them, so an increment that bounds one cannot leave the sentence wrong. See the
+ * module header.
  */
 export const REALISATION_CONSTRUCTION_CAVEAT =
   'TWO REALIZED CONSTRUCTIONS ARE REPORTED AND NEITHER REPLACES THE OTHER. The *OfFees figures are ' +
@@ -244,9 +247,12 @@ export const REALISATION_CONSTRUCTION_CAVEAT =
   "reported separately — and that residual is marked at the WINDOW's own last price, which is the " +
   'MORE GENEROUS of the two marks, not the harsher latest-known-price one this sentence cites. ' +
   'Positions whose closure our own rows cannot decide are in NEITHER ' +
-  'construction and are counted as horizon-not-observed. NONE of this is a profit verdict: the ' +
-  'landing tip and the cost of failed attempts are still unbounded, and an unbounded cost forbids ' +
-  'one.';
+  'construction and are counted as horizon-not-observed. NONE of this is a profit verdict. The ' +
+  'landing tip and the cost of failed attempts are bounded only INSIDE THE CREATE SLOT, by a ' +
+  "whole-slot ceiling attributed to one entrant rather than by any measurement of what an entrant " +
+  'paid; their residuals — landing-tip-outside-bound and failed-attempts-rest-of-window — carry no ' +
+  'numeric boundary at all. Which cost terms are unbounded is not asserted here: it is read off ' +
+  'the subtraction ledger, and the refusal that follows from it is exitVerdict.';
 
 /**
  * That the net all-positions population is a NON-RANDOM subset of the gross one, stated the way

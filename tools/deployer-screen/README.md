@@ -3945,6 +3945,17 @@ bytes, and the ledger is written atomically through a temp file and a rename: a 
 leaves the old ledger intact rather than a truncated one. A ledger that exists and cannot be read —
 corrupt, or from a schema this build does not know — **refuses the run** rather than starting over,
 because a latched grade has no other copy and an empty ledger would be written straight back over it.
+`GRADE_LEDGER_VERSION` is **2** — captain decisions 451 and 480a put `admissionArm` on every grade
+row — so a version-1 ledger refuses the run until it is migrated deliberately; `grade.mjs` →
+`loadGradeLedger` prints the whole migration in its refusal, and `outcome.mjs` →
+`GRADE_LEDGER_VERSION` owns why it is a version rather than a silent field.
+
+**The hit rate is reported PER ADMISSION ARM and there is no pooled one** (captain decision 480a).
+Since captain decision 451 a claim can be about a candidate the competence gate refused and the
+second arm admitted, and those are two populations with two denominators — see *"The SECOND
+ADMISSION ARM"* above, which owns the rule. So the report prints the overall and per-claim rates
+once for the gate arm and once for the sub-gate arm, and `claims` / `graded` / `ungraded` stay
+whole-ledger bookkeeping rather than becoming arm statistics.
 
 **Every provider call is bounded, and the plan is refused before the first request.** One keyed
 MadeOnSol profile per claim (ceiling 6 — 3 claims × the client's one retry), the keyless fill walk
@@ -4007,6 +4018,12 @@ proven, where Stage 2 requires only 8 proven of 10 planned. The launch **count**
 `maxLaunchesPerCandidate`; the **predicate** does not follow `minLaunchesSampled`. The census's
 re-run predicate is therefore deliberately stricter than the live rule, in the same understating
 direction, and reconciling the two is a separate decision.
+
+**And since captain decision 451 the POPULATION has drifted too, the other way**: this pass keeps
+`gate-passed` alone, so it surveys gate-arm survivors while `screen.mjs` walks the union of both
+admission arms — so the census is now NARROWER than the screen it is a finding about, and its rates
+may not be extended to the wallets the second arm admits. `bundling.mjs`'s module header owns that
+argument and what a widened re-run would cost.
 
 **What the pass does, and what it deliberately does not.** It walks create-slot windows with Stage
 2's own pinned window parameters and reports only `bundledTx`, `runTx`, `maxWalletsInOneTx`,

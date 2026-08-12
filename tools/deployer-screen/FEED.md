@@ -198,7 +198,8 @@ lane's output:
 | feed state | meaning |
 |---|---|
 | `queued` | Cleared the gate on the ownership reading. **The feed's product**: worth putting through the beatability screen. **Not a pass** — the rate that cleared it may read up to +0.6929 above the gate's on the same wallet. |
-| `held` | Did **not** clear it. **This is NOT a rejection.** It is a triage outcome on a reading whose count bars fail 46 more of 82 wallets than the gate reading does. |
+| `queued-sub-gate` | FAILED the gate and is queued anyway, admitted by the second arm (captain decision 451). Its own state and its own count — never added to `queued` — and `queuedForScreen` serves both. See *"The second admission arm reaches this lane too"* below. |
+| `held` | Did **not** clear it, **and was not admitted by the second arm either** — since 451 this is a smaller pile than it was. **This is NOT a rejection.** It is a triage outcome on a reading whose count bars fail 46 more of 82 wallets than the gate reading does. |
 | `unmeasured` | The vendor's profile carried no readable launch record — **or the completion criterion could not be read on some of the records it did carry** (captain decision 352b), since those launches leave the count and span bars as well as the rate. An empty deployer and a moved response shape are indistinguishable from here, so neither is recorded as a finding. |
 | `prefiltered` | Never gated: the vendor's trailing deploy count was below the floor. The cadence filter. |
 | `deferred` | Surfaced and recorded, waiting for a gate batch. |

@@ -788,10 +788,10 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   `fieldRealisedSolOverAllPositionsGrossOfFees`, `fieldReturnPerSolOverAllPositionsGrossOfFees`,
  *   `fieldHitRateOverAllPositionsGrossOfFees`, `fieldRealisedSolOverAllPositionsNetOfMeasuredFees`,
  *   `fieldReturnPerSolOverAllPositionsNetOfMeasuredFees`, `fieldHitRateOverAllPositionsNetOfMeasuredFees`,
- *   `fieldResidualMarkedSolAtWindowLastPrice`, `positionsStillHeldAtHorizon` and
+ *   `fieldResidualMarkedSolAtWindowLastPriceGrossOfFees`, `positionsStillHeldAtHorizon` and
  *   `positionsHorizonNotObserved` on the block itself, plus eight on every `entry.windows[].entrants`
  *   row (`positionOutcome`, `windowTxCount`, `residualTokens`,
- *   `residualMarkedSolAtWindowLastPrice`, `realisedSolAtZeroRecoveryGrossOfFees`,
+ *   `residualMarkedSolAtWindowLastPriceGrossOfFees`, `realisedSolAtZeroRecoveryGrossOfFees`,
  *   `returnPerSolAtZeroRecoveryGrossOfFees`, `realisedSolAtZeroRecoveryNetOfMeasuredFees`,
  *   `returnPerSolAtZeroRecoveryNetOfMeasuredFees`). No candidate ROW field and no run-level block:
  *   `PERSISTED_BY_SCHEMA[25]`, `ENTRY_COVERAGE_KEYS_BY_SCHEMA[25]`, `SPEND_KEYS_BY_SCHEMA[25]`,
@@ -819,7 +819,7 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   **The three outcomes, and the two that used to be one value.** `entry.mjs` → `POSITION_OUTCOMES`
  *   owns the rule. `exited` is a realized figure; `still-held-at-horizon` is resolved at **zero
  *   recovery** — the worst case for the part we cannot see, which is what the captain's standing
- *   evidence bar asks a figure to survive — with `residualMarkedSolAtWindowLastPrice` reported
+ *   evidence bar asks a figure to survive — with `residualMarkedSolAtWindowLastPriceGrossOfFees` reported
  *   BESIDE it and never instead of it; `horizon-not-observed` is OUR COVERAGE, resolved neither way,
  *   counted and surfaced and **not filterable** under captain decision 174b. `fieldOpenPositions` is
  *   the sum of the last two, which is precisely the conflation this version splits.

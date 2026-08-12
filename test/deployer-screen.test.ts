@@ -116,6 +116,7 @@ import {
   LANDING_TIP_CAVEAT,
   POSITION_OUTCOMES,
   REALISATION_CONSTRUCTION_CAVEAT,
+  NET_ALL_POSITIONS_SELECTION_CAVEAT,
   UNMEASURED_CAUSES,
   UNMEASURED_CAUSE_ATTRIBUTION,
   UNMEASURED_VERDICTS,
@@ -7442,7 +7443,7 @@ describe('the keyless boundary holds in both directions', () => {
     'fieldReturnPerSolOverAllPositionsNetOfMeasuredFees',
     'fieldHitRateOverAllPositionsNetOfMeasuredFees',
     // The BOUND on the worst case, beside it and never inside it. A mark is a price nobody paid.
-    'fieldResidualMarkedSolAtWindowLastPrice',
+    'fieldResidualMarkedSolAtWindowLastPriceGrossOfFees',
     // The two halves of what `fieldOpenPositions` was one number for: a fact about the deployer's
     // field, and a fact about OUR coverage (174b, unfilterable).
     'positionsStillHeldAtHorizon',
@@ -7569,14 +7570,14 @@ describe('the keyless boundary holds in both directions', () => {
   // is exactly `positionOutcome === 'exited'` — what it could not say is the difference between a
   // wallet still HOLDING and one whose closure our rows cannot decide, and those are a fact about
   // the field and a fact about our coverage respectively. `windowTxCount` is why a net figure is
-  // present or absent, and `residualMarkedSolAtWindowLastPrice` is the bound on the zero-recovery
+  // present or absent, and `residualMarkedSolAtWindowLastPriceGrossOfFees` is the bound on the zero-recovery
   // resolution rather than a substitute for it.
   const ENTRY_ENTRANT_KEYS_25 = [
     ...ENTRY_ENTRANT_KEYS_24,
     'positionOutcome',
     'windowTxCount',
     'residualTokens',
-    'residualMarkedSolAtWindowLastPrice',
+    'residualMarkedSolAtWindowLastPriceGrossOfFees',
     'realisedSolAtZeroRecoveryGrossOfFees',
     'returnPerSolAtZeroRecoveryGrossOfFees',
     'realisedSolAtZeroRecoveryNetOfMeasuredFees',
@@ -14210,14 +14211,14 @@ describe('every position taken is counted — captain decision 461, the realizat
     const e = measureLaunchEntry(window461());
     // The window's last readable price is `sPart`: 0.5 SOL for 40 tokens = 0.0125 SOL/token.
     expect(entrantOf(e, 'holder').residualTokens).toBeCloseTo(100, 9);
-    expect(entrantOf(e, 'holder').residualMarkedSolAtWindowLastPrice).toBeCloseTo(1.25, 9);
+    expect(entrantOf(e, 'holder').residualMarkedSolAtWindowLastPriceGrossOfFees).toBeCloseTo(1.25, 9);
     expect(entrantOf(e, 'partial').residualTokens).toBeCloseTo(60, 9);
-    expect(entrantOf(e, 'partial').residualMarkedSolAtWindowLastPrice).toBeCloseTo(0.75, 9);
+    expect(entrantOf(e, 'partial').residualMarkedSolAtWindowLastPriceGrossOfFees).toBeCloseTo(0.75, 9);
     const s = scoreOf();
     // Reported over the positions it BOUNDS, and it is not in any realised figure: the holder is
     // still -2 at zero recovery despite being marked at +1.25 of residual.
-    expect(s.fieldResidualMarkedSolAtWindowLastPrice.n).toBe(16);
-    expect(s.fieldResidualMarkedSolAtWindowLastPrice.median).toBeCloseTo(1, 9);
+    expect(s.fieldResidualMarkedSolAtWindowLastPriceGrossOfFees.n).toBe(16);
+    expect(s.fieldResidualMarkedSolAtWindowLastPriceGrossOfFees.median).toBeCloseTo(1, 9);
     expect(s.fieldRealisedSolOverAllPositionsGrossOfFees.min).toBeCloseTo(-2, 9);
   });
 
@@ -14268,7 +14269,7 @@ describe('every position taken is counted — captain decision 461, the realizat
       'positionOutcome',
       'positionsStillHeldAtHorizon',
       'positionsHorizonNotObserved',
-      'residualMarkedSolAtWindowLastPrice',
+      'residualMarkedSolAtWindowLastPriceGrossOfFees',
       'residualTokens',
       'windowTxCount',
     ];
@@ -14307,6 +14308,27 @@ describe('every position taken is counted — captain decision 461, the realizat
     const tooFew = scoreEntry([measureLaunchEntry(window461())!], ENTRY_T);
     expect(tooFew.verdict).toBe('entry-unmeasured');
     expect(tooFew.caveats).toContain(REALISATION_CONSTRUCTION_CAVEAT);
+  });
+
+  it('the NET all-positions population is the WORSE half, and its direction rides on every score', () => {
+    // Captain decision 471a. The shortfall is not random: an unexited position is priced across its
+    // whole window only where it never sold, so the wallet that recovered some SOL — and would score
+    // strictly better at zero recovery — is exactly the one left out. `partial` sold 40 of its 100
+    // and is absent from the net reading while `holder`, which sold nothing, is in it.
+    const priced = pricedWindow();
+    const by = (w: string) => priced.field.find((f) => f.wallet === w)!;
+    expect(by('partial').realisedSolAtZeroRecoveryGrossOfFees).toBeGreaterThan(
+      by('holder').realisedSolAtZeroRecoveryGrossOfFees,
+    );
+    expect(by('partial').realisedSolAtZeroRecoveryNetOfMeasuredFees).toBeNaN();
+    expect(Number.isFinite(by('holder').realisedSolAtZeroRecoveryNetOfMeasuredFees)).toBe(true);
+    // So the two readings must not be differenced to infer a fee cost, and the label saying so
+    // travels with the number rather than living in a document.
+    expect(NET_ALL_POSITIONS_SELECTION_CAVEAT).toMatch(/biased DOWNWARD/);
+    expect(NET_ALL_POSITIONS_SELECTION_CAVEAT).toMatch(/not all fees/);
+    expect(scoreOf().caveats).toContain(NET_ALL_POSITIONS_SELECTION_CAVEAT);
+    const tooFew = scoreEntry([measureLaunchEntry(window461())!], ENTRY_T);
+    expect(tooFew.caveats).toContain(NET_ALL_POSITIONS_SELECTION_CAVEAT);
   });
 
   it('no EXISTING figure moves, so a schema-24 and a schema-25 reading may be pooled', () => {

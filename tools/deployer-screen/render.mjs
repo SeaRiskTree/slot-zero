@@ -30,7 +30,7 @@ import {
   priceWalkFallbackCliff,
 } from './dune.mjs';
 import { describeMonthlyCapCredits, estimatePlanCredits } from './client.mjs';
-import { LANDING_TIP_CAVEAT } from './entry.mjs';
+import { LANDING_TIP_CAVEAT, NET_ALL_POSITIONS_SELECTION_CAVEAT } from './entry.mjs';
 // The reach the plan quotes is DERIVED, never a second copy of the formula: an operator reads this
 // block before authorising a run, so it has to describe the walk `readLaunchWindow` will actually do.
 import { windowReachMs } from './pumpfun.mjs';
@@ -419,6 +419,7 @@ export function renderEntry(e, coverage) {
     L.push(
       `      ${boundedHitRateLine(e.fieldHitRateOverAllPositionsNetOfMeasuredFees, 'positions priced across their whole window')}`,
     );
+    for (const line of wrap(NET_ALL_POSITIONS_SELECTION_CAVEAT, 84)) L.push(`      ! ${line}`);
   }
   L.push(
     `      ${e.positionsStillHeldAtHorizon} still HELD at the horizon (resolved at zero recovery), ` +
@@ -427,11 +428,11 @@ export function renderEntry(e, coverage) {
   L.push(
     `      cannot decide at all — OUR COVERAGE, resolved neither way, and not filterable (174b)`,
   );
-  if (e.fieldResidualMarkedSolAtWindowLastPrice.n > 0) {
+  if (e.fieldResidualMarkedSolAtWindowLastPriceGrossOfFees.n > 0) {
     // The BOUND on the worst case, printed under it rather than into it. A mark is a price nobody
     // paid: on the committed tape 95% of unexited positions are losses even at the token's LATEST
     // known price, which is why the headline resolves at zero and this sits beside it.
-    L.push(distLine('residual MARKED (bound)', e.fieldResidualMarkedSolAtWindowLastPrice));
+    L.push(distLine('residual MARKED (bound)', e.fieldResidualMarkedSolAtWindowLastPriceGrossOfFees));
   }
   L.push('      ^ NOT a profit verdict: the landing tip and the cost of failed attempts are still');
   L.push('        unbounded, and an unbounded cost forbids one.');

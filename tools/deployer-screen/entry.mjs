@@ -171,7 +171,7 @@ export const RESIDUAL_TOLERANCE = 0.001;
  *   is the one the `…GrossOfFees` / `…NetOfMeasuredFees` fields already carried.
  * - **`still-held-at-horizon`** — the wallet bought, we can read what it bought and what it sold,
  *   and it was not flat. **Resolved at ZERO RECOVERY** in every `…AtZeroRecovery` /
- *   `…OverAllPositions` figure, with {@link FieldEntrant.residualMarkedSolAtWindowLastPrice} printed
+ *   `…OverAllPositions` figure, with {@link FieldEntrant.residualMarkedSolAtWindowLastPriceGrossOfFees} printed
  *   BESIDE it and never instead of it. Zero recovery is the worst case for the part we cannot see,
  *   which is what the captain's standing evidence bar asks a figure to survive; the mark is the
  *   bound on it, and a mark is a price nobody paid.
@@ -230,6 +230,29 @@ export const REALISATION_CONSTRUCTION_CAVEAT =
   'construction and are counted as horizon-not-observed. NONE of this is a profit verdict: the ' +
   'landing tip and the cost of failed attempts are still unbounded, and an unbounded cost forbids ' +
   'one.';
+
+/**
+ * The DIRECTION of the net all-positions reading's selection, stated the way
+ * {@link LANDING_TIP_CAVEAT} and {@link WINNERS_ONLY_CAVEAT} state theirs.
+ *
+ * The population is not a random shortfall of the gross one. An unexited position enters the net
+ * denominator only where its WHOLE window was already priced, which for such a position means the
+ * wallet made no transaction outside its create slot — it never sold anything. A still-held wallet
+ * that partially sold has recovered SOL and so scores strictly better at zero recovery, and it is
+ * exactly the one left out. So the net reading is biased DOWNWARD relative to the gross one over and
+ * above the fee correction, and the gap between them is not all fees.
+ *
+ * The bias runs towards pessimism, which is the safe direction here and is why the correction ships
+ * with the population unchanged rather than with the cost leg widened — widening it is a spend.
+ */
+export const NET_ALL_POSITIONS_SELECTION_CAVEAT =
+  'THE NET *OverAllPositions FIGURES ARE OVER A NON-RANDOM SUBSET OF THE GROSS ONES, AND IT IS THE ' +
+  'WORSE HALF. An unexited position is priced across its whole window only where the wallet made no ' +
+  'transaction outside its create slot — that is, it never sold anything — so a still-held wallet ' +
+  'that partially sold has recovered SOL, would score strictly better at zero recovery, and is ' +
+  'exactly the one excluded. The net reading is therefore biased DOWNWARD relative to the gross one ' +
+  'over and above the fee correction: DO NOT difference the two to infer a fee cost, because the ' +
+  'gap is not all fees. The cost leg was not widened to close it, which would be a spend.';
 
 /**
  * @typedef {object} BoundedHitRate
@@ -378,7 +401,7 @@ export function hitRate(values, predicate) {
  *   than a missing one.
  * @property {number} residualTokens     `tokens bought − tokens sold` at the horizon. `NaN` when
  *   closure is undecidable; at or near zero on an exited position by the closure rule itself.
- * @property {number} residualMarkedSolAtWindowLastPrice  {@link FieldEntrant.residualTokens} valued
+ * @property {number} residualMarkedSolAtWindowLastPriceGrossOfFees  {@link FieldEntrant.residualTokens} valued
  *   at the LAST price the walked window itself showed. **The bound printed beside the zero-recovery
  *   resolution, never instead of it** — a mark is a price nobody paid, and on the committed tape
  *   95% of unexited positions are losses even marked at the token's LATEST known price.
@@ -611,7 +634,7 @@ export function measureLaunchEntry(fills) {
       positionOutcome,
       windowTxCount: t.txs.size,
       residualTokens,
-      residualMarkedSolAtWindowLastPrice: residualTokens * windowLastPrice,
+      residualMarkedSolAtWindowLastPriceGrossOfFees: residualTokens * windowLastPrice,
       realisedSolAtZeroRecoveryGrossOfFees: grossAtZeroRecovery,
       returnPerSolAtZeroRecoveryGrossOfFees:
         resolvable && t.solIn > 0 ? grossAtZeroRecovery / t.solIn : Number.NaN,
@@ -1418,11 +1441,14 @@ export function describeRoomMedianBound(b) {
  *   unexited position means it made no transaction outside the create slot: the cost leg's targets
  *   were not widened for this correction and would have cost RPC requests (see
  *   {@link entryCostTargets}). A different denominator from the gross one above and never pooled
- *   with it — each carries its own `n`.
+ *   with it — each carries its own `n`, and
+ *   {@link NET_ALL_POSITIONS_SELECTION_CAVEAT} states which way the selection runs.
  * @property {Distribution} fieldReturnPerSolOverAllPositionsNetOfMeasuredFees  The same, per SOL staked.
  * @property {BoundedHitRate} fieldHitRateOverAllPositionsNetOfMeasuredFees  Share of those above zero, with its
- *   exact interval. `n` is how many positions carried a complete whole-window net figure.
- * @property {Distribution} fieldResidualMarkedSolAtWindowLastPrice  **THE BOUND ON THE ZERO-RECOVERY
+ *   exact interval. `n` is how many positions carried a complete whole-window net figure, and the
+ *   positions it drops are not a random sample of the gross one —
+ *   {@link NET_ALL_POSITIONS_SELECTION_CAVEAT}.
+ * @property {Distribution} fieldResidualMarkedSolAtWindowLastPriceGrossOfFees  **THE BOUND ON THE ZERO-RECOVERY
  *   RESOLUTION, over the positions still held at the horizon** — what their remaining tokens would
  *   be worth at the last price the walked window itself showed. It is reported BESIDE the worst-case
  *   figures and is never substituted into one: a mark is a price nobody paid, and on the committed
@@ -1747,8 +1773,8 @@ export function scoreEntry(launches, t, context = {}) {
     fieldHitRateOverAllPositionsNetOfMeasuredFees,
     // The BOUND on the zero-recovery resolution, over the positions it resolves. Reported so the
     // worst case can be read against what the window's own last price says is still there.
-    fieldResidualMarkedSolAtWindowLastPrice: distribution(
-      stillHeld.map((e) => e.residualMarkedSolAtWindowLastPrice),
+    fieldResidualMarkedSolAtWindowLastPriceGrossOfFees: distribution(
+      stillHeld.map((e) => e.residualMarkedSolAtWindowLastPriceGrossOfFees),
     ),
     positionsStillHeldAtHorizon: stillHeld.length,
     positionsHorizonNotObserved: horizonNotObserved.length,
@@ -1825,6 +1851,7 @@ export function scoreEntry(launches, t, context = {}) {
   // cannot print a realised number without the label, and silence is never read as "there is only
   // one reading".
   score.caveats.push(REALISATION_CONSTRUCTION_CAVEAT);
+  score.caveats.push(NET_ALL_POSITIONS_SELECTION_CAVEAT);
   score.caveats.push(
     'Every *GrossOfFees* figure above is exactly that and is therefore an UPPER BOUND. Priority ' +
       'fees, landing tips, the venue fee and rent are all absent from the fill tape; the ' +

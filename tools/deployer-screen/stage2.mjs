@@ -829,7 +829,7 @@ export function toEntryRecordRow(s, coverage) {
     fieldReturnPerSolOverAllPositionsNetOfMeasuredFees: dist(s.fieldReturnPerSolOverAllPositionsNetOfMeasuredFees),
     fieldHitRateOverAllPositionsNetOfMeasuredFees: hitCi(s.fieldHitRateOverAllPositionsNetOfMeasuredFees),
     // The BOUND on that worst case, over the positions it resolves — beside it and never inside it.
-    fieldResidualMarkedSolAtWindowLastPrice: dist(s.fieldResidualMarkedSolAtWindowLastPrice),
+    fieldResidualMarkedSolAtWindowLastPriceGrossOfFees: dist(s.fieldResidualMarkedSolAtWindowLastPriceGrossOfFees),
     // The two halves of what `fieldOpenPositions` used to be one number for: a fact about the
     // deployer's field, and a fact about our own coverage (174b, unfilterable).
     positionsStillHeldAtHorizon: s.positionsStillHeldAtHorizon,
@@ -890,7 +890,7 @@ export function toEntryRecordRow(s, coverage) {
         residualTokens: round(e.residualTokens),
         // The BOUND on the zero-recovery resolution of THIS position, at the last price the walked
         // window itself showed. Beside the worst case, never substituted into it.
-        residualMarkedSolAtWindowLastPrice: round(e.residualMarkedSolAtWindowLastPrice),
+        residualMarkedSolAtWindowLastPriceGrossOfFees: round(e.residualMarkedSolAtWindowLastPriceGrossOfFees),
         realisedSolAtZeroRecoveryGrossOfFees: round(e.realisedSolAtZeroRecoveryGrossOfFees),
         returnPerSolAtZeroRecoveryGrossOfFees: round(e.returnPerSolAtZeroRecoveryGrossOfFees),
         realisedSolAtZeroRecoveryNetOfMeasuredFees: round(e.realisedSolAtZeroRecoveryNetOfMeasuredFees),

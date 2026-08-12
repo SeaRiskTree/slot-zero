@@ -72,8 +72,18 @@ export const COST_SOURCE_KINDS = Object.freeze(['solana-rpc', 'dune']);
  * @property {number} viaBlock            Priced from a whole-block read.
  * @property {number} viaTransaction      Priced one transaction at a time.
  * @property {boolean} blockRouteTried
- * @property {string | null} blockRouteNote Why the block route was not used, when it was not.
+ * @property {string | null} blockRouteNote Why the block route was not used, when it was not — or
+ *   why no whole-slot observation was taken from a route that DID serve, which is the other way this
+ *   field goes non-null (a block read with no mint to scope the slot's failures to).
  * @property {boolean} stoppedForBudget   The per-candidate ceiling ended the walk early.
+ * @property {import('./bounds.mjs').CreateSlotCostObservation | null} slotCosts  What the WHOLE
+ *   create slot cost — its failed-attempt fee bill and its tip total — when a source read the slot
+ *   as a unit and could scope the failures to this launch's mint. **`null` is the normal case and
+ *   the safe one**: a source that priced one transaction at a time never saw the slot's other
+ *   transactions, so it can say nothing about them, and `bounds.mjs` → `costLedger` leaves the two
+ *   create-slot rows UNBOUNDED whenever any launch of a sample reads `null` here. Never a zero: a
+ *   slot with no failed attempt and no tip reads `0`, and "we did not look" is not "it was free" —
+ *   the same distinction {@link CostWalkResult.unresolved} exists for one field over.
  */
 
 /**
@@ -84,8 +94,12 @@ export const COST_SOURCE_KINDS = Object.freeze(['solana-rpc', 'dune']);
  *   Provenance. Carried, and read by no bar — the same posture {@link CostWalkResult}'s producers
  *   are held to and `fill-source.mjs` states in full.
  * @property {(input: { transactions: readonly import('./measure.mjs').WalletTransaction[],
- *   createSlot: number }) => Promise<CostWalkResult>} priceLaunch
- *   Price one launch's target transactions. **The route choice is the SOURCE'S**, not Stage 2's:
+ *   createSlot: number, mint: string | null }) => Promise<CostWalkResult>} priceLaunch
+ *   Price one launch's target transactions. `mint` is what scopes {@link CostWalkResult.slotCosts}'
+ *   failed-attempt half to THIS launch rather than to every bot in a busy mainnet slot; a source
+ *   handed `null` returns `null` there rather than widening the scope. It is memory-only and reaches
+ *   no record — see `stage2.mjs` → `toEntryRecordRow` on retention.
+ *   **The route choice is the SOURCE'S**, not Stage 2's:
  *   whether a whole-block read is worth a request, and whether the probe that answered that is
  *   latched for the rest of the candidate, is a property of the vendor and belongs with it.
  * @property {() => number} issued    Requests spent so far, retries included.
@@ -120,5 +134,23 @@ export function assertCostWalkAccounted(walk, targets) {
   }
   if (walk.viaBlock > 0 && !walk.blockRouteTried) {
     throw new Error('a cost source priced from a block it says it never tried to read');
+  }
+  // A whole-slot observation can only come from a whole-slot read, and a ledger row bounded off a
+  // response the source says it never fetched is a bound resting on nothing. Same reason as the
+  // clause above, one field over — and it fails LOUDLY rather than silently dropping the
+  // observation, because a source producing one without the route is a source bug.
+  // A source that carries no `slotCosts` field at all has answered NOTHING about the slot, which is
+  // a different fault from claiming an observation it could not have made — and reporting it as the
+  // second names the opposite of what went wrong.
+  if (walk.slotCosts === undefined) {
+    throw new Error(
+      'a cost source did not say whether it read the whole create slot: `slotCosts` is missing, and ' +
+        'a missing answer is not the `null` that means "no whole-slot observation"',
+    );
+  }
+  if (walk.slotCosts !== null && walk.viaBlock === 0) {
+    throw new Error(
+      'a cost source reported whole-slot costs without pricing anything from a whole-block read',
+    );
   }
 }

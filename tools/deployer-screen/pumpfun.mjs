@@ -1995,6 +1995,178 @@ export function parseTransactionCosts(tx) {
  */
 
 /**
+ * The published mainnet Jito tip payment accounts, pinned as a literal.
+ *
+ * **PROVENANCE, AND ITS LIMIT, BECAUSE THE DIRECTION MATTERS.** These are Jito's published tip
+ * accounts. They were **NOT re-derived on-chain by the lane that added them** — Stage 3 increment 2
+ * is authorised to issue zero vendor requests, which is the whole point of it — so this list is
+ * evidence of the same kind as a vendor's published figure and not of the same kind as a
+ * measurement this repo made. Nothing here claims it is exhaustive of every tip route on Solana; it
+ * is not even claimed to be exhaustive of Jito's own, since the vendor may add an account without
+ * telling this file.
+ *
+ * **An address missing from this list makes {@link readCreateSlotSlotCosts}' tip total UNDER-state
+ * what was tipped in the slot, which is the OPTIMISTIC direction — entry looks cheaper than it
+ * was.** That is precisely why `bounds.mjs` → `COST_COMPONENTS`' `landing-tip-outside-bound` row is
+ * UNBOUNDED and stays so: a tip routed anywhere this list does not name is in that row by
+ * construction, and the realized-profit verdict is refused because of it. The bounded row is a
+ * ceiling over what this list CAN see and says so in its own `boundBasis`.
+ *
+ * @type {readonly string[]}
+ */
+export const JITO_TIP_ACCOUNTS = Object.freeze([
+  '96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5',
+  'HFqU5x63VTqvQss8hp11i4wVV8bD44PvwucfZ2bU7gRe',
+  'Cw8CFyM9FkoMi7K7Crf6HNQqf4uEMzpKw6QNghXLvLkY',
+  'ADaUMid9yfUytqMBgopwjb2DTLSokTSzL1zt6iGPaS49',
+  'DfXygSm4jCyNCybVYYK6DwvWqjKee8pbDmJGcLWNDXjh',
+  'ADuUkR4vqLUMWXxW9gh6D6L8pMSawimctcNZ5pGwDcEt',
+  'DttWaMuVvTiduZRnguLF7jNxTgiMBZ1hyAumKUiL2KRL',
+  '3AVi9Tg9Uo68tJfuvoKvqKNWKkC5wPdSSdeBnizKZ6jT',
+]);
+
+/**
+ * Read one transaction's account list, pre/post balances and fee — the fields both readers below
+ * need, and the ONE place their shape checks live.
+ *
+ * It differs from {@link parseTransactionCosts} in exactly one way and that way is the point: it
+ * ACCEPTS a transaction carrying an `err`. That parser refuses one because every transaction it is
+ * pointed at came from a FILL, so an error means the row is not what we think it is. Here a failed
+ * transaction is the SUBJECT — Solana charges fees on inclusion rather than on success, so a landed
+ * failure paid its full base and priority fee, and that money is what {@link readCreateSlotSlotCosts}
+ * recovers.
+ *
+ * @param {unknown} tx One element of a `getBlock`'s `transactions` array.
+ * @returns {{ failed: boolean, feeLamports: number, keys: string[], pre: number[], post: number[] } | null}
+ *   `null` when the shape is not one this can read exactly.
+ */
+function readBlockTransaction(tx) {
+  if (typeof tx !== 'object' || tx === null) return null;
+  const root = /** @type {Record<string, unknown>} */ (tx);
+  const meta = /** @type {Record<string, unknown> | null | undefined} */ (root['meta']);
+  if (meta === undefined || meta === null) return null;
+  const fee = meta['fee'];
+  const pre = meta['preBalances'];
+  const post = meta['postBalances'];
+  if (typeof fee !== 'number' || !Array.isArray(pre) || !Array.isArray(post)) return null;
+  if (pre.length !== post.length) return null;
+
+  const transaction = /** @type {Record<string, unknown> | null | undefined} */ (root['transaction']);
+  if (transaction === undefined || transaction === null) return null;
+  const message = /** @type {Record<string, unknown> | null | undefined} */ (transaction['message']);
+  if (message === undefined || message === null) return null;
+  const accountKeys = message['accountKeys'];
+  if (!Array.isArray(accountKeys)) return null;
+  // The same index check `parseTransactionCosts` documents at length: a balance read at an index the
+  // key list does not cover attributes a stranger's lamport change to the wrong account, which is a
+  // wrong number rather than a missing one.
+  if (accountKeys.length !== pre.length) return null;
+
+  /** @type {string[]} */
+  const keys = [];
+  for (const entry of accountKeys) {
+    const pubkey =
+      typeof entry === 'string'
+        ? entry
+        : typeof entry === 'object' && entry !== null
+          ? /** @type {Record<string, unknown>} */ (entry)['pubkey']
+          : undefined;
+    if (typeof pubkey !== 'string') return null;
+    keys.push(pubkey);
+  }
+  /** @type {number[]} */
+  const preN = [];
+  /** @type {number[]} */
+  const postN = [];
+  for (let i = 0; i < keys.length; i++) {
+    const before = pre[i];
+    const after = post[i];
+    if (typeof before !== 'number' || typeof after !== 'number') return null;
+    preN.push(before);
+    postN.push(after);
+  }
+  const err = meta['err'];
+  return { failed: err !== null && err !== undefined, feeLamports: fee, keys, pre: preN, post: postN };
+}
+
+/**
+ * @typedef {import('./bounds.mjs').CreateSlotCostObservation} CreateSlotCostObservation
+ */
+
+/**
+ * THE HALF OF THE CREATE-SLOT BLOCK THIS PROJECT ALREADY FETCHED AND THREW AWAY.
+ *
+ * Stage 3 increment 2, from `slot-zero-stage3-exit-design` → `report.md` §§6.1 and 6.2 (held in
+ * firstmate's records, not in this repo). {@link readCreateSlotCosts} calls `getBlock(slot,
+ * {transactionDetails: 'full'})` to price the entrants' own transactions in one request; that same
+ * response already carries **every other transaction in the slot**, and two of the cost terms that
+ * were blocking a realized-profit verdict are sitting in it:
+ *
+ * - **What it cost to TRY and fail.** Every landed-but-FAILED transaction touching this launch's
+ *   mint, with its exact `meta.fee` — base plus priority. It replaces a bracket spanning three
+ *   orders of magnitude (a floor that moves nothing against a ceiling of twelve times the entire
+ *   stake) with a measurement, for the one slot where the auction actually happens.
+ * - **What was tipped.** Every lamport arriving at a {@link JITO_TIP_ACCOUNTS} address in the slot.
+ *
+ * **BOTH ARE WHOLE-SLOT TOTALS AND NEITHER IS AN ATTRIBUTION.** `readCreateSlotCosts`' own doc says
+ * the block route *"does not reach out-of-transaction tips: attributing a sibling transaction in the
+ * same slot to the same bundle is an inference the chain does not support"* — and this does not
+ * change that. It makes no attribution at all: it reports what the SLOT cost, and `bounds.mjs` uses
+ * that as a per-position CEILING, which over-attributes grossly on purpose. A ceiling that
+ * over-attributes is what a worst case is for; an attribution that guesses is what 134a forbids.
+ *
+ * **The mint is required and its absence is a refusal, not a widening.** Without it there is no way
+ * to say which failed transactions in a busy mainnet slot were attempts on THIS launch, and counting
+ * the whole slot's failures would charge this launch for every unrelated bot in the block. So the
+ * caller that cannot name the mint gets `null` and the ledger row stays unbounded.
+ *
+ * @param {readonly unknown[]} rows The block's `transactions` array.
+ * @param {string} mint
+ * @returns {CreateSlotCostObservation}
+ */
+export function readCreateSlotSlotCosts(rows, mint) {
+  const tipAccounts = new Set(JITO_TIP_ACCOUNTS);
+  let tipLamports = 0;
+  let tipTransfers = 0;
+  let failedFeeLamports = 0;
+  let failedAttempts = 0;
+
+  for (const row of rows) {
+    const tx = readBlockTransaction(row);
+    // A row this build cannot read exactly contributes NOTHING rather than a guess. It biases both
+    // totals DOWN, which is the optimistic direction — and it is why the unbounded rows beside these
+    // two stay unbounded and the verdict stays refused.
+    if (tx === null) continue;
+
+    let tipped = 0;
+    for (let i = 0; i < tx.keys.length; i++) {
+      if (!tipAccounts.has(/** @type {string} */ (tx.keys[i]))) continue;
+      // ARRIVALS ONLY. A tip account can also be a fee payer or lose lamports to rent in some other
+      // transaction, and netting a decrease into the total would let one transaction cancel out
+      // another's tip — a ceiling has to be a sum of what went IN.
+      const delta = /** @type {number} */ (tx.post[i]) - /** @type {number} */ (tx.pre[i]);
+      if (delta > 0) tipped += delta;
+    }
+    if (tipped > 0) {
+      tipLamports += tipped;
+      tipTransfers += 1;
+    }
+
+    if (tx.failed && tx.keys.includes(mint)) {
+      failedFeeLamports += tx.feeLamports;
+      failedAttempts += 1;
+    }
+  }
+
+  return {
+    tipSol: tipLamports / LAMPORTS_PER_SOL,
+    tipTransfers,
+    failedAttemptFeeSol: failedFeeLamports / LAMPORTS_PER_SOL,
+    failedAttempts,
+  };
+}
+
+/**
  * Price a launch's create slot — and, optionally, the rest of its window — from the chain.
  *
  * ## What this recovers, and what it cannot
@@ -2021,9 +2193,17 @@ export function parseTransactionCosts(tx) {
  * per-signature route and records why. The route that ran reaches the run record, so a saved run
  * says which one paid for its numbers.
  *
- * Note the block route buys request count and nothing else. It does **not** reach out-of-transaction
- * tips: attributing a sibling transaction in the same slot to the same bundle is an inference the
- * chain does not support, and this walk makes no inference it cannot prove.
+ * Note the block route buys request count and nothing else *for the entrants' own costs*. It does
+ * **not** reach out-of-transaction tips: attributing a sibling transaction in the same slot to the
+ * same bundle is an inference the chain does not support, and this walk makes no inference it cannot
+ * prove.
+ *
+ * **What it DOES now buy, since Stage 3 increment 2, is a CEILING rather than an attribution.**
+ * When the block route serves, {@link readCreateSlotSlotCosts} reads the whole slot's failed-attempt
+ * fee bill and its whole tip total out of the same response — a `slotCosts` on the result, `null`
+ * whenever the route did not serve. Nothing is attributed to anybody: `bounds.mjs` uses each total
+ * as a per-position worst case, which over-attributes on purpose. It costs **zero marginal
+ * requests**; the response was already fetched and the extra work is parsing.
  *
  * ## Pacing is the creation walk's, and it is not negotiable
  *
@@ -2035,11 +2215,16 @@ export function parseTransactionCosts(tx) {
  * @param {object} opts
  * @param {readonly import('./measure.mjs').WalletTransaction[]} opts.transactions What to price.
  * @param {number} opts.createSlot The launch's create slot — the only slot the block route applies to.
+ * @param {string | null} [opts.mint] The launch's mint. Required to scope the failed-attempt half of
+ *   `slotCosts` to THIS launch; absent, `slotCosts` stays `null` and the ledger row stays unbounded.
+ *   It never leaves this walk — a mint is memory-only under MadeOnSol §5a(d), and nothing derived
+ *   from it here carries one.
  * @param {boolean} [opts.preferBlock] Try the whole-block read first. Default `true`.
  * @returns {Promise<CostWalkResult>}
  */
 export async function readCreateSlotCosts(rpc, opts) {
   const preferBlock = opts.preferBlock ?? true;
+  const mint = opts.mint ?? null;
   const issuedBefore = rpc.issued();
   /** @type {Map<string, TransactionCosts>} */
   const priced = new Map();
@@ -2050,6 +2235,8 @@ export async function readCreateSlotCosts(rpc, opts) {
   /** @type {string | null} */
   let blockRouteNote = null;
   let stoppedForBudget = false;
+  /** @type {CreateSlotCostObservation | null} */
+  let slotCosts = null;
 
   const inCreateSlot = opts.transactions.filter((t) => t.slot === opts.createSlot);
 
@@ -2089,6 +2276,19 @@ export async function readCreateSlotCosts(rpc, opts) {
           blockRouteNote =
             'getBlock served a block carrying none of the create slot\'s own transactions in a ' +
             'shape this build can price, so they were priced individually instead.';
+        } else if (mint === null) {
+          blockRouteNote =
+            'the whole-slot cost observation was NOT taken: the caller named no mint, so there is ' +
+            'no way to say which of this slot\'s failed transactions were attempts on this launch. ' +
+            'The subtraction ledger\'s create-slot rows stay UNBOUNDED.';
+        } else {
+          // TWO CONDITIONS, AND `viaBlock > 0` IS THE LOAD-BEARING ONE. A block that served but
+          // carried none of this launch's own transactions in a priceable shape is a block whose
+          // agreement with our own reading is unestablished — reading a ceiling out of it anyway
+          // would bound a verdict on a response we could not check against anything. It costs
+          // nothing to refuse: the ledger row is `null` and the verdict is refused, which is the
+          // direction every guard in this walk fails in.
+          slotCosts = readCreateSlotSlotCosts(rows, mint);
         }
       }
     } else if (preferBlock) {
@@ -2140,5 +2340,6 @@ export async function readCreateSlotCosts(rpc, opts) {
     blockRouteTried,
     blockRouteNote,
     stoppedForBudget,
+    slotCosts,
   };
 }

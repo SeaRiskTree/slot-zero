@@ -850,8 +850,48 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   are still unbounded (the separate-transaction landing tip, and what it costs to try and fail to
  *   land), and under the captain's evidence bar an unbounded cost forbids one. This version produces
  *   the number; making it rulable is a later increment.
+ *
+ * - **26** — captain decision 466, Stage 3 increment 2: **the subtraction ledger, and a
+ *   realized-profit verdict that is a FUNCTION of it.** Two keys on the `entry` block, `costLedger`
+ *   and `exitVerdict`, plus four counters inside `entry.coverage.cost` (`launchesSlotObserved`,
+ *   `slotFailedAttempts`, `slotFailedAttemptFeeSol`, `slotTipSol`). No candidate ROW field and no
+ *   run-level block: `PERSISTED_BY_SCHEMA[26]`, `SPEND_KEYS_BY_SCHEMA[26]`, `DUNE_KEYS_BY_SCHEMA[26]`,
+ *   `CREATION_KEYS_BY_SCHEMA[26]`, `ROTATION_BLOCK_KEYS_BY_SCHEMA[26]`, `ENTRY_WINDOW_KEYS_BY_SCHEMA[26]`
+ *   and `ENTRY_ENTRANT_KEYS_BY_SCHEMA[26]` all equal `[25]`.
+ *
+ *   **NO EXISTING FIELD MOVES AND NOTHING GATES ON THE NEW ONES.** A schema-25 and a schema-26 run
+ *   over the same inputs reach byte-identical `entry.verdict`s, no threshold moved, and a test pins
+ *   both — the shape 208b established and 461 repeated. `exitVerdict` is Stage 3's vocabulary
+ *   (`bounds.mjs` → `EXIT_VERDICTS`) and is never `entry.verdict`'s: every value of that one is a
+ *   statement about ENTRY.
+ *
+ *   **Why it needs a version.** *"No profit verdict may be issued while a cost term is unbounded"*
+ *   was a sentence in a doc comment and a clause inside a caveat string — a hand-maintained
+ *   condition, the shape this tree has watched go stale twice. It is arithmetic now: one typed row
+ *   per component, and `bounds.mjs` → `exitVerdict` returns `exit-unbounded` whenever any `cost` row
+ *   has `worstCaseSol === null`. A record carrying the rows can be audited for WHICH terms were
+ *   unbounded when it was written; a schema-≤25 one cannot, and its absence of a ledger is not the
+ *   same statement as an empty one.
+ *
+ *   **What became a number, and what did not.** The create slot's own failed-attempt fee bill (exact
+ *   `meta.fee`, base plus priority, over every landed-but-FAILED transaction touching the launch's
+ *   mint — Solana charges fees on inclusion rather than on success) and the SOL arriving at a
+ *   published Jito tip account in that slot. Both come out of the `getBlock` response the cost leg
+ *   already fetched, so this costs **zero vendor requests, zero credits and zero wall clock**, and
+ *   Stage 2's keyless ceiling cannot move. Both are **whole-slot totals used as per-position
+ *   CEILINGS** — they over-attribute grossly on purpose, which is what a worst case is for, and they
+ *   are not attributions of anything to anybody.
+ *
+ *   **THREE cost rows stay `null`**, so a profit verdict is still not issuable for a general
+ *   deployer: tips outside the create-slot bound, attempts outside the create slot (captain decision
+ *   466 declined to raise `stage2_cost.maxRpcRequestsPerCandidate`, so this one is deliberate and
+ *   not an oversight), and exit-side fees outside the walked horizon. Hence the verdict names its own
+ *   scope — `…-create-slot-costs-only` — so a reader who sees only the verdict string cannot mistake
+ *   it for a whole-window cost accounting. And it fails towards refusal: where the cost walk falls
+ *   back to per-signature reads there is no observation, the create-slot rows go back to `null`, and
+ *   the verdict stays `exit-unbounded`.
  */
-export const RECORD_SCHEMA_VERSION = 25;
+export const RECORD_SCHEMA_VERSION = 26;
 
 /**
  * The predictions-document contract version, carried inside the document itself.

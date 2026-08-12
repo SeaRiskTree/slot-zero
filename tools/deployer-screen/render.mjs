@@ -1409,7 +1409,11 @@ export function renderStage1(run) {
     // The legend has to speak the vocabulary the run actually emitted, and it has to state the
     // gross-only limit exactly where it is true. Naming a verdict this tool can no longer emit, or
     // calling a NET figure gross, misreads the run for whoever reads it — and the candidates are
-    // already in hand here, so the condition is a fact about THIS run rather than a hedge.
+    // already in hand here, so the condition is a fact rather than a hedge.
+    //
+    // A FACT ABOUT THESE ROWS, AND THE WORDING SAYS SO. This legend is printed once per ARM, so a
+    // sentence scoped to "this run" would let the gate block make a claim about a sub-gate candidate
+    // the cost leg priced, and the reverse.
     const anyPriced = rows.some((c) => c.entry !== null && c.entry.entryCostPriced.hits > 0);
     lines.push('  NO VERDICT HERE MEANS "BEATABLE". ENTRY-OPEN-AFTER-COSTS is the strongest thing this');
     lines.push('  stage says: room was present, the seat was priced from the chain, and the field still');
@@ -1430,12 +1434,14 @@ export function renderStage1(run) {
       lines.push('  ones rather than replacing them. They are an UPPER bound themselves: a landing tip');
       lines.push('  paid in a separate transaction of the same bundle is in neither figure.');
       lines.push('  Where a candidate\'s own block says NOT MEASURED, only the gross figures exist for it,');
-      lines.push('  and those are an upper bound.');
+      lines.push('  and those are an upper bound. This is stated over THIS BLOCK\'S rows; another arm\'s');
+      lines.push('  block states it over its own.');
     } else {
-      lines.push('  No candidate in this run carries a priced seat — the cost leg does not run under');
+      lines.push('  No candidate IN THIS BLOCK carries a priced seat — the cost leg does not run under');
       lines.push('  --no-stage2 or a --stage0 run, and does not run for a candidate the free legs (room,');
       lines.push('  or the field GROSS of fees) already refused. So every realised figure above is gross');
-      lines.push('  of fees and therefore an upper bound.');
+      lines.push('  of fees and therefore an upper bound. Another arm\'s block may differ; each states');
+      lines.push('  this over its own rows.');
     }
     return lines;
   };
@@ -1573,6 +1579,13 @@ export function renderStage1(run) {
     for (const c of failed) {
       L.push(`  ${c.wallet}`);
       for (const reason of c.gate.reasons) L.push(`      · ${reason}`);
+      // WHY THE SECOND ARM DID NOT TAKE IT EITHER — captain decision 451. `rank.mjs` appends this to
+      // the candidate's `rationale` precisely so "the arm refused this" can be told from "the arm
+      // was never asked", and the record carries it; without it here the rendered report is the one
+      // surface where a bound that has quietly stopped admitting anyone is invisible. A candidate
+      // the arm was never asked about prints nothing rather than an empty clause.
+      const refusal = subGateRefusalLine(c);
+      if (refusal !== null) L.push(`      · ${refusal}`);
       if (c.creation !== null && c.creation.coveredFromIso === null) {
         // The heading above promises each row states which history it was rejected over. A walk
         // that covered no window at all was rejected over the ownership listing plus whatever
@@ -2412,4 +2425,32 @@ function rotationGround(block) {
     if (g >= cap) saturated += 1;
   }
   return { selected, deferred, cap, saturated, rows: order.length };
+}
+
+/**
+ * One line saying which sub-gate condition refused a candidate the competence gate already failed.
+ *
+ * `null` when the arm was NOT ASKED, which is a different state from "asked and refused" and is why
+ * this returns a nullable rather than an empty string: `admission.mjs`'s whole visibility argument is
+ * that those two must be distinguishable, and printing an empty clause would erase the distinction
+ * it exists to keep. `null` too for a candidate the arm ADMITTED — that wallet is not in this block.
+ *
+ * **ONE LINE, and the reasons are TRUNCATED TO THEIR FIRST CLAUSE to earn it.** A rejection list runs
+ * to 74 rows on a real run, and the arm's reasons are full paragraphs carrying their own derivation;
+ * the head of each names the condition and its two numbers, which is what an operator scanning the
+ * list needs. The full text is in the run record's `subGate.reasons` and in the candidate's
+ * `rationale`, neither of which is abridged.
+ *
+ * @param {import('./rank.mjs').Candidate} c
+ * @returns {string | null}
+ */
+function subGateRefusalLine(c) {
+  const subGate = c.subGate;
+  if (subGate === null || subGate === undefined || subGate.admitted) return null;
+  const heads = subGate.reasons.map((reason) => {
+    const cut = [reason.indexOf('. '), reason.indexOf(' — ')].filter((i) => i > 0);
+    return cut.length === 0 ? reason : reason.slice(0, Math.min(...cut));
+  });
+  if (heads.length === 0) return null;
+  return `the SUB-GATE arm (451) also refused it: ${heads.join('; ')}`;
 }

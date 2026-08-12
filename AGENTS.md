@@ -1856,11 +1856,18 @@ Seven things bind:
   CHECK and not the derivation**: the rule admits four of them and refuses two (rates 0.018 and
   0.036), and the lever for that decile is a measurement of pass rate by sub-gate rate decile — not a
   floor lowered to catch wallets already known to have passed.
-- **IT BUYS NO VENDOR CALL, STRUCTURALLY — AND IT IS NOT FREE. Two claims, and only the first
-  survives.** No request, credit or wall-clock ceiling in this tool is a function of how many
-  candidates were ADMITTED — Stage 2's keyless ceiling is `maxCandidatesScored` ×
-  `maxLaunchesPerCandidate` × `maxRequestsPerLaunch` and the cost leg's is per candidate SCORED — and
-  `maxCandidatesScored` does not move (339a). **What it DOES cost is SCORING SLOTS, and they were not
+- **IT MOVES NO CEILING, AND IT IS NOT FREE — two claims, and the surviving one is NARROWER than it
+  first read.** On a DEFAULT run no ceiling is a function of how many candidates were ADMITTED —
+  Stage 2's keyless ceiling is `maxCandidatesScored` × `maxLaunchesPerCandidate` ×
+  `maxRequestsPerLaunch` and the cost leg's is per candidate SCORED — and `maxCandidatesScored` does
+  not move (339a). **ONE LEG'S COST DOES SCALE WITH THE ADMITTED COUNT and "it cannot cause one
+  extra vendor call" was wrong**: the OPT-IN keyless creator walk behind `--consistency` visits every
+  ADMITTED candidate at up to 3 pump.fun pages each, so on the run below it walks 12 wallets where it
+  walked 4. It was ALREADY per-survivor and uncapped before 451 — what 451 changed is its POPULATION,
+  not its boundedness — it is KEYLESS and metered nowhere, `budget.maxKeylessRequests` still bounds
+  it, it runs AFTER Stage 2 so a ceiling there cannot starve the scoring leg, and a ceiling hit is
+  caught per candidate as an UNMEASURED consistency reading rather than aborting the run. Whether it
+  should now be capped per run is OPEN and the captain's. **What it DOES cost is SCORING SLOTS, and they were not
   idle**: on the committed `runs/2026-08-04.json` the arm takes the admitted population from **4 to
   12 against a cap of 7**, so at today's pins the cap BINDS where it did not, 5 admitted candidates
   go unscored, and `scoringCap.survivorsUnscored` reads 5 where the gate arm alone left 0. **The

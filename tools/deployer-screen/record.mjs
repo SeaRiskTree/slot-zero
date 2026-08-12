@@ -961,7 +961,11 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  * whole-population counts (`gated`, `prefilteredOut`, `coverage.*`) never depended on the gate's
  * verdict, and every per-candidate measurement means what it always did. No bar moved,
  * `stage1_gate.minCompletionRate` is still 0.25 and Stage 2's ceilings are untouched, since none of
- * them is a function of how many candidates were ADMITTED. **What may never be pooled is the two
+ * them is a function of how many candidates were ADMITTED. **The one leg whose COST does scale with
+ * the admitted count is the opt-in `--consistency` creator walk** — keyless, metered nowhere,
+ * bounded by the unmoved `budget.maxKeylessRequests`, and run after Stage 2; it is what makes the
+ * `keylessRequests` widening above a real one rather than a bookkeeping note.
+ * **What may never be pooled is the two
  * arms** (`admission.mjs` → `ARMS_ARE_NEVER_POOLED`): they are two populations with two
  * denominators, and a figure over one of them says nothing about the other.
  *

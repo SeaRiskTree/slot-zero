@@ -20380,6 +20380,12 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
     expect(subGateOnly).toContain('NO VERDICT HERE MEANS "BEATABLE"');
     expect(subGateOnly).toContain('filters on our own budget and evidence (decision 174b)');
     expect(subGateOnly).toMatch(/gross\s+of fees and therefore an upper bound/);
+    // AND THE PRICED-SEAT SENTENCE IS SCOPED TO THE BLOCK IT IS COMPUTED OVER. The legend prints
+    // once per ARM, so "no candidate in this RUN carries a priced seat" would let the gate block
+    // make a claim about a sub-gate candidate the cost leg priced — the same false-published-line
+    // class, one sentence over from where the row scoping was already fixed.
+    expect(subGateOnly).toContain('No candidate IN THIS BLOCK carries a priced seat');
+    expect(subGateOnly).not.toContain('No candidate in this run carries a priced seat');
     // The footer no longer sends the reader to a block that was not rendered.
     expect(subGateOnly).not.toContain('mean in the\n  gate block above');
     expect(subGateOnly).toContain('The reading is the same one the gate arm is');
@@ -20407,5 +20413,85 @@ describe('451: a sub-gate deployer reaches Stage 2, and the record says which ar
     const gateLegend = gateOnly.slice(gateOnly.indexOf('  n    = launches in the denominator'));
     const subGateLegend = subGateOnly.slice(subGateOnly.indexOf('  n    = launches in the denominator'));
     expect(subGateLegend).toBe(gateLegend);
+  });
+
+  it('shows WHY the second arm refused a rejected wallet, and prints nothing when it was not asked', () => {
+    // `rank.mjs` appends the arm's refusal to a gate-failed candidate's `rationale` precisely so an
+    // operator can tell "the arm refused this" from "the arm was never asked" — the only way to see
+    // a bound that has quietly stopped admitting anyone. The rejection block printed `gate.reasons`
+    // alone, so on the report that distinction was invisible while the record carried it.
+    const completion = measureCompletion(
+      Array.from({ length: 40 }, (_, i) => ({ deployedAtMs: T0 + i * DAY, completed: i < 1 })),
+    );
+    const failedRow = (wallet: string, subGate: unknown) => ({
+      wallet,
+      seededBy: ['alerts'],
+      completion,
+      completionCapped: false,
+      gate: { passed: false, reasons: ['completion rate 0.0250 < 0.25 required'] },
+      verdict: 'gate-failed' as const,
+      rationale: '',
+      consistency: null,
+      historySource: 'creation-derived' as const,
+      vendorCompletion: completion,
+      vendorVerdict: 'gate-failed' as const,
+      vendorPageCapped: false,
+      creation: null,
+      entry: null,
+      entryCoverage: null,
+      subGate,
+    });
+    const text = renderStage1({
+      candidates: [
+        failedRow('REFUSEDWALLET', {
+          admitted: false,
+          reasons: [
+            'completion rate 0.0250 < 0.05 required by the sub-gate arm. Since captain decision 352b that rate is the share of…',
+            'launch tempo 0.2 /day < 0.465116 required — one Stage 2 visit harvests 10 window(s), and at this tempo…',
+          ],
+        }),
+        // The arm was never asked about this one, so it must print NOTHING rather than an empty
+        // clause: an absent question and a refusal are different states and this block keeps them so.
+        failedRow('NOTASKEDWALLET', null),
+      ],
+      keyedRequests: 2,
+      keylessRequests: 0,
+      rpcRequests: 0,
+      rpcLoadShedEvents: 0,
+      historySource: 'creation-derived' as const,
+      elapsedMs: 1000,
+      startedAtIso: '2026-08-11T00:00:00.000Z',
+      completed: true,
+      truncationReason: null,
+      prefiltered: 0,
+      coverage: {
+        seeds: [],
+        inertSeeds: [],
+        distinctWalletsSeeded: 2,
+        prefilteredOut: 0,
+        worthARequest: 2,
+        candidateCap: 195,
+        droppedByCandidateCap: 0,
+        gated: 2,
+        coverageTruncated: false,
+      },
+      unmeasured: [],
+      thresholds: {},
+    } as never);
+
+    const rejections = text.slice(text.indexOf('DID NOT CLEAR THE GATE'));
+    const refused = rejections.slice(rejections.indexOf('REFUSEDWALLET'), rejections.indexOf('NOTASKEDWALLET'));
+    // WHICH condition refused it, with its numbers — one line, both conditions named.
+    expect(refused).toContain('the SUB-GATE arm (451) also refused it');
+    expect(refused).toContain('completion rate 0.0250 < 0.05 required by the sub-gate arm');
+    expect(refused).toContain('launch tempo 0.2 /day < 0.465116 required');
+    // ONE LINE is the budget on a list that runs to 74 rows, so the reasons are cut at their first
+    // clause; the unabridged text stays in the record's `subGate.reasons`.
+    expect(refused).not.toContain('Since captain decision 352b');
+    expect(refused.split('\n').filter((l) => l.includes('SUB-GATE arm (451) also refused'))).toHaveLength(1);
+
+    // A candidate the arm was never asked about says nothing at all.
+    const notAsked = rejections.slice(rejections.indexOf('NOTASKEDWALLET'));
+    expect(notAsked).not.toContain('SUB-GATE arm (451) also refused');
   });
 });

@@ -3030,10 +3030,14 @@ export async function main(opts, env, out, err, seam = {}) {
       // `test/deployer-screen.test.ts` precisely so a third caller cannot quietly build a statistic
       // over two populations with two denominators. Every count below this line is still per arm.
       //
-      // IT WIDENS NO SPEND BOUND AND IT IS NOT FREE, and those are two different claims. No request,
-      // credit or wall-clock ceiling moves: `maxScored` is unmoved (captain decision 339a) and Stage
-      // 2's keyless ceiling is `maxCandidatesScored` x `maxLaunchesPerCandidate` x
-      // `maxRequestsPerLaunch`, none of which is a function of how many candidates were admitted.
+      // IT WIDENS NO CEILING AND IT IS NOT FREE, and those are two different claims. No ceiling this
+      // stage enforces moves: `maxScored` is unmoved (captain decision 339a) and Stage 2's keyless
+      // ceiling is `maxCandidatesScored` x `maxLaunchesPerCandidate` x `maxRequestsPerLaunch`, none
+      // of which is a function of how many candidates were admitted. The one leg whose COST scales
+      // with the admitted count is the opt-in `--consistency` walk below — keyless, metered nowhere,
+      // bounded by the unmoved `budget.maxKeylessRequests`, and run AFTER this stage so a ceiling
+      // reached there cannot starve it; `thresholds.json` ->
+      // `stage1_gate.justification.subGateAdmission` owns that qualification.
       //
       // What it DOES cost is SCORING SLOTS. On the committed `runs/2026-08-04.json` the arm takes
       // the admitted population from 4 to 12 against a cap of 7, so at today's pins the cap BINDS

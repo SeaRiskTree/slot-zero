@@ -20,8 +20,10 @@
  * comes from running the screen over that cohort:
  *
  * ```bash
- * # the cohort's wallets, one per line — the screen gates them, it does not just enumerate them
- * node tools/deployer-screen/screen.mjs --wallets cohort-wallets.txt --no-stage2 --out <record>
+ * # the cohort's wallets, one per line — the screen gates them, it does not just enumerate them.
+ * # --launch-list is what asks for the file: the write is OPT-IN, so a run without it writes none.
+ * node tools/deployer-screen/screen.mjs --wallets cohort-wallets.txt --no-stage2 \
+ *   --launch-list --out <record>
  * ```
  *
  * `--wallets` is captain decision 398a's already-approved input and the screen's ONE gate loop
@@ -168,6 +170,11 @@ export function newestLaunchListPath(dir) {
  * empty walk: the message names the directory, says the screen is what fills it, and says this lane
  * may not fetch one itself.
  *
+ * **The command it names carries `--launch-list`, and that is load-bearing rather than tidy.** The
+ * screen's write is opt-in, so a run without the flag enumerates, gates, completes — and writes no
+ * list. An operator following a command that omits it runs the screen, finds the directory still
+ * empty, and gets this identical refusal on the next attempt with nothing to tell them why.
+ *
  * @param {string} target A file or a directory.
  * @returns {{ ok: true, path: string } | { ok: false, reason: string }}
  */
@@ -178,9 +185,10 @@ export function resolveLaunchListPath(target) {
       reason:
         `there is no launch list at ${target}. This lane cannot fetch one — it is keyless by ` +
         `construction — so the list comes from a deployer-screen run over the wallets you want: ` +
-        `node tools/deployer-screen/screen.mjs --wallets <file> --no-stage2, which writes into ` +
-        `<data root>/${SCREEN_LAUNCH_LIST_DIRNAME}/ as a by-product of the enumeration it was ` +
-        `already going to do.`,
+        `node tools/deployer-screen/screen.mjs --wallets <file> --no-stage2 --launch-list, which ` +
+        `writes into <data root>/${SCREEN_LAUNCH_LIST_DIRNAME}/ as a by-product of the enumeration ` +
+        `it was already going to do. --launch-list is REQUIRED there: the write is opt-in, so a ` +
+        `screen run without it leaves this directory exactly as empty as it is now.`,
     };
   }
   if (!statSync(target).isDirectory()) return { ok: true, path: target };
@@ -190,8 +198,10 @@ export function resolveLaunchListPath(target) {
       ok: false,
       reason:
         `${target} holds no launch list. A deployer-screen run writes one there as a by-product of ` +
-        `its Dune enumeration leg; until one has run over the wallets you want, there is nothing ` +
-        `here to walk and this lane may not go and get it.`,
+        `its Dune enumeration leg ONLY when asked to — the write is opt-in behind --launch-list — ` +
+        `so run: node tools/deployer-screen/screen.mjs --wallets <file> --no-stage2 --launch-list ` +
+        `${target}. Until one has run over the wallets you want, there is nothing here to walk and ` +
+        `this lane may not go and get it.`,
     };
   }
   return { ok: true, path: newest };

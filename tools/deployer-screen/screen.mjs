@@ -750,10 +750,10 @@ export function duneFillSourceContradiction(opts, agreementBounds, selectedKind 
  * Folding them would make one function answer two questions and would couple this flag to the Gate 3
  * cutover, which has nothing to do with it.
  *
- * **The two causes it does NOT cover are legitimate states rather than contradictions** — no Dune
- * credential resolved, and a batch with no candidate to enumerate. Nothing was asked for and refused
- * there; the run simply had no enumeration to project, and `main` prints a line naming which of the
- * two applied and saying no list was written.
+ * **The four causes it does NOT cover are legitimate states rather than contradictions** — no Dune
+ * credential resolved, a batch with no candidate to enumerate, `--stage0` and `--dry-run`. Nothing
+ * was asked for and refused there; the run simply had no enumeration to project, and
+ * {@link launchListNotWrittenNote} is the one derivation that names which applied.
  *
  * @param {{ launchListDir?: string | null, noDune: boolean, ownershipOnly: boolean }} opts
  * @returns {string | null} The refusal, or `null` where the two instructions do not conflict.
@@ -773,6 +773,61 @@ export function launchListEnumerationContradiction(opts) {
     `reporting nothing leaves an OLDER list standing as the newest in the handover directory, which ` +
     `is the one reading that handover exists to prevent. Drop ${declared.join(' / ')}, or drop ` +
     `--launch-list. Nothing was requested and nothing was billed.`
+  );
+}
+
+/**
+ * WHY NO LAUNCH LIST WAS WRITTEN — ONE DERIVATION, ASKED BY EVERY PATH THAT CAN RETURN WITHOUT
+ * WRITING ONE. Captain decision **484**, and it is the other half of 483's answer.
+ *
+ * **There are SIX ways a `--launch-list` run can end with no file, and they are two kinds.** Two are
+ * CONTRADICTIONS and are refused before anything is spent ({@link launchListEnumerationContradiction}
+ * — `--no-dune`, `--ownership-only`). The other FOUR are legitimate states and are what this names:
+ * no usable Dune credential, a batch with no candidate to enumerate, `--stage0` and `--dry-run`.
+ *
+ * **`--stage0` and `--dry-run` are NOT refused, and the precedent is captain decision 286c.** That
+ * decision folded `--stage0` into `entryFillSourceIsRead` precisely so a guard would NOT refuse
+ * `--stage0 --no-dune` — the free, offline, keyless mode — and deliberately did not fold `--dry-run`,
+ * because a dry run PLANS a source rather than reading one. So the standing reading of both flags is
+ * "a legitimate mode", which puts them with the note and not with the refused pair.
+ *
+ * **It is ONE function rather than a line at each early return**, and that is captain decision 144a
+ * rather than tidiness: `--stage0` returns above the plan, `--dry-run` above the run path and the
+ * enumeration leg below both, so a line copied into each is three expressions that merely agree
+ * until one of them stops agreeing. A new early return asks this and gets the whole rule.
+ *
+ * **What it protects is a reading, not a file.** The frequency lane takes the NEWEST list in the
+ * handover directory, so a run that writes nothing and says nothing leaves an EARLIER observation
+ * standing as the current state of the world — which is exactly what the writer's "a leg that THREW
+ * still writes a document" rule exists to prevent, arriving from the other side.
+ *
+ * @param {{ launchListDir?: string | null, stage0Only?: boolean, dryRun?: boolean }} opts
+ * @param {object} [state] What the calling site knows yet. An UNKNOWN field is not a cause: a site
+ *   above the credential resolution passes neither, and only the mode causes can fire there.
+ * @param {boolean} [state.duneCredentialAvailable] Whether a usable `DUNE_API_KEY` resolved.
+ * @param {number} [state.gatingCount] How many candidates the enumeration leg was given.
+ * @returns {string | null} The line to print on `err`, or `null` where a list was or will be written.
+ */
+export function launchListNotWrittenNote(opts, state = {}) {
+  if (opts.launchListDir == null) return null;
+  const cause =
+    opts.stage0Only === true
+      ? '--stage0 runs the offline tape regressions and returns before any candidate is enumerated, ' +
+        'so there is no Stage 1 creation enumeration to project'
+      : opts.dryRun === true
+        ? '--dry-run prints the plan and reaches no vendor, so no creation enumeration ran and there ' +
+          'is nothing to project'
+        : state.duneCredentialAvailable === false
+          ? 'no usable DUNE_API_KEY resolved, so the Stage 1 creation enumeration never ran and there ' +
+            'is nothing to project'
+          : state.gatingCount === 0
+            ? 'this run had no candidate to enumerate, so the Stage 1 creation enumeration was never ' +
+              'asked'
+            : null;
+  if (cause === null) return null;
+  return (
+    `  !! no launch list was written: ${cause}. The newest list in ${opts.launchListDir} is an ` +
+    `EARLIER run's and this run did not refresh it.`
   );
 }
 
@@ -1796,6 +1851,8 @@ export async function main(opts, env, out, err, seam = {}) {
 
   if (opts.stage0Only) {
     if (opts.json) out(JSON.stringify({ stage0: summariseStage0(stage0), limitations: LIMITATIONS }, null, 2));
+    const unwritten = launchListNotWrittenNote(opts);
+    if (unwritten !== null) err(unwritten);
     return EXIT.ok;
   }
 
@@ -2241,6 +2298,10 @@ export async function main(opts, env, out, err, seam = {}) {
         allowWalkFallback: opts.allowWalkFallback,
       }),
     );
+    const unwritten = launchListNotWrittenNote(opts, {
+      duneCredentialAvailable: duneCredential.available,
+    });
+    if (unwritten !== null) err(unwritten);
     return EXIT.ok;
   }
 
@@ -2708,24 +2769,20 @@ export async function main(opts, env, out, err, seam = {}) {
           );
         }
       }
-    } else if (opts.launchListDir !== null) {
-      // ---- ASKED FOR, AND THERE WAS NO ENUMERATION TO PROJECT (captain decision 483). ---------
+    } else {
+      // ---- ASKED FOR, AND THERE WAS NO ENUMERATION TO PROJECT (captain decisions 483 and 484). -
       // The two CONTRADICTIONS — `--no-dune` and `--ownership-only` — were refused before this run
-      // spent anything. What is left here are the two legitimate states: no Dune credential
-      // resolved, and a batch with no candidate to enumerate. Neither is a fault and neither may be
-      // silent, because the reader takes the NEWEST list in the directory: an operator who believes
-      // this run refreshed it would be walking an older observation. Named on `err` so a `--json`
-      // run hears it too, and the run is unaffected either way.
-      err(
-        `  !! no launch list was written: ` +
-          (duneClient === null
-            ? 'no usable DUNE_API_KEY resolved, so the Stage 1 creation enumeration never ran and ' +
-              'there is nothing to project'
-            : 'this run had no candidate to enumerate, so the Stage 1 creation enumeration was ' +
-              'never asked') +
-          `. The newest list in ${opts.launchListDir} is an EARLIER run's and this run did not ` +
-          `refresh it.`,
-      );
+      // spent anything, and `--stage0` / `--dry-run` returned above with this same note. What
+      // reaches here are the remaining two legitimate states: no Dune credential resolved, and a
+      // batch with no candidate to enumerate. Neither is a fault and neither may be silent, because
+      // the reader takes the NEWEST list in the directory: an operator who believes this run
+      // refreshed it would be walking an older observation. `launchListNotWrittenNote` is the ONE
+      // derivation all three sites ask, so the wording and the cause list cannot drift apart.
+      const unwritten = launchListNotWrittenNote(opts, {
+        duneCredentialAvailable: duneCredential.available,
+        gatingCount: gating.length,
+      });
+      if (unwritten !== null) err(unwritten);
     }
 
     // ---- THE SPEND CLIFF, PRICED BEFORE IT IS PAID (captain decision 298a). ------------------

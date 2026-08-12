@@ -1304,6 +1304,17 @@ above exists to prevent, arriving from the other side. The two remaining causes 
 contradictions, so the run names which one applied and states plainly that no list was written, on
 stderr for the same reason the write failure is.
 
+**THERE ARE SIX WAYS A `--launch-list` RUN CAN END WITH NO FILE, AND ONE DERIVATION NAMES ALL OF
+THEM** (captain decision 484). Two are the refused contradictions above. The other four are
+legitimate modes and are the note's: no usable `DUNE_API_KEY`, no candidate to enumerate, `--stage0`
+and `--dry-run`. **Neither mode flag is refused** — captain decision 286c already ruled on exactly
+this by folding `--stage0` into `entryFillSourceIsRead` so a guard would NOT refuse the free,
+offline, keyless mode, and by deliberately not folding `--dry-run`, which PLANS a source rather than
+reading one. Both return above the write site, so `screen.mjs` → `launchListNotWrittenNote` is asked
+by each of the three return paths rather than a line being copied into each: three expressions that
+merely agree is captain decision 144a's defect, and a new early return asks the one function and
+gets the whole rule.
+
 ## Retention — MadeOnSol terms §5a(d)
 
 > *(d) you may not cache, store, or accumulate API Data beyond what is reasonably necessary to

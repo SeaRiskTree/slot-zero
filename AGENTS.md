@@ -416,10 +416,18 @@ Five things bind anything that touches it or copies from it:
   checked in both `parseArgs` and `main` — while the two LEGITIMATE states (no usable `DUNE_API_KEY`,
   no candidate to enumerate) print a line naming which applied and saying no list was written. That
   line and the write-FAILURE line go to **stderr unconditionally**, `--json` included, because the run
-  record deliberately carries nothing about this by-product; the success line stays on stdout. The
+  record deliberately carries nothing about this by-product; the success line stays on stdout.
+  **DECISION 484 then made that note ONE derivation asked by every path that can return without
+  writing** (`screen.mjs` → `launchListNotWrittenNote`): there are SIX causes — the two refused
+  contradictions plus no credential, no candidate, `--stage0` and `--dry-run` — and the two mode
+  flags are NOT refused, on 286c's precedent that both are legitimate modes. The
   reader side is the same rule: an unreadable `deployers` entry, or a wallet with rows and no entry,
-  REFUSES rather than being skipped, and `collect.mjs` → `refuseUnusableLaunchList` holds the
-  pre-flight's leg B to the walk's own refusals. And the **retention
+  REFUSES rather than being skipped, and `collect.mjs` → `launchListRefusalReason` holds the
+  pre-flight's leg B to the walk's own refusals — **DECISION 485: leg A is measured and written
+  first** (it opens no launch list), leg B is recorded `refused` rather than `skipped`, and the stop
+  is **exit 2**, the phase's own. Every command a refusal names carries `--launch-list`, because the
+  write is opt-in and a suggestion without it sends the operator to a run that writes nothing. And
+  the **retention
   posture moved while the ToS argument did not** — per-launch rows are no longer discarded;
   `CREATION-DERIVED.md` §8.7 and the screen README's "Retention" own the correction. Everything else
   is proven on a bounded sample: 5/5 create slots and exact fill counts against the committed tape

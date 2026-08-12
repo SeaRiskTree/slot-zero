@@ -191,15 +191,22 @@ export function ledger(out, phase) {
  * @param {import('./cohort.mjs').LaunchList | null} [args.launchList] An already-parsed list, which
  *   is how a screen by-product reaches leg B: that shape carries a staleness ceiling and is read by
  *   `launch-list.mjs` rather than by `readDuneResultFile`, so it arrives parsed. Takes precedence.
+ * @param {string | null} [args.launchListRefusal] Why the supplied list may not be walked — see
+ *   {@link launchListRefusalReason}. **Leg A runs and is written either way** (captain decision 485):
+ *   it compares the chain clock against the vendor clock and reads no launch list, so a problem with
+ *   a file it never opens may not cost that measurement. Leg B is refused instead of skipped, and
+ *   `preflight.json` records WHICH — "refused" and "no list was supplied" are opposite findings.
  * @param {number} [args.sampleLaunches]
  * @returns {Promise<{ verdict: import('./preflight.mjs').SkewVerdict, samples: import('./preflight.mjs').SkewSample[],
- *   duneVerdict: import('./preflight.mjs').SkewVerdict | null, duneSamples: import('./preflight.mjs').SkewSample[] }>}
+ *   duneVerdict: import('./preflight.mjs').SkewVerdict | null, duneSamples: import('./preflight.mjs').SkewSample[],
+ *   launchListRefusal: string | null }>}
  */
 export async function runPreflight({
   out,
   client,
   launchListPath = null,
   launchList = null,
+  launchListRefusal = null,
   sampleLaunches = BOUNDS.preflight.sampleLaunches,
 }) {
   const picked = selectPreflightLaunches(readLaunches(), (m) => readWindowTape(m), sampleLaunches);
@@ -217,11 +224,15 @@ export async function runPreflight({
   /** @type {import('./preflight.mjs').SkewVerdict | null} */
   let duneVerdict = null;
   const legBList =
-    launchList ??
-    (launchListPath === null
+    launchListRefusal !== null
       ? null
-      : parseLaunchListRows(readDuneResultFile(readFileSync(launchListPath, 'utf8'), launchListPath)));
-  if (legBList !== null) {
+      : (launchList ??
+        (launchListPath === null
+          ? null
+          : parseLaunchListRows(readDuneResultFile(readFileSync(launchListPath, 'utf8'), launchListPath))));
+  if (launchListRefusal !== null) {
+    say(`preflight leg B REFUSED: ${launchListRefusal}`);
+  } else if (legBList !== null) {
     const list = legBList;
     duneSamples = measureDuneClockSkew([...list.byDeployer.values()].flat(), (m) => readWindowTape(m));
     duneVerdict = assessSkew(duneSamples, BOUNDS.walk.mintFloorSlackMs);
@@ -243,15 +254,17 @@ export async function runPreflight({
         slackMs: BOUNDS.walk.mintFloorSlackMs,
         legA: { source: 'getBlockTime(createSlot) vs the committed window sidecar', verdict, samples },
         legB:
-          duneVerdict === null
-            ? { skipped: 'no launch-list export was supplied' }
-            : { source: "Dune created_at vs the committed window sidecar", verdict: duneVerdict, samples: duneSamples },
+          launchListRefusal !== null
+            ? { refused: launchListRefusal }
+            : duneVerdict === null
+              ? { skipped: 'no launch-list export was supplied' }
+              : { source: "Dune created_at vs the committed window sidecar", verdict: duneVerdict, samples: duneSamples },
       },
       null,
       2,
     ) + '\n',
   );
-  return { verdict, samples, duneVerdict, duneSamples };
+  return { verdict, samples, duneVerdict, duneSamples, launchListRefusal };
 }
 
 // -------------------------------------------------------------------------------------------
@@ -325,18 +338,30 @@ export function readLaunchListInput(target, { nowMs, maxAgeDays }) {
  * against a list whose enumeration leg had FAILED, whose coverage probe REFUSED, or that is past the
  * `--launch-list-max-age-days` the run itself stated, and report `ok` from it.
  *
- * **It throws rather than returning a verdict**, because a failing pre-flight is already a hard stop:
- * the collection it gates runs for days and the failure it looks for deletes create slots silently,
- * so a soft reading there is a reading nobody acts on.
+ * **It states the refusal rather than throwing it**, captain decision 485. The first cut threw
+ * before `runPreflight` was called, which cost LEG A — the chain-clock-versus-vendor-clock check,
+ * which uses no launch list at all — over a problem with a file it does not read, and unwound to the
+ * CLI's `main().catch` for exit 1 where this phase's documented hard stop is exit 2. Leg A is
+ * measured and written first, this refuses leg B, and the exit code is the phase's own.
+ *
+ * @param {import('./launch-list.mjs').LaunchListProvenance | null} provenance
+ * @returns {string | null} Why the list may not be walked, or `null` when nothing is against it —
+ *   including for a raw Dune export, which carries no provenance and states no ceiling.
+ */
+export function launchListRefusalReason(provenance) {
+  if (provenance === null || provenance.refusals.length === 0) return null;
+  return `the launch list at ${provenance.path} cannot be used: ${provenance.refusals.join(' ')}`;
+}
+
+/**
+ * {@link launchListRefusalReason} as a throw, for a caller with nowhere to put a verdict.
  *
  * @param {import('./launch-list.mjs').LaunchListProvenance | null} provenance
  * @returns {void}
  */
 export function refuseUnusableLaunchList(provenance) {
-  if (provenance === null || provenance.refusals.length === 0) return;
-  throw new Error(
-    `the launch list at ${provenance.path} cannot be used: ${provenance.refusals.join(' ')}`,
-  );
+  const reason = launchListRefusalReason(provenance);
+  if (reason !== null) throw new Error(reason);
 }
 
 /**
@@ -939,28 +964,36 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       });
       // Leg B reads whatever `--launch-list` points at, by-product or raw export, through the ONE
       // reader that knows the difference — and is held to the SAME refusals the walk is, not merely
-      // to the hard throws. `refuseUnusableLaunchList` is the enforcement the plan and walk phases
-      // get from `buildPlan`; this phase has no plan to carry them, so it refuses here.
+      // to the hard throws. `buildPlan` is where the plan and walk phases adopt them; this phase has
+      // no plan, so it carries the reason into `runPreflight` and lets leg A be measured first
+      // (captain decision 485): leg A opens no launch list, so a bad file may not cost it.
       /** @type {import('./cohort.mjs').LaunchList | null} */
       let preflightList = null;
+      /** @type {string | null} */
+      let launchListRefusal = null;
       if (args.launchList !== null) {
         const input = readLaunchListInput(args.launchList, {
           nowMs: Date.now(),
           maxAgeDays: args.launchListMaxAgeDays,
         });
-        refuseUnusableLaunchList(input.provenance);
+        launchListRefusal = launchListRefusalReason(input.provenance);
         preflightList = input.list;
       }
       const { verdict, duneVerdict } = await runPreflight({
         out: /** @type {string} */ (out),
         client,
         launchList: preflightList,
+        launchListRefusal,
       });
       say(`preflight leg A: ${JSON.stringify(verdict)}`);
       if (duneVerdict !== null) say(`preflight leg B: ${JSON.stringify(duneVerdict)}`);
       // A failing pre-flight is a hard stop. The collection it gates is days long and the failure it
-      // looks for deletes create slots silently.
-      process.exit(verdict.ok && (duneVerdict === null || duneVerdict.ok) ? 0 : 2);
+      // looks for deletes create slots silently. A REFUSED launch list stops on the same code as a
+      // failing verdict, so a wrapper reads one number for one meaning — and leg A's verdict is in
+      // `preflight.json` either way.
+      process.exit(
+        verdict.ok && launchListRefusal === null && (duneVerdict === null || duneVerdict.ok) ? 0 : 2,
+      );
     }
 
     if (args.phase === 'plan') {

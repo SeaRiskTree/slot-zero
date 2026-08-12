@@ -63,9 +63,11 @@ import {
 import { parseLaunchListRows, readDuneResultFile } from '../tools/arrival-rate-walk/cohort.mjs';
 import {
   buildPlan,
+  launchListRefusalReason,
   readLaunchListInput,
-  refuseUnusableLaunchList,
+  runPreflight,
 } from '../tools/arrival-rate-walk/collect.mjs';
+import { KeylessClient, SOLANA_RPC } from '../tools/arrival-rate-walk/client.mjs';
 
 const NOW_MS = Date.parse('2026-08-12T00:00:00.000Z');
 const KEY = 'x'.repeat(32);
@@ -340,22 +342,53 @@ describe('the rows survive the handover exactly', () => {
 });
 
 describe('absence fails towards refusal', () => {
-  it('names the screen invocation that fills the directory rather than walking nothing', () => {
+  /**
+   * The command a refusal tells the operator to run, fed to the screen's OWN `parseArgs`.
+   *
+   * The refusal text is an operator-facing contract, and the property that matters is not that it
+   * contains a flag but that the command it names would actually produce a list: the screen's write
+   * is opt-in, so a suggestion without `--launch-list` sends the operator to run a screen that
+   * completes and writes nothing, leaving them back at this identical refusal with no way to tell
+   * why. `parseArgs` is the real consumer of that command, so it is what decides.
+   */
+  const screenCommandIn = (reason: string) => {
+    const at = reason.indexOf('node tools/deployer-screen/screen.mjs');
+    expect(at, reason).toBeGreaterThanOrEqual(0);
+    const rest = reason.slice(at);
+    const end = Math.min(
+      ...[rest.indexOf(','), rest.indexOf('. '), rest.length].filter((i) => i >= 0),
+    );
+    return rest.slice('node '.length, end).trim().split(/\s+/).slice(1);
+  };
+
+  it('names a screen invocation that would ACTUALLY write a list, rather than walking nothing', () => {
     const missing = join(tmp(), 'nowhere');
     const resolved = resolveLaunchListPath(missing);
     expect(resolved.ok).toBe(false);
     if (!resolved.ok) {
       expect(resolved.reason).toContain('keyless by construction');
-      expect(resolved.reason).toContain('--wallets');
+      const parsed = parseArgs(screenCommandIn(resolved.reason));
+      expect(parsed.ok, resolved.reason).toBe(true);
+      if (parsed.ok) {
+        expect(parsed.opts.wallets, 'the command must point the screen at a cohort').not.toBeNull();
+        expect(parsed.opts.launchListDir, 'the command must ASK for the list').not.toBeNull();
+      }
     }
   });
 
-  it('refuses an EMPTY handover directory the same way', () => {
+  it('refuses an EMPTY handover directory the same way, and names a command that writes one', () => {
     const dir = tmp();
     try {
       const resolved = resolveLaunchListPath(dir);
       expect(resolved.ok).toBe(false);
-      if (!resolved.ok) expect(resolved.reason).toContain('may not go and get it');
+      if (!resolved.ok) {
+        expect(resolved.reason).toContain('may not go and get it');
+        const parsed = parseArgs(screenCommandIn(resolved.reason));
+        expect(parsed.ok, resolved.reason).toBe(true);
+        // And this one names the directory the operator actually asked about, so the list lands
+        // where the walk is looking rather than in the default store.
+        if (parsed.ok) expect(parsed.opts.launchListDir).toBe(dir);
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -659,11 +692,8 @@ describe('routing: a by-product can never be read as a raw export', () => {
     }
   });
 
-  it("the pre-flight is held to the walk's refusals, not only to the hard throws", () => {
-    // Leg B has no plan to carry the soft refusals into, so it enforces them itself — otherwise the
-    // clock check could pass over a list whose enumeration leg failed, whose coverage probe refused,
-    // or that is past the maximum age the run itself stated, and report `ok` from it.
-    const stale = readLaunchListDocument(
+  const unusableProvenance = () =>
+    readLaunchListDocument(
       JSON.stringify(
         buildLaunchListDocument({
           enumeration: null,
@@ -678,12 +708,99 @@ describe('routing: a by-product can never be read as a raw export', () => {
       ),
       { path: '/x/2026-07-03T00-00-00Z.json', nowMs: NOW_MS, maxAgeMs: 30 * DAY_MS },
     ).provenance;
+
+  it("the pre-flight is held to the walk's refusals, not only to the hard throws", () => {
+    // Leg B has no plan to carry the soft refusals into, so it enforces them itself — otherwise the
+    // clock check could pass over a list whose enumeration leg failed, whose coverage probe refused,
+    // or that is past the maximum age the run itself stated, and report `ok` from it.
+    const stale = unusableProvenance();
     expect(stale.refusals.length).toBeGreaterThan(0);
-    expect(() => refuseUnusableLaunchList(stale)).toThrow(/cannot be used/);
+    expect(launchListRefusalReason(stale)).toMatch(/cannot be used/);
 
     // A list with nothing against it, and a raw export with no provenance at all, both pass.
-    expect(() => refuseUnusableLaunchList({ ...stale, refusals: [] })).not.toThrow();
-    expect(() => refuseUnusableLaunchList(null)).not.toThrow();
+    expect(launchListRefusalReason({ ...stale, refusals: [] })).toBeNull();
+    expect(launchListRefusalReason(null)).toBeNull();
+  });
+
+  it('measures and WRITES leg A even when the launch list is refused — captain decision 485', async () => {
+    // Leg A compares the chain clock against the vendor clock and opens no launch list at all, so a
+    // problem with a file it never reads may not cost that measurement. The first cut threw before
+    // `runPreflight` was called and did exactly that.
+    const refusal = launchListRefusalReason(unusableProvenance());
+    expect(refusal).not.toBeNull();
+
+    const dir = tmp();
+    try {
+      // One launch, one stubbed `getBlockTime` — the RPC is never really reached.
+      const rpc = new KeylessClient({
+        host: SOLANA_RPC,
+        maxRequests: 4,
+        minIntervalMs: 0,
+        fetchImpl: (async () =>
+          new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: 1_770_000_000 }), {
+            status: 200,
+          })) as unknown as typeof fetch,
+        sleepImpl: async () => {},
+      });
+      const result = await runPreflight({
+        out: dir,
+        client: rpc,
+        launchList: parseLaunchListRows(launchRows(wallet(1), 2, 2)),
+        launchListRefusal: refusal,
+        sampleLaunches: 1,
+      });
+
+      // Leg A ran and produced a verdict; leg B did not run at all.
+      expect(result.samples.length).toBeGreaterThan(0);
+      expect(result.duneVerdict).toBeNull();
+      expect(result.duneSamples).toEqual([]);
+      expect(result.launchListRefusal).toBe(refusal);
+
+      // And `preflight.json` — the record this phase leaves behind — keeps leg A's measurement and
+      // says leg B was REFUSED, which is the opposite finding from "no list was supplied".
+      const written = JSON.parse(readFileSync(join(dir, 'preflight.json'), 'utf8'));
+      expect(written.legA.verdict).toEqual(result.verdict);
+      expect(written.legA.samples.length).toBe(result.samples.length);
+      expect(written.legB.refused).toBe(refusal);
+      expect(written.legB.skipped).toBeUndefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('runs leg B when nothing is against the list, and says SKIPPED when none was supplied', async () => {
+    const dir = tmp();
+    try {
+      const rpc = () =>
+        new KeylessClient({
+          host: SOLANA_RPC,
+          maxRequests: 4,
+          minIntervalMs: 0,
+          fetchImpl: (async () =>
+            new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: 1_770_000_000 }), {
+              status: 200,
+            })) as unknown as typeof fetch,
+          sleepImpl: async () => {},
+        });
+
+      const cleared = await runPreflight({
+        out: dir,
+        client: rpc(),
+        launchList: parseLaunchListRows(launchRows(wallet(1), 2, 2)),
+        launchListRefusal: null,
+        sampleLaunches: 1,
+      });
+      expect(cleared.duneVerdict).not.toBeNull();
+      expect(cleared.launchListRefusal).toBeNull();
+      expect(JSON.parse(readFileSync(join(dir, 'preflight.json'), 'utf8')).legB.refused).toBeUndefined();
+
+      const none = await runPreflight({ out: dir, client: rpc(), sampleLaunches: 1 });
+      expect(none.duneVerdict).toBeNull();
+      expect(none.launchListRefusal).toBeNull();
+      expect(JSON.parse(readFileSync(join(dir, 'preflight.json'), 'utf8')).legB.skipped).toBeDefined();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('reads a RAW Dune export exactly as before, with no ceiling and no staleness flag', () => {
@@ -863,6 +980,39 @@ describe('the whole screen writes it, and only when asked — end to end through
     } finally {
       rmSync(lists, { recursive: true, force: true });
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('SAYS SO for --stage0 and --dry-run too, which return above the write — captain decision 484', async () => {
+    // Both modes are legitimate rather than contradictions (captain decision 286c already ruled
+    // that way on `--stage0`), so neither is refused — but both return before the enumeration leg,
+    // so without the note they complete with exit 0 having written nothing and said nothing.
+    for (const [flag, expected] of [
+      ['--stage0', /--stage0 runs the offline tape regressions/],
+      ['--dry-run', /--dry-run prints the plan/],
+    ] as const) {
+      const lists = join(tmp(), `handover-${flag.slice(2)}`);
+      const { dir, errs } = await runScreen(['--launch-list', lists, flag]);
+      try {
+        expect(errs.join('\n'), flag).toMatch(/no launch list was written/);
+        expect(errs.join('\n'), flag).toMatch(expected);
+        expect(errs.join('\n'), flag).toContain(lists);
+        expect(existsSync(lists), flag).toBe(false);
+      } finally {
+        rmSync(lists, { recursive: true, force: true });
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('says nothing about a launch list on a run that never asked for one', async () => {
+    for (const flag of ['--stage0', '--dry-run']) {
+      const { dir, errs } = await runScreen([flag]);
+      try {
+        expect(errs.join('\n'), flag).not.toMatch(/launch list/);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     }
   });
 });

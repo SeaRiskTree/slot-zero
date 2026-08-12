@@ -128,7 +128,7 @@ node tools/creation-census/run.mjs --month 2026-01 --min-launches 20 --max-rows 
 # 2. The launch list, as a BY-PRODUCT of a deployer-screen run over that cohort (decision 457a).
 #    The screen gates the wallets it is given; the launch list falls out of the enumeration it was
 #    going to do anyway. No execution belongs to this lane and none is added for it.
-node tools/deployer-screen/screen.mjs --wallets <cohort-wallets.txt> --no-stage2 \\
+node tools/deployer-screen/screen.mjs --wallets <cohort-wallets.txt> --no-stage2 \
     --launch-list --out <record>
 
 # 3. Cost the run. Issues NOTHING.
@@ -206,11 +206,17 @@ rows are in `launches` with no entry of its own**. Either one leaves rows that n
 while making them look vouched for — the invisible direction — so the reader refuses, matching the
 writer-side rule that one unreadable row refuses the whole batch.
 
-**The pre-flight is held to the same refusals the walk is.** Leg B's clock check has no plan to carry
-them into, so `collect.mjs` → `refuseUnusableLaunchList` throws there instead: otherwise the clock
-check could measure skew against a list whose enumeration leg failed, whose coverage probe refused,
-or that is past the maximum age the run itself stated, and report `ok` from it. A failing pre-flight
-is already a hard stop (exit 2) because the collection it gates runs for days.
+**The pre-flight is held to the same refusals the walk is, and LEG A IS MEASURED ANYWAY** (captain
+decision 485). Leg B's clock check has no plan to carry them into, so `collect.mjs` →
+`launchListRefusalReason` states the refusal and `runPreflight` refuses leg B with it: otherwise the
+clock check could measure skew against a list whose enumeration leg failed, whose coverage probe
+refused, or that is past the maximum age the run itself stated, and report `ok` from it. **Leg A
+compares the chain clock against the vendor clock and opens no launch list at all**, so it runs first
+and its verdict reaches `preflight.json` either way — a problem with a file leg A never reads may not
+cost that measurement. `preflight.json` records leg B as `refused` with the reason rather than
+`skipped`, which is the opposite finding. A refused list stops the phase on **exit 2**, the same code
+a failing verdict uses, because the collection it gates runs for days and a wrapper should read one
+number for one meaning.
 
 ### Bounds
 

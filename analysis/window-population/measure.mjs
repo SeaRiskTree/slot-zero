@@ -363,9 +363,12 @@ export function rankSumZ(values, k, minSegment = 8) {
  * Duplicated from `tools/arrival-rate-walk/arrival.mjs` → `UNRESOLVED_BAND` by necessity:
  * `analysis/` may not import `tools/` and vice versa, asserted in both directions, and this file
  * already carries a duplicate of {@link changepoints} for the same reason. The guard against drift
- * is a source-text pin — `test/window-population.test.ts` → "keeps the two copies of the band in
- * step" — because two constants free to move independently is how the same series comes to earn
- * different words in two places.
+ * is BEHAVIOURAL — `test/window-population.test.ts` → "keeps the two copies of the band in step"
+ * imports both copies and asserts the bands are equal and that both {@link detectionVerdict}
+ * implementations return the same word across strengths spanning all three verdicts and both band
+ * edges — because two constants free to move independently is how the same series comes to earn
+ * different words in two places. The test file may import both; it is `analysis/` and `tools/`
+ * SOURCES that may not import each other.
  *
  * **It is not a second threshold.** Nothing here splits, merges or excludes on it — `minZ` decides
  * what the segmentation DOES and 496a leaves it at 4 — it decides only which of three words a
@@ -763,11 +766,14 @@ export function main() {
   console.log(`  captain decision 496a: every detection carries its strength, and |z| in ` +
     `[${UNRESOLVED_BAND.lo}, ${UNRESOLVED_BAND.hi}) is UNRESOLVED — neither a window nor no window. ` +
     'The bar is unmoved at 4; this changes the words, not the splits.');
-  for (const [name, pick] of /** @type {Array<[string, (r: LaunchRow) => number]>} */ ([
-    ['gross return per SOL', (r) => r.gross / r.stake],
-    ['gross prize, SOL', (r) => r.gross],
+  // ONE traversal of the return-per-SOL series, computed here and reused by the REGIMES block below
+  // rather than re-scanned there. Two scans of the identical series are two things free to disagree.
+  const roiSegmentation = segmentation(measurable.map((r) => r.gross / r.stake));
+  for (const [name, seg] of /** @type {Array<[string, ReturnType<typeof segmentation>]>} */ ([
+    ['gross return per SOL', roiSegmentation],
+    ['gross prize, SOL', segmentation(measurable.map((r) => r.gross))],
   ])) {
-    const { breaks, unresolvedBreaks } = segmentation(measurable.map(pick));
+    const { breaks, unresolvedBreaks } = seg;
     console.log(`  on ${name}:`);
     for (const b of breaks) {
       const before = measurable[b.index - 1], after = measurable[b.index];
@@ -806,10 +812,26 @@ export function main() {
   // The regime boundaries are the pinned WINDOW_OPEN / WINDOW_CLOSE dates, and the blind scan puts a
   // break on each of them. 496a: the window is not reported without the strength that separates it,
   // so the same scan's |z| is looked up per boundary and the binding (weaker) edge decides the word.
-  const boundaryBreaks = changepoints(measurable.map((r) => r.gross / r.stake));
-  /** @param {string | undefined} date @returns {number | null} */
-  const strengthAt = (date) =>
-    date === undefined ? null : (boundaryBreaks.find((b) => measurable[b.index]?.date.slice(0, 10) === date)?.z ?? null);
+  //
+  // A boundary with no break in that list is UNAVAILABLE, and it is rendered apart from CENSORED:
+  // a censored end is ABSENT evidence and an expected state at the first and last regime, while a
+  // missed lookup is UNKNOWN evidence and is not expected anywhere. Collapsing the second into the
+  // first is exactly the distinction 496a is careful about everywhere else.
+  const boundaryBreaks = roiSegmentation.breaks;
+  /**
+   * @typedef {{ kind: 'censored' } | { kind: 'unavailable' } | { kind: 'z', z: number }} EdgeStrength
+   */
+  /** @type {EdgeStrength} */
+  const CENSORED = { kind: 'censored' };
+  /** @param {string | undefined} date @returns {EdgeStrength} */
+  const strengthAt = (date) => {
+    const hit = date === undefined
+      ? undefined
+      : boundaryBreaks.find((b) => measurable[b.index]?.date.slice(0, 10) === date);
+    return hit === undefined ? { kind: 'unavailable' } : { kind: 'z', z: hit.z };
+  };
+  /** @param {EdgeStrength} e @returns {string} */
+  const edgeText = (e) => (e.kind === 'z' ? f(e.z, 2) : e.kind);
   for (const regime of /** @type {const} */ (['before', 'open', 'after'])) {
     const s = regimeStats(series, regime);
     const rows = series.filter((r) => regimeOf(r.date) === regime);
@@ -817,16 +839,22 @@ export function main() {
     const days = (Date.parse(rows[rows.length - 1]?.date ?? '') - Date.parse(rows[0]?.date ?? '')) / 86_400_000;
     console.log(`  ${regime.padEnd(6)} ${a} → ${b}  ${f(days, 0)} d  ${s.launches} launches (${s.measurable} measurable), ${s.trips} round trips`);
     // A censored end has NO break and contributes no strength — absent evidence, not weak evidence.
-    const openZ = regime === 'before' ? null : strengthAt(regime === 'open' ? WINDOW_OPEN : WINDOW_CLOSE);
-    const closeZ = regime === 'after' ? null : strengthAt(regime === 'before' ? WINDOW_OPEN : WINDOW_CLOSE);
-    const edges = /** @type {number[]} */ ([openZ, closeZ].filter((z) => z !== null));
-    const z = edges.length === 0 ? Number.NaN : Math.min(...edges);
+    const openZ = regime === 'before' ? CENSORED : strengthAt(regime === 'open' ? WINDOW_OPEN : WINDOW_CLOSE);
+    const closeZ = regime === 'after' ? CENSORED : strengthAt(regime === 'before' ? WINDOW_OPEN : WINDOW_CLOSE);
+    const uncensored = [openZ, closeZ].filter((e) => e.kind !== 'censored');
+    // An UNAVAILABLE edge leaves the binding strength unknown, so the reading is NaN and the verdict
+    // reads UNRESOLVED — the direction that refuses. Quoting the other edge would publish the half
+    // that happened to be found as if it bound the window.
+    const z =
+      uncensored.length === 0 || uncensored.some((e) => e.kind === 'unavailable')
+        ? Number.NaN
+        : Math.min(...uncensored.map((e) => /** @type {{ kind: 'z', z: number }} */ (e).z));
     // `open` IS the window this report measures; the other two are the levels either side of it, and
     // the same strength answers "how well is this regime separated" for all three. The label says
     // which question is being answered so a WINDOW verdict on `after` cannot read as a second window.
     const what = regime === 'open' ? 'WINDOW detection    ' : 'regime separation   ';
     console.log(`         ${what}${detectionVerdict(z).toUpperCase()}  |z|=${f(z, 2)}` +
-      `  (open ${openZ === null ? 'censored' : f(openZ, 2)}, close ${closeZ === null ? 'censored' : f(closeZ, 2)}` +
+      `  (open ${edgeText(openZ)}, close ${edgeText(closeZ)}` +
       `; bar 4, unresolved band ${UNRESOLVED_BAND.lo}–${UNRESOLVED_BAND.hi})`);
     console.log(`         stake ${f(s.stake, 1)} SOL   gross prize ${f(s.gross, 1)} SOL   return per SOL ${f(s.grossRoi, 3)}`);
     console.log(`         fully priced launches ${s.pricedLaunches}: gross ${f(s.pricedGross, 1)} → net ${f(s.pricedNet, 1)} SOL (net/gross ${f(s.pricedNet / s.pricedGross, 3)})`);

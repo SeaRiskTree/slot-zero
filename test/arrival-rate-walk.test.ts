@@ -920,10 +920,9 @@ describe('every window carries its strength, and the marginal band is a third ve
   // land on the three verdicts by construction rather than by being fished for. m = 10 → |z| 3.78
   // (inside the band, BELOW the bar), m = 12 → 4.16 (inside the band, ABOVE it), m = 15 → 4.67
   // (clear of the band). Nothing here is tuned: the only free number is the length.
-  const step = (m: number) => {
-    const point = (i: number, r: number) => ({ mint: `m${i}`, mintMs: i * 86_400_000, returnPerSol: r, prizeSol: r });
-    return [...Array(m)].map((_, i) => point(i, 1 + i * 1e-6)).concat([...Array(m)].map((_, i) => point(m + i, -1 + i * 1e-6)));
-  };
+  const point = (i: number, r: number) => ({ mint: `m${i}`, mintMs: i * 86_400_000, returnPerSol: r, prizeSol: r });
+  const step = (m: number) =>
+    [...Array(m)].map((_, i) => point(i, 1 + i * 1e-6)).concat([...Array(m)].map((_, i) => point(m + i, -1 + i * 1e-6)));
 
   it('THE BAR DOES NOT MOVE — 496a is a reporting change and this is what says so', () => {
     // If this fails, someone edited the threshold instead of the report. That is the one thing
@@ -1057,6 +1056,45 @@ describe('every window carries its strength, and the marginal band is a third ve
     expect(summary).not.toHaveProperty('windows');
     expect(summary).not.toHaveProperty('windowsPerDeployerYear');
     expect(summary).not.toHaveProperty('windowsWithBothEndsObserved');
+
+    // The classification is a PARTITION: the three classes sum to the pooled count, so no window is
+    // absorbed into a neighbour and none is dropped either.
+    expect(summary.windowsResolved + summary.windowsUnresolved + summary.windowsBelowBand).toBe(
+      summary.windowsDetectedIncludingUnresolved,
+    );
+  });
+
+  it('a BELOW-BAND window is neither pooled into unresolved nor lost — the third class', () => {
+    // 496a's own rule in the other direction. At the pinned bar this is unreachable — a taken break
+    // has |z| >= 4, above the band's `lo` — but `findWindows` takes `opts.minZ`, and a caller below
+    // the band is the reachable route. A `!== 'window'` catch-all counted such a window as
+    // UNRESOLVED, which is the collapse this change exists to prevent.
+    const m = 14;
+    const overlapped = [...Array(m)]
+      .map((_, i) => point(i, (i < 3 ? -1 : 1) + i * 1e-6))
+      .concat([...Array(m)].map((_, i) => point(m + i, (i < 3 ? 1 : -1) + i * 1e-6)));
+    const found = findWindows(overlapped, { minZ: 2.5, deployer: 'below-band' });
+    expect(found.windows).toHaveLength(1);
+    const w = found.windows[0]!;
+    expect(w.detection.z).toBeLessThan(UNRESOLVED_BAND.lo);
+    expect(w.detection.verdict).toBe('no-window');
+
+    const summary = summariseArrival([found]);
+    // NOT absorbed: it is out of the unresolved count and out of the rate's UPPER bound, which is
+    // resolved-plus-unresolved and never the class that resolved the other way.
+    expect(summary.windowsUnresolved).toBe(0);
+    expect(summary.windowsResolved).toBe(0);
+    expect(summary.windowsPerDeployerYearIncludingUnresolved).toBe(0);
+    expect(summary.windowsPerDeployerYearResolved).toBe(0);
+    expect(summary.unresolvedDurationsDaysCensored).toEqual([]);
+    expect(summary.unresolvedDurationsDaysBothEndsObserved).toEqual([]);
+    // NOT lost: counted in its own class, in its own duration list, and in the pooled total.
+    expect(summary.windowsBelowBand).toBe(1);
+    expect(summary.belowBandDurationsDaysCensored).toHaveLength(1);
+    expect(summary.windowsDetectedIncludingUnresolved).toBe(1);
+    expect(summary.windowsResolved + summary.windowsUnresolved + summary.windowsBelowBand).toBe(
+      summary.windowsDetectedIncludingUnresolved,
+    );
   });
 
   it('there is ONE window formatter and it cannot print a window without its strength', () => {

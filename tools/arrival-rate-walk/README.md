@@ -348,11 +348,18 @@ said how close the reading was.
   reported as `DeployerWindows.unresolvedBreaks` instead of vanishing. The band is in code and
   **not** in `bounds.json`, because it is not a bound: nothing splits, gates or is excluded on it,
   and a value in that file invites a later lane to tune it as one.
-- **Unresolved is never pooled into either neighbour.** `summariseArrival` counts
-  `windowsResolved` / `windowsUnresolved` / `unresolvedBreaksNotSplit` apart, keeps the duration
-  lists apart, and publishes the arrival rate as a **range** —
+- **Unresolved is never pooled into either neighbour.** `summariseArrival` splits the windows
+  **three ways on the verdict** rather than filtering `!== 'window'`, so the classification is
+  **total** instead of resting on the pinned bar happening to sit inside the band: it counts
+  `windowsResolved` / `windowsUnresolved` / `windowsBelowBand` / `unresolvedBreaksNotSplit` apart,
+  keeps the four duration lists apart, and publishes the arrival rate as a **range** —
   `windowsPerDeployerYearResolved` (lower bound) and `windowsPerDeployerYearIncludingUnresolved`
-  (upper). The pre-496a `windows`, `windowsPerDeployerYear` and `windowsWithBothEndsObserved` keys
+  (upper, resolved **plus unresolved** and never the below-band class). `windowsBelowBand` is
+  **unreachable at the pinned bar** — a taken break has `|z| >= minZ = 4`, above the band's `lo` —
+  and is present anyway so the three counts are a **partition** of
+  `windowsDetectedIncludingUnresolved`: no window is absorbed into a class it does not belong to,
+  and none is dropped. A caller passing `opts.minZ` below the band is the reachable route, and a
+  test drives one. The pre-496a `windows`, `windowsPerDeployerYear` and `windowsWithBothEndsObserved` keys
   are **removed rather than redefined**, so a consumer that collapsed the classes reads `undefined`
   and fails loudly instead of reading a pooled figure as resolved. That is why `bounds.json` is at
   **1.1.0**; this lane has never run, so no committed record carried the old keys.

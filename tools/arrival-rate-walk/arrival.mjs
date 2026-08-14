@@ -56,7 +56,9 @@
  *   sides. Above the bar a window still FORMS and is reported `unresolved` rather than `window`.
  *   Below it the recursion stops exactly where it always did — the split is **not** taken — and the
  *   near-miss is reported as {@link DeployerWindows.unresolvedBreaks} instead of vanishing.
- * - **Unresolved is never pooled into either neighbour.** {@link summariseArrival} counts the two
+ * - **Unresolved is never pooled into either neighbour.** {@link summariseArrival} splits the
+ *   windows three ways on the verdict — resolved, unresolved, below the band — so the classification
+ *   is TOTAL rather than resting on the bar happening to sit inside the band; it counts the three
  *   apart and publishes the arrival rate as a RANGE, and the old ambiguous `windows` /
  *   `windowsPerDeployerYear` keys are **gone** rather than quietly redefined, so a consumer that
  *   collapses the classes fails loudly instead of reading a pooled figure as resolved.
@@ -514,22 +516,32 @@ export function formatUnresolvedBreak(unresolved, minZ) {
  * @property {number} windowsResolved   Windows whose binding strength clears the band.
  * @property {number} windowsUnresolved Windows inside the band. **A third class, not a footnote on
  *   either neighbour.**
- * @property {number} windowsDetectedIncludingUnresolved The pooled count, named so it cannot be
- *   mistaken for the resolved one. There is deliberately no bare `windows` key: 496a removed it
- *   rather than redefining it, so a consumer that pooled the classes fails loudly.
+ * @property {number} windowsBelowBand Windows whose binding strength resolves the OTHER way — below
+ *   the band. **Unreachable at the pinned bar** (a taken break has `|z| >= minZ = 4`, above the
+ *   band's `lo`), and present anyway so the classification is TOTAL: the three counts are a
+ *   partition of `windowsDetectedIncludingUnresolved` rather than two named classes and a
+ *   catch-all. A caller passing `opts.minZ` below {@link UNRESOLVED_BAND}`.lo` is the reachable
+ *   route, and without this field such a window would be absorbed into `windowsUnresolved` — this
+ *   change's own rule broken in the other direction.
+ * @property {number} windowsDetectedIncludingUnresolved Every window {@link findWindows} produced,
+ *   named so it cannot be mistaken for the resolved one, and equal to the three classes summed so
+ *   no window is silently dropped either. There is deliberately no bare `windows` key: 496a removed
+ *   it rather than redefining it, so a consumer that pooled the classes fails loudly.
  * @property {number} unresolvedBreaksNotSplit Level changes inside the band but below the bar,
  *   summed over the cohort. The segmentation did not act on any of them and this changes no
  *   measured quantity; it is the count of places the evidence ran out.
  * @property {number} windowsResolvedWithBothEndsObserved The only ones whose duration is a
  *   measurement — and, being resolved, the only ones whose EXISTENCE is a measurement too.
  * @property {number} windowsUnresolvedWithBothEndsObserved
+ * @property {number} windowsBelowBandWithBothEndsObserved See `windowsBelowBand`.
  * @property {number} observationDeployerDays Summed over segmentable deployers only.
  * @property {number} windowsPerDeployerYearResolved The arrival rate's **LOWER** bound: unresolved
  *   windows counted as none. `NaN` when nothing was observed.
- * @property {number} windowsPerDeployerYearIncludingUnresolved Its **UPPER** bound: unresolved
- *   windows counted as windows. The two are published as a range and never averaged into one
- *   figure; there is no bare `windowsPerDeployerYear`, for the same reason there is no bare
- *   `windows`.
+ * @property {number} windowsPerDeployerYearIncludingUnresolved Its **UPPER** bound: resolved plus
+ *   unresolved windows. A below-band window is NOT in it — that class resolved the other way, and
+ *   counting it here would be pooling a `no-window` reading into the upper bound. The two are
+ *   published as a range and never averaged into one figure; there is no bare
+ *   `windowsPerDeployerYear`, for the same reason there is no bare `windows`.
  * @property {number[]} durationsDaysBothEndsObserved **Resolved** windows only.
  * @property {number[]} durationsDaysCensored **Lower bounds**, kept apart from the measurements.
  *   Resolved windows only.
@@ -537,6 +549,9 @@ export function formatUnresolvedBreak(unresolved, minZ) {
  *   durations: a duration is a measurement of a window, and whether there is a window is exactly
  *   what is unresolved here.
  * @property {number[]} unresolvedDurationsDaysCensored
+ * @property {number[]} belowBandDurationsDaysBothEndsObserved Kept apart for the same reason and
+ *   present for the same one: see `windowsBelowBand`.
+ * @property {number[]} belowBandDurationsDaysCensored
  * @property {string[]} caveats
  */
 
@@ -554,8 +569,17 @@ export function formatUnresolvedBreak(unresolved, minZ) {
 export function summariseArrival(perDeployer) {
   const segmentable = perDeployer.filter((d) => d.tooShortReason === null);
   const allWindows = segmentable.flatMap((d) => d.windows);
-  const resolved = allWindows.filter((w) => w.detection.verdict === 'window');
-  const unresolved = allWindows.filter((w) => w.detection.verdict !== 'window');
+  // An EXPLICIT three-way split on the verdict rather than a `!== 'window'` catch-all. The
+  // catch-all is only correct while the bar sits inside the band, and `findWindows` takes `opts.minZ`
+  // — a caller below the band's `lo` would have had its `no-window` windows counted as unresolved,
+  // which is 496a's own rule broken in the other direction. `byVerdict` is total by construction, so
+  // a fourth verdict word would land nowhere silently rather than being absorbed.
+  /** @type {Record<DetectionVerdict, Window[]>} */
+  const byVerdict = { window: [], unresolved: [], 'no-window': [] };
+  for (const w of allWindows) byVerdict[w.detection.verdict].push(w);
+  const resolved = byVerdict.window;
+  const unresolved = byVerdict.unresolved;
+  const belowBand = byVerdict['no-window'];
   const observationDeployerDays = segmentable.reduce((a, d) => a + d.observationDays, 0);
   const tooShort = perDeployer.length - segmentable.length;
   const perYear = (/** @type {number} */ n) =>
@@ -574,17 +598,21 @@ export function summariseArrival(perDeployer) {
     detectionBand: { minZ, unresolvedLo: UNRESOLVED_BAND.lo, unresolvedHi: UNRESOLVED_BAND.hi },
     windowsResolved: resolved.length,
     windowsUnresolved: unresolved.length,
+    windowsBelowBand: belowBand.length,
     windowsDetectedIncludingUnresolved: allWindows.length,
     unresolvedBreaksNotSplit: unresolvedBreaks,
     windowsResolvedWithBothEndsObserved: bothEnds(resolved).length,
     windowsUnresolvedWithBothEndsObserved: bothEnds(unresolved).length,
+    windowsBelowBandWithBothEndsObserved: bothEnds(belowBand).length,
     observationDeployerDays,
     windowsPerDeployerYearResolved: perYear(resolved.length),
-    windowsPerDeployerYearIncludingUnresolved: perYear(allWindows.length),
+    windowsPerDeployerYearIncludingUnresolved: perYear(resolved.length + unresolved.length),
     durationsDaysBothEndsObserved: days(bothEnds(resolved)),
     durationsDaysCensored: days(censored(resolved)),
     unresolvedDurationsDaysBothEndsObserved: days(bothEnds(unresolved)),
     unresolvedDurationsDaysCensored: days(censored(unresolved)),
+    belowBandDurationsDaysBothEndsObserved: days(bothEnds(belowBand)),
+    belowBandDurationsDaysCensored: days(censored(belowBand)),
     caveats: [
       `${tooShort} of ${perDeployer.length} deployer(s) had too few MEASURED launches to segment at ` +
         `all and are excluded from the denominator. That is not evidence no window arrived for them, ` +
@@ -592,11 +620,12 @@ export function summariseArrival(perDeployer) {
       'A duration on a censored end is a LOWER BOUND, and the two are reported apart rather than pooled.',
       'Measured launches only. An unmeasured launch is not a zero and never enters the rank test as one.',
       MARGINAL_DETECTION_CAVEAT,
-      `${unresolved.length} of ${allWindows.length} detected window(s) are UNRESOLVED, and ` +
-        `${unresolvedBreaks} further level change(s) fell inside the band below the bar and were not ` +
-        `split. The arrival rate is therefore a RANGE — ${perYear(resolved.length)} per deployer-year ` +
-        `counting only resolved windows, ${perYear(allWindows.length)} counting the unresolved ones ` +
-        `too — and neither end is the answer on its own.`,
+      `${unresolved.length} of ${allWindows.length} detected window(s) are UNRESOLVED, ` +
+        `${belowBand.length} resolved BELOW the band, and ${unresolvedBreaks} further level change(s) ` +
+        `fell inside the band below the bar and were not split. The arrival rate is therefore a ` +
+        `RANGE — ${perYear(resolved.length)} per deployer-year counting only resolved windows, ` +
+        `${perYear(resolved.length + unresolved.length)} counting the unresolved ones too — and ` +
+        `neither end is the answer on its own.`,
     ],
   };
 }

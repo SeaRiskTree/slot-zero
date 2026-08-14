@@ -2737,10 +2737,10 @@ realized-profit verdict are sitting in there:
   success, so a landed failure paid in full;
 - **what was tipped** — every lamport arriving at a published Jito tip account in that slot.
 
-`pumpfun.mjs` → `readCreateSlotSlotCosts` reads them, and it **costs zero vendor requests, zero
-credits and zero wall clock**: the response was already fetched to price the entrants' own
-transactions, and the extra work is parsing. Stage 2's keyless ceiling cannot move, because none of
-its three factors is a function of what is recorded.
+`pumpfun.mjs` → `readCreateSlotSlotCosts` reads them out of that response, and the extra work is
+parsing. Stage 2's keyless ceiling cannot move, because none of its three factors is a function of
+what is recorded. **What the response itself costs is no longer zero by construction** — captain
+decision 500a moved the route trigger, and the section below owns the measured cost.
 
 **Both are WHOLE-SLOT TOTALS USED AS PER-POSITION CEILINGS, and neither is an attribution.** Charging
 one entrant the entire slot's failed-attempt bill over-attributes grossly — which is exactly what a

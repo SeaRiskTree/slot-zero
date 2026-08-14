@@ -972,9 +972,11 @@ export function toEntryRecordRow(s, coverage) {
     })),
     // Schema 26, captain decision 466 — Stage 3 increment 2. THE SUBTRACTION LEDGER, and the
     // realized-profit verdict that is a FUNCTION of it rather than of a sentence beside it. Two of
-    // its cost rows became numbers at zero marginal cost (the create slot's own failed-attempt fee
-    // bill and its tip total, out of a block response the cost leg above had already fetched) and
-    // THREE stay `null` — so `exitVerdict` reads `exit-unbounded` on every candidate this build can
+    // its cost rows became numbers (the create slot's own failed-attempt fee bill and its tip
+    // total, parsed out of the cost leg's own block response — what fetching that response costs
+    // since captain decision 500a moved the route trigger is owned by `thresholds.json` →
+    // `stage2_cost.justification.preferBlockRoute`) and THREE stay `null` — so `exitVerdict` reads
+    // `exit-unbounded` on every candidate this build can
     // score, which is the honest state rather than a defect. It gates nothing: `verdict` above is
     // byte-identical with this block present and absent, exactly as with `roomLeftBound` (208b) and
     // the all-positions figures (461). Rows are counts, SOL figures and sentences from a closed set

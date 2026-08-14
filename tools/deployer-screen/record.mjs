@@ -876,11 +876,12 @@ import { CeilingReached, RequestFailed, UnparseableResponse } from './client.mjs
  *   **What became a number, and what did not.** The create slot's own failed-attempt fee bill (exact
  *   `meta.fee`, base plus priority, over every landed-but-FAILED transaction touching the launch's
  *   mint — Solana charges fees on inclusion rather than on success) and the SOL arriving at a
- *   published Jito tip account in that slot. Both come out of the `getBlock` response the cost leg
- *   already fetched, so this costs **zero vendor requests, zero credits and zero wall clock**, and
- *   Stage 2's keyless ceiling cannot move. Both are **whole-slot totals used as per-position
- *   CEILINGS** — they over-attribute grossly on purpose, which is what a worst case is for, and they
- *   are not attributions of anything to anybody.
+ *   published Jito tip account in that slot. Both come out of the cost leg's own `getBlock` response
+ *   — reading them adds no request, though since captain decision 500a the response itself is
+ *   fetched for their sake too (`thresholds.json` → `stage2_cost.justification.preferBlockRoute`
+ *   owns what that costs) — and Stage 2's keyless ceiling cannot move. Both are **whole-slot totals
+ *   used as per-position CEILINGS** — they over-attribute grossly on purpose, which is what a worst
+ *   case is for, and they are not attributions of anything to anybody.
  *
  *   **THREE cost rows stay `null`**, so a profit verdict is still not issuable for a general
  *   deployer: tips outside the create-slot bound, attempts outside the create slot (captain decision

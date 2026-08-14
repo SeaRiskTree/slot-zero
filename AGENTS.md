@@ -2017,12 +2017,13 @@ owns the long form; cite it rather than restating it. Six things bind:
   this build can bound it, **`null` where it cannot**) and `exitVerdict` is a function over the rows.
   `assertCostLedgerComplete` runs on every evaluation, so a refusal cannot be deleted into a pass by
   dropping a row.
-- **TWO ROWS BECAME NUMBERS AT ZERO MARGINAL COST — the half of the create-slot block this project
-  already fetched and threw away.** `pumpfun.mjs` → `readCreateSlotSlotCosts` reads, out of the
-  `getBlock` response the cost leg pays for anyway, (a) the exact `meta.fee` of every landed-but-
-  FAILED transaction touching that launch's mint — Solana bills inclusion, not success — and (b)
-  every lamport arriving at a published Jito tip account in the slot. Zero requests, zero credits,
-  zero wall clock, and Stage 2's keyless ceiling cannot move. **Both are WHOLE-SLOT TOTALS USED AS
+- **TWO ROWS BECAME NUMBERS — the half of the create-slot block this project already fetched and
+  threw away.** `pumpfun.mjs` → `readCreateSlotSlotCosts` reads, out of the cost leg's own `getBlock`
+  response, (a) the exact `meta.fee` of every landed-but-FAILED transaction touching that launch's
+  mint — Solana bills inclusion, not success — and (b) every lamport arriving at a published Jito tip
+  account in the slot. Parsing them adds no request and Stage 2's keyless ceiling cannot move;
+  **what fetching that response costs is no longer zero by construction — the 500a bullet below owns
+  it.** **Both are WHOLE-SLOT TOTALS USED AS
   PER-POSITION CEILINGS and neither is an attribution**: `readCreateSlotCosts`' refusal to tie a
   sibling transaction to an entrant's bundle is untouched.
 - **AND SINCE CAPTAIN DECISION 500a (2026-08-14) THE BLOCK IS READ WHENEVER THE *MINT* IS KNOWN, SO

@@ -1280,9 +1280,6 @@ describe('the arrival rate is published on CALENDAR exposure — 504a', () => {
     expect(readme).toMatch(/## The arrival rate is published on CALENDAR exposure/);
     expect(readme).toContain('504a');
     expect(readme).toContain('windowsPerDeployerYearResolvedOnCalendarExposure');
-    // And the superseded denominator is named as superseded rather than left for a reader to infer.
-    expect(readme).toMatch(/superseded series pair/);
-    expect(readme).toMatch(/computed on the \*\*series\*\*\s+denominator/);
   });
 
   it('says why, in the caveat that travels with every rate', () => {

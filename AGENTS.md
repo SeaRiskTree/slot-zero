@@ -2311,7 +2311,12 @@ lane that touches Stage 2:
   — `importScoredFromRunRecords` recovers it from `runs/*.json` on **every** run, so a lost state
   file degrades to a slower rotation rather than a wrong one, and it only ADDS.
 
-## THE REVISED STRANGER OCCUPANCY FIGURE IS FENCED — do not quote it, and the release condition is named
+## THE STRANGER FIGURES ARE FENCED — what may be published, and the release condition
+
+This section owns every publication rule on the stranger readings: the occupancy fence (**494a**,
+extended by **497a**) and the arrival-rate bracket (**495a**). All of it is a publication rule and
+none of it is a measurement change — no threshold, bar, bound or segmentation was touched for any
+of them.
 
 Captain decision **494a**, 2026-08-13. The gate-passing census re-walk moved stranger occupancy —
 the share of a stranger deployer's time that sits inside an open window, and **the number the whole
@@ -2339,7 +2344,39 @@ published claim has no number here and must take it to the captain. The correspo
 figures (the "~5.5 to ~18.3 deployers under continuous watch" restatement, and anything sized from
 them) are the same number in another unit and are fenced with it.
 
-**Captain decision 491a, same day — the launch list's ROUTE is ratified and is not a discrepancy.**
+**CAPTAIN DECISION 497a, 2026-08-14 — THE FENCE NOW COVERS THE SUCCESSOR OCCUPANCY FIGURES TOO.**
+The widening lane (each wallet read from its own genesis rather than from the original observation
+start) produced its own occupancy figures, and they fall under **the same prohibition and the same
+release condition as 494a's**: not quoted, cited, restated or built on outside their own report
+until a **SECOND stranger window has been measured**. They are **more** dangerous to quote than the
+figure already fenced, not less — **they have no stable sign across window width**, so an author
+picking a width does not merely pick a magnitude, they pick a direction. A later reader must not
+read the successor figures as superseding the fenced ones and therefore quotable; superseding a
+fenced figure does not unfence anything, and both live behind one release condition.
+
+**CAPTAIN DECISION 495a, 2026-08-14 — THE STRANGER ARRIVAL RATE IS A BRACKET, NEVER A POINT
+ESTIMATE.** Neither reading stands alone: the two are published **together**, as the bracket that is
+actually known, and any lane quoting one without the other is quoting a number the evidence does not
+support. The two readings:
+
+- Restricted to the **original observation start**, the cohort showed **ONE stranger window**.
+- Widened to **each wallet's own genesis**, that same window **does NOT survive**, taking the
+  one-hour stranger arrival rate to **ZERO windows over 4.43 deployer-years**.
+
+**The non-surviving reading is NOT a refutation of the earlier one, and must never be recorded as
+one.** The detection was marginal either way — strength **4.13** against a pinned bar of **4** — and
+whether it survives depends on **where the observation starts**. That is a known property of
+top-down binary segmentation: a longer series can mask a break a shorter one resolved. So the
+widened run does not overturn the earlier reading, it brackets it, and the honest published
+statement is the **pair**. (A detection-strength reporting convention is captain decision **496a**
+and is a separate lane's — do not implement it here.)
+
+Both reports are held in firstmate's records, not in this repo (see "Citing a report this repo does
+not hold"): `slot-zero-flat-positive-earlier-start` → `report.md` §8, and
+`slot-zero-frequency-recollect-gatepassing` → `report.md`. They hold every figure and its limits;
+point at them rather than restating them.
+
+**Captain decision 491a, 2026-08-13 (494a's own day) — the launch list's ROUTE is ratified and is not a discrepancy.**
 That run's launch list was built from the **Helius enumeration** rather than from PR #93's
 `--launch-list` handover, because the handover requires a **paid** deployer-screen run (a Dune
 execution plus a keyed MadeOnSol request per wallet) and the work was under a keyless, zero-spend

@@ -2376,8 +2376,8 @@ not hold"): `slot-zero-flat-positive-earlier-start` → `report.md` §8, and
 `slot-zero-frequency-recollect-gatepassing` → `report.md`. They hold every figure and its limits;
 point at them rather than restating them.
 
-**Captain decision 491a, 2026-08-13 (494a's own day) — the launch list's ROUTE is ratified and is not a discrepancy.**
-That run's launch list was built from the **Helius enumeration** rather than from PR #93's
+**Captain decision 491a, 2026-08-13 (494a's own day) — the launch list's ROUTE is ratified and is
+not a discrepancy.** That run's launch list was built from the **Helius enumeration** rather than from PR #93's
 `--launch-list` handover, because the handover requires a **paid** deployer-screen run (a Dune
 execution plus a keyed MadeOnSol request per wallet) and the work was under a keyless, zero-spend
 brief. The captain has **ratified the route actually used: no re-run, and no screen run is

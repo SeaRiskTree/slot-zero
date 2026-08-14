@@ -994,8 +994,13 @@ describe('the plan is the only place a run states its cost, and it issues nothin
   });
 
   it('walks only forward from the seed month, so every deployer gets the same observation', () => {
+    // The "before" row is DERIVED from the pinned bound, never restated: anchoring it to one
+    // particular `seed.months` value couples this fixture to a bound it is not testing, so moving
+    // the bound would fail the suite on the fixture rather than on a defect.
+    const seedStartMs = Date.parse(`${BOUNDS.seed.months[0]}-01T00:00:00Z`);
+    const beforeSeed = new Date(seedStartMs - 60 * 86_400_000).toISOString().replace('T', ' ').replace('Z', ' UTC');
     const rows = [
-      launchRow('before', '2025-11-01 00:00:00.000 UTC', 3),
+      launchRow('before', beforeSeed, 3),
       launchRow('inside', '2026-02-01 00:00:00.000 UTC', 3),
       launchRow('future', '2027-01-01 00:00:00.000 UTC', 3),
     ];

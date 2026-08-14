@@ -2016,14 +2016,17 @@ export function renderDryRun(plan) {
     // understates what turning it off costs.
     L.push(
       c.preferBlockRoute
-        ? '  It is read on every launch whose MINT is known, which is what populates the two'
+        ? '  It is read on every launch whose MINT is known and at least one of whose priced'
         : '  With it off, the two create-slot rows of the subtraction ledger are UNBOUNDED on every'
     );
     L.push(
       c.preferBlockRoute
-        ? '  create-slot rows of the subtraction ledger (captain decisions 466 and 500a).'
-        : '  candidate and every exit verdict reads exit-unbounded (captain decisions 466 and 500a).'
+        ? '  transactions is in the create slot, which is what populates the two create-slot rows'
+        : '  candidate, so 466\'s authorised bound is refused (captain decisions 466 and 500a).'
     );
+    if (c.preferBlockRoute) {
+      L.push('  of the subtraction ledger (captain decisions 466 and 500a).');
+    }
     for (const line of wrap(LANDING_TIP_CAVEAT, 78)) L.push(`  ! ${line}`);
   } else {
     L.push('KEYLESS — STAGE 2 DISABLED (--no-stage2). No entry measurement would be taken, so the');

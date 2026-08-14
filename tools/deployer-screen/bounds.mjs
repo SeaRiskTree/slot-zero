@@ -133,9 +133,11 @@ export const UNBOUNDABLE_TODAY = Object.freeze([
  *
  * A surface saying so must say it of the rows that are bounded on the ledger IN HAND, never of the
  * pair in general: both read `null` whenever any scored launch produced no whole-slot observation,
- * which is the ordinary case rather than an edge one — the block route is attempted only where the
- * create slot carries two or more of the launch's transactions, and a per-signature fallback,
- * a transport failure or a budget-skipped launch each take the pair back to `null`.
+ * which is the ordinary case rather than an edge one — since captain decision 500a the block route
+ * is attempted wherever the launch's MINT is known and at least one of its priced transactions is
+ * in the create slot (the two-transaction floor survives only for a mint-less caller), and a
+ * per-signature fallback, a transport failure or a budget-skipped launch each take the pair back
+ * to `null`.
  *
  * @type {readonly string[]}
  */

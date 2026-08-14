@@ -15,6 +15,9 @@
  * node tools/arrival-rate-walk/collect.mjs --phase series --out <dir>
  * ```
  *
+ * `series` publishes its arrival rate on CALENDAR exposure (captain decision 504a), read from the
+ * `observation.json` the walk wrote. There is deliberately no flag for the denominator.
+ *
  * ## The order is the safety property, not a convenience
  *
  * `preflight` before anything else, because the collection it authorises is days long and the clock
@@ -59,8 +62,10 @@ import {
   ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT,
 } from './series.mjs';
 import {
+  EXPOSURE_BASIS_CAVEAT,
   MARGINAL_DETECTION_CAVEAT,
   findWindows,
+  formatArrivalRate,
   formatUnresolvedBreak,
   formatWindow,
   summariseArrival,
@@ -653,6 +658,125 @@ export function givenUpReason(attempts) {
   );
 }
 
+/** The file the walk leaves behind so the offline phase can state its denominator. */
+export const OBSERVATION_FILE = 'observation.json';
+
+/** Bumped when the shape changes; a version this build does not know is refused, never guessed. */
+export const OBSERVATION_SCHEMA_VERSION = 1;
+
+/**
+ * Record the calendar window this collection observed — captain decision 504a.
+ *
+ * **It is written by the WALK, from the walk's own enumeration bounds**, and not by the offline
+ * phase from anything the series shows. That is the whole point: the denominator of a published
+ * arrival rate is *what we watched*, and only the phase that did the watching knows it. The two
+ * numbers are exactly the pair `runWalk` filters its launch list with — the seed month's start and
+ * the sitting's own instant — so the window a rate is divided by cannot drift from the window that
+ * was walked.
+ *
+ * A resumed collection MERGES rather than overwrites: the floor is the earliest any sitting
+ * enumerated from and the ceiling the latest any sitting reached, because observation ran across
+ * all of them. An unreadable or unknown-version file is REPLACED rather than merged, and the run
+ * says so through `sittings` restarting at 1 — the alternative is a denominator half from a shape
+ * this build cannot read.
+ *
+ * **Both ends can only ever OVERSTATE exposure, and that is the direction to be wrong in** —
+ * overstating the denominator biases the arrival rate DOWN, which refuses rather than manufactures
+ * an opportunity. The ceiling: a launch list generated shortly before the sitting cannot show a
+ * launch created after it was generated, so a few of the last hours are watched by nobody. The
+ * floor: it is the SEED MONTH's start, shared by the whole cohort, and a deployer whose genesis
+ * falls inside that month is credited with the days before it existed. **The floor is the cohort's
+ * observation start, NOT each wallet's own genesis** — those are the two readings captain decision
+ * 495a publishes as a bracket, and 504a pins the DENOMINATOR's basis without touching which of them
+ * a walk starts from.
+ *
+ * @param {string} out
+ * @param {{ fromMs: number, toMs: number }} window
+ * @returns {{ fromMs: number, toMs: number, sittings: number }}
+ */
+export function recordObservation(out, { fromMs, toMs }) {
+  const path = join(out, OBSERVATION_FILE);
+  /** @type {Record<string, unknown> | null} */
+  let previous = null;
+  if (existsSync(path)) {
+    try {
+      const parsed = JSON.parse(readFileSync(path, 'utf8'));
+      if (parsed?.schema_version === OBSERVATION_SCHEMA_VERSION) previous = parsed;
+    } catch {
+      previous = null;
+    }
+  }
+  const priorFrom = typeof previous?.['from_ms'] === 'number' ? previous['from_ms'] : fromMs;
+  const priorTo = typeof previous?.['to_ms'] === 'number' ? previous['to_ms'] : toMs;
+  const priorSittings = typeof previous?.['sittings'] === 'number' ? previous['sittings'] : 0;
+  const merged = {
+    fromMs: Math.min(fromMs, priorFrom),
+    toMs: Math.max(toMs, priorTo),
+    sittings: priorSittings + 1,
+  };
+  writeFileSync(
+    path,
+    JSON.stringify(
+      {
+        schema_version: OBSERVATION_SCHEMA_VERSION,
+        from_ms: merged.fromMs,
+        from_iso: new Date(merged.fromMs).toISOString(),
+        to_ms: merged.toMs,
+        to_iso: new Date(merged.toMs).toISOString(),
+        seed_months: BOUNDS.seed.months,
+        sittings: merged.sittings,
+        note: EXPOSURE_BASIS_CAVEAT,
+      },
+      null,
+      2,
+    ) + '\n',
+  );
+  return merged;
+}
+
+/**
+ * Read it back, or say why there is none.
+ *
+ * A missing, unreadable or unknown-version file is `null` WITH a reason, never a guessed window:
+ * `findWindows` then refuses calendar exposure for every deployer and the published rate reads
+ * UNAVAILABLE, which is the honest answer for a directory whose observation bounds nobody recorded.
+ *
+ * @param {string} out
+ * @returns {{ window: import('./arrival.mjs').ObservationWindow | null, reason: string | null }}
+ */
+export function readObservation(out) {
+  const path = join(out, OBSERVATION_FILE);
+  if (!existsSync(path)) {
+    return {
+      window: null,
+      reason:
+        `${OBSERVATION_FILE} is not in the collection directory, so what this run observed — and ` +
+        `therefore what a published arrival rate would be divided by — is unrecorded. The walk ` +
+        `writes it; a directory assembled by hand, or walked before captain decision 504a, has none.`,
+    };
+  }
+  /** @type {any} */
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (cause) {
+    return { window: null, reason: `${OBSERVATION_FILE} could not be parsed (${errorText(cause)})` };
+  }
+  if (parsed?.schema_version !== OBSERVATION_SCHEMA_VERSION) {
+    return {
+      window: null,
+      reason:
+        `${OBSERVATION_FILE} is schema ${JSON.stringify(parsed?.schema_version)} and this build ` +
+        `reads ${OBSERVATION_SCHEMA_VERSION}. A window read out of a shape this build does not know ` +
+        `is a denominator nobody vouched for.`,
+    };
+  }
+  if (typeof parsed.from_ms !== 'number' || typeof parsed.to_ms !== 'number') {
+    return { window: null, reason: `${OBSERVATION_FILE} carries no numeric from_ms/to_ms` };
+  }
+  return { window: { fromMs: parsed.from_ms, toMs: parsed.to_ms }, reason: null };
+}
+
 /**
  * Walk every launch in the plan, checkpointing each one.
  *
@@ -669,6 +793,15 @@ export async function runWalk({ out, client, list, nowMs, limit = null, only = [
   const windowDir = join(out, 'window');
   mkdirSync(windowDir, { recursive: true });
   const seedStartMs = Date.parse(`${BOUNDS.seed.months[0]}-01T00:00:00Z`);
+  // Written BEFORE the first request, from the same two bounds the enumeration below filters with,
+  // so a sitting that is interrupted — or that walks nothing at all — still leaves the offline phase
+  // able to state what was observed. Captain decision 504a.
+  const observation = recordObservation(out, { fromMs: seedStartMs, toMs: nowMs });
+  say(
+    `observation window: ${new Date(observation.fromMs).toISOString()} → ` +
+      `${new Date(observation.toMs).toISOString()} over ${observation.sittings} sitting(s) — this is ` +
+      `the CALENDAR exposure a published arrival rate is divided by (captain decision 504a)`,
+  );
 
   /** @type {import('./cohort.mjs').DuneLaunch[]} */
   let launches = [];
@@ -870,12 +1003,17 @@ function errorText(cause) {
  *
  * @param {object} args
  * @param {string} args.out
+ * @param {import('./arrival.mjs').ExposureBasis} args.exposureBasis **Required, and there is no
+ *   default** (captain decision 504a). It is the denominator the published arrival rate is computed
+ *   on, and the CLI passes the pin — `bounds.json` → `series.exposureBasis`. `summariseArrival`
+ *   throws on an absent or unknown value rather than choosing one, because a denominator nobody
+ *   chose is exactly the defect 504a closes.
  * @returns {{ rows: import('./series.mjs').LaunchMeasurement[], perDeployer: import('./arrival.mjs').DeployerWindows[],
  *   summary: import('./arrival.mjs').ArrivalSummary, unreadable: { mint: string, reason: string }[],
  *   givenUp: { mint: string, attempts: number, reason: string }[],
  *   rankInput: import('./series.mjs').RankInput }}
  */
-export function runSeries({ out }) {
+export function runSeries({ out, exposureBasis }) {
   const windowDir = join(out, 'window');
   if (!existsSync(windowDir)) throw new Error(`${windowDir} does not exist: run --phase walk first`);
   const mints = readdirSync(windowDir)
@@ -925,10 +1063,20 @@ export function runSeries({ out }) {
   // with no closed create-slot outsider round trip has no return per SOL and never enters the
   // segmentation as a 0. `series.csv` above already carries every one of those launches as a row.
   const rankInput = toSeriesPoints(rows);
+  // The calendar denominator is what the WALK observed, read back rather than inferred here — see
+  // `recordObservation`. `null` is carried through as a refusal: the published rate then reads
+  // UNAVAILABLE with the reason instead of silently reverting to the span of the series.
+  const observation = readObservation(out);
+  if (observation.reason !== null) say(`observation: UNRECORDED — ${observation.reason}`);
   const perDeployer = [...rankInput.byDeployer].map(([deployer, series]) =>
-    findWindows(series, { deployer, minZ: BOUNDS.series.minZ, minSegment: BOUNDS.series.minSegment }),
+    findWindows(series, {
+      deployer,
+      minZ: BOUNDS.series.minZ,
+      minSegment: BOUNDS.series.minSegment,
+      observation: observation.window,
+    }),
   );
-  const summary = summariseArrival(perDeployer);
+  const summary = summariseArrival(perDeployer, { exposureBasis });
 
   writeFileSync(
     join(out, 'arrival.json'),
@@ -936,6 +1084,21 @@ export function runSeries({ out }) {
       {
         at: new Date().toISOString(),
         bounds: { seed: BOUNDS.seed, walk: BOUNDS.walk, series: BOUNDS.series },
+        // The denominator every rate in `summary` was divided by, and where it came from. A record
+        // that states the rate without stating this is the pre-504a record: unreadable years later.
+        observation: {
+          basis: exposureBasis,
+          window:
+            observation.window === null
+              ? null
+              : {
+                  fromMs: observation.window.fromMs,
+                  fromIso: new Date(observation.window.fromMs).toISOString(),
+                  toMs: observation.window.toMs,
+                  toIso: new Date(observation.window.toMs).toISOString(),
+                },
+          unrecordedReason: observation.reason,
+        },
         launches: rows.length,
         // What actually reached the rank test, and every launch that did not, counted by reason.
         // `launchesMeasured` is the segmentation's own denominator: a launch excluded below is in
@@ -953,6 +1116,7 @@ export function runSeries({ out }) {
           GROSS_OF_FEES_CAVEAT,
           ALL_ENTRANT_FLOOR_CAVEAT,
           MARGINAL_DETECTION_CAVEAT,
+          EXPOSURE_BASIS_CAVEAT,
           `${rankInput.launchesNoClosedCreateSlotPair} measured launch(es) were excluded here. ` +
             ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT,
           ...summary.caveats,
@@ -1101,6 +1265,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
     const { rows, summary, perDeployer, rankInput, unreadable, givenUp } = runSeries({
       out: /** @type {string} */ (out),
+      // The PIN, passed explicitly rather than defaulted anywhere below. There is deliberately no
+      // flag for it: captain decision 504a chose the denominator, and a command line that could
+      // pick the other one is the silent choice it removed, wearing an argument.
+      exposureBasis: BOUNDS.series.exposureBasis,
     });
     say(
       `series: ${rows.length} launches, ${rankInput.launchesInRankTest} in the rank test, ` +
@@ -1122,7 +1290,10 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       for (const w of d.windows) say(`windows ${d.deployer}: ${formatWindow(w)}`);
       for (const b of d.unresolvedBreaks) say(`windows ${d.deployer}: ${formatUnresolvedBreak(b, d.minZ)}`);
     }
-    say(`arrival: ${JSON.stringify(summary)}`);
+    // `formatArrivalRate` is the ONE formatter for a rate, so the denominator cannot be omitted by
+    // a printer forgetting to name it — `formatWindow`'s rule one quantity over.
+    say(`arrival: ${formatArrivalRate(summary)}`);
+    say(`arrival summary: ${JSON.stringify(summary)}`);
     process.exit(0);
   };
 

@@ -582,7 +582,11 @@ bind. That is a smaller hold than a blanket one, and it is the one the evidence 
   and days of paced fetching. **The collector for it now exists** (`tools/arrival-rate-walk/`,
   proven on a bounded sample) and its cohort query is now deployed, but the collection is a separate
   operational step that has not run. Until it does, no arrival rate, no concurrency, and no
-  idle-time estimate exists here.
+  idle-time estimate exists here. **When one does exist it will be per deployer-year on CALENDAR
+  exposure** — the whole observation window, counting the months a deployer is quiet (captain
+  decision 504a; `tools/arrival-rate-walk/README.md` owns it). Every arrival-rate figure this
+  project published before that decision was computed on the SERIES denominator, which stops
+  observing a deployer the moment it stops launching, and the two are not comparable unnamed.
 - **Exit is not measured at all.** Stage 2 scores room to enter. Whether a position can be left —
   when the dev sells relative to mint and to outsider inflow, whether the trigger is a **size**
   that our own buy counts towards, whether an outsider could have exited first — is stage 3's

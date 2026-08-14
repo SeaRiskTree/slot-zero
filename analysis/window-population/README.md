@@ -473,7 +473,12 @@ state of the evidence.
 
 1. **How often does a window arrive?** Needs several deployers observed over several months each.
    One deployer × 8 months = one window; the arrival rate has a sample size of one deployer and
-   no confidence interval worth writing down.
+   no confidence interval worth writing down. **Whatever answers it is a rate per deployer-year on
+   CALENDAR exposure — the whole observation window, counting the months a deployer is quiet**
+   (captain decision 504a; `tools/arrival-rate-walk/README.md` owns the rule). The obvious
+   alternative, dividing by first-to-last observed launch, stops observing a deployer the moment it
+   stops launching, which is captain decision 165b's survivorship conditioning arriving through the
+   instrument instead of the seed.
    *What would answer it:* the same per-launch series for **10–20 other prolific deployers over
    6+ months each**. `frontend-api-v3.pump.fun/coins?creator=` gives a launch list keyless (a
    **lower bound** — the creator record moves, and the launch that goes missing is the good one,

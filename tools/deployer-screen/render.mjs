@@ -2014,18 +2014,13 @@ export function renderDryRun(plan) {
     // Captain decision 500a: this flag stopped being a request-count knob. It is also what buys the
     // two create-slot rows of the subtraction ledger (466), so a plan saying only which route runs
     // understates what turning it off costs.
-    L.push(
-      c.preferBlockRoute
-        ? '  It is read on every launch whose MINT is known and at least one of whose priced'
-        : '  With it off, the two create-slot rows of the subtraction ledger are UNBOUNDED on every'
-    );
-    L.push(
-      c.preferBlockRoute
-        ? '  transactions is in the create slot, which is what populates the two create-slot rows'
-        : '  candidate, so 466\'s authorised bound is refused (captain decisions 466 and 500a).'
-    );
     if (c.preferBlockRoute) {
+      L.push('  It is read on every launch whose MINT is known and at least one of whose priced');
+      L.push('  transactions is in the create slot, which is what populates the two create-slot rows');
       L.push('  of the subtraction ledger (captain decisions 466 and 500a).');
+    } else {
+      L.push('  With it off, the two create-slot rows of the subtraction ledger are UNBOUNDED on every');
+      L.push("  candidate, so 466's authorised bound is refused (captain decisions 466 and 500a).");
     }
     for (const line of wrap(LANDING_TIP_CAVEAT, 78)) L.push(`  ! ${line}`);
   } else {

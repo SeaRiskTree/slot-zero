@@ -2783,7 +2783,7 @@ being that the tape is n = 1 deployer with dense create slots and understates bo
 cost against a stranger lane.
 
 `stage2_cost.preferBlockRoute` therefore means something wider than its name: turning it off now
-also refuses 466's bound on every candidate, and every exit verdict reads `exit-unbounded`. Its
+also refuses 466's authorised bound on both create-slot ledger rows, on every candidate. Its
 `justification` in `thresholds.json` owns the current meaning.
 
 **The tip list's provenance is stated rather than assumed.** `pumpfun.mjs` → `JITO_TIP_ACCOUNTS` is a

@@ -25,7 +25,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -79,25 +79,34 @@ import {
 } from '../tools/arrival-rate-walk/series.mjs';
 import type { LaunchMeasurement } from '../tools/arrival-rate-walk/series.mjs';
 import {
+  EXPOSURE_BASES,
+  EXPOSURE_BASIS_CAVEAT,
   MARGINAL_DETECTION_CAVEAT,
+  PUBLISHED_EXPOSURE_BASIS,
   UNRESOLVED_BAND,
+  calendarExposure,
   changepoints,
   detectionVerdict,
   findWindows,
+  formatArrivalRate,
   formatUnresolvedBreak,
   formatWindow,
   median,
   segmentation,
   summariseArrival,
 } from '../tools/arrival-rate-walk/arrival.mjs';
-import type { Window } from '../tools/arrival-rate-walk/arrival.mjs';
+import type { ExposureBasis, Window } from '../tools/arrival-rate-walk/arrival.mjs';
 import {
   BOUNDS,
+  OBSERVATION_FILE,
+  OBSERVATION_SCHEMA_VERSION,
   buildPlan,
   checkpointState,
   parseArgs,
   readLaunchList,
+  readObservation,
   readPersistedWindow,
+  recordObservation,
   runSeries,
   runWalk,
   toTapeRow,
@@ -891,11 +900,12 @@ describe('windows are segmented, never thresholded — and the published answer 
     const found = findWindows(short);
     expect(found.windows).toHaveLength(0);
     expect(found.tooShortReason).toMatch(/NOT the same finding as no window having arrived/);
-    const summary = summariseArrival([found]);
+    const summary = summariseArrival([found], { exposureBasis: 'calendar' });
     // Excluded from the denominator rather than counted as a deployer with no window.
     expect(summary.deployersSegmentable).toBe(0);
-    expect(Number.isNaN(summary.windowsPerDeployerYearResolved)).toBe(true);
-    expect(Number.isNaN(summary.windowsPerDeployerYearIncludingUnresolved)).toBe(true);
+    expect(Number.isNaN(summary.windowsPerDeployerYearResolvedOnCalendarExposure)).toBe(true);
+    expect(Number.isNaN(summary.windowsPerDeployerYearIncludingUnresolvedOnCalendarExposure)).toBe(true);
+    expect(Number.isNaN(summary.windowsPerDeployerYearResolvedOnSeriesExposure)).toBe(true);
     // Nothing was segmentable, so no bar was applied to anything — reported as such, not as 4.
     expect(summary.detectionBand.minZ).toBeNull();
     expect(summary.caveats.join(' ')).toMatch(/excluded from the denominator/);
@@ -923,6 +933,10 @@ describe('every window carries its strength, and the marginal band is a third ve
   const point = (i: number, r: number) => ({ mint: `m${i}`, mintMs: i * 86_400_000, returnPerSol: r, prizeSol: r });
   const step = (m: number) =>
     [...Array(m)].map((_, i) => point(i, 1 + i * 1e-6)).concat([...Array(m)].map((_, i) => point(m + i, -1 + i * 1e-6)));
+  // Wide enough to contain every series built from `point`, so calendar exposure is a real span
+  // rather than a refusal — captain decision 504a. It is deliberately WIDER than any of them: the
+  // whole point of the calendar denominator is that it keeps counting after a deployer goes quiet.
+  const OBSERVATION = { fromMs: 0, toMs: 120 * 86_400_000 };
 
   it('THE BAR DOES NOT MOVE — 496a is a reporting change and this is what says so', () => {
     // If this fails, someone edited the threshold instead of the report. That is the one thing
@@ -1032,10 +1046,10 @@ describe('every window carries its strength, and the marginal band is a third ve
   });
 
   it('the summary keeps the three apart and publishes the rate as a RANGE', () => {
-    const resolved = findWindows(step(15), { deployer: 'resolved' });
-    const marginal = findWindows(step(12), { deployer: 'marginal' });
-    const nearMiss = findWindows(step(10), { deployer: 'near-miss' });
-    const summary = summariseArrival([resolved, marginal, nearMiss]);
+    const resolved = findWindows(step(15), { deployer: 'resolved', observation: OBSERVATION });
+    const marginal = findWindows(step(12), { deployer: 'marginal', observation: OBSERVATION });
+    const nearMiss = findWindows(step(10), { deployer: 'near-miss', observation: OBSERVATION });
+    const summary = summariseArrival([resolved, marginal, nearMiss], { exposureBasis: 'calendar' });
 
     expect(summary.windowsResolved).toBe(1);
     expect(summary.windowsUnresolved).toBe(1);
@@ -1044,7 +1058,9 @@ describe('every window carries its strength, and the marginal band is a third ve
     expect(summary.detectionBand).toEqual({ minZ: 4, unresolvedLo: UNRESOLVED_BAND.lo, unresolvedHi: UNRESOLVED_BAND.hi });
 
     // The rate is two bounds and never one figure, and the unresolved window moves only the upper.
-    expect(summary.windowsPerDeployerYearIncludingUnresolved).toBeGreaterThan(summary.windowsPerDeployerYearResolved);
+    expect(summary.windowsPerDeployerYearIncludingUnresolvedOnCalendarExposure).toBeGreaterThan(
+      summary.windowsPerDeployerYearResolvedOnCalendarExposure,
+    );
     // Durations are kept apart too: whether there is a window at all is what is unresolved.
     expect(summary.durationsDaysCensored).toHaveLength(1);
     expect(summary.unresolvedDurationsDaysCensored).toHaveLength(1);
@@ -1073,19 +1089,19 @@ describe('every window carries its strength, and the marginal band is a third ve
     const overlapped = [...Array(m)]
       .map((_, i) => point(i, (i < 3 ? -1 : 1) + i * 1e-6))
       .concat([...Array(m)].map((_, i) => point(m + i, (i < 3 ? 1 : -1) + i * 1e-6)));
-    const found = findWindows(overlapped, { minZ: 2.5, deployer: 'below-band' });
+    const found = findWindows(overlapped, { minZ: 2.5, deployer: 'below-band', observation: OBSERVATION });
     expect(found.windows).toHaveLength(1);
     const w = found.windows[0]!;
     expect(w.detection.z).toBeLessThan(UNRESOLVED_BAND.lo);
     expect(w.detection.verdict).toBe('no-window');
 
-    const summary = summariseArrival([found]);
+    const summary = summariseArrival([found], { exposureBasis: 'calendar' });
     // NOT absorbed: it is out of the unresolved count and out of the rate's UPPER bound, which is
     // resolved-plus-unresolved and never the class that resolved the other way.
     expect(summary.windowsUnresolved).toBe(0);
     expect(summary.windowsResolved).toBe(0);
-    expect(summary.windowsPerDeployerYearIncludingUnresolved).toBe(0);
-    expect(summary.windowsPerDeployerYearResolved).toBe(0);
+    expect(summary.windowsPerDeployerYearIncludingUnresolvedOnCalendarExposure).toBe(0);
+    expect(summary.windowsPerDeployerYearResolvedOnCalendarExposure).toBe(0);
     expect(summary.unresolvedDurationsDaysCensored).toEqual([]);
     expect(summary.unresolvedDurationsDaysBothEndsObserved).toEqual([]);
     // NOT lost: counted in its own class, in its own duration list, and in the pooled total.
@@ -1124,6 +1140,180 @@ describe('every window carries its strength, and the marginal band is a third ve
     expect(MARGINAL_DETECTION_CAVEAT).toContain('496a');
     expect(MARGINAL_DETECTION_CAVEAT).toContain('UNMOVED');
     expect(MARGINAL_DETECTION_CAVEAT).toMatch(/Never pool an unresolved count into either neighbour/);
+  });
+});
+
+describe('the arrival rate is published on CALENDAR exposure — 504a', () => {
+  const point = (i: number, r: number) => ({ mint: `m${i}`, mintMs: i * 86_400_000, returnPerSol: r, prizeSol: r });
+  const step = (m: number) =>
+    [...Array(m)].map((_, i) => point(i, 1 + i * 1e-6)).concat([...Array(m)].map((_, i) => point(m + i, -1 + i * 1e-6)));
+  // The series runs 0 → 29 days; observation runs 0 → 120. The 91 quiet days at the end are exactly
+  // what the series denominator drops and the calendar one keeps.
+  const OBSERVATION = { fromMs: 0, toMs: 120 * 86_400_000 };
+  const windows = (opts: Record<string, unknown> = {}) =>
+    findWindows(step(15), { deployer: 'd', observation: OBSERVATION, ...opts });
+
+  it('REFUSES to summarise without an explicit denominator — a default IS a pin', () => {
+    // The defect 504a closes is a denominator nobody chose. A caller that will not name one gets a
+    // throw naming the decision, not the basis that happens to be convenient.
+    // @ts-expect-error — the omission is exactly what this refuses, and TypeScript agrees.
+    expect(() => summariseArrival([windows()])).toThrow(/explicit exposureBasis/);
+    // @ts-expect-error — and a word neither basis is not silently coerced to one that is.
+    expect(() => summariseArrival([windows()], { exposureBasis: 'whatever' })).toThrow(/504a/);
+    expect(() => summariseArrival([windows()], { exposureBasis: 'calendar' })).not.toThrow();
+    expect(() => summariseArrival([windows()], { exposureBasis: 'series' })).not.toThrow();
+    expect([...EXPOSURE_BASES]).toEqual(['calendar', 'series']);
+  });
+
+  it('pins CALENDAR as the published basis in the code and in the bounds, and pins the two equal', () => {
+    // Two copies of one pin, held together, so the module's own refusal and the value a run reads
+    // cannot drift apart. If this fails, someone changed the denominator rather than the report.
+    expect(PUBLISHED_EXPOSURE_BASIS).toBe('calendar');
+    expect(BOUNDS.series.exposureBasis).toBe(PUBLISHED_EXPOSURE_BASIS);
+    expect(BOUNDS.justification['series.exposureBasis']).toMatch(/504a/);
+    expect(BOUNDS.justification['series.exposureBasis']).toMatch(/165b/);
+  });
+
+  it('the two denominators are DIFFERENT quantities, and the published rate is the calendar one', () => {
+    const summary = summariseArrival([windows()], { exposureBasis: 'calendar' });
+    // The bias, in one comparison: the series denominator stops at the last measured launch, so it
+    // is the smaller one and therefore the flattering one.
+    expect(summary.exposure.deployerDaysSeries).toBeCloseTo(29, 9);
+    expect(summary.exposure.deployerDaysCalendar).toBeCloseTo(120, 9);
+    expect(summary.exposure.seriesShareOfCalendar).toBeCloseTo(29 / 120, 9);
+    expect(summary.exposure.basis).toBe('calendar');
+    expect(summary.exposure.publishedBasis).toBe('calendar');
+    expect(summary.exposure.deployerDaysPublished).toBe(summary.exposure.deployerDaysCalendar);
+    // Same windows, two rates, and the calendar one is the smaller — which is the direction the
+    // whole finding turns on.
+    expect(summary.windowsPerDeployerYearResolvedOnSeriesExposure).toBeGreaterThan(
+      summary.windowsPerDeployerYearResolvedOnCalendarExposure,
+    );
+    expect(summary.windowsPerDeployerYearResolvedOnCalendarExposure).toBeCloseTo(365.25 / 120, 9);
+    expect(summary.windowsPerDeployerYearResolvedOnSeriesExposure).toBeCloseTo(365.25 / 29, 9);
+
+    // THE COLLAPSE GUARD, 496a's rule one quantity over: the pre-504a keys are GONE rather than
+    // redefined, so a consumer cannot read a calendar figure where it expected a series one.
+    expect(summary).not.toHaveProperty('windowsPerDeployerYearResolved');
+    expect(summary).not.toHaveProperty('windowsPerDeployerYearIncludingUnresolved');
+    expect(summary).not.toHaveProperty('observationDeployerDays');
+    expect(windows()).not.toHaveProperty('observationDays');
+  });
+
+  it('choosing the SERIES basis changes which rate is published and says so, changing no number', () => {
+    const calendar = summariseArrival([windows()], { exposureBasis: 'calendar' });
+    const series = summariseArrival([windows()], { exposureBasis: 'series' });
+    // Both readings are on both summaries; the basis decides which is THE published one, and never
+    // what either is worth.
+    for (const key of [
+      'windowsPerDeployerYearResolvedOnCalendarExposure',
+      'windowsPerDeployerYearIncludingUnresolvedOnCalendarExposure',
+      'windowsPerDeployerYearResolvedOnSeriesExposure',
+      'windowsPerDeployerYearIncludingUnresolvedOnSeriesExposure',
+    ] as const) {
+      expect(series[key], key).toBe(calendar[key]);
+    }
+    expect(series.exposure.deployerDaysPublished).toBe(series.exposure.deployerDaysSeries);
+    // And a summary computed on the superseded basis says in one comparison that it is not a
+    // published reading, rather than looking like one.
+    expect(series.exposure.basis).not.toBe(series.exposure.publishedBasis);
+    expect(formatArrivalRate(series)).toContain('NOT A PUBLISHED READING');
+    expect(formatArrivalRate(calendar)).not.toContain('NOT A PUBLISHED READING');
+  });
+
+  it('REFUSES the calendar rate rather than falling back to the series one when the window is unknown', () => {
+    // The dangerous failure is not an error, it is a plausible number: a run that quietly reverts to
+    // the denominator 504a replaced publishes a pre-504a rate under a post-504a name.
+    const unknown = findWindows(step(15), { deployer: 'd' });
+    expect(unknown.calendarObservationDays).toBeNull();
+    expect(unknown.calendarObservationRefusal).toMatch(/no observation window was supplied/);
+
+    const summary = summariseArrival([unknown], { exposureBasis: 'calendar' });
+    expect(Number.isNaN(summary.windowsPerDeployerYearResolvedOnCalendarExposure)).toBe(true);
+    // The series reading is still there, finite, and under its own name — labelled, not published.
+    expect(summary.windowsPerDeployerYearResolvedOnSeriesExposure).toBeCloseTo(365.25 / 29, 9);
+    expect(summary.exposure.calendarUnavailable).toHaveLength(1);
+    expect(summary.exposure.calendarUnavailable[0]!.deployer).toBe('d');
+    const line = formatArrivalRate(summary);
+    expect(line).toContain('CALENDAR EXPOSURE UNAVAILABLE');
+    expect(line).toContain('UNAVAILABLE');
+    expect(line).not.toMatch(/arrival rate 12\.5/);
+
+    // ONE deployer without a window makes the WHOLE calendar denominator unknown: the numerator
+    // still counts that deployer's windows, so dividing by the rest is a rate over two populations.
+    const mixed = summariseArrival([windows(), unknown], { exposureBasis: 'calendar' });
+    expect(Number.isNaN(mixed.exposure.deployerDaysCalendar)).toBe(true);
+    expect(Number.isNaN(mixed.windowsPerDeployerYearResolvedOnCalendarExposure)).toBe(true);
+  });
+
+  it('refuses a window that does not contain what was measured, rather than stretching it to fit', () => {
+    const points = step(15);
+    const short = calendarExposure({ fromMs: 0, toMs: 5 * 86_400_000 }, points);
+    expect(short.days).toBeNull();
+    expect(short.refusal).toMatch(/sit outside the stated observation window/);
+    // An unreadable mint instant gets its OWN refusal: it is not a launch in the wrong place, and
+    // the two sentences send an operator to different places.
+    const undated = calendarExposure(OBSERVATION, [...points, { ...points[0]!, mintMs: Number.NaN }]);
+    expect(undated.days).toBeNull();
+    expect(undated.refusal).toMatch(/carry no finite mint instant/);
+    expect(undated.refusal).not.toMatch(/sit outside/);
+    expect(calendarExposure({ fromMs: 10, toMs: 10 }, points).refusal).toMatch(/not a positive span/);
+    expect(calendarExposure({ fromMs: Number.NaN, toMs: 10 }, points).refusal).toMatch(/not a positive span/);
+    expect(calendarExposure(OBSERVATION, points).days).toBeCloseTo(120, 9);
+    // Never throws: this runs offline over persisted checkpoints, where one bad deployer must not
+    // cost every other deployer its measurement.
+    expect(() => calendarExposure(null, points)).not.toThrow();
+  });
+
+  it('there is ONE rate formatter and it cannot print a rate without its denominator', () => {
+    const line = formatArrivalRate(summariseArrival([windows()], { exposureBasis: 'calendar' }));
+    expect(line).toContain('CALENDAR EXPOSURE');
+    expect(line).toContain('per deployer-year');
+    expect(line).toContain('SUPERSEDED series denominator');
+    expect(line).toContain(EXPOSURE_BASIS_CAVEAT);
+  });
+
+  it('states the denominator in the DOCUMENTATION as well as in the output', () => {
+    // Criterion three of 504a: the choice is stated wherever a rate appears. The tool's README is
+    // where a reader meets the rate before ever running it.
+    const readme = readFileSync(join(TOOL_DIR, 'README.md'), 'utf8');
+    expect(readme).toMatch(/## The arrival rate is published on CALENDAR exposure/);
+    expect(readme).toContain('504a');
+    expect(readme).toContain('windowsPerDeployerYearResolvedOnCalendarExposure');
+  });
+
+  it('says why, in the caveat that travels with every rate', () => {
+    expect(EXPOSURE_BASIS_CAVEAT).toContain('504a');
+    expect(EXPOSURE_BASIS_CAVEAT).toContain('165b');
+    expect(EXPOSURE_BASIS_CAVEAT).toContain('495a');
+    expect(EXPOSURE_BASIS_CAVEAT).toContain('0.5893');
+    expect(EXPOSURE_BASIS_CAVEAT).toContain('0.1883');
+    expect(EXPOSURE_BASIS_CAVEAT).toMatch(/3\.13x/);
+    // The caveat reaches the summary itself, not only a document.
+    expect(summariseArrival([windows()], { exposureBasis: 'calendar' }).caveats).toContain(EXPOSURE_BASIS_CAVEAT);
+  });
+
+  it('MOVES NO MEASURED VALUE: the denominator is the only thing the observation window touches', () => {
+    // 504a is a reporting-unit change. Segments, windows, durations, strengths and the bar are
+    // byte-identical with the window supplied and without it.
+    const withWindow = windows();
+    const without = findWindows(step(15), { deployer: 'd' });
+    const measured = ({
+      calendarObservationDays: _days,
+      calendarObservationRefusal: _refusal,
+      ...rest
+    }: typeof withWindow) => rest;
+    expect(measured(withWindow)).toEqual(measured(without));
+    expect(withWindow.seriesObservationDays).toBe(without.seriesObservationDays);
+    for (const basis of EXPOSURE_BASES) {
+      const a = summariseArrival([withWindow], { exposureBasis: basis as ExposureBasis });
+      const b = summariseArrival([without], { exposureBasis: basis as ExposureBasis });
+      expect(a.windowsResolved).toBe(b.windowsResolved);
+      expect(a.durationsDaysCensored).toEqual(b.durationsDaysCensored);
+      expect(a.windowsPerDeployerYearResolvedOnSeriesExposure).toBe(
+        b.windowsPerDeployerYearResolvedOnSeriesExposure,
+      );
+    }
   });
 });
 
@@ -1291,7 +1481,7 @@ describe('the collector end to end, on a scripted endpoint', () => {
       expect(persisted.meta['pre_mint_fills']).toBe(0);
       expect(gunzipSync(readFileSync(join(dir, 'window', `${MINT}.jsonl.gz`))).toString('utf8')).toContain('"sid"');
 
-      const { rows, summary } = runSeries({ out: dir });
+      const { rows, summary } = runSeries({ out: dir, exposureBasis: BOUNDS.series.exposureBasis });
       expect(rows).toHaveLength(1);
       expect(rows[0]!.measured).toBe(true);
       expect(rows[0]!.createSlotOutsiders).toBe(1);
@@ -1311,6 +1501,21 @@ describe('the collector end to end, on a scripted endpoint', () => {
       expect(arrival.summary.detectionBand).toEqual({ minZ: null, unresolvedLo: 3.5, unresolvedHi: 4.5 });
       expect(arrival.perDeployer[0].minZ).toBe(4);
       expect(arrival.perDeployer[0].unresolvedBreaks).toEqual([]);
+
+      // 504a reaches the RUN RECORD too: the record says what a published rate would have been
+      // divided by, and where that window came from. A record that states the rate without stating
+      // this is the pre-504a record — unreadable years later.
+      expect(arrival.caveats.join(' ')).toContain('CALENDAR exposure');
+      expect(arrival.observation.basis).toBe('calendar');
+      expect(arrival.observation.unrecordedReason).toBeNull();
+      expect(arrival.observation.window.fromIso).toBe('2026-01-01T00:00:00.000Z');
+      expect(arrival.observation.window.toIso).toBe('2026-08-03T00:00:00.000Z');
+      expect(summary.exposure.basis).toBe('calendar');
+      expect(summary.exposure.publishedBasis).toBe('calendar');
+      // The walk enumerated from the seed month's start to its own instant, and that IS the
+      // denominator — read back from what the walk recorded, never inferred from the series.
+      expect(arrival.perDeployer[0].calendarObservationDays).toBeCloseTo(214, 6);
+      expect(arrival.perDeployer[0].calendarObservationRefusal).toBeNull();
 
       // Re-running skips what is already on disk: an interruption costs the launch in flight.
       const { client: second } = scriptedClient([pageBody(fills, false, null)]);
@@ -1370,6 +1575,53 @@ describe('the collector end to end, on a scripted endpoint', () => {
     }
   });
 
+  it('records the observation window the WALK covered, merges it across sittings, and refuses a shape it cannot read', async () => {
+    // Captain decision 504a: the denominator of a published arrival rate is what we WATCHED, and
+    // only the phase that did the watching knows it. It is written before the first request, so a
+    // sitting that is interrupted — or that walks nothing at all — still leaves the offline phase
+    // able to state its denominator.
+    const dir = mkdtempSync(join(tmpdir(), 'arrival-observation-'));
+    try {
+      const first = recordObservation(dir, { fromMs: 100, toMs: 200 });
+      expect(first).toEqual({ fromMs: 100, toMs: 200, sittings: 1 });
+      // A resumed collection MERGES: observation ran across every sitting, so the floor is the
+      // earliest any of them enumerated from and the ceiling the latest any of them reached.
+      const second = recordObservation(dir, { fromMs: 50, toMs: 150 });
+      expect(second).toEqual({ fromMs: 50, toMs: 200, sittings: 2 });
+      const third = recordObservation(dir, { fromMs: 100, toMs: 400 });
+      expect(third).toEqual({ fromMs: 50, toMs: 400, sittings: 3 });
+      expect(readObservation(dir)).toEqual({ window: { fromMs: 50, toMs: 400 }, reason: null });
+
+      const written = JSON.parse(readFileSync(join(dir, OBSERVATION_FILE), 'utf8'));
+      expect(written.schema_version).toBe(OBSERVATION_SCHEMA_VERSION);
+      expect(written.seed_months).toEqual(BOUNDS.seed.months);
+      expect(written.note).toBe(EXPOSURE_BASIS_CAVEAT);
+
+      // A version this build does not know is REFUSED, never guessed at: a window read out of a
+      // shape nobody vouched for is a denominator nobody vouched for.
+      writeFileSync(join(dir, OBSERVATION_FILE), JSON.stringify({ ...written, schema_version: 99 }));
+      expect(readObservation(dir).window).toBeNull();
+      expect(readObservation(dir).reason).toMatch(/schema 99/);
+      writeFileSync(join(dir, OBSERVATION_FILE), '{"schema_version":1,"from_ms":');
+      expect(readObservation(dir).reason).toMatch(/could not be parsed/);
+      rmSync(join(dir, OBSERVATION_FILE));
+      expect(readObservation(dir).reason).toMatch(/is not in the collection directory/);
+
+      // And an offline phase over a directory with no record publishes NO rate rather than the
+      // series one: the caveat and the refusal are in the record, and every rate on the calendar
+      // denominator reads NaN.
+      mkdirSync(join(dir, 'window'), { recursive: true });
+      const summary = runSeries({ out: dir, exposureBasis: BOUNDS.series.exposureBasis }).summary;
+      expect(summary.exposure.basis).toBe('calendar');
+      const arrival = JSON.parse(readFileSync(join(dir, 'arrival.json'), 'utf8'));
+      expect(arrival.observation.window).toBeNull();
+      expect(arrival.observation.unrecordedReason).toMatch(/is not in the collection directory/);
+      expect(arrival.caveats).toContain(EXPOSURE_BASIS_CAVEAT);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('reports a checkpoint killed mid-write as unreadable and UNMEASURED, instead of throwing', async () => {
     // One truncated last line is what a walk killed mid-write leaves. Aborting the whole offline
     // phase over it would lose every other launch's measurement to one launch's interrupted write.
@@ -1395,7 +1647,7 @@ describe('the collector end to end, on a scripted endpoint', () => {
 
       const torn = readPersistedWindow(join(dir, 'window'), MINT)!;
       expect(torn.unreadable).toMatch(/could not be parsed/);
-      const { rows, rankInput, unreadable } = runSeries({ out: dir });
+      const { rows, rankInput, unreadable } = runSeries({ out: dir, exposureBasis: BOUNDS.series.exposureBasis });
       expect(unreadable).toHaveLength(1);
       expect(rows[0]!.measured).toBe(false);
       // Unmeasured, never a zero: it reaches neither the rank test nor a deployer's observation span.
@@ -1411,7 +1663,7 @@ describe('the collector end to end, on a scripted endpoint', () => {
       writeFileSync(join(dir, 'window', `${MINT}.meta.json`), '{"mint":"x","created_time');
       const tornSidecar = readPersistedWindow(join(dir, 'window'), MINT)!;
       expect(tornSidecar.unreadable).toMatch(/sidecar could not be parsed/);
-      const after = runSeries({ out: dir });
+      const after = runSeries({ out: dir, exposureBasis: BOUNDS.series.exposureBasis });
       expect(after.unreadable).toHaveLength(1);
       expect(after.rows[0]!.measured).toBe(false);
       expect(Number.isFinite(after.rows[0]!.mintMs)).toBe(false);
@@ -1462,7 +1714,7 @@ describe('the collector end to end, on a scripted endpoint', () => {
       expect(after.issued()).toBe(0);
 
       // And giving up is REPORTED, not silent — while the launch still means UNMEASURED, not zero.
-      const { rankInput, givenUp } = runSeries({ out: dir });
+      const { rankInput, givenUp } = runSeries({ out: dir, exposureBasis: BOUNDS.series.exposureBasis });
       expect(givenUp.map((g) => g.mint)).toEqual([MINT]);
       expect(rankInput.launchesUnmeasured).toBe(1);
       expect(rankInput.launchesInRankTest).toBe(0);

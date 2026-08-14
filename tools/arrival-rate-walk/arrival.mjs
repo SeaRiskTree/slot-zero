@@ -62,6 +62,35 @@
  *   apart and publishes the arrival rate as a RANGE, and the old ambiguous `windows` /
  *   `windowsPerDeployerYear` keys are **gone** rather than quietly redefined, so a consumer that
  *   collapses the classes fails loudly instead of reading a pooled figure as resolved.
+ *
+ * ## The rate's DENOMINATOR is named, and it is calendar exposure — captain decision 504a
+ *
+ * A count of windows is not a rate until something says *per what*. This lane's answer was the span
+ * from a deployer's first MEASURED launch to its last, and nothing ever stated that it was — the
+ * denominator was whatever the series happened to reach. It is the survivorship conditioning
+ * decision 165b removed from the SEED, arriving again through the INSTRUMENT: a deployer that stops
+ * launching stops being observed, so its quiet months leave the denominator with it, and on the one
+ * stranger window measured to date that makes series exposure **3.13x smaller** than calendar
+ * exposure — 0.5893 per stranger deployer-year against 0.1883. The two do not merely differ in
+ * magnitude; they disagree on whether the unbiased cohort's rate is HIGHER or LOWER than a
+ * still-active cohort's, which is the finding.
+ *
+ * 504a is a REPORTING-UNIT change and nothing else — no bar, bound, predicate or measured value
+ * moves, and the segments, windows, durations and detection strengths are byte-identical:
+ *
+ * - **{@link PUBLISHED_EXPOSURE_BASIS} is `calendar`**, pinned here and in `bounds.json` →
+ *   `series.exposureBasis`, with a test pinning the two equal.
+ * - **{@link summariseArrival} REQUIRES the basis and throws without one.** A default is a pin, and
+ *   a denominator nobody chose is exactly what this decision closes.
+ * - **Both readings are published, each under a name carrying its own denominator**
+ *   (`…OnCalendarExposure` / `…OnSeriesExposure`), and the pre-504a `windowsPerDeployerYearResolved`
+ *   / `…IncludingUnresolved` / `observationDeployerDays` keys are **gone rather than redefined** —
+ *   496a's own rule, so a consumer cannot read a calendar figure where it expected a series one.
+ * - **Calendar exposure is REFUSED rather than substituted.** A deployer whose observation window
+ *   is unknown leaves {@link DeployerWindows.calendarObservationDays} `null` — never 0, never the
+ *   series span — and the published rate then reads `NaN` with the reason on the summary and in
+ *   {@link formatArrivalRate}'s line, instead of quietly falling back to the denominator 504a
+ *   replaced.
  */
 
 /**
@@ -143,6 +172,55 @@ export const MARGINAL_DETECTION_CAVEAT =
   'the bar there is a coin flip reported as a finding. The bar itself is UNMOVED (captain decision ' +
   '496a): an unresolved reading above it still segments exactly as before, one below it still does ' +
   'not split. Never pool an unresolved count into either neighbour.';
+
+/**
+ * @typedef {'calendar' | 'series'} ExposureBasis
+ *   `calendar` — the whole observation window the collection covered, **quiet months included**.
+ *   `series` — first to last MEASURED launch, which stops observing a deployer the moment it stops
+ *   launching.
+ */
+
+/**
+ * The two denominators an arrival rate can be computed on. Enumerated rather than left implicit
+ * because {@link summariseArrival} **requires** the caller to name one: a default IS a pin, and the
+ * whole defect captain decision 504a closes is a denominator nobody chose.
+ */
+export const EXPOSURE_BASES = Object.freeze(/** @type {readonly ExposureBasis[]} */ (['calendar', 'series']));
+
+/**
+ * **The denominator a PUBLISHED arrival rate uses — captain decision 504a, 2026-08-14.**
+ *
+ * The series denominator inherits exactly the survivorship bias decision 165b removed from the
+ * seed: a deployer that stops launching stops being observed, so the months it is quiet leave the
+ * denominator with it. The seed no longer selects on being active; the instrument still did. On the
+ * one stranger window this project has measured the two denominators do not merely differ in
+ * magnitude — they disagree on the SIGN of the finding, which is why the choice cannot be left to
+ * whichever a lane reached for first.
+ *
+ * It is pinned in `bounds.json` → `series.exposureBasis` as well, and a test pins the two equal:
+ * this constant is what the module's own refusal and caveat name, that one is what a run reads.
+ */
+export const PUBLISHED_EXPOSURE_BASIS = /** @type {ExposureBasis} */ ('calendar');
+
+/**
+ * The sentence that travels with every arrival rate, on every surface — the summary's caveats, the
+ * run record and {@link formatArrivalRate}'s line. A rate quoted without its denominator is not a
+ * rate, and this lane published one for its whole life without ever saying which it used.
+ */
+export const EXPOSURE_BASIS_CAVEAT =
+  'EVERY ARRIVAL RATE HERE NAMES ITS DENOMINATOR, and the published one is CALENDAR exposure — the ' +
+  'whole observation window the collection covered, counting the months a deployer is quiet ' +
+  '(captain decision 504a). The SERIES denominator every prior lane used without stating the ' +
+  'choice — first to last MEASURED launch — stops observing a deployer the moment it stops ' +
+  'launching, which is the survivorship conditioning decision 165b removed from the SEED arriving ' +
+  'again through the INSTRUMENT. On the one stranger window measured to date it reads 0.5893 per ' +
+  'stranger deployer-year against 0.1883 on calendar exposure, a series exposure 3.13x smaller, ' +
+  'and the two disagree on whether the unbiased cohort\'s rate is HIGHER or LOWER than a ' +
+  'still-active cohort\'s — which is the whole finding. Both readings are reported side by side ' +
+  'and neither may be quoted without its denominator. NEITHER IS A POINT ESTIMATE of the stranger ' +
+  'arrival rate: captain decision 495a publishes that as a BRACKET — one window read from the ' +
+  'original observation start, ZERO from each wallet\'s own genesis — and 504a changes the unit, ' +
+  'not the bracket and not one measured value.';
 
 /**
  * @typedef {'window' | 'unresolved' | 'no-window'} DetectionVerdict
@@ -320,9 +398,19 @@ export function median(values) {
  * @typedef {object} DeployerWindows
  * @property {string} deployer
  * @property {number} launchesMeasured
- * @property {number} observationDays  First to last MEASURED launch. Not the calendar span of the
- *   collection: a deployer that stopped launching in February is observed until February, and
- *   pretending otherwise inflates the denominator of every arrival rate computed from it.
+ * @property {number} seriesObservationDays First to last MEASURED launch — the SERIES exposure, and
+ *   **not** the denominator a published rate uses. A deployer that stopped launching in February is
+ *   observed until February here, so the months it was quiet are not in this span: that is the
+ *   survivorship conditioning captain decision 504a removed from the published rate. Named for its
+ *   basis rather than left as the bare `observationDays` it was before 504a, so a consumer reading
+ *   the old key gets `undefined` and fails loudly instead of reading a series span as the
+ *   denominator.
+ * @property {number | null} calendarObservationDays The observation window this collection covered
+ *   for the deployer, **quiet months included** — the published denominator. `null` means the window
+ *   is UNKNOWN and is never 0 and never the series span; {@link summariseArrival} then refuses to
+ *   publish a calendar rate rather than substituting the other denominator.
+ * @property {string | null} calendarObservationRefusal Why `calendarObservationDays` is `null`, in a
+ *   whole sentence, so a reader of a saved record sees *which* coverage failed rather than a blank.
  * @property {number} minZ            The bar this deployer's series was segmented at. Carried even
  *   when nothing was found, because "no window at |z| >= 4" and "no window at |z| >= 3" are
  *   different findings and a reader of a saved record cannot tell them apart otherwise.
@@ -341,6 +429,90 @@ export function median(values) {
  */
 
 /**
+ * The calendar window a collection covered for one deployer: the instant observation could first
+ * see a launch, and the instant it stopped. **It is the collection's own enumeration bound**, which
+ * is why the collector derives it from the same two numbers the walk filtered its launch list with
+ * rather than from anything the series shows — a denominator read off the series is the one 504a
+ * replaced.
+ *
+ * @typedef {object} ObservationWindow
+ * @property {number} fromMs
+ * @property {number} toMs
+ */
+
+/**
+ * Calendar exposure in days, or a refusal saying why there is none.
+ *
+ * Three things it will not do, and each is the direction that refuses rather than the one that
+ * publishes a number:
+ *
+ * - **No window supplied ⇒ `null`, never the series span.** Substituting the series span is the
+ *   silent default captain decision 504a exists to remove; substituting 0 would delete the deployer
+ *   from the denominator and inflate every rate computed from it.
+ * - **A window that does not contain the measured launches is REFUSED, not clamped.** A collection
+ *   whose stated observation bounds do not cover what it measured has bounds describing a different
+ *   run, and stretching them here would hide that with arithmetic.
+ * - **It never throws.** This runs in the offline phase over persisted checkpoints, where one bad
+ *   deployer must not cost every other deployer its measurement — the same rule a torn sidecar
+ *   already gets.
+ *
+ * A launch whose own mint instant is unreadable gets its own refusal rather than being counted as
+ * one sitting outside the window: the window is not what is wrong there, and the two sentences send
+ * an operator to different places.
+ *
+ * @param {ObservationWindow | null} observation
+ * @param {readonly SeriesPoint[]} points Ascending by `mintMs`. Measured launches only.
+ * @returns {{ days: number | null, refusal: string | null }}
+ */
+export function calendarExposure(observation, points) {
+  if (observation === null) {
+    return {
+      days: null,
+      refusal:
+        'no observation window was supplied, so the calendar exposure this deployer contributes is ' +
+        'UNKNOWN. It is not 0 and it is not the series span: captain decision 504a publishes the ' +
+        'arrival rate on calendar exposure, and a run that cannot state its observation window ' +
+        'cannot publish one.',
+    };
+  }
+  const { fromMs, toMs } = observation;
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs) || !(toMs > fromMs)) {
+    return {
+      days: null,
+      refusal:
+        `the observation window [${fromMs}, ${toMs}] is not a positive span of finite instants, so ` +
+        'it bounds nothing. Calendar exposure is UNKNOWN here rather than read from a span that ' +
+        'does not exist.',
+    };
+  }
+  // Kept apart from `outside` deliberately: an unreadable instant is not a launch in the wrong
+  // place, and reporting it as one sends an operator hunting a window mismatch that does not exist.
+  const undated = points.filter((p) => !Number.isFinite(p.mintMs)).length;
+  if (undated > 0) {
+    return {
+      days: null,
+      refusal:
+        `${undated} of ${points.length} measured launch(es) carry no finite mint instant, so whether ` +
+        'this observation window covers them cannot be decided. Calendar exposure is UNKNOWN here ' +
+        'rather than assumed either way — the window is not what is wrong.',
+    };
+  }
+  const outside = points.filter((p) => !(p.mintMs >= fromMs && p.mintMs <= toMs)).length;
+  if (outside > 0) {
+    return {
+      days: null,
+      refusal:
+        `${outside} of ${points.length} measured launch(es) sit outside the stated observation ` +
+        `window ${new Date(fromMs).toISOString()} → ${new Date(toMs).toISOString()}, so that window ` +
+        'describes a different collection from the one these launches came out of. Calendar ' +
+        'exposure is REFUSED rather than widened to fit: a denominator stretched to cover its own ' +
+        'contradiction is not a measurement.',
+    };
+  }
+  return { days: (toMs - fromMs) / 86_400_000, refusal: null };
+}
+
+/**
  * Find a deployer's windows.
  *
  * @param {readonly SeriesPoint[]} series Ascending by `mintMs`. **Measured launches only** — an
@@ -349,6 +521,9 @@ export function median(values) {
  * @param {number} [opts.minZ]
  * @param {number} [opts.minSegment]
  * @param {string} [opts.deployer]
+ * @param {ObservationWindow | null} [opts.observation] The calendar window this collection covered
+ *   for the deployer. Absent means the window is UNKNOWN, which is reported as a refusal rather
+ *   than filled in from the series — see {@link calendarExposure}.
  * @returns {DeployerWindows}
  */
 export function findWindows(series, opts = {}) {
@@ -356,17 +531,20 @@ export function findWindows(series, opts = {}) {
   const minSegment = opts.minSegment ?? 8;
   const deployer = opts.deployer ?? '';
   const points = [...series].sort((a, b) => a.mintMs - b.mintMs);
-  const observationDays =
+  const seriesObservationDays =
     points.length < 2
       ? 0
       : (/** @type {SeriesPoint} */ (points[points.length - 1]).mintMs - /** @type {SeriesPoint} */ (points[0]).mintMs) /
         86_400_000;
+  const calendar = calendarExposure(opts.observation ?? null, points);
 
   if (points.length < minSegment * 2 + 4) {
     return {
       deployer,
       launchesMeasured: points.length,
-      observationDays,
+      seriesObservationDays,
+      calendarObservationDays: calendar.days,
+      calendarObservationRefusal: calendar.refusal,
       minZ,
       segments: [],
       windows: [],
@@ -450,7 +628,9 @@ export function findWindows(series, opts = {}) {
   return {
     deployer,
     launchesMeasured: points.length,
-    observationDays,
+    seriesObservationDays,
+    calendarObservationDays: calendar.days,
+    calendarObservationRefusal: calendar.refusal,
     minZ,
     segments,
     windows,
@@ -506,6 +686,27 @@ export function formatUnresolvedBreak(unresolved, minZ) {
 }
 
 /**
+ * What every rate in a summary was divided by, and by what it was NOT — captain decision 504a.
+ *
+ * @typedef {object} ExposureSummary
+ * @property {ExposureBasis} basis The denominator this summary's published rate uses. It is the
+ *   caller's stated input, echoed rather than inferred, so a saved summary says which was chosen.
+ * @property {ExposureBasis} publishedBasis What 504a pins ({@link PUBLISHED_EXPOSURE_BASIS}). Equal
+ *   to `basis` on a published run; unequal says in one comparison that this summary is not one.
+ * @property {number} deployerDaysPublished The denominator actually applied — `basis`'s own.
+ * @property {number} deployerDaysCalendar Summed over segmentable deployers, quiet months included.
+ *   `NaN` when any of them has no known observation window.
+ * @property {number} deployerDaysSeries The superseded denominator, summed the same way.
+ * @property {number} seriesShareOfCalendar `deployerDaysSeries / deployerDaysCalendar` — the size of
+ *   the conditioning in one number (the measured stranger reading is 1/3.13 = 0.3195). Below 1 means
+ *   the series denominator is the smaller one and therefore the flattering one.
+ * @property {{ deployer: string, reason: string }[]} calendarUnavailable Segmentable deployers whose
+ *   calendar exposure is unknown, with the reason. **Non-empty means the published rate is refused**
+ *   rather than computed over the deployers that happened to have a window — a partial denominator
+ *   over a whole numerator is a rate that is simply wrong.
+ */
+
+/**
  * @typedef {object} ArrivalSummary
  * @property {number} deployers
  * @property {number} deployersSegmentable  How many had enough measured launches to detect anything.
@@ -534,14 +735,26 @@ export function formatUnresolvedBreak(unresolved, minZ) {
  *   measurement — and, being resolved, the only ones whose EXISTENCE is a measurement too.
  * @property {number} windowsUnresolvedWithBothEndsObserved
  * @property {number} windowsBelowBandWithBothEndsObserved See `windowsBelowBand`.
- * @property {number} observationDeployerDays Summed over segmentable deployers only.
- * @property {number} windowsPerDeployerYearResolved The arrival rate's **LOWER** bound: unresolved
- *   windows counted as none. `NaN` when nothing was observed.
- * @property {number} windowsPerDeployerYearIncludingUnresolved Its **UPPER** bound: resolved plus
- *   unresolved windows. A below-band window is NOT in it — that class resolved the other way, and
- *   counting it here would be pooling a `no-window` reading into the upper bound. The two are
- *   published as a range and never averaged into one figure; there is no bare
+ * @property {ExposureSummary} exposure The denominator every rate below was computed on — the named
+ *   input, echoed, beside BOTH exposures so the gap between them is visible rather than inferred.
+ * @property {number} windowsPerDeployerYearResolvedOnCalendarExposure The arrival rate's **LOWER**
+ *   bound on the PUBLISHED denominator (captain decision 504a): unresolved windows counted as none.
+ *   `NaN` when nothing was observed, and `NaN` when any segmentable deployer's calendar exposure is
+ *   unknown — a refusal, never a quiet fall back to the series denominator. **`JSON.stringify` writes
+ *   that `NaN` as `null`**, so a saved record's `null` here means REFUSED and never zero; the reason
+ *   is in `exposure.calendarUnavailable` and in `caveats`, which is where a reader of a record
+ *   should look rather than at the shape of the missing value.
+ * @property {number} windowsPerDeployerYearIncludingUnresolvedOnCalendarExposure Its **UPPER**
+ *   bound: resolved plus unresolved windows. A below-band window is NOT in it — that class resolved
+ *   the other way, and counting it here would be pooling a `no-window` reading into the upper bound.
+ *   The two are published as a range and never averaged into one figure; there is no bare
  *   `windowsPerDeployerYear`, for the same reason there is no bare `windows`.
+ * @property {number} windowsPerDeployerYearResolvedOnSeriesExposure The same lower bound on the
+ *   SUPERSEDED denominator — first to last measured launch. Published so a pre-504a reading can be
+ *   compared with the one that replaced it, and named for its denominator so it cannot be mistaken
+ *   for the published rate.
+ * @property {number} windowsPerDeployerYearIncludingUnresolvedOnSeriesExposure The upper bound on
+ *   the superseded denominator.
  * @property {number[]} durationsDaysBothEndsObserved **Resolved** windows only.
  * @property {number[]} durationsDaysCensored **Lower bounds**, kept apart from the measurements.
  *   Resolved windows only.
@@ -563,10 +776,26 @@ export function formatUnresolvedBreak(unresolved, minZ) {
  * itself a bias — it drops the shortest-lived deployers, which are exactly the ones the historical
  * seed was chosen to include — so it is reported rather than absorbed.
  *
+ * **`exposureBasis` is REQUIRED and has no default** (captain decision 504a). A default is a pin,
+ * and the defect this closes is a denominator nobody chose: every lane before it took the series
+ * span because that is what the function returned, and on the one stranger window measured to date
+ * that denominator and the calendar one disagree on the SIGN of the finding. A caller that will not
+ * name its denominator gets a throw rather than a number.
+ *
  * @param {readonly DeployerWindows[]} perDeployer
+ * @param {{ exposureBasis: ExposureBasis }} opts
  * @returns {ArrivalSummary}
  */
-export function summariseArrival(perDeployer) {
+export function summariseArrival(perDeployer, opts) {
+  const basis = opts?.exposureBasis;
+  if (basis === undefined || !EXPOSURE_BASES.includes(basis)) {
+    throw new Error(
+      `summariseArrival needs an explicit exposureBasis, one of ${EXPOSURE_BASES.join(' | ')}, and ` +
+        `got ${JSON.stringify(basis)}. Captain decision 504a pins ${PUBLISHED_EXPOSURE_BASIS} ` +
+        `exposure as the denominator a PUBLISHED arrival rate uses; a default here would be a pin ` +
+        `nobody chose, which is the defect that decision closes. ${EXPOSURE_BASIS_CAVEAT}`,
+    );
+  }
   const segmentable = perDeployer.filter((d) => d.tooShortReason === null);
   const allWindows = segmentable.flatMap((d) => d.windows);
   // An EXPLICIT three-way split on the verdict rather than a `!== 'window'` catch-all. The
@@ -580,10 +809,25 @@ export function summariseArrival(perDeployer) {
   const resolved = byVerdict.window;
   const unresolved = byVerdict.unresolved;
   const belowBand = byVerdict['no-window'];
-  const observationDeployerDays = segmentable.reduce((a, d) => a + d.observationDays, 0);
+  const deployerDaysSeries = segmentable.reduce((a, d) => a + d.seriesObservationDays, 0);
+  // A deployer with no known observation window makes the WHOLE calendar denominator unknown, not a
+  // smaller one: the numerator still counts that deployer's windows, so dividing by the exposure of
+  // the deployers that happened to have a window is a rate over two different populations.
+  const calendarUnavailable = segmentable
+    .filter((d) => d.calendarObservationDays === null)
+    .map((d) => ({ deployer: d.deployer, reason: d.calendarObservationRefusal ?? 'no reason recorded' }));
+  const deployerDaysCalendar =
+    calendarUnavailable.length > 0
+      ? Number.NaN
+      : segmentable.reduce((a, d) => a + /** @type {number} */ (d.calendarObservationDays), 0);
   const tooShort = perDeployer.length - segmentable.length;
-  const perYear = (/** @type {number} */ n) =>
-    observationDeployerDays > 0 ? (n * 365.25) / observationDeployerDays : Number.NaN;
+  // `days > 0` is false for NaN, so an unknown calendar denominator yields NaN rather than a number
+  // computed off something else. There is deliberately no fall back to the other basis.
+  const perYearOn = (/** @type {number} */ days) => (/** @type {number} */ n) =>
+    days > 0 ? (n * 365.25) / days : Number.NaN;
+  const perYearCalendar = perYearOn(deployerDaysCalendar);
+  const perYearSeries = perYearOn(deployerDaysSeries);
+  const perYear = basis === 'calendar' ? perYearCalendar : perYearSeries;
   const bothEnds = (/** @type {readonly Window[]} */ ws) => ws.filter((w) => w.openObserved && w.closeObserved);
   const censored = (/** @type {readonly Window[]} */ ws) => ws.filter((w) => !w.openObserved || !w.closeObserved);
   const days = (/** @type {readonly Window[]} */ ws) => ws.map((w) => w.durationDays).sort((a, b) => a - b);
@@ -604,9 +848,21 @@ export function summariseArrival(perDeployer) {
     windowsResolvedWithBothEndsObserved: bothEnds(resolved).length,
     windowsUnresolvedWithBothEndsObserved: bothEnds(unresolved).length,
     windowsBelowBandWithBothEndsObserved: bothEnds(belowBand).length,
-    observationDeployerDays,
-    windowsPerDeployerYearResolved: perYear(resolved.length),
-    windowsPerDeployerYearIncludingUnresolved: perYear(resolved.length + unresolved.length),
+    exposure: {
+      basis,
+      publishedBasis: PUBLISHED_EXPOSURE_BASIS,
+      deployerDaysPublished: basis === 'calendar' ? deployerDaysCalendar : deployerDaysSeries,
+      deployerDaysCalendar,
+      deployerDaysSeries,
+      seriesShareOfCalendar: deployerDaysCalendar > 0 ? deployerDaysSeries / deployerDaysCalendar : Number.NaN,
+      calendarUnavailable,
+    },
+    windowsPerDeployerYearResolvedOnCalendarExposure: perYearCalendar(resolved.length),
+    windowsPerDeployerYearIncludingUnresolvedOnCalendarExposure: perYearCalendar(
+      resolved.length + unresolved.length,
+    ),
+    windowsPerDeployerYearResolvedOnSeriesExposure: perYearSeries(resolved.length),
+    windowsPerDeployerYearIncludingUnresolvedOnSeriesExposure: perYearSeries(resolved.length + unresolved.length),
     durationsDaysBothEndsObserved: days(bothEnds(resolved)),
     durationsDaysCensored: days(censored(resolved)),
     unresolvedDurationsDaysBothEndsObserved: days(bothEnds(unresolved)),
@@ -623,9 +879,74 @@ export function summariseArrival(perDeployer) {
       `${unresolved.length} of ${allWindows.length} detected window(s) are UNRESOLVED, ` +
         `${belowBand.length} resolved BELOW the band, and ${unresolvedBreaks} further level change(s) ` +
         `fell inside the band below the bar and were not split. The arrival rate is therefore a ` +
-        `RANGE — ${perYear(resolved.length)} per deployer-year counting only resolved windows, ` +
-        `${perYear(resolved.length + unresolved.length)} counting the unresolved ones too — and ` +
-        `neither end is the answer on its own.`,
+        `RANGE — ${perYear(resolved.length)} per deployer-year on ${basis.toUpperCase()} exposure ` +
+        `counting only resolved windows, ${perYear(resolved.length + unresolved.length)} counting ` +
+        `the unresolved ones too — and neither end is the answer on its own.`,
+      EXPOSURE_BASIS_CAVEAT,
+      `The denominator applied above is ${basis.toUpperCase()} exposure, ` +
+        `${deployerDaysCalendar} deployer-day(s) of calendar observation against ` +
+        `${deployerDaysSeries} of series observation over the same ${segmentable.length} segmentable ` +
+        `deployer(s). On the SUPERSEDED series denominator the same windows read ` +
+        `${perYearSeries(resolved.length)} to ${perYearSeries(resolved.length + unresolved.length)} ` +
+        `per deployer-year; that pair is reported so a pre-504a reading can be compared with the ` +
+        `one that replaced it, and it is NOT the published rate.` +
+        (calendarUnavailable.length > 0
+          ? ` ${calendarUnavailable.length} segmentable deployer(s) have no known observation window, ` +
+            `so the calendar denominator is UNKNOWN and every rate on it reads NaN — refused, not ` +
+            `filled in from the series span.`
+          : ''),
     ],
   };
+}
+
+/**
+ * The ONE human-readable form of an arrival rate, and it always carries its denominator.
+ *
+ * `formatWindow`'s rule one quantity over (captain decision 504a): a printed rate without the
+ * exposure it was divided by is unreachable rather than merely discouraged, because every printed
+ * surface goes through this. It states the published pair, names the basis, and prints the
+ * SUPERSEDED series pair beside it under its own name so a reader can tell the two apart — the
+ * thing no reader of a pre-504a figure could do.
+ *
+ * A published rate the summary refused reads **UNAVAILABLE with the reason**, never a blank, a zero
+ * or the other basis's number.
+ *
+ * @param {ArrivalSummary} summary
+ * @returns {string}
+ */
+export function formatArrivalRate(summary) {
+  const n = (/** @type {number} */ v) => (Number.isFinite(v) ? v.toFixed(4) : 'UNAVAILABLE');
+  const e = summary.exposure;
+  const publishedLo =
+    e.basis === 'calendar'
+      ? summary.windowsPerDeployerYearResolvedOnCalendarExposure
+      : summary.windowsPerDeployerYearResolvedOnSeriesExposure;
+  const publishedHi =
+    e.basis === 'calendar'
+      ? summary.windowsPerDeployerYearIncludingUnresolvedOnCalendarExposure
+      : summary.windowsPerDeployerYearIncludingUnresolvedOnSeriesExposure;
+  const head =
+    `arrival rate ${n(publishedLo)}–${n(publishedHi)} windows per deployer-year on ` +
+    `${e.basis.toUpperCase()} EXPOSURE (${n(e.deployerDaysPublished)} deployer-days over ` +
+    `${summary.deployersSegmentable} segmentable deployer(s); resolved only → resolved plus ` +
+    `unresolved)`;
+  const other =
+    `    on the SUPERSEDED series denominator the same windows read ` +
+    `${n(summary.windowsPerDeployerYearResolvedOnSeriesExposure)}–` +
+    `${n(summary.windowsPerDeployerYearIncludingUnresolvedOnSeriesExposure)} over ` +
+    `${n(e.deployerDaysSeries)} deployer-days, ${n(e.seriesShareOfCalendar)} of the calendar ` +
+    `exposure — reported for comparison, NOT the published rate`;
+  const refusal =
+    e.calendarUnavailable.length > 0
+      ? `\n    CALENDAR EXPOSURE UNAVAILABLE on ${e.calendarUnavailable.length} segmentable ` +
+        `deployer(s), so the published rate is REFUSED rather than computed on the other ` +
+        `denominator: ${/** @type {{ deployer: string, reason: string }} */ (e.calendarUnavailable[0]).deployer} — ` +
+        `${/** @type {{ deployer: string, reason: string }} */ (e.calendarUnavailable[0]).reason}`
+      : '';
+  const mismatch =
+    e.basis === e.publishedBasis
+      ? ''
+      : `\n    NOT A PUBLISHED READING: captain decision 504a publishes on ${e.publishedBasis} ` +
+        `exposure and this summary was computed on ${e.basis}.`;
+  return `${head}${refusal}${mismatch}\n${other}\n    ${EXPOSURE_BASIS_CAVEAT}`;
 }

@@ -139,7 +139,8 @@ node tools/arrival-rate-walk/collect.mjs --phase plan --cohort <file> \
 node tools/arrival-rate-walk/collect.mjs --phase walk \
     --launch-list <file|dir> --launch-list-max-age-days <n> --out <dir> [--dry-run]
 
-# 5. Derive both series and the windows. Offline.
+# 5. Derive both series and the windows. Offline. The arrival rate comes out on CALENDAR exposure
+#    (decision 504a), read from the observation.json the walk wrote — there is no flag for it.
 node tools/arrival-rate-walk/collect.mjs --phase series --out <dir>
 ```
 
@@ -175,11 +176,14 @@ narrow on is our own coverage — a wallet the screen could not vouch for, which
 rather than restating it; the shape is:
 
 - **`generatedAtIso` is the observation ceiling.** Nothing after it was looked for, so a deployer that
-  appears to have gone quiet at the ceiling may simply be beyond the list's reach. `arrival.mjs`
-  measures observation from the first to the last MEASURED launch rather than from a wall clock, so an
-  old list yields a **shorter** observation rather than the same one over fewer launches — but the
-  last segment of every deployer is then censored by OUR file's age rather than by the deployer's
-  behaviour, and nothing in the series itself can tell those apart.
+  appears to have gone quiet at the ceiling may simply be beyond the list's reach. **The two
+  denominators take that differently, which is why each names itself** (decision 504a, below):
+  SERIES exposure runs first to last MEASURED launch, so an old list yields a **shorter** observation
+  rather than the same one over fewer launches; the published CALENDAR exposure runs to the
+  sitting's own instant, so an old list yields the **same** denominator over fewer launches, which
+  biases the published rate **down** — the direction that refuses. Either way the last segment of
+  every deployer is censored by OUR file's age rather than by the deployer's behaviour, and nothing
+  in the series itself can tell those apart.
 - **The age is reported on every read**, and a list generated after the reading clock is REFUSED
   rather than given a negative age.
 - **Past a maximum age the run STATES, the list is refused.** `--launch-list-max-age-days` is
@@ -317,6 +321,68 @@ refuses to book free money.
 
 ---
 
+## The arrival rate is published on CALENDAR exposure — and the denominator is now named
+
+Captain decision **504a**, 2026-08-14. It is a **reporting-unit change and only that**: no bar,
+bound, gate, predicate or measured value moves, the segments, windows, durations and detection
+strengths are byte-identical, and no saved query was touched.
+
+A count of windows is not a rate until something says *per what*. This lane's answer was the span
+from a deployer's first MEASURED launch to its last — **and nothing ever stated that it was**,
+because it was simply what `findWindows` returned. Every prior lane inherited it the same way. That
+denominator carries exactly the survivorship bias captain decision **165b** removed from the seed: a
+deployer that stops launching stops being observed, so the months it is quiet leave the denominator
+with it. **The seed no longer selects on being active; the instrument still did.**
+
+It is not a rounding difference. On the one stranger window this project has measured, series
+exposure is **3.13x smaller** than calendar exposure — **0.5893** per stranger deployer-year against
+**0.1883** — and the two disagree on whether the unbiased cohort's rate is **HIGHER or LOWER** than a
+still-active cohort's, which is the whole finding. **CALENDAR exposure — the whole observation
+window the collection covered, counting the months a deployer is quiet — is what a published rate is
+divided by.** Six things bind:
+
+- **The denominator is a REQUIRED, NAMED input.** `arrival.mjs` → `summariseArrival` takes
+  `exposureBasis` and **throws** without one; `runSeries` takes it and passes it down; the CLI
+  supplies the pin. A default is a pin, and a denominator nobody chose is exactly what 504a closes.
+  There is deliberately **no command-line flag** for it — a flag that could pick the other one is the
+  silent choice wearing an argument.
+- **The pin has two copies and a test holds them equal**: `bounds.json` → `series.exposureBasis`
+  (`"calendar"`, with its own justification) and `arrival.mjs` → `PUBLISHED_EXPOSURE_BASIS`, which is
+  what the module's refusal and caveat name. That is why `bounds.json` is at **1.2.0**.
+- **Both readings are published, each under a name carrying its own denominator** —
+  `windowsPerDeployerYearResolvedOnCalendarExposure` and `…OnSeriesExposure`, with the summary's
+  `exposure` block carrying `deployerDaysCalendar`, `deployerDaysSeries` and
+  `seriesShareOfCalendar` so the size of the conditioning is visible rather than inferred. **The
+  pre-504a `windowsPerDeployerYearResolved` / `…IncludingUnresolved` / `observationDeployerDays` and
+  the per-deployer `observationDays` keys are GONE rather than redefined** (496a's own rule), so a
+  consumer cannot read a calendar figure where it expected a series one. This lane has never run, so
+  no committed record carried the old keys.
+- **The window comes from the WALK, not from the series.** `collect.mjs` → `recordObservation` writes
+  `observation.json` before the first request, from the same two bounds the walk filters its launch
+  list with — the seed month's start and the sitting's own instant — so the window a rate is divided
+  by cannot drift from the window that was walked. A resumed collection merges (earliest floor,
+  latest ceiling, `sittings` counted). The ceiling can only ever OVERSTATE exposure, which biases the
+  rate **down** — the direction that refuses rather than the one that manufactures an opportunity.
+- **An unknown window REFUSES rather than reverting.** No `observation.json`, an unreadable or
+  unknown-version one, or a window that does not contain the launches that were measured, leaves
+  `calendarObservationDays` **`null` — never 0 and never the series span** — and the published rate
+  then reads `NaN` with the reason on the summary and in the printed line. One deployer without a
+  window makes the whole calendar denominator unknown, because the numerator still counts that
+  deployer's windows. The dangerous failure here is not an error, it is a plausible number.
+- **There is ONE rate formatter**, `arrival.mjs` → `formatArrivalRate`, so a printed rate without its
+  denominator is unreachable rather than discouraged — `formatWindow`'s rule one quantity over. It
+  states the published pair and the basis, prints the superseded series pair beside it under its own
+  name, and carries `EXPOSURE_BASIS_CAVEAT`, which also reaches the summary's caveats and the run
+  record.
+
+**It changes no prior published number and does not settle the stranger arrival rate.** Captain
+decision **495a** publishes that as a **BRACKET** — one window read from the original observation
+start, **zero** from each wallet's own genesis — and 504a changes the unit, not the bracket. Every
+arrival-rate figure this project published before this decision was computed on the **series**
+denominator; read them as such, and do not compare one with a calendar figure without saying so.
+
+---
+
 ## Every window carries its strength, and 3.5–4.5 is UNRESOLVED
 
 Captain decision **496a**, 2026-08-14. Evidence and the full table:
@@ -353,8 +419,10 @@ said how close the reading was.
   **total** instead of resting on the pinned bar happening to sit inside the band: it counts
   `windowsResolved` / `windowsUnresolved` / `windowsBelowBand` / `unresolvedBreaksNotSplit` apart,
   keeps the four duration lists apart, and publishes the arrival rate as a **range** —
-  `windowsPerDeployerYearResolved` (lower bound) and `windowsPerDeployerYearIncludingUnresolved`
-  (upper, resolved **plus unresolved** and never the below-band class). `windowsBelowBand` is
+  `windowsPerDeployerYearResolvedOnCalendarExposure` (lower bound) and
+  `windowsPerDeployerYearIncludingUnresolvedOnCalendarExposure` (upper, resolved **plus unresolved**
+  and never the below-band class; the `On…Exposure` half of those names is captain decision 504a's,
+  one section up). `windowsBelowBand` is
   **unreachable at the pinned bar** — a taken break has `|z| >= minZ = 4`, above the band's `lo` —
   and is present anyway so the three counts are a **partition** of
   `windowsDetectedIncludingUnresolved`: no window is absorbed into a class it does not belong to,
@@ -362,7 +430,8 @@ said how close the reading was.
   test drives one. The pre-496a `windows`, `windowsPerDeployerYear` and `windowsWithBothEndsObserved` keys
   are **removed rather than redefined**, so a consumer that collapsed the classes reads `undefined`
   and fails loudly instead of reading a pooled figure as resolved. That is why `bounds.json` is at
-  **1.1.0**; this lane has never run, so no committed record carried the old keys.
+  **1.1.0** for that change (504a took it to **1.2.0**); this lane has never run, so no committed
+  record carried the old keys.
 
 **IT LANDS ON THIS PROJECT'S OWN HEADLINE WINDOW, AND THAT IS THE CONVENTION WORKING RATHER THAN
 FAILING.** On `returnPerSol` — the metric `findWindows` segments — the published n = 1 window's two
@@ -438,7 +507,10 @@ The honest list, in the order that matters.
   are excluded from the arrival-rate denominator and counted in the output — and the exclusion drops
   the **shortest-lived** deployers, which the historical seed exists to include. The seed removes the
   survivorship conditioning at discovery; this reintroduces a weaker form of it at measurement, and
-  no amount of care in the seed fixes it.
+  no amount of care in the seed fixes it. **Captain decision 504a removed a second, larger form of
+  the same conditioning** — the denominator itself, which used to stop the moment a deployer stopped
+  launching — but it does not reach this one: a deployer excluded here contributes neither windows
+  nor exposure, on either basis.
 - **Censoring is flagged, not corrected.** A window that is the first segment may have opened before
   observation began; one that is the last may still be open. Their durations are **lower bounds** and
   are reported apart from the measurements rather than pooled with them.

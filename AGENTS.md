@@ -316,7 +316,9 @@ often does a profitable opening window arrive, and how long does it last* — by
 per-launch series for a cohort of deployers instead of one. Scope, bounds and limits in its
 `README.md`; the investigation behind its shape is `slot-zero-cursor-gap-walk-blast` → `report.md`,
 held outside this repo (see "Citing a report this repo does not hold").
-Five things bind anything that touches it or copies from it:
+Five things bind anything that touches it or copies from it — and the rate it produces has its own
+section, "THE ARRIVAL RATE'S DENOMINATOR is CALENDAR exposure" below, which owns captain decision
+504a and the labelling rule for every pre-504a figure:
 
 - **A WINDOW WALK GETS ONE BOUND, IN ONE UNIT — copy `walk.mjs`, never `readLaunchWindow`.** The rule
   stands; the instance behind it is now **FIXED, and the fix is what a copier must not undo.**
@@ -2361,7 +2363,11 @@ support. The two readings:
 
 - Restricted to the **original observation start**, the cohort showed **ONE stranger window**.
 - Widened to **each wallet's own genesis**, that same window **does NOT survive**, taking the
-  one-hour stranger arrival rate to **ZERO windows over 4.43 deployer-years**.
+  one-hour stranger arrival rate to **ZERO windows over 4.43 deployer-years — a SERIES-denominator
+  reading**, as every arrival-rate figure published before captain decision 504a is; see "The
+  arrival rate's DENOMINATOR" below, which pins calendar exposure for a published rate and owns the
+  labelling rule. The zero is a zero on either denominator (the numerator is 0); the 4.43 is not,
+  and a calendar restatement of it belongs to the report that holds the walk, not to this file.
 
 **The non-surviving reading is NOT a refutation of the earlier one, and must never be recorded as
 one.** The detection was marginal either way — strength **4.13** against a pinned bar of **4** — and
@@ -2386,6 +2392,47 @@ independent Dune census at **33/33 wallets** — so the substitution **changed n
 later reader must not re-open this as a defect, and must not read it as licence to skip the handover
 on a run that can afford it: the handover remains the route for a paid run (see "The arrival-rate
 walk" above, which owns the handover contract).
+
+## THE ARRIVAL RATE'S DENOMINATOR is CALENDAR exposure, and it is a named input now
+
+Captain decision **504a**, 2026-08-14. `tools/arrival-rate-walk/` — `arrival.mjs` →
+`PUBLISHED_EXPOSURE_BASIS` / `EXPOSURE_BASIS_CAVEAT` / `summariseArrival`, pinned at `bounds.json` →
+`series.exposureBasis` (1.2.0). The tool's `README.md` → "The arrival rate is published on CALENDAR
+exposure" owns the long form; cite it rather than restating it. **It is a reporting-unit change: no
+bar, gate, predicate or measured value moved, the only bounds value ADDED is the denominator this
+decision names, and no saved query was created, edited or executed.** Five things bind:
+
+- **A COUNT OF WINDOWS IS NOT A RATE UNTIL SOMETHING SAYS *PER WHAT*, AND NOTHING HERE EVER DID.**
+  Every lane before 504a divided by **series** exposure — a deployer's first to last MEASURED launch
+  — because that is what `findWindows` returned, and the choice was never stated. That denominator
+  carries exactly the survivorship bias **165b** removed from the seed: a deployer that stops
+  launching stops being observed, so its quiet months leave the denominator with it. **The seed
+  stopped selecting on being active; the instrument had not.**
+- **THE TWO DENOMINATORS DISAGREE ON THE SIGN OF THE FINDING, WHICH IS WHY THIS IS A DECISION AND NOT
+  A UNIT PREFERENCE.** On the same single stranger window, series exposure is **3.13x smaller** than
+  calendar exposure — **0.5893** per stranger deployer-year against **0.1883** — and the two
+  disagree on whether the unbiased cohort's rate is **HIGHER or LOWER** than the still-active
+  cohort's. **CALENDAR exposure — the whole observation window, counting the months a deployer is
+  quiet — is the denominator a published rate uses.**
+- **THE DENOMINATOR IS A REQUIRED NAMED INPUT AND THERE IS NO FLAG FOR IT.** `summariseArrival`
+  **throws** without an `exposureBasis`, `runSeries` takes it and passes it down, and the CLI
+  supplies the pin — a default is a pin, and a denominator nobody chose is the defect this closes. A
+  command line that could pick the other one would be the silent choice wearing an argument. The pin
+  has two copies (`bounds.json` and `PUBLISHED_EXPOSURE_BASIS`) and a test holds them equal.
+- **EVERY RATE NAMES ITS DENOMINATOR, AND THE OLD KEYS ARE GONE RATHER THAN REDEFINED.** The summary
+  publishes `…OnCalendarExposure` and `…OnSeriesExposure` side by side with both exposures and their
+  ratio; `windowsPerDeployerYearResolved`, `…IncludingUnresolved`, `observationDeployerDays` and the
+  per-deployer `observationDays` were **removed** (496a's own rule), so a consumer cannot read a
+  calendar figure where it expected a series one. `arrival.mjs` → `formatArrivalRate` is the ONE
+  rate formatter, so a printed rate without its denominator is unreachable. **An unknown observation
+  window REFUSES** — `null`, never 0 and never the series span — and the published rate reads
+  UNAVAILABLE with the reason rather than reverting to the denominator 504a replaced.
+- **EVERY ARRIVAL-RATE FIGURE PUBLISHED BEFORE 504a IS A SERIES-DENOMINATOR READING and must be
+  labelled as one rather than silently compared with a calendar figure.** The in-tree instance is
+  495a's widened reading (the "4.43 deployer-years" bullet above, now labelled); the rest live in
+  firstmate's records with their own reports. **504a changes the unit, not the bracket**: 495a's
+  pair — one window from the original observation start, ZERO from each wallet's own genesis — and
+  the 494a/497a occupancy fence are untouched by it.
 
 ## The feedback loop — the screen grading its own predictions
 

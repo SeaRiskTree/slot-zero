@@ -2011,6 +2011,19 @@ export function renderDryRun(plan) {
       `  Whole-block route ${c.preferBlockRoute ? 'PROBED FIRST' : 'DISABLED'} behind a fallback to per-signature reads; ` +
         `the record says which ran.`,
     );
+    // Captain decision 500a: this flag stopped being a request-count knob. It is also what buys the
+    // two create-slot rows of the subtraction ledger (466), so a plan saying only which route runs
+    // understates what turning it off costs.
+    L.push(
+      c.preferBlockRoute
+        ? '  It is read on every launch whose MINT is known, which is what populates the two'
+        : '  With it off, the two create-slot rows of the subtraction ledger are UNBOUNDED on every'
+    );
+    L.push(
+      c.preferBlockRoute
+        ? '  create-slot rows of the subtraction ledger (captain decisions 466 and 500a).'
+        : '  candidate and every exit verdict reads exit-unbounded (captain decisions 466 and 500a).'
+    );
     for (const line of wrap(LANDING_TIP_CAVEAT, 78)) L.push(`  ! ${line}`);
   } else {
     L.push('KEYLESS — STAGE 2 DISABLED (--no-stage2). No entry measurement would be taken, so the');

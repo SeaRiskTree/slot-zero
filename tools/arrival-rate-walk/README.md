@@ -176,11 +176,14 @@ narrow on is our own coverage — a wallet the screen could not vouch for, which
 rather than restating it; the shape is:
 
 - **`generatedAtIso` is the observation ceiling.** Nothing after it was looked for, so a deployer that
-  appears to have gone quiet at the ceiling may simply be beyond the list's reach. `arrival.mjs`
-  measures observation from the first to the last MEASURED launch rather than from a wall clock, so an
-  old list yields a **shorter** observation rather than the same one over fewer launches — but the
-  last segment of every deployer is then censored by OUR file's age rather than by the deployer's
-  behaviour, and nothing in the series itself can tell those apart.
+  appears to have gone quiet at the ceiling may simply be beyond the list's reach. **The two
+  denominators take that differently, which is why each names itself** (decision 504a, below):
+  SERIES exposure runs first to last MEASURED launch, so an old list yields a **shorter** observation
+  rather than the same one over fewer launches; the published CALENDAR exposure runs to the
+  sitting's own instant, so an old list yields the **same** denominator over fewer launches, which
+  biases the published rate **down** — the direction that refuses. Either way the last segment of
+  every deployer is censored by OUR file's age rather than by the deployer's behaviour, and nothing
+  in the series itself can tell those apart.
 - **The age is reported on every read**, and a list generated after the reading clock is REFUSED
   rather than given a negative age.
 - **Past a maximum age the run STATES, the list is refused.** `--launch-list-max-age-days` is

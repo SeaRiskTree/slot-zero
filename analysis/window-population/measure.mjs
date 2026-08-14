@@ -358,20 +358,69 @@ export function rankSumZ(values, k, minSegment = 8) {
  */
 
 /**
- * Binary segmentation: recursively split wherever the rank-sum statistic exceeds `minZ`.
+ * The band in which a detection is **UNRESOLVED** — captain decision 496a.
+ *
+ * Duplicated from `tools/arrival-rate-walk/arrival.mjs` → `UNRESOLVED_BAND` by necessity:
+ * `analysis/` may not import `tools/` and vice versa, asserted in both directions, and this file
+ * already carries a duplicate of {@link changepoints} for the same reason. The guard against drift
+ * is BEHAVIOURAL — `test/window-population.test.ts` → "keeps the two copies of the band in step"
+ * imports both copies and asserts the bands are equal and that both {@link detectionVerdict}
+ * implementations return the same word across strengths spanning all three verdicts and both band
+ * edges — because two constants free to move independently is how the same series comes to earn
+ * different words in two places. The test file may import both; it is `analysis/` and `tools/`
+ * SOURCES that may not import each other.
+ *
+ * **It is not a second threshold.** Nothing here splits, merges or excludes on it — `minZ` decides
+ * what the segmentation DOES and 496a leaves it at 4 — it decides only which of three words a
+ * detection is reported under.
+ */
+export const UNRESOLVED_BAND = Object.freeze({ lo: 3.5, hi: 4.5 });
+
+/**
+ * @typedef {'window' | 'unresolved' | 'no-window'} DetectionVerdict
+ */
+
+/**
+ * Which of the three a strength earns. Reporting only; see {@link UNRESOLVED_BAND}.
+ *
+ * @param {number} z Absolute rank-sum statistic. `NaN` is UNRESOLVED, never `no-window`.
+ * @returns {DetectionVerdict}
+ */
+export function detectionVerdict(z) {
+  if (!Number.isFinite(z)) return 'unresolved';
+  if (z >= UNRESOLVED_BAND.hi) return 'window';
+  if (z >= UNRESOLVED_BAND.lo) return 'unresolved';
+  return 'no-window';
+}
+
+/**
+ * @typedef {object} Segmentation
+ * @property {Break[]} breaks The splits that were TAKEN — `|z| >= minZ`, exactly as before 496a.
+ * @property {Break[]} unresolvedBreaks The best split of a segment the recursion declined, where its
+ *   strength still landed in {@link UNRESOLVED_BAND}. **Reported, never acted on.**
+ */
+
+/**
+ * Binary segmentation, plus the near-misses it declined.
  *
  * This is what makes the window count a measurement rather than a threshold choice. It asks
  * "is the level different either side of here", never "is the level above some bar" — so it
  * cannot be tuned into finding more windows, which thresholding demonstrably can
  * ({@link runsAboveThreshold}).
  *
+ * The splitting rule is untouched by 496a: a segment is cut when and only when its best split
+ * reaches `minZ`. What is added is that a declined split whose strength lands in the unresolved band
+ * is recorded before the recursion returns, out of the SAME traversal, so "no split here" can be
+ * told apart from "a level change this series cannot resolve".
+ *
  * @param {readonly number[]} values
  * @param {number} minZ
  * @param {number} minSegment
- * @returns {Break[]} Ascending by index.
+ * @returns {Segmentation}
  */
-export function changepoints(values, minZ = 4, minSegment = 8) {
+export function segmentation(values, minZ = 4, minSegment = 8) {
   /** @type {Break[]} */ const out = [];
+  /** @type {Break[]} */ const unresolved = [];
   /** @param {number} lo @param {number} hi @param {number} depth */
   const recurse = (lo, hi, depth) => {
     const slice = values.slice(lo, hi);
@@ -382,14 +431,38 @@ export function changepoints(values, minZ = 4, minSegment = 8) {
       const z = Math.abs(rankSumZFromPrefix(prefix, k, minSegment));
       if (z > best.z) best = { z, k };
     }
-    if (best.k < 0 || best.z < minZ) return;
+    if (best.k < 0 || best.z < minZ) {
+      // The only line 496a adds, and it sits AFTER the decision not to split.
+      // `!== 'no-window'` rather than `=== 'unresolved'`: with the pinned bar of 4 the two are the
+      // same set, and under a bar raised ABOVE the band they are not — a declined split at 4.6 is
+      // then reported rather than dropped, which is the direction that keeps evidence visible.
+      if (best.k >= 0 && detectionVerdict(best.z) !== 'no-window') {
+        unresolved.push({ index: lo + best.k, z: best.z, depth });
+      }
+      return;
+    }
     const at = lo + best.k;
     out.push({ index: at, z: best.z, depth });
     recurse(lo, at, depth + 1);
     recurse(at, hi, depth + 1);
   };
   recurse(0, values.length, 0);
-  return out.sort((a, b) => a.index - b.index);
+  return {
+    breaks: out.sort((a, b) => a.index - b.index),
+    unresolvedBreaks: unresolved.sort((a, b) => a.index - b.index),
+  };
+}
+
+/**
+ * The splits alone. {@link segmentation} is the same traversal and also reports the near-misses.
+ *
+ * @param {readonly number[]} values
+ * @param {number} minZ
+ * @param {number} minSegment
+ * @returns {Break[]} Ascending by index.
+ */
+export function changepoints(values, minZ = 4, minSegment = 8) {
+  return segmentation(values, minZ, minSegment).breaks;
 }
 
 /**
@@ -690,15 +763,28 @@ export function main() {
     `   of the rest, ${series.filter((r) => !r.taped).length} have no tape at all\n`);
 
   console.log('CHANGEPOINTS — binary segmentation, |z| >= 4, minimum segment 8 launches');
-  for (const [name, pick] of /** @type {Array<[string, (r: LaunchRow) => number]>} */ ([
-    ['gross return per SOL', (r) => r.gross / r.stake],
-    ['gross prize, SOL', (r) => r.gross],
+  console.log(`  captain decision 496a: every detection carries its strength, and |z| in ` +
+    `[${UNRESOLVED_BAND.lo}, ${UNRESOLVED_BAND.hi}) is UNRESOLVED — neither a window nor no window. ` +
+    'The bar is unmoved at 4; this changes the words, not the splits.');
+  // ONE traversal of the return-per-SOL series, computed here and reused by the REGIMES block below
+  // rather than re-scanned there. Two scans of the identical series are two things free to disagree.
+  const roiSegmentation = segmentation(measurable.map((r) => r.gross / r.stake));
+  for (const [name, seg] of /** @type {Array<[string, ReturnType<typeof segmentation>]>} */ ([
+    ['gross return per SOL', roiSegmentation],
+    ['gross prize, SOL', segmentation(measurable.map((r) => r.gross))],
   ])) {
-    const breaks = changepoints(measurable.map(pick));
+    const { breaks, unresolvedBreaks } = seg;
     console.log(`  on ${name}:`);
     for (const b of breaks) {
       const before = measurable[b.index - 1], after = measurable[b.index];
-      console.log(`    |z|=${f(b.z, 1)} depth ${b.depth}  between ${before?.date.slice(0, 10)} ${before?.symbol} and ${after?.date.slice(0, 10)} ${after?.symbol}`);
+      console.log(`    ${detectionVerdict(b.z).toUpperCase().padEnd(10)} |z|=${f(b.z, 1)} depth ${b.depth}  between ${before?.date.slice(0, 10)} ${before?.symbol} and ${after?.date.slice(0, 10)} ${after?.symbol}`);
+    }
+    // Declined splits inside the band. They changed nothing — the segments either side are still
+    // reported as one — and they are printed so the near-miss is not filed as an absence.
+    for (const b of unresolvedBreaks) {
+      const before = measurable[b.index - 1], after = measurable[b.index];
+      console.log(`    UNRESOLVED |z|=${f(b.z, 1)} depth ${b.depth}  between ${before?.date.slice(0, 10)} ${before?.symbol} and ${after?.date.slice(0, 10)} ${after?.symbol}` +
+        '  — BELOW the bar, so NOT split: reported, never acted on');
     }
   }
   const inside = measurable.filter((r) => regimeOf(r.date) === 'open');
@@ -709,7 +795,9 @@ export function main() {
     const vals = inside.map(pick);
     let best = 0;
     for (let k = 8; k <= vals.length - 8; k++) best = Math.max(best, Math.abs(rankSumZ(vals, k)));
-    console.log(`  strongest break INSIDE the open window on ${name}: |z|=${f(best, 2)} (below 4 — one regime)`);
+    // 496a: the word is DERIVED from the reading rather than written out, so a value that drifts
+    // into the unresolved band cannot keep printing "below 4 — one regime" as if it were settled.
+    console.log(`  strongest break INSIDE the open window on ${name}: ${detectionVerdict(best).toUpperCase()} |z|=${f(best, 2)} (bar 4)`);
   }
 
   console.log('\nTHRESHOLD COUNTING, the alternative this report rejects');
@@ -721,12 +809,53 @@ export function main() {
   }
 
   console.log('\nREGIMES');
+  // The regime boundaries are the pinned WINDOW_OPEN / WINDOW_CLOSE dates, and the blind scan puts a
+  // break on each of them. 496a: the window is not reported without the strength that separates it,
+  // so the same scan's |z| is looked up per boundary and the binding (weaker) edge decides the word.
+  //
+  // A boundary with no break in that list is UNAVAILABLE, and it is rendered apart from CENSORED:
+  // a censored end is ABSENT evidence and an expected state at the first and last regime, while a
+  // missed lookup is UNKNOWN evidence and is not expected anywhere. Collapsing the second into the
+  // first is exactly the distinction 496a is careful about everywhere else.
+  const boundaryBreaks = roiSegmentation.breaks;
+  /**
+   * @typedef {{ kind: 'censored' } | { kind: 'unavailable' } | { kind: 'z', z: number }} EdgeStrength
+   */
+  /** @type {EdgeStrength} */
+  const CENSORED = { kind: 'censored' };
+  /** @param {string | undefined} date @returns {EdgeStrength} */
+  const strengthAt = (date) => {
+    const hit = date === undefined
+      ? undefined
+      : boundaryBreaks.find((b) => measurable[b.index]?.date.slice(0, 10) === date);
+    return hit === undefined ? { kind: 'unavailable' } : { kind: 'z', z: hit.z };
+  };
+  /** @param {EdgeStrength} e @returns {string} */
+  const edgeText = (e) => (e.kind === 'z' ? f(e.z, 2) : e.kind);
   for (const regime of /** @type {const} */ (['before', 'open', 'after'])) {
     const s = regimeStats(series, regime);
     const rows = series.filter((r) => regimeOf(r.date) === regime);
     const a = rows[0]?.date.slice(0, 10), b = rows[rows.length - 1]?.date.slice(0, 10);
     const days = (Date.parse(rows[rows.length - 1]?.date ?? '') - Date.parse(rows[0]?.date ?? '')) / 86_400_000;
     console.log(`  ${regime.padEnd(6)} ${a} → ${b}  ${f(days, 0)} d  ${s.launches} launches (${s.measurable} measurable), ${s.trips} round trips`);
+    // A censored end has NO break and contributes no strength — absent evidence, not weak evidence.
+    const openZ = regime === 'before' ? CENSORED : strengthAt(regime === 'open' ? WINDOW_OPEN : WINDOW_CLOSE);
+    const closeZ = regime === 'after' ? CENSORED : strengthAt(regime === 'before' ? WINDOW_OPEN : WINDOW_CLOSE);
+    const uncensored = [openZ, closeZ].filter((e) => e.kind !== 'censored');
+    // An UNAVAILABLE edge leaves the binding strength unknown, so the reading is NaN and the verdict
+    // reads UNRESOLVED — the direction that refuses. Quoting the other edge would publish the half
+    // that happened to be found as if it bound the window.
+    const z =
+      uncensored.length === 0 || uncensored.some((e) => e.kind === 'unavailable')
+        ? Number.NaN
+        : Math.min(...uncensored.map((e) => /** @type {{ kind: 'z', z: number }} */ (e).z));
+    // `open` IS the window this report measures; the other two are the levels either side of it, and
+    // the same strength answers "how well is this regime separated" for all three. The label says
+    // which question is being answered so a WINDOW verdict on `after` cannot read as a second window.
+    const what = regime === 'open' ? 'WINDOW detection    ' : 'regime separation   ';
+    console.log(`         ${what}${detectionVerdict(z).toUpperCase()}  |z|=${f(z, 2)}` +
+      `  (open ${edgeText(openZ)}, close ${edgeText(closeZ)}` +
+      `; bar 4, unresolved band ${UNRESOLVED_BAND.lo}–${UNRESOLVED_BAND.hi})`);
     console.log(`         stake ${f(s.stake, 1)} SOL   gross prize ${f(s.gross, 1)} SOL   return per SOL ${f(s.grossRoi, 3)}`);
     console.log(`         fully priced launches ${s.pricedLaunches}: gross ${f(s.pricedGross, 1)} → net ${f(s.pricedNet, 1)} SOL (net/gross ${f(s.pricedNet / s.pricedGross, 3)})`);
     console.log(`         per-launch prize   p10/p25/p50/p75/p90 = ${qline(s.prizeQuantiles, 2)} SOL`);
@@ -740,10 +869,16 @@ export function main() {
     ['gross return per SOL', (r) => r.lateGross / r.lateStake],
     ['gross prize, SOL', (r) => r.lateGross],
   ])) {
-    const breaks = changepoints(lateRows.map(pick));
+    const late = segmentation(lateRows.map(pick));
+    const breaks = late.breaks;
     for (const b of breaks) {
       const before = lateRows[b.index - 1], after = lateRows[b.index];
-      console.log(`  ${name}: |z|=${f(b.z, 1)} between ${before?.date.slice(0, 10)} ${before?.symbol} and ${after?.date.slice(0, 10)} ${after?.symbol}`);
+      console.log(`  ${name}: ${detectionVerdict(b.z).toUpperCase()} |z|=${f(b.z, 1)} between ${before?.date.slice(0, 10)} ${before?.symbol} and ${after?.date.slice(0, 10)} ${after?.symbol}`);
+    }
+    for (const b of late.unresolvedBreaks) {
+      const before = lateRows[b.index - 1], after = lateRows[b.index];
+      console.log(`  ${name}: UNRESOLVED |z|=${f(b.z, 1)} between ${before?.date.slice(0, 10)} ${before?.symbol} and ${after?.date.slice(0, 10)} ${after?.symbol}` +
+        '  — BELOW the bar, so NOT split: reported, never acted on');
     }
     const cut = breaks[0]?.index ?? lateRows.length;
     console.log(`    up to the break: median ${f(median(lateRows.slice(0, cut).map(pick)), 3)}` +

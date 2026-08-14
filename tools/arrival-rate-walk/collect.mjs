@@ -58,7 +58,13 @@ import {
   GROSS_OF_FEES_CAVEAT,
   ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT,
 } from './series.mjs';
-import { findWindows, summariseArrival } from './arrival.mjs';
+import {
+  MARGINAL_DETECTION_CAVEAT,
+  findWindows,
+  formatUnresolvedBreak,
+  formatWindow,
+  summariseArrival,
+} from './arrival.mjs';
 
 /** The pinned bounds. Read once, never overridden downward-unsafe by a flag. */
 export const BOUNDS = JSON.parse(readFileSync(fileURLToPath(new URL('./bounds.json', import.meta.url)), 'utf8'));
@@ -946,6 +952,7 @@ export function runSeries({ out }) {
         caveats: [
           GROSS_OF_FEES_CAVEAT,
           ALL_ENTRANT_FLOOR_CAVEAT,
+          MARGINAL_DETECTION_CAVEAT,
           `${rankInput.launchesNoClosedCreateSlotPair} measured launch(es) were excluded here. ` +
             ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT,
           ...summary.caveats,
@@ -1092,13 +1099,29 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       process.exit(0);
     }
 
-    const { rows, summary, rankInput, unreadable, givenUp } = runSeries({ out: /** @type {string} */ (out) });
+    const { rows, summary, perDeployer, rankInput, unreadable, givenUp } = runSeries({
+      out: /** @type {string} */ (out),
+    });
     say(
       `series: ${rows.length} launches, ${rankInput.launchesInRankTest} in the rank test, ` +
         `${rankInput.launchesUnmeasured} unmeasured, ${rankInput.launchesNoClosedCreateSlotPair} ` +
         `measured with no closed create-slot round trip (excluded, NOT read as zero), ` +
         `${unreadable.length} unreadable, ${givenUp.length} given up on at the attempt cap`,
     );
+    // Captain decision 496a: a window is never printed without its detection strength, and an
+    // unresolved reading is printed under its own word rather than folded into either neighbour.
+    // `formatWindow` is the one formatter, so this loop cannot omit the strength by forgetting to.
+    for (const d of perDeployer) {
+      if (d.tooShortReason !== null) {
+        say(`windows ${d.deployer}: UNSEGMENTABLE — ${d.tooShortReason}`);
+        continue;
+      }
+      if (d.windows.length === 0 && d.unresolvedBreaks.length === 0) {
+        say(`windows ${d.deployer}: none detected at |z| >= ${d.minZ} over ${d.launchesMeasured} measured launches`);
+      }
+      for (const w of d.windows) say(`windows ${d.deployer}: ${formatWindow(w)}`);
+      for (const b of d.unresolvedBreaks) say(`windows ${d.deployer}: ${formatUnresolvedBreak(b, d.minZ)}`);
+    }
     say(`arrival: ${JSON.stringify(summary)}`);
     process.exit(0);
   };

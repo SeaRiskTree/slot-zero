@@ -2202,8 +2202,20 @@ export function readCreateSlotSlotCosts(rows, mint) {
  * When the block route serves, {@link readCreateSlotSlotCosts} reads the whole slot's failed-attempt
  * fee bill and its whole tip total out of the same response — a `slotCosts` on the result, `null`
  * whenever the route did not serve. Nothing is attributed to anybody: `bounds.mjs` uses each total
- * as a per-position worst case, which over-attributes on purpose. It costs **zero marginal
- * requests**; the response was already fetched and the extra work is parsing.
+ * as a per-position worst case, which over-attributes on purpose.
+ *
+ * **AND SINCE CAPTAIN DECISION 500a THAT CEILING IS WHAT DECIDES WHETHER THE REQUEST IS WORTH
+ * MAKING, WHICH IS WHY IT IS NO LONGER FREE.** The route was gated on there being two or more of
+ * this launch's own transactions in the slot — the point at which one `getBlock` strictly beats the
+ * `getTransaction` calls it replaces — and on the 2026-08-14 try-cost lane that floor left both
+ * create-slot ledger rows `null` on **12 of 15 candidates**, so 466's authorised bound was
+ * unavailable on 80% of the population. The block is now read whenever the MINT is known and the
+ * slot holds at least one of the transactions being priced. On a one-transaction slot the request no
+ * longer pays for itself in request count, so this trades a small, measured number of requests for
+ * the ledger rows; the measurement is
+ * `tools/deployer-screen/measurements/2026-08-14-block-route-request-delta/`. It moves no verdict —
+ * the ledger rows gate nothing (captain decision 466) — and that is demonstrated there rather than
+ * asserted.
  *
  * ## Pacing is the creation walk's, and it is not negotiable
  *
@@ -2241,10 +2253,34 @@ export async function readCreateSlotCosts(rpc, opts) {
   const inCreateSlot = opts.transactions.filter((t) => t.slot === opts.createSlot);
 
   try {
-    // The block route is only worth a request when it can replace more than one, and it can only
-    // ever serve the create slot — the rest of a window is spread over ~150 slots, where one block
-    // per slot would cost far more than one transaction per transaction.
-    if (preferBlock && inCreateSlot.length >= 2) {
+    // WHAT THE BLOCK ROUTE IS WORTH A REQUEST FOR IS TWO THINGS SINCE CAPTAIN DECISION 500a, AND
+    // THE SECOND ONE DOES NOT CARE HOW MANY OF OUR OWN TRANSACTIONS ARE IN THE SLOT.
+    //
+    // It used to be a pure request-count optimisation — one `getBlock` replacing one
+    // `getTransaction` per create-slot transaction — so it was refused whenever it could replace
+    // fewer than two, which is a strict saving argument and was the right one while the response's
+    // other half was thrown away. Since 466 that same response also carries the ONLY bound this
+    // build has on the create-slot tip total and on the create-slot failed-attempt fee bill
+    // ({@link readCreateSlotSlotCosts}), and `bounds.mjs` → `costLedger` refuses BOTH rows unless
+    // every scored launch produced one. Measured on the 2026-08-14 try-cost lane: the two-transaction
+    // floor left both rows `null` on 12 of 15 candidates, so 466's authorised bound was unavailable
+    // on 80% of the population for the sake of at most one request a launch.
+    //
+    // So the trigger is now the MINT: a launch whose mint is known reads the block whenever there is
+    // anything of ours in the slot to cross-check the response against. The `>= 2` clause survives
+    // for the mint-less caller, where the request still has to pay for itself in request count alone.
+    //
+    // The one-transaction floor is not arbitrary and is not "whenever the mint is known" read
+    // loosely: `viaBlock > 0` is the load-bearing condition below and in `cost-source.mjs` →
+    // `assertCostWalkAccounted`, so a slot holding none of our own transactions could not yield an
+    // observation anyway and the request would buy nothing. It stays refused for that reason rather
+    // than for the saving.
+    //
+    // It can still only ever serve the create slot — the rest of a window is spread over ~150 slots,
+    // where one block per slot would cost far more than one transaction per transaction.
+    const blockRouteWorthARequest =
+      inCreateSlot.length >= 2 || (mint !== null && inCreateSlot.length >= 1);
+    if (preferBlock && blockRouteWorthARequest) {
       blockRouteTried = true;
       const block = await rpc.call('getBlock', [
         opts.createSlot,
@@ -2293,8 +2329,13 @@ export async function readCreateSlotCosts(rpc, opts) {
       }
     } else if (preferBlock) {
       blockRouteNote =
-        'the block route was not attempted: it replaces one request per create-slot transaction ' +
-        'and there were fewer than two to replace.';
+        inCreateSlot.length === 0
+          ? 'the block route was not attempted: none of the priced transactions is in the create ' +
+            'slot, so a whole-block read would carry nothing to check the response against and ' +
+            'could yield neither a saving nor a create-slot cost observation.'
+          : 'the block route was not attempted: the caller named no mint, so the block could buy ' +
+            'no create-slot cost observation, and there were fewer than two create-slot ' +
+            'transactions for it to pay for itself in request count alone.';
     }
 
     for (const target of opts.transactions) {

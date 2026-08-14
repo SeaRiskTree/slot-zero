@@ -2737,10 +2737,10 @@ realized-profit verdict are sitting in there:
   success, so a landed failure paid in full;
 - **what was tipped** — every lamport arriving at a published Jito tip account in that slot.
 
-`pumpfun.mjs` → `readCreateSlotSlotCosts` reads them, and it **costs zero vendor requests, zero
-credits and zero wall clock**: the response was already fetched to price the entrants' own
-transactions, and the extra work is parsing. Stage 2's keyless ceiling cannot move, because none of
-its three factors is a function of what is recorded.
+`pumpfun.mjs` → `readCreateSlotSlotCosts` reads them out of that response, and the extra work is
+parsing. Stage 2's keyless ceiling cannot move, because none of its three factors is a function of
+what is recorded. **What the response itself costs is no longer zero by construction** — captain
+decision 500a moved the route trigger, and the section below owns the measured cost.
 
 **Both are WHOLE-SLOT TOTALS USED AS PER-POSITION CEILINGS, and neither is an attribution.** Charging
 one entrant the entire slot's failed-attempt bill over-attributes grossly — which is exactly what a
@@ -2753,6 +2753,38 @@ walk that fell back to per-signature reads never saw the slot's other transactio
 `null` — never a zero, which would read as "nothing was spent". A single fallback inside a
 candidate's sample takes the ledger's create-slot rows back to `null`, because a bound over four
 launches of six is no bound over the candidate.
+
+### The block is now read whenever the MINT is known — captain decision 500a
+
+466 left the route trigger where it found it: two or more of the launch's own transactions in the
+create slot, which is where one `getBlock` strictly beats the `getTransaction` calls it replaces.
+That is a request-count argument, and it stopped being the whole argument the moment the same
+response became the only source of the two rows above. **Measured on the 2026-08-14 try-cost lane,
+the floor left BOTH create-slot rows `null` on 12 of 15 candidates** (88 of 133 scored windows
+observed), so 466's authorised bound was unavailable on 80% of the population.
+
+`pumpfun.mjs` → `readCreateSlotCosts` now reads the block whenever the **mint** is known and at
+least one of the priced transactions is in the create slot. The two-transaction floor survives only
+for a mint-less caller, which can buy no observation and so still has to pay for itself in request
+count alone; the one-transaction floor is not a saving argument but the `viaBlock > 0` condition
+`cost-source.mjs` → `assertCostWalkAccounted` enforces — a slot holding none of our own transactions
+gives the response nothing to be checked against, so the request would buy nothing.
+
+**The cost is measured, not projected, and it is zero on the population that could be measured
+offline.** Replaying the production functions over the committed tape on both revisions: 2,959 →
+2,959 requests with the block serving, 4,220 → 4,220 with it shedding, 189 → 195 launches carrying
+an observation, 1 → 5 of 23 candidates with both rows bounded, and **0 of 23 entry verdicts moved**
+on either revision. The reason the request delta is zero is arithmetic rather than luck — on a
+one-transaction create slot the added `getBlock` replaces the one `getTransaction` it would have
+cost — and the general bound where the endpoint does **not** serve full blocks is at most one wasted
+request per CANDIDATE, because `rpc-costs.mjs` latches the route off after one failed probe.
+`measurements/2026-08-14-block-route-request-delta/` owns the figures and their limits, the sharpest
+being that the tape is n = 1 deployer with dense create slots and understates both the gain and the
+cost against a stranger lane.
+
+`stage2_cost.preferBlockRoute` therefore means something wider than its name: turning it off now
+also refuses 466's authorised bound on both create-slot ledger rows, on every candidate. Its
+`justification` in `thresholds.json` owns the current meaning.
 
 **The tip list's provenance is stated rather than assumed.** `pumpfun.mjs` → `JITO_TIP_ACCOUNTS` is a
 published vendor list pinned as a literal and **not re-derived on-chain by the lane that added it**;

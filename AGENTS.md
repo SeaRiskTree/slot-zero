@@ -2019,14 +2019,36 @@ owns the long form; cite it rather than restating it. Six things bind:
   this build can bound it, **`null` where it cannot**) and `exitVerdict` is a function over the rows.
   `assertCostLedgerComplete` runs on every evaluation, so a refusal cannot be deleted into a pass by
   dropping a row.
-- **TWO ROWS BECAME NUMBERS AT ZERO MARGINAL COST — the half of the create-slot block this project
-  already fetched and threw away.** `pumpfun.mjs` → `readCreateSlotSlotCosts` reads, out of the
-  `getBlock` response the cost leg pays for anyway, (a) the exact `meta.fee` of every landed-but-
-  FAILED transaction touching that launch's mint — Solana bills inclusion, not success — and (b)
-  every lamport arriving at a published Jito tip account in the slot. Zero requests, zero credits,
-  zero wall clock, and Stage 2's keyless ceiling cannot move. **Both are WHOLE-SLOT TOTALS USED AS
+- **TWO ROWS BECAME NUMBERS — the half of the create-slot block this project already fetched and
+  threw away.** `pumpfun.mjs` → `readCreateSlotSlotCosts` reads, out of the cost leg's own `getBlock`
+  response, (a) the exact `meta.fee` of every landed-but-FAILED transaction touching that launch's
+  mint — Solana bills inclusion, not success — and (b) every lamport arriving at a published Jito tip
+  account in the slot. Parsing them adds no request and Stage 2's keyless ceiling cannot move;
+  **what fetching that response costs is no longer zero by construction — the 500a bullet below owns
+  it.** **Both are WHOLE-SLOT TOTALS USED AS
   PER-POSITION CEILINGS and neither is an attribution**: `readCreateSlotCosts`' refusal to tie a
   sibling transaction to an entrant's bundle is untouched.
+- **AND SINCE CAPTAIN DECISION 500a (2026-08-14) THE BLOCK IS READ WHENEVER THE *MINT* IS KNOWN, SO
+  `stage2_cost.preferBlockRoute` IS NO LONGER A REQUEST-COUNT KNOB.** 466 left the trigger at two or
+  more of the launch's own transactions in the create slot — the point at which one `getBlock` beats
+  the `getTransaction` calls it replaces — and that floor left **both create-slot rows `null` on 12
+  of 15 candidates** of the 2026-08-14 try-cost lane, i.e. 466's authorised bound unavailable on 80%
+  of the population. The two-transaction floor now survives only for a **mint-less** caller, which
+  can buy no observation; a slot holding **none** of the priced transactions is still refused, on
+  `cost-source.mjs` → `assertCostWalkAccounted`'s load-bearing `viaBlock > 0` rather than on the
+  saving. **The cost is MEASURED and it is zero on the population that can be measured offline** —
+  replaying the production functions over the committed tape on both revisions gives 2,959 → 2,959
+  requests with the block serving and 4,220 → 4,220 with it shedding, 189 → 195 launches observed,
+  1 → 5 of 23 candidates with both rows bounded, and **0 of 23 entry verdicts moved**; the arithmetic
+  is that on a one-transaction create slot the added `getBlock` replaces the one `getTransaction` it
+  would have cost, and the general bound on a non-serving endpoint is one wasted request per
+  CANDIDATE (the route latches off after one failed probe). **The tape is n = 1 with dense create
+  slots and understates BOTH the gain and the cost against a stranger lane.**
+  `tools/deployer-screen/measurements/2026-08-14-block-route-request-delta/` owns every figure and
+  its limits and `thresholds.json` → `stage2_cost.justification.preferBlockRoute` owns the flag's
+  current meaning — cite them rather than restating them. **Turning the flag off now refuses 466's
+  bound on every candidate**, and the residual `null` rows are NOT this decision's: they are
+  `costLedger`'s own completeness rule over scored launches that produced no cost targets at all.
 - **THREE COST ROWS STAY `null`, so this does NOT unlock a profit verdict for a general deployer** —
   every candidate this build can score reads `exit-unbounded`, which the design report calls the
   correct and honest state. They are tips outside the create-slot bound, attempts outside the create

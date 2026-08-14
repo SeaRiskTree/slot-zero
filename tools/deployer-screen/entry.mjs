@@ -110,10 +110,12 @@
  * `bounds.mjs` → `exitVerdict` over it, which returns `'exit-unbounded'` whenever ANY cost row has
  * no numeric boundary.
  *
- * Two of those rows became numbers here at zero marginal cost — the create slot's whole
- * failed-attempt fee bill and its whole tip total, read out of a `getBlock` response the cost leg
- * already fetched (`pumpfun.mjs` → `readCreateSlotSlotCosts`). **Three stay `null`**, so every
- * candidate this build can score still reads `'exit-unbounded'`, and that is the correct state
+ * Two of those rows became numbers here — the create slot's whole failed-attempt fee bill and its
+ * whole tip total, read out of the cost leg's own `getBlock` response (`pumpfun.mjs` →
+ * `readCreateSlotSlotCosts`); reading them adds no request, and what the response itself costs
+ * since captain decision 500a moved the route trigger is owned by `thresholds.json` →
+ * `stage2_cost.justification.preferBlockRoute`. **Three stay `null`**, so every candidate this
+ * build can score still reads `'exit-unbounded'`, and that is the correct state
  * rather than a defect. The verdict is REPORTING on the same terms as everything else in this
  * header: no entry verdict, bar, gate or threshold reads it, and a test pins that a run's entry
  * findings are byte-identical with it present and absent.

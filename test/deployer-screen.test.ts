@@ -14234,6 +14234,55 @@ describe('the cost walk, and the route it took', () => {
     expect(() => assertCostWalkAccounted(fallback, targets.length)).not.toThrow();
   });
 
+  it('500a: a ONE-transaction create slot still reads the block when the mint is known', async () => {
+    // Captain decision 500a. The route used to be gated on two or more of the launch's own
+    // transactions being in the slot, which is a pure request-count argument and was the right one
+    // while the response's other half was thrown away. Since 466 that response is the ONLY source
+    // of the two create-slot ledger rows, and the floor left BOTH null on 12 of 15 candidates of
+    // the 2026-08-14 try-cost lane.
+    const one = [{ tx: 'T1', slot: 100, wallets: [{ wallet: 'A', quotedSol: 3.1 }] }];
+    const failedOne = {
+      transaction: { signatures: ['F1'], message: { accountKeys: [{ pubkey: 'L' }, { pubkey: 'MINT-1' }] } },
+      meta: { err: { X: 1 }, fee: 1_500_000, preBalances: [0, 0], postBalances: [0, 0] },
+    };
+    const { calls, fetchImpl } = rpcOver((method) =>
+      method === 'getBlock' ? { transactions: [txBody('T1', 'A', 3.1), failedOne] } : null,
+    );
+    const rpc = new SolanaRpcClient({ maxRequests: 20, minIntervalMs: 0, fetchImpl, sleepImpl: async () => {} });
+    const walk = await readCreateSlotCosts(rpc, { transactions: one, createSlot: 100, mint: 'MINT-1' });
+
+    // THE COST, ASSERTED RATHER THAN DESCRIBED: the `getBlock` this decision adds REPLACES the one
+    // `getTransaction` it would otherwise have cost, so the request count does not move at all.
+    expect(calls).toEqual(['getBlock']);
+    expect(walk.viaBlock).toBe(1);
+    expect(walk.slotCosts).not.toBeNull();
+    expect(walk.slotCosts!.failedAttempts).toBe(1);
+
+    // WITHOUT A MINT the old floor survives, because a mint-less caller can buy no observation and
+    // the request has to pay for itself in request count alone.
+    const b = rpcOver((method) => (method === 'getBlock' ? { transactions: [txBody('T1', 'A', 3.1)] } : txBody('T1', 'A', 3.1)));
+    const rpcB = new SolanaRpcClient({ maxRequests: 20, minIntervalMs: 0, fetchImpl: b.fetchImpl, sleepImpl: async () => {} });
+    const mintless = await readCreateSlotCosts(rpcB, { transactions: one, createSlot: 100 });
+    expect(b.calls).toEqual(['getTransaction']);
+    expect(mintless.blockRouteTried).toBe(false);
+    expect(mintless.blockRouteNote).toMatch(/named no mint/);
+
+    // AND A SLOT HOLDING NONE OF OUR OWN TRANSACTIONS IS STILL REFUSED, on the load-bearing
+    // `viaBlock > 0` condition rather than on the saving: there would be nothing to check the
+    // response against, so the request would buy nothing.
+    const c = rpcOver(() => txBody('T3', 'A', 1));
+    const rpcC = new SolanaRpcClient({ maxRequests: 20, minIntervalMs: 0, fetchImpl: c.fetchImpl, sleepImpl: async () => {} });
+    const away = await readCreateSlotCosts(rpcC, {
+      transactions: [{ tx: 'T3', slot: 140, wallets: [{ wallet: 'A', quotedSol: 1 }] }],
+      createSlot: 100,
+      mint: 'MINT-1',
+    });
+    expect(c.calls).toEqual(['getTransaction']);
+    expect(away.blockRouteTried).toBe(false);
+    expect(away.slotCosts).toBeNull();
+    expect(away.blockRouteNote).toMatch(/none of the priced transactions is in the create slot/);
+  });
+
   it('a tip account LOSING lamports never cancels out another transaction\'s tip', () => {
     // A ceiling has to be a sum of what went IN. A tip account can also pay a fee or lose rent in
     // some other transaction of the same slot, and netting that decrease would let one transaction

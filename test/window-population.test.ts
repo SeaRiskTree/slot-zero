@@ -8,11 +8,13 @@ import {
   BOOK,
   COHORT,
   DEPLOYER as ANALYSIS_DEPLOYER,
+  UNRESOLVED_BAND,
   WINDOW_CLOSE,
   WINDOW_OPEN,
   changepoints,
   closeDetectionLatency,
   createSlotPriceMultiples,
+  detectionVerdict,
   median,
   perLaunchSeries,
   percentile,
@@ -21,6 +23,7 @@ import {
   regimeOf,
   regimeStats,
   runsAboveThreshold,
+  segmentation,
   unitLedger,
   type LaunchRow,
 } from '../analysis/window-population/measure.mjs';
@@ -65,6 +68,63 @@ describe('the boundaries are found blind, not assumed', () => {
       for (let k = 8; k <= inside.length - 8; k++) best = Math.max(best, Math.abs(rankSumZ(inside, k)));
       expect(best).toBeLessThan(4);
     }
+  });
+
+  it('every break carries its strength, and 3.5-4.5 is UNRESOLVED — captain decision 496a', () => {
+    // The bar is UNMOVED and this is the assertion that says so: `changepoints` still splits at 4,
+    // and `segmentation` returns the identical break list on both metrics. 496a changes the WORDS
+    // a reading is reported under, never which readings the segmentation acts on.
+    for (const pick of [(r: LaunchRow) => r.gross / r.stake, (r: LaunchRow) => r.gross]) {
+      const values = measurable.map(pick);
+      const full = segmentation(values);
+      expect(full.breaks).toEqual(changepoints(values));
+      // Nothing on this series lands in the band below the bar, so nothing was previously being
+      // filed as absence here. That is a reading of this tape, not a property of the convention.
+      expect(full.unresolvedBreaks).toEqual([]);
+    }
+
+    // The band straddles the bar rather than replacing it, so a detection can be unresolved from
+    // either side. Exactly one verdict applies to any |z|; the edges are lo-inclusive, hi-exclusive.
+    expect(UNRESOLVED_BAND.lo).toBeLessThan(4);
+    expect(UNRESOLVED_BAND.hi).toBeGreaterThan(4);
+    expect(detectionVerdict(6.5)).toBe('window');
+    expect(detectionVerdict(UNRESOLVED_BAND.hi)).toBe('window');
+    expect(detectionVerdict(4.13)).toBe('unresolved');
+    expect(detectionVerdict(3.91)).toBe('unresolved');
+    expect(detectionVerdict(UNRESOLVED_BAND.lo)).toBe('unresolved');
+    expect(detectionVerdict(3.49)).toBe('no-window');
+    // An unreadable strength is no answer; reading it as `no-window` would manufacture a refusal.
+    expect(detectionVerdict(Number.NaN)).toBe('unresolved');
+
+    // AND THE FINDING 496a EXISTS TO SURFACE LANDS ON THIS TAPE'S OWN WINDOW. On return per SOL the
+    // open reads 4.2802 and the close 5.0205, so the window's BINDING edge is 0.28 above the bar —
+    // inside the band. On the prize it reads 5.2582 / 6.5002 and is comfortably resolved. Both
+    // numbers were always here; what is new is that the report no longer says the same word for a
+    // reading 0.28 above the bar and one 2.5 above it.
+    const roi = changepoints(measurable.map((r) => r.gross / r.stake));
+    expect(roi.map((b) => Number(b.z.toFixed(4)))).toEqual([4.2802, 5.0205]);
+    expect(roi.map((b) => detectionVerdict(b.z))).toEqual(['unresolved', 'window']);
+    const prize = changepoints(measurable.map((r) => r.gross));
+    expect(prize.slice(0, 2).map((b) => detectionVerdict(b.z))).toEqual(['window', 'window']);
+  });
+
+  it('keeps the two copies of the band in step — analysis/ and tools/ cannot import each other', () => {
+    // `analysis/` may not import `tools/` and vice versa, so the band is duplicated exactly as
+    // `changepoints` already is. A source-text pin is the guard: the same series must earn the same
+    // word in both places, and two constants free to drift is how it would stop doing so.
+    const tool = readFileSync(
+      join(fileURLToPath(new URL('..', import.meta.url)), 'tools/arrival-rate-walk/arrival.mjs'),
+      'utf8',
+    );
+    const literal = 'export const UNRESOLVED_BAND = Object.freeze({ lo: 3.5, hi: 4.5 });';
+    expect(tool).toContain(literal);
+    expect(
+      readFileSync(
+        join(fileURLToPath(new URL('..', import.meta.url)), 'analysis/window-population/measure.mjs'),
+        'utf8',
+      ),
+    ).toContain(literal);
+    expect({ lo: UNRESOLVED_BAND.lo, hi: UNRESOLVED_BAND.hi }).toEqual({ lo: 3.5, hi: 4.5 });
   });
 
   it('counting runs above a bar instead manufactures windows — the answer moves with the bar', () => {

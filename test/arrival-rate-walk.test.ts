@@ -78,7 +78,19 @@ import {
   ZERO_CLOSED_PAIR_EXCLUSION_CAVEAT,
 } from '../tools/arrival-rate-walk/series.mjs';
 import type { LaunchMeasurement } from '../tools/arrival-rate-walk/series.mjs';
-import { changepoints, findWindows, median, summariseArrival } from '../tools/arrival-rate-walk/arrival.mjs';
+import {
+  MARGINAL_DETECTION_CAVEAT,
+  UNRESOLVED_BAND,
+  changepoints,
+  detectionVerdict,
+  findWindows,
+  formatUnresolvedBreak,
+  formatWindow,
+  median,
+  segmentation,
+  summariseArrival,
+} from '../tools/arrival-rate-walk/arrival.mjs';
+import type { Window } from '../tools/arrival-rate-walk/arrival.mjs';
 import {
   BOUNDS,
   buildPlan,
@@ -882,7 +894,10 @@ describe('windows are segmented, never thresholded — and the published answer 
     const summary = summariseArrival([found]);
     // Excluded from the denominator rather than counted as a deployer with no window.
     expect(summary.deployersSegmentable).toBe(0);
-    expect(Number.isNaN(summary.windowsPerDeployerYear)).toBe(true);
+    expect(Number.isNaN(summary.windowsPerDeployerYearResolved)).toBe(true);
+    expect(Number.isNaN(summary.windowsPerDeployerYearIncludingUnresolved)).toBe(true);
+    // Nothing was segmentable, so no bar was applied to anything — reported as such, not as 4.
+    expect(summary.detectionBand.minZ).toBeNull();
     expect(summary.caveats.join(' ')).toMatch(/excluded from the denominator/);
   });
 
@@ -897,6 +912,180 @@ describe('windows are segmented, never thresholded — and the published answer 
   it('keeps a median honest on an empty sample', () => {
     expect(Number.isNaN(median([]))).toBe(true);
     expect(median([1, 2, 3, 4])).toBe(2.5);
+  });
+});
+
+describe('every window carries its strength, and the marginal band is a third verdict — 496a', () => {
+  // A PERFECT step of `m` launches either side has a closed-form rank-sum z, so these three series
+  // land on the three verdicts by construction rather than by being fished for. m = 10 → |z| 3.78
+  // (inside the band, BELOW the bar), m = 12 → 4.16 (inside the band, ABOVE it), m = 15 → 4.67
+  // (clear of the band). Nothing here is tuned: the only free number is the length.
+  const step = (m: number) => {
+    const point = (i: number, r: number) => ({ mint: `m${i}`, mintMs: i * 86_400_000, returnPerSol: r, prizeSol: r });
+    return [...Array(m)].map((_, i) => point(i, 1 + i * 1e-6)).concat([...Array(m)].map((_, i) => point(m + i, -1 + i * 1e-6)));
+  };
+
+  it('THE BAR DOES NOT MOVE — 496a is a reporting change and this is what says so', () => {
+    // If this fails, someone edited the threshold instead of the report. That is the one thing
+    // 496a forbids: the bar is 4 for comparability with the published n = 1.
+    expect(BOUNDS.series.minZ).toBe(4);
+    // And the band is not a second bar dressed as one — it straddles 4 rather than replacing it.
+    expect(UNRESOLVED_BAND.lo).toBeLessThan(BOUNDS.series.minZ);
+    expect(UNRESOLVED_BAND.hi).toBeGreaterThan(BOUNDS.series.minZ);
+  });
+
+  it('sorts a strength into exactly one of the three verdicts, band edges included', () => {
+    expect(detectionVerdict(6.5)).toBe('window');
+    expect(detectionVerdict(4.5)).toBe('window'); // `hi` is exclusive of unresolved
+    expect(detectionVerdict(4.49)).toBe('unresolved');
+    expect(detectionVerdict(4.13)).toBe('unresolved'); // the reading that was called "window"
+    expect(detectionVerdict(3.91)).toBe('unresolved'); // and the one 0.2 away called "no window"
+    expect(detectionVerdict(3.5)).toBe('unresolved'); // `lo` is inclusive
+    expect(detectionVerdict(3.49)).toBe('no-window');
+    expect(detectionVerdict(2.99)).toBe('no-window');
+    // An unreadable strength is no answer, and reading it as `no-window` would manufacture a refusal.
+    expect(detectionVerdict(Number.NaN)).toBe('unresolved');
+  });
+
+  it('a comfortable detection is a WINDOW and states its own strength', () => {
+    const found = findWindows(step(15));
+    expect(found.windows).toHaveLength(1);
+    const w = found.windows[0]!;
+    expect(w.detection.z).toBeGreaterThanOrEqual(UNRESOLVED_BAND.hi);
+    expect(w.detection.verdict).toBe('window');
+    // The open end is the series' own start: absent evidence, not weak evidence.
+    expect(w.detection.openZ).toBeNull();
+    expect(w.detection.closeZ).toBeCloseTo(w.detection.z, 12);
+    expect(w.detection.minZ).toBe(4);
+    expect(found.unresolvedBreaks).toHaveLength(0);
+  });
+
+  it('a detection INSIDE the band still segments, and is reported UNRESOLVED rather than as a window', () => {
+    const found = findWindows(step(12));
+    // Segmentation behaviour is untouched: it cleared the bar, so it split, exactly as before.
+    expect(found.segments).toHaveLength(2);
+    expect(found.windows).toHaveLength(1);
+    const w = found.windows[0]!;
+    expect(w.detection.z).toBeGreaterThanOrEqual(BOUNDS.series.minZ);
+    expect(w.detection.z).toBeLessThan(UNRESOLVED_BAND.hi);
+    expect(w.detection.verdict).toBe('unresolved');
+    // It is still a window object with a real duration — unresolved is a verdict, not a deletion.
+    expect(w.launchesMeasured).toBe(12);
+  });
+
+  it('a detection BELOW the bar but inside the band is reported, not filed as absence', () => {
+    const found = findWindows(step(10));
+    // The split was NOT taken — one segment, no window, byte-identical to the pre-496a answer.
+    expect(found.segments).toHaveLength(1);
+    expect(found.windows).toHaveLength(0);
+    // ...and the near-miss is now visible instead of vanishing.
+    expect(found.unresolvedBreaks).toHaveLength(1);
+    const b = found.unresolvedBreaks[0]!;
+    expect(b.z).toBeGreaterThanOrEqual(UNRESOLVED_BAND.lo);
+    expect(b.z).toBeLessThan(BOUNDS.series.minZ);
+    expect(detectionVerdict(b.z)).toBe('unresolved');
+    // And a genuinely flat series still says nothing at all — the band does not invent detections.
+    const flat = [...Array(30)].map((_, i) => ({ mint: `m${i}`, mintMs: i * 86_400_000, returnPerSol: (i % 2) * 1e-9, prizeSol: 0 }));
+    expect(findWindows(flat).unresolvedBreaks).toHaveLength(0);
+  });
+
+  it('surfacing the near-miss changes NO split: the breaks are the ones changepoints always took', () => {
+    for (const m of [10, 12, 15, 20]) {
+      const values = step(m).map((p) => p.returnPerSol);
+      const full = segmentation(values);
+      expect(full.breaks, `m=${m}`).toEqual(changepoints(values));
+      // A near-miss is by definition not a break, so the two lists cannot overlap.
+      const taken = new Set(full.breaks.map((b) => b.index));
+      expect(full.unresolvedBreaks.some((b) => taken.has(b.index)), `m=${m}`).toBe(false);
+    }
+    // The published n = 1 is the real regression: same segments, same one window, unchanged.
+    const published = findWindows(publishedSeries(), { deployer: DEPLOYER });
+    expect(published.segments.map((s) => s.launches)).toEqual([15, 102, 80]);
+    expect(published.windows).toHaveLength(1);
+    expect(published.unresolvedBreaks).toHaveLength(0);
+    // Both of its ends are real breaks, so the binding strength is the weaker of the two.
+    const d = published.windows[0]!.detection;
+    expect(d.openZ).not.toBeNull();
+    expect(d.closeZ).not.toBeNull();
+    expect(d.z).toBe(Math.min(d.openZ!, d.closeZ!));
+  });
+
+  it('reports the PUBLISHED n = 1 window as unresolved, which is 496a working rather than failing', () => {
+    // The finding this convention was adopted to surface, and it lands on this project's own
+    // headline window. On `returnPerSol` — the metric findWindows segments — the two breaks read
+    // |z| 4.2802 at the open and 5.0205 at the close, so the BINDING edge is 4.28: inside the band,
+    // and 0.28 from having not been found at all. On `prizeSol` the same window reads 5.26 / 6.50
+    // and is comfortably resolved. Nothing about the measurement changed — 102 launches, 82.7 days,
+    // both ends observed, all byte-identical — and no bar moved; what changed is that the report no
+    // longer presents a reading 0.28 above the bar in the same words as one 2.5 above it.
+    const roi = findWindows(publishedSeries(), { deployer: DEPLOYER });
+    const d = roi.windows[0]!.detection;
+    expect(d.openZ).toBeCloseTo(4.2802, 3);
+    expect(d.closeZ).toBeCloseTo(5.0205, 3);
+    expect(d.verdict).toBe('unresolved');
+    expect(roi.windows[0]!.launchesMeasured).toBe(102);
+    expect(roi.windows[0]!.durationDays).toBeCloseTo(82.7, 1);
+
+    // On the prize metric the same boundaries clear the band, so the window is not marginal on the
+    // evidence as a whole — which is exactly why the strength travels per reading and not per window.
+    const prizeBreaks = changepoints(publishedSeries().map((s) => s.prizeSol));
+    expect(prizeBreaks.slice(0, 2).map((b) => detectionVerdict(b.z))).toEqual(['window', 'window']);
+  });
+
+  it('the summary keeps the three apart and publishes the rate as a RANGE', () => {
+    const resolved = findWindows(step(15), { deployer: 'resolved' });
+    const marginal = findWindows(step(12), { deployer: 'marginal' });
+    const nearMiss = findWindows(step(10), { deployer: 'near-miss' });
+    const summary = summariseArrival([resolved, marginal, nearMiss]);
+
+    expect(summary.windowsResolved).toBe(1);
+    expect(summary.windowsUnresolved).toBe(1);
+    expect(summary.windowsDetectedIncludingUnresolved).toBe(2);
+    expect(summary.unresolvedBreaksNotSplit).toBe(1);
+    expect(summary.detectionBand).toEqual({ minZ: 4, unresolvedLo: UNRESOLVED_BAND.lo, unresolvedHi: UNRESOLVED_BAND.hi });
+
+    // The rate is two bounds and never one figure, and the unresolved window moves only the upper.
+    expect(summary.windowsPerDeployerYearIncludingUnresolved).toBeGreaterThan(summary.windowsPerDeployerYearResolved);
+    // Durations are kept apart too: whether there is a window at all is what is unresolved.
+    expect(summary.durationsDaysCensored).toHaveLength(1);
+    expect(summary.unresolvedDurationsDaysCensored).toHaveLength(1);
+    expect(summary.durationsDaysBothEndsObserved).toHaveLength(0);
+    expect(summary.caveats).toContain(MARGINAL_DETECTION_CAVEAT);
+
+    // THE COLLAPSE GUARD: the pre-496a keys are GONE rather than redefined, so a consumer that
+    // pooled the classes reads `undefined` and fails, instead of reading a pooled count as resolved.
+    expect(summary).not.toHaveProperty('windows');
+    expect(summary).not.toHaveProperty('windowsPerDeployerYear');
+    expect(summary).not.toHaveProperty('windowsWithBothEndsObserved');
+  });
+
+  it('there is ONE window formatter and it cannot print a window without its strength', () => {
+    const lines: Array<[Window, string]> = [
+      [findWindows(step(15)).windows[0]!, 'WINDOW'],
+      [findWindows(step(12)).windows[0]!, 'UNRESOLVED'],
+    ];
+    for (const [w, word] of lines) {
+      const line = formatWindow(w);
+      expect(line, word).toContain(word);
+      expect(line, word).toContain(`|z|=${w.detection.z.toFixed(2)}`);
+      expect(line, word).toContain(`bar ${w.detection.minZ}`);
+    }
+    // The unresolved one carries the caveat with it; the resolved one has nothing to warn about.
+    expect(formatWindow(lines[1]![0])).toContain(MARGINAL_DETECTION_CAVEAT);
+    expect(formatWindow(lines[0]![0])).not.toContain(MARGINAL_DETECTION_CAVEAT);
+
+    const near = findWindows(step(10)).unresolvedBreaks[0]!;
+    const text = formatUnresolvedBreak(near, 4);
+    expect(text).toContain('UNRESOLVED');
+    expect(text).toContain(`|z|=${near.z.toFixed(2)}`);
+    expect(text).toMatch(/NOT split/);
+    expect(text).toContain(MARGINAL_DETECTION_CAVEAT);
+  });
+
+  it('says why, in the caveat that travels with every unresolved reading', () => {
+    expect(MARGINAL_DETECTION_CAVEAT).toContain('496a');
+    expect(MARGINAL_DETECTION_CAVEAT).toContain('UNMOVED');
+    expect(MARGINAL_DETECTION_CAVEAT).toMatch(/Never pool an unresolved count into either neighbour/);
   });
 });
 
@@ -1077,6 +1266,13 @@ describe('the collector end to end, on a scripted endpoint', () => {
       const arrival = JSON.parse(readFileSync(join(dir, 'arrival.json'), 'utf8'));
       expect(arrival.caveats.join(' ')).toContain('FLOOR');
       expect(summary.deployers).toBe(1);
+      // 496a reaches the RUN RECORD, not only the library: the band the run read is on the summary,
+      // the caveat is in the record's own caveats, and every per-deployer row carries the bar it was
+      // segmented at even when — as here — the series was far too short to detect anything.
+      expect(arrival.caveats.join(' ')).toContain('UNRESOLVED');
+      expect(arrival.summary.detectionBand).toEqual({ minZ: null, unresolvedLo: 3.5, unresolvedHi: 4.5 });
+      expect(arrival.perDeployer[0].minZ).toBe(4);
+      expect(arrival.perDeployer[0].unresolvedBreaks).toEqual([]);
 
       // Re-running skips what is already on disk: an interruption costs the launch in flight.
       const { client: second } = scriptedClient([pageBody(fills, false, null)]);

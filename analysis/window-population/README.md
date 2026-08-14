@@ -158,6 +158,41 @@ directly and finds all three testable participants closing on the same date.
 
 ---
 
+### 2.4 "Detected" — and the band where it is UNRESOLVED
+
+**Captain decision 496a, 2026-08-14.** Of the five distinct level changes this project's cohort has
+ever produced, **four sit within ±0.5 of the |z| = 4 bar** and only one clears it comfortably; two
+readings 0.2 apart — **3.91 and 4.13** — received opposite verdicts, one *window* and one *no
+window*. Evidence and the full table: `slot-zero-flat-positive-earlier-start` → `report.md` §12 item
+4, held in firstmate's records, not in this repo.
+
+So a break is reported under one of **three** words, and every reported break and window carries the
+|z| that earned it:
+
+| \|z\| | verdict |
+|---|---|
+| ≥ 4.5 | **window** |
+| 3.5 ≤ \|z\| < 4.5 | **unresolved** — neither a window nor no window |
+| < 3.5 | **no window** |
+
+**The bar itself does not move and the segmentation is untouched.** It splits at |z| = 4 exactly as
+§2.2 says, so every measured quantity here is unchanged; a reading in the band *above* 4 still
+segments and is merely reported under a different word, and one *below* 4 still does not split — it
+is reported as a declined near-miss rather than filed as absence. The band straddles the bar so a
+marginal reading is caught from either side, and it is **not** a second threshold: nothing splits,
+gates or is excluded on it. `measure.mjs` → `UNRESOLVED_BAND` and `detectionVerdict` are the
+implementation, duplicated in `tools/arrival-rate-walk/arrival.mjs` for the reason `changepoints`
+already is, and pinned equal by `test/window-population.test.ts`.
+
+**It lands on this report's own window.** §4.1's table below carries the reading: on return per SOL
+the open break is |z| = **4.2802**, so this tape's one window is **unresolved** on its weaker edge
+and 0.28 away from never having been found. On the prize the same boundary reads 5.2582 and is
+resolved. That is the convention doing its job rather than a new doubt about the finding — every
+figure in §§4–7 is unchanged, and §4.2 shows the strongest split *inside* the window at 2.99–3.25,
+well clear of the band from below.
+
+---
+
 ## 3. Method and coverage
 
 239 launches, 2025-12-01 → 2026-07-28, one deployer (`7ufmve7Z…`; 238 of the 239 still list it
@@ -185,13 +220,19 @@ figure below is labelled gross, priced, or estimated.
 
 Binary segmentation, given the series and no candidate dates:
 
-| series | break | \|z\| | between |
-|---|---|---:|---|
-| return per SOL | **open** | 4.3 | 2026-03-02 `Ceasar` → **2026-03-12 `escape`** |
-| return per SOL | **close** | 5.0 | 2026-06-03 `Banknote` → **2026-06-04 `Peque`** |
-| prize in SOL | **open** | 5.3 | same pair |
-| prize in SOL | **close** | 6.5 | same pair |
-| prize in SOL | (third) | 4.7 | 2026-06-20 → 2026-06-22, *inside* the closed regime |
+| series | break | \|z\| | detection | between |
+|---|---|---:|---|---|
+| return per SOL | **open** | 4.2802 | **unresolved** | 2026-03-02 `Ceasar` → **2026-03-12 `escape`** |
+| return per SOL | **close** | 5.0205 | window | 2026-06-03 `Banknote` → **2026-06-04 `Peque`** |
+| prize in SOL | **open** | 5.2582 | window | same pair |
+| prize in SOL | **close** | 6.5002 | window | same pair |
+| prize in SOL | (third) | 4.6528 | window | 2026-06-20 → 2026-06-22, *inside* the closed regime |
+
+The `detection` column is captain decision **496a** (§2.4): a strength travels with every break, and
+**3.5 ≤ \|z\| < 4.5 is UNRESOLVED** — a third verdict, neither a window nor no window. **The open
+break on return per SOL sits 0.28 above the bar and is one of them.** Nothing about the measurement
+changed for it; the |z| figures above are the same ones this table always carried, now printed to
+four decimals so the margin is legible rather than rounded away.
 
 Two independent metrics, the same two dates. The close lands on 2026-06-04, which is the date
 `slot-zero-june-regime-change` arrived at by an entirely different route — an independent
@@ -204,7 +245,8 @@ and the test asserts that it stays under 2 SOL.
 ### 4.2 The window is one regime, not several end to end
 
 The strongest split *inside* 2026-03-12 → 2026-06-03 is |z| = 2.99 on return per SOL and
-|z| = 3.25 on the prize — both below the 4.0 that the two real breaks clear at 4.3–6.5. Twelve
+|z| = 3.25 on the prize — both **below 3.5**, so both are *no window* under §2.4 rather than
+unresolved, and neither is close to the 4.0 the two real breaks clear at 4.28–6.50. Twelve
 weeks, 129 launches, one level.
 
 ### 4.3 The three regimes

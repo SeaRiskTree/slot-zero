@@ -317,6 +317,71 @@ refuses to book free money.
 
 ---
 
+## Every window carries its strength, and 3.5–4.5 is UNRESOLVED
+
+Captain decision **496a**, 2026-08-14. Evidence and the full table:
+`slot-zero-flat-positive-earlier-start` → `report.md` §12 item 4, held in firstmate's records, not in
+this repo.
+
+Of the five distinct level changes this project's cohort has ever produced, **four sit within ±0.5 of
+the pinned bar** and only one clears it comfortably; two readings 0.2 apart — **3.91 and 4.13** —
+received opposite verdicts, one *window* and one *no window*. A pass/fail at 4 was therefore
+reporting a coin flip as a finding, and reporting it silently, because nothing beside the verdict
+said how close the reading was.
+
+**This is a reporting change and only a reporting change.** Four things bind:
+
+- **The bar does not move.** `bounds.json` → `series.minZ` is **4**, unchanged, for comparability
+  with the published n = 1, and `test/arrival-rate-walk.test.ts` asserts it. The segments, the
+  windows, the durations and every measured quantity are byte-identical to what they were. If a lane
+  finds itself editing the bar, it has taken the wrong change.
+- **The strength travels with every window, and there is ONE formatter.** `arrival.mjs` →
+  `Window.detection` is not optional, and `formatWindow` is the only human-readable form, so a
+  printed window without its `|z|` is unreachable rather than merely discouraged. The **binding**
+  strength is the **weaker** of the window's two bounding breaks — a window is only as well separated
+  as its worse edge — and a **censored** end contributes none, because that is absent evidence rather
+  than weak evidence.
+- **`3.5 ≤ |z| < 4.5` is a third verdict**, `unresolved` (`arrival.mjs` → `UNRESOLVED_BAND`,
+  `detectionVerdict`). It **straddles** the bar deliberately, so a marginal reading is caught from
+  both sides. Above the bar a window still forms and is reported `unresolved` rather than `window`.
+  **Below it the segmentation is untouched — the split is still not taken** — and the near-miss is
+  reported as `DeployerWindows.unresolvedBreaks` instead of vanishing. The band is in code and
+  **not** in `bounds.json`, because it is not a bound: nothing splits, gates or is excluded on it,
+  and a value in that file invites a later lane to tune it as one.
+- **Unresolved is never pooled into either neighbour.** `summariseArrival` counts
+  `windowsResolved` / `windowsUnresolved` / `unresolvedBreaksNotSplit` apart, keeps the duration
+  lists apart, and publishes the arrival rate as a **range** —
+  `windowsPerDeployerYearResolved` (lower bound) and `windowsPerDeployerYearIncludingUnresolved`
+  (upper). The pre-496a `windows`, `windowsPerDeployerYear` and `windowsWithBothEndsObserved` keys
+  are **removed rather than redefined**, so a consumer that collapsed the classes reads `undefined`
+  and fails loudly instead of reading a pooled figure as resolved. That is why `bounds.json` is at
+  **1.1.0**; this lane has never run, so no committed record carried the old keys.
+
+**IT LANDS ON THIS PROJECT'S OWN HEADLINE WINDOW, AND THAT IS THE CONVENTION WORKING RATHER THAN
+FAILING.** On `returnPerSol` — the metric `findWindows` segments — the published n = 1 window's two
+breaks read **|z| 4.2802** at the open and **5.0205** at the close, so its **binding edge is 0.28
+above the bar** and is reported `unresolved`. On `prizeSol` the same two boundaries read **5.2582**
+and **6.5002** and are comfortably resolved. Both numbers were always there; what is new is that the
+report no longer gives a reading 0.28 above the bar the same word as one 2.5 above it. **Nothing
+about the measurement moved** — 102 launches, 82.7 days, both ends observed — and
+`test/window-population.test.ts` and `test/arrival-rate-walk.test.ts` both pin the figures, so the
+finding cannot quietly disappear.
+
+`analysis/window-population/measure.mjs` carries the same band and the same verdict function,
+**duplicated rather than imported** for the reason `changepoints` already is (`analysis/` may not
+import `tools/`, and vice versa, asserted in both directions); a source-text pin holds the two
+copies equal.
+
+**Where 496a does NOT reach, deliberately.** `tools/window-decay-tripwire/` emits no window — it asks
+whether an *already open* one has **closed**, off the operation's own take (T1) against a bar of
+0.55 confirmed by two consecutive readings, with no rank-sum statistic anywhere in it. There is no
+detection strength there to report, and inventing one would be inventing a measure. The deployer
+screen's "opening window" is a 60-second span of one launch and a different sense of the word again.
+The instrument 496a governs is the **level-change segmentation**, and it has exactly two
+implementations — the two named above.
+
+---
+
 ## What this tool cannot answer
 
 The honest list, in the order that matters.

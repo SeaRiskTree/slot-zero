@@ -347,7 +347,10 @@ rest of the repo cites.
 **One window. 2026-03-12 → 2026-06-04. 83 days, 129 launches.** Both ends are *observed* — 91 days
 of no window before it and 54 days after — so the duration is a measurement rather than a lower
 bound. Both dates fall out of a **blind changepoint scan** given no candidate dates, on two
-independent series (return per SOL and prize in SOL) that agree.
+independent series (return per SOL and prize in SOL) that agree. Since captain decision 496a every
+break is reported with the detection strength that earned it, and the open break on return per SOL
+sits inside the **unresolved** band — no measured value moved for that;
+`analysis/window-population/README.md` §2.4 and §4.1 own the convention and the readings.
 
 **It closed in one launch, over 24.7 hours,** between `Banknote` (2026-06-03 11:25, +2.61 SOL) and
 `Peque` (2026-06-04 12:08, −1.27 SOL). There was no decay. A participant watching only its own P&L

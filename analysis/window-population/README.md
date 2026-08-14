@@ -51,7 +51,9 @@ one command; the headline ones are asserted in `test/window-population.test.ts`.
 
 **Confidence.** *High* on the count, the dates, the duration and the close speed: they are
 complete-set measurements on this deployer, and the two dates fall out of a blind changepoint
-scan that was given no candidate dates. *High* on "this tape cannot count windows across
+scan that was given no candidate dates — but read §2.4 before quoting that: under captain decision
+496a the **open** date's binding strength on return per SOL is reported **unresolved**, and §4.1
+carries the reading for every break. *High* on "this tape cannot count windows across
 deployers" — that is a property of what was collected. *No confidence at all* is offered on the
 arrival rate of windows, because one observation supports none.
 

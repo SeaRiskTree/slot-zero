@@ -2311,6 +2311,45 @@ lane that touches Stage 2:
   — `importScoredFromRunRecords` recovers it from `runs/*.json` on **every** run, so a lost state
   file degrades to a slower rotation rather than a wrong one, and it only ADDS.
 
+## THE REVISED STRANGER OCCUPANCY FIGURE IS FENCED — do not quote it, and the release condition is named
+
+Captain decision **494a**, 2026-08-13. The gate-passing census re-walk moved stranger occupancy —
+the share of a stranger deployer's time that sits inside an open window, and **the number the whole
+viability arithmetic turns on** — from **1.86%** to a **5.48%–18.27%** range. That range **MAY NOT
+be quoted, cited, restated or built on outside its own report** until a **SECOND stranger window has
+been measured**. The report is `slot-zero-frequency-recollect-gatepassing` → `report.md` §10 (held
+in firstmate's records, not in this repo — see "Citing a report this repo does not hold"); it holds
+every figure and its limits, and this section deliberately does not reproduce the rest of them.
+
+**The reasoning is the fence, and it must travel with the rule** — a bare prohibition is one a later
+worker talks themselves past:
+
+- **It rests on exactly ONE observed stranger window.** One observation is not a rate, and no
+  interval on the ratio is quotable from it.
+- **It swings ~3.3-fold with a choice the analyst makes**, not with the chain: 5.48% at a 60 s window
+  width against 18.27% at 1 h. A quoted figure would silently carry whichever width its author picked.
+- **It inherits an UPWARD bias from the cohort's still-active selection**, which is captain decision
+  **165b**'s named bias one lane over: the census requires a launch in the reading month, so a
+  deployer whose window opened, paid, closed and who then quit is invisible. The bias runs in exactly
+  the direction that inflates occupancy — the direction that manufactures viability.
+
+**The release condition is a second MEASURED stranger window** — not a re-derivation, not a wider
+width, not a re-read of the same walk. Until that exists, a lane needing an occupancy input for a
+published claim has no number here and must take it to the captain. The corresponding downstream
+figures (the "~5.5 to ~18.3 deployers under continuous watch" restatement, and anything sized from
+them) are the same number in another unit and are fenced with it.
+
+**Captain decision 491a, same day — the launch list's ROUTE is ratified and is not a discrepancy.**
+That run's launch list was built from the **Helius enumeration** rather than from PR #93's
+`--launch-list` handover, because the handover requires a **paid** deployer-screen run (a Dune
+execution plus a keyed MadeOnSol request per wallet) and the work was under a keyless, zero-spend
+brief. The captain has **ratified the route actually used: no re-run, and no screen run is
+authorised.** The two routes were proven equivalent — **239/239 rows**, cross-checked against an
+independent Dune census at **33/33 wallets** — so the substitution **changed no measured value**. A
+later reader must not re-open this as a defect, and must not read it as licence to skip the handover
+on a run that can afford it: the handover remains the route for a paid run (see "The arrival-rate
+walk" above, which owns the handover contract).
+
 ## The feedback loop — the screen grading its own predictions
 
 `node tools/deployer-screen/grade.mjs`, with `prediction.mjs` (what a run claimed), `outcome.mjs`
